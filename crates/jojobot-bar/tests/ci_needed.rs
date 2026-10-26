@@ -206,7 +206,7 @@ fn ci_needed_mixed_code_crates_markdown_and_unknown_base_keep_full_checks() {
 #[test]
 fn ci_needed_ratchet_only_still_rejects_a_cap_raise() {
     let (dir, base) = repo();
-    fs::write(dir.join("size-ratchet.toml"), "cap = 2001\n").unwrap();
+    fs::write(dir.join("size-ratchet.toml"), "cap = 5001\n").unwrap();
     git(&dir, &["add", "size-ratchet.toml"]);
     git(&dir, &["commit", "-qm", "bad raise"]);
     let out = bar(&dir, &base, "check");

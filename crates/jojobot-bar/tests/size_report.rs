@@ -2,7 +2,7 @@
 //! report` and `bar dev`, run first, and it fails the verdict without skipping
 //! the phases after it. These cases drive the real binary against a real git
 //! tree, so they prove the phase is wired to the exit code and not only that the
-//! library judges a list correctly.
+//! library judges a change correctly.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -57,23 +57,20 @@ fn lines_of(count: usize) -> String {
     "x\n".repeat(count)
 }
 
-/// A ratchet file listing the given files at the given counts, under a cap of
-/// 2000. The third part is the card an entry names, for the entries that name one.
-fn ratchet(entries: &[(&str, usize, Option<u32>)]) -> String {
-    let mut text = String::from("cap = 2000\n");
-    for (path, lines, card) in entries {
-        text.push_str(&format!("\n[[file]]\npath = \"{path}\"\nlines = {lines}\n"));
-        if let Some(card) = card {
-            text.push_str(&format!("raised_by = {card}\n"));
-        }
-    }
-    text
+/// The file `size-ratchet.toml`: the cap, and whatever else the case adds.
+fn ratchet(extra: &str) -> String {
+    format!("cap = 5000\n{extra}")
 }
 
-/// Track `files` and commit them, returning the commit.
-fn commit(dir: &Path, files: &[&str]) -> String {
-    for file in files {
-        git(dir, &["add", file]);
+/// Write a file and its list into the tree, track both and commit them, returning
+/// the commit.
+fn commit_files(dir: &Path, files: &[(&str, String)]) -> String {
+    for (path, text) in files {
+        if let Some(parent) = Path::new(path).parent() {
+            fs::create_dir_all(dir.join(parent)).unwrap();
+        }
+        fs::write(dir.join(path), text).unwrap();
+        git(dir, &["add", path]);
     }
     git(dir, &["commit", "-q", "-m", "scratch"]);
     git(dir, &["rev-parse", "HEAD"])
@@ -86,10 +83,14 @@ struct Ran {
 
 /// Run `bar <verb>` over the fake cargo, with `base` as the size base when given.
 fn bar(dir: &Path, verb: &str, base: Option<&str>) -> Ran {
+    bar_with(dir, &[verb], base)
+}
+
+fn bar_with(dir: &Path, args: &[&str], base: Option<&str>) -> Ran {
     let fake_cargo = write_fake_cargo_always_green(dir);
     let mut command = Command::new(env!("CARGO_BIN_EXE_jojobot-bar"));
     command
-        .arg(verb)
+        .args(args)
         .current_dir(dir)
         .env("TMPDIR", dir)
         .env("CARGO", &fake_cargo)
@@ -117,8 +118,7 @@ fn size_line(stdout: &str) -> &str {
 fn a_new_test_file_over_100_kb_is_refused() {
     for path in ["tests/homer.sql", "crates/jojobot/tests/homer.sql"] {
         let dir = repo("test-bytes");
-        fs::write(dir.join("size-ratchet.toml"), ratchet(&[])).unwrap();
-        let base = commit(&dir, &["size-ratchet.toml"]);
+        let base = commit_files(&dir, &[("size-ratchet.toml", ratchet(""))]);
         fs::create_dir_all(dir.join(path).parent().unwrap()).unwrap();
         fs::write(dir.join(path), vec![b'x'; 101_000]).unwrap();
         git(&dir, &["add", path]);
@@ -135,7 +135,7 @@ fn a_new_test_file_over_100_kb_is_refused() {
 fn an_unborn_repo_still_refuses_a_new_test_file_over_100_kb() {
     for path in ["tests/homer.sql", "crates/jojobot/tests/homer.sql"] {
         let dir = repo("unborn-test-bytes");
-        fs::write(dir.join("size-ratchet.toml"), ratchet(&[])).unwrap();
+        fs::write(dir.join("size-ratchet.toml"), ratchet("")).unwrap();
         git(&dir, &["add", "size-ratchet.toml"]);
         fs::create_dir_all(dir.join(path).parent().unwrap()).unwrap();
         fs::write(dir.join(path), vec![b'x'; 101_000]).unwrap();
@@ -151,9 +151,13 @@ fn an_unborn_repo_still_refuses_a_new_test_file_over_100_kb() {
 #[test]
 fn moving_a_large_file_into_tests_is_a_new_test_file() {
     let dir = repo("test-file-move");
-    fs::write(dir.join("size-ratchet.toml"), ratchet(&[])).unwrap();
-    fs::write(dir.join("homer.sql"), vec![b'x'; 101_000]).unwrap();
-    let base = commit(&dir, &["size-ratchet.toml", "homer.sql"]);
+    let base = commit_files(
+        &dir,
+        &[
+            ("size-ratchet.toml", ratchet("")),
+            ("homer.sql", "x".repeat(101_000)),
+        ],
+    );
     fs::create_dir_all(dir.join("tests")).unwrap();
     git(&dir, &["mv", "homer.sql", "tests/homer.sql"]);
     let ran = bar(&dir, "size", Some(&base));
@@ -165,10 +169,13 @@ fn moving_a_large_file_into_tests_is_a_new_test_file() {
 #[test]
 fn the_test_file_limit_allows_the_boundary_and_existing_files() {
     let dir = repo("test-file-boundary");
-    fs::create_dir_all(dir.join("tests")).unwrap();
-    fs::write(dir.join("size-ratchet.toml"), ratchet(&[])).unwrap();
-    fs::write(dir.join("tests/old.sql"), vec![b'x'; 101_000]).unwrap();
-    let base = commit(&dir, &["size-ratchet.toml", "tests/old.sql"]);
+    let base = commit_files(
+        &dir,
+        &[
+            ("size-ratchet.toml", ratchet("")),
+            ("tests/old.sql", "x".repeat(101_000)),
+        ],
+    );
     for (path, bytes) in [("tests/homer.sql", 100_000), ("marge.sql", 101_000)] {
         fs::write(dir.join(path), vec![b'x'; bytes]).unwrap();
         git(&dir, &["add", path]);
@@ -181,12 +188,13 @@ fn the_test_file_limit_allows_the_boundary_and_existing_files() {
 #[test]
 fn the_test_file_limit_cannot_be_raised_without_a_base() {
     let dir = repo("test-file-limit-raise");
-    fs::write(
-        dir.join("size-ratchet.toml"),
-        "cap = 2000\ntest_file_bytes = 100001\n",
-    )
-    .unwrap();
-    commit(&dir, &["size-ratchet.toml"]);
+    commit_files(
+        &dir,
+        &[(
+            "size-ratchet.toml",
+            "cap = 5000\ntest_file_bytes = 100001\n".to_string(),
+        )],
+    );
     let ran = bar(&dir, "size", None);
     assert_eq!(ran.code, Some(1), "{}", ran.stdout);
     assert!(ran.stdout.contains("test_file_bytes"), "{}", ran.stdout);
@@ -194,49 +202,50 @@ fn the_test_file_limit_cannot_be_raised_without_a_base() {
 }
 
 /// **A tree that changed nothing is green, and the size line is on the verdict
-/// block** between `verdict:` and `log:`, naming both counts.
+/// block** between `verdict:` and `log:`, naming both counts and the base.
 #[test]
 fn a_tree_that_changed_nothing_is_green_with_a_size_line_in_the_verdict_block() {
     let dir = repo("quiet");
-    fs::write(dir.join("homer.rs"), lines_of(2001)).unwrap();
-    fs::write(
-        dir.join("size-ratchet.toml"),
-        ratchet(&[("homer.rs", 2001, None)]),
-    )
-    .unwrap();
-    commit(&dir, &["homer.rs", "size-ratchet.toml"]);
-
-    let ran = bar(&dir, "check", None);
+    let base = commit_files(
+        &dir,
+        &[
+            ("size-ratchet.toml", ratchet("")),
+            ("homer.rs", lines_of(5001)),
+            ("marge.md", lines_of(2500)),
+        ],
+    );
+    let ran = bar(&dir, "check", Some(&base));
     assert_eq!(ran.code, Some(0), "{}", ran.stdout);
     let verdict = ran.stdout.find("verdict: GREEN").expect(&ran.stdout);
     let size = ran.stdout.find("size: ok").expect(&ran.stdout);
     let log = ran.stdout.find("log:").expect(&ran.stdout);
     assert!(verdict < size && size < log, "{}", ran.stdout);
     let line = size_line(&ran.stdout);
-    assert!(line.contains("1 files over 2000 lines"), "{line}");
-    assert!(line.contains("1 listed in size-ratchet.toml"), "{line}");
+    assert!(line.contains("1 red and 1 yellow files"), "{line}");
+    assert!(line.contains("compared with"), "{line}");
     let _ = fs::remove_dir_all(&dir);
 }
 
-/// **One added line to a listed file turns the run red**, and the size line
-/// names the file, the before and the after. The phases after it still run.
+/// **One added line to a red file turns the run red**, and the size line names the
+/// file, the before and the after. The phases after it still run.
 #[test]
-fn one_line_added_to_a_listed_file_is_red_and_names_the_file() {
+fn one_line_added_to_a_red_file_is_red_and_names_the_file() {
     let dir = repo("grew");
-    fs::write(dir.join("homer.rs"), lines_of(2001)).unwrap();
-    fs::write(
-        dir.join("size-ratchet.toml"),
-        ratchet(&[("homer.rs", 2001, None)]),
-    )
-    .unwrap();
-    commit(&dir, &["homer.rs", "size-ratchet.toml"]);
-    fs::write(dir.join("homer.rs"), lines_of(2002)).unwrap();
+    let base = commit_files(
+        &dir,
+        &[
+            ("size-ratchet.toml", ratchet("")),
+            ("homer.rs", lines_of(5001)),
+        ],
+    );
+    fs::write(dir.join("homer.rs"), lines_of(5002)).unwrap();
 
-    let ran = bar(&dir, "check", None);
+    let ran = bar(&dir, "check", Some(&base));
     assert_eq!(ran.code, Some(1), "{}", ran.stdout);
     assert!(ran.stdout.contains("verdict: RED"), "{}", ran.stdout);
     assert!(
-        ran.stdout.contains("homer.rs: grew from 2001 to 2002"),
+        ran.stdout
+            .contains("homer.rs: red file grew from 5001 to 5002"),
         "{}",
         ran.stdout
     );
@@ -253,126 +262,196 @@ fn one_line_added_to_a_listed_file_is_red_and_names_the_file() {
     let _ = fs::remove_dir_all(&dir);
 }
 
-/// **A new file of 2001 lines turns the run red**: it is over the cap and has
-/// no entry.
+/// **A red file that shrank is green**, and a red file that grew in a file of any
+/// kind is red: the check reads text, not only Rust.
 #[test]
-fn a_new_file_over_the_cap_is_red() {
+fn a_red_markdown_file_is_measured_like_code() {
+    let dir = repo("markdown");
+    let base = commit_files(
+        &dir,
+        &[
+            ("size-ratchet.toml", ratchet("")),
+            ("notes.md", lines_of(5100)),
+        ],
+    );
+    fs::write(dir.join("notes.md"), lines_of(5050)).unwrap();
+    let shrank = bar(&dir, "check", Some(&base));
+    assert_eq!(shrank.code, Some(0), "{}", shrank.stdout);
+    fs::write(dir.join("notes.md"), lines_of(5101)).unwrap();
+    let grew = bar(&dir, "check", Some(&base));
+    assert_eq!(grew.code, Some(1), "{}", grew.stdout);
+    assert!(
+        grew.stdout.contains("notes.md: red file grew"),
+        "{}",
+        grew.stdout
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// **A new file of 5001 lines turns the run red**, whatever it holds.
+#[test]
+fn a_new_5001_line_markdown_file_is_red() {
     let dir = repo("new");
-    fs::write(dir.join("size-ratchet.toml"), ratchet(&[])).unwrap();
-    commit(&dir, &["size-ratchet.toml"]);
-    fs::write(dir.join("marge.rs"), lines_of(2001)).unwrap();
-    git(&dir, &["add", "marge.rs"]);
-
-    let ran = bar(&dir, "check", None);
-    assert_eq!(ran.code, Some(1), "{}", ran.stdout);
-    assert!(
-        ran.stdout
-            .contains("marge.rs: new file over the cap, 2001 lines"),
-        "{}",
-        ran.stdout
-    );
-    let _ = fs::remove_dir_all(&dir);
-}
-
-/// **A raise with no card is red against the base; a raise that names a card is
-/// green.** The raised entry matches the file in both runs, so only the base
-/// half can tell them apart.
-#[test]
-fn a_raised_entry_without_a_card_is_red_and_with_a_card_is_green() {
-    let dir = repo("raise");
-    fs::write(dir.join("homer.rs"), lines_of(2001)).unwrap();
-    fs::write(
-        dir.join("size-ratchet.toml"),
-        ratchet(&[("homer.rs", 2001, None)]),
-    )
-    .unwrap();
-    let base = commit(&dir, &["homer.rs", "size-ratchet.toml"]);
-
-    fs::write(dir.join("homer.rs"), lines_of(2005)).unwrap();
-    fs::write(
-        dir.join("size-ratchet.toml"),
-        ratchet(&[("homer.rs", 2005, None)]),
-    )
-    .unwrap();
-    let bare = bar(&dir, "check", Some(&base));
-    assert_eq!(bare.code, Some(1), "{}", bare.stdout);
-    assert!(
-        bare.stdout
-            .contains("homer.rs: the entry went from 2001 to 2005"),
-        "{}",
-        bare.stdout
-    );
-
-    fs::write(
-        dir.join("size-ratchet.toml"),
-        ratchet(&[("homer.rs", 2005, Some(2778))]),
-    )
-    .unwrap();
-    let named = bar(&dir, "check", Some(&base));
-    assert_eq!(named.code, Some(0), "{}", named.stdout);
-    assert!(
-        size_line(&named.stdout).contains("compared with"),
-        "{}",
-        named.stdout
-    );
-    let _ = fs::remove_dir_all(&dir);
-}
-
-/// **A card that justified the base's entry does not justify another raise.**
-#[test]
-fn a_card_already_named_at_the_base_does_not_pay_for_a_second_raise() {
-    let dir = repo("again");
-    fs::write(dir.join("homer.rs"), lines_of(2005)).unwrap();
-    fs::write(
-        dir.join("size-ratchet.toml"),
-        ratchet(&[("homer.rs", 2005, Some(2778))]),
-    )
-    .unwrap();
-    let base = commit(&dir, &["homer.rs", "size-ratchet.toml"]);
-    fs::write(dir.join("homer.rs"), lines_of(2009)).unwrap();
-    fs::write(
-        dir.join("size-ratchet.toml"),
-        ratchet(&[("homer.rs", 2009, Some(2778))]),
-    )
-    .unwrap();
+    let base = commit_files(&dir, &[("size-ratchet.toml", ratchet(""))]);
+    fs::write(dir.join("marge.md"), lines_of(5001)).unwrap();
+    git(&dir, &["add", "marge.md"]);
 
     let ran = bar(&dir, "check", Some(&base));
     assert_eq!(ran.code, Some(1), "{}", ran.stdout);
-    assert!(ran.stdout.contains("without a new card"), "{}", ran.stdout);
+    assert!(
+        ran.stdout
+            .contains("marge.md: new file over the cap, 5001 lines"),
+        "{}",
+        ran.stdout
+    );
     let _ = fs::remove_dir_all(&dir);
 }
 
-/// **With no base the half says unknown and the tree half still decides.** An
-/// unknown base is never printed as a pass.
+/// **A yellow file may grow, and the check says so** without turning red.
+#[test]
+fn a_yellow_file_that_grew_warns_and_stays_green() {
+    let dir = repo("yellow");
+    let base = commit_files(
+        &dir,
+        &[
+            ("size-ratchet.toml", ratchet("")),
+            ("homer.rs", lines_of(2500)),
+        ],
+    );
+    fs::write(dir.join("homer.rs"), lines_of(2600)).unwrap();
+    let ran = bar(&dir, "check", Some(&base));
+    assert_eq!(ran.code, Some(0), "{}", ran.stdout);
+    assert!(
+        ran.stdout
+            .contains("warning: homer.rs: over 2000 lines and grew from 2500 to 2600"),
+        "{}",
+        ran.stdout
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// **A moved red file is the same file**: it may move at its size and may not
+/// grow while moving, and the move shows in both areas of the table.
+#[test]
+fn a_moved_red_file_keeps_its_size_and_cannot_grow_in_the_move() {
+    let dir = repo("moved");
+    let base = commit_files(
+        &dir,
+        &[
+            ("size-ratchet.toml", ratchet("")),
+            ("crates/a/src/big.rs", lines_of(5200)),
+        ],
+    );
+    fs::create_dir_all(dir.join("crates/b/src")).unwrap();
+    git(&dir, &["mv", "crates/a/src/big.rs", "crates/b/src/big.rs"]);
+    let moved = bar(&dir, "check", Some(&base));
+    assert_eq!(moved.code, Some(0), "{}", moved.stdout);
+    assert!(
+        moved.stdout.contains("-5200"),
+        "the old area loses it: {}",
+        moved.stdout
+    );
+    assert!(
+        moved.stdout.contains("5200"),
+        "the new area gains it: {}",
+        moved.stdout
+    );
+    fs::write(dir.join("crates/b/src/big.rs"), lines_of(5201)).unwrap();
+    git(&dir, &["add", "crates/b/src/big.rs"]);
+    let grown = bar(&dir, "check", Some(&base));
+    assert_eq!(grown.code, Some(1), "{}", grown.stdout);
+    assert!(
+        grown
+            .stdout
+            .contains("crates/b/src/big.rs: red file grew from 5200 to 5201"),
+        "{}",
+        grown.stdout
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// **A raise that names the operator's rule lets a red file grow once**, and the
+/// check prints it. A base that already held the same rule for the file does not
+/// pay for a second raise.
+#[test]
+fn a_raise_pays_once_and_is_printed() {
+    let dir = repo("raise");
+    let base = commit_files(
+        &dir,
+        &[
+            ("size-ratchet.toml", ratchet("")),
+            ("homer.rs", lines_of(5001)),
+        ],
+    );
+    fs::write(dir.join("homer.rs"), lines_of(5010)).unwrap();
+    let bare = bar(&dir, "check", Some(&base));
+    assert_eq!(bare.code, Some(1), "{}", bare.stdout);
+
+    let raise = "\n[[raise]]\npath = \"homer.rs\"\nrule = 704\n";
+    fs::write(dir.join("size-ratchet.toml"), ratchet(raise)).unwrap();
+    let named = bar(&dir, "check", Some(&base));
+    assert_eq!(named.code, Some(0), "{}", named.stdout);
+    assert!(
+        named
+            .stdout
+            .contains("homer.rs: red file grew from 5001 to 5010 under rule 704"),
+        "{}",
+        named.stdout
+    );
+
+    git(&dir, &["add", "homer.rs", "size-ratchet.toml"]);
+    git(&dir, &["commit", "-q", "-m", "raise"]);
+    let second_base = git(&dir, &["rev-parse", "HEAD"]);
+    fs::write(dir.join("homer.rs"), lines_of(5020)).unwrap();
+    let again = bar(&dir, "check", Some(&second_base));
+    assert_eq!(again.code, Some(1), "{}", again.stdout);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// **With no base the phase never says ok**: growth cannot be judged, so the line
+/// says unknown. The run is not failed by it. The same clean tree with a known
+/// base is ok.
 #[test]
 fn with_no_base_the_size_line_says_unknown_and_never_ok() {
     let dir = repo("unknown");
-    fs::write(dir.join("homer.rs"), "fn main() {}\n").unwrap();
-    commit(&dir, &["homer.rs"]);
-
-    let ran = bar(&dir, "check", None);
-    assert_eq!(ran.code, Some(0), "{}", ran.stdout);
-    let line = size_line(&ran.stdout);
-    assert!(line.contains("base: unknown"), "{line}");
+    let base = commit_files(
+        &dir,
+        &[
+            ("size-ratchet.toml", ratchet("")),
+            ("homer.rs", "fn main() {}\n".to_string()),
+        ],
+    );
+    let without = bar(&dir, "check", None);
+    assert_eq!(without.code, Some(0), "{}", without.stdout);
+    let line = size_line(&without.stdout);
+    assert!(line.starts_with("size: unknown"), "{line}");
     assert!(
         line.contains("SIZE_BASE"),
         "the line names what would set a base: {line}"
     );
+    assert!(!without.stdout.contains("size: ok"), "{}", without.stdout);
+
+    let with = bar(&dir, "check", Some(&base));
+    assert_eq!(with.code, Some(0), "{}", with.stdout);
+    assert!(
+        size_line(&with.stdout).starts_with("size: ok"),
+        "{}",
+        with.stdout
+    );
     let _ = fs::remove_dir_all(&dir);
 }
 
-/// **A base with no list at it is unknown too**, the way the first change that
-/// adds the list meets it.
+/// **A base that held no list is still a base**: the change is read from git.
 #[test]
-fn a_base_with_no_list_is_unknown() {
+fn a_base_with_no_list_is_still_a_base() {
     let dir = repo("firstlist");
-    fs::write(dir.join("homer.rs"), "fn main() {}\n").unwrap();
-    let base = commit(&dir, &["homer.rs"]);
-
+    let base = commit_files(&dir, &[("homer.rs", "fn main() {}\n".to_string())]);
+    fs::write(dir.join("size-ratchet.toml"), ratchet("")).unwrap();
+    git(&dir, &["add", "size-ratchet.toml"]);
     let ran = bar(&dir, "check", Some(&base));
     assert_eq!(ran.code, Some(0), "{}", ran.stdout);
     assert!(
-        size_line(&ran.stdout).contains("base: unknown — no size-ratchet.toml at"),
+        size_line(&ran.stdout).contains("compared with"),
         "{}",
         ran.stdout
     );
@@ -392,18 +471,20 @@ fn a_directory_that_is_no_repository_fails_the_phase() {
     let _ = fs::remove_dir_all(&dir);
 }
 
-/// **A malformed list fails the phase and names the line**, not an empty list.
+/// **A malformed file fails the phase and names the line**, not an empty file.
 #[test]
 fn a_malformed_list_fails_the_phase_naming_the_line() {
     let dir = repo("malformed");
-    fs::write(dir.join("homer.rs"), "fn main() {}\n").unwrap();
-    fs::write(
-        dir.join("size-ratchet.toml"),
-        "cap = 2000\n\n[[file]]\nlines = lots\n",
-    )
-    .unwrap();
-    commit(&dir, &["homer.rs", "size-ratchet.toml"]);
-
+    commit_files(
+        &dir,
+        &[
+            ("homer.rs", "fn main() {}\n".to_string()),
+            (
+                "size-ratchet.toml",
+                "cap = 5000\n\n[[raise]]\nrule = lots\n".to_string(),
+            ),
+        ],
+    );
     let ran = bar(&dir, "check", None);
     assert_eq!(ran.code, Some(1), "{}", ran.stdout);
     let line = size_line(&ran.stdout);
@@ -416,90 +497,107 @@ fn a_malformed_list_fails_the_phase_naming_the_line() {
 #[test]
 fn the_report_level_is_red_for_growth_as_well() {
     let dir = repo("report");
-    fs::write(dir.join("homer.rs"), lines_of(2001)).unwrap();
-    fs::write(
-        dir.join("size-ratchet.toml"),
-        ratchet(&[("homer.rs", 2000, None)]),
-    )
-    .unwrap();
-    commit(&dir, &["homer.rs", "size-ratchet.toml"]);
-
-    let ran = bar(&dir, "report", None);
+    let base = commit_files(
+        &dir,
+        &[
+            ("size-ratchet.toml", ratchet("")),
+            ("homer.rs", lines_of(5001)),
+        ],
+    );
+    fs::write(dir.join("homer.rs"), lines_of(5002)).unwrap();
+    let ran = bar(&dir, "report", Some(&base));
     assert_eq!(ran.code, Some(1), "{}", ran.stdout);
     assert!(
-        ran.stdout.contains("homer.rs: grew from 2000 to 2001"),
+        ran.stdout
+            .contains("homer.rs: red file grew from 5001 to 5002"),
         "{}",
         ran.stdout
     );
     let _ = fs::remove_dir_all(&dir);
 }
 
-/// **`bar size` alone checks, and `--write` lowers a stale entry and adds
-/// nothing.** A new file over the cap stays refused after `--write`.
+/// **The area table shows on every run**: net lines by area and by kind, and a
+/// deletion is a negative number.
 #[test]
-fn bar_size_write_lowers_a_stale_entry_and_adds_nothing() {
-    let dir = repo("write");
-    fs::write(dir.join("homer.rs"), lines_of(2003)).unwrap();
-    fs::write(dir.join("marge.rs"), lines_of(2500)).unwrap();
-    fs::write(
-        dir.join("size-ratchet.toml"),
-        ratchet(&[("homer.rs", 2010, None)]),
-    )
-    .unwrap();
-    commit(&dir, &["homer.rs", "marge.rs", "size-ratchet.toml"]);
-
-    let before = bar(&dir, "size", None);
-    assert_eq!(before.code, Some(1), "{}", before.stdout);
+fn the_area_table_shows_net_lines_by_area_and_kind() {
+    let dir = repo("table");
+    let base = commit_files(
+        &dir,
+        &[
+            ("size-ratchet.toml", ratchet("")),
+            ("crates/a/src/x.rs", lines_of(100)),
+            ("crates/a/tests/t.rs", lines_of(50)),
+            ("README.md", lines_of(10)),
+        ],
+    );
+    fs::write(dir.join("crates/a/src/x.rs"), lines_of(60)).unwrap();
+    fs::write(dir.join("crates/a/tests/t.rs"), lines_of(55)).unwrap();
+    fs::write(dir.join("README.md"), lines_of(14)).unwrap();
+    let ran = bar(&dir, "check", Some(&base));
+    assert_eq!(ran.code, Some(0), "{}", ran.stdout);
+    let table: Vec<&str> = ran.stdout.lines().filter(|l| l.starts_with("  ")).collect();
+    let row = |area: &str| {
+        table
+            .iter()
+            .find(|line| line.ends_with(area))
+            .unwrap_or_else(|| panic!("no row for {area}: {table:?}"))
+            .split_whitespace()
+            .map(str::to_string)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(row("crates/a/x")[..3], ["-40", "0", "0"], "{table:?}");
+    assert_eq!(row("crates/a")[..3], ["0", "5", "0"], "{table:?}");
+    assert_eq!(row("(root)")[..3], ["0", "0", "4"], "{table:?}");
     assert!(
-        before.stdout.contains("Run `bar size --write`"),
-        "{}",
-        before.stdout
+        table.iter().any(|l| l.contains("source plus tests -35")),
+        "{table:?}"
     );
-
-    let written = support::output_fenced(
-        Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
-            .args(["size", "--write"])
-            .current_dir(&dir)
-            .env_remove("SIZE_BASE")
-            .env_remove("GITHUB_BASE_REF"),
-    )
-    .expect("run bar size --write");
-    let out = String::from_utf8_lossy(&written.stdout);
-    assert_eq!(
-        written.status.code(),
-        Some(1),
-        "marge.rs is still new: {out}"
-    );
-    let list = fs::read_to_string(dir.join("size-ratchet.toml")).unwrap();
-    assert!(list.contains("lines = 2003"), "{list}");
-    assert!(!list.contains("marge.rs"), "--write adds nothing: {list}");
-    assert!(out.contains("marge.rs: new file over the cap"), "{out}");
     let _ = fs::remove_dir_all(&dir);
 }
 
-/// **`--init` writes the first list from the tree and refuses a second.**
+/// **`bar size --net` prints the table; a positive source plus tests needs a
+/// named reason**, and an empty reason file names none.
 #[test]
-fn bar_size_init_writes_the_first_list_once() {
-    let dir = repo("init");
-    fs::write(dir.join("homer.rs"), lines_of(2004)).unwrap();
-    git(&dir, &["add", "homer.rs"]);
-    let run = |dir: &Path| {
-        support::output_fenced(
-            Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
-                .args(["size", "--init"])
-                .current_dir(dir),
-        )
-        .expect("run bar size --init")
-    };
-    let first = run(&dir);
-    assert!(first.status.success());
-    let list = fs::read_to_string(dir.join("size-ratchet.toml")).unwrap();
-    assert!(
-        list.contains("path = \"homer.rs\"") && list.contains("lines = 2004"),
-        "{list}"
+fn net_positive_code_needs_a_reason_file_with_a_reason_in_it() {
+    let dir = repo("net");
+    let base = commit_files(
+        &dir,
+        &[
+            ("size-ratchet.toml", ratchet("")),
+            ("crates/a/src/x.rs", lines_of(10)),
+        ],
     );
-    let second = run(&dir);
-    assert_eq!(second.status.code(), Some(1));
+    fs::write(dir.join("crates/a/src/x.rs"), lines_of(30)).unwrap();
+    let bare = bar_with(&dir, &["size", "--net"], Some(&base));
+    assert_eq!(bare.code, Some(1), "{}", bare.stdout);
+    assert!(
+        bare.stdout.contains("net lines by area since"),
+        "{}",
+        bare.stdout
+    );
+    fs::write(dir.join("reason.txt"), "").unwrap();
+    let empty = bar_with(
+        &dir,
+        &["size", "--net", "--reason-file", "reason.txt"],
+        Some(&base),
+    );
+    assert_eq!(empty.code, Some(1), "{}", empty.stdout);
+    fs::write(
+        dir.join("reason.txt"),
+        "grew to shrink; the fold goes at 9.3.4\n",
+    )
+    .unwrap();
+    let named = bar_with(
+        &dir,
+        &["size", "--net", "--reason-file", "reason.txt"],
+        Some(&base),
+    );
+    assert_eq!(named.code, Some(0), "{}", named.stdout);
+    fs::write(dir.join("crates/a/src/x.rs"), lines_of(3)).unwrap();
+    let negative = bar_with(&dir, &["size", "--net"], Some(&base));
+    assert_eq!(negative.code, Some(0), "{}", negative.stdout);
+    let unknown = bar_with(&dir, &["size", "--net"], None);
+    assert_eq!(unknown.code, Some(1), "{}", unknown.stdout);
     let _ = fs::remove_dir_all(&dir);
 }
 
@@ -507,7 +605,7 @@ fn bar_size_init_writes_the_first_list_once() {
 #[test]
 fn narrow_prints_no_size_line() {
     let dir = repo("narrow");
-    fs::write(dir.join("homer.rs"), lines_of(2001)).unwrap();
+    fs::write(dir.join("homer.rs"), lines_of(5001)).unwrap();
     git(&dir, &["add", "homer.rs"]);
     let fake_cargo = write_fake_cargo_always_green(&dir);
     let output = support::output_fenced(

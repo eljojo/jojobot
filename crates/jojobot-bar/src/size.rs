@@ -1,34 +1,40 @@
-//! **The size check: no new file over the cap, no listed file grows, and a raise
-//! that names its card is the only way past.** Rules 273, 597 and 661.
+//! **The size check: every tracked text file is measured, no new file is over the
+//! ceiling, no red file grows, a yellow file warns, and the net lines of the
+//! change are shown by area.** Rules 273, 597, 661, 704 and the series rules of
+//! 9.3.1-1.
 //!
-//! `size-ratchet.toml` holds the cap and one entry for each tracked `.rs` file
-//! over it, with the exact line count. Two halves judge a change:
-//!
-//! - **The tree half** compares the entries with the tree. A listed file over
-//!   its entry grew. An unlisted file over the cap is new. An entry whose file
-//!   is gone, at or under the cap, or smaller than the entry is stale, so the
-//!   room a shrunk file freed cannot be spent again. `bar size --write` fixes
-//!   the stale entries and nothing else.
-//! - **The base half** compares the entries with the file as it stood at the
-//!   base of the change. The cap may only fall. An entry may only fall, unless it
-//!   names a card that the base entry did not name. A new entry is allowed only
-//!   as the move of an entry whose file left the tree. With no base copy the
-//!   half says unknown; unknown is never ok.
+//! - **Red** is a file over `cap` lines (5,000), of any kind. A new red file is
+//!   refused, and so is a red file that grew against the base. A red file may
+//!   grow past its base only under a `[[raise]]` entry in `size-ratchet.toml`
+//!   that names the operator's rule number; the entry pays once, and the check
+//!   prints the raise for the engineer in charge to read.
+//! - **Yellow** is a file over [`YELLOW`] lines and not over the ceiling. It may
+//!   grow. The check warns about each that is new or grew.
+//! - **The base** is where the change branched from `SIZE_BASE`, else
+//!   `GITHUB_BASE_REF`. Growth is read from git alone, so there is no list of
+//!   frozen counts to keep. **An unknown base is never ok:** growth cannot be
+//!   judged, so the phase fails and says why.
+//! - **The table** is the net lines of the change, by area and by kind, as git
+//!   counts them with renames off, so a move shows in both areas.
 //!
 //! **Incomplete measurement is a failure.** A file the bar cannot read, or a tree
 //! git cannot list, fails the phase: it is never read as no growth.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use std::process::Command;
 
 use crate::Summary;
 
-/// The checked-in list, at the repo root.
+/// The checked-in file, at the repo root. It holds the byte limit of an added
+/// test file and the raises that were allowed.
 pub const RATCHET_FILE: &str = "size-ratchet.toml";
 
-/// The cap that `bar size --init` writes. The file carries the cap after that.
-pub const INITIAL_CAP: usize = 2000;
+/// A file over this many lines is red.
+pub const CEILING: usize = 5000;
+
+/// A file over this many lines, and not red, is yellow.
+pub const YELLOW: usize = 2000;
 
 /// The base of the change, as a revision. It wins over [`BASE_REF_VARIABLE`]:
 /// a workflow sets it to an exact commit, while the other names a branch that a
@@ -38,55 +44,73 @@ pub const BASE_VARIABLE: &str = "SIZE_BASE";
 /// The branch a pull request targets, as a runner sets it.
 pub const BASE_REF_VARIABLE: &str = "GITHUB_BASE_REF";
 
-/// One listed file.
+/// The byte limit of an added test file when the file names none (rule 661).
+const TEST_FILE_BYTES: usize = 100_000;
+
+/// One allowed growth of a red file.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Entry {
+pub struct Raise {
     pub path: String,
-    pub lines: usize,
-    /// The card that justifies this entry being higher than at the base.
-    pub raised_by: Option<u32>,
+    /// The operator's rule number that allows it.
+    pub rule: u32,
 }
 
-/// The whole list.
+/// What `size-ratchet.toml` holds.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Ratchet {
+pub struct Limits {
+    /// A file over this many lines is red. It only falls.
     pub cap: usize,
     /// Byte limit for added test paths, never higher than rule 661's 100 KB.
     pub test_file_bytes: usize,
-    pub entries: Vec<Entry>,
+    /// The step of the series that a change is made in, such as `9.3.1`.
+    pub step: Option<String>,
+    pub raises: Vec<Raise>,
 }
 
-impl Ratchet {
-    /// **No list at all**: the initial cap and no entry. A tree with no file over
-    /// the cap passes it; every file over the cap is new.
-    pub fn empty() -> Ratchet {
-        Ratchet {
-            cap: INITIAL_CAP,
-            test_file_bytes: 100_000,
-            entries: Vec::new(),
+impl Limits {
+    pub fn empty() -> Limits {
+        Limits {
+            cap: CEILING,
+            test_file_bytes: TEST_FILE_BYTES,
+            step: None,
+            raises: Vec::new(),
         }
     }
 
-    fn entry(&self, path: &str) -> Option<&Entry> {
-        self.entries.iter().find(|entry| entry.path == path)
+    /// **Read the file's text.** `cap = N`, `test_file_bytes = N` and `step = "X"`
+    /// before the first table, and a `[[raise]]` table for each allowed growth with
+    /// `path` and `rule`. Paths are sorted and unique. Every refusal names the line
+    /// it is about.
+    pub fn parse(text: &str) -> Result<Limits, String> {
+        Self::read(text, false)
     }
 
-    /// **Read the file's text.** Only its own shape is read: `cap = N` before the
-    /// first `[[file]]` header, with optional `test_file_bytes`; under each header
-    /// `path`, `lines` and the optional `raised_by`. Paths are sorted and unique. Every refusal names the
-    /// line it is about.
-    pub fn parse(text: &str) -> Result<Ratchet, String> {
-        let mut cap: Option<usize> = None;
+    /// The same read for the file as it stood at the base: the `[[file]]` entries of
+    /// the list this replaces are skipped, not refused, and its cap, which then
+    /// meant the yellow line, is read as the ceiling.
+    fn parse_base(text: &str) -> Result<Limits, String> {
+        Self::read(text, true)
+    }
+
+    fn read(text: &str, lenient: bool) -> Result<Limits, String> {
+        let mut cap = None;
+        let mut step = None;
         let mut test_file_bytes = None;
-        let mut pending: Vec<(usize, Pending)> = Vec::new();
+        let mut raises: Vec<(usize, Option<String>, Option<u32>)> = Vec::new();
+        let mut skipping = false;
         for (index, raw) in text.lines().enumerate() {
             let number = index + 1;
             let line = raw.trim();
             if line.is_empty() || line.starts_with('#') {
                 continue;
             }
-            if line == "[[file]]" {
-                pending.push((number, Pending::default()));
+            if line == "[[file]]" && lenient {
+                skipping = true;
+                continue;
+            }
+            if line == "[[raise]]" {
+                skipping = false;
+                raises.push((number, None, None));
                 continue;
             }
             if line.starts_with('[') {
@@ -96,131 +120,107 @@ impl Ratchet {
                 return Err(format!("line {number}: not a key = value line: {line}"));
             };
             let (key, value) = (key.trim(), value.trim());
-            match pending.last_mut() {
-                None if key == "test_file_bytes" => {
-                    if test_file_bytes.is_some() {
-                        return Err(format!("line {number}: test_file_bytes is given twice"));
-                    }
-                    test_file_bytes = Some(whole(key, value, number)?);
-                }
-                None if key == "cap" => {
+            if skipping {
+                continue;
+            }
+            match (raises.last_mut(), key) {
+                (None, "cap") => {
                     if cap.is_some() {
                         return Err(format!("line {number}: cap is given twice"));
                     }
                     cap = Some(whole(key, value, number)?);
                 }
-                None => return Err(format!("line {number}: {key} before any [[file]] header")),
-                Some(_) if key == "cap" => {
-                    return Err(format!(
-                        "line {number}: cap must come before the first entry"
-                    ));
+                (None, "step") => {
+                    if step.is_some() {
+                        return Err(format!("line {number}: step is given twice"));
+                    }
+                    let quoted = value
+                        .strip_prefix('"')
+                        .and_then(|rest| rest.strip_suffix('"'))
+                        .filter(|inner| !inner.is_empty() && !inner.contains(['"', '\\']));
+                    step = Some(
+                        quoted
+                            .ok_or_else(|| {
+                                format!(
+                                    "line {number}: step must be a non-empty string in double quotes"
+                                )
+                            })?
+                            .to_string(),
+                    );
                 }
-                Some((_, entry)) => entry.set(key, value, number)?,
+                (None, "test_file_bytes") => {
+                    if test_file_bytes.is_some() {
+                        return Err(format!("line {number}: test_file_bytes is given twice"));
+                    }
+                    test_file_bytes = Some(whole(key, value, number)?);
+                }
+                (None, _) => {
+                    return Err(format!("line {number}: {key} before any [[raise]] header"));
+                }
+                (Some((_, path, _)), "path") => {
+                    if path.is_some() {
+                        return Err(format!("line {number}: path is given twice in one entry"));
+                    }
+                    let quoted = value
+                        .strip_prefix('"')
+                        .and_then(|rest| rest.strip_suffix('"'))
+                        .filter(|inner| !inner.contains(['"', '\\']) && !inner.is_empty());
+                    *path = Some(quoted.ok_or_else(|| {
+                        format!("line {number}: path must be a non-empty string in double quotes")
+                    })?
+                    .to_string());
+                }
+                (Some((_, _, rule)), "rule") => {
+                    if rule.is_some() {
+                        return Err(format!("line {number}: rule is given twice in one entry"));
+                    }
+                    *rule = Some(value.parse().map_err(|_| {
+                        format!("line {number}: rule must be a rule number, not {value}")
+                    })?);
+                }
+                (Some(_), other) => return Err(format!("line {number}: unknown key {other}")),
             }
         }
-        let cap = cap.ok_or("the file has no cap = N line")?;
-        if test_file_bytes.is_some_and(|limit| limit > 100_000) {
+        if test_file_bytes.is_some_and(|limit| limit > TEST_FILE_BYTES) {
             return Err("test_file_bytes may not exceed 100000".into());
         }
-        let mut entries: Vec<Entry> = Vec::new();
-        for (start, entry) in pending {
-            let entry = entry.finish(start)?;
+        let mut entries: Vec<Raise> = Vec::new();
+        for (start, path, rule) in raises {
+            let raise = Raise {
+                path: path.ok_or(format!("line {start}: the entry has no path"))?,
+                rule: rule.ok_or(format!("line {start}: the entry has no rule"))?,
+            };
             if let Some(last) = entries.last() {
-                if last.path == entry.path {
-                    return Err(format!("line {start}: {} is listed twice", entry.path));
+                if last.path == raise.path {
+                    return Err(format!("line {start}: {} is listed twice", raise.path));
                 }
-                if last.path > entry.path {
+                if last.path > raise.path {
                     return Err(format!(
                         "line {start}: {} is out of order after {}",
-                        entry.path, last.path
+                        raise.path, last.path
                     ));
                 }
             }
-            entries.push(entry);
+            entries.push(raise);
         }
-        Ok(Ratchet {
+        let cap = match cap {
+            Some(cap) if lenient && cap < CEILING => CEILING,
+            Some(cap) if cap < YELLOW => {
+                return Err(format!("cap may not be under {YELLOW}, the yellow line"));
+            }
+            Some(cap) => cap,
+            None => CEILING,
+        };
+        Ok(Limits {
             cap,
-            test_file_bytes: test_file_bytes.unwrap_or(100_000),
-            entries,
+            test_file_bytes: test_file_bytes.unwrap_or(TEST_FILE_BYTES),
+            step,
+            raises: entries,
         })
     }
 
-    /// The file as `parse` reads it.
-    pub fn render(&self) -> String {
-        let mut out = String::from(
-            "# The size ratchet (rules 273 and 597). `bar size` checks the tree against it.\n\
-             # A file over `cap` lines is listed with its exact line count. A listed file\n\
-             # may not grow, and a file over the cap that is not listed is refused.\n\
-             # `bar size --write` lowers an entry or deletes it, and adds nothing.\n\
-             # To raise an entry, set `lines` to the new count and add `raised_by` with\n\
-             # the card that justifies it. Any other raise is refused against the base.\n",
-        );
-        out.push_str(&format!("\ncap = {}\n", self.cap));
-        out.push_str("# Rule 661: added test files; this limit only falls.\n");
-        out.push_str(&format!("test_file_bytes = {}\n", self.test_file_bytes));
-        for entry in &self.entries {
-            out.push_str(&format!(
-                "\n[[file]]\npath = \"{}\"\nlines = {}\n",
-                entry.path, entry.lines
-            ));
-            if let Some(card) = entry.raised_by {
-                out.push_str(&format!("raised_by = {card}\n"));
-            }
-        }
-        out
-    }
-}
-
-#[derive(Default)]
-struct Pending {
-    path: Option<String>,
-    lines: Option<usize>,
-    raised_by: Option<u32>,
-}
-
-impl Pending {
-    fn set(&mut self, key: &str, value: &str, line: usize) -> Result<(), String> {
-        let twice = || format!("line {line}: {key} is given twice in one entry");
-        match key {
-            "path" => {
-                if self.path.is_some() {
-                    return Err(twice());
-                }
-                let path = value
-                    .strip_prefix('"')
-                    .and_then(|rest| rest.strip_suffix('"'))
-                    .filter(|inner| !inner.contains(['"', '\\']) && !inner.is_empty())
-                    .ok_or_else(|| {
-                        format!("line {line}: path must be a non-empty string in double quotes")
-                    })?;
-                self.path = Some(path.to_string());
-            }
-            "lines" => {
-                if self.lines.is_some() {
-                    return Err(twice());
-                }
-                self.lines = Some(whole(key, value, line)?);
-            }
-            "raised_by" => {
-                if self.raised_by.is_some() {
-                    return Err(twice());
-                }
-                self.raised_by = Some(value.parse().map_err(|_| {
-                    format!("line {line}: raised_by must be a card number, not {value}")
-                })?);
-            }
-            other => return Err(format!("line {line}: unknown key {other}")),
-        }
-        Ok(())
-    }
-
-    fn finish(self, start: usize) -> Result<Entry, String> {
-        let missing = |part: &str| format!("line {start}: the entry has no {part}");
-        Ok(Entry {
-            path: self.path.ok_or_else(|| missing("path"))?,
-            lines: self.lines.ok_or_else(|| missing("lines"))?,
-            raised_by: self.raised_by,
-        })
+    fn raise(&self, path: &str) -> Option<&Raise> {
+        self.raises.iter().find(|raise| raise.path == path)
     }
 }
 
@@ -230,12 +230,91 @@ fn whole(key: &str, value: &str, line: usize) -> Result<usize, String> {
         .map_err(|_| format!("line {line}: {key} must be a whole number, not {value}"))
 }
 
-/// A tracked `.rs` file and how many lines it holds now, counted as
+/// A tracked text file and how many lines it holds now, counted as
 /// `str::lines` counts them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Measured {
     pub path: String,
     pub lines: usize,
+}
+
+/// What a file is made of, for the table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    Source,
+    Tests,
+    Text,
+}
+
+/// **Source, tests or text.** Code in a `tests` or `testing` directory, or in a
+/// file named for tests, is tests; other code is source; the rest is text.
+pub fn kind_of(path: &str) -> Kind {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    let extension = name.rsplit_once('.').map_or("", |(_, ext)| ext);
+    let code = matches!(extension, "rs" | "py" | "nix" | "sh")
+        || (extension.is_empty() && path.starts_with("scripts/"));
+    if !code {
+        return Kind::Text;
+    }
+    let in_tests = path
+        .split('/')
+        .any(|part| part == "tests" || part == "testing")
+        || name.ends_with("tests.rs");
+    if in_tests { Kind::Tests } else { Kind::Source }
+}
+
+/// **The area of a path**: a crate, with the top-level module under its `src`
+/// when the file is in one; any other top-level directory by its name; and a file
+/// at the root as `(root)`.
+pub fn area_of(path: &str) -> String {
+    let parts: Vec<&str> = path.split('/').collect();
+    match parts.as_slice() {
+        ["crates", name, "src", module, _, ..] => format!("crates/{name}/{module}"),
+        ["crates", name, "src", file] => {
+            format!("crates/{name}/{}", file.trim_end_matches(".rs"))
+        }
+        ["crates", name, ..] => format!("crates/{name}"),
+        [only] => {
+            let _ = only;
+            "(root)".to_string()
+        }
+        [first, ..] => (*first).to_string(),
+        [] => "(root)".to_string(),
+    }
+}
+
+/// **How one file differs from the base.**
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Change {
+    pub added: usize,
+    pub removed: usize,
+    /// The file is new in this change; a rename is not new.
+    pub new: bool,
+}
+
+impl Change {
+    fn net(&self) -> i64 {
+        self.added as i64 - self.removed as i64
+    }
+}
+
+/// **What the change looks like against its base**, by path.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Changes {
+    /// With renames followed: a moved file is the same file, so its growth is its own.
+    pub followed: HashMap<String, Change>,
+    /// With renames off: a move is a deletion in one area and an addition in another.
+    pub flat: HashMap<String, Change>,
+}
+
+/// **What the base half compared with**, or why it could not.
+pub enum Base {
+    Unknown(String),
+    Known {
+        rev: String,
+        limits: Limits,
+        changes: Changes,
+    },
 }
 
 /// **Why a check refuses.** Each says what to do about it.
@@ -250,36 +329,19 @@ pub enum Offence {
         base: usize,
         now: usize,
     },
-    /// A listed file is over its entry.
-    Grew {
-        path: String,
-        entry: usize,
-        now: usize,
-    },
-    /// An unlisted file is over the cap.
-    New {
-        path: String,
-        now: usize,
-    },
-    /// An entry that `--write` would lower or delete.
-    Stale {
-        path: String,
-        entry: usize,
-        reason: String,
-    },
     /// The cap is higher than at the base.
     CapRaised {
         base: usize,
         now: usize,
     },
-    /// An entry is higher than at the base and names no new card.
-    Raised {
+    /// A red file is longer than at the base.
+    Grew {
         path: String,
         base: usize,
         now: usize,
     },
-    /// An entry the base did not have, and no file left the tree to explain it.
-    Added {
+    /// A file that is new in this change is red.
+    New {
         path: String,
         now: usize,
     },
@@ -295,168 +357,169 @@ impl Offence {
             Offence::TestLimitRaised { base, now } => format!(
                 "{RATCHET_FILE}: test_file_bytes went from {base} to {now}. The limit only falls."
             ),
-            Offence::Grew { path, entry, now } => format!(
-                "{path}: grew from {entry} to {now} lines. Shrink it back, or raise its \
-                 entry to {now} in {RATCHET_FILE} with raised_by = <the card that needs it>."
-            ),
-            Offence::New { path, now } => format!(
-                "{path}: new file over the cap, {now} lines. Keep it under the cap; put new \
-                 code in a new module."
-            ),
-            Offence::Stale {
-                path,
-                entry,
-                reason,
-            } => format!(
-                "{path}: entry says {entry} but {reason}. Run `bar size --write` and commit \
-                 {RATCHET_FILE}."
-            ),
             Offence::CapRaised { base, now } => {
                 format!("{RATCHET_FILE}: the cap went from {base} to {now}. The cap only falls.")
             }
-            Offence::Raised { path, base, now } => format!(
-                "{path}: the entry went from {base} to {now} against the base without a new \
-                 card. Add raised_by = <the card that needs it> to the entry."
+            Offence::Grew { path, base, now } => format!(
+                "{path}: red file grew from {base} to {now} lines. Make room by deleting. When \
+                 no deletion is possible, stop and bring the change to the PM."
             ),
-            Offence::Added { path, now } => format!(
-                "{path}: new entry at {now} lines against the base, and no listed file left \
-                 the tree to explain it. A move keeps its entry; a new file stays under the cap."
+            Offence::New { path, now } => format!(
+                "{path}: new file over the cap, {now} lines. Make it smaller; do not move code \
+                 to another file to keep the count."
             ),
         }
     }
 }
 
-/// **The tree half.**
-pub fn judge_tree(ratchet: &Ratchet, files: &[Measured]) -> Vec<Offence> {
-    let mut offences = Vec::new();
-    for file in files.iter().filter(|file| file.lines > ratchet.cap) {
-        match ratchet.entry(&file.path) {
-            None => offences.push(Offence::New {
-                path: file.path.clone(),
-                now: file.lines,
-            }),
-            Some(entry) if file.lines > entry.lines => offences.push(Offence::Grew {
-                path: file.path.clone(),
-                entry: entry.lines,
-                now: file.lines,
-            }),
-            Some(_) => {}
-        }
-    }
-    for entry in &ratchet.entries {
-        let reason = match files.iter().find(|file| file.path == entry.path) {
-            None => Some("the file is gone".to_string()),
-            Some(file) if file.lines <= ratchet.cap => Some(format!(
-                "the file holds {} lines, at or under the cap of {}",
-                file.lines, ratchet.cap
-            )),
-            Some(file) if file.lines < entry.lines => {
-                Some(format!("the file holds {} lines", file.lines))
-            }
-            Some(_) => None,
-        };
-        if let Some(reason) = reason {
-            offences.push(Offence::Stale {
-                path: entry.path.clone(),
-                entry: entry.lines,
-                reason,
-            });
-        }
-    }
-    offences
+/// **The verdict of the change**: what is refused, what only warns, what a
+/// raise allowed, and the table.
+#[derive(Debug, Default)]
+pub struct Verdict {
+    pub offences: Vec<Offence>,
+    pub warnings: Vec<String>,
+    pub raises: Vec<String>,
+    pub red: usize,
+    pub yellow: usize,
 }
 
-/// **The base half.** `tracked` is every tracked `.rs` path in the tree now.
-pub fn judge_base(now: &Ratchet, base: &Ratchet, tracked: &HashSet<&str>) -> Vec<Offence> {
-    let mut offences = Vec::new();
-    if now.test_file_bytes > base.test_file_bytes {
-        offences.push(Offence::TestLimitRaised {
-            base: base.test_file_bytes,
-            now: now.test_file_bytes,
+/// The lines a file held at the base, when it existed there.
+fn lines_at_base(change: Option<&Change>, now: usize) -> Option<usize> {
+    match change {
+        None => Some(now),
+        Some(change) if change.new => None,
+        Some(change) => Some((now as i64 - change.net()).max(0) as usize),
+    }
+}
+
+/// **Judge the tree against the base.** A red file new in the change, or longer
+/// than it was, is refused unless a raise that the base did not hold allows it.
+pub fn judge(limits: &Limits, files: &[Measured], base: &Base) -> Verdict {
+    let mut verdict = Verdict::default();
+    let Base::Known {
+        limits: was,
+        changes,
+        ..
+    } = base
+    else {
+        return verdict;
+    };
+    if limits.test_file_bytes > was.test_file_bytes {
+        verdict.offences.push(Offence::TestLimitRaised {
+            base: was.test_file_bytes,
+            now: limits.test_file_bytes,
         });
     }
-    if now.cap > base.cap {
-        offences.push(Offence::CapRaised {
-            base: base.cap,
-            now: now.cap,
+    if limits.cap > was.cap {
+        verdict.offences.push(Offence::CapRaised {
+            base: was.cap,
+            now: limits.cap,
         });
     }
-    // The entries whose file left the tree, each able to explain one new entry.
-    let mut left: Vec<&Entry> = base
-        .entries
-        .iter()
-        .filter(|entry| !tracked.contains(entry.path.as_str()))
-        .collect();
-    for entry in &now.entries {
-        match base.entry(&entry.path) {
-            Some(was) if entry.lines > was.lines => {
-                if entry.raised_by.is_none() || entry.raised_by == was.raised_by {
-                    offences.push(Offence::Raised {
-                        path: entry.path.clone(),
-                        base: was.lines,
-                        now: entry.lines,
-                    });
+    for file in files.iter().filter(|file| file.lines > YELLOW) {
+        let before = lines_at_base(changes.followed.get(&file.path), file.lines);
+        if file.lines > limits.cap {
+            verdict.red += 1;
+            match before {
+                None => verdict.offences.push(Offence::New {
+                    path: file.path.clone(),
+                    now: file.lines,
+                }),
+                Some(before) if file.lines > before => {
+                    let paid = limits
+                        .raise(&file.path)
+                        .filter(|raise| was.raise(&file.path) != Some(raise));
+                    match paid {
+                        Some(raise) => verdict.raises.push(format!(
+                            "{}: red file grew from {before} to {} under rule {}",
+                            file.path, file.lines, raise.rule
+                        )),
+                        None => verdict.offences.push(Offence::Grew {
+                            path: file.path.clone(),
+                            base: before,
+                            now: file.lines,
+                        }),
+                    }
                 }
+                Some(_) => {}
             }
-            Some(_) => {}
-            None => {
-                let named = entry.raised_by.is_some();
-                let explained = left
-                    .iter()
-                    .position(|gone| named || entry.lines <= gone.lines)
-                    .map(|at| left.remove(at))
-                    .is_some();
-                if !explained {
-                    offences.push(Offence::Added {
-                        path: entry.path.clone(),
-                        now: entry.lines,
-                    });
-                }
+        } else {
+            verdict.yellow += 1;
+            match before {
+                None => verdict.warnings.push(format!(
+                    "{}: new file over {YELLOW} lines, {}",
+                    file.path, file.lines
+                )),
+                Some(before) if file.lines > before => verdict.warnings.push(format!(
+                    "{}: over {YELLOW} lines and grew from {before} to {}. Look for a deletion \
+                     first, and name the reason in the report when there is none.",
+                    file.path, file.lines
+                )),
+                Some(_) => {}
             }
         }
     }
-    offences
+    verdict
 }
 
-/// **What `--write` makes of the list**: entries lowered to their file, and
-/// deleted when the file is gone or at or under the cap. It adds nothing and
-/// raises nothing.
-pub fn lowered(ratchet: &Ratchet, files: &[Measured]) -> Ratchet {
-    let entries = ratchet
-        .entries
-        .iter()
-        .filter_map(|entry| {
-            let file = files.iter().find(|file| file.path == entry.path)?;
-            (file.lines > ratchet.cap).then(|| Entry {
-                lines: entry.lines.min(file.lines),
-                ..entry.clone()
-            })
-        })
-        .collect();
-    Ratchet {
-        cap: ratchet.cap,
-        test_file_bytes: ratchet.test_file_bytes,
-        entries,
+/// One row of the table: net lines by kind.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct NetRow {
+    pub area: String,
+    pub source: i64,
+    pub tests: i64,
+    pub text: i64,
+}
+
+impl NetRow {
+    pub fn code(&self) -> i64 {
+        self.source + self.tests
     }
 }
 
-/// **A list made from the tree**, for `--init`: every tracked file over the cap.
-pub fn from_tree(files: &[Measured]) -> Ratchet {
-    let mut entries: Vec<Entry> = files
-        .iter()
-        .filter(|file| file.lines > INITIAL_CAP)
-        .map(|file| Entry {
-            path: file.path.clone(),
-            lines: file.lines,
-            raised_by: None,
-        })
-        .collect();
-    entries.sort_by(|a, b| a.path.cmp(&b.path));
-    Ratchet {
-        cap: INITIAL_CAP,
-        test_file_bytes: 100_000,
-        entries,
+/// **Net lines of the change by area**, most negative code first.
+pub fn net_by_area(changes: &Changes) -> Vec<NetRow> {
+    let mut rows: BTreeMap<String, NetRow> = BTreeMap::new();
+    for (path, change) in &changes.flat {
+        let row = rows.entry(area_of(path)).or_insert_with(|| NetRow {
+            area: area_of(path),
+            ..NetRow::default()
+        });
+        match kind_of(path) {
+            Kind::Source => row.source += change.net(),
+            Kind::Tests => row.tests += change.net(),
+            Kind::Text => row.text += change.net(),
+        }
     }
+    let mut rows: Vec<NetRow> = rows.into_values().collect();
+    rows.sort_by(|a, b| a.code().cmp(&b.code()).then(a.area.cmp(&b.area)));
+    rows
+}
+
+/// The table as lines, with its total.
+pub fn render_net(rev: &str, rows: &[NetRow]) -> Vec<String> {
+    let mut lines = vec![format!(
+        "net lines by area since {rev}: {:>8} {:>8} {:>8}  area",
+        "source", "tests", "text"
+    )];
+    let mut total = NetRow::default();
+    for row in rows {
+        total.source += row.source;
+        total.tests += row.tests;
+        total.text += row.text;
+        lines.push(format!(
+            "  {:>8} {:>8} {:>8}  {}",
+            row.source, row.tests, row.text, row.area
+        ));
+    }
+    lines.push(format!(
+        "  {:>8} {:>8} {:>8}  total; source plus tests {}",
+        total.source,
+        total.tests,
+        total.text,
+        total.code()
+    ));
+    lines
 }
 
 /// How many lines `str::lines` counts, read from bytes so a file that is not
@@ -466,12 +529,17 @@ fn count_lines(bytes: &[u8]) -> usize {
     breaks + usize::from(!bytes.is_empty() && !bytes.ends_with(b"\n"))
 }
 
-/// **Every tracked `.rs` file and its line count.** A tracked path that is gone
-/// from the work tree is left out, as a deleted file is. A path that cannot be read,
-/// or a tree git cannot list, is an error.
+/// Whether the bytes are text: no NUL in the first part of the file.
+fn is_text(bytes: &[u8]) -> bool {
+    !bytes.iter().take(8000).any(|&b| b == 0)
+}
+
+/// **Every tracked text file and its line count.** A tracked path that is gone
+/// from the work tree is left out, as a deleted file is; a binary file is left
+/// out. A path that cannot be read, or a tree git cannot list, is an error.
 pub fn measure() -> Result<Vec<Measured>, String> {
     let output = Command::new("git")
-        .args(["ls-files", "-z", "--", "*.rs"])
+        .args(["ls-files", "-z"])
         .output()
         .map_err(|e| format!("git could not be run to list the tracked files: {e}"))?;
     if !output.status.success() {
@@ -487,10 +555,11 @@ pub fn measure() -> Result<Vec<Measured>, String> {
             .map_err(|_| "a tracked path is not UTF-8".to_string())?
             .to_string();
         match std::fs::read(&path) {
-            Ok(bytes) => files.push(Measured {
+            Ok(bytes) if is_text(&bytes) => files.push(Measured {
                 path,
                 lines: count_lines(&bytes),
             }),
+            Ok(_) => {}
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => return Err(format!("{path}: could not be read: {e}")),
         }
@@ -498,25 +567,96 @@ pub fn measure() -> Result<Vec<Measured>, String> {
     Ok(files)
 }
 
-/// The list in the work tree. No file is [`Ratchet::empty`]; a file that exists
+/// The file in the work tree. No file is [`Limits::empty`]; a file that exists
 /// and is malformed is an error.
-pub fn load(path: &Path) -> Result<Ratchet, String> {
+pub fn load(path: &Path) -> Result<Limits, String> {
     match std::fs::read_to_string(path) {
-        Ok(text) => Ratchet::parse(&text).map_err(|e| format!("{}: {e}", path.display())),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Ratchet::empty()),
+        Ok(text) => Limits::parse(&text).map_err(|e| format!("{}: {e}", path.display())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Limits::empty()),
         Err(e) => Err(format!("{}: could not be read: {e}", path.display())),
     }
 }
 
-/// **What the base half compared with**, or why it could not.
-pub enum Base {
-    Unknown(String),
-    Copy { rev: String, ratchet: Ratchet },
+fn git_output(args: &[&str]) -> Option<Vec<u8>> {
+    Command::new("git")
+        .args(args)
+        .output()
+        .ok()
+        .filter(|out| out.status.success())
+        .map(|out| out.stdout)
 }
 
-/// **The list as it stood where this change branched from the base.** The base
-/// is `SIZE_BASE`, else `GITHUB_BASE_REF`. No remote is guessed: a name git does
-/// not resolve here is unknown, and says so.
+/// **What git counts for each path since `joint`**, from `--numstat -z`. A binary
+/// file has no count and is left out. With renames followed, a rename record
+/// names the old path and then the new; the new one is the key.
+fn numstat(joint: &str, follow: bool) -> Option<HashMap<String, Change>> {
+    let flag = if follow { "-M" } else { "--no-renames" };
+    let stdout = git_output(&["diff", flag, "--numstat", "-z", joint])?;
+    let mut tokens = stdout.split(|&b| b == 0).filter(|t| !t.is_empty());
+    let mut found = HashMap::new();
+    while let Some(record) = tokens.next() {
+        let text = String::from_utf8_lossy(record).into_owned();
+        let mut parts = text.splitn(3, '\t');
+        let (added, removed, path) = (parts.next()?, parts.next()?, parts.next()?);
+        let path = if path.is_empty() {
+            let _old = tokens.next()?;
+            String::from_utf8_lossy(tokens.next()?).into_owned()
+        } else {
+            path.to_string()
+        };
+        if let (Ok(added), Ok(removed)) = (added.parse(), removed.parse()) {
+            found.insert(
+                path,
+                Change {
+                    added,
+                    removed,
+                    new: false,
+                },
+            );
+        }
+    }
+    Some(found)
+}
+
+/// The paths that are new since `joint`, with renames followed: a rename is not new.
+fn added_paths(joint: &str) -> Option<Vec<String>> {
+    let stdout = git_output(&["diff", "-M", "--name-status", "-z", joint])?;
+    let mut tokens = stdout.split(|&b| b == 0).filter(|t| !t.is_empty());
+    let mut added = Vec::new();
+    while let Some(status) = tokens.next() {
+        let status = String::from_utf8_lossy(status).into_owned();
+        let first = String::from_utf8_lossy(tokens.next()?).into_owned();
+        if status.starts_with('R') || status.starts_with('C') {
+            let _new = tokens.next()?;
+        } else if status.starts_with('A') {
+            added.push(first);
+        }
+    }
+    Some(added)
+}
+
+/// **The change since `joint`**, or none when git could not say.
+fn changes_since(joint: &str) -> Option<Changes> {
+    let mut followed = numstat(joint, true)?;
+    for path in added_paths(joint)? {
+        followed
+            .entry(path)
+            .or_insert(Change {
+                added: 0,
+                removed: 0,
+                new: true,
+            })
+            .new = true;
+    }
+    Some(Changes {
+        followed,
+        flat: numstat(joint, false)?,
+    })
+}
+
+/// **The base of this change**, as the commit it branched from: `SIZE_BASE`, else
+/// `GITHUB_BASE_REF`. No remote is guessed: a name git does not resolve here is
+/// unknown, and says so.
 pub fn read_base() -> Base {
     let wanted = [BASE_VARIABLE, BASE_REF_VARIABLE]
         .iter()
@@ -529,67 +669,37 @@ pub fn read_base() -> Base {
     if !crate::is_a_revision(&wanted) {
         return Base::Unknown(format!("{wanted} is not a revision git knows"));
     }
-    let git = |args: &[&str]| {
-        Command::new("git")
-            .args(args)
-            .output()
-            .ok()
-            .filter(|out| out.status.success())
-            .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+    let text = |args: &[&str]| {
+        git_output(args).map(|out| String::from_utf8_lossy(&out).trim().to_string())
     };
-    let Some(joint) = git(&["merge-base", "HEAD", &wanted]).filter(|joint| !joint.is_empty())
+    let Some(joint) = text(&["merge-base", "HEAD", &wanted]).filter(|joint| !joint.is_empty())
     else {
         return Base::Unknown(format!("{wanted} has no common commit with HEAD here"));
     };
     let short: String = joint.chars().take(10).collect();
-    let Some(text) = git(&["show", &format!("{joint}:{RATCHET_FILE}")]) else {
-        return Base::Unknown(format!("no {RATCHET_FILE} at {short}"));
-    };
-    match Ratchet::parse(&text) {
-        Ok(ratchet) => Base::Copy {
-            rev: short,
-            ratchet,
+    let limits = match text(&["show", &format!("{joint}:{RATCHET_FILE}")]) {
+        None => Limits::empty(),
+        Some(text) => match Limits::parse_base(&text) {
+            Ok(limits) => limits,
+            Err(e) => {
+                return Base::Unknown(format!("{RATCHET_FILE} at {short} cannot be read: {e}"));
+            }
         },
-        Err(e) => Base::Unknown(format!("{RATCHET_FILE} at {short} cannot be read: {e}")),
-    }
-}
-
-/// **The verdict of both halves.**
-pub struct Verdict {
-    /// Tracked files over the cap now.
-    pub over: usize,
-    /// Entries in the list.
-    pub listed: usize,
-    pub cap: usize,
-    pub offences: Vec<Offence>,
-    /// What the base half did: the revision it compared with, or why it could not.
-    pub base: String,
-}
-
-/// Judge the tree and, when there is a base copy, the change.
-pub fn judge(ratchet: &Ratchet, files: &[Measured], base: &Base) -> Verdict {
-    let mut offences = judge_tree(ratchet, files);
-    let base_note = match base {
-        Base::Unknown(why) => format!("unknown — {why}"),
-        Base::Copy { rev, ratchet: was } => {
-            let tracked: HashSet<&str> = files.iter().map(|file| file.path.as_str()).collect();
-            offences.extend(judge_base(ratchet, was, &tracked));
-            format!("compared with {rev}")
-        }
     };
-    Verdict {
-        over: files.iter().filter(|file| file.lines > ratchet.cap).count(),
-        listed: ratchet.entries.len(),
-        cap: ratchet.cap,
-        offences,
-        base: base_note,
+    let Some(changes) = changes_since(&joint) else {
+        return Base::Unknown(format!("git could not list the change since {short}"));
+    };
+    Base::Known {
+        rev: short,
+        limits,
+        changes,
     }
 }
 
 /// Rule 661 limits additions, including binary files, rather than grandfathered tests.
-fn test_file_offences(ratchet: &Ratchet, base: &Base) -> Result<Vec<Offence>, String> {
+fn test_file_offences(limits: &Limits, base: &Base) -> Result<Vec<Offence>, String> {
     let revision = match base {
-        Base::Copy { rev, .. } => Some(rev.clone()),
+        Base::Known { rev, .. } => Some(rev.clone()),
         Base::Unknown(_) => ["main", "origin/main"]
             .iter()
             .find_map(|reference| {
@@ -650,11 +760,11 @@ fn test_file_offences(ratchet: &Ratchet, base: &Base) -> Result<Vec<Offence>, St
         let bytes = std::fs::metadata(path)
             .map_err(|error| format!("{path}: {error}"))?
             .len();
-        if bytes > ratchet.test_file_bytes as u64 {
+        if bytes > limits.test_file_bytes as u64 {
             offences.push(Offence::TestFile {
                 path: path.into(),
                 bytes,
-                limit: ratchet.test_file_bytes,
+                limit: limits.test_file_bytes,
             });
         }
     }
@@ -662,11 +772,11 @@ fn test_file_offences(ratchet: &Ratchet, base: &Base) -> Result<Vec<Offence>, St
 }
 
 /// **The phase of `bar check`, `bar report` and `bar dev`**, run first. It
-/// fails the summary on any offence and on any measurement it could not make,
-/// and it skips none of the phases after it.
+/// fails the summary on any offence, on an unknown base, and on any measurement
+/// it could not make, and it skips none of the phases after it.
 pub fn phase(summary: &mut Summary) {
     let measured = measure().and_then(|files| Ok((files, load(Path::new(RATCHET_FILE))?)));
-    let (files, ratchet) = match measured {
+    let (files, limits) = match measured {
         Ok(both) => both,
         Err(refusal) => {
             summary.phase_failed("size", &format!("not measured — {refusal}"));
@@ -674,111 +784,113 @@ pub fn phase(summary: &mut Summary) {
         }
     };
     let base = read_base();
-    let mut verdict = judge(&ratchet, &files, &base);
-    match test_file_offences(&ratchet, &base) {
+    let mut verdict = judge(&limits, &files, &base);
+    match test_file_offences(&limits, &base) {
         Ok(offences) => verdict.offences.extend(offences),
         Err(refusal) => {
             summary.phase_failed("size", &format!("not measured — {refusal}"));
             return;
         }
     }
+    let Base::Known { rev, changes, .. } = &base else {
+        let Base::Unknown(why) = &base else { return };
+        // Not ok, and not a failure of the run: growth was not judged, and the line
+        // says so. A workflow that means to judge it sets SIZE_BASE.
+        summary.note(&format!(
+            "size: unknown — {why}; growth was not judged, so the size is not ok"
+        ));
+        for offence in &verdict.offences {
+            summary.note(&format!("  {}", offence.line()));
+        }
+        if !verdict.offences.is_empty() {
+            summary.phase_failed("size", &format!("{} offence(s)", verdict.offences.len()));
+        }
+        return;
+    };
     let counts = format!(
-        "{} files over {} lines, {} listed in {RATCHET_FILE}; base: {}",
-        verdict.over, verdict.cap, verdict.listed, verdict.base
+        "{} red and {} yellow files; base: compared with {rev}",
+        verdict.red, verdict.yellow
     );
     if verdict.offences.is_empty() {
         summary.phase_ok("size", &counts);
-        return;
+    } else {
+        summary.phase_failed(
+            "size",
+            &format!("{} offence(s) — {counts}", verdict.offences.len()),
+        );
+        for offence in &verdict.offences {
+            summary.note(&format!("  {}", offence.line()));
+        }
     }
-    summary.phase_failed(
-        "size",
-        &format!("{} offence(s) — {counts}", verdict.offences.len()),
-    );
-    for offence in &verdict.offences {
-        summary.note(&format!("  {}", offence.line()));
+    for line in verdict.warnings.iter().chain(&verdict.raises) {
+        summary.note(&format!("  warning: {line}"));
+    }
+    for line in render_net(rev, &net_by_area(changes)) {
+        summary.note(&format!("  {line}"));
     }
 }
 
-/// **`bar size`**: the check alone. `--write` lowers or deletes stale entries.
-/// `--init` writes the list from the tree, once, and refuses when one exists.
+/// **`bar size`**: the check alone. `--net` prints the table of the change since
+/// the base; with `--reason-file FILE` it also refuses a positive total of
+/// source plus tests unless the file names a reason.
 pub fn run(args: &[String]) -> std::io::Result<std::process::ExitCode> {
     use std::process::ExitCode;
     let usage = || {
-        eprintln!("usage: bar size [--write | --init]");
+        eprintln!("usage: bar size [--net [--reason-file FILE]]");
         Ok(ExitCode::from(2))
     };
-    let mode = match args {
-        [] => None,
-        [flag] if flag == "--write" || flag == "--init" => Some(flag.as_str()),
-        _ => return usage(),
-    };
-    let path = Path::new(RATCHET_FILE);
     let fail = |message: String| {
         eprintln!("bar size: {message}");
         Ok(ExitCode::FAILURE)
     };
-    let files = match measure() {
-        Ok(files) => files,
-        Err(refusal) => return fail(format!("not measured — {refusal}")),
-    };
-    match mode {
-        Some("--init") => {
-            if path.exists() {
-                return fail(format!(
-                    "{RATCHET_FILE} exists; --init writes the first list only"
-                ));
-            }
-            let ratchet = from_tree(&files);
-            std::fs::write(path, ratchet.render())?;
-            println!(
-                "wrote {RATCHET_FILE}: cap {}, {} entries",
-                ratchet.cap,
-                ratchet.entries.len()
-            );
-            return Ok(ExitCode::SUCCESS);
+    match args {
+        [] => {
+            let mut summary = Summary::new();
+            phase(&mut summary);
+            print!("{}", summary.render());
+            Ok(if summary.green {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            })
         }
-        Some(_) => {
-            let ratchet = match load(path) {
-                Ok(ratchet) => ratchet,
-                Err(refusal) => return fail(refusal),
+        [net, rest @ ..] if net == "--net" => {
+            let reason = match rest {
+                [] => None,
+                [flag, file] if flag == "--reason-file" => Some(file),
+                _ => return usage(),
             };
-            let after = lowered(&ratchet, &files);
-            if after != ratchet {
-                std::fs::write(path, after.render())?;
-                println!("rewrote {RATCHET_FILE}: lowered or deleted the stale entries");
+            let Base::Known { rev, changes, .. } = read_base() else {
+                return fail("the base is unknown, so the net cannot be told".into());
+            };
+            let rows = net_by_area(&changes);
+            for line in render_net(&rev, &rows) {
+                println!("{line}");
+            }
+            let code: i64 = rows.iter().map(NetRow::code).sum();
+            if code <= 0 {
+                return Ok(ExitCode::SUCCESS);
+            }
+            let named = reason
+                .and_then(|file| std::fs::read_to_string(file).ok())
+                .is_some_and(|text| !text.trim().is_empty());
+            if named {
+                println!("source plus tests is {code} lines up, and a reason is named");
+                Ok(ExitCode::SUCCESS)
+            } else {
+                fail(format!(
+                    "source plus tests is {code} lines up. Name what grew in order to shrink, \
+                     and the step where it shrinks, in a reason file (--reason-file)."
+                ))
             }
         }
-        None => {}
+        _ => usage(),
     }
-    let mut summary = Summary::new();
-    phase(&mut summary);
-    print!("{}", summary.render());
-    Ok(if summary.green {
-        ExitCode::SUCCESS
-    } else {
-        ExitCode::FAILURE
-    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn entry(path: &str, lines: usize, raised_by: Option<u32>) -> Entry {
-        Entry {
-            path: path.to_string(),
-            lines,
-            raised_by,
-        }
-    }
-
-    fn list(entries: Vec<Entry>) -> Ratchet {
-        Ratchet {
-            cap: 2000,
-            test_file_bytes: 100_000,
-            entries,
-        }
-    }
 
     fn file(path: &str, lines: usize) -> Measured {
         Measured {
@@ -787,269 +899,358 @@ mod tests {
         }
     }
 
-    fn tracked(files: &[Measured]) -> HashSet<&str> {
-        files.iter().map(|f| f.path.as_str()).collect()
+    fn known(changes: &[(&str, usize, usize, bool)], was: Limits) -> Base {
+        let followed = changes
+            .iter()
+            .map(|&(path, added, removed, new)| {
+                (
+                    path.to_string(),
+                    Change {
+                        added,
+                        removed,
+                        new,
+                    },
+                )
+            })
+            .collect();
+        Base::Known {
+            rev: "abc".into(),
+            limits: was,
+            changes: Changes {
+                followed,
+                flat: HashMap::new(),
+            },
+        }
     }
 
-    /// **The list the repo ships parses**, and is sorted, so a hand edit that
-    /// breaks the shape fails here and not only in the first run that reads it.
+    fn raise(path: &str, rule: u32) -> Raise {
+        Raise {
+            path: path.to_string(),
+            rule,
+        }
+    }
+
+    /// **The file the repo ships parses**, so a hand edit that breaks the shape
+    /// fails here and not only in the first run that reads it.
     #[test]
-    fn the_shipped_list_parses_and_renders_as_it_is_written() {
+    fn the_shipped_file_parses() {
         let text = include_str!("../../../size-ratchet.toml");
-        let ratchet = Ratchet::parse(text).expect("the shipped size-ratchet.toml parses");
-        assert_eq!(ratchet.cap, INITIAL_CAP);
-        assert!(!ratchet.entries.is_empty());
-        assert!(
-            ratchet.entries.iter().all(|e| e.lines > ratchet.cap),
-            "an entry at or under the cap is stale"
-        );
-        let again = Ratchet::parse(&ratchet.render()).expect("a rendered list parses");
-        assert_eq!(again, ratchet);
+        let limits = Limits::parse(text).expect("the shipped size-ratchet.toml parses");
+        assert!(limits.test_file_bytes <= 100_000);
     }
 
     #[test]
     fn the_parser_refuses_each_malformed_shape_by_line() {
         for (text, wants) in [
-            ("[[file]]\npath = \"a.rs\"\nlines = 1\n", "no cap"),
+            (
+                "test_file_bytes = x\n",
+                "line 1: test_file_bytes must be a whole number",
+            ),
+            (
+                "test_file_bytes = 1\ntest_file_bytes = 2\n",
+                "line 2: test_file_bytes is given twice",
+            ),
+            ("test_file_bytes = 100001\n", "may not exceed 100000"),
             ("cap = x\n", "line 1: cap must be a whole number"),
-            ("cap = 1\ncap = 2\n", "line 2: cap is given twice"),
+            ("cap = 1999\n", "cap may not be under 2000"),
+            ("cap = 5000\ncap = 4000\n", "line 2: cap is given twice"),
+            ("step = 9.3.1\n", "line 1: step must be a non-empty string"),
             (
-                "cap = 1\n[[file]]\ncap = 2\n",
-                "line 3: cap must come before",
-            ),
-            ("cap = 1\n[[file]]\npath = a.rs\n", "line 3: path must be"),
-            (
-                "cap = 1\n[[file]]\npath = \"a.rs\"\n",
-                "line 2: the entry has no lines",
+                "step = \"9.3.1\"\nstep = \"9.3.2\"\n",
+                "line 2: step is given twice",
             ),
             (
-                "cap = 1\n[[file]]\nlines = 3\n",
-                "line 2: the entry has no path",
+                "path = \"a.rs\"\n",
+                "line 1: path before any [[raise]] header",
             ),
-            ("cap = 1\n[[bot]]\n", "line 2: unknown table"),
-            ("cap = 1\n[[file]]\nsize = 3\n", "line 3: unknown key size"),
+            ("[[file]]\n", "line 1: unknown table [[file]]"),
+            ("[[raise]]\npath = a.rs\n", "line 2: path must be"),
             (
-                "cap = 1\n[[file]]\npath = \"b.rs\"\nlines = 3\n[[file]]\npath = \"a.rs\"\nlines = 3\n",
-                "line 5: a.rs is out of order after b.rs",
+                "[[raise]]\npath = \"a.rs\"\n",
+                "line 1: the entry has no rule",
+            ),
+            ("[[raise]]\nrule = 7\n", "line 1: the entry has no path"),
+            (
+                "[[raise]]\nrule = x\n",
+                "line 2: rule must be a rule number",
             ),
             (
-                "cap = 1\n[[file]]\npath = \"a.rs\"\nlines = 3\n[[file]]\npath = \"a.rs\"\nlines = 3\n",
-                "line 5: a.rs is listed twice",
+                "[[raise]]\nraised_by = 7\n",
+                "line 2: unknown key raised_by",
             ),
             (
-                "cap = 1\n[[file]]\npath = \"a.rs\"\nlines = 3\nraised_by = abc\n",
-                "line 5: raised_by",
+                "[[raise]]\npath = \"b.rs\"\nrule = 1\n[[raise]]\npath = \"a.rs\"\nrule = 1\n",
+                "line 4: a.rs is out of order after b.rs",
+            ),
+            (
+                "[[raise]]\npath = \"a.rs\"\nrule = 1\n[[raise]]\npath = \"a.rs\"\nrule = 2\n",
+                "line 4: a.rs is listed twice",
             ),
         ] {
-            let refusal = Ratchet::parse(text).expect_err(text);
-            assert!(refusal.contains(wants), "{text:?}: {refusal}");
+            let error = Limits::parse(text).expect_err(text);
+            assert!(
+                error.contains(wants),
+                "{text:?} gave {error:?}, wanted {wants:?}"
+            );
         }
+    }
+
+    /// **The file as the earlier list shaped it still reads at the base**: the cap
+    /// and each [[file]] entry, with its raised_by, are skipped, and the test limit
+    /// and the raises are read.
+    #[test]
+    fn the_base_read_skips_the_cap_and_the_old_entries() {
+        let old = "cap = 2000\ntest_file_bytes = 90000\n\n[[file]]\npath = \"a.rs\"\nlines = 2100\n\
+                   raised_by = 7\n\n[[file]]\npath = \"b.rs\"\nlines = 3000\n";
+        let limits = Limits::parse_base(old).expect("the old shape reads at the base");
+        assert_eq!(limits.test_file_bytes, 90_000);
+        assert_eq!(limits.cap, CEILING, "the old cap meant the yellow line");
+        assert!(limits.raises.is_empty());
+        let both = "test_file_bytes = 90000\n\n[[raise]]\npath = \"a.rs\"\nrule = 704\n";
+        assert_eq!(
+            Limits::parse_base(both).unwrap().raises,
+            vec![raise("a.rs", 704)]
+        );
     }
 
     #[test]
     fn lines_are_counted_as_str_lines_counts_them() {
-        for text in [
-            "",
-            "a",
-            "a\n",
-            "a\nb",
-            "a\nb\n",
-            "\n",
-            "a\r\nb\r\n",
-            "a\n\n\n",
-        ] {
+        for text in ["", "a", "a\n", "a\nb", "a\nb\n", "\n", "\n\n", "a\r\nb\r\n"] {
             assert_eq!(
                 count_lines(text.as_bytes()),
                 text.lines().count(),
                 "{text:?}"
             );
         }
+        assert_eq!(count_lines(&[0xff, b'\n', 0xfe]), 2);
     }
 
     #[test]
-    fn a_listed_file_over_its_entry_grew_and_an_unlisted_one_over_the_cap_is_new() {
-        let ratchet = list(vec![entry("homer.rs", 2100, None)]);
-        let files = [
-            file("homer.rs", 2101),
-            file("marge.rs", 2001),
-            file("lisa.rs", 2000),
-        ];
-        let offences = judge_tree(&ratchet, &files);
-        assert_eq!(
-            offences,
-            vec![
-                Offence::Grew {
-                    path: "homer.rs".into(),
-                    entry: 2100,
-                    now: 2101
-                },
-                Offence::New {
-                    path: "marge.rs".into(),
-                    now: 2001
-                },
-            ]
-        );
+    fn a_file_with_a_nul_byte_is_binary_and_one_without_is_text() {
+        assert!(is_text(b"hello\nworld\n"));
+        assert!(!is_text(&[b'a', 0, b'b']));
     }
 
     #[test]
-    fn a_file_at_its_entry_passes_and_one_at_the_cap_is_not_over() {
-        let ratchet = list(vec![entry("homer.rs", 2100, None)]);
-        let files = [file("homer.rs", 2100), file("lisa.rs", 2000)];
-        assert!(judge_tree(&ratchet, &files).is_empty());
-    }
-
-    #[test]
-    fn an_entry_that_is_gone_at_the_cap_or_above_its_file_is_stale() {
-        let ratchet = list(vec![
-            entry("bart.rs", 2100, None),
-            entry("homer.rs", 2100, None),
-            entry("lisa.rs", 2100, None),
-            entry("marge.rs", 2100, None),
-        ]);
-        let files = [
-            file("homer.rs", 2000),
-            file("lisa.rs", 2050),
-            file("marge.rs", 2100),
-        ];
-        let reasons: Vec<(String, String)> = judge_tree(&ratchet, &files)
-            .into_iter()
-            .map(|o| match o {
-                Offence::Stale { path, reason, .. } => (path, reason),
-                other => panic!("{other:?}"),
-            })
-            .collect();
-        assert_eq!(reasons.len(), 3);
-        assert_eq!(
-            reasons[0],
-            ("bart.rs".to_string(), "the file is gone".to_string())
-        );
-        assert!(reasons[1].1.contains("at or under the cap"), "{reasons:?}");
-        assert!(reasons[2].1.contains("holds 2050 lines"), "{reasons:?}");
-    }
-
-    #[test]
-    fn the_cap_may_only_fall() {
-        let now = Ratchet {
-            cap: 2500,
-            test_file_bytes: 100_000,
-            entries: vec![],
-        };
-        let base = list(vec![]);
-        let files: [Measured; 0] = [];
-        assert_eq!(
-            judge_base(&now, &base, &tracked(&files)),
-            vec![Offence::CapRaised {
-                base: 2000,
-                now: 2500
-            }]
-        );
-        let lower = Ratchet {
-            cap: 1500,
-            test_file_bytes: 100_000,
-            entries: vec![],
-        };
-        assert!(judge_base(&lower, &base, &tracked(&files)).is_empty());
-    }
-
-    /// **An entry rises only under a card the base entry did not name.** The
-    /// same raised number passes with a new card and fails with none, and with
-    /// the card the base already carried.
-    #[test]
-    fn an_entry_rises_only_under_a_new_card() {
-        let base = list(vec![entry("homer.rs", 2100, Some(7))]);
-        let files = [file("homer.rs", 2150)];
-        for (raised_by, passes) in [(None, false), (Some(7), false), (Some(8), true)] {
-            let now = list(vec![entry("homer.rs", 2150, raised_by)]);
-            assert_eq!(
-                judge_base(&now, &base, &tracked(&files)).is_empty(),
-                passes,
-                "{raised_by:?}"
-            );
+    fn kinds_split_source_tests_and_text() {
+        for (path, kind) in [
+            ("crates/jojobot-bar/src/size.rs", Kind::Source),
+            ("crates/jojobot-bar/tests/size_report.rs", Kind::Tests),
+            (
+                "crates/jojobot-domain/src/memory/testing/fake.rs",
+                Kind::Tests,
+            ),
+            (
+                "crates/jojobot-mcp/src/orientation/floor_unmeasured_tests.rs",
+                Kind::Tests,
+            ),
+            (
+                "crates/jojobot-domain/src/memory/graph/tests.rs",
+                Kind::Tests,
+            ),
+            ("scripts/wait-run", Kind::Source),
+            ("scripts/dev-command-gate", Kind::Source),
+            ("flake.nix", Kind::Source),
+            ("CLAUDE.md", Kind::Text),
+            ("size-ratchet.toml", Kind::Text),
+            (".forgejo/workflows/branch.yml", Kind::Text),
+            ("crates/jojobot-mcp/served-texts/tools.md", Kind::Text),
+            ("crates/jojobot/tests/fixtures/x/doltdump.sql", Kind::Text),
+        ] {
+            assert_eq!(kind_of(path), kind, "{path}");
         }
-        let lower = list(vec![entry("homer.rs", 2050, None)]);
-        assert!(judge_base(&lower, &base, &tracked(&files)).is_empty());
     }
 
-    /// **A new entry is a move, or it is refused.** The old file left the tree
-    /// and the new entry is no larger; a larger one needs a card of its own.
     #[test]
-    fn a_new_entry_is_allowed_only_as_the_move_of_a_file_that_left() {
-        let base = list(vec![entry("homer.rs", 2100, None)]);
-        let moved = [file("marge.rs", 2100)];
-        let kept = [file("homer.rs", 2100), file("marge.rs", 2100)];
-        let at = |lines, raised_by| list(vec![entry("marge.rs", lines, raised_by)]);
+    fn areas_name_a_crate_and_its_top_level_module() {
+        for (path, area) in [
+            (
+                "crates/jojobot-adapters/src/dolt/memory.rs",
+                "crates/jojobot-adapters/dolt",
+            ),
+            (
+                "crates/jojobot-adapters/src/search.rs",
+                "crates/jojobot-adapters/search",
+            ),
+            (
+                "crates/jojobot-adapters/tests/dolt_repair.rs",
+                "crates/jojobot-adapters",
+            ),
+            ("crates/jojobot-bar/Cargo.toml", "crates/jojobot-bar"),
+            ("scripts/branch-prune", "scripts"),
+            (".forgejo/workflows/branch.yml", ".forgejo"),
+            ("CLAUDE.md", "(root)"),
+        ] {
+            assert_eq!(area_of(path), area, "{path}");
+        }
+    }
 
-        assert!(judge_base(&at(2100, None), &base, &tracked(&moved)).is_empty());
-        assert!(judge_base(&at(2090, None), &base, &tracked(&moved)).is_empty());
-        assert_eq!(
-            judge_base(&at(2101, None), &base, &tracked(&moved)),
-            vec![Offence::Added {
-                path: "marge.rs".into(),
-                now: 2101
-            }]
+    #[test]
+    fn a_new_red_file_and_a_red_file_that_grew_are_refused() {
+        let files = [file("a.md", 5200), file("b.rs", 6100), file("c.rs", 5800)];
+        let base = known(
+            &[("a.md", 5200, 0, true), ("b.rs", 10, 0, false)],
+            Limits::empty(),
         );
-        assert!(judge_base(&at(2101, Some(9)), &base, &tracked(&moved)).is_empty());
+        let verdict = judge(&Limits::empty(), &files, &base);
         assert_eq!(
-            judge_base(&at(2100, None), &base, &tracked(&kept)).len(),
-            1,
-            "the old file is still tracked, so this is a copy"
-        );
-    }
-
-    #[test]
-    fn one_departed_entry_explains_one_new_entry() {
-        let base = list(vec![entry("homer.rs", 2100, None)]);
-        let now = list(vec![
-            entry("lisa.rs", 2050, None),
-            entry("marge.rs", 2050, None),
-        ]);
-        let files = [file("lisa.rs", 2050), file("marge.rs", 2050)];
-        assert_eq!(judge_base(&now, &base, &tracked(&files)).len(), 1);
-    }
-
-    #[test]
-    fn write_lowers_or_deletes_and_never_adds_or_raises() {
-        let ratchet = list(vec![
-            entry("bart.rs", 2100, None),
-            entry("homer.rs", 2100, Some(3)),
-            entry("lisa.rs", 2100, None),
-            entry("marge.rs", 2100, None),
-        ]);
-        let files = [
-            file("homer.rs", 2040),
-            file("lisa.rs", 1999),
-            file("marge.rs", 2200),
-            file("maggie.rs", 3000),
-        ];
-        let after = lowered(&ratchet, &files);
-        assert_eq!(
-            after.entries,
+            verdict.offences,
             vec![
-                entry("homer.rs", 2040, Some(3)),
-                entry("marge.rs", 2100, None)
+                Offence::New {
+                    path: "a.md".into(),
+                    now: 5200
+                },
+                Offence::Grew {
+                    path: "b.rs".into(),
+                    base: 6090,
+                    now: 6100
+                },
+            ],
+            "a text file counts, c.rs is unchanged and red: {verdict:?}"
+        );
+        assert_eq!(verdict.red, 3);
+    }
+
+    #[test]
+    fn a_red_file_that_shrank_or_stood_still_passes() {
+        let files = [file("b.rs", 6000)];
+        let base = known(&[("b.rs", 0, 10, false)], Limits::empty());
+        assert!(judge(&Limits::empty(), &files, &base).offences.is_empty());
+        assert!(
+            judge(&Limits::empty(), &files, &known(&[], Limits::empty()))
+                .offences
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_yellow_file_warns_when_it_is_new_or_grew_and_never_fails() {
+        let files = [file("a.rs", 2100), file("b.rs", 4000), file("c.rs", 3000)];
+        let base = known(
+            &[("a.rs", 2100, 0, true), ("b.rs", 5, 0, false)],
+            Limits::empty(),
+        );
+        let verdict = judge(&Limits::empty(), &files, &base);
+        assert!(verdict.offences.is_empty());
+        assert_eq!(verdict.yellow, 3);
+        assert_eq!(verdict.warnings.len(), 2, "{:?}", verdict.warnings);
+        assert!(verdict.warnings[0].starts_with("a.rs: new file over 2000"));
+        assert!(verdict.warnings[1].contains("grew from 3995 to 4000"));
+    }
+
+    #[test]
+    fn a_raise_that_the_base_did_not_hold_pays_once() {
+        let files = [file("big.rs", 5600)];
+        let growth = [("big.rs", 100, 0, false)];
+        let allowed = Limits {
+            raises: vec![raise("big.rs", 704)],
+            ..Limits::empty()
+        };
+        let refused = judge(&Limits::empty(), &files, &known(&growth, Limits::empty()));
+        assert_eq!(refused.offences.len(), 1);
+        let paid = judge(&allowed, &files, &known(&growth, Limits::empty()));
+        assert!(paid.offences.is_empty());
+        assert!(
+            paid.raises[0].contains("under rule 704"),
+            "{:?}",
+            paid.raises
+        );
+        let again = judge(&allowed, &files, &known(&growth, allowed.clone()));
+        assert_eq!(
+            again.offences.len(),
+            1,
+            "the base held the same raise: it paid already"
+        );
+    }
+
+    #[test]
+    fn an_unknown_base_judges_nothing_and_the_phase_does_not_call_it_ok() {
+        let verdict = judge(
+            &Limits::empty(),
+            &[file("big.rs", 9000)],
+            &Base::Unknown("none".into()),
+        );
+        assert!(verdict.offences.is_empty() && verdict.red == 0);
+    }
+
+    #[test]
+    fn the_test_byte_limit_and_the_cap_may_only_fall() {
+        let was = Limits {
+            test_file_bytes: 90_000,
+            cap: 4000,
+            ..Limits::empty()
+        };
+        let verdict = judge(&Limits::empty(), &[], &known(&[], was));
+        assert_eq!(
+            verdict.offences,
+            vec![
+                Offence::TestLimitRaised {
+                    base: 90_000,
+                    now: 100_000
+                },
+                Offence::CapRaised {
+                    base: 4000,
+                    now: 5000
+                },
             ]
         );
     }
 
     #[test]
-    fn init_lists_every_file_over_the_cap_sorted() {
-        let files = [
-            file("marge.rs", 2001),
-            file("lisa.rs", 2000),
-            file("homer.rs", 5000),
-        ];
-        let ratchet = from_tree(&files);
+    fn a_lower_cap_makes_a_file_red_that_was_yellow() {
+        let low = Limits {
+            cap: 3000,
+            ..Limits::empty()
+        };
+        let verdict = judge(
+            &low,
+            &[file("a.rs", 3500)],
+            &known(&[("a.rs", 3500, 0, true)], Limits::empty()),
+        );
+        assert_eq!(verdict.red, 1);
         assert_eq!(
-            ratchet.entries,
-            vec![entry("homer.rs", 5000, None), entry("marge.rs", 2001, None)]
+            verdict.offences,
+            vec![Offence::New {
+                path: "a.rs".into(),
+                now: 3500
+            }],
+            "the cap fell, which is allowed, and the file is new and now red"
         );
     }
 
     #[test]
-    fn an_unknown_base_is_said_and_never_called_ok() {
-        let ratchet = list(vec![]);
-        let verdict = judge(&ratchet, &[], &Base::Unknown("no base".into()));
-        assert!(verdict.base.starts_with("unknown"), "{}", verdict.base);
-        assert!(!verdict.base.contains("ok"), "{}", verdict.base);
+    fn the_table_nets_added_against_removed_by_area_and_kind_and_totals() {
+        let change = |added, removed| Change {
+            added,
+            removed,
+            new: false,
+        };
+        let flat: HashMap<String, Change> = [
+            ("crates/a/src/x.rs", change(10, 40)),
+            ("crates/a/tests/t.rs", change(5, 20)),
+            ("crates/a/src/y/z.rs", change(1, 0)),
+            ("CLAUDE.md", change(8, 2)),
+        ]
+        .into_iter()
+        .map(|(path, change)| (path.to_string(), change))
+        .collect();
+        let rows = net_by_area(&Changes {
+            followed: HashMap::new(),
+            flat,
+        });
+        let by_area = |area: &str| rows.iter().find(|row| row.area == area).unwrap().clone();
+        assert_eq!(by_area("crates/a/x").source, -30);
+        assert_eq!(by_area("crates/a").tests, -15);
+        assert_eq!(by_area("crates/a/y").source, 1);
+        assert_eq!(by_area("(root)").text, 6);
+        assert_eq!(
+            rows[0].area, "crates/a/x",
+            "the most negative code is first"
+        );
+        let lines = render_net("abc", &rows);
+        assert!(
+            lines.last().unwrap().contains("source plus tests -44"),
+            "{lines:?}"
+        );
     }
 }
