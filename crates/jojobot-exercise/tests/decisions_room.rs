@@ -649,7 +649,7 @@ async fn the_decision_room_is_solvable_through_the_served_surface() {
 /// not started borrowing the seed instead.
 #[test]
 fn the_solvable_test_still_files_live_rather_than_borrowing_the_cached_seed() {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/decisions_room.rs");
+    let path = expectations::room_document("tests/decisions_room.rs");
     let source = std::fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("this test's own file at {} reads: {e}", path.display()));
     let marker = "async fn the_decision_room_is_solvable_through_the_served_surface";

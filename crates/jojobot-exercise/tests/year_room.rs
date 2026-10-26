@@ -3962,7 +3962,7 @@ async fn the_years_turns_are_checked_in_rather_than_set_by_hand() {
 /// reads the source instead.
 #[test]
 fn the_canary_test_still_furnishes_live_rather_than_borrowing_the_cache() {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/year_room.rs");
+    let path = expectations::room_document("tests/year_room.rs");
     let source = std::fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("this test's own file at {} reads: {e}", path.display()));
     let marker = "async fn the_years_turns_are_checked_in_rather_than_set_by_hand";

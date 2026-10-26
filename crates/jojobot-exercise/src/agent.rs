@@ -621,7 +621,8 @@ mod tests {
     #[test]
     fn the_agent_is_started_outside_the_tree_that_carries_our_instructions() {
         let line = Agent::new("sonnet").invocation("http://room", &Conversation::fresh(), "go");
-        let coaching = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        let package = crate::expectations::room_document("");
+        let coaching = package
             .ancestors()
             .find(|dir| dir.join("CLAUDE.md").is_file())
             .expect("this repository carries instructions, which is the whole reason for the case");

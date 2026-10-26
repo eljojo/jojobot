@@ -40,9 +40,7 @@ fn run(transcript: Vec<Said>) -> Results {
 
 /// A recorded stream, as this crate's own material.
 fn fixture(name: &str) -> String {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures")
-        .join(name);
+    let path = jojobot_exercise::expectations::room_document("tests/fixtures").join(name);
     std::fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("the fixture is test material: {}: {e}", path.display()))
 }

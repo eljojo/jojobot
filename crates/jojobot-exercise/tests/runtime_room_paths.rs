@@ -79,3 +79,42 @@ fn room_paths_read_the_running_checkouts_control_proof() {
         .is_err()
     );
 }
+
+/// Cached test libraries can hide a baked reader on a runner whose old checkout
+/// still exists. Audit every Rust reader, alongside the moved-file behavior cases.
+#[test]
+fn room_paths_no_reader_bakes_a_checkout_outside_the_resolver() {
+    let root = expectations::room_document("");
+    let needle = concat!("env!", "(\"CARGO_MANIFEST_DIR\")");
+    let mut pending = vec![root.join("src"), root.join("tests")];
+    let mut baked = Vec::new();
+    let mut resolver_sites = 0;
+    while let Some(dir) = pending.pop() {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            if entry.file_type().unwrap().is_dir() {
+                pending.push(path);
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                let text = std::fs::read_to_string(&path).unwrap();
+                for (at, line) in text.lines().enumerate() {
+                    if line.contains(needle) {
+                        if path == root.join("src/expectations.rs") {
+                            resolver_sites += 1;
+                        } else {
+                            baked.push(format!("{}:{}", path.display(), at + 1));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(
+        resolver_sites, 2,
+        "only the fallback and its unit expectation"
+    );
+    assert!(
+        baked.is_empty(),
+        "readers still bake a checkout: {baked:#?}"
+    );
+}

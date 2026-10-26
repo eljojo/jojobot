@@ -23,7 +23,7 @@ fn every_shipped_room_states_its_server_day() {
 /// paid path reads it from.
 #[test]
 fn no_room_test_file_declares_a_server_day_of_its_own() {
-    let tests = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests");
+    let tests = expectations::room_document("tests");
     let mut copies = Vec::new();
     for entry in std::fs::read_dir(&tests).expect("the tests directory reads") {
         let path = entry.expect("an entry").path();
@@ -111,7 +111,7 @@ fn opens_on_the_wall_clock(line: &str) -> bool {
 /// server on the wall clock is named too, so the list cannot go stale.
 #[test]
 fn a_test_file_opens_a_server_on_the_wall_clock_only_when_it_is_listed_with_a_reason() {
-    let tests = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests");
+    let tests = expectations::room_document("tests");
     let mut unlisted = Vec::new();
     let mut opening = std::collections::BTreeSet::new();
     for entry in std::fs::read_dir(&tests).expect("the tests directory reads") {

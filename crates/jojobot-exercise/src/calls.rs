@@ -407,9 +407,7 @@ mod tests {
     /// `a_recorded_session_carries_only_the_keys_its_readers_read`, in
     /// `jojobot-domain`'s fixture roster suite, which holds the key list.
     fn fixture(name: &str) -> String {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures")
-            .join(name);
+        let path = crate::expectations::room_document("tests/fixtures").join(name);
         std::fs::read_to_string(&path)
             .unwrap_or_else(|e| panic!("the fixture is test material: {}: {e}", path.display()))
     }

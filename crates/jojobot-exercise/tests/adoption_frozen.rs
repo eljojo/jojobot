@@ -19,8 +19,8 @@ const FROZEN: [&str; 4] = [
     "experiments/adoption/e3-receipt-teaches-type.patch",
 ];
 
-fn crate_dir() -> &'static std::path::Path {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+fn crate_dir() -> std::path::PathBuf {
+    jojobot_exercise::expectations::room_document("")
 }
 
 /// **Every frozen file hashes to what the manifest recorded.**

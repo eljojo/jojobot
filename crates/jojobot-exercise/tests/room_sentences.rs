@@ -22,11 +22,11 @@
 //! to keep using.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// The workspace root, from this crate's own manifest.
 fn workspace_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+    jojobot_exercise::expectations::room_document("../..")
 }
 
 /// **Why a piece of text does not read as one line**, or nothing when it does.

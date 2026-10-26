@@ -97,7 +97,7 @@ fn calls_to_run(text: &str) -> Vec<(usize, String)> {
 /// any that does not carry `--playbook`.
 #[test]
 fn nothing_here_calls_the_binary_with_no_playbook() {
-    let here = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/entrance.rs");
+    let here = jojobot_exercise::expectations::room_document("tests/entrance.rs");
     let text = std::fs::read_to_string(&here).expect("this file is readable");
     // Everything above the scanner itself: the guard's own source names the
     // pattern it looks for, which would otherwise match itself.
