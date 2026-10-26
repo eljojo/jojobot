@@ -293,6 +293,10 @@ def main():
     print()
     red, died = report(run)
     code = FINAL[run["status"]]
+    # **A red block is red whatever the run's status**: the sibling watcher cancels a
+    # run when one job goes red, so the run of a red job reads `cancelled`.
+    if red:
+        code = 1
     if code == 1 and died and not red:
         code = 5
     sys.exit(code)

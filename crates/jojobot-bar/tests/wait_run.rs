@@ -722,6 +722,27 @@ fn a_skipped_job_beside_a_red_one_is_named_and_the_run_exits_one() {
     );
 }
 
+/// **A red job makes the run exit one, whatever the run's own status.** The sibling
+/// watcher cancels the run when a job goes red, so the run of a red report job reads
+/// `cancelled` and its other job read cancelled with no log. The printed block says
+/// red, and the exit code says so too, not two.
+#[test]
+fn a_red_job_in_a_cancelled_run_exits_one() {
+    let forge = stand(Forge {
+        runs: vec![(
+            run(254, "dev9-2647-work", RED_SHA, "cancelled"),
+            fixture("wait-run-rooms-red-job.txt"),
+        )],
+        branches: vec![("dev9-2647-work", RED_SHA)],
+        more_jobs: vec![(254, "rooms", "cancelled", String::new())],
+        ..Default::default()
+    });
+    let (code, out, err) = wait(&forge, &["dev9-2647-work"]);
+    assert_eq!(code, 1, "{out}\n{err}");
+    assert!(out.contains("verdict: RED"), "{out}");
+    assert!(out.contains("job rooms  cancelled"), "{out}");
+}
+
 /// **A job with no log is named whatever its status.** A job cancelled before it
 /// started has no log either, and the forge answers 404 to it. The run keeps the
 /// exit code of its own status, here two for a cancelled run, and the other job's
