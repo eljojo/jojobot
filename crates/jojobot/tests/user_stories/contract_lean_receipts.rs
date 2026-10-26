@@ -250,7 +250,8 @@ async fn lean_receipts_review_derivations_name_mentions_without_echoing_refs() {
     }
     let made = s.call("add_entity", json!({"kind":"thing", "handle":"kettle", "name":"The Kettle of @person:milhouse", "source":"user-named", "sets":{"colour":"white"}})).await.json();
     let captured = s.call("capture", json!({"subject":"person:alpha", "content":"plays with @person:milhouse beside `@person:nelson`", "refs":["person:beta"]})).await.json();
-    let edited = s.call("update_fact", json!({"address":captured["address"], "content":"plays chess", "details":"with @person:nelson", "token_saving":true})).await.json();
+    s.call("capture", json!({"subject":"bot:otto", "content":"Use lean receipts", "sets":{"setting_token_saving":"on"}})).await;
+    let edited = s.call("update_fact", json!({"address":captured["address"], "content":"plays chess", "details":"with @person:nelson"})).await.json();
     let set = s
         .call(
             "update_entity",
@@ -385,7 +386,8 @@ async fn lean_receipts_keep_archived_source_warnings_on_normal_writes() {
         )
         .await
         .json();
-    let lean = s.call("capture", json!({"subject":"person:beta", "content":"read the ledger", "derived_from":source["address"], "token_saving":true})).await.json();
+    s.call("capture", json!({"subject":"bot:otto", "content":"Use lean receipts", "sets":{"setting_token_saving":"on"}})).await;
+    let lean = s.call("capture", json!({"subject":"person:beta", "content":"read the ledger", "derived_from":source["address"]})).await.json();
     assert_eq!(lean["id"], "person:beta", "{lean}");
     assert!(
         lean.as_object()

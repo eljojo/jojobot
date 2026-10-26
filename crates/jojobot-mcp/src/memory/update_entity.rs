@@ -137,7 +137,9 @@ impl Jojobot {
                        yours on top. `source` and `crm` stay the build's, refused with no \
                        token. A handle that names \
                        nothing comes back blocked with the nearest handles — it never creates. Aliases or `sets` that would leave the thing, or its claim, too big to \
-                       be read back whole in one answer are refused with nothing written. Receipt: `success`, `id`, any claim address, `derived`, `changed` and warnings."
+                       be read back whole in one answer are refused with nothing written. Receipt: `success`, `id`, any claim address, `derived`, `changed` and warnings; the calling bot's setting_token_saving=on (off by default) selects only id and derived values, \
+                       deferring teaching and session notices; set it with capture sets on that bot \
+                       and read claims with recall facts:true."
     )]
     pub(crate) async fn update_entity(
         &self,

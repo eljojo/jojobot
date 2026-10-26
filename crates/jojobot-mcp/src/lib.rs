@@ -265,25 +265,13 @@ impl Jojobot {
     /// it and its context being named here — the same deliberate friction
     /// `the_tool_surface_is_exactly_this_list` puts in front of a new tool.
     pub fn tool_router() -> ToolRouter<Self> {
-        Self::publishing_write_receipts(Self::stating_the_windows(Self::publishing_what_falls_due(
+        Self::stating_the_windows(Self::publishing_what_falls_due(
             Self::core_router()
                 + mailboxes::router()
                 + memory::router()
                 + orientation::router()
                 + session::router(),
-        )))
-    }
-
-    fn publishing_write_receipts(mut router: ToolRouter<Self>) -> ToolRouter<Self> {
-        for verb in ["add_entity", "capture", "update_fact", "update_entity"] {
-            let route = router.map.get_mut(verb).expect("a memory write is served");
-            let schema = Arc::make_mut(&mut route.attr.input_schema);
-            schema.get_mut("properties").and_then(serde_json::Value::as_object_mut).expect("write properties").insert("token_saving".into(), serde_json::json!({
-                "type":"boolean",
-                "description":"Single writes only. true returns only id and derived values. id always names the entity written. Omit or false for a normal receipt: success, id, any claim address, derived values, changed keys and warnings, without argument echoes or a generated claim block. recall facts:true reads the claim and its edit address. how_to_read and static explanations are taught once per session; call-specific warnings remain on each normal receipt. Token-saving calls defer teaching and session notices without consuming them."
-            }));
-        }
-        router
+        ))
     }
 
     /// **Every description on the surface, with the windows it states written
@@ -626,7 +614,8 @@ impl ServerHandler for Jojobot {
             .flatten()
             .and_then(|bot| crate::memory::parse::named_bot(Some(bot)).ok().flatten());
         let started = std::time::Instant::now();
-        let saving = write_receipts::saving_request(&request);
+        let saving = write_receipts::Call::from_request(&request).is_some()
+            && self.token_saving(caller.as_ref()).on;
         let (result, counted) = write_receipts::TOKEN_SAVING
             .scope(saving, self.serve_call(request, context))
             .await;

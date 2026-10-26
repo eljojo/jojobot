@@ -341,8 +341,9 @@ impl Jojobot {
                        claim is inference: a field that needs the operator's own word \
                        (testimony), or one you read in a system of record (observation), is \
                        written with capture. Receipt: `success`, `id`, any claim address, \
-                       `derived` values, `changed` keys and warnings. Read claims with recall \
-                       `facts: true`. If its handle or any of its names \
+                       `derived` values, `changed` keys and warnings; the calling bot's setting_token_saving=on (off by default) selects only id and derived values, \
+                       deferring teaching and session notices; set it with capture sets on that bot \
+                       and read claims with recall facts:true. If its handle or any of its names \
                        resembles something jojobot already knows, NOTHING is written: the \
                        result says status: blocked with candidates and how_to_proceed. Use the \
                        candidate you meant, or re-call with the override_token that refusal \

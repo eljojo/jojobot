@@ -1,4 +1,4 @@
-//! A per-call small receipt defers explanations until they can be seen.
+//! The calling bot chooses lean receipts through its held setting.
 use super::dsl::Story;
 use serde_json::{Value, json};
 
@@ -10,18 +10,16 @@ fn only_id_and_derivations(body: &Value) {
 }
 
 #[tokio::test]
-async fn lean_receipts_token_saving_is_published_and_covers_the_four_single_writes() {
+async fn lean_receipts_token_saving_setting_covers_the_four_single_writes() {
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
-    assert_eq!(
-        s.verbs_publishing("token_saving").await,
-        ["add_entity", "capture", "update_entity", "update_fact"]
-    );
-    let made = s.call("add_entity", json!({"kind":"thing", "handle":"kettle", "name":"The Kettle", "source":"user-named", "sets":{"runs_out":"2026-10-26"}, "token_saving":true})).await.json();
+    s.call("capture", json!({"subject":"bot:otto", "content":"Use lean receipts", "sets":{"setting_token_saving":"on"}})).await;
+    let made = s.call("add_entity", json!({"kind":"thing", "handle":"kettle", "name":"The Kettle", "source":"user-named", "sets":{"runs_out":"2026-10-26"}})).await.json();
     only_id_and_derivations(&made);
     assert_eq!(made["id"], "thing:kettle", "{made}");
     assert_eq!(made["derived"]["due_on"], "2026-10-26", "{made}");
-    let args = json!({"subject":"thing:kettle", "content":"holds tea", "request_id":"kettle-claim", "token_saving":true});
+    let args =
+        json!({"subject":"thing:kettle", "content":"holds tea", "request_id":"kettle-claim"});
     let captured = s.call("capture", args.clone()).await.json();
     only_id_and_derivations(&captured);
     assert_eq!(captured["id"], "thing:kettle", "{captured}");
@@ -42,7 +40,7 @@ async fn lean_receipts_token_saving_is_published_and_covers_the_four_single_writ
     let edited = s
         .call(
             "update_fact",
-            json!({"address":address, "content":"holds coffee", "token_saving":true}),
+            json!({"address":address, "content":"holds coffee"}),
         )
         .await
         .json();
@@ -52,7 +50,7 @@ async fn lean_receipts_token_saving_is_published_and_covers_the_four_single_writ
     let renamed = s
         .call(
             "update_entity",
-            json!({"handle":"thing:kettle", "name":"The Silver Kettle", "token_saving":true}),
+            json!({"handle":"thing:kettle", "name":"The Silver Kettle"}),
         )
         .await
         .json();
@@ -61,7 +59,7 @@ async fn lean_receipts_token_saving_is_published_and_covers_the_four_single_writ
     let set = s
         .call(
             "update_entity",
-            json!({"handle":"thing:kettle", "sets":{"colour":"white"}, "token_saving":true}),
+            json!({"handle":"thing:kettle", "sets":{"colour":"white"}}),
         )
         .await
         .json();
@@ -79,15 +77,18 @@ async fn lean_receipts_token_saving_is_published_and_covers_the_four_single_writ
 async fn lean_receipts_token_saving_defers_teaching_until_a_normal_receipt() {
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
+    let setting = story.session().await;
     s.add("person:alpha", "Alpha").await;
+    setting.call("capture", json!({"subject":"bot:otto", "content":"Use lean receipts", "sets":{"setting_token_saving":"on"}})).await;
     let lean = s
         .call(
             "capture",
-            json!({"subject":"person:alpha", "content":"plays chess", "token_saving":true}),
+            json!({"subject":"person:alpha", "content":"plays chess"}),
         )
         .await
         .json();
     only_id_and_derivations(&lean);
+    setting.call("capture", json!({"subject":"bot:otto", "content":"Use normal receipts", "sets":{"setting_token_saving":"off"}})).await;
     let normal = s
         .call(
             "capture",
@@ -119,6 +120,7 @@ async fn lean_receipts_token_saving_defers_teaching_until_a_normal_receipt() {
 async fn lean_receipts_token_saving_leaves_unseen_session_notices_for_the_next_answer() {
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
+    let setting = story.session().await;
     s.add("person:alpha", "Alpha").await;
     let first = s
         .call(
@@ -137,7 +139,14 @@ async fn lean_receipts_token_saving_leaves_unseen_session_notices_for_the_next_a
         )
         .await;
     other.post("otto", "Chess", "The game changed.").await;
-    let lean = s.call("add_entity", json!({"kind":"person", "handle":"beta", "name":"Beta", "source":"user-named", "token_saving":true})).await.json();
+    setting.call("capture", json!({"subject":"bot:otto", "content":"Use lean receipts", "sets":{"setting_token_saving":"on"}})).await;
+    let lean = s
+        .call(
+            "add_entity",
+            json!({"kind":"person", "handle":"beta", "name":"Beta", "source":"user-named"}),
+        )
+        .await
+        .json();
     only_id_and_derivations(&lean);
     let next = s
         .call("recall", json!({"subject":"person:beta"}))
@@ -159,5 +168,99 @@ async fn lean_receipts_token_saving_leaves_unseen_session_notices_for_the_next_a
         .await
         .json();
     assert!(again.get("held_changed").is_none(), "{again}");
+    story.finish().await;
+}
+
+#[tokio::test]
+async fn lean_receipts_token_saving_setting_defaults_off_and_belongs_to_the_caller() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    let other = story.as_bot("bot:assistant").await;
+    let unset = s
+        .call(
+            "capture",
+            json!({"subject":"bot:otto", "content":"Read the map"}),
+        )
+        .await
+        .json();
+    assert_eq!(unset["success"], true, "{unset}");
+    assert!(unset["address"].is_string(), "{unset}");
+    other.call("capture", json!({"subject":"bot:assistant", "content":"Use lean receipts", "sets":{"setting_token_saving":"on"}})).await;
+    let ordinary = s
+        .call(
+            "capture",
+            json!({"subject":"bot:assistant", "content":"Read the ledger"}),
+        )
+        .await
+        .json();
+    assert_eq!(ordinary["success"], true, "{ordinary}");
+    assert!(ordinary["address"].is_string(), "{ordinary}");
+    let lean = other
+        .call(
+            "capture",
+            json!({"subject":"bot:otto", "content":"Read the timetable"}),
+        )
+        .await
+        .json();
+    only_id_and_derivations(&lean);
+    assert_eq!(lean["id"], "bot:otto", "{lean}");
+    other.call("capture", json!({"subject":"bot:assistant", "content":"Use normal receipts", "sets":{"setting_token_saving":"off"}})).await;
+    let off = other
+        .call(
+            "capture",
+            json!({"subject":"bot:otto", "content":"Read the roster"}),
+        )
+        .await
+        .json();
+    assert_eq!(off["success"], true, "{off}");
+    assert!(off["address"].is_string(), "{off}");
+    story.finish().await;
+}
+
+#[tokio::test]
+async fn lean_receipts_token_saving_old_argument_is_unpublished_and_refused_on_all_four_writes() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("thing:kettle", "The Kettle").await;
+    let captured = s
+        .call(
+            "capture",
+            json!({"subject":"thing:kettle", "content":"Holds tea"}),
+        )
+        .await
+        .json();
+    let mut failures = Vec::new();
+    let published = s.verbs_publishing("token_saving").await;
+    if !published.is_empty() {
+        failures.push(format!("published: {published:?}"));
+    }
+    for (verb, args) in [
+        (
+            "add_entity",
+            json!({"kind":"thing", "handle":"map", "name":"The Map", "source":"user-named", "token_saving":true}),
+        ),
+        (
+            "capture",
+            json!({"subject":"thing:kettle", "content":"Holds coffee", "token_saving":true}),
+        ),
+        (
+            "update_entity",
+            json!({"handle":"thing:kettle", "name":"The Silver Kettle", "token_saving":true}),
+        ),
+        (
+            "update_fact",
+            json!({"address":captured["address"], "content":"Holds coffee", "token_saving":true}),
+        ),
+    ] {
+        let body = s.attempt(verb, args).await;
+        if body["status"] != "blocked"
+            || !body["how_to_proceed"]
+                .as_str()
+                .is_some_and(|text| text.contains("token_saving"))
+        {
+            failures.push(format!("{verb}: {body}"));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
     story.finish().await;
 }

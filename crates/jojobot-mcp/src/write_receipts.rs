@@ -16,15 +16,6 @@ pub(crate) fn saving() -> bool {
     TOKEN_SAVING.try_with(|saving| *saving).unwrap_or(false)
 }
 
-pub(crate) fn saving_request(request: &CallToolRequestParams) -> bool {
-    request
-        .arguments
-        .as_ref()
-        .and_then(|args| args.get("token_saving"))
-        == Some(&Value::Bool(true))
-        && Call::from_request(request).is_some()
-}
-
 /// Compact before accounting or session notices: unseen notices stay pending.
 pub(crate) fn compact(answered: &mut CallToolResponse) -> bool {
     if !saving() {

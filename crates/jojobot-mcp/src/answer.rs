@@ -508,7 +508,7 @@ impl Jojobot {
     /// **The answer to a repeated call** is the stored receipt: a retry may be
     /// recovering an answer the caller never received, including its teaching.
     /// The ledger and accounting were spent by the first call, so replay reads
-    /// neither. The per-call small form still omits replay markers.
+    /// neither. The bot's small receipt mode still omits replay markers.
     pub(crate) async fn finish_replay(
         &self,
         answered: &mut CallToolResponse,
