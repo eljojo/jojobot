@@ -65,9 +65,9 @@ jobs:
     # the runner's own cap. Measured 2026-10-26 from /actions/runs (a run lasts as
     # long as its longer job): in the last day 80 of 88 runs ended under the old
     # 60 minute limit, p50 30, p90 48; 8 were cut at 60, so the true p95 is at
-    # least 60 and twice it is 120. The lisa runners cap a job at 135 minutes
-    # (forgejo-runner config); the maggie and cloudy runners come from the same nix
-    # module and their cap is unverified. A hung job now holds a runner for up to
+    # least 60 and twice it is 120. The build runners measured cap a job at 135
+    # minutes (forgejo-runner config); the other build runners come from the same
+    # nix module and their cap is unverified. A hung job now holds a runner for up to
     # two hours instead of one.
     timeout-minutes: 120
     steps:
@@ -135,9 +135,9 @@ jobs:
     # the runner's own cap. Measured 2026-10-26 from /actions/runs (a run lasts as
     # long as its longer job): in the last day 80 of 88 runs ended under the old
     # 60 minute limit, p50 30, p90 48; 8 were cut at 60, so the true p95 is at
-    # least 60 and twice it is 120. The lisa runners cap a job at 135 minutes
-    # (forgejo-runner config); the maggie and cloudy runners come from the same nix
-    # module and their cap is unverified. A hung job now holds a runner for up to
+    # least 60 and twice it is 120. The build runners measured cap a job at 135
+    # minutes (forgejo-runner config); the other build runners come from the same
+    # nix module and their cap is unverified. A hung job now holds a runner for up to
     # two hours instead of one.
     timeout-minutes: 120
     steps:
