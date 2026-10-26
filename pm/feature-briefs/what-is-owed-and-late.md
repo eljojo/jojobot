@@ -10,9 +10,9 @@
 
 ⛔️ **Two reads answering one question is how a session learns two vocabularies.** It reaches for whichever it happened to meet first, gets a true answer to half the question, and cannot tell that the other half exists. **Generalising after a second carrier arrives means either forking the read or retrofitting it under pressure**, which is why the shape comes first and the carriers land into it.
 
-## A thing appears here by CARRYING a due moment
+## A thing appears here when its kind declares a due moment and it holds one
 
-**Carrying the key is the whole of qualifying.** Nothing is declared on the thing, and no list of the kinds that count sits inside the read. A recurring loop, an undelivered promise and something with an expiry all arrive the same way — and so does a kind nobody has invented yet.
+**A thing qualifies when its kind declares the interface for falling due and the thing holds a due moment.** Nothing is declared on the thing, and no list of kind names sits inside the read: the read asks for the interface. A recurring loop, an undelivered promise and something with an expiry all arrive the same way — and so does a kind nobody has invented yet, once it declares the interface.
 
 **The read never holds the arithmetic**, and the carrier never holds code of its own either. What this question does is written once, here, for everything that qualifies.
 

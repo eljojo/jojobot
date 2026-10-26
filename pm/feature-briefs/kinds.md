@@ -14,7 +14,7 @@ Keys accumulate on things one at a time. The same keys keep appearing. A bike ke
 
 **Declaring it makes it real.** After that, a bike arrives with those keys. Nobody sets them up per bike.
 
-**A key means the same thing everywhere inside its kind.** This is what makes a question about many things answerable.
+**A key means the same thing everywhere.** This is what makes a question about many things answerable.
 
 **A new kind is based on an existing kind and inherits it.** A figurine collector declares `figurine` on top of `thing`. A figurine then has what a thing has, plus what a figurine has. Inheritance keeps the set from becoming a flat list of everything anybody owns.
 
@@ -40,7 +40,7 @@ A key declares one of: text, a number, a date, **a span between two dates, held 
 
 **A reference key declares a relation, and both directions come free.** From the record, the key names the relation: a lens reaches the camera it fits. From the other end, the same key names the reverse: every record that points at that camera through it. **That reverse is the has-many. Nobody declares an inverse.** jojobot derives both names from the declaration.
 
-**A key belongs to the kind that declares it.** `owner` on `pet` is the pet's owner and points at a person. Another kind may declare a key of the same name for its own purpose. Those are two keys.
+**A key is defined once for the whole instance, and a kind lists the keys it uses.** The definition says what the key holds, how it folds and what it means. A kind may narrow it: `owner` on `pet` points at a person. Two real meanings get two names, because one name carrying two meanings is a question nobody can ask across kinds.
 
 ## A kind also declares whether it folds
 
@@ -88,17 +88,19 @@ Choosing among things asks which are *described like* a pet. Narrowing a walk as
 
 *(Two reference keys of one kind onto the same kind stay distinct. A trip names `departs_from` and `arrives_at`, both places, and `leaves_on` and `returns_on`, both dates. All four are required to fit and none to write, so a trip with its two places and no dates is accepted and answers the type, naming the two days it lacks.)*
 
-## Interfaces — a schema a thing merely carries, and what it unlocks
+## Interfaces — a behaviour a kind declares
 
-**A set of keys may be declared without being a kind, and that is an INTERFACE** — a shape a thing carries alongside whatever it already is. `concert` over things of kind `event` gathers the concerts without inventing a kind for them. **Every kind is a schema; not every schema is a kind.**
+**An interface is a behaviour jojobot ships: a name, the keys it needs, and what jojobot does with them, written once.** *Falls due* needs a due moment and brings the read for what is owed and late; *adds up* needs a key that sums and brings the question of a total. **The name is the feature**, the way a processor reports the instructions it supports: a release ships a set of names, and a changed meaning is a new name, never a version of an old one.
 
-**A kind is the schema you can only have one of, that sits in the handle, and that can refuse a write** — and changing it is a deliberate act rather than something that happens to a thing. **An interface has none of those three.** A thing carries any number, it qualifies the moment it holds the keys and stops the moment it does not, nothing about it shows in the handle, and it gates nothing. **Nobody declares one on a thing. Carrying the keys is the whole of it.**
+**A kind declares the interfaces it conforms to, and that is the only way a thing gets one.** A thing whose kind declares *falls due* and that holds a due moment is in the owed read; the same key on a thing whose kind declares nothing does nothing. A thing still declares nothing itself. **Declaring is a promise jojobot checks** against the kind's keys, their types and their narrowings: when the kind is declared or edited, when a kind shared from elsewhere is installed, and when an upgrade drops or renames an interface. A shared kind installs only where this release ships every interface it declares.
 
-**What carrying one buys is behaviour.** Carry a due moment and the read for what is owed and late reaches you. Carry a key that adds its writes together and the question of a total reaches you. **That behaviour belongs to jojobot and is written once, for the schema rather than for each carrier** — which is what keeps a new carrier free, because it arrives as data and costs no code.
+**Declaring never makes a key required.** Which keys a thing must hold stays each key's choice on the kind, so the floor below holds: a half-described thing is refused nothing.
 
-**This is the only way a question can span kinds.** A thing has one kind, and a new kind inherits one existing kind, so anything cross-cutting — *is due*, *has a chronology*, *belongs to somebody* — has nowhere to live inside the kind. A read that instead kept a list of the kinds it knows about would stop being true the day somebody declares a kind. **The proof that one of these generalised is that a carrier the read has never seen appears in its answer without the read changing.**
+**Behaviour arrives in the software, never through a call.** A kind is data an instance writes; an interface is code a release ships. That keeps a new kind free, because it arrives as data and costs no code, and keeps each behaviour in one place.
 
-**One matcher serves both.** Whether a thing holds a set of keys is one question with one implementation, kind or not. **The two stay separate words on the surface**, because they answer *what is this* and *what can I do with it*, and a reader who cannot tell those apart is how a distinction nobody asked for gets drawn.
+**This is the only way a question can span kinds.** A thing has one kind, and a new kind inherits one existing kind, so anything cross-cutting — *is due*, *has a chronology*, *belongs to somebody* — has nowhere to live inside the kind. A read that kept a list of kind names would stop being true the day somebody declares a kind; a read that asks for the interface does not. **The proof that one of these generalised is that a kind the read has never seen appears in its answer without the read changing.**
+
+**Finding things by shape is a view's job, not an interface's.** `concert` over things of kind `event` is a view: a saved question that gathers the concerts without inventing a kind and without unlocking anything.
 
 ## Batteries, and then the operator's own
 
@@ -109,6 +111,8 @@ Choosing among things asks which are *described like* a pet. Narrowing a walk as
 ⭐ **Separate in storage, and COMPOSED in the answer.** A read returns one kind, not two halves — the layers exist so an upgrade can tell them apart, never so a caller has to.
 
 **Keeping them separately addressable is what makes that safe.** A shipped kind is a promise the software makes about what it will do with a thing; if an instance could edit that promise in place, an upgrade would have no way to tell a deliberate change from a leftover of an older build. So adding is welcome, and shrinking or replacing the shipped half is refused — with the refusal pointing at the instance's own layer, which is where that want belongs.
+
+**jojobot's own machinery is shown and never extended.** Bots, roles, sessions, vouchers and challenges read like any kind, but no instance and no shared kind adds to them, because identity and authority are code, not data.
 
 ## Declaring makes it real, and then it governs
 
@@ -132,9 +136,11 @@ Choosing among things asks which are *described like* a pet. Narrowing a walk as
 
 **Not a shape a thing takes on by accident.** A kind is never derived from whatever keys a thing happens to be carrying. Retyping is possible and it is somebody's deliberate act, never something that happens to a thing on its own.
 
-**Not a second way to say what a thing IS.** A schema that is not a kind says what a shape is called and what carrying it unlocks. It never competes with the kind for identity, and a caller may name one after a kind without it governing anything.
+**Not a second way to say what a thing IS.** An interface says what a kind's things can do, and a view says how to find a shape. Neither competes with the kind for identity.
 
-**Not a set of keys any carrier implements for itself.** What a schema unlocks is written once, in jojobot. A carrier that supplied its own code behind a shared shape would make every new carrier a change to the software, which is a kind wearing a different word.
+**Not a switch for behaviour.** A kind's name unlocks nothing. What a thing can do comes from the interfaces its kind declares, so a kind an instance declares behaves exactly like a shipped one.
+
+**Not behaviour a kind implements for itself.** What an interface does is written once, in jojobot. A kind that supplied its own code behind a shared name would make every new kind a change to the software.
 
 **Not a catalogue of every kind anybody might want.** The shipped set covers what a life has. The rest is one instance's data.
 

@@ -14,7 +14,7 @@
 
 **The ceiling is a property of the thing, not of a feature.** A bot's room of thoughts, a thread of rulings and what stays live about Milhouse's bike are bounded by the same mechanism, set the same way.
 
-**Carrying the keys is what makes a thing a container.** Set them on any ordinary thing and the behaviour attaches; nothing is declared and no special kind is needed. The behaviour is written once, for the container, rather than once per kind that can carry it.
+**Being a container is an interface a kind declares.** A thing whose kind declares it and that holds the keys is bounded; no special kind is needed, because the shipped everyday kinds declare it, so any ordinary thing can carry a ceiling. The behaviour is written once, for the container, rather than once per kind that declares it.
 
 ## A thing cannot raise its own ceiling
 
