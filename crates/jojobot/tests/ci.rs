@@ -600,8 +600,8 @@ fn a_newer_push_cancels_the_same_branchs_older_run_and_no_protected_ref_is_pushe
 #[test]
 fn each_long_job_carries_a_time_bound_of_its_own() {
     for (workflow, job, minutes) in [
-        ("branch", "report", 60),
-        ("branch", "rooms", 60),
+        ("branch", "report", 120),
+        ("branch", "rooms", 120),
         ("prepush", "prepush", 130),
     ] {
         let yaml = forgejo_workflow(workflow);

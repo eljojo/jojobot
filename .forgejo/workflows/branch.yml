@@ -61,8 +61,15 @@ jobs:
     if: ${{ forgejo.event_name != 'workflow_dispatch' || forgejo.event.inputs.job == '' || forgejo.event.inputs.job == 'report' }}
     # A host executor: see pull-request.yml for what the runner sees.
     runs-on: nix
-    # About twice its usual run, so a hung job fails inside the runner's own cap.
-    timeout-minutes: 60
+    # About twice the tail of its run under load, so a hung job still fails inside
+    # the runner's own cap. Measured 2026-10-26 from /actions/runs (a run lasts as
+    # long as its longer job): in the last day 80 of 88 runs ended under the old
+    # 60 minute limit, p50 30, p90 48; 8 were cut at 60, so the true p95 is at
+    # least 60 and twice it is 120. The lisa runners cap a job at 135 minutes
+    # (forgejo-runner config); the maggie and cloudy runners come from the same nix
+    # module and their cap is unverified. A hung job now holds a runner for up to
+    # two hours instead of one.
+    timeout-minutes: 120
     steps:
       - name: Level
         run: |
@@ -114,8 +121,15 @@ jobs:
   rooms:
     if: ${{ forgejo.event_name != 'workflow_dispatch' || forgejo.event.inputs.job == '' || forgejo.event.inputs.job == 'rooms' }}
     runs-on: nix
-    # About twice its usual run, so a hung job fails inside the runner's own cap.
-    timeout-minutes: 60
+    # About twice the tail of its run under load, so a hung job still fails inside
+    # the runner's own cap. Measured 2026-10-26 from /actions/runs (a run lasts as
+    # long as its longer job): in the last day 80 of 88 runs ended under the old
+    # 60 minute limit, p50 30, p90 48; 8 were cut at 60, so the true p95 is at
+    # least 60 and twice it is 120. The lisa runners cap a job at 135 minutes
+    # (forgejo-runner config); the maggie and cloudy runners come from the same nix
+    # module and their cap is unverified. A hung job now holds a runner for up to
+    # two hours instead of one.
+    timeout-minutes: 120
     steps:
       - name: Level
         run: |
