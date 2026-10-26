@@ -89,6 +89,7 @@ impl DoltMemory {
             .await
             .map_err(store)?
             .into_iter()
+            .filter(|(_, key, ..)| !jojobot_domain::memory::reserved_key(key))
             .collect();
         let mut unaddressable_holders = BTreeSet::new();
         let mut historical = BTreeMap::new();

@@ -40,9 +40,6 @@ impl DoltMemory {
     ) -> Result<(), MemoryError> {
         let declared = Self::types_in(tx).await?;
         for (key, value) in fields.clone() {
-            if reserved_key(&key) {
-                continue;
-            }
             // A key a type declares a reference also takes a bare id of an existing
             // thing, as a write has always read it; that is read here, once, and
             // the mark it is given is what stays.
@@ -138,6 +135,7 @@ impl DoltMemory {
             .await
             .map_err(store)?
             .into_iter()
+            .filter(|(_, key, ..)| !reserved_key(key))
             .collect();
 
         // **After the marking has run once, only the writes the rule before it
@@ -269,6 +267,7 @@ impl DoltMemory {
             .await
             .map_err(store)?
             .into_iter()
+            .filter(|(_, key, ..)| !reserved_key(key))
             .collect();
         Ok(held != expected)
     }

@@ -733,6 +733,92 @@ async fn engine_merge_accounts_are_never_lowered_or_reported_as_r1() {
     store.stop().await;
 }
 
+/// Older boots marked merge accounts; their rows stay history, not live links.
+#[tokio::test]
+async fn marked_engine_accounts_keep_their_rows_without_linking_or_warning() {
+    let (_scratch, mut store, pool, memory, [holder, alpha, beta]) =
+        world("links_by_mark_old_account").await;
+    let merged = memory
+        .merge(&alpha, &beta, None, date(2026, 8, 2), &holder, None)
+        .await
+        .unwrap();
+    let survivor = badge_of(&pool, beta.as_str()).await;
+    let folded = badge_of(&pool, alpha.as_str()).await;
+    let value = format!("{MARK}{folded}");
+    sqlx::query("UPDATE field_write SET value = ? WHERE entity = ? AND `key` = 'merged_from'")
+        .bind(&value)
+        .bind(&survivor)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO field_link (entity, `key`, ordinal, target) SELECT entity, `key`, ordinal, ? FROM field_write WHERE entity = ? AND `key` = 'merged_from'")
+        .bind(&folded)
+        .bind(&survivor)
+        .execute(&pool)
+        .await
+        .unwrap();
+    memory
+        .capture(memory::state(NewFact {
+            fields: [("owner_of".into(), beta.to_string())].into(),
+            ..NewFact::about(holder.clone(), "names the survivor", date(2026, 8, 3))
+        }))
+        .await
+        .unwrap()
+        .written()
+        .unwrap();
+    for pass in ["field value lowering", "field value links marked"] {
+        sqlx::query(
+            "INSERT INTO store_pass (name, finished_at) VALUES (?, '2026-06-01T00:00:00Z')",
+        )
+        .bind(pass)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    let before = link_rows(&pool).await;
+    let forwarded = memory.migrate_forwarded_links().await.unwrap();
+    assert_eq!(forwarded.repointed, 0, "{forwarded:?}");
+    assert_eq!(stored(&pool, &survivor, "merged_from").await, value);
+    assert_eq!(link_rows(&pool).await, before);
+    let diagnostics = memory.link_rule_diagnostics().await.unwrap();
+    assert_eq!(diagnostics.summary.owned_now, 0, "{diagnostics:?}");
+    assert_eq!(diagnostics.summary.links_dropped, 0, "{diagnostics:?}");
+    let settled = memory.migrate_field_links_marked().await.unwrap();
+    assert!(settled.settled && !settled.disagreed, "{settled:?}");
+    assert!(settled.left_as_text.is_empty(), "{settled:?}");
+    assert_eq!(stored(&pool, &survivor, "merged_from").await, value);
+    assert_eq!(link_rows(&pool).await, before);
+
+    let account = memory
+        .recall(&beta)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|fact| fact.id == merged.record.id)
+        .unwrap();
+    assert!(
+        !account.field_links.contains_key("merged_from"),
+        "{account:?}"
+    );
+    let ordinary = memory.recall(&holder).await.unwrap();
+    assert_eq!(ordinary[0].field_links["owner_of"], vec![beta.clone()]);
+
+    // A real missing link still repairs without deleting the account's old row.
+    sqlx::query("DELETE FROM field_link WHERE `key` = 'owner_of'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let repaired = memory.migrate_field_links_marked().await.unwrap();
+    assert!(repaired.disagreed, "{repaired:?}");
+    assert_eq!(repaired.linked, 1, "{repaired:?}");
+    assert_eq!(repaired.unlinked, 0, "{repaired:?}");
+    assert_eq!(link_rows(&pool).await, before);
+    assert_eq!(stored(&pool, &survivor, "merged_from").await, value);
+    assert!(memory.migrate_field_links_marked().await.unwrap().settled);
+    pool.close().await;
+    store.stop().await;
+}
+
 /// **R2: text that wears no mark is served as written, never resolved into a
 /// link at read time.** A value of plain handle text that the marking left alone
 /// names whoever owns the spelling today if a read resolves it; the read must not.

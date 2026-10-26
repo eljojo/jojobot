@@ -52,6 +52,9 @@ pub fn marked_field_links(
         return Some(links);
     }
     for (key, value) in stored {
+        if reserved_key(key) {
+            continue;
+        }
         let mut named = Vec::new();
         for item in value.split(',') {
             if let Some(id) = stored_handle_id(item) {
