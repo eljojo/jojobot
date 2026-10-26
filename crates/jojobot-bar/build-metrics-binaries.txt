@@ -19,6 +19,7 @@ test-bar_call
 test-bike_room
 test-binary_reports_its_bound_port
 test-boot_failure
+test-boot_logs_the_time_of_each_step
 test-boot_lowers_a_value_naming_a_supplied_record
 test-boot_reads_dolt
 test-boot_reads_link_rule_dolt

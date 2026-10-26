@@ -62,6 +62,22 @@ use jojobot_domain::session::history::WriteStamp;
 use jojobot_domain::session::mention as session_mention;
 use jojobot_domain::teaching::Teachings;
 
+/// **Run one startup step and log what it cost, on its own line.** Every step
+/// that reads or rewrites the store goes through here, so no stretch of the boot
+/// is silent: a step that takes a minute names itself with the time it took,
+/// whatever it found to do. The line is logged whether the step succeeded or
+/// not, because a step that failed after a minute is the one to read about.
+async fn timed<T>(step: &'static str, work: impl std::future::Future<Output = T>) -> T {
+    let started = std::time::Instant::now();
+    let out = work.await;
+    tracing::info!(
+        step,
+        elapsed_ms = started.elapsed().as_millis() as u64,
+        "boot step finished"
+    );
+    out
+}
+
 /// **Whether this process has already provisioned a store.** Set once, by
 /// the first call to [`open_provisioned`] to reach it.
 ///
@@ -116,7 +132,7 @@ pub async fn open_provisioned_on<M: Memory + Clone + 'static>(
              call was refused before touching the store it was handed"
         );
     }
-    match jojobot_domain::memory::kinds::seed(&bare).await {
+    match timed("load-kinds", jojobot_domain::memory::kinds::seed(&bare)).await {
         Ok(kinds) => tracing::info!(kinds, "loaded the kinds this instance holds"),
         Err(e) => tracing::error!(
             error = %e,
@@ -379,7 +395,7 @@ pub async fn fill_memory(folded: &Folded, indexed: &IndexedMemory) {
              correct and only slower until then."
         ),
     }
-    match indexed.rebuild_scanned().await {
+    match timed("search-memory", indexed.rebuild_scanned()).await {
         Ok(scan) => {
             tracing::info!(docs = scan.len(), "search: index built from a full scan");
             report_stored_records_over_the_ceiling(&scan);
@@ -490,12 +506,14 @@ pub async fn boot_store_observed(
     set_link_rule_from(std::env::var("JOJOBOT_LINK_RULE").ok().as_deref())?;
     // **The SQL store jojobot runs itself**, brought up and migrated before
     // anything else is wired.
-    let (store, applied) = Dolt::ready(dir, port).await.with_context(|| {
-        format!(
-            "STORE UNAVAILABLE — the store at {} did not come up, or its schema did not apply",
-            dir.display()
-        )
-    })?;
+    let (store, applied) = timed("store-up", Dolt::ready(dir, port))
+        .await
+        .with_context(|| {
+            format!(
+                "STORE UNAVAILABLE — the store at {} did not come up, or its schema did not apply",
+                dir.display()
+            )
+        })?;
     if applied.is_empty() {
         tracing::info!(dir = %dir.display(), "store: up, schema already current");
     } else {
@@ -548,7 +566,7 @@ pub async fn boot_store_observed(
     // and refusing to start over a column nothing reads would be worse than
     // saying so.
     let badging = DoltMemory::open(store.pool().clone());
-    match badging.badge_the_unbadged().await {
+    match timed("badge-the-unbadged", badging.badge_the_unbadged()).await {
         Ok(0) => {}
         Ok(given) => tracing::info!(given, "store: gave a badge to rows written before it"),
         Err(e) => tracing::warn!(
@@ -570,7 +588,12 @@ pub async fn boot_store_observed(
     // **Not fatal, for the same reason the fill above is not**: the store
     // already reports on itself, and a restart once it is reachable finishes
     // what this pass could not.
-    match badging.backfill_handle_keyed_rows().await {
+    match timed(
+        "rekey-handle-keyed-rows",
+        badging.backfill_handle_keyed_rows(),
+    )
+    .await
+    {
         Ok(0) => {}
         Ok(given) => tracing::info!(
             given,
@@ -613,9 +636,11 @@ pub async fn boot_store_observed(
     // **Only a handle a build once supplied is adopted**, so this build records
     // what it supplies, and what earlier builds supplied before the record
     // existed, before the pass reads the record.
-    if let Err(e) = linking
-        .record_supplied_handles(&jojobot_mcp::retired_handles())
-        .await
+    if let Err(e) = timed(
+        "record-supplied-handles",
+        linking.record_supplied_handles(&jojobot_mcp::retired_handles()),
+    )
+    .await
     {
         tracing::error!(
             error = %e,
@@ -624,7 +649,12 @@ pub async fn boot_store_observed(
              once the store is reachable records them."
         );
     }
-    match linking.adopt_handles_without_a_row().await {
+    match timed(
+        "adopt-handles-without-a-row",
+        linking.adopt_handles_without_a_row(),
+    )
+    .await
+    {
         Ok(report) => {
             for handle in &report.adopted {
                 tracing::info!(
@@ -669,7 +699,12 @@ pub async fn boot_store_observed(
     // not a routine retry. It is still not fatal to boot: refusing to serve a
     // live instance over historical rows would be a worse outcome than
     // reporting on itself loudly and continuing.
-    match linking.resolve_stale_pointer_columns().await {
+    match timed(
+        "resolve-stale-pointer-columns",
+        linking.resolve_stale_pointer_columns(),
+    )
+    .await
+    {
         Ok(0) => {}
         Ok(rewritten) => tracing::info!(
             rewritten,
@@ -697,7 +732,12 @@ pub async fn boot_store_observed(
     // that is told what the build supplies**, as the pass above is: a value
     // naming a shipped record has no row to resolve through, and is valid as it
     // stands.
-    match linking.migrate_reference_fields().await {
+    match timed(
+        "migrate-reference-fields",
+        linking.migrate_reference_fields(),
+    )
+    .await
+    {
         Ok(0) => {}
         Ok(rewritten) => tracing::info!(
             rewritten,
@@ -720,14 +760,14 @@ pub async fn boot_store_observed(
     // is not: a value naming a shipped record has no row to resolve through, and
     // an instance with no provisions reads that handle as naming nothing and
     // leaves the value as text with no link.
-    field_links::boot_field_links(&linking).await;
+    timed("field-links", field_links::boot_field_links(&linking)).await;
 
     // **Forwarding rows an older build left naming a handle their survivor wore
     // before a rename, brought to the handle it wears now.** Runs before the pass
     // below, which reads the same rows. Marked finished once it has committed
     // and skipped no row; a row it could not place is warned about once, the first boot that
     // meets it.
-    match linking.migrate_forward_names().await {
+    match timed("migrate-forward-names", linking.migrate_forward_names()).await {
         Ok(report) if report.settled => {
             tracing::info!("store: forwarding rows name their survivor: already done");
         }
@@ -749,7 +789,7 @@ pub async fn boot_store_observed(
     // table agree with the writes it reads. Marked finished once it has
     // committed and skipped no forward, so it is made once; a forward it could
     // not place keeps it open and is warned about once, the first boot that meets it.
-    match linking.migrate_forwarded_links().await {
+    match timed("migrate-forwarded-links", linking.migrate_forwarded_links()).await {
         Ok(report) if report.settled => {
             tracing::info!("store: links on forwarding rows: already done");
         }
@@ -770,7 +810,7 @@ pub async fn boot_store_observed(
     // merges. Log-only reaches both here, after the legacy field-link pass. On
     // repaired bare lines ahead of marking, so that repair is settled here.
     // A row a repair cannot place is named and left for the storage check.
-    for (pass, outcome) in linking.repair_stored_rows().await {
+    for (pass, outcome) in timed("repair-stored-rows", linking.repair_stored_rows()).await {
         match outcome {
             jojobot_adapters::dolt::Migrated::Ran(rows) => {
                 tracing::info!(pass, rows, "store: repair pass finished")
@@ -791,8 +831,14 @@ pub async fn boot_store_observed(
     // **The storage check: one read-only pass over the store for the damage a
     // cut-off write leaves, after every migration above and before the fold is
     // filled.** It repairs nothing and never stops the boot.
-    crate::storage_check::report_storage_damage(
-        &jojobot_adapters::dolt::storage_check::DoltStorageCheck::open(store.pool().clone(), clock),
+    timed(
+        "storage-check",
+        crate::storage_check::report_storage_damage(
+            &jojobot_adapters::dolt::storage_check::DoltStorageCheck::open(
+                store.pool().clone(),
+                clock,
+            ),
+        ),
     )
     .await;
 
@@ -847,11 +893,14 @@ pub async fn boot_store_observed(
     // distinct from an empty store, which is what `Migrated::Skipped`
     // exists to say — lives in `migrate_permanent_ids` itself, where it can
     // be tested against a real store; this only renders what came back.
-    for (name, outcome) in jojobot_adapters::dolt::migrate_permanent_ids(
-        store.pool(),
-        indexed.as_ref(),
-        &bare_mail_store,
-        &bare_sessions,
+    for (name, outcome) in timed(
+        "permanent-ids",
+        jojobot_adapters::dolt::migrate_permanent_ids(
+            store.pool(),
+            indexed.as_ref(),
+            &bare_mail_store,
+            &bare_sessions,
+        ),
     )
     .await
     {
@@ -885,11 +934,14 @@ pub async fn boot_store_observed(
     // holds none), once, and marked finished; a thing that becomes unreadable
     // afterwards is stamped by the write that made it so.
     // Not fatal: a pass that failed or was skipped is owed again at the next boot.
-    match jojobot_adapters::dolt::backfill_unreadable_due_days(
-        store.pool(),
-        indexed.as_ref(),
-        the_day_of_this_boot(indexed.as_ref(), &clock).await,
-    )
+    match timed("due-days", async {
+        jojobot_adapters::dolt::backfill_unreadable_due_days(
+            store.pool(),
+            indexed.as_ref(),
+            the_day_of_this_boot(indexed.as_ref(), &clock).await,
+        )
+        .await
+    })
     .await
     {
         jojobot_adapters::dolt::Migrated::Ran(n) => {
@@ -983,7 +1035,7 @@ pub async fn boot_store_observed(
     // gap in every answer rather than passing it off as "nothing matched".
     // Refusing to start over a projection is worse than a thin one that admits
     // what it is.
-    match wired.mailboxes.rebuild().await {
+    match timed("search-mail", wired.mailboxes.rebuild()).await {
         Ok(messages) => tracing::info!(messages, "search: mail indexed from a full board read"),
         Err(e) => tracing::warn!(
             error = %e,
@@ -1003,7 +1055,7 @@ pub async fn boot_store_observed(
     // the port is not on either of them.
     // **The third half: a bot's own runs.** Owner-scoped when a query asks, so
     // every bot's runs are indexed and each caller is served only its own.
-    match wired.sessions_indexed.rebuild().await {
+    match timed("search-sessions", wired.sessions_indexed.rebuild()).await {
         Ok(count) => tracing::info!(
             sessions = count,
             "search: sessions indexed from a full read"
@@ -1017,11 +1069,14 @@ pub async fn boot_store_observed(
     }
     let search = wired.search;
 
-    let registry = run_startup_passes(
-        &sessions,
-        &(indexed.clone() as Arc<dyn Memory>),
-        &mailboxes,
-        &clock,
+    let registry = timed(
+        "startup-passes",
+        run_startup_passes(
+            &sessions,
+            &(indexed.clone() as Arc<dyn Memory>),
+            &mailboxes,
+            &clock,
+        ),
     )
     .await;
     let seed_memory: Arc<dyn Memory> = indexed.clone();
@@ -1032,11 +1087,14 @@ pub async fn boot_store_observed(
     // object, the keys come off the bot, and the pass is marked finished. Not
     // fatal: a pass that failed or was skipped is owed again at the next boot, and
     // the keys of a role that could not be moved stay where they are.
-    match jojobot_adapters::dolt::move_old_role_claims_once(
-        store.pool(),
-        seed_memory.as_ref(),
-        the_day_of_this_boot(seed_memory.as_ref(), &clock).await,
-    )
+    match timed("old-role-claims", async {
+        jojobot_adapters::dolt::move_old_role_claims_once(
+            store.pool(),
+            seed_memory.as_ref(),
+            the_day_of_this_boot(seed_memory.as_ref(), &clock).await,
+        )
+        .await
+    })
     .await
     {
         jojobot_adapters::dolt::Migrated::Ran(moved) => {
