@@ -9,6 +9,7 @@ use jojobot_adapters::counted::Counted;
 use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::fold::Folded;
+use jojobot_adapters::observe::{Observation, Observer, Operation, Outcome};
 use jojobot_adapters::provisioned::Provisioned;
 use jojobot_adapters::search::IndexedMemory;
 use jojobot_adapters::testing::{Scratch, free_port, migrated_database};
@@ -16,6 +17,13 @@ use jojobot_domain::memory::Memory;
 use jojobot_domain::memory::mention::Mentioning;
 use jojobot_domain::memory::owned::Provisions;
 use sqlx::mysql::MySqlPoolOptions;
+
+/// An observer that records nothing: the layer it makes is what the case reads.
+struct Silent;
+
+impl Observer for Silent {
+    fn finished(&self, _: Operation, _: Outcome, _: std::time::Duration) {}
+}
 
 /// **Every layer the binary puts over the store answers the store's pool size.**
 /// A layer that kept the port's default would answer one, and the fold would
@@ -41,9 +49,16 @@ async fn every_layer_over_the_store_answers_the_pool_size() {
     assert_eq!(dolt.read_width(), 3, "the store answers its pool size");
     let counted = Counted::new(dolt.clone());
     assert_eq!(counted.read_width(), 3, "Counted forwards");
-    let provisioned = Provisioned::new(DoltMemory::open(pool.clone()), Provisions::default());
+    let provisioned = Arc::new(Provisioned::new(
+        DoltMemory::open(pool.clone()),
+        Provisions::default(),
+    ));
     assert_eq!(provisioned.read_width(), 3, "Provisioned forwards");
-    let folded = Arc::new(Folded::new(dolt.clone()));
+    // **The observing layer the binary puts between the store and the fold** when
+    // metrics are on: with none, it is no layer at all and the case reads nothing.
+    let observed = Observation::new(Arc::new(Silent)).memory(provisioned);
+    assert_eq!(observed.read_width(), 3, "Observed forwards");
+    let folded = Arc::new(Folded::new(observed));
     assert_eq!(folded.read_width(), 3, "Folded forwards");
     let mentioning = Arc::new(Mentioning::new(folded));
     assert_eq!(mentioning.read_width(), 3, "Mentioning forwards");
