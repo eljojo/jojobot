@@ -112,15 +112,14 @@ jobs:
     if: ${{ forgejo.event_name != 'workflow_dispatch' || forgejo.event.inputs.job == '' || forgejo.event.inputs.job == 'report' }}
     # A host executor: see pull-request.yml for what the runner sees.
     runs-on: nix
-    # About twice the tail of its run under load, so a hung job still fails inside
-    # the runner's own cap. Measured 2026-10-26 from /actions/runs (a run lasts as
-    # long as its longer job): in the last day 80 of 88 runs ended under the old
-    # 60 minute limit, p50 30, p90 48; 8 were cut at 60, so the true p95 is at
-    # least 60 and twice it is 120. The build runners measured cap a job at 135
-    # minutes (forgejo-runner config); the other build runners come from the same
-    # nix module and their cap is unverified. A hung job now holds a runner for up to
-    # two hours instead of one.
-    timeout-minutes: 120
+    # The bar kills a test binary that runs past its own deadline (twenty minutes,
+    # BINARY_DEADLINE in crates/jojobot-bar/src/deadline.rs), names it and keeps
+    # its output, so a hang costs minutes and says where it is. This bound is the
+    # last resort, an hour as it was before it was raised to two: runs 762, 1640
+    # and 1650 were silent hangs, not slow progress, and a raised bound only held a
+    # runner longer. Measured 2026-10-26 from /actions/runs: in the last day 80 of
+    # 88 runs ended under 60 minutes, p50 30, p90 48, p95 51.
+    timeout-minutes: 60
     steps:
       - name: Level
         run: |
@@ -183,15 +182,14 @@ jobs:
     needs: static
     if: ${{ forgejo.event_name != 'workflow_dispatch' || forgejo.event.inputs.job == '' || forgejo.event.inputs.job == 'rooms' }}
     runs-on: nix
-    # About twice the tail of its run under load, so a hung job still fails inside
-    # the runner's own cap. Measured 2026-10-26 from /actions/runs (a run lasts as
-    # long as its longer job): in the last day 80 of 88 runs ended under the old
-    # 60 minute limit, p50 30, p90 48; 8 were cut at 60, so the true p95 is at
-    # least 60 and twice it is 120. The build runners measured cap a job at 135
-    # minutes (forgejo-runner config); the other build runners come from the same
-    # nix module and their cap is unverified. A hung job now holds a runner for up to
-    # two hours instead of one.
-    timeout-minutes: 120
+    # The bar kills a test binary that runs past its own deadline (twenty minutes,
+    # BINARY_DEADLINE in crates/jojobot-bar/src/deadline.rs), names it and keeps
+    # its output, so a hang costs minutes and says where it is. This bound is the
+    # last resort, an hour as it was before it was raised to two: runs 762, 1640
+    # and 1650 were silent hangs, not slow progress, and a raised bound only held a
+    # runner longer. Measured 2026-10-26 from /actions/runs: in the last day 80 of
+    # 88 runs ended under 60 minutes, p50 30, p90 48, p95 51.
+    timeout-minutes: 60
     steps:
       - name: Level
         run: |

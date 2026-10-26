@@ -375,36 +375,6 @@ impl Prebuilt {
     }
 }
 
-/// **Run one job's command to its end, or kill it when `stop` is set.** The
-/// command leads a process group of its own, so the test binaries a `cargo test`
-/// started die with it. `Some` is whether it exited zero; `None` is a command
-/// killed because another job was red. With no `stop` it waits as `status` does.
-fn run_job_command(
-    command: &mut Command,
-    stop: Option<&std::sync::atomic::AtomicBool>,
-) -> std::io::Result<Option<bool>> {
-    use std::os::unix::process::CommandExt;
-    let Some(stop) = stop else {
-        return Ok(Some(command.status()?.success()));
-    };
-    let mut child = command.process_group(0).spawn()?;
-    loop {
-        if let Some(status) = child.try_wait()? {
-            return Ok(Some(status.success()));
-        }
-        if stop.load(std::sync::atomic::Ordering::SeqCst) {
-            // SAFETY: `killpg` takes a process group id and a signal, and reads
-            // no memory of ours. The group is the one this child leads.
-            unsafe {
-                libc::killpg(child.id() as libc::pid_t, libc::SIGKILL);
-            }
-            child.wait()?;
-            return Ok(None);
-        }
-        std::thread::sleep(std::time::Duration::from_millis(100));
-    }
-}
-
 /// **What each test job did, in the order the jobs were listed**: whether it
 /// exited zero, and the wall time of that one job.
 type JobWalls = Vec<(bool, std::time::Duration)>;
@@ -477,11 +447,13 @@ fn run_test_jobs(
                                     let mut all = Some(true);
                                     for (name, mut command) in commands {
                                         writeln!(&out, "\n     Running {name}")?;
-                                        let ran = run_job_command(
+                                        let ran = jojobot_bar::deadline::run_job(
                                             in_the_run_root(&mut command)
                                                 .stdout(Stdio::from(out.try_clone()?))
                                                 .stderr(Stdio::from(err.try_clone()?)),
                                             fail_fast.then_some(&stop),
+                                            &file,
+                                            &name,
                                         )?;
                                         all = match (all, ran) {
                                             (Some(so_far), Some(ok)) => Some(so_far && ok),
@@ -493,7 +465,7 @@ fn run_test_jobs(
                                     }
                                     all
                                 }
-                                None => run_job_command(
+                                None => jojobot_bar::deadline::run_job(
                                     jojobot_bar::metrics::time_tests(
                                         in_the_run_root(&mut Command::new(cargo))
                                             .arg("test")
@@ -504,6 +476,8 @@ fn run_test_jobs(
                                     .stdout(Stdio::from(out))
                                     .stderr(Stdio::from(err)),
                                     fail_fast.then_some(&stop),
+                                    &file,
+                                    &format!("cargo test {}", job_args(prefix, job).join(" ")),
                                 )?,
                             };
                             let took = started.elapsed();

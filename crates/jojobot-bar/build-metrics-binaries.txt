@@ -19,6 +19,7 @@ test-assembled_stack_forwards_defaults
 test-assembled_stack_names_unserved_claims
 test-bar_call
 test-bike_room
+test-binary_deadline
 test-binary_reports_its_bound_port
 test-boot_failure
 test-boot_logs_the_time_of_each_step

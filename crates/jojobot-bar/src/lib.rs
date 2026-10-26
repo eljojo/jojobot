@@ -14,6 +14,7 @@ pub mod binary_allowlist;
 pub mod bundle;
 mod calls;
 pub mod changes;
+pub mod deadline;
 pub mod dev;
 mod expectation;
 mod history;
@@ -69,6 +70,8 @@ pub struct TestVerdict {
     /// up to the next header or the end of the failures section. A failing test
     /// that printed no such section has no entry.
     pub failures: std::collections::BTreeMap<String, String>,
+    /// **The binaries killed at their deadline**, one verdict line each.
+    pub timed_out: Vec<String>,
 }
 
 impl TestVerdict {
@@ -104,7 +107,10 @@ pub fn test_healthy(exit_ok: bool, verdict: &TestVerdict) -> bool {
 /// same reason: an exit code a caller obtained by piping the run is not this
 /// function's to trust.
 pub fn summarize_test_output(output: &str) -> TestVerdict {
-    let mut verdict = TestVerdict::default();
+    let mut verdict = TestVerdict {
+        timed_out: deadline::named(output),
+        ..TestVerdict::default()
+    };
     // The test whose failure section the lines are inside, if any.
     let mut inside: Option<String> = None;
     for line in output.lines() {
@@ -412,6 +418,13 @@ impl Summary {
     /// is printed ahead of those, so a list of known reds cannot push a new
     /// red below the cap. Neither the verdict nor `green` reads the list.
     pub fn test_phase(&mut self, exit_ok: bool, verdict: &TestVerdict, known: &KnownReds) {
+        self.test_lines(exit_ok, verdict, known);
+        for line in &verdict.timed_out {
+            self.note(line);
+        }
+    }
+
+    fn test_lines(&mut self, exit_ok: bool, verdict: &TestVerdict, known: &KnownReds) {
         self.green = self.green && test_healthy(exit_ok, verdict);
         if !verdict.compiled {
             self.lines
