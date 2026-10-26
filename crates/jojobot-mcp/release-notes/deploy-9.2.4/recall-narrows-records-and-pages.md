@@ -9,7 +9,7 @@ miss: A bot that never read this would read every claim whole, details and field
 
 ## Example
 
-Marge checks who backs each claim about `person:milhouse`. She calls `recall` with `{"subject": "person:milhouse", "record_keys": ["content", "provenance", "standing"], "limit": 20}` and reads twenty claims with three keys each. To read more she repeats the call with the `offset` the answer names.
+Marge checks who backs each claim about `person:milhouse`. Marge calls `recall` with `{"subject": "person:milhouse", "record_keys": ["content", "provenance", "standing"], "limit": 20}` and reads twenty claims with three keys each. To read more Marge repeats the call with the `offset` the answer names.
 
 ## What to do
 
