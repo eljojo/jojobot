@@ -1,6 +1,8 @@
 //! Stored-record readback on the last deployed release's CI-built store.
 use super::*;
 
+mod repair_pass;
+
 /// **Mail the last deployed build left read and open is closed by the current binary in
 /// one call.** The recorded box of the assistant holds a read message. The
 /// current binary boots over the store, the assistant closes that message with
