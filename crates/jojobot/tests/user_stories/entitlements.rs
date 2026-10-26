@@ -85,7 +85,7 @@ async fn reading_the_thing_says_who_holds_what_gets_them_in() {
     unsure
         .hedged_with(
             "person:nelson",
-            "thinks he still has a pass from last year",
+            "thinks Nelson still has a pass from last year",
             json!({ "admits": "event:krusty-fest", "tier": "full" }),
         )
         .await;
@@ -99,7 +99,7 @@ async fn reading_the_thing_says_who_holds_what_gets_them_in() {
     // on the day — and asserting either alone passes on a build that still
     // carries one word for both.
     with_the_hedge
-        .says("thinks he still has a pass")
+        .says("thinks Nelson still has a pass")
         .says("\"standing\":\"open\"")
         .says("\"liveness\":\"live\"");
     // …and the claim nobody hedged says so under the same key, so this cannot

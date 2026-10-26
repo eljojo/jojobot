@@ -214,6 +214,7 @@ fn function_end(lines: &[&str], at: usize, indent: &str) -> usize {
 /// carries them.
 fn testimony_literals_for_nobody(files: &[PathBuf]) -> Vec<String> {
     let names = character_names();
+    let helpers = testimony_helpers(files);
     let mut unattached = Vec::new();
     for file in files
         .iter()
@@ -267,9 +268,152 @@ fn testimony_literals_for_nobody(files: &[PathBuf]) -> Vec<String> {
             }
             at = end + 1;
         }
+        if file.to_string_lossy().contains("user_stories") {
+            for (line, literal) in helper_calls_with_a_literal(&text, &helpers) {
+                let gendered = PRONOUNS.iter().any(|word| says_word(&literal, word, false));
+                if gendered && !excused.contains(&line) && !names_somebody(&literal, &names) {
+                    unattached.push(format!("{}:{line}: {}", file.display(), literal.trim()));
+                }
+            }
+        }
     }
     unattached.sort();
     unattached
+}
+
+/// A story helper that writes testimony: how many arguments it takes and which
+/// one is the content it sends.
+struct Helper {
+    name: String,
+    arity: usize,
+    content: usize,
+}
+
+/// The text between the parenthesis that opens at `open` and its close, split at
+/// the commas that sit at the top level, as `(start, text)` pairs. A string is
+/// read whole, so a comma or a parenthesis inside one splits nothing.
+fn arguments_at(text: &str, open: usize) -> Vec<(usize, String)> {
+    let chars: Vec<(usize, char)> = text[open + 1..]
+        .char_indices()
+        .map(|(at, c)| (open + 1 + at, c))
+        .collect();
+    let (mut depth, mut start, mut found) = (0usize, open + 1, Vec::new());
+    let mut at = 0;
+    while at < chars.len() {
+        let (index, c) = chars[at];
+        match c {
+            '"' => {
+                at += 1;
+                while at < chars.len() && chars[at].1 != '"' {
+                    at += usize::from(chars[at].1 == '\\');
+                    at += 1;
+                }
+            }
+            '\'' if chars.get(at + 2).is_some_and(|(_, c)| *c == '\'') => at += 2,
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' if depth == 0 => {
+                found.push((start, text[start..index].to_string()));
+                return found
+                    .into_iter()
+                    .filter(|(_, a)| !a.trim().is_empty())
+                    .collect();
+            }
+            ')' | ']' | '}' => depth -= 1,
+            ',' if depth == 0 => {
+                found.push((start, text[start..index].to_string()));
+                start = index + 1;
+            }
+            _ => {}
+        }
+        at += 1;
+    }
+    Vec::new()
+}
+
+/// **The story helpers that write testimony**, found by reading the story
+/// support files: a function there whose own body holds the string `"testimony"`
+/// and sends one of its parameters as `"content"` is one, and the position of
+/// that parameter is the content argument of its calls. No list of names.
+fn testimony_helpers(files: &[PathBuf]) -> Vec<Helper> {
+    let mut helpers = Vec::new();
+    for file in files.iter().filter(|f| {
+        let path = f.to_string_lossy();
+        path.contains("user_stories/dsl")
+    }) {
+        let text = fs::read_to_string(file).expect("readable source file");
+        let lines: Vec<&str> = text.lines().collect();
+        for (at, line) in lines.iter().enumerate() {
+            let trimmed = line.trim_start();
+            let Some((before, after)) = trimmed.split_once("fn ") else {
+                continue;
+            };
+            if !before.split_whitespace().all(is_fn_qualifier) {
+                continue;
+            }
+            let end = function_end(&lines, at, &line[..line.len() - trimmed.len()]);
+            let body = lines[at..=end].join("\n");
+            if !body.contains("\"testimony\"") {
+                continue;
+            }
+            let Some(sent) = body.split("\"content\":").nth(1) else {
+                continue;
+            };
+            let parameter: String = sent
+                .trim_start()
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+            let head = lines[at..=end].join("\n");
+            let Some(open) = head.find('(') else { continue };
+            let params: Vec<String> = arguments_at(&head, open)
+                .into_iter()
+                .map(|(_, p)| p.trim().to_string())
+                .filter(|p| !p.ends_with("self"))
+                .collect();
+            let name: String = after
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+            if let Some(content) = params
+                .iter()
+                .position(|p| p.split(':').next().is_some_and(|n| n.trim() == parameter))
+            {
+                helpers.push(Helper {
+                    name,
+                    arity: params.len(),
+                    content,
+                });
+            }
+        }
+    }
+    helpers
+}
+
+/// **Each call of a testimony helper whose content argument is a string literal**,
+/// as the line the literal starts on and its text. A call with another number of
+/// arguments than the helper takes is a different function of the same name (a
+/// string's `replace` takes two where the story helper takes three).
+fn helper_calls_with_a_literal(text: &str, helpers: &[Helper]) -> Vec<(usize, String)> {
+    let mut found = Vec::new();
+    for helper in helpers {
+        let needle = format!(".{}(", helper.name);
+        for (at, _) in text.match_indices(&needle) {
+            let arguments = arguments_at(text, at + needle.len() - 1);
+            if arguments.len() != helper.arity {
+                continue;
+            }
+            let (start, argument) = &arguments[helper.content];
+            let trimmed = argument.trim();
+            if !trimmed.starts_with('"') {
+                continue;
+            }
+            if let [literal] = literals_of(trimmed).as_slice() {
+                let before = &text[..*start + (argument.len() - argument.trim_start().len())];
+                found.push((1 + before.matches('\n').count(), literal.text.clone()));
+            }
+        }
+    }
+    found
 }
 
 /// A word that may stand before `fn` in an item's head.
@@ -411,5 +555,47 @@ fn literals_are_read_with_their_lines_across_raw_strings_chars_and_comments() {
             (7, "tab\tendjoined".to_string()),
             (9, "last".to_string()),
         ]
+    );
+}
+
+/// **A call of a story helper that writes testimony is read like a direct one.**
+/// The helper is found by reading the story support file, so no name is listed.
+/// A pronoun with nobody in the literal is reported, a name in the literal licenses
+/// it, a call with the arguments of another function of the same name is not a
+/// helper call, and the marker excuses a statement.
+#[test]
+fn testimony_helper_calls_are_read_like_direct_ones() {
+    let scratch = Scratch::new("testimony-helpers");
+    scratch.write(
+        "crates/x/tests/user_stories/dsl.rs",
+        "pub async fn undated_fact(&self, subject: &str, content: &str) -> String {\n    \
+         json!({\"subject\": subject, \"content\": content, \"provenance\": \"testimony\"})\n}\n\
+         pub async fn plain(&self, subject: &str, content: &str) {\n    \
+         json!({\"subject\": subject, \"content\": content})\n}\n",
+    );
+    scratch.write(
+        "crates/x/tests/user_stories/calls.rs",
+        "fn a() {\n    s.undated_fact(\"person:milhouse\", \"said he would come along\");\n    \
+         s.undated_fact(\"person:milhouse\", \"Milhouse said he would come along\");\n    \
+         s.plain(\"person:milhouse\", \"said he would come along\");\n    \
+         let _ = text.undated_fact(\"a\", \"said he would come\", \"b\");\n    \
+         // pronoun-check: negative example\n    \
+         s.undated_fact(\"person:milhouse\", \"said he would come back\");\n}\n",
+    );
+
+    let unattached = testimony_literals_for_nobody(&scanned_files(&scratch.0));
+    let lines: Vec<&String> = unattached
+        .iter()
+        .filter(|line| line.contains("calls.rs"))
+        .collect();
+
+    assert_eq!(
+        lines.len(),
+        1,
+        "exactly the bare call is reported: {lines:?}"
+    );
+    assert!(
+        lines[0].contains("calls.rs:2:") && lines[0].contains("said he would come along"),
+        "{lines:?}"
     );
 }

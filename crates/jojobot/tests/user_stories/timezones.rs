@@ -142,7 +142,7 @@ async fn two_runs_in_two_zones_read_one_claim_in_their_own_day() {
     let dated = async |s: &super::dsl::Session, zone: &str| {
         let (stamped, days) = days_during(
             zone,
-            s.undated_fact("person:milhouse", "said he would come along"),
+            s.undated_fact("person:milhouse", "said Milhouse would come along"),
         )
         .await;
         assert_one_of(
@@ -190,7 +190,7 @@ async fn two_runs_in_two_zones_read_one_claim_in_their_own_day() {
     let unframed = story.session_in("UTC", Some("new")).await;
     let (stamped, days) = days_during(
         "UTC",
-        unframed.undated_fact("person:milhouse", "and he did"),
+        unframed.undated_fact("person:milhouse", "and Milhouse did"),
     )
     .await;
     assert_one_of(

@@ -693,7 +693,7 @@ async fn keeping_track_of_bikes() {
     s.add("thing:torque-wrench", "Torque Wrench").await;
     s.fact_about(
         "thing:torque-wrench",
-        "his, borrowed for the bottom bracket and not given back yet",
+        "Milhouse's, borrowed for the bottom bracket and not given back yet",
         "connection",
         "person:milhouse",
     )
