@@ -33,16 +33,18 @@ jobs:
     timeout-minutes: 20
     env:
       DELETE: ${{ forgejo.event.inputs.delete }}
-      TOKEN: ${{ forgejo.token }}
     steps:
       # Every branch head and `origin/main`, for the ancestor and patch checks.
       - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
       - run: git fetch -q origin '+refs/heads/*:refs/remotes/origin/*'
+      # The token reaches this step alone.
       - run: |
           if [ "$DELETE" = true ]; then
             nix develop -c python3 scripts/branch-prune --delete
           else
             nix develop -c python3 scripts/branch-prune
           fi
+        env:
+          TOKEN: ${{ forgejo.token }}

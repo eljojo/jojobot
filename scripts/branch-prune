@@ -80,6 +80,11 @@ def landed(sha):
     """How the work on this head is already on main, or None."""
     if git("merge-base", "--is-ancestor", sha, "origin/main").returncode == 0:
         return "ancestor of main"
+    # `git cherry` skips a merge commit, so a branch holding one would read as
+    # landed on the strength of the commits beside it.
+    merges = git("rev-list", "--merges", f"origin/main..{sha}")
+    if merges.returncode != 0 or merges.stdout.strip():
+        return None
     cherry = git("cherry", "origin/main", sha)
     if cherry.returncode == 0 and not any(l.startswith("+") for l in cherry.stdout.splitlines()):
         return "every commit patch-equal on main"
@@ -100,14 +105,34 @@ def hold_reason(branch, open_heads, now):
     return None
 
 
+def delete(name, sha):
+    """Delete a branch only if it still holds the head that was judged.
+
+    Returns the words for the log, or raises `Refused`. A push that landed between
+    the judgement and the delete would otherwise be deleted with its new commits.
+    """
+    path = f"/branches/{urllib.parse.quote(name, safe='')}"
+    current = json.loads(forge(path))["commit"]["id"]
+    if current != sha:
+        raise Refused(f"changed since judged: {name} was {sha}, now {current}")
+    forge(path, "DELETE")
+
+
+class Refused(Exception):
+    pass
+
+
 def main(argv):
     live = argv == ["--delete"]
     if argv not in ([], ["--delete"]):
         print(__doc__)
         return 2
+    if live and not os.environ.get("TOKEN"):
+        print("--delete needs the job's token in TOKEN", file=sys.stderr)
+        return 2
     now = datetime.datetime.now(datetime.timezone.utc)
     open_heads = {p["head"]["ref"] for p in listed("/pulls?state=open")}
-    deleted = held = kept = 0
+    deleted = held = kept = failed = 0
     for branch in listed("/branches"):
         name, sha = branch["name"], branch["commit"]["id"]
         why = hold_reason(branch, open_heads, now)
@@ -121,14 +146,23 @@ def main(argv):
             print(f"keep {name} {sha}: work not on main")
             continue
         if live:
-            forge(f"/branches/{urllib.parse.quote(name, safe='')}", "DELETE")
+            try:
+                delete(name, sha)
+            except Refused as refusal:
+                kept += 1
+                print(f"keep {name}: {refusal}")
+                continue
+            except (urllib.error.HTTPError, urllib.error.URLError) as error:
+                failed += 1
+                print(f"could not delete {name}: {getattr(error, 'code', error)}")
+                continue
             print(f"deleted {name} {sha}: {how}")
         else:
             print(f"would delete {name} {sha}: {how}")
         deleted += 1
     verb = "deleted" if live else "would delete"
-    print(f"{verb} {deleted}, held {held}, kept {kept}")
-    return 0
+    print(f"{verb} {deleted}, held {held}, kept {kept}, failed {failed}")
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":
