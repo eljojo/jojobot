@@ -26,7 +26,7 @@ fn watched(tag: &str, jobs: &[String], command: &str) -> (String, String, i32) {
     support::write_executable(
         &dir.join("bin/curl"),
         &format!(
-            "#!/bin/sh\ncase \" $* \" in\n  *\" -X POST \"*) echo \"$*\" >> {0}/posts ;;\n  *) cat {0}/jobs.json ;;\nesac\n",
+            "#!/bin/sh\ncase \" $* \" in\n  *\" -X POST \"*) echo \"$*\" >> {0}/posts; sed 's/^/stdin: /' >> {0}/posts ;;\n  *) cat {0}/jobs.json ;;\nesac\n",
             dir.display()
         ),
     );
@@ -67,8 +67,15 @@ fn watcher_cancels_on_a_failed_sibling_and_the_command_never_sees_the_token() {
         "no cancel was sent: {posts:?}"
     );
     assert!(
-        posts.contains("token the-job-token"),
-        "the cancel carried no token: {posts:?}"
+        posts.contains("stdin: header = \"Authorization: token the-job-token\""),
+        "the cancel carried no token on stdin: {posts:?}"
+    );
+    assert!(
+        !posts
+            .lines()
+            .filter(|line| !line.starts_with("stdin: "))
+            .any(|line| line.contains("the-job-token")),
+        "the token is in curl's arguments: {posts:?}"
     );
     assert!(
         said.contains("token=unset"),

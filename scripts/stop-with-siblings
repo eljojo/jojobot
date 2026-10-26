@@ -39,7 +39,9 @@ if [ -n "${TOKEN:-}" ] && [ -n "${GITHUB_API_URL:-}" ] && [ -n "${GITHUB_RUN_ID:
         while sleep "${STOP_POLL_SECONDS:-15}"; do
             if failed_sibling; then
                 echo "stop-with-siblings: a sibling job failed; cancelling the run" >&2
-                curl -fsS -X POST -H "Authorization: token $TOKEN" "$run/cancel" >&2 || true
+                # The token goes in on stdin, so it is in no process's argument list.
+                printf 'header = "Authorization: token %s"\n' "$TOKEN" |
+                    curl -fsS -K - -X POST "$run/cancel" >&2 || true
                 break
             fi
         done
