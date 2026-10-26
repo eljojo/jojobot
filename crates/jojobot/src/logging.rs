@@ -12,6 +12,26 @@ pub fn colour_for(stream: &impl std::io::IsTerminal) -> bool {
     stream.is_terminal()
 }
 
+/// **The directives a process logs under when the operator sets none.** Info
+/// for every crate, and the search index at warn: at info it writes thousands
+/// of lines a boot about its own commits, merges and deleted segment files, and
+/// the lines that say what jojobot is doing are lost among them.
+pub const DEFAULT_DIRECTIVES: &str = "info,tantivy=warn";
+
+/// **The filter the binary logs under, from the value of `RUST_LOG`.** The one
+/// place a filter is built. An unset or empty value is no filter and gets
+/// [`DEFAULT_DIRECTIVES`] (an empty string parses to no directives and would
+/// drop every event, the serving line included; a build sandbox exports exactly
+/// that). A value the operator sets wins whole, and one that does not parse
+/// falls back to the default.
+pub fn filter_for(rust_log: Option<&str>) -> tracing_subscriber::EnvFilter {
+    match rust_log.filter(|raw| !raw.trim().is_empty()) {
+        Some(raw) => tracing_subscriber::EnvFilter::try_new(raw)
+            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(DEFAULT_DIRECTIVES)),
+        None => tracing_subscriber::EnvFilter::new(DEFAULT_DIRECTIVES),
+    }
+}
+
 /// **The subscriber the binary logs through**, over any writer. Start-up and the
 /// case that reads the log back build it the same way. `ansi` is the answer of
 /// [`colour_for`] for the stream the writer ends in.
@@ -245,6 +265,58 @@ mod tests {
         });
         let bytes = kept.0.lock().expect("log buffer").clone();
         assert!(bytes.contains(&0x1b), "colour on writes escape codes");
+    }
+
+    /// **With `RUST_LOG` unset the search index's info lines are filtered and
+    /// jojobot's own are kept.** Events go in under tantivy's own target and
+    /// through the `log` bridge tantivy really logs through, so the case travels
+    /// both paths. A tantivy warning still comes through.
+    #[test]
+    fn the_default_filter_drops_tantivy_info_and_keeps_ours() {
+        let _ = tracing_log::LogTracer::init();
+        let kept = Kept::default();
+        let subscriber = logging(kept.clone(), false, filter_for(None));
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::info!(target: "tantivy::indexer::index_writer", "tantivy housekeeping");
+            tracing_log::log::info!(target: "tantivy::directory::managed_directory", "tantivy deleted a segment file");
+            tracing::warn!(target: "tantivy::indexer::segment_updater", "tantivy warning");
+            tracing::info!(target: "jojobot::wiring", "jojobot says what it does");
+        });
+        let text = String::from_utf8(kept.0.lock().expect("log buffer").clone()).expect("utf8");
+        assert!(!text.contains("tantivy housekeeping"), "{text}");
+        assert!(!text.contains("deleted a segment file"), "{text}");
+        for line in ["tantivy warning", "jojobot says what it does"] {
+            assert!(text.contains(line), "{line:?} was dropped: {text}");
+        }
+    }
+
+    /// **An empty `RUST_LOG` is the default, and one the operator sets wins.**
+    /// A value that names tantivy at info brings its info lines back.
+    #[test]
+    fn a_rust_log_the_operator_sets_wins_and_an_empty_one_is_the_default() {
+        for (rust_log, tantivy_info_kept) in [
+            (Some("  "), false),
+            (Some(""), false),
+            (Some("info,tantivy=info"), true),
+            (Some("not a ( directive"), false),
+        ] {
+            let kept = Kept::default();
+            let subscriber = logging(kept.clone(), false, filter_for(rust_log));
+            tracing::subscriber::with_default(subscriber, || {
+                tracing::info!(target: "tantivy::indexer::index_writer", "tantivy housekeeping");
+                tracing::info!(target: "jojobot::wiring", "jojobot says what it does");
+            });
+            let text = String::from_utf8(kept.0.lock().expect("log buffer").clone()).expect("utf8");
+            assert_eq!(
+                text.contains("tantivy housekeeping"),
+                tantivy_info_kept,
+                "{rust_log:?}: {text}"
+            );
+            assert!(
+                text.contains("jojobot says what it does"),
+                "{rust_log:?}: {text}"
+            );
+        }
     }
 
     /// **The same holds for the path tantivy's warnings really take.** Tantivy
