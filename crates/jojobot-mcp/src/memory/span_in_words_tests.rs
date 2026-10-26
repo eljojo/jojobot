@@ -137,7 +137,7 @@ fn the_reader_takes_the_ways_a_span_is_written() {
         "From 6 October, then 10 November",
         "Room 6 to 10 is free",
         "in October 2026",
-        "You may 6 to 10 times",
+        "You may 6 to 10 November",
     ] {
         assert!(!names_a_span(no), "{no}");
     }
