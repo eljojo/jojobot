@@ -2332,9 +2332,7 @@ async fn field_link_holds_the_links_the_writes_imply_and_nothing_else() {
         state_dir,
         store_port,
         git_ref,
-        held_before: _,
-        handles: _,
-        holder_key: _,
+        ..
     } = restore_a_fixture(&fixture_dir(), "links").await;
     let booted = boot_current(&state_dir, store_port, &git_ref).await;
     booted.stop().await;
@@ -2403,10 +2401,10 @@ fn check_field_link_rows(
     ))
 }
 
-/// Reference keys admit bare ids; other keys require every comma item marked.
-/// All reference declarations contribute, with list forms taking their union.
-/// Identities distinguish bare ids from loose text, without a merge walk.
+/// Reference declarations combine list forms; other keys need all items marked.
+/// Stored and build-supplied identities distinguish bare ids from loose text.
 async fn links_the_stored_fields_imply(pool: &sqlx::MySqlPool) -> std::collections::BTreeSet<Link> {
+    let supplied = jojobot_mcp::provisions();
     let identities: Vec<(String, Option<String>)> = sqlx::query_as("SELECT id, badge FROM entity")
         .fetch_all(pool)
         .await
@@ -2414,6 +2412,7 @@ async fn links_the_stored_fields_imply(pool: &sqlx::MySqlPool) -> std::collectio
     let identities: std::collections::BTreeSet<String> = identities
         .into_iter()
         .flat_map(|(id, badge)| std::iter::once(id).chain(badge))
+        .chain(supplied.records().map(|(entity, _)| entity.id.to_string()))
         .collect();
     let declarations: Vec<(String, String)> =
         sqlx::query_as("SELECT key_name, holds FROM type_field ORDER BY type_name, ordinal")
