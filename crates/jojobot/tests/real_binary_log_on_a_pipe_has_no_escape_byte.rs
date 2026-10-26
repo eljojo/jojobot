@@ -21,14 +21,13 @@ async fn the_log_of_the_real_binary_on_a_pipe_names_the_tool_and_holds_no_escape
     let state_dir = jojobot_adapters::testing::scratch_path("jojobot-pipe-log");
     std::fs::create_dir_all(&state_dir).expect("a scratch directory");
     let _scratch = Scratch(state_dir.clone());
-    let http_port = free_port();
     let store_port = free_port();
 
     let binary = jojobot_exercise::room::server_binary().expect("a jojobot binary to run");
     let mut child = tokio::process::Command::new(&binary)
         .env("STATE_DIRECTORY", &state_dir)
         .env("JOJOBOT_STORE_PORT", store_port.to_string())
-        .env("JOJOBOT_BIND", format!("127.0.0.1:{http_port}"))
+        .env("JOJOBOT_BIND", "127.0.0.1:0")
         .env("JOJOBOT_ALLOW_NO_AUTH", "1")
         .env_remove("JOJOBOT_ISSUER")
         // An inherited filter can hide the request line, and the package build
@@ -57,20 +56,26 @@ async fn the_log_of_the_real_binary_on_a_pipe_names_the_tool_and_holds_no_escape
         })
     };
     let said = |needle: &str| String::from_utf8_lossy(&log.lock().unwrap()).contains(needle);
+    let reported = || {
+        String::from_utf8_lossy(&log.lock().unwrap())
+            .lines()
+            .find_map(jojobot_adapters::testing::served_port)
+    };
 
     let boot_began = Instant::now();
     let deadline = boot_began + jojobot_exercise::room::READY_TIMEOUT;
-    while !said("serving http://") && Instant::now() < deadline {
+    while reported().is_none() && Instant::now() < deadline {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     assert!(
-        said("serving http://"),
+        reported().is_some(),
         "the binary never reached its serving line after {:?} (a boot is given {:?}), so there is \
          no request to log",
         boot_began.elapsed(),
         jojobot_exercise::room::READY_TIMEOUT
     );
 
+    let http_port = reported().expect("the serving line names a port");
     let surface =
         jojobot_exercise::surface::Surface::connect(&format!("http://127.0.0.1:{http_port}/mcp"))
             .await

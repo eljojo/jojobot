@@ -38,12 +38,11 @@ async fn running(name: &str, metrics_port: Option<u16>) -> Running {
     std::fs::create_dir_all(&state_dir).expect("a scratch directory");
     let scratch = Scratch(state_dir.clone());
     let binary = jojobot_exercise::room::server_binary().expect("a jojobot binary to run");
-    let http_port = free_port();
     let mut command = tokio::process::Command::new(&binary);
     command
         .env("STATE_DIRECTORY", &state_dir)
         .env("JOJOBOT_STORE_PORT", free_port().to_string())
-        .env("JOJOBOT_BIND", format!("127.0.0.1:{http_port}"))
+        .env("JOJOBOT_BIND", "127.0.0.1:0")
         .env("JOJOBOT_ALLOW_NO_AUTH", "1")
         .env_remove("JOJOBOT_ISSUER")
         .env_remove("JOJOBOT_METRICS_BIND")
@@ -74,6 +73,10 @@ async fn running(name: &str, metrics_port: Option<u16>) -> Running {
         served,
         "the binary never reached its serving line: {printed:#?}"
     );
+    let http_port = printed
+        .last()
+        .and_then(|line| jojobot_adapters::testing::served_port(line))
+        .expect("the serving line names a port");
     // The rest of what it prints is not read; draining it keeps a full pipe
     // from stopping the server.
     tokio::spawn(async move { while let Ok(Some(_)) = lines.next_line().await {} });

@@ -242,7 +242,13 @@ async fn main() -> anyhow::Result<()> {
             "apps registered: the app route is mounted"
         );
     }
-    tracing::info!("serving http://{}/mcp", config.bind);
+    // **The address the listener holds, not the one configured.** A bind on port 0
+    // takes its port from the operating system, and this line is where a caller
+    // that asked for that learns which port it got.
+    tracing::info!(
+        "serving http://{}/mcp",
+        listener.local_addr().context("reading the bound address")?
+    );
 
     // **Each bot is told what this build changed, once the listener is open.**
     // Sending writes to every bot's box in turn, and a start that waited for it

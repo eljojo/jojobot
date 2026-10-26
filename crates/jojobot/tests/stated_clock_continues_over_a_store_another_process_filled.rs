@@ -198,11 +198,10 @@ async fn one_boot_of_the_binary(
     state_dir: &std::path::Path,
     store_port: u16,
 ) -> Result<Timestamp, String> {
-    let http_port = free_port();
     let mut child = tokio::process::Command::new(binary)
         .env("STATE_DIRECTORY", state_dir)
         .env("JOJOBOT_STORE_PORT", store_port.to_string())
-        .env("JOJOBOT_BIND", format!("127.0.0.1:{http_port}"))
+        .env("JOJOBOT_BIND", "127.0.0.1:0")
         .env("JOJOBOT_ALLOW_NO_AUTH", "1")
         .env("JOJOBOT_TODAY", DAY)
         .env_remove("JOJOBOT_ISSUER")
@@ -227,6 +226,7 @@ async fn one_boot_of_the_binary(
         )
     })?;
     // Held to the end of the boot, so the pipe stays open while the case reads.
+    let http_port = serving.port();
     let _stdout = serving.stdout;
 
     let surface =

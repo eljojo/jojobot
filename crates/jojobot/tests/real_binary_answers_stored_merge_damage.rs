@@ -134,11 +134,10 @@ async fn every_read_a_stored_merge_loop_touches_is_answered_as_damage_a_person_r
     kinds::load_shipped();
 
     let binary = jojobot_exercise::room::server_binary().expect("a jojobot binary to run");
-    let http_port = free_port();
     let mut child = tokio::process::Command::new(&binary)
         .env("STATE_DIRECTORY", &state_dir)
         .env("JOJOBOT_STORE_PORT", store_port.to_string())
-        .env("JOJOBOT_BIND", format!("127.0.0.1:{http_port}"))
+        .env("JOJOBOT_BIND", "127.0.0.1:0")
         .env("JOJOBOT_ALLOW_NO_AUTH", "1")
         .env_remove("JOJOBOT_ISSUER")
         .env("RUST_LOG", "info")
@@ -180,6 +179,10 @@ async fn every_read_a_stored_merge_loop_touches_is_answered_as_damage_a_person_r
         seen.join("\n")
     );
 
+    let http_port = seen
+        .last()
+        .and_then(|line| jojobot_adapters::testing::served_port(line))
+        .expect("the serving line names a port");
     let surface =
         jojobot_exercise::surface::Surface::connect(&format!("http://127.0.0.1:{http_port}/mcp"))
             .await

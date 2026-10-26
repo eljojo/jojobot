@@ -82,7 +82,6 @@ fn start(name: &str) -> Running {
 /// already hold a store an earlier run filled.
 fn start_over(scratch: Scratch) -> Running {
     let state_dir = scratch.0.clone();
-    let http_port = free_port();
     let store_port = free_port();
     let stderr_path = state_dir.join("server.stderr");
     let child = Command::new(env!("CARGO_BIN_EXE_jojobot"))
@@ -94,7 +93,7 @@ fn start_over(scratch: Scratch) -> Running {
         )
         .env("STATE_DIRECTORY", &state_dir)
         .env("JOJOBOT_STORE_PORT", store_port.to_string())
-        .env("JOJOBOT_BIND", format!("127.0.0.1:{http_port}"))
+        .env("JOJOBOT_BIND", "127.0.0.1:0")
         .env("JOJOBOT_ALLOW_NO_AUTH", "1")
         .env("RUST_LOG", "info")
         // **The server leads a process group of its own**, so a signal to the
@@ -105,8 +104,13 @@ fn start_over(scratch: Scratch) -> Running {
         .stderr(std::fs::File::create(&stderr_path).expect("a file for the server's stderr"))
         .spawn()
         .expect("the binary runs");
-    let mut running = watch(child, http_port, stderr_path, scratch);
+    let mut running = watch(child, 0, stderr_path, scratch);
     running.wait_for_line("serving http://", jojobot_exercise::room::READY_TIMEOUT);
+    running.http_port = running
+        .seen
+        .last()
+        .and_then(|line| jojobot_adapters::testing::served_port(line))
+        .expect("the serving line names a port");
     running
 }
 

@@ -24,11 +24,10 @@ async fn running(
     String,
 ) {
     let binary = jojobot_exercise::room::server_binary().expect("a jojobot binary to run");
-    let http_port = free_port();
     let mut child = tokio::process::Command::new(&binary)
         .env("STATE_DIRECTORY", state_dir)
         .env("JOJOBOT_STORE_PORT", store_port.to_string())
-        .env("JOJOBOT_BIND", format!("127.0.0.1:{http_port}"))
+        .env("JOJOBOT_BIND", "127.0.0.1:0")
         .env("JOJOBOT_ALLOW_NO_AUTH", "1")
         .env_remove("JOJOBOT_ISSUER")
         .env("RUST_LOG", "info")
@@ -40,22 +39,23 @@ async fn running(
     let stdout = child.stdout.take().expect("stdout was piped");
     let mut lines = tokio::io::BufReader::new(stdout).lines();
     let boot_began = std::time::Instant::now();
-    let served = tokio::time::timeout(jojobot_exercise::room::READY_TIMEOUT, async {
+    let reported = tokio::time::timeout(jojobot_exercise::room::READY_TIMEOUT, async {
         while let Ok(Some(line)) = lines.next_line().await {
             if line.contains("serving http://") {
-                return true;
+                return jojobot_adapters::testing::served_port(&line);
             }
         }
-        false
+        None
     })
     .await
-    .unwrap_or(false);
+    .unwrap_or(None);
     assert!(
-        served,
+        reported.is_some(),
         "the binary never reached its serving line after {:?} (a boot is given {:?})",
         boot_began.elapsed(),
         jojobot_exercise::room::READY_TIMEOUT
     );
+    let http_port = reported.expect("the serving line names a port");
     let surface =
         jojobot_exercise::surface::Surface::connect(&format!("http://127.0.0.1:{http_port}/mcp"))
             .await

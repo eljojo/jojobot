@@ -3563,12 +3563,11 @@ async fn boot_current_with(
     environment: &[(&str, String)],
 ) -> Booted {
     let binary = jojobot_exercise::room::server_binary().expect("a jojobot binary to run");
-    let http_port = free_port();
     let mut child = tokio::process::Command::new(&binary)
         .envs(environment.iter().map(|(key, value)| (*key, value)))
         .env("STATE_DIRECTORY", state_dir)
         .env("JOJOBOT_STORE_PORT", store_port.to_string())
-        .env("JOJOBOT_BIND", format!("127.0.0.1:{http_port}"))
+        .env("JOJOBOT_BIND", "127.0.0.1:0")
         .env("JOJOBOT_ALLOW_NO_AUTH", "1")
         .env_remove("JOJOBOT_ISSUER")
         // The serving line is an info event. An inherited RUST_LOG can filter it
@@ -3595,6 +3594,7 @@ async fn boot_current_with(
             jojobot_exercise::room::READY_TIMEOUT
         ),
     };
+    let http_port = serving.port();
     let mut seen = serving.seen;
     let mut lines = serving.stdout;
     // **The release notes are sent after the serving line**, in a task of the

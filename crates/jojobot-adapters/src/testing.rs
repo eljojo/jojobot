@@ -272,6 +272,23 @@ pub struct Serving {
     pub seen: Vec<String>,
 }
 
+/// **The port a serving line names**, from `serving http://127.0.0.1:PORT/mcp`.
+/// A caller that starts the binary on port 0 learns its port here.
+pub fn served_port(line: &str) -> Option<u16> {
+    let (address, _) = line.split("serving http://").nth(1)?.split_once("/mcp")?;
+    address.rsplit(':').next()?.parse().ok()
+}
+
+impl Serving {
+    /// **The port the binary reports it serves on**, read from the serving line.
+    pub fn port(&self) -> u16 {
+        self.seen
+            .last()
+            .and_then(|line| served_port(line))
+            .expect("the serving line names a port")
+    }
+}
+
 /// **Wait for a child to print `serving`, or say how it failed.** The child is
 /// spawned with stdout piped, and stderr piped when its words are wanted; stderr
 /// is read as it arrives and its last [`STDERR_TAIL_LINES`] lines are kept, and

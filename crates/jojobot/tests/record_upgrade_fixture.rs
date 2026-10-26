@@ -29,12 +29,11 @@ async fn record_the_upgrade_fixture() {
     let scratch = Scratch::new("state");
     let state_dir = scratch.0.clone();
     let store_port = free_port();
-    let http_port = free_port();
 
     let mut child = tokio::process::Command::new(&binary)
         .env("STATE_DIRECTORY", &state_dir)
         .env("JOJOBOT_STORE_PORT", store_port.to_string())
-        .env("JOJOBOT_BIND", format!("127.0.0.1:{http_port}"))
+        .env("JOJOBOT_BIND", "127.0.0.1:0")
         .env("JOJOBOT_ALLOW_NO_AUTH", "1")
         .env_remove("JOJOBOT_ISSUER")
         // The serving line is an info event, and the deployed binary treats an
@@ -62,6 +61,7 @@ async fn record_the_upgrade_fixture() {
     // **Keep reading.** The binary logs to the pipe for as long as it runs, and
     // a pipe nobody reads fills, after which the binary blocks inside a write
     // and every call to it hangs.
+    let http_port = serving.port();
     let mut lines = serving.stdout;
     tokio::spawn(async move { while let Ok(Some(_)) = lines.next_line().await {} });
 
