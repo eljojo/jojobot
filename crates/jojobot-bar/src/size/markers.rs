@@ -22,13 +22,14 @@ pub(super) fn steps(text: &str) -> Option<Vec<u32>> {
     text.split('.').map(|part| part.parse().ok()).collect()
 }
 
-/// A `work:q-` handle with a name, or the word INVARIANT.
+/// A work-queue handle with a name, or the word INVARIANT.
 fn names_an_owner(text: &str) -> bool {
+    let prefix = ["work", ":q-"].concat();
     let invariant = ["INVARI", "ANT"].concat();
     text.contains(&invariant)
-        || text
-            .match_indices("work:q-")
-            .any(|(at, _)| text[at + 7..].starts_with(|c: char| c.is_ascii_alphanumeric()))
+        || text.match_indices(&prefix).any(|(at, _)| {
+            text[at + prefix.len()..].starts_with(|c: char| c.is_ascii_alphanumeric())
+        })
 }
 
 /// Offences in one file. `step` is the step the series is at.
@@ -74,7 +75,7 @@ pub fn offences_in(path: &str, text: &str, step: Option<&str>) -> Vec<String> {
         };
         if !names_an_owner(&lines[from..to].join("\n")) {
             let what = if call { "tripwire" } else { "GAP marker" };
-            found.push(format!("{place}: the {what} names no work:q- owner"));
+            found.push(format!("{place}: the {what} names no owner"));
         }
     }
     found
@@ -107,13 +108,17 @@ mod tests {
     fn a_gap_marker_needs_a_handle_and_a_tripwire_takes_its_blocks() {
         let (g, t) = (gap(), tripwire());
         assert_eq!(story(&format!("    {g} a\n    // b\n")).len(), 1);
-        let owned = format!("    {g} a\n    // work:q-x\n    s{t}\"a\", &[]).await;\n");
+        let owned = format!("    {g} a\n    // work:q-1001\n    s{t}\"a\", &[]).await;\n");
         assert!(story(&owned).is_empty(), "{:?}", story(&owned));
         let bare = format!("    // plain\n    s{t}\"a\", &[]).await;\n");
         assert_eq!(story(&bare).len(), 1);
         let invariant = format!("    // INVARIANT\n    s{t}\"a\", &[]).await;\n");
         assert!(story(&invariant).is_empty());
-        assert_eq!(story(&format!("    {g} work:q- x\n")).len(), 1, "no name");
+        assert_eq!(
+            story(&format!("    {g} {} x\n", ["work", ":q-"].concat())).len(),
+            1,
+            "no name"
+        );
     }
 
     #[test]

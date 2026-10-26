@@ -290,6 +290,23 @@ const ORDINARY: &[&str] = &[
     "work:q-1010",
     "work:q-1020",
     "work:q-1021",
+    // The work-queue cards that own the missing capabilities the user stories
+    // mark. Each is a build-card handle and names nobody.
+    "work:q-1320",
+    "work:q-boot-composes-now",
+    "work:q-decisions-carry-tradeoffs",
+    "work:q-derivation-and-trust",
+    "work:q-entity-lifecycle",
+    "work:q-kinds-first-class",
+    "work:q-quantities-in-words",
+    "work:q-reach-other-layers",
+    "work:q-relation-vocabulary",
+    "work:q-shortlist-and-choice",
+    "work:q-time-and-nearness",
+    "work:q-work-state-reads",
+    // An event a unit case of the exercise checks files a hit under; it names
+    // nobody.
+    "event:inspection",
     // The documents a sitting of the querying room keeps its numbered answers in,
     // one for each question that has a lock. They name nobody.
     "document:answer-1",

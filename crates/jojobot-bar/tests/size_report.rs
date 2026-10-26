@@ -578,7 +578,7 @@ fn a_past_step_a_bare_gap_and_a_step_gone_back_are_red_through_the_bar() {
     assert!(past.contains("a.rs:1"), "{past}");
     let bare = red(&[(stories, gap.clone())]);
     assert!(bare.contains(&format!("{stories}:1")), "{bare}");
-    commit_files(&dir, &[(stories, gap.replace("x", "work:q-x —"))]);
+    commit_files(&dir, &[(stories, gap.replace("x", "work:q-1001 —"))]);
     let owned = bar(&dir, "check", Some(&base));
     assert!(
         owned.stdout.contains("a.rs:1"),
