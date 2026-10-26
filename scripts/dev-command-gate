@@ -115,16 +115,53 @@ def positionals(words, takes_value):
     return result
 
 
-def blocked(words):
+# A word that leads to the command after it when it starts a command.
+KEYWORDS = {"if", "then", "else", "elif", "while", "until", "do", "!", "{"}
+# A program that runs the command after it: the options that take a value, and how
+# many plain words (a duration) come before that command.
+WRAPPERS = {
+    "env": ({"-u", "-C", "-S", "--unset", "--chdir", "--split-string"}, 0),
+    "command": (set(), 0),
+    "exec": ({"-a"}, 0),
+    "time": (set(), 0),
+    "nohup": (set(), 0),
+    "nice": ({"-n", "--adjustment"}, 0),
+    "setsid": (set(), 0),
+    "stdbuf": ({"-i", "-o", "-e"}, 0),
+    "ionice": ({"-c", "-n", "-p", "-t"}, 0),
+    "timeout": ({"-k", "-s", "--kill-after", "--signal"}, 1),
+    "sudo": ({"-u", "-g", "-h", "-p", "-C", "-D", "-R", "-T", "-U", "--user", "--group"}, 0),
+    "xargs": (
+        {"-n", "-I", "-P", "-d", "-L", "-s", "-E", "-a", "--max-args", "--replace",
+         "--max-procs", "--delimiter", "--max-lines", "--max-chars", "--eof", "--arg-file"},
+        0,
+    ),
+}
+SHELLS = {"sh", "bash", "zsh", "dash", "ksh"}
+DEPTH = 4
+
+
+def after_wrapper(words, takes_value, plain):
+    """The command a wrapper runs: past its options, and past the plain words it takes."""
+    index = 1
+    while index < len(words) and words[index].startswith("-") and words[index] != "-":
+        index += 2 if words[index] in takes_value else 1
+    return words[index + plain:]
+
+
+def blocked(words, depth=0):
     while words:
         if ASSIGNMENT.match(words[0]):
             if sets_target(words[0]):
                 return True
             words = words[1:]
             continue
-        program = os.path.basename(words[0])
-        if program in ("env", "command", "exec"):
+        if words[0] in KEYWORDS:
             words = words[1:]
+            continue
+        program = os.path.basename(words[0])
+        if program in WRAPPERS:
+            words = after_wrapper(words, *WRAPPERS[program])
             continue
         if program == "nix" and words[1:2] == ["develop"] and "-c" in words:
             words = words[words.index("-c") + 1:]
@@ -134,6 +171,14 @@ def blocked(words):
             continue
         break
     if not words:
+        return False
+    if program == "eval":
+        return judge(" ".join(words[1:]), depth + 1)
+    if program in SHELLS:
+        # `sh -c STRING` and a cluster such as `bash -lc STRING` run STRING as a command.
+        for index, word in enumerate(words[1:], start=1):
+            if word.startswith("-") and not word.startswith("--") and "c" in word:
+                return index + 1 < len(words) and judge(words[index + 1], depth + 1)
         return False
     if program == "export":
         return any(sets_target(word) for word in words[1:])
@@ -158,21 +203,76 @@ def blocked(words):
     return False
 
 
+def substitutions(command):
+    """The text of every command substitution, `$(...)` or backquotes, that the shell
+    would run: in double quotes too, and not inside single quotes or after a backslash."""
+    found = []
+    quote = None
+    i, n = 0, len(command)
+    while i < n:
+        c = command[i]
+        if quote == "'":
+            quote = None if c == "'" else quote
+            i += 1
+        elif c == "\\":
+            i += 2
+        elif c == "`":
+            close = i + 1
+            while close < n and command[close] != "`":
+                close += 2 if command[close] == "\\" else 1
+            if close >= n:
+                raise ValueError("a backquote is not closed")
+            found.append(command[i + 1 : close])
+            i = close + 1
+        elif c == "$" and command[i + 1 : i + 2] == "(":
+            depth, j = 1, i + 2
+            while j < n and depth:
+                if command[j] == "\\":
+                    j += 2
+                    continue
+                depth += (command[j] == "(") - (command[j] == ")")
+                j += 1
+            if depth:
+                raise ValueError("a command substitution is not closed")
+            found.append(command[i + 2 : j - 1])
+            i = j
+        else:
+            if c == '"':
+                quote = None if quote == '"' else '"'
+            elif c == "'" and quote is None:
+                quote = "'"
+            i += 1
+    return found
+
+
+def judge(command, depth=0):
+    """Whether this command text runs something the gate refuses. A backslash and a
+    newline join two lines, as the shell reads them; a substitution, a string given
+    to `eval` and a string given to `sh -c` are read as commands in their turn, and
+    nesting beyond a few levels is refused."""
+    if depth > DEPTH:
+        return True
+    command = command.replace("\\\n", "")
+    if any(judge(inner, depth + 1) for inner in substitutions(command)):
+        return True
+    lexer = shlex.shlex(strip_redirections(command), posix=True, punctuation_chars=";&|()\n")
+    lexer.whitespace = " \t\r"
+    words = []
+    commands = []
+    for word in lexer:
+        if all(char in ";&|()\n" for char in word):
+            commands.append(words)
+            words = []
+        else:
+            words.append(word)
+    commands.append(words)
+    return any(blocked(words, depth) for words in commands)
+
+
 def main():
     try:
         command = json.load(sys.stdin)["tool_input"]["command"]
-        lexer = shlex.shlex(strip_redirections(command), posix=True, punctuation_chars=";&|()\n")
-        lexer.whitespace = " \t\r"
-        words = []
-        commands = []
-        for word in lexer:
-            if all(char in ";&|()\n" for char in word):
-                commands.append(words)
-                words = []
-            else:
-                words.append(word)
-        commands.append(words)
-        if any(blocked(words) for words in commands):
+        if judge(command):
             print(MESSAGE, file=sys.stderr)
             return 2
     except (ValueError, KeyError, TypeError):
