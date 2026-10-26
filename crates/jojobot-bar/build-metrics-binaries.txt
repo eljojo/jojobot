@@ -51,6 +51,7 @@ test-dolt_due_pass_instance
 test-dolt_due_pass_unread
 test-dolt_id_case
 test-dolt_link_rule_log_only
+test-dolt_link_rule_round_trip
 test-dolt_links_by_mark
 test-dolt_must_back
 test-dolt_numbered_restart
