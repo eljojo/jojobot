@@ -361,6 +361,12 @@ fn teachings(doc: &mut Doc) {
         "text",
         &sentence_per_line(&empty_shipped_type_teaching("trip")),
     );
+    doc.text(
+        3,
+        "Search with an unreadable token-saving setting",
+        "text",
+        crate::settings::SETTING_UNREADABLE,
+    );
     // **The search caveats**: standing notes taught once per session and wording.
     // They are built by the functions the verb's own answer uses, so
     // a changed word shows in this diff.

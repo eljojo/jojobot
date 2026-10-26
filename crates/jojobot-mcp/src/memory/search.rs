@@ -319,40 +319,8 @@ fn next_coverage(coverage: Coverage) -> Option<Coverage> {
     }
 }
 
-/// **Every note these two functions can put in an answer**, each labelled with
-/// the state that produces it — the input to the surface's checks on the words
-/// an agent is handed.
-///
-/// Both axes are walked rather than listed (see [`walk`]), so a coverage state
-/// or a query-driven exclusion added later fails to compile here instead of
-/// quietly going unread.
 #[cfg(test)]
-pub(crate) fn coverage_notes() -> Vec<(String, String)> {
-    let mut found = Vec::new();
-    // The query answers ahead of coverage, so these notes are the same whatever
-    // the index holds. One pass, not one per coverage state.
-    for left_out in walk(MailExcluded::NotAsked, MailExcluded::next) {
-        found.push((
-            format!("search's mail coverage note ({left_out:?})"),
-            mail_coverage(&left_out.query(), Coverage::Loaded).to_string(),
-        ));
-    }
-    for coverage in walk(Coverage::Unread, next_coverage) {
-        found.push((
-            format!("search's memory coverage note ({coverage:?})"),
-            memory_coverage(coverage).to_string(),
-        ));
-        found.push((
-            format!("search's mail coverage note ({coverage:?})"),
-            mail_coverage(&asking_for_mail(), coverage).to_string(),
-        ));
-        found.push((
-            format!("search's sessions coverage note ({coverage:?})"),
-            session_coverage(coverage).to_string(),
-        ));
-    }
-    found
-}
+pub(crate) use notes::coverage_notes;
 
 /// The front door: one ranked list over entities, facts and prose.
 #[tool_router(router = search_router, vis = "pub(crate)")]
@@ -384,6 +352,8 @@ impl Jojobot {
                        exclusions (left_out), what an empty search looked through (searched), \
                        and a page past the last hit (past_the_end). With sid, each note is taught \
                        once per session; anonymous searches keep their notes. \
+                       A bot with setting_token_saving=on gets only results; off is the default. \
+                       If the setting cannot be read, the normal mode is served with a note. \
                        See each argument for details."
     )]
     pub(crate) async fn search(
@@ -396,7 +366,6 @@ impl Jojobot {
     }
 
     async fn search_inner(&self, args: SearchArgs) -> Result<CallToolResult, McpError> {
-        let token_saving = args.token_saving.unwrap_or(false);
         // Resolved before the query is built — see [`Jojobot::attributable`].
         // This verb publishes a `sid` and says it is what tells jojobot who is
         // asking, so a handle that addresses nothing is refused rather than
@@ -405,6 +374,8 @@ impl Jojobot {
             Ok(caller) => caller,
             Err(refused) => return Ok(refused),
         };
+        let saving = self.token_saving(asking.as_ref());
+        let token_saving = saving.on;
         if let Err(refused) = self.attributable(args.sid.as_deref()) {
             return Ok(refused);
         }
@@ -705,6 +676,7 @@ impl Jojobot {
         // answer that ships is under the ceiling and not merely its hits.
         // **Whether the claims this answer renders carry their details**: only
         // when the call asked.
+        saving.explain(&mut body);
         let details_asked = args.details.unwrap_or(false);
         let rendered: Vec<(serde_json::Value, usize)> = hits
             .iter()

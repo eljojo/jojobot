@@ -10,8 +10,8 @@ Search leads with the passage matching your words, including words in details. R
 
 ## Example
 
-`search` `{"query":"size ratchet unknown base"}` returns matching passages and the next offset when more hits remain. Add `"token_saving":true` to get only `results`, without counts, coverage, notes or change notices. Refusals still explain how to proceed.
+`search` `{"query":"size ratchet unknown base"}` returns matching passages and the next offset when more hits remain. A calling bot with `setting_token_saving` set to `on` gets only `results`, without counts, coverage, notes or change notices. Refusals still explain how to proceed.
 
 ## What to do
 
-Use an ordinary search when coverage or the rest count matters. Use `token_saving: true` when only the matching results are needed. Teaching omitted by that mode remains available to an ordinary call.
+Use an ordinary search when coverage or the rest count matters. Set `setting_token_saving` to `on` on your bot when only matching results are needed; `off` is the default. The setting is read from memory. If it cannot be read, search serves the normal mode and says why. Teaching omitted by that mode remains available to an ordinary call.

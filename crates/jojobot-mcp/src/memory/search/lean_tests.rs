@@ -3,6 +3,14 @@ use crate::harness::*;
 use crate::memory::testing::*;
 use jojobot_domain::memory::FactId;
 
+#[path = "setting_tests.rs"]
+mod setting_tests;
+
+async fn set_search_mode(jojobot: &Jojobot, sid: &str, value: &str) {
+    let bot = jojobot.caller(Some(sid)).unwrap().unwrap().bot;
+    setting_tests::set_mode(jojobot, sid, bot.as_str(), value).await;
+}
+
 const QUERIES: [(&str, &str); 3] = [
     (
         "one task per Codex session fresh agent wraps when its card is reported",
@@ -105,6 +113,7 @@ fn fact(content: &str, details: Option<String>) -> Fact {
         happened_through: None,
         edge: None,
         fields: Default::default(),
+        field_links: Default::default(),
         refs: Vec::new(),
         derived_from: None,
         stands_for: Vec::new(),
@@ -224,6 +233,7 @@ fn indexed_on(hits: Vec<Hit>, home: EntityId) -> Jojobot {
                 entity: Some(entity),
                 facts,
                 fields: Default::default(),
+                field_links: Default::default(),
                 owner: None,
                 unmapped: Vec::new(),
             },
@@ -252,11 +262,13 @@ async fn search_lean_measure_fixed_real_queries() {
         }
         for token_saving in [false, true] {
             let jojobot = indexed(hits.clone());
+            let sid = as_bot(&jojobot, "otto");
+            set_search_mode(&jojobot, &sid, if token_saving { "on" } else { "off" }).await;
             let body = answer_args(
                 &jojobot,
                 SearchArgs {
                     query: Some(query.into()),
-                    token_saving: Some(token_saving),
+                    sid: Some(sid.clone()),
                     ..search_args()
                 },
             )
@@ -561,6 +573,7 @@ async fn search_lean_part4_leaves_unrelated_held_news_for_the_next_answer() {
     let retired = jojobot
         .mark_processed(Parameters(MarkProcessedArgs {
             message_id: id.clone(),
+            message_ids: None,
             notes: None,
             sid: Some(other),
             request_id: None,
@@ -655,16 +668,18 @@ async fn search_lean_part4_keeps_news_about_a_hits_parent_and_subject() {
             .await
             .unwrap();
     }
+    set_search_mode(&jojobot, &sid, "on").await;
     let lean = answer_args(
         &jojobot,
         serde_json::from_value(serde_json::json!({
-            "query": "damper", "sid": sid, "token_saving": true
+            "query": "damper", "sid": sid
         }))
         .unwrap(),
     )
     .await;
     assert_eq!(lean.as_object().unwrap().len(), 1, "{lean}");
     assert_eq!(lean["results"].as_array().unwrap().len(), 1, "{lean}");
+    set_search_mode(&jojobot, &sid, "off").await;
     let body = answer(&jojobot, "damper", Some(sid)).await;
     for address in addresses {
         assert!(
@@ -743,6 +758,7 @@ async fn search_lean_part5_results_only_keeps_notes_unspent_and_counts_actual_te
     let sid = writing_as(&jojobot);
     crate::session::testing::journal_entry(&jojobot, &sid, "begin the lookup").await;
     let card = jojobot.caller(Some(&sid)).unwrap().unwrap().card.unwrap();
+    set_search_mode(&jojobot, &sid, "on").await;
     let before = jojobot
         .sessions
         .read_session(&card)
@@ -752,7 +768,7 @@ async fn search_lean_part5_results_only_keeps_notes_unspent_and_counts_actual_te
     let lean = answer_args(
         &jojobot,
         serde_json::from_value(serde_json::json!({
-            "query": "damper", "sid": sid, "token_saving": true
+            "query": "damper", "sid": sid
         }))
         .unwrap(),
     )
@@ -766,6 +782,7 @@ async fn search_lean_part5_results_only_keeps_notes_unspent_and_counts_actual_te
         .unwrap()
         .served_chars;
     assert_eq!(after - before, lean.to_string().chars().count() as u64);
+    set_search_mode(&jojobot, &sid, "off").await;
     let normal = answer(&jojobot, "damper", Some(sid.clone())).await;
     assert_eq!(normal["results"], lean["results"]);
     assert!(normal["mail"]["note"].is_string(), "{normal}");
@@ -784,7 +801,7 @@ async fn search_lean_part5_results_only_keeps_notes_unspent_and_counts_actual_te
     let explicit_false = answer_args(
         &jojobot,
         serde_json::from_value(serde_json::json!({
-            "query": "damper", "sid": sid, "token_saving": false
+            "query": "damper", "sid": sid
         }))
         .unwrap(),
     )
@@ -797,17 +814,17 @@ async fn search_lean_part5_results_only_keeps_notes_unspent_and_counts_actual_te
     let anonymous = answer_args(
         &jojobot,
         serde_json::from_value(serde_json::json!({
-            "query": "nonexistent", "token_saving": true
+            "query": "nonexistent"
         }))
         .unwrap(),
     )
     .await;
-    assert_eq!(anonymous, serde_json::json!({"results": []}));
+    assert_eq!(anonymous["results"], serde_json::json!([]));
+    assert!(anonymous["matching"].is_object(), "{anonymous}");
     let refused = answer_args(
         &jojobot,
         serde_json::from_value(serde_json::json!({
-            "query": "damper", "answers_type": "contract-no-such-type",
-            "token_saving": true
+            "query": "damper", "answers_type": "contract-no-such-type"
         }))
         .unwrap(),
     )
@@ -820,15 +837,17 @@ async fn search_lean_part5_results_only_keeps_notes_unspent_and_counts_actual_te
 async fn search_lean_part5_an_empty_type_does_not_spend_unshown_teaching() {
     let jojobot = handler_shipped();
     let sid = writing_as(&jojobot);
+    set_search_mode(&jojobot, &sid, "on").await;
     let lean = answer_args(
         &jojobot,
         serde_json::from_value(serde_json::json!({
-            "answers_type": "trip", "sid": sid, "token_saving": true
+            "answers_type": "trip", "sid": sid
         }))
         .unwrap(),
     )
     .await;
     assert_eq!(lean, serde_json::json!({"results": []}));
+    set_search_mode(&jojobot, &sid, "off").await;
     let normal = answer_args(
         &jojobot,
         SearchArgs {
@@ -856,15 +875,17 @@ async fn search_lean_part5_waiting_mail_stays_out_until_an_ordinary_answer() {
     let sid = owning(&jojobot, "otto").await;
     owning(&jojobot, "gamma").await;
     send(&jojobot, "otto", "gamma", "the errand is ready").await;
+    set_search_mode(&jojobot, &sid, "on").await;
     let lean = answer_args(
         &jojobot,
         serde_json::from_value(serde_json::json!({
-            "query": "damper", "sid": sid, "token_saving": true
+            "query": "damper", "sid": sid
         }))
         .unwrap(),
     )
     .await;
     assert_eq!(lean, serde_json::json!({"results": []}));
+    set_search_mode(&jojobot, &sid, "off").await;
     let normal = answer(&jojobot, "damper", Some(sid)).await;
     assert_eq!(normal["status_bar"]["mail_waiting"], 1, "{normal}");
     assert!(normal["mail"]["note"].is_string(), "{normal}");

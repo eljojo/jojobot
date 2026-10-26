@@ -90,3 +90,41 @@ impl Jojobot {
         }
     }
 }
+
+/// **Every note these two functions can put in an answer**, each labelled with
+/// the state that produces it — the input to the surface's checks on the words
+/// an agent is handed.
+///
+/// Both axes are walked rather than listed (see [`walk`]), so a coverage state
+/// or a query-driven exclusion added later fails to compile here instead of
+/// quietly going unread.
+#[cfg(test)]
+pub(crate) fn coverage_notes() -> Vec<(String, String)> {
+    let mut found = vec![(
+        "search's unreadable token-saving setting".into(),
+        crate::settings::SETTING_UNREADABLE.to_string(),
+    )];
+    // The query answers ahead of coverage, so these notes are the same whatever
+    // the index holds. One pass, not one per coverage state.
+    for left_out in walk(MailExcluded::NotAsked, MailExcluded::next) {
+        found.push((
+            format!("search's mail coverage note ({left_out:?})"),
+            mail_coverage(&left_out.query(), Coverage::Loaded).to_string(),
+        ));
+    }
+    for coverage in walk(Coverage::Unread, next_coverage) {
+        found.push((
+            format!("search's memory coverage note ({coverage:?})"),
+            memory_coverage(coverage).to_string(),
+        ));
+        found.push((
+            format!("search's mail coverage note ({coverage:?})"),
+            mail_coverage(&asking_for_mail(), coverage).to_string(),
+        ));
+        found.push((
+            format!("search's sessions coverage note ({coverage:?})"),
+            session_coverage(coverage).to_string(),
+        ));
+    }
+    found
+}

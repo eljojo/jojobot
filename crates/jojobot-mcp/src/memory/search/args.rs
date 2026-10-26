@@ -131,11 +131,6 @@ pub struct SearchArgs {
     /// Include relationships and references on results. Omitted by default.
     #[serde(default)]
     pub(crate) include_links: Option<bool>,
-    /// Return only `results`, omitting notes, counts, coverage and change notices.
-    /// Off by default. Omitted teaching stays available to the next ordinary call.
-    /// Refusals still say what went wrong and how to proceed.
-    #[serde(default)]
-    pub(crate) token_saving: Option<bool>,
     /// **Whether matching also reaches a claim's earlier wordings.** Defaults
     /// to false: an ordinary search matches only the current wording of a
     /// claim, exactly as the corpus note says. Worth passing true when a

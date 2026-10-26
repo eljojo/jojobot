@@ -338,6 +338,7 @@ mod tests {
                             archived: None,
                         }),
                         facts: Vec::new(),
+                        field_links: Default::default(),
                         fields: [(
                             "crates".into(),
                             if at % 2 == 0 { "1" } else { "many" }.into(),

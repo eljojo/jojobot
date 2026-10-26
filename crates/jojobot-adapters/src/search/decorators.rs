@@ -357,6 +357,10 @@ impl IndexedMemory {
 
 #[async_trait]
 impl Memory for IndexedMemory {
+    fn image_field(&self, entity: &EntityId, key: &str) -> Option<Option<String>> {
+        self.inner.image_field(entity, key)
+    }
+
     async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
         let _gate = self.write_gate.lock().await;
         let began = self.summary_before_a_write().await;

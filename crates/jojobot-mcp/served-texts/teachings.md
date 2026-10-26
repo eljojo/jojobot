@@ -138,6 +138,12 @@ It is a partial record: answers_type finds it, and the answer names the keys it 
 fits_type keeps only a thing that holds every key in type_keys, optional ones too.
 ```
 
+### Search with an unreadable token-saving setting
+
+```text
+Served the normal mode because the token-saving setting could not be read.
+```
+
 ### Search caveat `matching` (a query of words)
 
 ```text

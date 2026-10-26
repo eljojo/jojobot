@@ -5130,6 +5130,8 @@ Read the `mail` and `memory` fields of the answer: searched: false means nothing
 AN ANSWER IS CUT AT THE CEILING, never mid-hit: not_shown says how many it left out and the offset that returns them.
 Notes name default exclusions (left_out), what an empty search looked through (searched), and a page past the last hit (past_the_end).
 With sid, each note is taught once per session; anonymous searches keep their notes.
+A bot with setting_token_saving=on gets only results; off is the default.
+If the setting cannot be read, the normal mode is served with a note.
 See each argument for details.
 ```
 
@@ -5288,13 +5290,6 @@ See each argument for details.
         "default": null,
         "type": [
           "string",
-          "null"
-        ]
-      },
-      "token_saving": {
-        "default": null,
-        "type": [
-          "boolean",
           "null"
         ]
       }
@@ -5551,14 +5546,6 @@ claim, the retracted ones too.
 
 ```text
 Facts about this entity, as `kind:slug`.
-```
-
-#### `search` — argument `/inputSchema.token_saving`
-
-```text
-Return only `results`, omitting notes, counts, coverage and change notices.
-Off by default. Omitted teaching stays available to the next ordinary call.
-Refusals still say what went wrong and how to proceed.
 ```
 
 ### Tool `set_charter`

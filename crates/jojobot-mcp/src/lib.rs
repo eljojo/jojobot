@@ -70,6 +70,7 @@ mod held;
 pub mod seed;
 mod seen;
 pub mod session;
+mod settings;
 pub mod sid;
 mod status_bar;
 pub use status_bar::owned_box;
