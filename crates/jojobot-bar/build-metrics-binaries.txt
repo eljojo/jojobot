@@ -91,6 +91,7 @@ test-killed_run
 test-kind_schema
 test-kind_set
 test-known_reds
+test-link_rule_default_boot
 test-link_rule_log_only_boot
 test-link_rule_on
 test-link_rule_on_repair_order
