@@ -366,14 +366,19 @@ fn answer(forge: &Forge, path: &str, lists: usize) -> (u16, String) {
         .and_then(|r| r.strip_suffix("/logs"))
     {
         let job: u64 = job.parse().unwrap_or(0);
+        // The forge keeps no log for a job that never ran: a skipped job's log is a 404.
         if job >= 9000 {
             return match forge.more_jobs.get((job - 9000) as usize) {
+                Some((_, _, status, _)) if *status == "skipped" => {
+                    (404, "404 page not found".into())
+                }
                 Some((_, _, _, log)) => (200, log.clone()),
                 None => (404, "404 page not found".into()),
             };
         }
         let id = job.saturating_sub(1000);
         return match forge.runs.iter().find(|(run, _)| run["id"] == id) {
+            Some((run, _)) if run["status"] == "skipped" => (404, "404 page not found".into()),
             Some((_, log)) => (200, log.clone()),
             None => (404, "404 page not found".into()),
         };
@@ -654,11 +659,40 @@ fn a_run_that_did_not_finish_says_its_log_holds_no_block() {
         });
         let (code, out, err) = wait(&forge, &["dev4-2413-work"]);
         assert_eq!(code, 2, "{status}: {out}\n{err}");
-        assert!(
-            out.contains("no verdict block"),
-            "{status}: a verdict with no closing line is no block: {out}"
-        );
+        if status == "cancelled" {
+            assert!(
+                out.contains("no verdict block"),
+                "{status}: a verdict with no closing line is no block: {out}"
+            );
+        }
     }
+}
+
+/// **A skipped job has no log, and the exit code is still the run's verdict.** A
+/// dispatch that names one job leaves the other skipped, and the forge answers 404
+/// to the log of a job that never ran. The skipped job is named with its status
+/// and no log is asked for.
+#[test]
+fn a_skipped_job_beside_a_green_one_is_named_and_the_run_exits_zero() {
+    let forge = stand(Forge {
+        runs: vec![(
+            run(251, "dev9-2647-work", GREEN_SHA, "success"),
+            fixture("wait-run-green-job.txt"),
+        )],
+        branches: vec![("dev9-2647-work", GREEN_SHA)],
+        more_jobs: vec![(251, "rooms", "skipped", String::new())],
+        ..Default::default()
+    });
+    let (code, out, err) = wait(&forge, &["dev9-2647-work"]);
+    assert_eq!(code, 0, "{out}\n{err}");
+    assert!(out.contains("job rooms  skipped"), "{out}");
+    assert!(out.contains("verdict: GREEN"), "{out}");
+    assert!(!err.contains("Traceback"), "{err}");
+    assert_eq!(
+        forge.asked_for("/actions/jobs/9000/logs"),
+        0,
+        "a skipped job's log was asked for"
+    );
 }
 
 /// **Every job of the run prints, whatever its name.** A job called `build`

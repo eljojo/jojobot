@@ -213,6 +213,10 @@ def report(run):
     red = died = False
     for job in jobs:
         print(f"job {job['name']}  {job['status']}")
+        # **A skipped job never ran, so the forge keeps no log for it** and answers 404.
+        if job["status"] == "skipped":
+            print()
+            continue
         kind, found = classify(fetch(f"/actions/jobs/{job['id']}/logs"))
         if kind == "block":
             print("\n".join(found))
