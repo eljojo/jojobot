@@ -96,7 +96,7 @@ pub struct OrderArgs {
 /// Leave both `shape` and `relation` unset and a walk also reaches a
 /// mention (an entity named in a claim's own words), a ref (an entity a
 /// claim touches with no claim about how) and a field link (an entity whose
-/// handle a record holds as a whole field value, or as every item of a comma
+/// handle a record holds as a whole field value, or as an item of a comma
 /// list, under any key) — each
 /// labelled mention, ref or field, never as an edge. Naming a shape or a
 /// relation narrows to that alone: none has one.
@@ -776,7 +776,7 @@ pub struct RecallArgs {
     /// With `shape` and `relation` both unset a walk also reaches a MENTION (an
     /// entity named in a claim's own words), a REF (an entity a claim touches with
     /// no claim about how) and a FIELD LINK (an entity whose handle a record holds
-    /// as a whole field value, or as every item of a comma list, under any key),
+    /// as a whole field value, or as an item of a comma list, under any key),
     /// each labelled mention, ref or field rather than as an edge; naming a shape
     /// or a relation answers only that. For one kind of thing, SELECT it (`kind`
     /// plus a `fields` filter on the key) rather than walking: traversal reaches,

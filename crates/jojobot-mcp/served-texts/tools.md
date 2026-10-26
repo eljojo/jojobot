@@ -525,7 +525,7 @@ PROVENANCE: testimony (the operator said it), observation (you READ it in a syst
 STANDING (settled or open) is how sure anyone is, apart from provenance, which it follows unless you set it.
 A NEW THING THAT HAPPENED IS A NEW CLAIM: capture it again, never update_fact.
 Every entity the call names — the subject, an edge's object, refs — must ALREADY EXIST, or nothing is written and the answer is status: blocked with candidates: add_entity first, then capture.
-`fields` is a flat bag that stays on the claim (a handle, or a comma list of handles, is a link and must exist; six keys describe their own claim); `sets` sets keys on the thing itself in the same call, the only bag that reaches it.
+`fields` is a flat bag that stays on the claim (a handle, or a handle among the items of a comma list, is a link and must exist, and the other items stay text; six keys describe their own claim); `sets` sets keys on the thing itself in the same call, the only bag that reaches it.
 A connection claim with your OWN bot handle as subject is a `thought`, capped in length (`thought_body_cap`, else 200 with `thought_capacity`) and in count (`thought_capacity`).
 In a full room a new thought needs `drop` with `drop_because`, or `borrow` once to land one over; a room over capacity takes none until you archive back under it.
 Another bot's such claim is ordinary and takes no seat.
@@ -1152,9 +1152,10 @@ worth recording about this claim beyond the sentence.
 
 Flat and free-form on purpose: jojobot stores what you put here, acts
 only on the keys the build names, and keeps a key it has never seen
-exactly as you wrote it. **A value that is a handle, or a comma list of
-handles, is a link and must name something that exists**; a handle
-inside a sentence is prose. **Nothing has to be declared first**, and no
+exactly as you wrote it. **A value that is a handle, or an item of a
+comma list that is a handle, is a link and must name something that
+exists**; the loose items beside it stay text, and a handle inside a
+longer sentence is prose. **Nothing has to be declared first**, and no
 name for the class of thing is asked for: the fields ARE what the record
 says, and a type is something the keys answer rather than something you
 announce.
@@ -3739,7 +3740,7 @@ The `follow` argument of a `recall` — which edges to walk, and how far.
 Leave both `shape` and `relation` unset and a walk also reaches a
 mention (an entity named in a claim's own words), a ref (an entity a
 claim touches with no claim about how) and a field link (an entity whose
-handle a record holds as a whole field value, or as every item of a comma
+handle a record holds as a whole field value, or as an item of a comma
 list, under any key) — each
 labelled mention, ref or field, never as an edge. Naming a shape or a
 relation narrows to that alone: none has one.
@@ -4183,7 +4184,7 @@ an empty `connected` with no such note is an object with nothing beyond it.
 With `shape` and `relation` both unset a walk also reaches a MENTION (an
 entity named in a claim's own words), a REF (an entity a claim touches with
 no claim about how) and a FIELD LINK (an entity whose handle a record holds
-as a whole field value, or as every item of a comma list, under any key),
+as a whole field value, or as an item of a comma list, under any key),
 each labelled mention, ref or field rather than as an edge; naming a shape
 or a relation answers only that. For one kind of thing, SELECT it (`kind`
 plus a `fields` filter on the key) rather than walking: traversal reaches,

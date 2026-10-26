@@ -1,9 +1,10 @@
-//! **The link decision of rule 646, ahead of its switch.** Whether a field value
+//! **The link decision of rule 646, in force by default.** Whether a field value
 //! links is decided from the value alone, at the write, and stored as the mark
 //! on the permanent id; no declaration decides it. These are the functions the
-//! switch ([`super::link_rule`]) selects when it is [`super::LinkRule::On`]; the
-//! same-named functions one level up answer today's rule until then, and the
-//! log-only summary asks these what the rule would do.
+//! switch ([`super::link_rule`]) selects when it is [`super::LinkRule::On`], the
+//! default. The same-named functions one level up answer the earlier rule that
+//! `log-only`, the rollback, keeps, and the log-only summary asks these what the
+//! rule would do.
 
 use super::*;
 

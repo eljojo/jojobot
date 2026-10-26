@@ -210,9 +210,10 @@ pub struct CaptureArgs {
     ///
     /// Flat and free-form on purpose: jojobot stores what you put here, acts
     /// only on the keys the build names, and keeps a key it has never seen
-    /// exactly as you wrote it. **A value that is a handle, or a comma list of
-    /// handles, is a link and must name something that exists**; a handle
-    /// inside a sentence is prose. **Nothing has to be declared first**, and no
+    /// exactly as you wrote it. **A value that is a handle, or an item of a
+    /// comma list that is a handle, is a link and must name something that
+    /// exists**; the loose items beside it stay text, and a handle inside a
+    /// longer sentence is prose. **Nothing has to be declared first**, and no
     /// name for the class of thing is asked for: the fields ARE what the record
     /// says, and a type is something the keys answer rather than something you
     /// announce.
@@ -789,8 +790,8 @@ impl Jojobot {
                        edge's object, refs — must ALREADY EXIST, or nothing is written and \
                        the answer is status: blocked with candidates: add_entity first, then \
                        capture. `fields` is a flat bag that stays \
-                       on the claim (a handle, or a comma list of handles, is a link and must \
-                       exist; six keys describe their own claim); \
+                       on the claim (a handle, or a handle among the items of a comma list, is a link and must \
+                       exist, and the other items stay text; six keys describe their own claim); \
                        `sets` sets keys on the thing itself in the same call, the only bag \
                        that reaches it. A connection claim with your OWN bot handle as \
                        subject is a `thought`, capped in length (`thought_body_cap`, else 200 \
