@@ -6,7 +6,7 @@ narrows: true
 
 ## What you can now do
 
-Search leads with the passage matching your words, including words in details. Relevance comes before recency, and the default page holds up to five hits with a count of the rest. A fact names its parent once; a separate subject appears only when it differs. Ask for `details: true` for whole details and `include_links: true` for relationships and references. With a session, notes are taught once; unrelated change notices wait for another answer.
+Search leads with the passage matching your words, including words in details. Relevance comes before recency: a clock you name (`recorded_on` or `happened_at`) ranks ahead of word-match strength, and without one the stronger match wins and the day only breaks ties. The default page holds up to five hits with a count of the rest. A fact names its parent once; a separate subject appears only when it differs. Ask for `details: true` for whole details and `include_links: true` for relationships and references. With a session, notes are taught once; unrelated change notices wait for another answer.
 
 ## Example
 
