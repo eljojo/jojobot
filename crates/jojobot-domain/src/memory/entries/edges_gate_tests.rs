@@ -11,6 +11,11 @@ use crate::memory::{
 
 /// A testimony section of a document, written by session `a`.
 async fn a_testimony_section() -> (InMemoryMemory, crate::memory::Fact) {
+    a_testimony_section_with(";;\\n\\n;").await
+}
+
+/// A testimony section whose edges are `edges`, written by session `a`.
+async fn a_testimony_section_with(edges: &str) -> (InMemoryMemory, crate::memory::Fact) {
     let store = InMemoryMemory::booted();
     let document = EntityId("document:homer".into());
     store
@@ -25,7 +30,7 @@ async fn a_testimony_section() -> (InMemoryMemory, crate::memory::Fact) {
         .capture(NewFact {
             provenance: Provenance::Testimony,
             session: Some("a".into()),
-            fields: [("edges".to_string(), ";;\\n\\n;".to_string())].into(),
+            fields: [("edges".to_string(), edges.to_string())].into(),
             ..NewFact::about(document, "## Opening", jiff::civil::date(2026, 10, 21))
         })
         .await
@@ -106,4 +111,37 @@ async fn another_sessions_blank_lead_on_a_testimony_section_is_a_seam_and_passes
             "{rewrite}: a lead with a character and a changed tail are rewrites"
         );
     }
+}
+
+/// **A held lead that holds a character is not a seam to set.** The section
+/// already has a letter in its lead, and another session's patch that replaces the
+/// lead with line feeds takes that letter away: a rewrite, though the sent lead is
+/// blank. The pair is the same patch on a section whose held lead is blank, which
+/// passes.
+#[tokio::test]
+async fn another_sessions_patch_over_a_lead_that_holds_a_character_is_a_rewrite() {
+    let patched = |held: &'static str| async move {
+        let (_store, section) = a_testimony_section_with(held).await;
+        settle_rewrite(
+            &section.address(),
+            &section,
+            FactPatch {
+                fields: [("edges".to_string(), "\\n\\n;;\\n\\n;".to_string())].into(),
+                session: Some("b".into()),
+                ..FactPatch::default()
+            },
+            Some("a"),
+            &[],
+        )
+    };
+    patched(";;\\n\\n;")
+        .await
+        .expect("a held lead of nothing is the seam");
+    assert!(
+        matches!(
+            patched("\\u{49};;\\n\\n;").await,
+            Err(MemoryError::TestimonyRewritten { .. })
+        ),
+        "a held lead with a letter in it is rewritten by a blank one"
+    );
 }

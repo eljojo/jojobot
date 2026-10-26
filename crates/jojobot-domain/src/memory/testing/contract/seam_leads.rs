@@ -53,6 +53,15 @@ pub async fn another_sessions_blank_lead_on_a_testimony_section_lands_and_nothin
             "{rewrite}: a lead with a character and a changed tail are rewrites: {refused:?}"
         );
     }
+    assert_eq!(
+        store
+            .claim_history(&section.address())
+            .await
+            .expect("the history reads")
+            .len(),
+        1,
+        "the refused patches wrote nothing"
+    );
     store
         .update_fact(
             &section.address(),
