@@ -146,6 +146,10 @@ in
         needs one; it is a credential, so it belongs in this file and nowhere else.
         Setting only one of the URL and the topic is refused at start, and setting
         neither pushes nothing.
+
+        The link rule is on unless this file says otherwise: set
+        JOJOBOT_LINK_RULE=log-only to roll it back, so a field value's links are
+        computed and logged and nothing is marked. Any other word refuses to start.
       '';
     };
 

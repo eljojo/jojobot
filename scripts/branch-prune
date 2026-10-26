@@ -179,6 +179,9 @@ def delete(name, sha, last):
     # **The feed was read before the loop began.** A branch deleted and made again
     # at the same head since then passes the lease, so any event on this name
     # newer than that read refuses the delete.
+    # The hold is best-effort for a branch made again at a commit already on main:
+    # the feed can trail the forge, so a recreation it has not shown yet is not
+    # held. No commit is lost by it, because the lease below refuses a head that moved.
     if any(event[2] == name for event in feed(newer_than=last)):
         raise Refused(f"activity on {name} since judged")
     pushed = git(
