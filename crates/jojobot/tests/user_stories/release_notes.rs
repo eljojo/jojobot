@@ -28,6 +28,7 @@ const SHIPPED_NOTES: &[&str] = &[
     "recall-narrows-records-and-pages",
     "release-notes",
     "rhythm-on-the-calendar",
+    "search-matching-passages",
     "trip-is-a-kind",
 ];
 
@@ -444,6 +445,11 @@ async fn a_bot_told_deploy_nines_notes_is_sent_the_point_release_notes_alone() {
     owed.sort();
     assert!(!owed.is_empty(), "the point release ships notes: {owed:?}");
     assert_eq!(sent, owed, "the message lists the notes owed: {delivered}");
+    assert_eq!(
+        told_ids(&later.as_bot("bot:delta").await, "bot:delta").await,
+        shipped_note_ids(),
+        "and the bot is told every note again, so the next start sends nothing"
+    );
     later.finish().await;
 }
 
@@ -914,10 +920,16 @@ async fn a_bot_that_uses_none_of_the_features_reads_the_problem_each_note_solves
         "each one says something: {reach:?}"
     );
 
-    // The note that cuts an existing call leads.
-    assert_eq!(
-        ids_named(body).first().map(String::as_str),
-        Some("list-read-pages-and-counts-ticks"),
-        "the note that cuts a call comes first: {body}"
+    // A note that cuts an existing call leads. Several do, so the case names them
+    // all and asks that the first note named is one of them.
+    const CUT_A_CALL: [&str; 3] = [
+        "list-read-pages-and-counts-ticks",
+        "recall-narrows-records-and-pages",
+        "search-matching-passages",
+    ];
+    let first = ids_named(body).into_iter().next().expect("a first note");
+    assert!(
+        CUT_A_CALL.contains(&first.as_str()),
+        "a note that cuts a call comes first: {body}"
     );
 }
