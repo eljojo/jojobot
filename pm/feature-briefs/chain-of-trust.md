@@ -36,7 +36,7 @@
 
 **The booting session receives a reference to the challenge, never the code.** The operator types the code into that session's chat, and the session presents it on boot. jojobot holds only the code's hash, and the hash is spent on first use. The message is a delivery copy: a processed message is never a credential.
 
-**One challenge stands per bot at a time.** A new request voids the old one, so a misfiring session cannot flood the operator's phone with codes. A challenge is not a voucher: it is void once redeemed, once replaced, or 10 minutes after it was issued.
+**One challenge stands per bot at a time.** While one waits, a new request is refused and told when the waiting code ends, so a misfiring session cannot flood the operator's phone with codes. A challenge is not a voucher: it is void once redeemed, after three wrong codes, or 10 minutes after it was issued.
 
 **A root lasts one session.** The assistant's next session needs a fresh code, and reopening a wrapped session restores no elevation. That is why a root never passes through escrow.
 
