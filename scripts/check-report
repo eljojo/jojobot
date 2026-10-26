@@ -5,7 +5,8 @@
 
 The report comes on stdin. Its top carries COMMIT:, BRANCH:, BASE:, RUN:, OWNER:,
 RETIRES:, FALSIFY: and SELF-REVIEW: lines, one value each; the header ends at the
-first line that is neither blank nor one of those keys. The tool prints one line
+first line that is neither blank nor one of those keys, so the header is the top
+of the report and any preamble goes below it. The tool prints one line
 per key, `pass` or `FAIL` and the reason, and exits 0 only when all pass.
 
   OWNER, FALSIFY and SELF-REVIEW pass when they hold a value. RETIRES passes when
@@ -147,7 +148,7 @@ def main():
     for key in NAMED:
         if key in header:
             results[key] = (True, "named")
-    if re.fullmatch(r"none\W*", header.get("RETIRES", "")):
+    if re.fullmatch(r"(?i)none\W*", header.get("RETIRES", "")):
         results["RETIRES"] = (False, "none needs its reason")
     if re.search(r"^net lines by area since \S+", text, re.M) and re.search(r"total; source plus tests", text):
         header["NET"] = "table"

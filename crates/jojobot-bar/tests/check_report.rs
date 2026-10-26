@@ -1,12 +1,14 @@
 //! **`scripts/check-report` checks the facts in a line report's header before
 //! anyone reads the prose.**
 //!
-//! The report arrives on stdin. Its top carries `COMMIT:`, `BRANCH:`, `BASE:`
-//! and `RUN:` lines. The tool prints one line per key, `pass` or `FAIL`, and
-//! exits 0 only when all four pass. COMMIT has to be the head the forge holds
-//! for BRANCH. BASE has to be an ancestor of COMMIT in the checkout the tool
-//! runs in (it fetches nothing). RUN has to be a run of COMMIT on BRANCH that
-//! succeeded, found with the lookup `scripts/wait-run` uses. A missing key is a
+//! The report arrives on stdin. Its top carries `COMMIT:`, `BRANCH:`, `BASE:`,
+//! `RUN:`, `OWNER:`, `RETIRES:`, `FALSIFY:` and `SELF-REVIEW:` lines, and the text
+//! below holds the bar's net table. The tool prints one line per key, `pass` or
+//! `FAIL`, and exits 0 only when all nine pass. COMMIT has to be the head the
+//! forge holds for BRANCH. BASE has to be an ancestor of COMMIT in the checkout
+//! the tool runs in (it fetches nothing). RUN has to be a run of COMMIT on BRANCH
+//! that succeeded, found with the lookup `scripts/wait-run` uses. The other four
+//! have to be named, and a RETIRES of none needs its reason. A missing key is a
 //! failure that names it.
 //!
 //! Every case runs the tool against a stand-in forge on a local port and a
@@ -392,11 +394,51 @@ fn a_missing_net_table_and_a_bare_none_fail_like_a_missing_key() {
     let (code, out, _) = check(&repo, &api, &text);
     assert_eq!(code, 1, "{out}");
     assert!(failures(&out).iter().any(|l| l.contains("NET")), "{out}");
-    let bare = report(&with(&head, "RETIRES", "none"));
-    let (code, out, _) = check(&repo, &api, &bare);
+    for none in ["none", "None", "NONE."] {
+        let bare = report(&with(&head, "RETIRES", none));
+        let (code, out, _) = check(&repo, &api, &bare);
+        assert_eq!(code, 1, "{none}: {out}");
+        assert!(
+            failures(&out).iter().any(|l| l.contains("RETIRES")),
+            "{none}: {out}"
+        );
+    }
+}
+
+/// **Each half of the net table is needed.** A report with the heading only, and
+/// one with the total line only, each fail NET.
+#[test]
+fn the_net_table_needs_its_heading_and_its_total_like_a_missing_key() {
+    let repo = repository();
+    let api = stand(green(&repo));
+    let head = header(&repo);
+    let (heading, total) = NET_TABLE.split_at(NET_TABLE.find("-4").unwrap());
+    for (kept, dropped) in [(heading, total), (total, heading)] {
+        let text = report(&with(&head, "RUN", "700")).replace(NET_TABLE, kept);
+        assert_ne!(text, report(&with(&head, "RUN", "700")), "{dropped}");
+        let (code, out, _) = check(&repo, &api, &text);
+        assert_eq!(code, 1, "{out}");
+        assert!(failures(&out).iter().any(|l| l.contains("NET")), "{out}");
+    }
+}
+
+/// **A preamble above the header hides it**: the header is the top of the report,
+/// so the keys below a paragraph are missing.
+#[test]
+fn a_preamble_above_the_header_leaves_the_keys_missing_like_a_missing_key() {
+    let repo = repository();
+    let api = stand(green(&repo));
+    let head = header(&repo);
+    let text = format!(
+        "A line of preamble.\n{}",
+        report(&with(&head, "RUN", "700"))
+    );
+    let (code, out, _) = check(&repo, &api, &text);
     assert_eq!(code, 1, "{out}");
     assert!(
-        failures(&out).iter().any(|l| l.contains("RETIRES")),
+        failures(&out)
+            .iter()
+            .any(|l| l.contains("COMMIT") && l.contains("missing")),
         "{out}"
     );
 }
