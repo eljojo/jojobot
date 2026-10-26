@@ -20,6 +20,7 @@ use super::*;
 use crate::harness::*;
 use crate::memory::testing::*;
 use jojobot_domain::attention;
+use jojobot_domain::memory::capacity::ENGINE_RECORD;
 use jojobot_domain::memory::types::ValueType;
 use rmcp::handler::server::wrapper::Parameters;
 use std::collections::BTreeSet;
@@ -164,8 +165,8 @@ async fn every_key_a_carrier_computes_reaches_its_thing() {
 }
 
 /// **A check-in's schedule reaches the rhythm.** The rhythm is made whole with
-/// its settings, then checked in; every key the check-in's record holds that the
-/// caller did not send is the schedule jojobot worked out.
+/// its settings, then checked in. Its linked derived record carries the computed
+/// schedule; its own engine label describes that record rather than the rhythm.
 #[tokio::test]
 async fn every_key_a_check_in_computes_reaches_the_rhythm() {
     let jojobot = handler();
@@ -192,7 +193,6 @@ async fn every_key_a_check_in_computes_reaches_the_rhythm() {
         },
     )
     .await;
-    let sent: BTreeSet<String> = BTreeSet::new();
     let checked = capture_ok(
         &jojobot,
         CaptureArgs {
@@ -202,13 +202,33 @@ async fn every_key_a_check_in_computes_reaches_the_rhythm() {
         },
     )
     .await;
+    let read = json_of(
+        &jojobot
+            .recall(Parameters(recall_args("rhythm:descale")))
+            .await
+            .expect("recall ok"),
+    );
+    let schedules: Vec<_> = read["objects"][0]["facts"]
+        .as_array()
+        .expect("the claims are listed")
+        .iter()
+        .filter(|fact| fact["derived_from"] == checked["address"])
+        .collect();
+    assert_eq!(
+        schedules.len(),
+        1,
+        "one schedule derives from the check-in: {read}"
+    );
     let (record, thing) = record_and_thing(
         &jojobot,
         "rhythm:descale",
-        checked["address"].as_str().unwrap(),
+        schedules[0]["address"].as_str().unwrap(),
     )
     .await;
-    let computed: BTreeSet<&String> = record.iter().filter(|key| !sent.contains(*key)).collect();
+    let computed: BTreeSet<&String> = record
+        .iter()
+        .filter(|key| key.as_str() != ENGINE_RECORD)
+        .collect();
     assert!(!computed.is_empty(), "the check-in computed nothing");
     for key in computed {
         assert!(

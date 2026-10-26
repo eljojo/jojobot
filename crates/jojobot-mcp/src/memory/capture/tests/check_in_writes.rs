@@ -282,7 +282,8 @@ async fn a_schedule_write_outage_still_wears_retry_after_the_source_lands() {
 
 #[tokio::test]
 async fn a_schedule_write_with_stored_damage_wears_person_after_the_source_lands() {
-    a_schedule_write_keeps_its_cause(Cause::Damage("the schedule row is damaged"), "person").await;
+    a_schedule_write_keeps_its_cause(Cause::Damage("the schedule claim is damaged"), "person")
+        .await;
 }
 
 #[tokio::test]
