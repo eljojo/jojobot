@@ -1,0 +1,33 @@
+#!/bin/sh
+# Run a command, and cancel the run when a sibling job of the same run has failed.
+#
+#   TOKEN=<the job's token> scripts/stop-with-siblings <command...>
+#
+# The jobs of a run are independent, so a job that failed at minute two leaves its
+# siblings running for a verdict nobody needs. A job that wraps its long step in
+# this script asks the run for its jobs every STOP_POLL_SECONDS (15) and, on the
+# first one that failed, cancels the run. The failed job keeps its status: the
+# forge cancels only the jobs that are still going, and this one is the one that
+# is. A job that failed itself is stopped by the sibling that still runs, which
+# wraps its own step the same way.
+#
+# The read of a run's jobs needs no credential. The cancel needs the job's own
+# token, which the command itself does not receive. A run that is already over,
+# or a newer push that cancelled it, has no job in `failure`, so nothing is sent.
+# Without GITHUB_API_URL, GITHUB_REPOSITORY, GITHUB_RUN_ID and TOKEN the command
+# runs alone.
+run="${GITHUB_API_URL:-}/repos/${GITHUB_REPOSITORY:-}/actions/runs/${GITHUB_RUN_ID:-}"
+if [ -n "${TOKEN:-}" ] && [ -n "${GITHUB_API_URL:-}" ] && [ -n "${GITHUB_RUN_ID:-}" ]; then
+    (
+        while sleep "${STOP_POLL_SECONDS:-15}"; do
+            if curl -fsS "$run/jobs" 2>/dev/null | grep -q '"status":"failure"'; then
+                echo "stop-with-siblings: a sibling job failed; cancelling the run" >&2
+                curl -fsS -X POST -H "Authorization: token $TOKEN" "$run/cancel" >&2 || true
+                break
+            fi
+        done
+    ) &
+    watcher=$!
+    trap 'kill "$watcher" 2>/dev/null' EXIT
+fi
+env -u TOKEN "$@"

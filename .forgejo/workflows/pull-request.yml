@@ -138,9 +138,10 @@ jobs:
       - if: ${{ steps.plan.outputs.fast == 'true' }}
         run: nix develop -c make check
       - if: ${{ steps.plan.outputs.fast != 'true' }}
-        run: nix develop -c make check CI_ROOT=${{ env.CI_ROOT }}
+        run: scripts/stop-with-siblings nix develop -c make check CI_ROOT=${{ env.CI_ROOT }}
         env:
           BAR_BUNDLE: target/bundle/manifest.json
+          TOKEN: ${{ forgejo.token }}
           SIZE_BASE: ${{ forgejo.event.pull_request.base.sha || 'origin/deploy-9' }}
       # The bar's own log, kept a week. The job log carries only the summary,
       # so a red case's output is in here or nowhere. v3: v4 refuses any host
@@ -185,9 +186,10 @@ jobs:
       - if: ${{ steps.plan.outputs.fast != 'true' }}
         run: nix develop -c tar -xzf target/bundle-download/bundle.tar.gz
       - if: ${{ steps.plan.outputs.fast != 'true' }}
-        run: nix develop -c make rooms CI_ROOT=${{ env.CI_ROOT }}
+        run: scripts/stop-with-siblings nix develop -c make rooms CI_ROOT=${{ env.CI_ROOT }}
         env:
           BAR_BUNDLE: target/bundle/manifest.json
+          TOKEN: ${{ forgejo.token }}
       # The bar's own log, kept a week. The job log carries only the summary,
       # so a red case's output is in here or nowhere. v3: v4 refuses any host
       # but GitHub. A failed upload never changes the bar's verdict.
@@ -231,9 +233,10 @@ jobs:
       - if: ${{ steps.plan.outputs.fast != 'true' }}
         run: nix develop -c tar -xzf target/bundle-download/bundle.tar.gz
       - if: ${{ steps.plan.outputs.fast != 'true' }}
-        run: nix develop -c make year CI_ROOT=${{ env.CI_ROOT }}
+        run: scripts/stop-with-siblings nix develop -c make year CI_ROOT=${{ env.CI_ROOT }}
         env:
           BAR_BUNDLE: target/bundle/manifest.json
+          TOKEN: ${{ forgejo.token }}
       # The bar's own log, kept a week. The job log carries only the summary,
       # so a red case's output is in here or nowhere. v3: v4 refuses any host
       # but GitHub. A failed upload never changes the bar's verdict.

@@ -92,9 +92,12 @@ jobs:
       # A branch's first push, a dispatch and a rewritten branch name no commit
       # this checkout holds, and the bar then falls back to the merge base with
       # `main`.
-      - run: nix develop -c make report
+      # A red sibling cancels this job (scripts/stop-with-siblings); this job keeps
+      # its own status when it is the one that failed.
+      - run: scripts/stop-with-siblings nix develop -c make report
         env:
           BAR_PUSH_BASE: ${{ forgejo.event.before }}
+          TOKEN: ${{ forgejo.token }}
       # The bar's own log, kept a week. The job log carries only the summary,
       # so a red case's output is in here or nowhere. v3: v4 refuses any host
       # but GitHub. A failed upload never changes the bar's verdict.
@@ -143,7 +146,9 @@ jobs:
           mkdir -p target/bar
           nix develop -c cargo run -q --locked -p jojobot-bar -- plan rooms 2>target/bar/plan.log || { cat target/bar/plan.log >&2; exit 1; }
       - if: ${{ steps.plan.outputs.fast != 'true' }}
-        run: nix develop -c make rooms
+        run: scripts/stop-with-siblings nix develop -c make rooms
+        env:
+          TOKEN: ${{ forgejo.token }}
       # The bar's own log, kept a week. The job log carries only the summary,
       # so a red case's output is in here or nowhere. v3: v4 refuses any host
       # but GitHub. A failed upload never changes the bar's verdict.
