@@ -41,7 +41,7 @@ async fn throwing_a_birthday_party() {
     )
     .await;
 
-    // work:q-1320
+    // work:q-shortlist-and-choice
     s.has_no_verb("shortlist", &["capture", "search"]).await;
 
     // The day is not missing either, though the party has not got one here. A

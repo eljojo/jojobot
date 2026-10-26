@@ -69,7 +69,7 @@ async fn moving_abroad() {
     )
     .await;
 
-    // work:q-1320
+    // work:q-shortlist-and-choice
     s.has_no_verb("shortlist", &["capture", "search"]).await;
 
     // A place DOES sit inside another: `location` constrains what an edge
