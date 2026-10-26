@@ -16,6 +16,9 @@ const FORWARDED_FOLDED: &str = "thing:upgrade-fixture-husk";
 const FORWARDED_SURVIVOR: &str = "thing:upgrade-fixture-heir";
 const PASSES: [&str; 2] = ["bare line values", "old merge events"];
 
+/// The claims of the planted chain. An old build moved the folded thing's claims onto its survivor in the merge, so both sit on the middle thing and none on the old one.
+const LEDGERS: [&str; 2] = ["kept the first ledger", "kept the second ledger"];
+
 /// **The warnings a boot on the amended line store gives on purpose**: the repair
 /// leaves a name no bot wears and says so, the check that follows names it, and
 /// the planted bots were made without boxes.
@@ -124,6 +127,7 @@ async fn said(pool: &sqlx::MySqlPool, sql: &str, bind: &[&str]) {
 /// one on another, each given a bot through the verbs and then edited so the
 /// stored value and its link hold the bare name. One name is a bot's, one is not.
 async fn plant_bare_line_names(pool: &sqlx::MySqlPool) {
+    as_a_store_before_the_repairs(pool).await;
     let memory = opened(pool).await;
     memory
         .declare_type(
@@ -170,17 +174,19 @@ async fn plant_bare_line_names(pool: &sqlx::MySqlPool) {
 }
 
 /// **A merge made before merge events existed, with history behind it and a later
-/// merge over it.** The old thing folds into the middle one, which holds two
-/// claims, and the middle one folds into the last. The first merge's event rows
-/// are then removed, as a build that made no events left it.
-async fn plant_an_old_merge_under_a_later_one(pool: &sqlx::MySqlPool) {
+/// merge over it.** The old thing folds into the middle one, which holds the
+/// claims an old build moved onto it, and the middle one folds into the last. The first
+/// merge's event rows are then removed, as a build that made no events left it,
+/// unless `keep_event` leaves them in place.
+async fn plant_an_old_merge_under_a_later_one(pool: &sqlx::MySqlPool, keep_event: bool) {
+    as_a_store_before_the_repairs(pool).await;
     let memory = opened(pool).await;
     let old = added(&memory, FORWARDED_FOLDED, "An Old Husk").await;
     let middle = added(&memory, FORWARDED_SURVIVOR, "A Middle Heir").await;
     let last = added(&memory, FORWARDED_HOLDER, "A Last Holder").await;
-    for said_so in ["kept the first ledger", "kept the second ledger"] {
+    for (home, said_so) in [(&middle, LEDGERS[0]), (&middle, LEDGERS[1])] {
         memory
-            .capture(NewFact::about(middle.clone(), said_so, date(2026, 9, 1)))
+            .capture(NewFact::about(home.clone(), said_so, date(2026, 9, 1)))
             .await
             .expect("capture")
             .written()
@@ -200,8 +206,40 @@ async fn plant_an_old_merge_under_a_later_one(pool: &sqlx::MySqlPool) {
             .await
             .expect("the merge lands");
     }
-    let key = badge_of(pool, FORWARDED_FOLDED).await;
-    said(pool, "DELETE FROM merge_event WHERE folded = ?", &[&key]).await;
+    if !keep_event {
+        let key = badge_of(pool, FORWARDED_FOLDED).await;
+        said(pool, "DELETE FROM merge_event WHERE folded = ?", &[&key]).await;
+    }
+}
+
+/// **The merge events of the planted chain** as `(merge_no, folded, survivor)`, in
+/// the order the store holds them, with the keys read back as handles.
+async fn chain_events(pool: &sqlx::MySqlPool) -> Vec<(i64, String, String)> {
+    let keys = [FORWARDED_FOLDED, FORWARDED_SURVIVOR, FORWARDED_HOLDER];
+    let mut handles = std::collections::BTreeMap::new();
+    for handle in keys {
+        handles.insert(badge_of(pool, handle).await, handle.to_string());
+    }
+    let rows: Vec<(i64, String, String)> = sqlx::query_as(
+        "SELECT merge_no, folded, survivor FROM merge_event WHERE ordinal = 0 ORDER BY merge_no",
+    )
+    .fetch_all(pool)
+    .await
+    .expect("merge events");
+    rows.into_iter()
+        .filter(|(_, folded, _)| handles.contains_key(folded))
+        .map(|(no, folded, survivor)| {
+            let name = |key: &String| handles.get(key).cloned().unwrap_or_else(|| key.clone());
+            (no, name(&folded), name(&survivor))
+        })
+        .collect()
+}
+
+/// **The recorded store as a build before the repairs left it.** A build that has
+/// the repairs wrote their markers at its own boot, and a marker makes a boot skip
+/// its repair, so the planted damage would never be repaired.
+async fn as_a_store_before_the_repairs(pool: &sqlx::MySqlPool) {
+    said(pool, "DELETE FROM store_pass WHERE name IN (?, ?)", &PASSES).await;
 }
 
 async fn markers_of_the_repairs(pool: &sqlx::MySqlPool) -> Vec<String> {
@@ -365,22 +403,22 @@ async fn an_old_merge_under_a_later_one_gets_its_event_once_across_boots() {
         ..
     } = restore_a_fixture(&fixture_dir(), "repair-old-merge").await;
     let mut store = open_the_store(&state_dir, store_port).await;
-    plant_an_old_merge_under_a_later_one(store.pool()).await;
-    let events_before = tables(store.pool())
-        .await
-        .2
-        .iter()
-        .filter(|row| row.1 == 0)
-        .count();
+    plant_an_old_merge_under_a_later_one(store.pool(), false).await;
+    let planted = chain_events(store.pool()).await;
     store.stop().await;
+    assert_eq!(
+        planted
+            .iter()
+            .map(|(_, folded, survivor)| (folded.as_str(), survivor.as_str()))
+            .collect::<Vec<_>>(),
+        [(FORWARDED_SURVIVOR, FORWARDED_HOLDER)],
+        "only the later merge has its event: {planted:?}"
+    );
 
     // These merges predate link marking, so the link rule at on warns once about
-    // each raw `merged_from` value on the first boot. Later boots are strict.
-    let planted_r1 = [
-        "value=thing:upgrade-fixture-holder key 'merged_from' item 'thing:upgrade-fixture-heir':",
-        "value=thing:upgrade-fixture-heir key 'merged_from' item 'thing:upgrade-fixture-husk':",
-    ];
-    let first = boot_allowing(&state_dir, store_port, &git_ref, &planted_r1).await;
+    // each raw `merged_from` value on the first boot, at the counts RECORDED_R1
+    // gives. Later boots are strict.
+    let first = boot_current(&state_dir, store_port, &git_ref).await;
     let log = first.log.clone();
     let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", first.http_port))
         .await
@@ -392,7 +430,7 @@ async fn an_old_merge_under_a_later_one_gets_its_event_once_across_boots() {
         )
         .await;
     first.stop().await;
-    for ledger in ["kept the first ledger", "kept the second ledger"] {
+    for ledger in LEDGERS {
         assert!(
             read.contains(ledger),
             "the history is still served through both merges ({ledger}): {read}"
@@ -403,16 +441,6 @@ async fn an_old_merge_under_a_later_one_gets_its_event_once_across_boots() {
         1,
         "the first boot says it wrote the event"
     );
-    for identity in planted_r1 {
-        let told = log
-            .iter()
-            .filter(|line| line.contains("FIELD VALUE LEFT AS TEXT") && line.contains(identity))
-            .count();
-        assert_eq!(
-            told, 1,
-            "the first boot warns once about {identity}: {log:?}"
-        );
-    }
     assert!(
         !log.iter().any(|line| line.contains("STORAGE DAMAGE")),
         "the check finds nothing after the repair, no unmapped claim among it: {log:?}"
@@ -421,56 +449,64 @@ async fn an_old_merge_under_a_later_one_gets_its_event_once_across_boots() {
     let mut store = open_the_store(&state_dir, store_port).await;
     let after_first = tables(store.pool()).await;
     store.stop().await;
-    let events_after = after_first.2.iter().filter(|row| row.1 == 0).count();
-    assert_eq!(events_after, events_before + 1, "one event was written");
+    let mut store = open_the_store(&state_dir, store_port).await;
+    let repaired = chain_events(store.pool()).await;
+    store.stop().await;
+    assert_eq!(
+        repaired
+            .iter()
+            .map(|(_, folded, survivor)| (folded.as_str(), survivor.as_str()))
+            .collect::<Vec<_>>(),
+        [
+            (FORWARDED_SURVIVOR, FORWARDED_HOLDER),
+            (FORWARDED_FOLDED, FORWARDED_SURVIVOR)
+        ],
+        "the written event names the middle thing as survivor and follows the later merge: \
+         {repaired:?}"
+    );
+    assert!(
+        repaired[0].0 < repaired[1].0,
+        "the repaired event sorts after the later merge: {repaired:?}"
+    );
 
     later_boots_leave_the_tables_alone(&state_dir, store_port, &git_ref, &after_first, &[]).await;
     drop(scratch);
 }
 
-/// **A store with no old merge gets no event and no warning about one.** The same
-/// boot path as the case above, over the recorded store with nothing planted: the
-/// planted things do not exist, the boot logs no warning for their identities and
-/// writes no merge event for them.
+/// **The same chain with the first merge's event left in place gets no event
+/// written.** The control of the case above: the same planted things, merges and
+/// raw `merged_from` values, so the first boot gives the same warnings, and the
+/// events of the chain are the same after the boot as before it.
 #[tokio::test]
-async fn a_store_with_no_planted_merge_gets_no_event_for_one() {
+async fn an_old_merge_chain_with_its_event_in_place_gets_none_written() {
     let Restored {
         scratch,
         state_dir,
         store_port,
         git_ref,
         ..
-    } = restore_a_fixture(&fixture_dir(), "repair-no-merge").await;
+    } = restore_a_fixture(&fixture_dir(), "repair-chain-event-kept").await;
+    let mut store = open_the_store(&state_dir, store_port).await;
+    plant_an_old_merge_under_a_later_one(store.pool(), true).await;
+    let planted = chain_events(store.pool()).await;
+    store.stop().await;
+    assert_eq!(
+        planted
+            .iter()
+            .map(|(_, folded, survivor)| (folded.as_str(), survivor.as_str()))
+            .collect::<Vec<_>>(),
+        [
+            (FORWARDED_FOLDED, FORWARDED_SURVIVOR),
+            (FORWARDED_SURVIVOR, FORWARDED_HOLDER)
+        ],
+        "both merges have their events: {planted:?}"
+    );
 
     let first = boot_current(&state_dir, store_port, &git_ref).await;
-    let log = first.log.clone();
     first.stop().await;
-    assert!(
-        !log.iter()
-            .any(|line| line.contains("upgrade-fixture-husk")
-                || line.contains("upgrade-fixture-heir")),
-        "the boot names a merge nobody planted: {log:?}"
-    );
     let mut store = open_the_store(&state_dir, store_port).await;
-    let events: Vec<String> = sqlx::query_scalar("SELECT folded FROM merge_event WHERE folded = ?")
-        .bind(badge_of_or_id(store.pool(), FORWARDED_FOLDED).await)
-        .fetch_all(store.pool())
-        .await
-        .expect("merge events");
+    let after = chain_events(store.pool()).await;
     store.stop().await;
-    assert!(
-        events.is_empty(),
-        "an event exists for a thing never merged: {events:?}"
-    );
+    assert_eq!(after, planted, "the boot wrote or changed a chain event");
     drop(scratch);
-}
-
-/// The key of `handle` when the store holds the thing, else the handle itself.
-async fn badge_of_or_id(pool: &sqlx::MySqlPool, handle: &str) -> String {
-    sqlx::query_scalar("SELECT COALESCE(badge, id) FROM entity WHERE id = ?")
-        .bind(handle)
-        .fetch_optional(pool)
-        .await
-        .expect("the key reads")
-        .unwrap_or_else(|| handle.to_string())
 }

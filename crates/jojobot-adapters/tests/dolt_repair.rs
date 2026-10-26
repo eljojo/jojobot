@@ -347,9 +347,12 @@ async fn an_old_merge_under_a_later_one_gets_its_event_and_the_history_is_still_
     let old = thing(&memory, "person:skinner", "Skinner").await;
     let middle = thing(&memory, "person:krusty", "Krusty").await;
     let last = thing(&memory, "person:homer", "Homer").await;
-    for said in ["kept the first ledger", "kept the second ledger"] {
+    for (home, said) in [
+        (&middle, "kept the first ledger"),
+        (&middle, "kept the second ledger"),
+    ] {
         memory
-            .capture(NewFact::about(middle.clone(), said, date(2026, 9, 1)))
+            .capture(NewFact::about(home.clone(), said, date(2026, 9, 1)))
             .await
             .expect("capture")
             .written()

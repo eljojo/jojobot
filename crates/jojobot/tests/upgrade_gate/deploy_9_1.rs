@@ -320,8 +320,10 @@ fn only_the_recorded_r1_values_are_expected_warnings() {
 }
 
 // Audited raw held values in deploy5 (first three), and deploy6 through 9.2.1
-// (all six). The CI fixture decides which remain; other identities fail closed.
-const RECORDED_R1: [(&str, &str, &str); 6] = [
+// (the first six), plus the two merges the repair case plants over the recorded
+// store (the last two). The CI fixture decides which remain; other identities
+// fail closed.
+const RECORDED_R1: [(&str, &str, &str); 8] = [
     (
         "thing:upgrade-fixture-thing",
         "merged_from",
@@ -347,6 +349,16 @@ const RECORDED_R1: [(&str, &str, &str); 6] = [
         "document:upgrade-fixture-manual",
         "merged_from",
         "document:upgrade-fixture-appendix",
+    ),
+    (
+        "thing:upgrade-fixture-holder",
+        "merged_from",
+        "thing:upgrade-fixture-heir",
+    ),
+    (
+        "thing:upgrade-fixture-heir",
+        "merged_from",
+        "thing:upgrade-fixture-husk",
     ),
 ];
 
