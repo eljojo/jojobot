@@ -14,6 +14,8 @@ mod deploy_8_1;
 mod deploy_9_1;
 #[path = "upgrade_gate/deploy_9_2_1.rs"]
 mod deploy_9_2_1;
+#[path = "upgrade_gate/oracle.rs"]
+mod oracle;
 #[path = "upgrade_gate/runs_in_moment_order.rs"]
 mod runs_in_moment_order;
 mod support;
@@ -1260,7 +1262,7 @@ async fn fields_every_thing_holds(pool: &sqlx::MySqlPool) -> Vec<(String, String
     .await
     .expect("the old store's folded fields read");
     held.into_iter()
-        .map(|(handle, key, value)| (handle, key, with_badges_as_handles(&value, &badges)))
+        .map(|(handle, key, value)| (handle, key, oracle::with_badges_as_handles(&value, &badges)))
         .collect()
 }
 
@@ -1313,30 +1315,6 @@ async fn assert_every_held_row_joined(pool: &sqlx::MySqlPool, git_ref: &str) {
          comparison would skip them: {unjoined:?}",
         unjoined.len()
     );
-}
-
-/// **A stored value with each item that is a badge replaced by the handle of the
-/// entity wearing it.** An item is one piece of a comma list, and it is a badge
-/// when it is one an entity wears, with or without the `@#` mark: a field a type
-/// declared a reference holds the bare id, any other key holds the marked one.
-/// Separators and every other item are untouched. A badge nothing wears is left
-/// as it is, so the comparison against it fails loudly.
-fn with_badges_as_handles(
-    value: &str,
-    badges: &std::collections::BTreeMap<String, String>,
-) -> String {
-    value
-        .split(',')
-        .map(|piece| {
-            let item = piece.trim();
-            let bare = item.strip_prefix("@#").unwrap_or(item);
-            match badges.get(bare) {
-                Some(handle) => piece.replacen(item, handle, 1),
-                None => piece.to_string(),
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(",")
 }
 
 /// **The upgrade changed nothing a thing holds.** Each value the old store held
@@ -2754,9 +2732,11 @@ async fn the_boots_over_a_store_the_deployed_build_filled_log_no_warning_and_no_
         .await
         .expect("the pass markers read");
     store.stop().await;
+    // The field-link pass of the rule the deployed build ran: log-only lowers, on marks.
+    let linked = |pass: &str| marked.iter().any(|name| name == pass);
     assert!(
-        marked.iter().any(|name| name == "field value lowering")
-            && marked.iter().any(|name| name == "reference field lowering"),
+        (linked("field value lowering") || linked("field value links marked"))
+            && linked("reference field lowering"),
         "the recording holds the markers the deployed build's own boot set: {marked:?}"
     );
     let mut dumps = Vec::new();
