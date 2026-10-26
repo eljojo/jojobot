@@ -304,7 +304,7 @@ async fn the_parent_named_in_the_words_is_not_reported() {
     jojobot
         .add_entity(Parameters(AddEntityArgs {
             parent: Some("thing:kettle".into()),
-            ..add_args("thing", "spout", "spout")
+            ..add_args("thing", "omega", "omega")
         }))
         .await
         .expect("add ok");
@@ -326,7 +326,7 @@ async fn the_parent_named_in_the_words_is_not_reported() {
         &jojobot,
         CaptureArgs {
             sets: sets_runs_out(),
-            ..capture_args("thing:spout", words)
+            ..capture_args("thing:omega", words)
         },
     )
     .await;
