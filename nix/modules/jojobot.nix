@@ -149,8 +149,10 @@ in
 
         The link rule is on unless this file says otherwise: set
         JOJOBOT_LINK_RULE=log-only to roll it back: writes then decide links by the
-        earlier rule, and the boot logs what the link rule would do and marks no
-        stored value. Values an earlier boot with the rule on marked stay marked.
+        earlier rule; the boot logs what the link rule would do, and runs the
+        earlier lowering pass, which stores plain handle text under undeclared keys
+        as ids behind the mark, once on a store. Values an earlier boot with the
+        rule on marked stay marked.
         Any other word refuses to start.
       '';
     };
