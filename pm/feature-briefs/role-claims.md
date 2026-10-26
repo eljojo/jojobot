@@ -30,7 +30,7 @@
 
 **Only the claim itself writes those keys.** A caller cannot edit a role's holder or its claim time, because a hand-written holder is a seat taken without a lease.
 
-**A change to where roles are stored is read in both shapes until a full lease has passed.** A reader that understands only the new shape sees every role as empty, and a watcher that sees an empty role starts a second session for it. So the claim code, the watchers and every charter read old and new alike, and the old shape goes only after every live lease has renewed into the new one.
+**A change to where roles are stored moves every old claim to the new shape once, at startup.** A reader that understands only the new shape sees an unmoved role as empty, and a watcher that sees an empty role starts a second session for it. So the move runs at startup, nothing reads the old shape as a lease afterwards, and a role the move could not finish keeps its old keys and is moved again at the next start.
 
 ## How a role changes hands
 

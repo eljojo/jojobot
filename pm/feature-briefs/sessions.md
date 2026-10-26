@@ -8,11 +8,11 @@
 
 **The handle is the only address, and it rides every verb — reads included.** That is what tells jojobot which bot is calling, on every single call.
 
-**It is server-minted, four characters, and opaque.** It is never named after what the session is about, because a handle that describes its contents becomes a thing people read instead of an address.
+**It is server-minted and opaque, in two halves.** The key (`sk-` and 26 drawn characters) is the run's secret and its only credential: it rides every call and is told to nobody. The run's name (six characters) is what records carry, and it opens nothing. Neither is named after what the session is about, because a handle that describes its contents becomes a thing people read instead of an address.
 
 **It is persisted outside the process**, so a session outlives the run that made it. Bot to session to receipts to journal is a chain somebody can follow, and that traceability is the reason.
 
-**Four verbs require it** — journal, amend_journal, wrap_session and post_message, whose whole act is saying who did something. **Every other verb takes it optionally**, because a reader or a poster that never booted is legitimate. Optional means implemented: a handle that is carried is used and attributed exactly as on any other call, and a dead one is refused before the write rather than dropped, because an argument accepted and dropped is a lie about work not done.
+**Every verb that writes requires it**, because a write is a claim about who did something: a memory write, a post, the session's own journal and wrap. **A read takes it optionally**, because a reader that never booted is legitimate, except a read of mail, which needs it to know whose box. Optional means implemented: a handle that is carried is used and attributed exactly as on any other call, and a dead one is refused before the write rather than dropped, because an argument accepted and dropped is a lie about work not done.
 
 ## Bound for life
 
