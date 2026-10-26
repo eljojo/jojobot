@@ -313,8 +313,9 @@ design notes, questions — goes to `pm`.
 - **Zero user PII, zero life specifics** — the bright line at the top of this
   file. It outranks every other rule here.
 - **The real-dependency gate.** A slice that touches an adapter does not merge
-  on fakes alone: run the suites that exercise a real store and show the
-  output. **They need no credentials and no separate gate** — every store
+  on fakes alone: the suites that exercise a real store must have run on it,
+  and the branch's CI run is where they run (a dev line never runs a whole
+  suite locally; see the bar below), so the report cites that run. **They need no credentials and no separate gate** — every store
   jojobot fronts is a process it spawns itself, against a disposable database,
   so the suites are ordinary cases the whole run already covers. **That makes
   the gate cheap, which removes the last excuse for skipping it**: a suite that
@@ -327,15 +328,21 @@ design notes, questions — goes to `pm`.
   each fronted service's quirks live in its adapter, quarantined.
 - **Green bar before DONE, and the bar runs in CI, never on a dev host.** The
   bar is `make check`: `cargo test` green and `cargo clippy` clean, through the
-  flake. **It reports every target rather than stopping at the first failure,
-  so its count is coverage** — a red run names each suite's verdict instead of
+  flake. **Within one job it reports every target rather than stopping at the
+  first failure, so its count is coverage** — a red run names each suite's verdict instead of
   leaving a reader to guess which parts ran. **A dev line never runs `make
   check`, `make report`, a whole suite, the real-store suites, the upgrade gate,
   `make prepush` or `nix build` locally:** between edits it runs its own cases
   (`make narrow CRATE=<crate> [FILTER=<substring>]`), a suite only when it
   expects that suite to fail or is debugging a red, then pushes its branch and
   cites that branch run by id and sha. The full bar runs once per change, at
-  the carry (rules 501, 622).
+  the carry (rules 501, 622). **In CI a job that goes red cancels its sibling
+  jobs**, so a cancelled job in a red run is unproven, never passed.
+- **The size ratchet** (`size-ratchet.toml`, checked by `bar size`): a file over
+  `cap` lines (5,000) is red, a new one is refused and a red one may not grow
+  against the base; over 2,000 is yellow and warns. `test_file_bytes` caps an
+  added file under a tests directory at 100 KB (rule 661). Both only fall; a
+  raise is a `[[raise]]` table naming the operator's rule.
 - **The bar has levels, and `make check` runs no room.** Each suite that
   stands up a room sits behind a cargo feature, so the bar compiles and lints
   it and never runs it. `make rooms` runs every room but the year,
@@ -363,7 +370,10 @@ design notes, questions — goes to `pm`.
   built in CI from the release's `deploy-N` tag and cached outside git; no
   fixture or dump is ever committed (rule 661).** Only the last release
   matters, because production upgrades only from the build it runs. A cache
-  miss rebuilds it; it never skips the gate.
+  miss rebuilds it; it never skips the gate. **The Nix sandbox check cannot
+  record or restore that store**, so `flake.nix` skips the gate's cases, the
+  interrupted-start `deaths::` cases and the others that need git history or a
+  running server; `make check` in CI runs every one of them, and it is the gate.
   **It also boots the head over a start interrupted partway through each
   migration the head adds**, in both states a death leaves (the marker alone,
   and the change landed with no ledger row), built by `leave_interrupted`, the
