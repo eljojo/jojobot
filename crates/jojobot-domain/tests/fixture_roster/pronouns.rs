@@ -208,10 +208,14 @@ fn function_end(lines: &[&str], at: usize, indent: &str) -> usize {
 /// [`NEGATIVE_EXAMPLE`] is skipped. Every other literal of such a function, a
 /// label or a subject, is not what anybody said and is not read.
 ///
-/// ⚠️ **What it does not reach**: a value a helper passes on, such as
-/// `s.undated_fact("person:milhouse", "...")`, or one built before the call and
-/// sent by name; a text scan sees a key and its value and not the call that
-/// carries them.
+/// A call of a testimony helper found in the story support files, such as
+/// `s.undated_fact("person:milhouse", "...")`, is read in the story files when its
+/// content argument is a string literal.
+///
+/// ⚠️ **What it does not reach**: a helper outside the story support files, a
+/// helper whose content is not a string literal at the call, a value built before
+/// the call and sent by name, and a `mut` content; a text scan sees a key and its
+/// value or a literal argument, and not where a value came from.
 fn testimony_literals_for_nobody(files: &[PathBuf]) -> Vec<String> {
     let names = character_names();
     let helpers = testimony_helpers(files);
@@ -291,7 +295,9 @@ struct Helper {
 
 /// The text between the parenthesis that opens at `open` and its close, split at
 /// the commas that sit at the top level, as `(start, text)` pairs. A string is
-/// read whole, so a comma or a parenthesis inside one splits nothing.
+/// read whole, so a comma or a parenthesis inside one splits nothing, and a `//`
+/// comment is skipped to its line end, so a comma or a quote in one counts for
+/// nothing.
 fn arguments_at(text: &str, open: usize) -> Vec<(usize, String)> {
     let chars: Vec<(usize, char)> = text[open + 1..]
         .char_indices()
@@ -306,6 +312,11 @@ fn arguments_at(text: &str, open: usize) -> Vec<(usize, String)> {
                 at += 1;
                 while at < chars.len() && chars[at].1 != '"' {
                     at += usize::from(chars[at].1 == '\\');
+                    at += 1;
+                }
+            }
+            '/' if chars.get(at + 1).is_some_and(|(_, c)| *c == '/') => {
+                while at < chars.len() && chars[at].1 != '\n' {
                     at += 1;
                 }
             }
@@ -403,17 +414,30 @@ fn helper_calls_with_a_literal(text: &str, helpers: &[Helper]) -> Vec<(usize, St
                 continue;
             }
             let (start, argument) = &arguments[helper.content];
-            let trimmed = argument.trim();
+            let lead = argument.len() - without_leading_comments(argument).len();
+            let trimmed = argument[lead..].trim();
             if !trimmed.starts_with('"') {
                 continue;
             }
             if let [literal] = literals_of(trimmed).as_slice() {
-                let before = &text[..*start + (argument.len() - argument.trim_start().len())];
+                let before = &text[..*start + lead];
                 found.push((1 + before.matches('\n').count(), literal.text.clone()));
             }
         }
     }
     found
+}
+
+/// `text` with the white space and `//` comment lines in front of it removed.
+fn without_leading_comments(text: &str) -> &str {
+    let mut rest = text.trim_start();
+    while rest.starts_with("//") {
+        rest = rest
+            .split_once('\n')
+            .map_or("", |(_, after)| after)
+            .trim_start();
+    }
+    rest
 }
 
 /// A word that may stand before `fn` in an item's head.
@@ -597,5 +621,33 @@ fn testimony_helper_calls_are_read_like_direct_ones() {
     assert!(
         lines[0].contains("calls.rs:2:") && lines[0].contains("said he would come along"),
         "{lines:?}"
+    );
+}
+
+/// **A comment between the arguments of a helper call splits and quotes nothing.**
+/// A comma, a double quote or an apostrophe in a `//` comment must not change how
+/// many arguments the call has or where a string ends, or the call is skipped and
+/// its pronoun passes.
+#[test]
+fn a_comment_between_helper_arguments_hides_nothing_from_the_pass() {
+    let scratch = Scratch::new("testimony-helper-comments");
+    scratch.write(
+        "crates/x/tests/user_stories/dsl.rs",
+        "pub async fn undated_fact(&self, subject: &str, content: &str) -> String {\n    \
+         json!({\"subject\": subject, \"content\": content, \"provenance\": \"testimony\"})\n}\n",
+    );
+    scratch.write(
+        "crates/x/tests/user_stories/calls.rs",
+        "fn a() {\n    s.undated_fact(\n        \"person:milhouse\",\n        \
+         // one, two \"three and it's four\n        \"said he would come along\",\n    );\n}\n",
+    );
+
+    let unattached = testimony_literals_for_nobody(&scanned_files(&scratch.0));
+
+    assert!(
+        unattached
+            .iter()
+            .any(|line| line.contains("calls.rs:5:") && line.contains("come along")),
+        "the call with a comment between its arguments has to be read: {unattached:?}"
     );
 }
