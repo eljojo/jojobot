@@ -87,7 +87,12 @@ async fn recalled(booted: &Booted) -> String {
 /// on again marks that write and keeps its link row.
 #[tokio::test]
 async fn a_rollback_to_log_only_reads_as_9_2_3_did_and_the_way_back_to_on_keeps_every_link() {
-    let restored = restore_a_fixture(&fixture_dir(), "rollback-round-trip").await;
+    for restored in deploy_9_1::both_recordings(&fixture_dir(), "rollback-round-trip").await {
+        the_round_trip_over(restored).await;
+    }
+}
+
+async fn the_round_trip_over(restored: Restored) {
     deploy_9_1::as_a_recording_before_the_marking(&restored.state_dir, restored.store_port).await;
     let mut store = open_the_store(&restored.state_dir, restored.store_port).await;
     let pool = store.pool().clone();

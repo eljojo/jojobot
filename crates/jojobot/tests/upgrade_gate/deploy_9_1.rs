@@ -93,14 +93,22 @@ pub(super) fn assert_still_held(git_ref: &str, handle: &str, key: &str, was: &st
 /// **A boot with the link rule on, over the last deployed release's store.**
 /// The repairs of stored rows run first, the marking pass runs once and is marked
 /// finished, and a second boot changes no row. Every gate boot explicitly selects
-/// On; this case also checks its marker and repeat stability.
+/// On; this case also checks its marker and repeat stability. **Over a recording
+/// whose values are marked already, the first boot marks none**: the case then shows
+/// that the marker is written back and that later boots change nothing, and the
+/// round trip of the rollback module is the case that shows a value marked.
 #[tokio::test]
 async fn the_current_binary_boots_with_the_link_rule_on_over_the_last_deployed_store() {
     the_link_rule_preserves_a_recorded_store(&fixture_dir(), "boots-deploy9-1-link-rule-on").await;
 }
 
 async fn the_link_rule_preserves_a_recorded_store(fixture: &str, label: &str) {
-    let restored = restore_a_fixture(fixture, label).await;
+    for restored in both_recordings(fixture, label).await {
+        the_link_rule_preserves_the_recording(restored).await;
+    }
+}
+
+async fn the_link_rule_preserves_the_recording(restored: Restored) {
     as_a_recording_before_the_marking(&restored.state_dir, restored.store_port).await;
     let first = boot_current_with(
         &restored.state_dir,
@@ -120,9 +128,7 @@ async fn the_link_rule_preserves_a_recorded_store(fixture: &str, label: &str) {
         .expect("the markers read");
     store.stop().await;
     assert!(
-        markers
-            .iter()
-            .any(|name| name == "field value links marked"),
+        markers.iter().any(|name| name == MARKING_PASS),
         "recorded at {}: the marking pass finished: {markers:?}",
         restored.git_ref
     );
@@ -198,35 +204,151 @@ pub(super) async fn boot_with_link_rule_tolerating(
     booted
 }
 
-/// **The recorded store as a build before the marking left it.** The recording
-/// is made by the newest deployed build. Once that build runs the link rule on by
-/// default, it marks the store at its own boot and leaves the marker of the pass
-/// in what it records, and a marker makes a boot skip the marking. A case that
-/// needs the marking to run takes the marker off first. The values the recording
-/// holds are already marked, and the pass keeps a mark it finds.
+/// The marker of the pass that marks every link in a stored field value.
+pub(super) const MARKING_PASS: &str = "field value links marked";
+/// The marker of the pass the rule before it ran at each boot. A store that ever
+/// booted with the rule log-only holds it; one built from empty by a build that
+/// runs the rule on never does.
+pub(super) const LOWERING_PASS: &str = "field value lowering";
+
+/// **The pass markers of a store the last release filled**, written in one place:
+/// the lowering marker present, the marking marker absent. A release that runs the
+/// rule on marks its own store at its boot and leaves the marking marker in what it
+/// records, and a marker makes a boot skip the marking; it never writes the
+/// lowering marker. A recording made by that release is put into the shape the
+/// last release left, so a case that boots log-only, or that needs the marking to
+/// run, meets the store production holds. The values such a recording holds are
+/// marked already, and the pass keeps a mark it finds.
+pub(super) async fn the_markers_the_last_release_left(pool: &sqlx::MySqlPool) {
+    sqlx::query("DELETE FROM store_pass WHERE name = ?")
+        .bind(MARKING_PASS)
+        .execute(pool)
+        .await
+        .expect("the marker of the marking pass is taken off");
+    sqlx::query("INSERT IGNORE INTO store_pass (name, finished_at) VALUES (?, ?)")
+        .bind(LOWERING_PASS)
+        .bind(jiff::Timestamp::now().to_string())
+        .execute(pool)
+        .await
+        .expect("the marker of the lowering pass is put on");
+}
+
+/// [`the_markers_the_last_release_left`] over a restored store, with no binary over it.
 pub(super) async fn as_a_recording_before_the_marking(
     state_dir: &std::path::Path,
     store_port: u16,
 ) {
     let mut store = open_the_store(state_dir, store_port).await;
-    sqlx::query("DELETE FROM store_pass WHERE name = 'field value links marked'")
-        .execute(store.pool())
-        .await
-        .expect("the marker of the marking pass is taken off");
+    the_markers_the_last_release_left(store.pool()).await;
     store.stop().await;
 }
 
-/// Whether the marking pass has finished in the store, read with no binary over it.
-async fn links_are_marked(restored: &Restored) -> bool {
+/// **The recording as it is, and as a release that runs the rule on would have
+/// recorded it.** The second boots once with the rule on, so its values are
+/// marked and its marking marker is set, and drops the lowering marker that
+/// release never writes. The gate cases that take their store from the newest
+/// deployed release run over both, so the day the tag moves to such a release
+/// changes nothing they prove.
+pub(super) async fn both_recordings(fixture: &str, label: &str) -> Vec<Restored> {
+    let as_recorded = restore_a_fixture(fixture, label).await;
+    let marked_once = restore_a_fixture(fixture, &format!("{label}-marked-once")).await;
+    let on = boot_with_link_rule("on", &marked_once).await;
+    on.stop().await;
+    let mut store = open_the_store(&marked_once.state_dir, marked_once.store_port).await;
+    sqlx::query("DELETE FROM store_pass WHERE name = ?")
+        .bind(LOWERING_PASS)
+        .execute(store.pool())
+        .await
+        .expect("the lowering marker a rule-on release never writes is taken off");
+    store.stop().await;
+    vec![as_recorded, marked_once]
+}
+
+/// The names of the passes a store holds finished, read with no binary over it.
+async fn passes_of(restored: &Restored) -> Vec<String> {
     let mut store = open_the_store(&restored.state_dir, restored.store_port).await;
-    let markers: Vec<String> = sqlx::query_scalar("SELECT name FROM store_pass ORDER BY name")
+    let names: Vec<String> = sqlx::query_scalar("SELECT name FROM store_pass ORDER BY name")
         .fetch_all(store.pool())
         .await
         .expect("the markers read");
     store.stop().await;
-    markers
+    names
+}
+
+/// Whether the marking pass has finished in the store, read with no binary over it.
+async fn links_are_marked(restored: &Restored) -> bool {
+    passes_of(restored)
+        .await
         .iter()
-        .any(|name| name == "field value links marked")
+        .any(|name| name == MARKING_PASS)
+}
+
+/// Every field write, read with no binary over the store.
+async fn field_write_rows(restored: &Restored) -> Vec<(String, String, i64, Option<String>)> {
+    let mut store = open_the_store(&restored.state_dir, restored.store_port).await;
+    let rows = sqlx::query_as(
+        "SELECT entity, `key`, ordinal, value FROM field_write ORDER BY entity, `key`, ordinal",
+    )
+    .fetch_all(store.pool())
+    .await
+    .expect("the field writes read");
+    store.stop().await;
+    rows
+}
+
+/// **The helper takes exactly the marking marker off and puts the lowering marker
+/// on.** The store is booted once with the rule on, as a release that runs it on
+/// records its store, so it holds the marker, then the helper runs: only the
+/// marking marker goes, the lowering marker is there, no other pass changes, and no
+/// field write or link row moves. A boot with the rule on then writes the marker
+/// back and leaves every write and link row as it was.
+#[tokio::test]
+async fn the_helper_that_shapes_a_recording_takes_one_marker_off_and_moves_no_row() {
+    let restored = restore_a_fixture(&fixture_dir(), "recording-helper").await;
+    let on = boot_with_link_rule("on", &restored).await;
+    on.stop().await;
+    let before = passes_of(&restored).await;
+    let writes = field_write_rows(&restored).await;
+    let links = link_rows(&restored).await;
+    assert!(
+        before.iter().any(|name| name == MARKING_PASS),
+        "recorded at {}: the boot with the rule on did not mark: {before:?}",
+        restored.git_ref
+    );
+
+    as_a_recording_before_the_marking(&restored.state_dir, restored.store_port).await;
+    let after = passes_of(&restored).await;
+    let gone: Vec<&String> = before.iter().filter(|name| !after.contains(name)).collect();
+    assert_eq!(
+        gone,
+        [MARKING_PASS],
+        "recorded at {}: the helper took off more or less than the marking marker: {before:?} then {after:?}",
+        restored.git_ref
+    );
+    let new: Vec<&String> = after.iter().filter(|name| !before.contains(name)).collect();
+    assert!(
+        new.iter().all(|name| *name == LOWERING_PASS) && after.iter().any(|n| n == LOWERING_PASS),
+        "recorded at {}: the helper put on more than the lowering marker: {new:?}",
+        restored.git_ref
+    );
+    assert!(
+        field_write_rows(&restored).await == writes && link_rows(&restored).await == links,
+        "recorded at {}: the helper moved a field write or a link row",
+        restored.git_ref
+    );
+
+    let again = boot_with_link_rule("on", &restored).await;
+    again.stop().await;
+    assert!(
+        links_are_marked(&restored).await,
+        "recorded at {}: the boot after the helper did not mark again",
+        restored.git_ref
+    );
+    assert!(
+        field_write_rows(&restored).await == writes && link_rows(&restored).await == links,
+        "recorded at {}: the boot after the helper changed a field write or a link row",
+        restored.git_ref
+    );
 }
 
 /// Every link row, read with no binary over the store.
@@ -259,7 +381,12 @@ fn says_it_is_log_only(booted: &Booted) -> bool {
 /// build that ignores the word.
 #[tokio::test]
 async fn a_rollback_to_log_only_boots_clean_over_the_recorded_store_and_over_one_the_rule_marked() {
-    let restored = restore_a_fixture(&fixture_dir(), "boots-link-rule-log-only-rollback").await;
+    for restored in both_recordings(&fixture_dir(), "boots-link-rule-log-only-rollback").await {
+        a_rollback_over_the_recording(restored).await;
+    }
+}
+
+async fn a_rollback_over_the_recording(restored: Restored) {
     as_a_recording_before_the_marking(&restored.state_dir, restored.store_port).await;
 
     let first = boot_with_link_rule(LOG_ONLY, &restored).await;
@@ -430,9 +557,9 @@ pub(super) async fn recorded_r1_before_boot(
         .fetch_all(store.pool())
         .await
         .expect("the pre-boot markers read");
-    let marked = passes.iter().any(|name| name == "field value links marked");
+    let marked = passes.iter().any(|name| name == MARKING_PASS);
     let mut expected = Vec::new();
-    if !marked && passes.iter().any(|name| name == "field value lowering") {
+    if !marked && passes.iter().any(|name| name == LOWERING_PASS) {
         // The MAX includes NULL clears. Joining the owning fact excludes orphan
         // writes, and only the newest active write of each key can still be held.
         let held: Vec<(String, String, String)> = sqlx::query_as(

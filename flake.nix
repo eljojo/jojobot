@@ -277,6 +277,7 @@
               "--skip=deploy_9_2_1::repair_pass::an_old_merge_chain_with_its_event_in_place_gets_none_written"
               "--skip=deploy_9_2_1::deploy_9_2_4_default::a_boot_with_the_link_rule_variable_unset_runs_the_rule_on"
               "--skip=deploy_9_2_1::deploy_9_2_4_rollback::a_rollback_to_log_only_reads_as_9_2_3_did_and_the_way_back_to_on_keeps_every_link"
+              "--skip=deploy_9_1::the_helper_that_shapes_a_recording_takes_one_marker_off_and_moves_no_row"
             ];
           }
         );

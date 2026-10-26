@@ -237,17 +237,12 @@ async fn chain_events(pool: &sqlx::MySqlPool) -> Vec<(i64, String, String)> {
 
 /// **The recorded store as a build before the repairs left it.** A build that has
 /// the repairs wrote their markers at its own boot, and a marker makes a boot skip
-/// its repair, so the planted damage would never be repaired. **The marker of the
-/// marking pass goes too:** a build that runs the link rule on marks its own store,
-/// and the cases below count the repairs against a first boot that marks.
+/// its repair, so the planted damage would never be repaired. **The pass markers
+/// the last release left go on with them**, in the one place that writes them: the
+/// cases below count the repairs against a first boot that marks.
 async fn as_a_store_before_the_repairs(pool: &sqlx::MySqlPool) {
     said(pool, "DELETE FROM store_pass WHERE name IN (?, ?)", &PASSES).await;
-    said(
-        pool,
-        "DELETE FROM store_pass WHERE name = 'field value links marked'",
-        &[],
-    )
-    .await;
+    deploy_9_1::the_markers_the_last_release_left(pool).await;
 }
 
 async fn markers_of_the_repairs(pool: &sqlx::MySqlPool) -> Vec<String> {
@@ -331,13 +326,19 @@ async fn later_boots_leave_the_tables_alone(
 /// as they were.
 #[tokio::test]
 async fn bare_line_names_are_pointed_at_their_bots_once_across_boots() {
+    for restored in deploy_9_1::both_recordings(&fixture_dir(), "repair-bare-lines").await {
+        bare_line_names_are_repaired_over(restored).await;
+    }
+}
+
+async fn bare_line_names_are_repaired_over(restored: Restored) {
     let Restored {
         scratch,
         state_dir,
         store_port,
         git_ref,
         ..
-    } = restore_a_fixture(&fixture_dir(), "repair-bare-lines").await;
+    } = restored;
     let mut store = open_the_store(&state_dir, store_port).await;
     plant_bare_line_names(store.pool()).await;
     let planted = tables(store.pool()).await;
@@ -414,13 +415,19 @@ async fn bare_line_names_are_pointed_at_their_bots_once_across_boots() {
 /// boots leave the tables as they were.
 #[tokio::test]
 async fn an_old_merge_under_a_later_one_gets_its_event_once_across_boots() {
+    for restored in deploy_9_1::both_recordings(&fixture_dir(), "repair-old-merge").await {
+        an_old_merge_gets_its_event_over(restored).await;
+    }
+}
+
+async fn an_old_merge_gets_its_event_over(restored: Restored) {
     let Restored {
         scratch,
         state_dir,
         store_port,
         git_ref,
         ..
-    } = restore_a_fixture(&fixture_dir(), "repair-old-merge").await;
+    } = restored;
     let mut store = open_the_store(&state_dir, store_port).await;
     plant_an_old_merge_under_a_later_one(store.pool(), false).await;
     let planted = chain_events(store.pool()).await;
@@ -498,13 +505,19 @@ async fn an_old_merge_under_a_later_one_gets_its_event_once_across_boots() {
 /// events of the chain are the same after the boot as before it.
 #[tokio::test]
 async fn an_old_merge_chain_with_its_event_in_place_gets_none_written() {
+    for restored in deploy_9_1::both_recordings(&fixture_dir(), "repair-chain-event-kept").await {
+        an_old_merge_chain_keeps_its_event_over(restored).await;
+    }
+}
+
+async fn an_old_merge_chain_keeps_its_event_over(restored: Restored) {
     let Restored {
         scratch,
         state_dir,
         store_port,
         git_ref,
         ..
-    } = restore_a_fixture(&fixture_dir(), "repair-chain-event-kept").await;
+    } = restored;
     let mut store = open_the_store(&state_dir, store_port).await;
     plant_an_old_merge_under_a_later_one(store.pool(), true).await;
     let planted = chain_events(store.pool()).await;

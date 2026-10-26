@@ -12,9 +12,7 @@ async fn links_are_marked(state_dir: &std::path::Path, store_port: u16) -> bool 
         .await
         .expect("the markers read");
     store.stop().await;
-    markers
-        .iter()
-        .any(|name| name == "field value links marked")
+    markers.iter().any(|name| name == deploy_9_1::MARKING_PASS)
 }
 
 /// **Boot the current binary with `JOJOBOT_LINK_RULE` removed from its environment**
@@ -81,17 +79,23 @@ async fn boot_with_the_variable_unset(state_dir: &std::path::Path, store_port: u
 /// log-only would log the summary and leave the marker out.
 #[tokio::test]
 async fn a_boot_with_the_link_rule_variable_unset_runs_the_rule_on() {
+    for restored in deploy_9_1::both_recordings(&fixture_dir(), "link-rule-variable-unset").await {
+        a_boot_with_the_variable_unset_over(restored).await;
+    }
+}
+
+async fn a_boot_with_the_variable_unset_over(restored: Restored) {
     let Restored {
         scratch,
         state_dir,
         store_port,
         git_ref,
         ..
-    } = restore_a_fixture(&fixture_dir(), "link-rule-variable-unset").await;
+    } = restored;
     deploy_9_1::as_a_recording_before_the_marking(&state_dir, store_port).await;
     assert!(
         !links_are_marked(&state_dir, store_port).await,
-        "recorded at {git_ref}: the recorded store is already marked, so the case proves nothing"
+        "recorded at {git_ref}: the helper left the marking marker on, so the boot could not show that it marks"
     );
 
     let booted = boot_with_the_variable_unset(&state_dir, store_port).await;
