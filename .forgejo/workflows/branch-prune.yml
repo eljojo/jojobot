@@ -2,10 +2,11 @@
 #
 # A merged branch is no work in flight, and a branch list that fills up hides the
 # ones that are. The script keeps main, the release lines, the head of an open
-# pull request, any branch newer than a day (by its head commit's date, the only
-# time the forge gives, so an old commit pushed today looks old) and any branch
-# with work main lacks. The workflow cannot read the cards: only the engineering
-# manager dispatches `delete`, after reading the dry-run list against the cards.
+# pull request, any branch whose head was pushed less than a day ago (the push
+# time, read from the forge's activity feed; a head with no push in the feed is
+# held, because its age is unknown) and any branch with work main lacks. The
+# workflow cannot read the cards: only the engineering manager dispatches
+# `delete`, after reading the dry-run list against the cards.
 #
 # **It deletes nothing yet.** The schedule and a dispatch print what they would
 # delete. A dispatch with `delete` set to `true` deletes, and logs every branch
