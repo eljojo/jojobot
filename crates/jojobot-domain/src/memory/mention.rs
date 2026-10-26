@@ -50,7 +50,7 @@
 
 use super::stored::{StoredMemory, Unrendered};
 use super::text_edit::{TextEdit, apply_text_edit};
-use super::{Entity, EntityId, kinds};
+use super::{Entity, EntityId, kinds, search::DocScan};
 
 mod code;
 pub(crate) use code::outside_code;
@@ -1748,13 +1748,13 @@ impl super::Memory for Mentioning {
         self.inner.composed_prose(entity, own).await
     }
 
-    async fn scan_entity(
-        &self,
-        entity: &EntityId,
-    ) -> Result<Option<super::search::DocScan>, super::MemoryError> {
+    async fn scan_entity(&self, entity: &EntityId) -> Result<Option<DocScan>, super::MemoryError> {
         let Some(mut doc) = self.inner.scan_entity(entity).await?.open() else {
             return Ok(None);
         };
+        if doc.prose.is_empty() && doc.facts.is_empty() {
+            return Ok(Some(doc));
+        }
         let known = self.known().await?;
         let former = self.former().await?;
         let declared = self.declared().await?;

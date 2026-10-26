@@ -21,6 +21,7 @@ pub(super) async fn field_writes_in(
 }
 
 /// The first ACTIVE write per key, from `field_writes_in`'s newest-first rows.
+/// A write with no fact row holds nothing, like an inactive record's write.
 pub(super) fn held_ordinals(writes: &[FieldWriteRow]) -> BTreeSet<(&str, &str, i64)> {
     let mut newest = BTreeSet::new();
     writes
