@@ -161,10 +161,11 @@ async fn a_session_whose_first_look_at_a_claim_is_a_search_is_taught_there() {
 }
 
 /// "I searched twice and it said the same long caveat twice." It says it once:
-/// the caveat about what matching can miss rides the first search of a session
-/// and any answer too thin to trust, and is left out of a second full answer.
+/// the caveat about what matching can miss rides the first search of a session,
+/// and a later answer leaves it out, an empty one included; the empty one says
+/// what it looked through.
 #[tokio::test]
-async fn a_second_full_search_leaves_the_caveats_out_and_an_empty_one_brings_them_back() {
+async fn a_second_full_search_leaves_the_caveats_out_and_an_empty_one_says_what_it_searched() {
     let story = Story::begin("bot:otto").await;
     let writer = story.session().await;
     for slug in ["alpha", "beta", "gamma"] {
@@ -182,11 +183,17 @@ async fn a_second_full_search_leaves_the_caveats_out_and_an_empty_one_brings_the
     let second = reader.call("search", json!({"query": "diner"})).await;
     second.number("/count", 3).never_says("\"corpus\"");
     second.says("\"exact\"");
-    // An empty answer is where the gap shows, so it brings the caveat back.
+    // Notes are taught once for each session and wording, so an empty answer does
+    // not teach the caveat again; it says what it looked through and left out.
     let empty = reader
         .call("search", json!({"query": "zzzqxnomatch"}))
         .await;
-    empty.number("/count", 0).says("\"corpus\"");
+    empty.number("/count", 0).never_says("\"corpus\"");
+    assert!(
+        empty.json()["searched"].is_string(),
+        "an empty answer says what it looked through: {}",
+        empty.raw()
+    );
 
     story.finish().await;
 }
