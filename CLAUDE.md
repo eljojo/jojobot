@@ -69,7 +69,7 @@ in doubt, it doesn't cross.
   it for orientation. **Nothing life-specific may cross back into this repo** —
   see the bright line below.
 
-## The build model — two sessions, never one
+## The build model — who does what
 
 - **PM (`pm`)** — holds the vision, scopes each card, writes the hand-off,
   reviews adversarially, reconciles the docs. Does not implement.
@@ -106,10 +106,6 @@ A session here starts at jojobot, not at these files. The whole protocol:
    wrap; others poll for the next with `read_mailbox` `counts_only: true`,
    which costs nothing and takes delivery of nothing. Your charter decides,
    not this file.
-
-The operator dispatches you; they are not the report channel (see the audience
-discipline above). Everything else — commits, test output, deviations,
-design notes, questions — goes to `pm`.
 
 ## Engineering rules (non-negotiable)
 
