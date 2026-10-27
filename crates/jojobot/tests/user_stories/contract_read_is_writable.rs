@@ -226,6 +226,25 @@ async fn whatever_a_read_serves_the_write_that_sets_it_accepts_as_served() {
             json!({"content": format!("{key} alone"), "provenance": "testimony", "fields": fields});
         records.push(("capture", copy));
     }
+    // Every served account is also copied with a caller key beside its server keys.
+    let accounts: Vec<Value> = records
+        .iter()
+        .filter(|(verb, record)| {
+            let fields = record["fields"].as_object();
+            *verb == "capture"
+                && fields.is_some_and(|f| {
+                    f.keys()
+                        .any(|k| jojobot_domain::memory::copied_read_key(None, k))
+                })
+        })
+        .map(|(_, record)| {
+            let mut copy = record.clone();
+            copy["fields"]["source"] = json!("copied account");
+            copy.as_object_mut().expect("a record").remove("address");
+            copy
+        })
+        .collect();
+    records.extend(accounts.into_iter().map(|copy| ("capture", copy)));
     assert!(
         RENAMED.iter().all(|row| !row.3.is_empty())
             && READ_ONLY.iter().all(|row| !row.2.is_empty())
