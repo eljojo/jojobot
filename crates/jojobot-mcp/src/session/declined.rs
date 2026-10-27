@@ -85,7 +85,7 @@ pub(crate) fn session_fix_by(e: &SessionError) -> Option<FixBy> {
         // so it is a person's, whichever field holds it.
         SessionError::Unreadable { .. } => Some(FixBy::Person),
         SessionError::Conflict => Some(FixBy::Retry),
-        SessionError::Store(_) => other_store_failure_word(),
+        SessionError::Store(_) => Some(FixBy::Retry),
         SessionError::Indeterminate => None,
     }
 }

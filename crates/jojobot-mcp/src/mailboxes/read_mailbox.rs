@@ -1529,7 +1529,7 @@ mod tests {
         );
         assert_eq!(
             unreadable["fix_by"].as_str(),
-            other_store_failure_word().map(FixBy::as_token),
+            Some(FixBy::Retry.as_token()),
             "{unreadable}"
         );
         assert!(unreadable["how_to_proceed"].is_string(), "{unreadable}");

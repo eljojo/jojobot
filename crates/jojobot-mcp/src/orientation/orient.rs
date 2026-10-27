@@ -1347,7 +1347,7 @@ impl Jojobot {
 }
 
 /// **A claim the store could not decide**, with the word a storage failure
-/// wears (see [`memory_store_failure_word`]).
+/// wears: `retry`.
 fn unavailable_claim(role: &str, note: &str) -> serde_json::Value {
     let mut outcome = serde_json::json!({
         "role": role,
@@ -1355,9 +1355,7 @@ fn unavailable_claim(role: &str, note: &str) -> serde_json::Value {
         "note": note,
         "how_to_proceed": claim_unavailable_way_forward(role),
     });
-    if let Some(word) = memory_store_failure_word() {
-        outcome[FixBy::KEY] = word.as_token().into();
-    }
+    outcome[FixBy::KEY] = FixBy::Retry.as_token().into();
     outcome
 }
 
@@ -1479,7 +1477,7 @@ mod tests {
         );
         assert_eq!(
             claim["fix_by"].as_str(),
-            memory_store_failure_word().map(FixBy::as_token),
+            Some(FixBy::Retry.as_token()),
             "a claim the store could not decide wears the storage-failure word: {booted}"
         );
         let how = claim["how_to_proceed"]
@@ -1556,7 +1554,7 @@ mod tests {
         assert_eq!(claim["status"], "unavailable", "{claim}");
         assert_eq!(
             claim["fix_by"].as_str(),
-            memory_store_failure_word().map(FixBy::as_token),
+            Some(FixBy::Retry.as_token()),
             "an ownership read that failed wears the storage-failure word: {claim}"
         );
         let note = claim["note"].as_str().unwrap_or_default();

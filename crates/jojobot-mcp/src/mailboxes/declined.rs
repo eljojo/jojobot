@@ -252,7 +252,7 @@ pub(crate) fn mailbox_fix_by(e: &MailboxError) -> Option<FixBy> {
         | MailboxError::OwnerHasMultipleBoxes { .. }
         | MailboxError::KindsNeverLoaded => Some(FixBy::Person),
         MailboxError::Conflict => Some(FixBy::Retry),
-        MailboxError::Store(_) => other_store_failure_word(),
+        MailboxError::Store(_) => Some(FixBy::Retry),
         MailboxError::Indeterminate => None,
     }
 }

@@ -622,7 +622,7 @@ pub(crate) fn memory_fix_by(e: &MemoryError) -> Option<FixBy> {
         MemoryError::TextChangedWhileEditing { .. } => Some(FixBy::Retry),
         // The words do not occur once in the text: the call has to name them differently.
         MemoryError::TextEditMatches { .. } => Some(FixBy::Change),
-        MemoryError::Store(_) => memory_store_failure_word(),
+        MemoryError::Store(_) => Some(FixBy::Retry),
         MemoryError::FoldBehind { .. } | MemoryError::Indeterminate => None,
     }
 }
