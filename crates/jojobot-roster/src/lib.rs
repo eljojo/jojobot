@@ -113,6 +113,26 @@ mod tests {
     }
 
     #[test]
+    fn the_recurring_cast_is_typed_and_available_without_ordinary_exceptions() {
+        for (kind, slug) in [
+            ("person", "maggie"),
+            ("person", "cartman"),
+            ("person", "peter"),
+            ("person", "bob"),
+            ("pet", "brian"),
+            ("place", "bobs-burgers"),
+            ("org", "springfield-elementary"),
+            ("org", "springfield-nuclear-plant"),
+        ] {
+            let handle = format!("{kind}:{slug}");
+            assert!(is_listed(&handle), "{handle}");
+            assert!(!ordinary().contains(&handle.as_str()), "{handle}");
+        }
+        assert!(!is_listed(&format!("person:{}", "brian")));
+        assert!(!is_listed(&format!("person:{}", "bobs-burgers")));
+    }
+
+    #[test]
     fn a_handle_has_a_boundary_and_an_unlisted_one_is_refused() {
         let unlisted = ["person", ":", "not-on-the-roster"].concat();
         assert_eq!(handles_in(&unlisted), vec![unlisted.clone()]);
