@@ -36,8 +36,8 @@ use jojobot_bar::{
 
 mod local_upgrade;
 mod plan;
-mod selection;
 mod room_server;
+mod selection;
 
 /// **The tests that are red and already have a card**, read from the directory
 /// the bar runs in, which is the repository root.
@@ -1554,12 +1554,7 @@ fn run_check_phases(known: &KnownReds, level: Level) -> std::io::Result<ExitCode
         summary.phase_ok("build", "prebuilt bundle");
     } else {
         let started = std::time::Instant::now();
-        let (ok, text) = run_phase(
-            &log_path,
-            "cargo build --workspace --locked",
-            &cargo,
-            &["build", "--workspace", "--locked"],
-        )?;
+        let (ok, text) = room_server::for_tests(&log_path, &cargo, true)?;
         let took = started.elapsed();
         if !ok {
             let verdict = summarize_test_output(&text);
@@ -1588,9 +1583,15 @@ fn run_check_phases(known: &KnownReds, level: Level) -> std::io::Result<ExitCode
         Some(prebuilt) => (true, prebuilt.listing()),
         None => run_phase(
             &log_path,
-            "cargo test --workspace --no-run --locked",
+            "cargo test --workspace --no-run --locked --features=jojobot/room-harness",
             &cargo,
-            &["test", "--workspace", "--no-run", "--locked"],
+            &[
+                "test",
+                "--workspace",
+                "--no-run",
+                "--locked",
+                "--features=jojobot/room-harness",
+            ],
         )?,
     };
     let took = started.elapsed();
@@ -1643,7 +1644,10 @@ fn run_check_phases(known: &KnownReds, level: Level) -> std::io::Result<ExitCode
         let (ok, text, walls, not_run) = run_test_jobs(
             &log_path,
             &cargo,
-            &selection.map_or_else(|| vec!["--workspace"], |s| s.scope()),
+            &selection.map_or_else(
+                || vec!["--workspace", "--features=jojobot/room-harness"],
+                |s| s.scope(),
+            ),
             &jobs,
             limit,
             history.as_ref(),
@@ -1786,12 +1790,7 @@ fn run_narrow(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
         return Ok(ExitCode::FAILURE);
     }
 
-    let (ok, text) = run_phase(
-        &log_path,
-        "cargo build --workspace --locked",
-        &cargo,
-        &["build", "--workspace", "--locked"],
-    )?;
+    let (ok, text) = room_server::for_tests(&log_path, &cargo, krate == "jojobot-exercise")?;
     if !ok {
         let verdict = summarize_test_output(&text);
         if verdict.compiled {

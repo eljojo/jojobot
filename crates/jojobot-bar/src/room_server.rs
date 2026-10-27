@@ -1,6 +1,20 @@
-//! Only room executors receive the binary carrying the compiled grader route.
+//! Tests that grade a room need the binary carrying its compiled grader route.
 
 use super::*;
+
+pub(super) fn for_tests(log: &Path, cargo: &str, harness: bool) -> std::io::Result<(bool, String)> {
+    let built = run_phase(
+        log,
+        "cargo build --workspace --locked",
+        cargo,
+        &["build", "--workspace", "--locked"],
+    )?;
+    if built.0 && harness {
+        build(log, cargo)
+    } else {
+        Ok(built)
+    }
+}
 
 pub(super) fn build(log: &Path, cargo: &str) -> std::io::Result<(bool, String)> {
     run_phase(
