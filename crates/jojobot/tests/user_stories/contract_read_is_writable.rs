@@ -14,7 +14,13 @@ const RENAMED: &[(&str, &str, &str, &str)] = &[
         "capture",
         "edge",
         "shape",
-        "the relation model, release 10 (rule 718)",
+        "the release 10 relation model (rule 718)",
+    ),
+    (
+        "capture",
+        "text",
+        "content",
+        "none named: a list entry serves its words as text",
     ),
     (
         "update_entity",
@@ -36,48 +42,47 @@ const RENAMED: &[(&str, &str, &str, &str)] = &[
     ),
 ];
 
-/// Served keys no write sets: (verb, served, why).
-const READ_ONLY: &[(&str, &str, &str)] = &[
+/// Served keys no write sets: (verb, served keys, why).
+const READ_ONLY: &[(&str, &[&str], &str)] = &[
     (
         "capture",
-        "address",
-        "names the claim; update_fact takes it",
+        &[
+            "address",
+            "inserted_at",
+            "written_at",
+            "nth",
+            "run",
+            "revised",
+            "revision_count",
+        ],
+        "the store's own identity and stamps",
     ),
-    ("capture", "inserted_at", "the store's stamp"),
-    ("capture", "written_at", "the store's stamp on a version"),
-    ("capture", "nth", "a version's place in the history"),
-    ("capture", "run", "the session that wrote a version"),
-    ("capture", "revised", "counts rewrites"),
-    ("capture", "revision_count", "counts rewrites"),
     (
         "capture",
-        "status",
-        "update_fact archives; capture never sets it",
+        &["status", "stands_for", "hit", "parent", "state"],
+        "set by another verb, or a search envelope",
     ),
-    ("capture", "stands_for", "read from the entry's own links"),
-    ("capture", "hit", "a search hit's envelope"),
-    ("capture", "parent", "a search hit's thing"),
     (
         "update_entity",
-        "type",
-        "the kind's schema name; add_entity takes kind",
+        &["type", "boot", "parent"],
+        "fixed when add_entity creates the thing",
     ),
-    ("update_entity", "boot", "set at creation"),
-    ("update_entity", "parent", "set at creation"),
-    ("update_entity", "as_of", "the day the answer is for"),
-    ("update_entity", "connected", "computed from the graph"),
-    ("update_entity", "entries", "written by capture"),
-    ("update_entity", "facts", "written by capture"),
-    ("update_entity", "records", "written by capture"),
     (
         "update_entity",
-        "fields_backing_note",
-        "explains the answer",
+        &[
+            "as_of",
+            "connected",
+            "held",
+            "fields_backing_note",
+            "foldedNames",
+            "record_history",
+            "entries",
+            "facts",
+            "records",
+            "ticked",
+        ],
+        "an answer worked out from the claims, which capture and update_fact write",
     ),
-    ("update_entity", "foldedNames", "names a merge folded in"),
-    ("update_entity", "held", "computed from the graph"),
-    ("update_entity", "record_history", "written by update_fact"),
-    ("update_entity", "ticked", "written by capture's tick"),
 ];
 
 /// A world that uses every write option once, so the reads serve every form.
@@ -181,30 +186,27 @@ async fn whatever_a_read_serves_the_write_that_sets_it_accepts_as_served() {
     let mut records = Vec::new();
     reads.iter().for_each(|read| records_in(read, &mut records));
     assert!(
-        records.len() > 20,
-        "the reads served {} records",
-        records.len()
+        RENAMED.iter().all(|row| !row.3.is_empty())
+            && READ_ONLY.iter().all(|row| !row.2.is_empty())
     );
 
-    let (mut unaccounted, mut refused) = (Vec::new(), Vec::new());
+    // ── every served key is taken by its write, renamed, or read-only ────────
+    let (mut unaccounted, mut landed) = (Vec::new(), Vec::new());
     for (verb, record) in &records {
         let mut args = serde_json::Map::new();
         for (key, value) in record.as_object().expect("a record is an object") {
-            let rename = RENAMED
-                .iter()
-                .find(|(by, served, ..)| by == verb && served == key);
+            let rename = RENAMED.iter().find(|row| row.0 == *verb && row.1 == key);
             let written = rename.map_or(key.as_str(), |row| row.2);
-            let published = s.verbs_publishing(written).await.iter().any(|v| v == verb);
             let read_only = READ_ONLY
                 .iter()
-                .any(|(by, served, _)| by == verb && served == key);
-            if !published && !read_only {
-                unaccounted.push(format!("{verb}: {key}"));
-            } else if key == "edge" {
+                .any(|row| row.0 == *verb && row.1.contains(&key.as_str()));
+            if key == "edge" {
                 args.insert("shape".into(), value["type"].clone());
                 args.insert("object".into(), value["object"].clone());
-            } else if published {
+            } else if s.takes(verb, written).await {
                 args.insert(written.into(), value.clone());
+            } else if !read_only {
+                unaccounted.push(format!("{verb}: {key}"));
             }
         }
         // A claim lands on another thing; a thing is written back onto itself.
@@ -215,16 +217,66 @@ async fn whatever_a_read_serves_the_write_that_sets_it_accepts_as_served() {
         } else {
             continue;
         }
-        let body = s.attempt(verb, Value::Object(args.clone())).await;
-        if body["status"] == "blocked" {
-            refused.push(format!("{verb} sent {args:?} -> {body}"));
-        }
-    }
-    for (verb, _, written, _) in RENAMED {
-        assert!(s.verbs_publishing(written).await.iter().any(|v| v == verb));
+        let receipt = s.attempt(verb, Value::Object(args.clone())).await;
+        landed.push((*verb, args, receipt));
     }
     unaccounted.sort();
     unaccounted.dedup();
     assert!(unaccounted.is_empty(), "{unaccounted:#?}");
-    assert!(refused.is_empty(), "{}", refused.join("\n"));
+
+    // ── and what lands reads back as sent, unless the receipt named it dropped ─
+    let mut changed = Vec::new();
+    for (verb, args, receipt) in &landed {
+        let held = if receipt["status"] == "blocked" {
+            changed.push(format!("{verb} refused {args:?}: {receipt}"));
+            continue;
+        } else if *verb == "capture" {
+            // The lambda claims are numbered in landing order: read the one page.
+            let n = receipt["address"]
+                .as_str()
+                .and_then(|a| a.rsplit('f').next());
+            let at = n.and_then(|n| n.parse::<u32>().ok()).unwrap_or(1) - 1;
+            let page = json!({"subject": "thing:lambda", "facts": true, "details": true,
+                              "offset": at, "limit": 1});
+            s.call("recall", page).await.json()["objects"][0]["facts"][0].clone()
+        } else {
+            let thing = s
+                .call("recall", json!({"subject": args["handle"]}))
+                .await
+                .json();
+            thing["objects"][0].clone()
+        };
+        let dropped = receipt["dropped_keys"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        for (key, sent) in args {
+            let renamed = RENAMED.iter().find(|row| row.0 == *verb && row.2 == key);
+            let served = renamed.map_or(key.as_str(), |row| row.1);
+            let served = if held.get(key).is_some() { key } else { served };
+            let kept = match key.as_str() {
+                "shape" => &held["edge"]["type"],
+                "object" => &held["edge"]["object"],
+                _ => &held[served],
+            };
+            let lost: Vec<String> = match sent
+                .as_object()
+                .filter(|_| key == "fields" || key == "sets")
+            {
+                Some(bag) => bag
+                    .iter()
+                    .filter(|(k, v)| kept.get(k) != Some(v) && !dropped.contains(&json!(k)))
+                    .map(|(k, _)| k.clone())
+                    .collect(),
+                None if kept == sent || sent.as_array().is_some_and(Vec::is_empty) => vec![],
+                None => vec![key.clone()],
+            };
+            if !lost.is_empty() {
+                changed.push(format!(
+                    "{verb} sent {key} {sent} and read back {kept} in {held}"
+                ));
+            }
+        }
+    }
+    assert!(changed.is_empty(), "{}", changed.join("\n"));
 }

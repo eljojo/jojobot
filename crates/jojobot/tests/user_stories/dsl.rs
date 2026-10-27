@@ -1834,6 +1834,18 @@ impl Session {
         publishing
     }
 
+    /// **Whether a verb takes an argument of this name at its top level**, where
+    /// [`verbs_publishing`](Self::verbs_publishing) also counts a name nested in
+    /// another argument.
+    pub async fn takes(&self, verb: &str, argument: &str) -> bool {
+        let listed = self.client.list_tools(None).await.expect("the verb list");
+        let tool = listed.tools.iter().find(|t| t.name == verb);
+        let schema = serde_json::to_value(&tool.expect("a served verb").input_schema);
+        schema.expect("the schema serializes")["properties"]
+            .get(argument)
+            .is_some()
+    }
+
     /// **The tripwire for a gap whose capability will arrive as an ARGUMENT.**
     ///
     /// [`has_no_verb`] cannot hold one of these. A verb has to earn its place
