@@ -404,7 +404,7 @@ mod request_ids_in_parts;
 /// stopped whether a resend finishes it.
 #[path = "user_stories/resend_advice.rs"]
 mod resend_advice;
-/// Words the operator said are not rewritten in place by a later run.
+/// An inference rewritten by another run stays an inference; observation and testimony still ask or refuse.
 #[path = "user_stories/rewrite_keeps_inference.rs"]
 mod rewrite_keeps_inference;
 /// A rhythm recurs on the calendar, written as an RFC 5545 rule.
@@ -461,6 +461,7 @@ mod superseding;
 mod synthesis;
 #[path = "user_stories/talkingpast.rs"]
 mod talkingpast;
+/// Words the operator said are not rewritten in place by a later run.
 #[path = "user_stories/testimony.rs"]
 mod testimony;
 /// What a testimony claim says includes its details.
