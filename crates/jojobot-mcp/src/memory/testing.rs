@@ -528,6 +528,8 @@ pub(crate) enum Down {
     /// **Only the role named cannot be released**: the release of any other role
     /// lands, so a holder of two roles keeps just the named one.
     RoleReleaseOnly(&'static str),
+    /// RAM fields have no readable image; asynchronous reads and writes still answer.
+    ImageFields,
     /// **Nothing fails.** The healthy half of a pair that needs both halves to
     /// be the same kind of store.
     Nothing,

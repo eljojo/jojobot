@@ -4,7 +4,7 @@ use rmcp::model::{CallToolRequestParams, CallToolResponse, ContentBlock};
 use serde_json::{Map, Value, json};
 
 tokio::task_local! {
-    pub(crate) static TOKEN_SAVING: bool;
+    pub(crate) static TOKEN_SAVING: Option<crate::settings::TokenSaving>;
     pub(crate) static SINGLE_WRITE: bool;
 }
 
@@ -13,12 +13,15 @@ pub(crate) fn single_write() -> bool {
 }
 
 pub(crate) fn saving() -> bool {
-    TOKEN_SAVING.try_with(|saving| *saving).unwrap_or(false)
+    TOKEN_SAVING
+        .try_with(|setting| setting.as_ref().is_some_and(|setting| setting.on))
+        .unwrap_or(false)
 }
 
-/// Compact before accounting or session notices: unseen notices stay pending.
+/// Apply receipt mode before accounting and notices; lean leaves notices pending.
+/// An unreadable setting keeps normal mode and says why.
 pub(crate) fn compact(answered: &mut CallToolResponse) -> bool {
-    if !saving() {
+    if !TOKEN_SAVING.try_with(Option::is_some).unwrap_or(false) {
         return false;
     }
     let CallToolResponse::Complete(result) = answered else {
@@ -33,15 +36,24 @@ pub(crate) fn compact(answered: &mut CallToolResponse) -> bool {
     let Some(text) = block.as_text() else {
         return false;
     };
-    let Ok(body) = serde_json::from_str::<Value>(&text.text) else {
+    let Ok(mut body) = serde_json::from_str::<Value>(&text.text) else {
         return false;
     };
     if body["status"] == "blocked" {
         return false;
     }
-    let Some(id) = body.get("id") else {
+    let Some(id) = body.get("id").cloned() else {
         return false;
     };
+    if !saving() {
+        TOKEN_SAVING.with(|setting| {
+            if let Some(setting) = setting {
+                setting.explain(&mut body);
+            }
+        });
+        *block = ContentBlock::text(body.to_string());
+        return false;
+    }
     let mut derived = body
         .get("derived")
         .and_then(Value::as_object)
@@ -136,9 +148,9 @@ impl Call {
 
     fn keep_new_information(&self, body: &mut Value) {
         let mut derived = body
-            .get("derived")
-            .and_then(Value::as_object)
-            .cloned()
+            .as_object_mut()
+            .and_then(|body| body.remove("derived"))
+            .and_then(|value| value.as_object().cloned())
             .unwrap_or_default();
         for key in ["first_claim", "claim"] {
             if let Some(values) = body[key]["derived"].as_object() {
@@ -204,13 +216,6 @@ impl Call {
                     if !keys.iter().any(|held| held == key) {
                         keys.push(key.into());
                     }
-                    // A changed value the call did not supply is the result of
-                    // the write's arithmetic or normalisation, rather than an echo.
-                    if let Some(value) = change.get("to")
-                        && self.sent(key) != Some(value)
-                    {
-                        derived.insert(key.into(), value.clone());
-                    }
                 }
                 if !matches!(change["what"].as_str(), Some("key" | "field")) {
                     let what = group
@@ -227,6 +232,9 @@ impl Call {
             }
             body["changed"] = grouped.into_values().collect::<Vec<_>>().into();
         }
+        // A changed value the call did not supply is the result of
+        // the write's arithmetic or normalisation, rather than an echo.
+        derived.retain(|key, value| self.sent(key) != Some(value));
         if derived.contains_key("due_on") {
             body["falls_due"] = true.into();
         }
@@ -302,4 +310,70 @@ pub(crate) fn warnings(body: &mut Value, lines: impl IntoIterator<Item = Value>)
         .as_array_mut()
         .expect("warnings are a list");
     held.extend(lines);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::harness::TEST_SID;
+    use crate::memory::testing::{Down, capture_args, capture_ok, ensure, healthy_and_down};
+    use rmcp::model::{ClientCapabilities, ClientInfo, Implementation, ProtocolVersion};
+
+    #[tokio::test]
+    async fn lean_receipts_explain_an_unreadable_setting_over_the_served_tools() {
+        let (healthy, blind) = healthy_and_down(Down::ImageFields);
+        ensure(&healthy, "person:alpha").await;
+        capture_ok(
+            &healthy,
+            crate::memory::capture::CaptureArgs {
+                sets: Some([("setting_token_saving".into(), "on".into())].into()),
+                ..capture_args("bot:otto", "Use lean receipts")
+            },
+        )
+        .await;
+        for (readable, handler) in [(true, healthy), (false, blind)] {
+            let request = serde_json::from_value(json!({
+                "jsonrpc":"2.0", "id":1, "method":"tools/call",
+                "params":{"name":"capture", "arguments":{
+                    "subject":"person:alpha", "content":"Reads the map", "sid":TEST_SID
+                }}
+            }))
+            .expect("a tool request");
+            let (transport, mut replies) =
+                rmcp::transport::OneshotTransport::<rmcp::RoleServer>::new(request);
+            let mut info = ClientInfo::new(
+                ClientCapabilities::default(),
+                Implementation::new("receipt-case", "0.0.1"),
+            );
+            info.protocol_version = ProtocolVersion::V_2024_11_05;
+            let server = rmcp::service::serve_directly(handler, transport, Some(info));
+            let reply = replies.recv().await.expect("a tool response");
+            server.waiting().await.expect("the request ends");
+            let reply = serde_json::to_value(reply).expect("a JSON response");
+            let body: Value = serde_json::from_str(
+                reply["result"]["content"][0]["text"]
+                    .as_str()
+                    .unwrap_or_else(|| panic!("a receipt: {reply}")),
+            )
+            .expect("a receipt body");
+            assert_eq!(body["id"], "person:alpha", "{body}");
+            if readable {
+                assert!(
+                    body.as_object()
+                        .expect("a receipt")
+                        .keys()
+                        .all(|key| matches!(key.as_str(), "id" | "derived")),
+                    "{body}"
+                );
+            } else {
+                assert_eq!(body["success"], true, "{body}");
+                assert_eq!(body["token_saving"]["mode"], "normal", "{body}");
+                assert_eq!(body["token_saving"]["setting_read"], false, "{body}");
+                let note = body["token_saving"]["note"]
+                    .as_str()
+                    .expect("an explanation");
+                assert!(!note.is_empty() && !note.contains('\n') && !note.contains("  "));
+            }
+        }
+    }
 }

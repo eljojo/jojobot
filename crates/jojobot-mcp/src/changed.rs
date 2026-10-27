@@ -77,6 +77,9 @@ pub(crate) struct Change {
     from: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     to: Option<serde_json::Value>,
+    /// Derivations need the value even when the display only names its size.
+    #[serde(skip)]
+    value_after: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     bytes_before: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -91,6 +94,7 @@ impl Change {
             key: None,
             from: None,
             to: None,
+            value_after: None,
             bytes_before: None,
             bytes_after: None,
         }
@@ -107,6 +111,7 @@ impl Change {
         let long = |v: &Option<serde_json::Value>| {
             v.as_ref().is_some_and(|v| shown_len(v) > VALUE_SHOWN_BYTES)
         };
+        self.value_after = to.clone();
         if long(&from) || long(&to) {
             self.bytes_before = from.as_ref().map(shown_len);
             self.bytes_after = to.as_ref().map(shown_len);
@@ -534,6 +539,21 @@ pub(crate) fn note_changed(body: &mut serde_json::Value, changed: Changed) {
     if changed.changes.is_empty() {
         fields.insert("changed".into(), NOTHING.into());
         return;
+    }
+    if crate::write_receipts::single_write() {
+        let values: serde_json::Map<String, serde_json::Value> = changed
+            .changes
+            .iter()
+            .filter_map(|change| Some((change.key.clone()?, change.value_after.clone()?)))
+            .collect();
+        if !values.is_empty() {
+            fields
+                .entry("derived")
+                .or_insert_with(|| serde_json::json!({}))
+                .as_object_mut()
+                .expect("derivations are an object")
+                .extend(values);
+        }
     }
     let total = changed.changes.len();
     let shown: Vec<serde_json::Value> = changed

@@ -614,10 +614,10 @@ impl ServerHandler for Jojobot {
             .flatten()
             .and_then(|bot| crate::memory::parse::named_bot(Some(bot)).ok().flatten());
         let started = std::time::Instant::now();
-        let saving = write_receipts::Call::from_request(&request).is_some()
-            && self.token_saving(caller.as_ref()).on;
+        let setting = write_receipts::Call::from_request(&request)
+            .map(|_| self.token_saving(caller.as_ref()));
         let (result, counted) = write_receipts::TOKEN_SAVING
-            .scope(saving, self.serve_call(request, context))
+            .scope(setting, self.serve_call(request, context))
             .await;
         if counted {
             self.count_call(verb, caller, named_bot, &result, started.elapsed())

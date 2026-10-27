@@ -16,7 +16,10 @@ pub(crate) struct DownMemory(pub(crate) Down, pub(crate) Arc<InMemoryMemory>);
 #[async_trait]
 impl Memory for DownMemory {
     fn image_field(&self, entity: &EntityId, key: &str) -> Option<Option<String>> {
-        self.1.image_field(entity, key)
+        match self.0 {
+            Down::ImageFields => None,
+            _ => self.1.image_field(entity, key),
+        }
     }
 
     async fn record_app_event(
@@ -60,6 +63,7 @@ impl Memory for DownMemory {
             | Down::RoleRelease
             | Down::RoleReleaseExcept(_)
             | Down::RoleReleaseOnly(_)
+            | Down::ImageFields
             | Down::Nothing
             | Down::BuiltOn
             | Down::Writes => self.1.list_entities(kind).await,
@@ -144,6 +148,7 @@ impl Memory for DownMemory {
             | Down::RoleRelease
             | Down::RoleReleaseExcept(_)
             | Down::RoleReleaseOnly(_)
+            | Down::ImageFields
             | Down::Nothing
             | Down::BuiltOn
             | Down::Writes => self.1.declared_kinds().await,
@@ -183,6 +188,7 @@ impl Memory for DownMemory {
             | Down::RoleRelease
             | Down::RoleReleaseExcept(_)
             | Down::RoleReleaseOnly(_)
+            | Down::ImageFields
             | Down::Nothing
             | Down::BuiltOn
             | Down::Writes => self.1.declared_types().await,
@@ -257,6 +263,7 @@ impl Memory for DownMemory {
             | Down::RoleRelease
             | Down::RoleReleaseExcept(_)
             | Down::RoleReleaseOnly(_)
+            | Down::ImageFields
             | Down::Nothing
             | Down::BuiltOn
             | Down::ThingFields
@@ -292,6 +299,7 @@ impl Memory for DownMemory {
             | Down::RoleRelease
             | Down::RoleReleaseExcept(_)
             | Down::RoleReleaseOnly(_)
+            | Down::ImageFields
             | Down::Nothing
             | Down::BuiltOn
             | Down::ThingFields
@@ -404,6 +412,7 @@ impl Memory for DownMemory {
             | Down::RoleRelease
             | Down::RoleReleaseExcept(_)
             | Down::RoleReleaseOnly(_)
+            | Down::ImageFields
             | Down::Nothing
             | Down::BuiltOn
             | Down::ThingFields

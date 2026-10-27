@@ -10,6 +10,95 @@ fn only_id_and_derivations(body: &Value) {
 }
 
 #[tokio::test]
+async fn lean_receipts_derivations_survive_the_changed_count_limit() {
+    let mut failures = Vec::new();
+    for saving in [false, true] {
+        let story = Story::begin("bot:otto").await;
+        let s = story.session().await;
+        if saving {
+            s.call("capture", json!({"subject":"bot:otto", "content":"Use lean receipts", "sets":{"setting_token_saving":"on"}})).await;
+        }
+        let short = s.call("add_entity", json!({"kind":"thing", "handle":"brass-bell", "name":"Brass bell", "source":"user-named", "sets":{"runs_out":"2026-10-26"}})).await.json();
+        assert_eq!(short["derived"]["due_on"], "2026-10-26", "{short}");
+        let mut sets = serde_json::Map::new();
+        for n in 0..20 {
+            sets.insert(format!("a{n:02}"), "short".into());
+        }
+        sets.insert("runs_out".into(), "2026-10-26".into());
+        let many = s.call("add_entity", json!({"kind":"thing", "handle":"kettle", "name":"The Kettle", "source":"user-named", "sets":sets})).await.json();
+        if many["derived"]["due_on"] != "2026-10-26" {
+            failures.push(format!("saving={saving}: {many}"));
+        }
+        assert!(many["derived"].get("a00").is_none(), "{many}");
+        assert!(many["derived"].get("runs_out").is_none(), "{many}");
+        if saving {
+            only_id_and_derivations(&many);
+        }
+        story.finish().await;
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[tokio::test]
+async fn lean_receipts_derivations_survive_an_elided_old_list_value() {
+    let mut failures = Vec::new();
+    for saving in [false, true] {
+        let story = Story::begin("bot:otto").await;
+        let s = story.session().await;
+        s.call(
+            "declare_type",
+            json!({"name":"thing", "fields":[
+                {"key":"tags", "holds":"list:text"},
+                {"key":"short_tags", "holds":"list:text"}
+            ]}),
+        )
+        .await;
+        s.add("thing:kettle", "The Kettle").await;
+        let long_item = "b".repeat(250);
+        let old = format!("alpha, {long_item}");
+        let long = s
+            .call(
+                "capture",
+                json!({"subject":"thing:kettle", "content":"Long list", "sets":{"tags":old}}),
+            )
+            .await
+            .json();
+        let short = s.call("capture", json!({"subject":"thing:kettle", "content":"Short list", "sets":{"short_tags":"alpha, beta"}})).await.json();
+        if saving {
+            s.call("capture", json!({"subject":"bot:otto", "content":"Use lean receipts", "sets":{"setting_token_saving":"on"}})).await;
+        }
+        let control = s
+            .call(
+                "update_fact",
+                json!({"address":short["address"], "sets_remove":{"short_tags":"beta"}}),
+            )
+            .await
+            .json();
+        assert_eq!(control["derived"]["short_tags"], "alpha", "{control}");
+        let changed = s
+            .call(
+                "update_fact",
+                json!({"address":long["address"], "sets_remove":{"tags":long_item}}),
+            )
+            .await
+            .json();
+        if changed["derived"]["tags"] != "alpha" {
+            failures.push(format!("saving={saving}: {changed}"));
+        }
+        if saving {
+            only_id_and_derivations(&changed);
+        }
+        let read = s
+            .call("recall", json!({"subject":"thing:kettle"}))
+            .await
+            .json();
+        assert_eq!(read["objects"][0]["fields"]["tags"], "alpha", "{read}");
+        story.finish().await;
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[tokio::test]
 async fn lean_receipts_token_saving_setting_covers_the_four_single_writes() {
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
