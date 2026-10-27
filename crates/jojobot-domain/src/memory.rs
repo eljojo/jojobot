@@ -2046,9 +2046,9 @@ pub fn validate_happened_span(
 /// the order key of a document's section, which is layout, or a move of the status, which is the route itself, or of the standing, whose
 /// settling asks for a receipt on its own.
 ///
-/// A rewrite of the words by the session that wrote the claim, which sends no
-/// provenance, keeps the provenance the claim has. Anyone else still has to say
-/// how the new words are known, which [`apply_fact_patch`] asks.
+/// A rewrite of the words that sends no provenance keeps the claim's own when
+/// the session wrote the claim or the claim is an inference. Any other session
+/// must say how the new words are known ([`apply_fact_patch`] asks).
 ///
 /// `written_in` is the session of the claim's FIRST write: the session that
 /// brought the claim in. `declared` is the types the store holds, which say which
@@ -2141,7 +2141,10 @@ pub fn settle_rewrite(
             address: address.to_string(),
         });
     }
-    if rewrites_words && own && patch.provenance.is_none() {
+    // The writing session keeps its claim's provenance, and any session keeps an
+    // inference's: an agent's new words are an inference whoever writes them.
+    let keeps = own || fact.provenance == Provenance::Inference;
+    if rewrites_words && keeps && patch.provenance.is_none() {
         patch.provenance = Some(fact.provenance);
     }
     Ok(patch)
@@ -6290,16 +6293,13 @@ pub enum MemoryError {
     /// **A content replacement named no provenance.**
     ///
     /// An edit that rewrites `content` and leaves `provenance` unnamed would
-    /// carry forward whatever the claim already had — testimony, an
-    /// observation, an inference — over words that did not exist when that
-    /// provenance was set. Refused rather than silently kept: a caller who
-    /// meant the same provenance says so again, and a caller who does not
-    /// know how the new words are known has found that out before anything
-    /// is written under a name that no longer fits it.
+    /// carry an observation's source over words that system never held. Refused
+    /// rather than silently kept: a caller who meant the same provenance says so
+    /// again. The claim's own writing session and an inference are not asked.
     #[error(
         "a claim's content cannot be replaced without saying how the new words are known: give \
          'provenance' — testimony, observation or inference — even to say it is known the same \
-         way as before"
+         way as before. Only an inference you rewrite keeps its provenance when you send none"
     )]
     UnstatedProvenance,
     /// **Testimony is not rewritten in place by a session that did not write it.**

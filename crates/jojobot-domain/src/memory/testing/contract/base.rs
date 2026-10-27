@@ -4770,28 +4770,24 @@ pub async fn promotion_to_testimony_needs_confirmation<M: Memory>(store: &M) {
     );
 }
 
-/// **A content replacement must restate how the new words are known.**
-///
-/// Editing `content` with no `provenance` named would leave whatever the
-/// claim already carried standing over words that did not exist when that
-/// provenance was set — testimony backing a sentence the operator never
-/// said. A refusal makes the caller decide rather than a silent value
-/// deciding for them: name provenance again, even to say it is known the
-/// same way as before.
+/// **An observation's content replacement must restate how the new words are
+/// known.** Editing `content` with no `provenance` named would leave a system
+/// named as the source of words it never held. A refusal makes the caller
+/// decide: name provenance again, even to say it is known the same way as
+/// before. An inference is not asked: its new words are an inference whoever
+/// writes them (see `a_rewrite_of_testimony_belongs_to_the_session_that_wrote_it`).
 pub async fn a_content_replacement_without_provenance_is_refused<M: Memory>(store: &M) {
     let subject = EntityId::person("person:contract-wordswap");
-    // **An inference**, because a rewrite of another session's testimony is
-    // refused for its own reason before provenance is asked about (see
-    // `a_rewrite_of_testimony_belongs_to_the_session_that_wrote_it`).
     let captured = capture(
         store,
         NewFact {
-            provenance: Provenance::Inference,
+            provenance: Provenance::Observation,
+            fields: [(READ_FROM.to_string(), "the till".to_string())].into(),
             ..NewFact::about(subject.clone(), "prefers tea", date(2026, 7, 1))
         },
     )
     .await;
-    assert_eq!(captured.provenance, Provenance::Inference);
+    assert_eq!(captured.provenance, Provenance::Observation);
 
     let err = store
         .update_fact(
@@ -4820,13 +4816,13 @@ pub async fn a_content_replacement_without_provenance_is_refused<M: Memory>(stor
         &captured.address(),
         FactPatch {
             content: Some("prefers coffee".to_string()),
-            provenance: Some(Provenance::Inference),
+            provenance: Some(Provenance::Observation),
             ..Default::default()
         },
     )
     .await;
     assert_eq!(edited.content, "prefers coffee");
-    assert_eq!(edited.provenance, Provenance::Inference);
+    assert_eq!(edited.provenance, Provenance::Observation);
 }
 
 /// **A hedge round-trips as itself.** The claim the second field exists
@@ -18150,8 +18146,8 @@ pub async fn a_rewrite_of_testimony_belongs_to_the_session_that_wrote_it<M: Memo
         "prefers green tea",
     );
 
-    // **An inference is not protected**: any session rewrites it, and a session
-    // that did not write it still has to say how the new words are known.
+    // **An inference is not protected**: any session rewrites it, and it stays an
+    // inference when the session that did not write it names no provenance.
     let unsaid = store
         .update_fact(
             &guessed.address(),
@@ -18159,11 +18155,10 @@ pub async fn a_rewrite_of_testimony_belongs_to_the_session_that_wrote_it<M: Memo
             &other_caller(),
         )
         .await
-        .expect_err("a session that did not write it has to name a provenance");
-    assert!(
-        matches!(unsaid, MemoryError::UnstatedProvenance),
-        "{unsaid:?}"
-    );
+        .expect("a session that did not write it keeps it an inference")
+        .written()
+        .expect("nothing blocks it");
+    assert_eq!(unsaid.provenance, Provenance::Inference, "{unsaid:?}");
     store
         .update_fact(
             &guessed.address(),

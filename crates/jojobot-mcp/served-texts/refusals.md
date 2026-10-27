@@ -132,12 +132,13 @@ answer: {
 ### Memory refusal `UnstatedProvenance`
 
 ```text
-reads: a claim's content cannot be replaced without saying how the new words are known: give 'provenance' — testimony, observation or inference — even to say it is known the same way as before
+reads: a claim's content cannot be replaced without saying how the new words are known: give 'provenance' — testimony, observation or inference — even to say it is known the same way as before.
+Only an inference you rewrite keeps its provenance when you send none
 answer: {
   "attempted": "",
   "candidates": [],
   "fix_by": "change",
-  "how_to_proceed": "Nothing was written: a claim's content cannot be replaced without saying how the new words are known: give 'provenance' — testimony, observation or inference — even to say it is known the same way as before. Nothing is missing from the store and nothing here needs the operator — the call itself is what jojobot cannot carry out. Send the same capture call again with that fixed.",
+  "how_to_proceed": "Nothing was written: a claim's content cannot be replaced without saying how the new words are known: give 'provenance' — testimony, observation or inference — even to say it is known the same way as before. Only an inference you rewrite keeps its provenance when you send none. Nothing is missing from the store and nothing here needs the operator — the call itself is what jojobot cannot carry out. Send the same capture call again with that fixed.",
   "status": "blocked",
   "wrote": false
 }
