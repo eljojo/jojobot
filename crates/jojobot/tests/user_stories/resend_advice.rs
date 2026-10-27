@@ -222,3 +222,47 @@ async fn a_beat_whose_working_on_was_refused_is_told_to_change() {
     change_naming_the_rule(&otto.refused("journal", args).await);
     story.finish().await;
 }
+
+/// A paragraph long enough that a section of sixty of them is cut into pieces.
+fn paragraph() -> String {
+    format!("{}\n\n", "word ".repeat(200).trim_end())
+}
+
+#[tokio::test]
+async fn a_section_move_whose_first_piece_was_refused_is_told_to_change() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    s.add("document:homer", "Fryer manual").await;
+    let mut text = String::from("# A\n\nalpha.\n\n# B\n\n");
+    for _ in 0..60 {
+        text.push_str(&paragraph());
+    }
+    text.push_str("# C\n\ngamma.\n");
+    s.call(
+        "put_document",
+        json!({ "document": "document:homer", "markdown": text }),
+    )
+    .await;
+    let held = s.recall("document:homer").await.json();
+    let facts = held["objects"][0]["facts"]
+        .as_array()
+        .expect("sections")
+        .clone();
+    let address_of = |heading: &str| {
+        facts
+            .iter()
+            .find(|fact| fact["content"] == heading)
+            .and_then(|fact| fact["address"].as_str())
+            .unwrap_or_else(|| panic!("no section {heading}: {held}"))
+            .to_string()
+    };
+    assert!(facts.len() > 3, "B is cut into pieces: {held}");
+    let args = json!({
+        "address": address_of("# B"), "after": address_of("# C"), "request_id": "move-9",
+    });
+
+    story.refuses_every_commit_of("chunk-0", RULE);
+    change_naming_the_rule(&s.refused("update_fact", args.clone()).await);
+    change_naming_the_rule(&s.refused("update_fact", args).await);
+    story.finish().await;
+}
