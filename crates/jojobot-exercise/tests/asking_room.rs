@@ -1371,17 +1371,17 @@ async fn started_on_of(surface: &Surface, sid: &str, focus: &str) -> String {
 }
 
 /// **Case 3. What the movers quoted is in the March session, and the cold
-/// sitting is shown ten of its own runs and none of Lisa's.** The room's
-/// furnishing run and the nine sittings are the occupant's; Lisa's three are
-/// hers, and a list of "my past sessions" must not hand them over.
+/// sitting is shown its nine runs and none of Lisa's.** Furnishing creates
+/// no run. Lisa's three sittings are hers, and a list of "my past sessions"
+/// must not hand them over.
 #[tokio::test]
 async fn solvable_the_movers_quote_is_in_the_march_session_and_lisas_sessions_are_not_listed() {
     let (_room, surface) = year_worked().await;
     let sid = cold(&surface).await;
     let runs = did(&surface, &sid, "list_runs", json!({})).await;
     assert_eq!(
-        runs["count"], 10,
-        "the occupant's own runs are the furnishing and the nine sittings: {runs}",
+        runs["count"], 9,
+        "only the nine occupant sittings count; furnishing opens no run: {runs}",
     );
     let read = surface
         .call(

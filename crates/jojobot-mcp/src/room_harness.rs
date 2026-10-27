@@ -31,6 +31,11 @@ impl Harness {
             "ping" => self.handler.ping(Parameters(decode(arguments)?)).await,
             "search" => self.handler.search(Parameters(decode(arguments)?)).await,
             "recall" => self.handler.recall(Parameters(decode(arguments)?)).await,
+            "read_document" => {
+                self.handler
+                    .read_document(Parameters(decode(arguments)?))
+                    .await
+            }
             "list_entities" => {
                 self.handler
                     .list_entities(Parameters(decode(arguments)?))
@@ -110,7 +115,10 @@ impl Harness {
             .await
             .map_err(|error| error.to_string())?
             .into_iter()
-            .filter(|run| run.is_offerable(self.handler.clock.now(), Some(day)))
+            .filter(|run| {
+                run.state == jojobot_domain::session::SessionState::Active
+                    || run.is_offerable(self.handler.clock.now(), Some(day))
+            })
             .map(|run| serde_json::json!({"id":run.id.as_str(),"working_on":run.focus}))
             .collect();
         view["session"] = serde_json::json!({"choices":choices});

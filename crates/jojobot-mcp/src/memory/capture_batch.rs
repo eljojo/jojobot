@@ -452,7 +452,7 @@ impl Jojobot {
     ) {
         if ends_later.load(std::sync::atomic::Ordering::SeqCst)
             && self
-                .clear_stored_due_moment(subject, &caller.bot, caller.sid.as_str())
+                .clear_stored_due_moment(subject, &caller.bot, Some(caller.sid.as_str()))
                 .await
                 .is_err()
         {

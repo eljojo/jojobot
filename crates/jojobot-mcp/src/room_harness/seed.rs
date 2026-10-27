@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::memory::parse::{entity_id, parse_boot, parse_provenance};
+use jojobot_domain::attention;
 use jojobot_domain::session::{NewEntry, NewSession, SessionState};
 
 #[derive(serde::Deserialize)]
@@ -114,10 +115,14 @@ impl Harness {
                 new.boot = parse_boot(args["boot"].as_str()).map_err(err)?;
                 new.override_token = args["override_token"].as_str().map(str::to_string);
                 new.override_reason = args["override_reason"].as_str().map(str::to_string);
-                let first = args
-                    .get("sets")
-                    .map(|sets| self.fact(author, &id, &new.name, sets));
-                let first = first.transpose()?;
+                let first = match args.get("sets") {
+                    Some(sets) => Some(
+                        self.prepare(self.fact(author, &id, &new.name, sets)?)
+                            .await
+                            .0,
+                    ),
+                    None => None,
+                };
                 let written = self.create(new.clone(), first.clone()).await?;
                 let entity = match written {
                     Guarded::Blocked {
@@ -152,7 +157,16 @@ impl Harness {
                 let mut fact =
                     self.fact(author, &subject, text(&args, "content")?, &args["sets"])?;
                 fact.provenance = parse_provenance(args["provenance"].as_str()).map_err(err)?;
+                let (fact, clears_due) = self.prepare(fact).await;
                 written_value(self.handler.memory.capture(fact).await.map_err(err)?)?;
+                if clears_due {
+                    self.handler
+                        .clear_stored_due_moment(&subject, author, None)
+                        .await
+                        .map_err(|error| {
+                            format!("the seeded due moment could not be cleared: {error:?}")
+                        })?;
+                }
             }
             "declare_type" => {
                 let mut fields = Vec::new();
@@ -226,6 +240,24 @@ impl Harness {
         fact.sets = fact.fields.keys().cloned().collect();
         fact.written_by_bot = Some(author.clone());
         Ok(fact)
+    }
+
+    /// Seeded settings carry the same arithmetic as a capture, with no caller.
+    async fn prepare(&self, mut fact: NewFact) -> (NewFact, bool) {
+        let unread = crate::memory::instance_unread::InstanceUnread::default();
+        let (moved, derived) = self
+            .handler
+            .moved_due_moment(&fact.subject, &fact.fields, &[], fact.recorded_at, &unread)
+            .await;
+        if let attention::DueMove::Set(day) = moved {
+            fact.fields
+                .insert(attention::DUE_ON.to_string(), day.to_string());
+            fact.derived.insert(attention::DUE_ON.to_string());
+            if derived {
+                fact.provenance = Provenance::Inference;
+            }
+        }
+        (fact, matches!(moved, attention::DueMove::Cleared))
     }
 
     async fn create(

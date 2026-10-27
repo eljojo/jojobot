@@ -295,7 +295,7 @@ impl Jojobot {
         caller: &crate::caller::Caller,
     ) -> Option<CallToolResult> {
         let cleared = self
-            .clear_stored_due_moment(subject, &caller.bot, caller.sid.as_str())
+            .clear_stored_due_moment(subject, &caller.bot, Some(caller.sid.as_str()))
             .await;
         if let Err(cause) = &cleared
             && jojobot_domain::request::carries_an_id()
@@ -347,7 +347,7 @@ impl Jojobot {
         &self,
         subject: &EntityId,
         bot: &EntityId,
-        session: &str,
+        session: Option<&str>,
     ) -> Result<(), crate::stopped::Stopped> {
         let carrier = match self.memory.recall(subject).await {
             Ok(facts) => facts.into_iter().find(|fact| {
@@ -363,7 +363,7 @@ impl Jojobot {
         };
         let patch = FactPatch {
             clear_fields: vec![attention::DUE_ON.to_string()],
-            session: Some(session.to_string()),
+            session: session.map(str::to_string),
             ..Default::default()
         };
         // **The second part of a capture that finishes a thing**, written once
