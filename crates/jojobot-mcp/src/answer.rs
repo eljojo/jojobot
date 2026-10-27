@@ -594,6 +594,7 @@ fn receipt_notes_in(value: &serde_json::Value, path: &str, found: &mut Vec<(Stri
                             | "possible_subject_note"
                             | "event_negation_note"
                             | "pushes_over_note"
+                            | "dropped_keys_note"
                     )
                 {
                     found.push((path.into(), key.clone()));
