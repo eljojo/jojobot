@@ -31,7 +31,7 @@ const FIGURE: &str = "the secret figure is wiggum";
 /// different answers: this one is about the person's box, that one about a box
 /// that is merely not the caller's.
 const PRIVATE: &str = "not one any bot reads";
-const NOT_YOURS: &str = "not your box";
+const NOT_YOURS: &str = "NotYourMessage";
 
 /// One reader's ordinary mail: two notes in its own box, one to retire and one
 /// to quarantine, and a word from them the front door finds.
@@ -66,8 +66,8 @@ async fn leave_notes(from: &Session, to: &str, word: &'static str) -> Own {
 /// the operator's message, which it refuses, and of an ordinary note, which it
 /// serves, in the same block.
 ///
-/// `other_box_note` is a note in a different bot's box, for the refusal that is
-/// not the private one. `outbox_title` is the title of a message the listed
+/// `other_box_note` is a note the reader wrote to a different bot: it may be
+/// read, never processed by its author. `outbox_title` is the title of a message the listed
 /// outbox shows, and `listing_sender` is who `list_sent` is asked after (`None` for the
 /// bot's own outbox).
 async fn tries_every_way_to_read_it(
@@ -86,7 +86,7 @@ async fn tries_every_way_to_read_it(
     delivered.says(own.word).never_says(NEEDLE);
 
     // Opening a message by id: the ordinary note opens, the operator's is the
-    // private-box refusal, and a note in another bot's box is a different one.
+    // private-box refusal, and the author's outbox opens without delivery.
     reader
         .call("read_message", json!({"message_id": own.retire}))
         .await
@@ -97,8 +97,14 @@ async fn tries_every_way_to_read_it(
         .says(PRIVATE)
         .never_says(NOT_YOURS)
         .never_says(NEEDLE);
+    let outbox = reader
+        .call("read_message", json!({"message_id": other_box_note}))
+        .await
+        .json();
+    assert_eq!(outbox["id"], other_box_note, "{outbox}");
+    assert_eq!(outbox["taken"], false, "{outbox}");
     reader
-        .refused("read_message", json!({"message_id": other_box_note}))
+        .refused("mark_processed", json!({"message_id": other_box_note}))
         .await
         .says(NOT_YOURS)
         .never_says(PRIVATE);
@@ -303,7 +309,7 @@ async fn a_bot_leaves_the_operator_a_message_and_no_bot_can_read_it_back() {
 
     // ── retired in the store, it is still private: the archive is not open ───
     //
-    // The processed note in a bot's box is readable by any bot; the processed
+    // The processed note in a bot's box is readable by its owner; the processed
     // message in the person's box is readable by none.
     story.retire_in_the_store(id).await;
     assert_eq!(story.mail_held_by("person:lisa").await, (0, 0, 1));
@@ -326,8 +332,7 @@ async fn a_bot_leaves_the_operator_a_message_and_no_bot_can_read_it_back() {
             .await
             .says(&note.title);
     }
-    // And the other bot's processed note is readable from here too: the
-    // archive is open on every ordinary box.
+    // Its author can read an outbox message even in a peer's archive.
     s.call("read_message", json!({"message_id": sigmas.retire}))
         .await
         .says(sigmas.word);

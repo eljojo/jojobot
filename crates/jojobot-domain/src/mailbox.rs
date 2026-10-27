@@ -33,6 +33,7 @@ pub mod event;
 pub mod guard;
 pub mod mention;
 pub mod quote;
+pub mod visibility;
 
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;

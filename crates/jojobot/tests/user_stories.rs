@@ -310,6 +310,8 @@ mod lists;
 /// A bot's mail is finished only by that bot.
 #[path = "user_stories/mail_finished_by_its_owner.rs"]
 mod mail_finished_by_its_owner;
+#[path = "user_stories/mail_visible_down_the_chart.rs"]
+mod mail_visible_down_the_chart;
 #[path = "user_stories/mentioning.rs"]
 mod mentioning;
 /// A merge refusal's advice to clear a ceiling is advice the clear honours.

@@ -176,6 +176,7 @@ pub const ROSTER: &[&str] = &[
     "document:marge",
     "document:skinner",
     "bot:bart",
+    "bot:homer",
     "bot:lisa",
     "bot:marge",
     "bot:moe",

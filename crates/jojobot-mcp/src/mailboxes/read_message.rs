@@ -21,7 +21,7 @@ pub struct ReadMessageArgs {
     /// left in the state it is in, and the answer is its changes in the order
     /// they happened, each naming the run, when, the state it left, and the
     /// notes or reason it was given. Allowed exactly where reading the message
-    /// is. Without it this verb takes delivery, as always.
+    /// is. Without it a read of your own box takes delivery.
     #[serde(default)]
     pub(crate) history: Option<bool>,
 }
@@ -33,24 +33,20 @@ impl Jojobot {
         description = "Take delivery of ONE message by id — the selective half of \
                        read_mailbox, for when you want a single message (the one a search hit \
                        named) and have no business owning the rest of the box. That one moves \
-                       `new` to `read`; nothing else in the box is touched. IT MUST BE IN \
-                       YOUR OWN BOX: reading is taking delivery, so opening somebody else's \
-                       message would move their mail out of `new` and it would never look \
-                       fresh to them again — the same reason read_mailbox takes no box name. \
-                       A message in another bot's box comes back \
-                       status: blocked and moves nothing. To reach another \
-                       box, post_message writes into it without reading it, which is the \
-                       shape of a request. THE ARCHIVE IS THE EXCEPTION, and it is not a \
-                       loophole: a `processed` message comes back unchanged and flagged, from \
-                       any bot's box, because processed is terminal — reading one moves \
-                       nothing and takes nothing on, and it is what a search hit over old \
-                       mail points at. THE OPERATOR'S BOX IS NOT A BOT'S: no bot opens a \
+                       `new` to `read` in YOUR OWN BOX; nothing else in the box is touched. \
+                       DOWN THE CHART, you may also read any message in every bot's box below \
+                       you on the reports_to chain, or a message you sent above or beside you. \
+                       That read shows its current state, new \
+                       included, with taken: false: it moves nothing and obliges nobody. \
+                       The message remains its owner's to handle. Other mail above or beside you \
+                       is refused in every state, processed included; post_message can ask \
+                       its owner for what you need. THE OPERATOR'S BOX IS NOT A BOT'S: no bot opens a \
                        message in it, in any state, whoever wrote it. Same envelope a \
                        delivery hands over, seen_before and all: true means somebody had \
                        already taken this message, so it is a leftover rather than fresh \
                        mail. Taking delivery is NOT handling: call mark_processed once you \
-                       have acted, and only then. It renews a role claim your session holds, as \
-                       a read of your own box does. WITH `history: true` THIS VERB TAKES NO \
+                       have acted on your own mail, and only then. Reading your own mail renews \
+                       your role claim. WITH `history: true` THIS VERB TAKES NO \
                        DELIVERY: it answers the message's changes of state in order, with the \
                        run that made each, and leaves the message where it is. A refusal is an answer with status: blocked \
                        and nothing taken, in three kinds: an id that names nothing at all; an \
@@ -81,10 +77,9 @@ impl Jojobot {
             .message_by_id(&id)
             .await
             .map_err(mailbox_error)?;
-        // **A person's box is read by no bot, in any state.** Asked before the
-        // archive exception below, because that exception is about a bot's
-        // box: `processed` stays readable from any BOT's box, and a person's
-        // box is not one. A board that cannot say refuses too, and so does a
+        // **A person's box is read by no bot, in any state.** This privacy
+        // refusal must precede the chart refusal so it names no private box.
+        // A board that cannot say refuses too, and so does a
         // box it does not list. A card jojobot cannot read answers no lookup by
         // id, and the refusal that follows would describe what is wrong with
         // it.
@@ -95,16 +90,9 @@ impl Jojobot {
         {
             return Ok(refused);
         }
-        let readable = located.clone();
-        if let Some(message) = located
-            // **The guard is on the STATE CHANGE, not on the bytes.** `processed`
-            // is a terminal archive: reading one moves nothing and takes nothing
-            // on, so there is no delivery to guard — and `search` returns mail
-            // from every box in that state by design, each hit carrying the id
-            // this verb takes. Guarding the archive would hand a session a hit
-            // it is structurally forbidden to open.
-            .filter(|m| !matches!(m.state, mailbox::MessageState::Processed))
-        {
+        let readable = located;
+        let mut peek = false;
+        if let Some(message) = &readable {
             // The same three refusals a read of your own box gets — no handle,
             // a world that cannot say, a bot whose box is missing — because it
             // is the same question, asked by the same caller, about the same
@@ -113,12 +101,22 @@ impl Jojobot {
                 Ok(mine) => mine,
                 Err(refused) => return Ok(refused),
             };
-            if mine.name != message.mailbox {
-                return Ok(not_yours(&id, &message.mailbox));
+            let visible = self.mail_visibility(Some(&mine.owner)).await?;
+            if visible.message(&message.mailbox, Some(&message.sender))
+                != mailbox::visibility::MessageVisibility::Readable
+            {
+                return Ok(not_yours(
+                    &id,
+                    &message.mailbox,
+                    visible.above.contains(&message.mailbox),
+                ));
             }
+            peek = mine.name != message.mailbox;
             // **A read of one's own box renews the claim**, as `read_mailbox`
             // does: a session that only reads its mail writes nothing.
-            self.renew_role_claims_after_answer(args.sid.as_deref());
+            if !peek {
+                self.renew_role_claims_after_answer(args.sid.as_deref());
+            }
         }
         // **The caller's key is checked before either path**, so a key that
         // opens nothing is refused the history of an archived message exactly as
@@ -139,6 +137,21 @@ impl Jojobot {
                 Ok(events) => json_result(&history_json(message, &events)),
                 Err(e) => mailbox_declined(e),
             };
+        }
+        // A manager reads the located bytes, never the delivering store verb:
+        // even a new message stays new, with no delivery event or obligation.
+        if peek && let Some(message) = &readable {
+            let mut rendered = message_json(message);
+            rendered["seen_before"] = (message.state != mailbox::MessageState::New).into();
+            rendered["taken"] = false.into();
+            let viewer = self
+                .caller(args.sid.as_deref())
+                .ok()
+                .flatten()
+                .and_then(|caller| caller.card);
+            self.mark_other_run(&mut rendered, message, viewer.as_ref())
+                .await;
+            return json_result(&rendered);
         }
         let acting = jojobot_domain::mailbox::Acting {
             session: run.as_deref(),
@@ -279,7 +292,7 @@ mod tests {
                 .read_message(Parameters(ReadMessageArgs {
                     history: None,
                     message_id: processed["id"].as_str().expect("an id").to_string(),
-                    sid: None,
+                    sid: Some(reader),
                 }))
                 .await
                 .expect("read_message ok"),
@@ -418,26 +431,10 @@ mod tests {
         assert_eq!(counted["counts"]["new"], 1, "nothing moved: {counted}");
     }
 
-    /// **A processed message is history, and history is readable by anybody.**
-    ///
-    /// The scoping call this batch left open, and it goes on the STATE CHANGE
-    /// rather than on the bytes. What the owner check exists to prevent is one
-    /// bot taking delivery of another's mail — moving it out of `new` so its
-    /// real consumer never sees it as fresh. `processed` is terminal: reading
-    /// one moves nothing, takes nothing on, and owes nobody anything, so there
-    /// is no delivery to guard.
-    ///
-    /// **And guarding it would break the front door.** `search` returns mail
-    /// from every box in every state, processed included, by design and by
-    /// default — the reader who needs a filed finding is a later session that
-    /// does not know it is there. Every one of those hits carries the id
-    /// `read_message` takes. An owner check over the archive would hand a
-    /// session a hit it is structurally forbidden to open, which is a worse
-    /// answer than either extreme.
+    /// An owner still reads its processed archive without moving it.
     #[tokio::test]
     async fn a_processed_message_is_history_and_reading_one_takes_nothing() {
         let jojobot = mailbox_handler();
-        let gamma = owning(&jojobot, "gamma").await;
         let delta = owning(&jojobot, "delta").await;
         let theirs = send(&jojobot, "delta", "epsilon", "a finding worth filing").await;
         let id = theirs["id"].as_str().expect("an id").to_string();
@@ -446,7 +443,7 @@ mod tests {
                 request_id: None,
                 message_id: id.clone(),
                 notes: Some("acted on".into()),
-                sid: Some(delta),
+                sid: Some(delta.clone()),
                 quarantine: None,
                 message_ids: None,
             }))
@@ -458,7 +455,7 @@ mod tests {
                 .read_message(Parameters(ReadMessageArgs {
                     history: None,
                     message_id: id.clone(),
-                    sid: Some(gamma),
+                    sid: Some(delta),
                 }))
                 .await
                 .expect("read_message ok"),
@@ -471,16 +468,11 @@ mod tests {
         );
     }
 
-    /// **The history of an archived message is read only by a caller the verb
-    /// would let read it.** A processed message is readable from any bot's box,
-    /// so no box check stands in front of it, and the caller's key is the one
-    /// check left: a key that opens nothing is refused a plain read of the
-    /// message and has to be refused its history. Paired with the key that
-    /// opens a session, which reads it.
+    /// An invalid session key cannot read an owner's archived history.
+    /// The owner's valid key reads the same history.
     #[tokio::test]
     async fn the_history_of_an_archived_message_is_refused_to_a_key_that_opens_nothing() {
         let jojobot = mailbox_handler();
-        let gamma = owning(&jojobot, "gamma").await;
         let delta = owning(&jojobot, "delta").await;
         let theirs = send(&jojobot, "delta", "epsilon", "a finding worth filing").await;
         let id = theirs["id"].as_str().expect("an id").to_string();
@@ -489,7 +481,7 @@ mod tests {
                 request_id: None,
                 message_id: id.clone(),
                 notes: Some("acted on".into()),
-                sid: Some(delta),
+                sid: Some(delta.clone()),
                 quarantine: None,
                 message_ids: None,
             }))
@@ -513,7 +505,7 @@ mod tests {
             }
         };
 
-        let opened = ask(&gamma, true).await;
+        let opened = ask(&delta, true).await;
         assert_eq!(
             opened["history"]["count"], 1,
             "a key that opens a session reads the history: {opened}"
@@ -617,7 +609,7 @@ mod tests {
     /// **A message in a person's box is read by no bot, in any state.** The
     /// bot that wrote it, a different bot and a caller with no handle all meet
     /// the same refusal, whether the message is waiting or already processed:
-    /// `processed` is readable from any other box, and this box is not another
+    /// `processed` follows the chart rule too, and this box is not another
     /// box. The refusal carries none of the message, moves nothing, and is
     /// paired with the post that landed, counted from the store.
     #[tokio::test]
@@ -801,8 +793,7 @@ mod tests {
         )
         .await;
         let id = posted["id"].as_str().expect("an id").to_string();
-        // A retired message is readable from any bot's box, so only the guard
-        // on a person's box stands between it and the reader.
+        // Privacy is checked before the chart, including in the archive.
         jojobot
             .mailboxes
             .mark_processed(

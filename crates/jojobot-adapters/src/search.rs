@@ -37,6 +37,7 @@ use tantivy::schema::{FAST, Field, IndexRecordOption, STORED, STRING, Schema, Va
 use tantivy::{Index, IndexReader, IndexWriter, TantivyDocument, Term, doc};
 
 use jiff::civil::Date;
+use jojobot_domain::mailbox::visibility::MessageVisibility;
 use jojobot_domain::mailbox::{MailboxError, Mailboxes, Message};
 use std::collections::{BTreeMap, HashSet};
 
@@ -1880,14 +1881,10 @@ impl FullTextIndex {
     fn other_clauses(&self, query: &SearchQuery) -> Vec<(Occur, Box<dyn Query>)> {
         let f = &self.fields;
         let mut clauses = self.text_clauses(query);
-        // Mail is in unless the caller took it out. A `kind` filter takes it out
-        // too, one clause down: a message has no entity kind, so asking for one
-        // excludes it exactly as it excludes prose in nobody's doc.
-        let mut classes = vec![CLASS_ENTITY, CLASS_PROSE];
-        if query.include_mail {
-            classes.push(CLASS_MESSAGE);
-        }
-        let mut classes: Vec<(Occur, Box<dyn Query>)> = classes
+        // A message is admitted by the domain predicate before counting and
+        // ranking. The existing mirror avoids a second store read or a copied
+        // sender-or-box rule in this query builder.
+        let mut classes: Vec<(Occur, Box<dyn Query>)> = [CLASS_ENTITY, CLASS_PROSE]
             .into_iter()
             .map(|class| {
                 let q: Box<dyn Query> = Box::new(TermQuery::new(
@@ -1897,6 +1894,38 @@ impl FullTextIndex {
                 (Occur::Should, q)
             })
             .collect();
+        if query.include_mail {
+            let messages: Vec<(Occur, Box<dyn Query>)> = self
+                .messages
+                .read()
+                .expect("mail mirror poisoned")
+                .iter()
+                .filter(|message| {
+                    query
+                        .mail_visibility
+                        .message(&message.mailbox, Some(&message.sender))
+                        == MessageVisibility::Readable
+                })
+                .map(|message| {
+                    (
+                        Occur::Should,
+                        Box::new(TermQuery::new(
+                            Term::from_field_text(f.message_id, message.id.as_str()),
+                            IndexRecordOption::Basic,
+                        )) as Box<dyn Query>,
+                    )
+                })
+                .collect();
+            if !messages.is_empty() {
+                classes.push((
+                    Occur::Should,
+                    Box::new(BooleanQuery::new(vec![
+                        self.must_term(f.class, CLASS_MESSAGE),
+                        (Occur::Must, Box::new(BooleanQuery::new(messages))),
+                    ])),
+                ));
+            }
+        }
         // **Sessions come in only for a caller that says who it is, and only
         // that caller's own.** The owner term is MUST *inside* this class's
         // clause rather than beside it: a global one would demand an owner of
@@ -2471,6 +2500,8 @@ impl SearchViaPort for Arc<IndexedMemory> {
     }
 }
 
+#[cfg(test)]
+mod mail_fixtures;
 #[cfg(test)]
 mod reload_tests;
 #[cfg(test)]

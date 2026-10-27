@@ -2067,11 +2067,11 @@ whose runs this reads, and no way to name a different one.
 
 ```text
 See the mail YOU have sent and where it got to — read-only, and it moves NOTHING: no state changes, nobody's delivery is taken, and the messages stay exactly as owed as they were.
-It answers whether something you sent arrived and whether anyone has read it, which no other verb can answer without taking delivery of the box you posted into.
+Your own outbox is readable above or beside you too; naming another sender returns only messages in your own box or boxes below you along reports_to; the rest are counted as withheld, with no metadata, bodies or digests.
 A `to` that names no colleague comes back status: blocked with candidates, never an empty list, because an empty list would read as 'it never arrived'.
 Messages jojobot cannot read are reported separately under `unreadable`: it cannot tell who sent them, so one of yours could be there.
 Newest first, each with its state (`new` = nobody has picked it up · `read` = delivered, not yet finished with · `processed` = acted on) plus notes when the consumer recorded an outcome; a message a read or a post delivered carries `taken_by` (`reading` = the owner opened the box or took that message by id · `posting` = it rode back with the answer to a post of the owner's own); absent says nothing was recorded, never that nobody looked, since a message processed straight from `new` and one delivered before the record existed have none.
-Bodies are left out unless you ask for them — you wrote them — so each carries body_bytes and a digest of about 120 characters and says body_elided: true.
+Permitted bodies are left out unless you ask for them, so each carries body_bytes and a digest of about 120 characters and says body_elided: true.
 MAIL TO THE OPERATOR is listed by id, time and subject only, even with include_bodies, because no bot reads the operator's box back.
 Twenty newest by default; an answer stops at the ceiling, never mid-message, and counts what it left out under not_shown with the `offset` that reads the next page.
 ```
@@ -2139,8 +2139,8 @@ Twenty newest by default; an answer stops at the ceiling, never mid-message, and
 #### `list_sent` — argument `/inputSchema.include_bodies`
 
 ```text
-Ship the bodies back too. Off by default: you wrote them, so the useful
-answer is where they got to, not what they say.
+Ship permitted bodies too. Off by default: receipts and digests usually
+answer where your report got to.
 
 Each message may also carry `sender_mail_waiting_at_send`, stamped once when
 it was posted; see `post_message`'s `sid` for what it means (`null` is
@@ -2174,8 +2174,8 @@ that is, and your own mail is what this verb is for.
 
 Omit it for your own mail: your `sid` already says who that is. Pass one to
 ask after somebody else's outgoing mail; it is matched exactly against the
-bot handle recorded on each message (`bot:gamma`), which is allowed, because
-where a message got to is not private to its sender.
+bot handle recorded on each message (`bot:gamma`). Only messages in your
+own or descendant boxes are returned; the rest are counted as withheld.
 ```
 
 #### `list_sent` — argument `/inputSchema.sid`
@@ -3142,15 +3142,15 @@ attributed, never journalled.
 
 ```text
 Take delivery of ONE message by id — the selective half of read_mailbox, for when you want a single message (the one a search hit named) and have no business owning the rest of the box.
-That one moves `new` to `read`; nothing else in the box is touched.
-IT MUST BE IN YOUR OWN BOX: reading is taking delivery, so opening somebody else's message would move their mail out of `new` and it would never look fresh to them again — the same reason read_mailbox takes no box name.
-A message in another bot's box comes back status: blocked and moves nothing.
-To reach another box, post_message writes into it without reading it, which is the shape of a request.
-THE ARCHIVE IS THE EXCEPTION, and it is not a loophole: a `processed` message comes back unchanged and flagged, from any bot's box, because processed is terminal — reading one moves nothing and takes nothing on, and it is what a search hit over old mail points at.
+That one moves `new` to `read` in YOUR OWN BOX; nothing else in the box is touched.
+DOWN THE CHART, you may also read any message in every bot's box below you on the reports_to chain, or a message you sent above or beside you.
+That read shows its current state, new included, with taken: false: it moves nothing and obliges nobody.
+The message remains its owner's to handle.
+Other mail above or beside you is refused in every state, processed included; post_message can ask its owner for what you need.
 THE OPERATOR'S BOX IS NOT A BOT'S: no bot opens a message in it, in any state, whoever wrote it.
 Same envelope a delivery hands over, seen_before and all: true means somebody had already taken this message, so it is a leftover rather than fresh mail.
-Taking delivery is NOT handling: call mark_processed once you have acted, and only then.
-It renews a role claim your session holds, as a read of your own box does.
+Taking delivery is NOT handling: call mark_processed once you have acted on your own mail, and only then.
+Reading your own mail renews your role claim.
 WITH `history: true` THIS VERB TAKES NO DELIVERY: it answers the message's changes of state in order, with the run that made each, and leaves the message where it is.
 A refusal is an answer with status: blocked and nothing taken, in three kinds: an id that names nothing at all; an id naming an item jojobot cannot read (which comes back saying why, and needs a person rather than a retry); and a message that is not yours to take.
 A message a DIFFERENT run posted than the one reading it carries `written_by_other_run`, naming that run and whether it has since ended.
@@ -3198,7 +3198,7 @@ With `true` the call takes NO delivery and moves nothing: the message is
 left in the state it is in, and the answer is its changes in the order
 they happened, each naming the run, when, the state it left, and the
 notes or reason it was given. Allowed exactly where reading the message
-is. Without it this verb takes delivery, as always.
+is. Without it a read of your own box takes delivery.
 ```
 
 #### `read_message` — argument `/inputSchema.message_id`
@@ -5083,7 +5083,7 @@ attributed, never journalled.
 
 ```text
 The front door — use it first, and any time you do not already hold the exact handle or address.
-One ranked list over entities, claims, free prose AND messages in bots' mailboxes at once (the operator's box is never searched).
+One ranked list over entities, claims, free prose AND mail you sent or in your own box and every bot's box below you on the reports_to chain (other mail above or beside you and the operator's box are excluded).
 `query` matches by stem, needing at least half its terms, rounded up.
 It is optional when a filter narrows: kind, status (unset: active claims, then archived ones ranked below them, retracted ones left out; `active` is current truth only; `archived` reads the archive, retracted claims too), provenance, standing (`open` asks which claims are still in doubt), subject, edge {shape, object}, answers_type or fits_type (one of the two, never both; prefer answers_type, which names each thing's gaps).
 A call with neither a query nor one of those filters is refused, and include_mail is not a filter.

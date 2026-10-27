@@ -46,9 +46,8 @@ fn the_reader_reloads_only_when_it_is_told_to() {
 fn found(index: &FullTextIndex, text: &str) -> usize {
     index
         .search(&SearchQuery {
-            include_mail: true,
             asked_by: Some(EntityId("bot:milhouse".into())),
-            ..SearchQuery::text(text)
+            ..asking_for_mail(text)
         })
         .expect("search ok")
         .len()

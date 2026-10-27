@@ -88,7 +88,7 @@ impl MailExcluded {
             MailExcluded::NotAsked => {
                 "mail was not searched, because this call did not ask for it — that is the \
                  default. Pass include_mail: true to search messages too, which is how you \
-                 find a report another session filed."
+                 find your own outbox or a report in your own box or below you on the reports_to chain."
             }
             MailExcluded::FactScoped => {
                 "this query filters on a property only a fact has (status, provenance, \
@@ -160,7 +160,7 @@ impl MailExcluded {
 fn mail_coverage(query: &SearchQuery, coverage: Coverage) -> serde_json::Value {
     let excluded = |note: &str| serde_json::json!({ "searched": false, "note": note });
     // **Whose mail a search over mail never reaches.** A person's box is kept
-    // out of the index, so a hit list over mail is a list over every other box,
+    // out of the index; the chart scope further narrows the bot boxes,
     // and "searched: true" alone read as "no message says that" even for the
     // operator's. Said on every answer that did search mail.
     let never = "a person's box, the operator's, is never searched: no search finds mail left \
@@ -327,8 +327,9 @@ impl Jojobot {
     #[tool(
         description = "The front door — use it first, and any time you do not already hold \
                        the exact handle or address. One ranked list over entities, claims, \
-                       free prose AND messages in bots' mailboxes at once (the operator's \
-                       box is never searched). `query` matches by stem, needing at least half its terms, rounded up. It is optional when a \
+                       free prose AND mail you sent or in your own box and every bot's box below you on \
+                       the reports_to chain (other mail above or beside you and the operator's box \
+                       are excluded). `query` matches by stem, needing at least half its terms, rounded up. It is optional when a \
                        filter narrows: kind, status (unset: active claims, then archived ones \
                        ranked below them, retracted ones left out; `active` is current truth \
                        only; `archived` reads the archive, retracted claims too), provenance, \
@@ -419,7 +420,14 @@ impl Jojobot {
         // **Kept for the answer.** The declaration moves into the query, and an
         // empty answer under it has to be able to say what the type is.
         let asked_answers = declared.clone();
+        let mail_visibility = if args.include_mail.unwrap_or(false) {
+            self.mail_visibility(asking.as_ref().map(|caller| &caller.bot))
+                .await?
+        } else {
+            Default::default()
+        };
         let query = SearchQuery {
+            mail_visibility,
             answers_type: declared,
             fits_type: fits,
             // The search verb offers no way to ask what a thing holds; only a

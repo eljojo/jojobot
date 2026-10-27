@@ -14,18 +14,17 @@ pub(crate) use codes::{MAILBOXES_REFUSAL_CODES, mailbox_refusal_code};
 
 /// **Somebody else's message, addressed by id.**
 ///
-/// The read side has no box argument at all, so a caller cannot open another
-/// bot's box; this closed the same move made one message at a time. What the
-/// refusal owes is the legitimate alternative, because a session that needs
-/// something out of another box and is told only "no" will find a worse way.
-/// Writing INTO that box is the sanctioned shape, and it is the shape of a
-/// request rather than a taking.
-pub(crate) fn not_yours(id: &MessageId, theirs: &MailboxName) -> CallToolResult {
+/// Mail above or beside the caller stays unreadable, even in the archive.
+/// Posting asks its owner without reading it or taking delivery.
+pub(crate) fn not_yours(id: &MessageId, theirs: &MailboxName, above: bool) -> CallToolResult {
+    let relation = if above {
+        "above you on the chart"
+    } else {
+        "outside your own box and the bots below you on the chart"
+    };
     let how_to_proceed: WayForward = format!(
         "Nothing was delivered and nothing moved. Message '{id}' is in '{theirs}', which is \
-             not your box — and reading IS taking delivery, so opening it would move somebody \
-             else's mail out of `new` and it would never look fresh to the bot it was sent to \
-             again. A message in another bot's box is not a permission you can be granted. To reach that box, post_message writes into it \
+             {relation}. To reach that box, post_message writes into it \
              without reading it, which is the shape of a request — ask its owner for what you \
              need. Your own mail is read_mailbox, which needs no id and no name."
     )
@@ -685,7 +684,7 @@ pub(crate) mod tests {
         let id = MessageId("9".to_string());
         assert_fix_by(
             "not_yours",
-            &not_yours(&id, &MailboxName("gamma".into())),
+            &not_yours(&id, &MailboxName("gamma".into()), false),
             "change",
         );
         assert_fix_by(

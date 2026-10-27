@@ -31,7 +31,7 @@ use super::{
     Edge, EdgeShape, Entity, EntityId, EntityKind, Fact, FactAddress, FactStatus, MemoryError,
     Provenance, Standing, types, validate_edge, validate_subject,
 };
-use crate::mailbox::Message;
+use crate::mailbox::{Message, visibility::VisibleBoxes};
 use crate::session::SessionId;
 
 /// One document as the index needs it: its prose, the entity it is (if it is
@@ -312,6 +312,9 @@ pub struct SearchQuery {
     /// It scopes nothing else. Entities, facts and prose are the operator's
     /// and every bot may see them; mail has its own rule and its own flag.
     pub asked_by: Option<EntityId>,
+    /// The domain's per-message predicate, applied before ranking and paging.
+    /// The default permits no mail, including when no caller is named.
+    pub mail_visibility: VisibleBoxes,
     /// How many results to return.
     pub limit: usize,
     /// **Which day ranking measures recency against.** `RecordedAt` by
@@ -345,6 +348,7 @@ impl Default for SearchQuery {
             fits_type: None,
             holding: Vec::new(),
             asked_by: None,
+            mail_visibility: VisibleBoxes::default(),
             include_mail: false,
             include_history: false,
             include_review_marks: false,

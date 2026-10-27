@@ -5,6 +5,7 @@
 
 use super::*;
 use crate::answer::STATUS_BAR_ROOM;
+use jojobot_domain::mailbox::visibility::MessageVisibility;
 use jojobot_domain::text::{ANSWER_CEILING, Capped};
 
 /// How many messages come back when the caller does not say — the same twenty
@@ -21,8 +22,8 @@ pub struct ListSentArgs {
     ///
     /// Omit it for your own mail: your `sid` already says who that is. Pass one to
     /// ask after somebody else's outgoing mail; it is matched exactly against the
-    /// bot handle recorded on each message (`bot:gamma`), which is allowed, because
-    /// where a message got to is not private to its sender.
+    /// bot handle recorded on each message (`bot:gamma`). Only messages in your
+    /// own or descendant boxes are returned; the rest are counted as withheld.
     #[serde(default)]
     pub(crate) sender: Option<String>,
     /// **Only what you sent to this bot, or the operator** — a bare name like
@@ -42,8 +43,8 @@ pub struct ListSentArgs {
     /// out; repeat the same call with it. Defaults to 0.
     #[serde(default)]
     pub(crate) offset: Option<u32>,
-    /// Ship the bodies back too. Off by default: you wrote them, so the useful
-    /// answer is where they got to, not what they say.
+    /// Ship permitted bodies too. Off by default: receipts and digests usually
+    /// answer where your report got to.
     ///
     /// Each message may also carry `sender_mail_waiting_at_send`, stamped once when
     /// it was posted; see `post_message`'s `sid` for what it means (`null` is
@@ -63,10 +64,11 @@ impl Jojobot {
     #[tool(
         description = "See the mail YOU have sent and where it got to — read-only, and it \
                        moves NOTHING: no state changes, nobody's delivery is taken, and the \
-                       messages stay exactly as owed as they were. It answers whether \
-                       something you sent arrived and whether anyone has read it, which no \
-                       other verb can answer without taking delivery of the box you posted \
-                       into. A `to` that names no colleague comes back status: blocked with \
+                       messages stay exactly as owed as they were. Your own outbox is readable \
+                       above or beside you too; naming another sender returns only messages \
+                       in your own box or boxes below you along reports_to; the rest are \
+                       counted as withheld, with no metadata, bodies or digests. \
+                       A `to` that names no colleague comes back status: blocked with \
                        candidates, never an empty list, because an empty list would read as \
                        'it never arrived'. Messages jojobot cannot read are reported \
                        separately under `unreadable`: it cannot tell who sent them, so one of \
@@ -78,7 +80,7 @@ impl Jojobot {
                        `posting` = it rode back with the answer to a post of the owner's \
                        own); absent says nothing was recorded, never that nobody looked, since a \
                        message processed straight from `new` and one delivered before the \
-                       record existed have none. Bodies are left out unless you ask for them — you wrote them — \
+                       record existed have none. Permitted bodies are left out unless you ask for them, \
                        so each carries body_bytes and a digest of about 120 characters and says body_elided: \
                        true. MAIL TO THE OPERATOR is listed by id, time and subject only, \
                        even with include_bodies, because no bot reads the operator's box \
@@ -92,8 +94,8 @@ impl Jojobot {
     ) -> Result<CallToolResult, McpError> {
         // **Your own mail by default.** The sender is derived from the handle
         // now, so the caller does not have to remember what they called
-        // themselves — and asking after somebody else's is still allowed,
-        // because where a message got to is not private to its writer.
+        // themselves. Another sender's mail is scoped by the same per-message
+        // predicate as search and read_message, before paging or rendering.
         let caller = match self.caller(args.sid.as_deref()) {
             Ok(caller) => caller,
             Err(refused) => return Ok(refused),
@@ -206,6 +208,14 @@ impl Jojobot {
             .list_mailboxes()
             .await
             .map_err(mailbox_error)?;
+        let visible = self
+            .mail_visibility_on(caller.as_ref().map(|caller| &caller.bot), &board)
+            .await?;
+        let before = sent.len();
+        sent.retain(|message| {
+            visible.message(&message.mailbox, Some(&message.sender)) != MessageVisibility::Withheld
+        });
+        let withheld = before - sent.len();
         // **The boxes whose mail this listing shows no text of.** Read from the
         // same board as the unreadable report, so one read answers both.
         let private: std::collections::BTreeSet<&mailbox::MailboxName> = board
@@ -213,16 +223,8 @@ impl Jojobot {
             .filter(|b| b.is_private())
             .map(|b| &b.name)
             .collect();
-        // **A message is shown whole only when the board lists its box and no
-        // person owns it.** The messages were read before the board, and a
-        // rename of a box's owner can land between the two: a message then sits
-        // under a name the board no longer lists, and "not among the private
-        // names" would call it public for being unmatched.
-        let open: std::collections::BTreeSet<&mailbox::MailboxName> = board
-            .iter()
-            .filter(|b| !b.is_private())
-            .map(|b| &b.name)
-            .collect();
+        // The domain decision also withholds text when an owner's rename
+        // leaves a message under a box name the board no longer lists.
         let unreadable: Vec<serde_json::Value> = board
             .iter()
             .filter(|_| !operator_unopened)
@@ -231,6 +233,7 @@ impl Jojobot {
             // what is wrong with a card in it is that person's to be told.
             .filter(|b| !b.is_private())
             .filter(|b| !b.quarantined.is_empty())
+            .filter(|b| visible.message(&b.name, None) == MessageVisibility::Readable)
             .map(|b| {
                 serde_json::json!({
                     "mailbox": b.name.as_str(),
@@ -256,14 +259,18 @@ impl Jojobot {
         let rendered: Vec<(serde_json::Value, usize)> = page
             .iter()
             .map(|m| {
-                let mut json = if private.contains(&m.mailbox) {
+                let mut json = if visible.message(&m.mailbox, Some(&m.sender))
+                    == MessageVisibility::Readable
+                {
+                    if bodies {
+                        message_json(m)
+                    } else {
+                        message_receipt_json(m, None)
+                    }
+                } else if private.contains(&m.mailbox) {
                     private_listing_json(m)
-                } else if !open.contains(&m.mailbox) {
-                    unlisted_listing_json(m)
-                } else if bodies {
-                    message_json(m)
                 } else {
-                    message_receipt_json(m, None)
+                    unlisted_listing_json(m)
                 };
                 if crate::answer::served_len(&json) + 1 > full_room && json["body"].is_string() {
                     elide_body(&mut json, m);
@@ -281,13 +288,14 @@ impl Jojobot {
                 "mailbox": only,
                 "count": count,
                 "sent_total": held,
-                "how_to_read": (!bodies).then(|| how_to_read_bodies(shown, &open)),
+                "withheld": withheld,
+                "how_to_read": (!bodies).then(|| how_to_read_bodies(shown, &visible)),
                 "note": operator_unopened.then_some(
                     "the operator's box opens at first post or code request, and nothing was \
                      sent yet",
                 ),
                 "unreadable": unreadable,
-                "unreadable_note": "Messages jojobot cannot read are not in the list above — \
+                "unreadable_note": "Unreadable messages in boxes you can see are not in the list above — \
                                     it cannot tell who sent them. If one of yours is missing, it \
                                     may be here, and a person has to repair it before any verb \
                                     can act on it.",
@@ -301,6 +309,9 @@ impl Jojobot {
         let kept = Capped::beside(rest).head(&rendered, |(_, size)| *size);
         let shown = &page[..kept.kept().len()];
         let mut answer = envelope(shown.len(), shown);
+        if shown.is_empty() && withheld > 0 {
+            answer["how_to_read"] = serde_json::Value::Null;
+        }
         answer["messages"] = kept
             .kept()
             .iter()
@@ -334,11 +345,11 @@ impl Jojobot {
 /// **What the top of an answer says about reading bodies**, for the messages it
 /// carries. Said once, beside the list: it is the same sentence for every
 /// message, so carrying it on each one is most of the answer.
-fn how_to_read_bodies(
-    shown: &[Message],
-    open: &std::collections::BTreeSet<&mailbox::MailboxName>,
-) -> String {
-    let withheld = shown.iter().filter(|m| !open.contains(&m.mailbox)).count();
+fn how_to_read_bodies(shown: &[Message], visible: &mailbox::visibility::VisibleBoxes) -> String {
+    let withheld = shown
+        .iter()
+        .filter(|m| visible.message(&m.mailbox, Some(&m.sender)) != MessageVisibility::Readable)
+        .count();
     match (withheld, shown.len()) {
         (0, _) => BODIES_POINTER.to_string(),
         (all, total) if all == total => WITHHELD_POINTER.to_string(),
@@ -348,8 +359,8 @@ fn how_to_read_bodies(
 
 /// What the top of an answer says about reading bodies, for a list whose
 /// messages can show one.
-const BODIES_POINTER: &str = "call list_sent again with include_bodies: true — these are your \
-                              own messages, so reading them takes no delivery from anybody";
+const BODIES_POINTER: &str = "call list_sent again with include_bodies: true — reading permitted \
+                              bodies takes no delivery from anybody";
 
 /// What it says instead for a list in which no message can show one: every
 /// message is to a person's box, or its box was renamed while the list was
@@ -418,7 +429,7 @@ mod tests {
                             sender: Some("bot:otto".into()),
                             to: None,
                             include_bodies: Some(bodies),
-                            sid: None,
+                            sid: Some(as_bot(&jojobot, "otto")),
                         }))
                         .await
                         .expect("list_sent ok"),
@@ -453,7 +464,7 @@ mod tests {
                     sender: Some("bot:otto".into()),
                     to: None,
                     include_bodies: Some(false),
-                    sid: None,
+                    sid: Some(as_bot(jojobot, "otto")),
                 }))
                 .await
                 .expect("list_sent ok"),
@@ -533,7 +544,7 @@ mod tests {
                     sender: Some("bot:otto".into()),
                     to: None,
                     include_bodies: None,
-                    sid: None,
+                    sid: Some(as_bot(&jojobot, "otto")),
                 }))
                 .await
                 .expect("list_sent ok"),
@@ -650,7 +661,7 @@ mod tests {
                     sender: Some("bot:otto".into()),
                     to: None,
                     include_bodies: None,
-                    sid: None,
+                    sid: Some(as_bot(&jojobot, "otto")),
                 }))
                 .await
                 .expect("list_sent ok"),
@@ -686,7 +697,7 @@ mod tests {
                     sender: Some("bot:otto".into()),
                     to: Some("epsilo".into()),
                     include_bodies: None,
-                    sid: None,
+                    sid: Some(as_bot(&jojobot, "otto")),
                 }))
                 .await
                 .expect("a near miss is an answer, not an error"),
@@ -725,7 +736,7 @@ mod tests {
             sender: Some("bot:otto".into()),
             to,
             include_bodies: None,
-            sid: None,
+            sid: Some(as_bot(&jojobot, "otto")),
         };
 
         let before = board.listings();
@@ -782,7 +793,7 @@ mod tests {
                     sender: Some("dev (implementer)".into()),
                     to: None,
                     include_bodies: None,
-                    sid: None,
+                    sid: Some(as_bot(&jojobot, "pm")),
                 }))
                 .await
                 .expect("list_sent ok"),
@@ -838,7 +849,7 @@ mod tests {
                     sender: Some("dev (implementer)".into()),
                     to: None,
                     include_bodies: None,
-                    sid: None,
+                    sid: Some(as_bot(&jojobot, "pm")),
                 }))
                 .await
                 .expect("list_sent ok"),
@@ -944,7 +955,7 @@ mod tests {
                     sender: Some("bot:otto".into()),
                     to: None,
                     include_bodies: Some(true),
-                    sid: None,
+                    sid: Some(as_bot(&jojobot, "otto")),
                 }))
                 .await
                 .expect("list_sent ok"),
@@ -979,7 +990,7 @@ mod tests {
                     sender: Some("bot:otto".into()),
                     to: Some("dev-two".into()),
                     include_bodies: None,
-                    sid: None,
+                    sid: Some(as_bot(&jojobot, "otto")),
                 }))
                 .await
                 .expect("a bad address is an answer, not an error"),
@@ -995,9 +1006,9 @@ mod tests {
     }
 
     /// **A message to a person's box is listed by id, time and subject, and no
-    /// more, to everyone who asks.** The bot that wrote it, a later run of that
-    /// bot and a different bot asking after its outbox all see the same three
-    /// things, with bodies asked for and without. A later session must not be
+    /// more, to everyone who asks.** The sender and a different bot asking
+    /// after its outbox see the same restricted receipt, with bodies asked for
+    /// and without. Other bot-box messages still follow the chart. A later session must not be
     /// able to read what its predecessor sent to the person, so the text is
     /// withheld even from the sender. A message to a bot's box beside it keeps
     /// its ordinary rendering, so the withholding is the box's and not a
@@ -1039,7 +1050,16 @@ mod tests {
                         .await
                         .expect("list_sent ok"),
                 );
-                assert_eq!(listed["count"], 2, "both messages are listed: {listed}");
+                assert_eq!(
+                    listed["count"],
+                    if sender.is_some() { 1 } else { 2 },
+                    "{listed}"
+                );
+                assert_eq!(
+                    listed["withheld"],
+                    if sender.is_some() { 1 } else { 0 },
+                    "{listed}"
+                );
                 let messages = listed["messages"].as_array().expect("messages");
                 let to_the_person = messages
                     .iter()
@@ -1076,6 +1096,10 @@ mod tests {
                     "the note reads as one line: {note:?}"
                 );
                 // The ordinary message beside it is rendered as it always was.
+                if sender.is_some() {
+                    assert!(!listed.to_string().contains("ordinary report"), "{listed}");
+                    continue;
+                }
                 let ordinary = messages
                     .iter()
                     .find(|m| m["id"] != private["id"])

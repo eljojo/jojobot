@@ -582,7 +582,7 @@ mod tests {
                 .read_message(Parameters(ReadMessageArgs {
                     history: None,
                     message_id: id,
-                    sid: None,
+                    sid: Some(as_bot(&jojobot, "inbox")),
                 }))
                 .await
                 .expect("read_message ok"),

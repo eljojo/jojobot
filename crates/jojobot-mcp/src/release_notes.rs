@@ -67,6 +67,10 @@ pub(crate) const SHIPPED: &[(&str, &str)] = &[
         include_str!("../release-notes/deploy-9.3.1/memory-write-receipts.md"),
     ),
     (
+        "mail-visible-down-the-chart",
+        include_str!("../release-notes/deploy-9.3/mail-visible-down-the-chart.md"),
+    ),
+    (
         "search-matching-passages",
         include_str!("../release-notes/deploy-9.3/search-matching-passages.md"),
     ),

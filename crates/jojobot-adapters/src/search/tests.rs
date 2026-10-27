@@ -12,6 +12,7 @@ use jojobot_domain::memory::{
     Standing, folded_fields, validate_subject,
 };
 
+pub(super) use super::mail_fixtures::asking_for_mail;
 use super::*;
 
 /// The shared contract's search case (rule 234), asked of a stored row
@@ -815,17 +816,6 @@ fn fact(home: &str, id: &str, content: &str, on: jiff::civil::Date) -> Fact {
         inserted_at: None,
         stale_after: None,
         receipt: None,
-    }
-}
-
-/// A free-text query that asks for mail as well. **Mail is opt-in** — the
-/// bare query leaves it out — and the tests below are about what the mail
-/// half of the index holds, so they ask for it rather than relying on a
-/// default that would hide the flag from every one of them.
-pub(super) fn asking_for_mail(text: &str) -> SearchQuery {
-    SearchQuery {
-        include_mail: true,
-        ..SearchQuery::text(text)
     }
 }
 
@@ -7259,10 +7249,7 @@ async fn include_mail_is_a_filter_the_caller_holds() {
     // Its pair: asked for, it is there. Without this the assertion above
     // passes on an index that cannot return a message at all.
     let asked = index
-        .search(&SearchQuery {
-            include_mail: true,
-            ..SearchQuery::text("shipment")
-        })
+        .search(&asking_for_mail("shipment"))
         .expect("search ok");
     assert!(
         asked.iter().any(|h| matches!(h, Hit::Message { .. })),

@@ -33,6 +33,9 @@ pub mod read_mailbox;
 pub mod read_message;
 #[cfg(test)]
 pub mod testing;
+mod visibility;
+#[cfg(test)]
+mod visibility_tests;
 pub mod wire;
 
 pub use list_sent::ListSentArgs;
