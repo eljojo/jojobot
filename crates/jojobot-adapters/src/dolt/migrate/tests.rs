@@ -154,6 +154,10 @@ const ALL_VERSIONS: &[&str] = &[
     "0111_type_field_must",
     "0112_tool_call_refusal_code",
     "0113_run_call_refusal_code",
+    "0114_tool_call_code_key_drop",
+    "0115_tool_call_code_key_add",
+    "0116_run_call_code_key_drop",
+    "0117_run_call_code_key_add",
 ];
 
 /// **The versions a start on a fresh store records and does not issue.** An

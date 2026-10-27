@@ -59,6 +59,10 @@ async fn a_death_inside_one_migration(version: &str, how: Interruption) {
 deaths_beyond_the_last_release!(
     tool_call_refusal_code => "0112_tool_call_refusal_code",
     run_call_refusal_code => "0113_run_call_refusal_code",
+    tool_call_code_key_drop => "0114_tool_call_code_key_drop",
+    tool_call_code_key_add => "0115_tool_call_code_key_add",
+    run_call_code_key_drop => "0116_run_call_code_key_drop",
+    run_call_code_key_add => "0117_run_call_code_key_add",
 );
 
 #[tokio::test]

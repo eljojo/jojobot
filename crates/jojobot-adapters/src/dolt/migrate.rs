@@ -860,6 +860,26 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../../migrations/0113_run_call_refusal_code.sql"),
         leaves: Leaves::Column("run_call_count", "code"),
     },
+    Migration {
+        version: "0114_tool_call_code_key_drop",
+        sql: include_str!("../../migrations/0114_tool_call_code_key_drop.sql"),
+        leaves: Leaves::NoIndex("tool_call_count", "PRIMARY"),
+    },
+    Migration {
+        version: "0115_tool_call_code_key_add",
+        sql: include_str!("../../migrations/0115_tool_call_code_key_add.sql"),
+        leaves: Leaves::Index("tool_call_count", "PRIMARY"),
+    },
+    Migration {
+        version: "0116_run_call_code_key_drop",
+        sql: include_str!("../../migrations/0116_run_call_code_key_drop.sql"),
+        leaves: Leaves::NoIndex("run_call_count", "PRIMARY"),
+    },
+    Migration {
+        version: "0117_run_call_code_key_add",
+        sql: include_str!("../../migrations/0117_run_call_code_key_add.sql"),
+        leaves: Leaves::Index("run_call_count", "PRIMARY"),
+    },
 ];
 
 /// The table recording what has run. Created by hand rather than by a
