@@ -503,7 +503,7 @@ impl Sessions for FoldedSessions {
     }
 
     async fn write_summary(&self) -> Result<Option<(i64, Option<Timestamp>)>, SessionError> {
-        self.readable()?;
+        self.unheld()?;
         self.inner.write_summary().await
     }
 

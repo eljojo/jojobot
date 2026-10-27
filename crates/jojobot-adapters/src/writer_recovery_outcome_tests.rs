@@ -75,6 +75,10 @@ async fn writer_recovery_an_unheld_read_refuses_until_the_native_rail_recovers()
     assert!(writer.rail_uncertain("runs"));
     counted.calls.reset();
     assert!(
+        matches!(folded.write_summary().await, Err(SessionError::Store(_))),
+        "the unheld write count crossed into the uncertain store"
+    );
+    assert!(
         matches!(
             folded.minted_without_a_card().await,
             Err(SessionError::Store(_))
@@ -118,6 +122,12 @@ async fn writer_recovery_an_unheld_read_refuses_until_the_native_rail_recovers()
         1,
         "known-state source behavior changed"
     );
+    counted.calls.reset();
+    assert_eq!(
+        folded.write_summary().await.expect("recovered write count"),
+        native.write_summary().await.expect("native write count")
+    );
+    assert_eq!(counted.calls.reads(), 1);
     let stored = native.all_sessions().await.expect("native run");
     assert_eq!(stored.len(), 1);
     counted.calls.reset();

@@ -27,16 +27,13 @@ use jojobot_domain::mailbox::testing::contract as mailboxes;
 use jojobot_domain::mailbox::{
     MailboxError, MailboxName, Mailboxes, NewMessage, OwnerIndex, OwnerLookup,
 };
-use jojobot_domain::memory::EntityId;
-use jojobot_domain::memory::FormerHandle;
-use jojobot_domain::memory::Memory;
 use jojobot_domain::memory::owned::{Provision, Provisions};
 use jojobot_domain::memory::search::{Hit, Search, SearchQuery};
 use jojobot_domain::memory::testing::contract as memory;
 use jojobot_domain::memory::types::{DeclaredType, Field, Origin, ValueType};
 use jojobot_domain::memory::{
-    Edge, EdgeShape, EntityPatch, FactAddress, FactPatch, MemoryError, NewEntity, NewFact,
-    Provenance, Receipt, Standing,
+    Edge, EdgeShape, EntityId, EntityPatch, FactAddress, FactPatch, FormerHandle, Memory,
+    MemoryError, NewEntity, NewFact, Provenance, Receipt, Standing,
 };
 use jojobot_domain::session::testing::contract as sessions;
 use jojobot_domain::session::{NewEntry, NewSession, SessionError, SessionState, Sessions, Sid};
@@ -140,11 +137,8 @@ async fn calls_counted_at_once_under_one_key_are_all_counted() {
     migrate::run(&pool).await.expect("the schema");
     let stamp = WriteStamp::new();
     let writer = jojobot_adapters::writer::Writer::default();
-    let stored = Arc::new(
-        DoltSessions::open(pool)
-            .stamped_by(stamp.clone())
-            .with_writer(writer.clone()),
-    );
+    let stored = DoltSessions::open(pool).stamped_by(stamp.clone());
+    let stored = Arc::new(stored.with_writer(writer.clone()));
     let sessions =
         Arc::new(FoldedSessions::new(stored.clone(), stamp, Clock::Real).with_writer(writer));
     sessions.rebuild().await.expect("the image loads");
