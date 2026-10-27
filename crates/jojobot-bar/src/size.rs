@@ -8,8 +8,10 @@
 //!   grow past its base only under a `[[raise]]` entry in `size-ratchet.toml`
 //!   that names the operator's rule number; the entry pays once, and the check
 //!   prints the raise for the engineer in charge to read.
-//! - **Yellow** is a file over [`YELLOW`] lines and not over the ceiling. It may
-//!   grow. The check warns about each that is new or grew.
+//! - **Yellow** is a file over [`YELLOW`] lines and not over [`ORANGE`] (2,001 to
+//!   3,000, subject to the cap). It may grow. The check warns about each that is new
+//!   or grew. **Orange** is a file over [`ORANGE`] lines and not red: the check warns
+//!   about each, and it turns red when the ceiling drops to 3,000.
 //! - **The base** is where the change branched from `SIZE_BASE`, else
 //!   `GITHUB_BASE_REF`. Growth is read from git alone, so there is no list of
 //!   frozen counts to keep. **An unknown base is never ok:** growth cannot be
@@ -35,7 +37,7 @@ pub const RATCHET_FILE: &str = "size-ratchet.toml";
 /// A file over this many lines is red.
 pub const CEILING: usize = 5000;
 
-/// A file over this many lines, and not red, is yellow.
+/// A file over this many lines, and not over [`ORANGE`] or red, is yellow.
 pub const YELLOW: usize = 2000;
 
 /// A file over this many lines, and not red, is orange: it turns red when the

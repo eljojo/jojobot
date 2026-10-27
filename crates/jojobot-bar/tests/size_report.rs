@@ -663,6 +663,7 @@ fn a_file_over_3000_lines_is_orange_and_one_under_it_is_not() {
             ("size-ratchet.toml", ratchet("")),
             ("homer.rs", lines_of(3001)),
             ("marge.rs", lines_of(2999)),
+            ("bart.rs", lines_of(3000)),
         ],
     );
     let ran = bar(&dir, "check", Some(&base));
@@ -674,14 +675,14 @@ fn a_file_over_3000_lines_is_orange_and_one_under_it_is_not() {
         ran.stdout
     );
     assert!(
-        !ran.stdout.contains("marge.rs: over 3000"),
+        !ran.stdout.contains("marge.rs: over 3000") && !ran.stdout.contains("bart.rs: over 3000"),
         "{}",
         ran.stdout
     );
-    assert!(size_line(&ran.stdout).contains("0 red, 1 orange and 1 yellow"));
+    assert!(size_line(&ran.stdout).contains("0 red, 1 orange and 2 yellow"));
     let weekly = bar_with(&dir, &["size", "--weekly"], None);
     assert!(
-        weekly.stdout.contains("0 red, 1 orange, 1 yellow"),
+        weekly.stdout.contains("0 red, 1 orange, 2 yellow"),
         "{}",
         weekly.stdout
     );
