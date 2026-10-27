@@ -227,8 +227,7 @@ impl Jojobot {
                        override_reason, shown beside the name. A `handle` that names nothing jojobot ever held is \
                        blocked with the nearest handles; one that named something BEFORE an \
                        earlier rename moved it is told what it is called now. The receipt's \
-                       `changed` lists changes, or is `nothing` or `not_read`. A `request_id` \
-                       makes a resend safe. Each argument's own description holds the rest."
+                       `changed` lists changes, or is `nothing` or `not_read`."
     )]
     pub(crate) async fn rename_entity(
         &self,

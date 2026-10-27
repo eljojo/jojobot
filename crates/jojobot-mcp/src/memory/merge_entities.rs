@@ -97,9 +97,7 @@ impl Jojobot {
                        thought room or thought ceiling the merge would break; a number the \
                        merge would lose; or a result that could not be read back whole in \
                        one answer. The receipt's \
-                       `changed` lists changes, or is `nothing` or `not_read`. Each \
-                       argument's own description holds the rest. A `request_id` makes a \
-                       resend safe: a repeat returns the first receipt and writes nothing."
+                       `changed` lists changes, or is `nothing` or `not_read`."
     )]
     pub(crate) async fn merge_entities(
         &self,

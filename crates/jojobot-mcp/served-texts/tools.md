@@ -421,7 +421,6 @@ Archiving something already archived comes back blocked, saying the entity is al
 Restoring something that is not archived says the same.
 A handle that names nothing comes back blocked with the nearest handles.
 The receipt's `changed` lists changes, or is `nothing` or `not_read`.
-A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing.
 ```
 
 #### `archive_entity` — structure
@@ -535,8 +534,6 @@ On a `list`, `after` places an entry and `tick` marks one.
 It answers with a receipt, not the record: its address, what was recorded and how many keys landed, read back before it is called a success.
 A claim too big to read back whole is refused.
 The receipt's `changed` lists changes, or is `nothing` or `not_read`.
-Each argument's own description holds the rest.
-A `request_id` makes a resend safe: a repeat writes nothing.
 ```
 
 #### `capture` — structure
@@ -1499,7 +1496,6 @@ SOME TYPES SHIP WITH THE SOFTWARE and those are CLOSED: declaring over one comes
 Every type you declare is yours.
 The answer names every type that exists, by name and origin, so you can see what is there without asking again.
 The receipt's `changed` lists changes in the type, or is `nothing` or `not_read`.
-A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing.
 ```
 
 #### `declare_type` — structure
@@ -1810,7 +1806,6 @@ IT ANSWERS WITH A RECEIPT, NOT YOUR BEAT: the id the entry was given, when it wa
 You wrote the entry; a resume through start_here returns the newest entries and says how many older ones it left out.
 IF YOUR SESSION HOLDS A CLAIMED ROLE, this beat renews it, under the same rule as any other write — the lease is not journal's alone to keep fresh.
 The receipt's `changed` lists changes, or is `nothing` or `not_read`.
-A `request_id` makes a resend safe.
 ```
 
 #### `journal` — structure
@@ -2100,7 +2095,6 @@ Newest first, each with its state (`new` = nobody has picked it up · `read` = d
 Bodies are left out unless you ask for them — you wrote them — so each carries body_bytes and a digest of about 120 characters and says body_elided: true.
 MAIL TO THE OPERATOR is listed by id, time and subject only, even with include_bodies, because no bot reads the operator's box back.
 Twenty newest by default; an answer stops at the ceiling, never mid-message, and counts what it left out under not_shown with the `offset` that reads the next page.
-Each argument's own description holds the rest.
 ```
 
 #### `list_sent` — structure
@@ -2238,8 +2232,6 @@ The answer confirms the move (for many: processed, ids, already_processed, notes
 A refusal is an answer with status: blocked and nothing written, in three kinds: an id that names nothing (use one read_mailbox or post_message handed you); an item jojobot cannot read, which says why (no retry helps: a person has to repair it, and until then treat what it carried as unhandled and say so); and a message that is not yours to retire — one in another bot's box, or in the operator's, which no bot reads.
 TO QUARANTINE A MESSAGE INSTEAD OF RETIRING IT — a decision, not damage — pass `quarantine` with your reason and leave `notes` unset; there is no verb that lifts a quarantine.
 The receipt's `changed` lists changes, or is `nothing` or `not_read`.
-Each argument's own description holds the rest.
-A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing.
 ```
 
 #### `mark_processed` — structure
@@ -2391,8 +2383,6 @@ TWO DOCUMENTS MERGE INTO ONE: the duplicate's sections follow the survivor's las
 A document and a thing do not merge.
 A refusal is status: blocked with nothing moved, and the answer says why and who may; among them: one handle named as both sides; a thing folded into its own descendant; a handle already merged away; a role object merged by anyone but its owner or a bot heading the chart; a thought room or thought ceiling the merge would break; a number the merge would lose; or a result that could not be read back whole in one answer.
 The receipt's `changed` lists changes, or is `nothing` or `not_read`.
-Each argument's own description holds the rest.
-A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing.
 ```
 
 #### `merge_entities` — structure
@@ -2581,8 +2571,6 @@ POSTING ALSO DELIVERS: mail in YOUR OWN box that no read has handed you yet ride
 Mail an earlier read already handed you is not listed again: it is counted under your_mail.leftovers and still owed, and mail replaced before you read it is counted under your_mail.superseded; read_mailbox lists both, and read_message returns one by id.
 The sender is the bot behind the `sid` you pass, never one you declare, and a sid jojobot is not holding comes back status: blocked with nothing written.
 The receipt's `changed` lists what moved.
-Each argument's description holds the rest.
-A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing.
 ```
 
 #### `post_message` — structure
@@ -3080,7 +3068,6 @@ Mail its sender replaced before anyone read it is not delivered: it stays in new
 Mail from the sender `jojobot` is a release note, which lists what a deploy changed: act on it and mark it processed like any other.
 `jojobot` has no box, so a post to it is refused and writes nothing.
 An empty delivery names what it looked through, as searched.
-Each argument's own description holds the rest.
 ```
 
 #### `read_mailbox` — structure
@@ -3265,7 +3252,6 @@ Unlike search, recall returns claims of EVERY status unless you pass `status`.
 Your own past runs are kind session.
 AN ANSWER STOPS AT THE CEILING, never mid-record: `limit` sizes pages; not_shown names the next offset.
 Empty answers name what they searched.
-Each argument's description holds the rest.
 ```
 
 #### `recall` — structure
@@ -4835,8 +4821,6 @@ The display name stays as it was: update_entity's name changes it.
 The destination faces the same near-miss guard a creation does: a collision with something that resembles it comes back status: blocked with candidates, liftable with override_token unless the collision is an exact handle, which can never be forced; a collision on the name alone also needs override_reason, shown beside the name.
 A `handle` that names nothing jojobot ever held is blocked with the nearest handles; one that named something BEFORE an earlier rename moved it is told what it is called now.
 The receipt's `changed` lists changes, or is `nothing` or `not_read`.
-A `request_id` makes a resend safe.
-Each argument's own description holds the rest.
 ```
 
 #### `rename_entity` — structure
@@ -5013,7 +4997,6 @@ Retracting a retraction is refused: it is the last word on what it takes back.
 Retracting a record that is already archived is refused too, and says so, because the state you asked for is the state jojobot holds.
 An address that names no record is refused with the addresses that do exist.
 The receipt's `changed` lists changes, or is `nothing` or `not_read`.
-A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing.
 ```
 
 #### `retract` — structure
@@ -5566,7 +5549,6 @@ Who the bot reports to goes the same way: capture sets.reports_to on this bot, h
 The bot itself does not write it, except a bot that heads a chart, which has reports and no manager above it, and places itself: otherwise a bot above it on the chart does, and a bot with no manager is adopted by the manager named or by a bot above that manager.
 The refusal names who may.
 Who reports to a bot is the other direction, a second call: recall that bot with follow, relation reports_to, direction in.
-A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing.
 ```
 
 #### `set_charter` — structure
@@ -5666,7 +5648,6 @@ A bot with a run to pick up gets a resume-or-new choice and no sid until it answ
 CALLED THIS BEFORE? Pass brief: true to skip the essay; calling without brief reads the essay.
 `claim` holds a named role for 45 minutes so two sessions never work one role at once; a claim by another run of the same bot takes the role from the run that holds it, abandoning an active holder and leaving a wrapped one wrapped (taken, refused, conflict or unavailable; a claim is refused while its role object is archived, and archive_entity restores it); every write, and read_mailbox and read_message, renews the lease unless the last renewal is less than 4 minutes 30 seconds old, and wrapping releases it.
 A boot writes the sweep, a missing box's repair, a key note and, when asked, a claim, a pick-up, a spent code or a wrap window.
-Each argument's own description holds the rest.
 ```
 
 #### `start_here` — structure
@@ -6061,7 +6042,6 @@ On a record the build supplies (a shipped view), `name` and `aliases` are yours,
 A handle that names nothing comes back blocked with the nearest handles — it never creates.
 Aliases or `sets` that would leave the thing, or its claim, too big to be read back whole in one answer are refused with nothing written.
 The receipt's `changed` lists changes, or is `nothing` or `not_read`.
-A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing.
 ```
 
 #### `update_entity` — structure

@@ -98,8 +98,7 @@ impl Jojobot {
                        bot reads. TO QUARANTINE A MESSAGE INSTEAD OF RETIRING IT — a \
                        decision, not damage — pass `quarantine` with your reason and leave \
                        `notes` unset; there is no verb that lifts a quarantine. The \
-                       receipt's `changed` lists changes, or is `nothing` or `not_read`. \
-                       Each argument's own description holds the rest. A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing."
+                       receipt's `changed` lists changes, or is `nothing` or `not_read`."
     )]
     pub(crate) async fn mark_processed(
         &self,

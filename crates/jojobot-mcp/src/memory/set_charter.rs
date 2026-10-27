@@ -75,7 +75,7 @@ impl Jojobot {
                        does, and a bot with no manager is adopted by the manager named or by \
                        a bot above that manager. The refusal names who may. Who reports to a bot is the other \
                        direction, a second call: recall that bot with follow, relation \
-                       reports_to, direction in. A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing."
+                       reports_to, direction in."
     )]
     pub(crate) async fn set_charter(
         &self,

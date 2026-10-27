@@ -2697,8 +2697,7 @@ impl Jojobot {
                        returns claims of EVERY status unless you pass `status`. Your own past \
                        runs are kind session. AN ANSWER STOPS AT THE CEILING, never \
                        mid-record: `limit` sizes pages; not_shown names the next offset. Empty answers \
-                       name what they searched. Each argument's \
-                       description holds the rest."
+                       name what they searched."
     )]
     pub(crate) async fn recall(
         &self,

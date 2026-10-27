@@ -804,8 +804,7 @@ impl Jojobot {
                        key by its items. It answers with a receipt, not the record: its \
                        address, what was recorded and how many keys landed, read back before \
                        it is called a success. A claim too big to read back \
-                       whole is refused. The receipt's `changed` lists changes, or is `nothing` or `not_read`. Each argument's own description \
-                       holds the rest. A `request_id` makes a resend safe: a repeat writes nothing."
+                       whole is refused. The receipt's `changed` lists changes, or is `nothing` or `not_read`."
     )]
     pub(crate) async fn capture(
         &self,

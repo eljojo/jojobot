@@ -138,7 +138,7 @@ impl Jojobot {
                        token. A handle that names \
                        nothing comes back blocked with the nearest handles — it never creates. Aliases or `sets` that would leave the thing, or its claim, too big to \
                        be read back whole in one answer are refused with nothing written. The \
-                       receipt's `changed` lists changes, or is `nothing` or `not_read`. A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing."
+                       receipt's `changed` lists changes, or is `nothing` or `not_read`."
     )]
     pub(crate) async fn update_entity(
         &self,

@@ -450,9 +450,7 @@ impl Jojobot {
                        The sender is the bot behind the `sid` you pass, never one you \
                        declare, and a sid jojobot is not holding comes back status: \
                        blocked with nothing written. The receipt's `changed` lists \
-                       what moved. Each argument's description holds the rest. A \
-                       `request_id` makes a resend safe: a repeat returns the first \
-                       receipt and writes nothing."
+                       what moved."
     )]
     pub(crate) async fn post_message(
         &self,

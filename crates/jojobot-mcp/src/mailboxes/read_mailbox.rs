@@ -251,8 +251,7 @@ impl Jojobot {
                        release note, which lists what a deploy changed: act on it and mark \
                        it processed like any other. `jojobot` has no box, so a post to it is \
                        refused and writes nothing. An \
-                       empty delivery names what it looked through, as searched. Each \
-                       argument's own description holds the rest."
+                       empty delivery names what it looked through, as searched."
     )]
     pub(crate) async fn read_mailbox(
         &self,

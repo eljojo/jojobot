@@ -98,7 +98,7 @@ impl Jojobot {
                        what it takes back. Retracting a record that is already archived is \
                        refused too, and says so, because the state you asked for is the state \
                        jojobot holds. An address that names no record is refused with the \
-                       addresses that do exist. The receipt's `changed` lists changes, or is `nothing` or `not_read`. A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing."
+                       addresses that do exist. The receipt's `changed` lists changes, or is `nothing` or `not_read`."
     )]
     pub(crate) async fn retract(
         &self,

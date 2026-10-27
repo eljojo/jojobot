@@ -84,8 +84,7 @@ impl Jojobot {
                        even with include_bodies, because no bot reads the operator's box \
                        back. Twenty newest by default; an answer stops at the ceiling, never \
                        mid-message, and counts what it left out under not_shown with the \
-                       `offset` that reads the next page. Each argument's own description \
-                       holds the rest."
+                       `offset` that reads the next page."
     )]
     pub(crate) async fn list_sent(
         &self,

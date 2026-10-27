@@ -71,7 +71,7 @@ impl Jojobot {
                        entity is already in the state you asked for — that answer means jojobot \
                        holds what you wanted, not that nothing happened. Restoring something that is not archived says the same. A handle that names \
                        nothing comes back blocked with the nearest handles. The receipt's \
-                       `changed` lists changes, or is `nothing` or `not_read`. A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing."
+                       `changed` lists changes, or is `nothing` or `not_read`."
     )]
     pub(crate) async fn archive_entity(
         &self,
