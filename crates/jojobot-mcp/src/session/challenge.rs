@@ -950,7 +950,10 @@ mod tests {
         assert_eq!(holder["session"]["claim"]["status"], "taken", "{holder}");
         let (handle, code) = asked(&jojobot).await;
 
-        scripted.script(|s| s.update_fails = true);
+        // **Only the challenge's own write fails**: the role claim and the releases
+        // are writes too, and a global failure would stop the claim before any run
+        // could be displaced.
+        scripted.script(|s| s.update_fails_for = Some(handle.clone()));
         let mut coded = boot_with_code("gamma", handle.as_str(), &code);
         coded.claim = Some("dev-dispatch".into());
         coded.resume = Some("new".into());
@@ -962,8 +965,9 @@ mod tests {
         );
         scripted.script(|s| *s = Default::default());
 
-        assert_ne!(second["session"]["claim"]["status"], "taken", "{second}");
         let holder_run = holder["session"]["run"].as_str().expect("a run name");
+        assert_eq!(second["session"]["claim"]["status"], "refused", "{second}");
+        assert_eq!(second["session"]["claim"]["holder"], holder_run, "{second}");
         let runs = jojobot
             .sessions
             .all_sessions()

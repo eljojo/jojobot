@@ -76,6 +76,9 @@ pub(crate) struct Script {
     pub(crate) update_reports_fold_behind: bool,
     /// An `update_fact` fails and writes nothing.
     pub(crate) update_fails: bool,
+    /// An `update_fact` on a claim of this thing fails and writes nothing; every
+    /// other update lands.
+    pub(crate) update_fails_for: Option<EntityId>,
     /// `list_entities` of this kind fails.
     pub(crate) listing_fails_for: Option<EntityKind>,
     /// The `scan_entity` call with this number, counting from 1 once it is set,
@@ -244,7 +247,7 @@ impl Memory for Scripted {
             (
                 script.fold_lags_after_update,
                 script.update_reports_fold_behind,
-                script.update_fails,
+                script.update_fails || script.update_fails_for.as_ref() == Some(&address.home),
             )
         };
         if fails {
