@@ -71,22 +71,22 @@ in doubt, it doesn't cross.
 
 ## The build model — two sessions, never one
 
-- **Coordinator (`pm`)** — holds the vision, scopes each slice, writes
-  hand-off tasks, reviews adversarially, reconciles the docs. Does not
-  implement.
-- **Implementer (`dev`)** — boots in this repo, builds ONE scoped slice
-  test-first, reports back, and is disposed. If that's you: read your task
-  from the **`dev` mailbox** over the jojobot MCP (`read_mailbox`). Work that
-  one task. When done, `mark_processed(message, notes)` and post your report
-  as a message to the **`pm`** mailbox. A failure the coordinator must know
-  about is also a message to `pm` — failure is data, not silence.
-- **Audience discipline — the user is not the report channel.** Two different
-  readers: the **user** dispatched you; the **coordinator (`pm`)** reviews
-  you. Detail — commits, deviations, test output, design notes — goes to the
-  `pm` mailbox in full. The user gets the close-out only: done or blocked, in
-  a line or two, plus "report posted to pm." Don't narrate the work to the
-  user as you go; if something needs a decision mid-slice, ask it as one
-  crisp question.
+- **PM (`pm`)** — holds the vision, scopes each card, writes the hand-off,
+  reviews adversarially, reconciles the docs. Does not implement.
+- **EM (`em`)** — decides which line takes which card and when, dispatches,
+  reads the reports, accepts and carries (decision log 358, 451).
+- **Implementer (a dev line: `dev`, `dev7`, `dev-sol`, …)** — boots in this
+  repo as the bot its start line names, builds ONE scoped card test-first,
+  reports, and is disposed. If that's you: your task is in **your own bot's
+  mailbox** (`read_mailbox`). When done, `mark_processed(message, notes)` and
+  post your report where the dispatch says: delivery to the **`em`** box, a
+  scope question to the **`pm`** box. A failure is also a report — failure is
+  data, not silence.
+- **Audience discipline — the user is not the report channel.** Detail —
+  commits, deviations, test output, design notes — goes to the box your
+  dispatch names, in full. The user gets the close-out only: done or blocked,
+  in a line or two. Don't narrate the work to the user as you go; if something
+  needs a decision mid-card, ask it as one crisp question.
 - Merging advances `main` only. **Deploy and push are the user's verbs** —
   never deploy; never push unless asked. The one exception: a dev line pushes
   its own branches to Forgejo (see "A dev line manages its own git" below).
@@ -95,20 +95,17 @@ in doubt, it doesn't cross.
 
 A session here starts at jojobot, not at these files. The whole protocol:
 
-1. **`start_here` with your bot name** — `dev` if you were not told otherwise.
+1. **`start_here` with your bot name** — the one your start line names.
    It hands back a `sid`; pass it on every call after that, reads included.
-   It also hands back your charter and your rules, which say more about how
-   you work than this file does.
-2. **`read_mailbox`** — your task is in your box. Work it.
-3. **Report to `pm`** as you go, not only at the end: `post_message` to the
-   `pm` box at each coherent milestone, and `mark_processed` a task the
-   moment you have acted on it.
-4. **Keep polling.** When the work is done you are not done: `read_mailbox`
-   with `counts_only: true` costs nothing and takes delivery of nothing.
-   Poll, take whatever arrived, repeat, until your bot's own rules say when to
-   stop. **A session that stops checking its
-   box is indistinguishable from one that has died** — and the next task is
-   usually already waiting.
+   It also hands back your charter and your rules, which win over this file
+   wherever the two differ.
+2. **`read_mailbox`** — your task is in your own box. Work it.
+3. **Report where the dispatch says** as you go, not only at the end, and
+   `mark_processed` a task the moment you have acted on it.
+4. **Stop when your charter says.** Some lines take one card per session and
+   wrap; others poll for the next with `read_mailbox` `counts_only: true`,
+   which costs nothing and takes delivery of nothing. Your charter decides,
+   not this file.
 
 The operator dispatches you; they are not the report channel (see the audience
 discipline above). Everything else — commits, test output, deviations,
