@@ -72,6 +72,55 @@ async fn read_keys_written_back_placement() {
     );
 }
 
+/// A copied tick account cannot tick the entry again.
+#[tokio::test]
+async fn read_keys_written_back_tick_account() {
+    let jojobot = handler();
+    a_list(&jojobot, "packing").await;
+    let entry = capture_ok(&jojobot, capture_args("list:packing", "tent")).await;
+    let tick = capture_ok(&jojobot, serde_json::from_value(serde_json::json!({
+        "subject":"list:packing", "content":"done it", "tick":{"entry":address_of(&entry), "act":"done"}, "sid":TEST_SID
+    })).expect("tick arguments")).await;
+    let facts = jojobot
+        .memory
+        .recall(&EntityId("list:packing".into()))
+        .await
+        .expect("claims");
+    let tick = facts
+        .iter()
+        .find(|fact| fact.address().to_string() == address_of(&tick))
+        .expect("tick account");
+    let copied = capture_ok(
+        &jojobot,
+        CaptureArgs {
+            fields: Some(tick.fields.clone()),
+            ..capture_args("list:packing", "a copy of the tick")
+        },
+    )
+    .await;
+    assert_eq!(
+        copied["dropped_keys"],
+        serde_json::json!(["tick_act", "tick_entry", "tick_session"]),
+        "{copied}"
+    );
+    let facts = jojobot
+        .memory
+        .recall(&EntityId("list:packing".into()))
+        .await
+        .expect("claims");
+    let copy = facts
+        .iter()
+        .find(|fact| fact.address().to_string() == address_of(&copied))
+        .expect("copied words landed");
+    assert!(
+        copy.fields.contains_key("order"),
+        "the copy is an entry: {copy:?}"
+    );
+    for key in ["tick_act", "tick_entry", "tick_session"] {
+        assert!(!copy.fields.contains_key(key), "{copy:?}");
+    }
+}
+
 /// A merge account can be quoted without forging another merge account.
 #[tokio::test]
 async fn read_keys_written_back_merged_from() {

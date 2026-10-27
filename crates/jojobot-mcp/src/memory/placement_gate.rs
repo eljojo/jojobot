@@ -50,7 +50,7 @@ impl Jojobot {
             .chain(cleared.iter().map(String::as_str))
             .collect();
         if !named.iter().any(|key| {
-            entries::is_placement_key(key)
+            entries::is_minted_key(key)
                 || key.trim() == document::EDGES
                 || jojobot_domain::memory::copied_read_key(None, key)
         }) {
@@ -58,7 +58,7 @@ impl Jojobot {
         }
         let (kind, section) = if named
             .iter()
-            .any(|key| entries::is_placement_key(key) || key.trim() == document::EDGES)
+            .any(|key| entries::is_minted_key(key) || key.trim() == document::EDGES)
         {
             self.stored_kind(thing, record).await?
         } else {

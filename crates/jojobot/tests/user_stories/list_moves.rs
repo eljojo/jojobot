@@ -234,13 +234,13 @@ async fn a_move_that_cannot_be_honoured_is_refused_and_writes_nothing() {
         .await
         .holds_at("/fix_by", "change")
         .says("\"wrote\":false");
-    // The server's own key is never sent by a caller.
+    // Dropping a copied key leaves no requested change.
     s.refused(
         "update_fact",
         json!({"address": stove, "fields": {"order": "5"}}),
     )
     .await
-    .says("after");
+    .says("keep");
     assert_eq!(
         read_back(&s, "list:packing").await,
         before,

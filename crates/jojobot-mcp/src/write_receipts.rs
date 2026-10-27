@@ -245,6 +245,13 @@ impl Call {
         // A changed value the call did not supply is the result of
         // the write's arithmetic or normalisation, rather than an echo.
         derived.retain(|key, value| self.sent(key) != Some(value));
+        if saving() {
+            for key in ["dropped_keys", "dropped_keys_note"] {
+                if let Some(value) = body.get(key) {
+                    derived.insert(key.into(), value.clone());
+                }
+            }
+        }
         if derived.contains_key("due_on") {
             body["falls_due"] = true.into();
         }
@@ -365,6 +372,69 @@ mod tests {
         .expect("an answer body");
         assert_ne!(body["status"], "blocked", "{body}");
         body
+    }
+
+    /// A caller copying a served account learns which keys the server ignored.
+    #[tokio::test]
+    async fn read_keys_written_back_lean_receipt_names_the_copy() {
+        let handler = crate::harness::handler();
+        ensure(&handler, "bot:otto").await;
+        ensure(&handler, "thing:kettle").await;
+        served(
+            &handler,
+            "update_entity",
+            json!({"handle":"thing:kettle", "sets":{"colour":"blue"}}),
+        )
+        .await;
+        let read = served(
+            &handler,
+            "recall",
+            json!({"subject":"thing:kettle", "facts":true}),
+        )
+        .await;
+        let fields = &read["objects"][0]["facts"][0]["fields"];
+        assert_eq!(fields["settings_record"], "true", "{read}");
+        served(
+            &handler,
+            "capture",
+            json!({"subject":"bot:otto", "content":"Use lean receipts", "sets":{"setting_token_saving":"on"}}),
+        )
+        .await;
+        let copied = served(
+            &handler,
+            "capture",
+            json!({"subject":"thing:kettle", "content":"The kettle is blue", "fields":fields}),
+        )
+        .await;
+        assert_eq!(
+            copied["derived"]["dropped_keys"],
+            json!(["settings_record"]),
+            "{copied}"
+        );
+        let note = copied["derived"]["dropped_keys_note"]
+            .as_str()
+            .expect("why the key was dropped");
+        assert!(
+            !note.is_empty() && !note.contains(['\n', '\r']) && !note.contains("  "),
+            "{note}"
+        );
+        assert!(
+            copied.get("success").is_none(),
+            "the receipt is lean: {copied}"
+        );
+        let read = served(
+            &handler,
+            "recall",
+            json!({"subject":"thing:kettle", "facts":true}),
+        )
+        .await;
+        let claim = read["objects"][0]["facts"]
+            .as_array()
+            .expect("claims")
+            .iter()
+            .find(|claim| claim["content"] == "The kettle is blue")
+            .expect("copied words landed");
+        assert!(claim["fields"].get("settings_record").is_none(), "{claim}");
     }
 
     async fn counter_derivation(lean: bool) {

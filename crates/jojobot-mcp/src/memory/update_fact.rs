@@ -543,21 +543,6 @@ impl Jojobot {
         // **The setting bag joins `fields` for everything below**, exactly as
         // `capture`'s own copy does; the keys that are the bag travel apart.
         let mut sets_sent = args.sets.unwrap_or_default();
-        let dropped_keys = match self
-            .drop_read_keys(
-                &address.home,
-                Some(&address.local),
-                [&mut fields, &mut sets_sent],
-                &mut cleared,
-            )
-            .await
-        {
-            Ok(dropped) => dropped,
-            Err(e) => return memory_declined("update_fact", e),
-        };
-        // **What remains of the caller's own fields**, apart from the setting
-        // bag for the receipt's hint; copied server keys are not caller fields.
-        let own_sent: Vec<String> = fields.keys().cloned().collect();
         // **An item added to or taken off a list is resolved against the thing's
         // fold, held under its lock from the read to the write.** The thing is the
         // one the claim is about. A move already holds the lock on the claim's
@@ -603,6 +588,21 @@ impl Jojobot {
         } else {
             None
         };
+        let dropped_keys = match self
+            .drop_read_keys(
+                &address.home,
+                Some(&address.local),
+                [&mut fields, &mut sets_sent],
+                &mut cleared,
+            )
+            .await
+        {
+            Ok(dropped) => dropped,
+            Err(e) => return memory_declined("update_fact", e),
+        };
+        // **What remains of the caller's own fields**, apart from the setting
+        // bag for the receipt's hint; copied server keys are not caller fields.
+        let own_sent: Vec<String> = fields.keys().cloned().collect();
         if let Some(key) = sets_sent.keys().find(|key| fields.contains_key(*key)) {
             return memory_declined(
                 "update_fact",

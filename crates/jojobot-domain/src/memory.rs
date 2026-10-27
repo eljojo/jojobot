@@ -1773,7 +1773,7 @@ pub fn reserved_key(key: &str) -> bool {
 pub fn copied_read_key(kind: Option<EntityKind>, key: &str) -> bool {
     reserved_key(key)
         || review::SERVER_WRITTEN_KEYS.contains(&key.trim())
-        || (entries::places_its_records(kind) && entries::is_placement_key(key))
+        || (entries::places_its_records(kind) && entries::is_minted_key(key))
 }
 
 /// **Where a machine-read claim was read**, and it is required on one.
