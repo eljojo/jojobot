@@ -668,7 +668,7 @@ impl Jojobot {
                 let gate = self.registry.gate(bot.as_str());
                 let _serialized = gate.lock().await;
                 let outcome = self
-                    .decide_role_claim(bot, role, &run, now, today_or_clock)
+                    .decide_role_claim(bot, role, &run, now, today_or_clock, redeem)
                     .await;
                 // **A GRANTED claim has done something, so its session record
                 // is written now, through the same lazy path any first write
@@ -1124,6 +1124,7 @@ impl Jojobot {
         claimant: &str,
         now: jiff::Timestamp,
         today: jiff::civil::Date,
+        operator: Option<&crate::session::challenge::Verified>,
     ) -> serde_json::Value {
         // **Ownership is decided before anything is written**, so a claim from
         // the wrong bot leaves no role object and no key behind.
@@ -1192,12 +1193,16 @@ impl Jojobot {
                 today,
             )
             .await;
-        // **A fresh lease held by another run of this same bot is taken over.**
-        // That run is abandoned, which releases its lease, and the claim is
-        // made again once. A lease held by another bot's run stands.
+        // **A fresh lease stands, whoever holds it, until its holder wraps or it runs
+        // out, or the operator's word takes the role**: a claim that carries a code
+        // the operator typed for this bot, already checked. That run is abandoned,
+        // which releases its lease, and the claim is made again once. No bot can
+        // say it replaces a stuck run; a stuck run is one whose lease ran out.
         let mut took_over_from = None;
+        let by_word = operator.filter(|word| word.bot == *bot);
         if let Err(MemoryError::RoleTaken { holder, .. }) = &written
             && holder != claimant
+            && by_word.is_some()
         {
             let holder = holder.clone();
             match self
@@ -1231,6 +1236,10 @@ impl Jojobot {
                     taken["took_over_from"] = run.clone().into();
                     taken["note"] =
                         super::takeover_note::of(&run, displaced.was, displaced.left_open).into();
+                    if let Some(word) = by_word {
+                        taken["abandoned_by"] = "the operator's word".into();
+                        taken["challenge"] = word.handle.as_str().into();
+                    }
                     if displaced.left_open {
                         taken["holder_still_active"] = run.into();
                     }
@@ -1245,6 +1254,7 @@ impl Jojobot {
                     role,
                     &holder,
                     &until.to_string(),
+                    &(until - jojobot_domain::session::LEASE_FRESHNESS).to_string(),
                 ),
                 "holder": holder,
                 "until": until.to_string(),

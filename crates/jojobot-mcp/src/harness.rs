@@ -668,13 +668,14 @@ pub(crate) fn run_name(jojobot: &Jojobot, key: &str) -> String {
         .to_string()
 }
 
-/// **A claim that found a fresh lease held by another run of the same bot**:
-/// taken, with the run it took the role from named. What a refusal used to
-/// show for a lease that had not lapsed.
+/// **A claim that found a fresh lease held by another run, of the same bot or
+/// any other**: refused, with the run that holds the role named and nothing
+/// taken from it.
 pub(crate) fn assert_lease_was_held(body: &serde_json::Value, holder_run: &str) {
     let claim = &body["session"]["claim"];
-    assert_eq!(claim["status"], "taken", "{body}");
-    assert_eq!(claim["took_over_from"], holder_run, "{body}");
+    assert_eq!(claim["status"], "refused", "{body}");
+    assert_eq!(claim["holder"], holder_run, "{body}");
+    assert!(claim.get("took_over_from").is_none(), "{body}");
 }
 
 /// **A claim that found nothing to take over**: taken, naming no run. What a

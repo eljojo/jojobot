@@ -2042,7 +2042,12 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
         } => {
             let how_to_proceed = WayForward::from(format!(
                 "Nothing was written: {e}. {}",
-                role_taken_way_forward(role, holder, &until.to_string())
+                role_taken_way_forward(
+                    role,
+                    holder,
+                    &until.to_string(),
+                    &(until - jojobot_domain::session::LEASE_FRESHNESS).to_string(),
+                )
             ));
             let mut body = serde_json::json!({
                 "status": "blocked",

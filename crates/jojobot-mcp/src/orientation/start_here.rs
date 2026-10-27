@@ -167,9 +167,12 @@ pub struct OrientArgs {
     /// want jojobot to refuse a second claimant while your claim is fresh —
     /// **`taken` means your claim succeeded and YOU hold the role; it never
     /// means somebody else has it, which is `refused`.** **A fresh lease held
-    /// by another run of YOUR OWN bot does not refuse you: that run is
-    /// abandoned (a run that wrapped stays wrapped), its lease is released, and
-    /// the answer says `took_over_from` that run, and `holder_still_active` when
+    /// by another run, of your own bot or any other, refuses you, naming the run, when it
+    /// last wrote and when the lease runs out: the role changes hands when that run
+    /// wraps, when the lease runs out, or at the operator's word. A claim that
+    /// presents the operator's code (`ask_for_code`, then `challenge` and `code`)
+    /// takes it, and the answer says `took_over_from` that run and
+    /// `abandoned_by` the operator's word, and `holder_still_active` when
     /// that run lost the role but could not be closed.** The answer is one of
     /// `taken`, `refused` naming who holds it and until
     /// when — or, when the role belongs to another bot, naming that `owner`, or,
@@ -258,8 +261,8 @@ impl Jojobot {
                        true to skip the essay; \
                        calling without brief reads the essay. `claim` holds a named role for \
                        {{lease}} so two sessions never work one role at once; a claim by \
-                       another run of the same bot takes the role from the run that holds it, \
-                       abandoning an active holder and leaving a wrapped one wrapped (taken, refused, conflict or unavailable; a claim is refused while its role \
+                       a run that holds it keeps it until it wraps or its lease runs out, or the operator's \
+                       code takes it, abandoning an active holder and leaving a wrapped one wrapped (taken, refused, conflict or unavailable; a claim is refused while its role \
                        object is archived, and archive_entity restores it); every write, and \
                        read_mailbox and read_message, renews the lease \
                        unless the last renewal is less than {{renewal}} old, and wrapping \

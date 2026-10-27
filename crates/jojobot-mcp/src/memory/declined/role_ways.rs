@@ -1,8 +1,19 @@
 /// **What to do about a role somebody else holds** — said once, for the
 /// refusal a write gets and for the `refused` outcome of a claim at the boot
 /// door, so the two cannot come to say different things.
-pub(crate) fn role_taken_way_forward(role: &str, holder: &str, until: &str) -> String {
-    format!("Wait until {until}, or ask '{holder}' to release '{role}' by wrapping its session.")
+pub(crate) fn role_taken_way_forward(
+    role: &str,
+    holder: &str,
+    until: &str,
+    last_wrote: &str,
+) -> String {
+    format!(
+        "Run '{holder}' holds '{role}' and last wrote at {last_wrote}; its lease runs until \
+         {until}. The role changes hands when '{holder}' wraps its session, or at {until} if \
+         it writes nothing more, or when the operator's code is presented: ask for one with \
+         start_here's ask_for_code, then boot again with the challenge, the code and this \
+         claim."
+    )
 }
 
 /// **What to do about a role that belongs to another bot.** The refusal a claim
