@@ -355,8 +355,8 @@ fn screen_with(
 }
 
 /// Every existing entity an incoming set of **labels** might already be — the
-/// relabel channel. `kind` is the kind of the entity being relabelled; there is
-/// no slug to compare, because relabelling never touches the handle.
+/// relabel channel. The stable handle supplies numbered-sibling context; only
+/// the names are screened, because relabelling never changes the handle.
 ///
 /// Same reasons and same order as [`screen`], minus the two handle channels.
 /// That subtraction is the whole point: see [`decide_relabel`].
@@ -376,6 +376,7 @@ pub fn screen_labels(
 ) -> Vec<EntityMatch> {
     let incoming = folded(labels);
     let incoming_slugs: Vec<String> = incoming.iter().map(|n| slugify(n)).collect();
+    let current = except.and_then(|id| index.iter().find(|entity| &entity.id == id));
     let words = Words {
         written: labels,
         rarity: Rarity::of(index),
@@ -386,15 +387,31 @@ pub fn screen_labels(
         .iter()
         .filter(|e| Some(&e.id) != except)
         .filter_map(|e| {
-            name_reason(kind, (&incoming, &incoming_slugs), false, e, &words).map(|reason| {
-                EntityMatch {
-                    handle: e.id.clone(),
-                    kind: e.kind,
-                    name: e.name.clone(),
-                    source: e.source.clone(),
-                    reason,
-                    told_apart_by: None,
-                }
+            let numbered_siblings = current.is_some_and(|current| {
+                kind == Some(e.kind)
+                    && current.parent.is_some()
+                    && current.parent == e.parent
+                    && numbered_apart(current.id.slug(), e.id.slug())
+            });
+            let reason = name_reason(
+                kind,
+                (&incoming, &incoming_slugs),
+                numbered_siblings,
+                e,
+                &words,
+            );
+            let reason = if numbered_siblings {
+                sibling_name_reason(reason, &incoming, e)
+            } else {
+                reason
+            };
+            reason.map(|reason| EntityMatch {
+                handle: e.id.clone(),
+                kind: e.kind,
+                name: e.name.clone(),
+                source: e.source.clone(),
+                reason,
+                told_apart_by: None,
             })
         })
         .collect();
@@ -437,6 +454,8 @@ fn reason_for(
 
     // The name channels, shared with `screen_labels`.
     let siblings = parent.is_some() && parent == existing.parent.as_ref();
+    let numbered_siblings =
+        same_kind && siblings && numbered_apart(incoming_slug, existing.id.slug());
     let by_name = name_reason(
         handle.kind(),
         (incoming_names, incoming_name_slugs),
@@ -465,11 +484,8 @@ fn reason_for(
     // number**: a name that carries the same number as the sibling's is the
     // copied-name duplicate the screen exists for, whatever the handle says, so
     // the name channels answer in full.
-    if siblings && numbered_apart(incoming_slug, existing.id.slug()) {
-        if names_repeat_a_number(incoming_names, &folded(&existing.labels())) {
-            return by_name;
-        }
-        return by_name.filter(|reason| *reason == MatchReason::Nickname);
+    if numbered_siblings {
+        return sibling_name_reason(by_name, incoming_names, existing);
     }
     if edit_distance_within(incoming_slug, existing.id.slug(), NEAR).is_some() {
         return Some(MatchReason::NearSlug);
@@ -553,17 +569,45 @@ fn names_repeat_a_number(incoming: &[String], existing: &[String]) -> bool {
     })
 }
 
+/// Exact names, copied numbers and known nicknames still name a possible duplicate.
+fn sibling_name_reason(
+    reason: Option<MatchReason>,
+    incoming: &[String],
+    existing: &Entity,
+) -> Option<MatchReason> {
+    if names_repeat_a_number(incoming, &folded(&existing.labels())) {
+        reason
+    } else {
+        reason.filter(|reason| {
+            matches!(
+                reason,
+                MatchReason::SameName | MatchReason::SameNameOtherKind | MatchReason::Nickname
+            )
+        })
+    }
+}
+
 /// Whether two slugs are entries of one numbered series: the same skeleton once
 /// every run of digits is taken out, and different digits in those runs. **Only
 /// a different number sets them apart.** A letter, a stem or a suffix that
 /// differs does not, and neither does the same number twice, which is one entry
 /// seen twice. A full date is digit runs, so a dated series is numbered too.
+/// A series can add trailing numeric parts: `deploy-9` and `deploy-9-3-6`.
 /// The screen asks it only of two things under the same parent. **A refusal asks
 /// it of two that are not**, to tell a caller that a series is made under one
 /// parent (rule 498).
 pub fn numbered_apart(a: &str, b: &str) -> bool {
     let ((skeleton_a, runs_a), (skeleton_b, runs_b)) = (digit_runs(a), digit_runs(b));
-    skeleton_a == skeleton_b && runs_a != runs_b
+    let added_parts = |short: &str, long: &str| {
+        long.strip_prefix(short)
+            .is_some_and(|tail| !tail.is_empty() && tail.trim_end_matches("-#").is_empty())
+    };
+    !runs_a.is_empty()
+        && !runs_b.is_empty()
+        && runs_a != runs_b
+        && (skeleton_a == skeleton_b
+            || added_parts(&skeleton_a, &skeleton_b)
+            || added_parts(&skeleton_b, &skeleton_a))
 }
 
 /// The strongest reason an incoming set of **names** means an existing entity:
@@ -571,8 +615,7 @@ pub fn numbered_apart(a: &str, b: &str) -> bool {
 /// label spells out the existing handle, or two labels are within a typo.
 /// `incoming` is already normalized, `incoming_slugs` are their slugified forms.
 /// `siblings` says the incoming write sits under the same parent as `existing`,
-/// which is what lets two names that differ only by a number or a date count as
-/// two.
+/// which lets names differing by a number or date count as two.
 ///
 /// **Every label on both sides.** An entity's aliases are names it answers to,
 /// not decoration: matching only the preferred one lets the name the user
@@ -1894,6 +1937,9 @@ mod tests {
             ("q-1001", "q-1002"),
             ("a-1-b", "a-2-b"),
             ("a-1-b-2", "a-3-b-4"),
+            ("q-1", "q-1-2"),
+            ("deploy-9", "deploy-9-3-6"),
+            ("deploy-9-3", "deploy-9"),
             // A date is digit runs too, so a series by date is apart by number.
             ("stunt-rehearsal-2026-10-05", "stunt-rehearsal-2026-10-08"),
         ] {
@@ -1906,7 +1952,8 @@ mod tests {
             ("q-1", "r-1"),
             ("q-1001", "q-1001x"),
             ("q-1", "q-1-final"),
-            ("q-1", "q-1-2"),
+            ("q-1", "q-1-2x"),
+            ("q", "q-1"),
             // No digits to differ in.
             ("alpha", "alpha"),
             ("alpha", "alpho"),
@@ -1944,6 +1991,18 @@ mod tests {
             !screen_under(&typo, &name, Some(&alpha), &filed).is_empty(),
             "a typo-shaped neighbour is still screened"
         );
+    }
+
+    #[test]
+    fn numbered_siblings_fix_keeps_the_existing_label_channel() {
+        let parent = EntityId("topic:contract-card-queue".into());
+        let existing = Entity {
+            parent: Some(parent.clone()),
+            ..entity("work:alpha-queue", "Card 2700", "fixture")
+        };
+        let asked = EntityId("work:beta-queue".into());
+        let found = screen_creating(&asked, &["Card 2701"], Some(&parent), &[existing]);
+        assert!(found.is_empty(), "{found:?}");
     }
 
     /// **A known short form still counts between numbered siblings.** The name

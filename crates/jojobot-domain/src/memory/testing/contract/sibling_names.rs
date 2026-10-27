@@ -163,4 +163,112 @@ pub async fn numbered_siblings_are_not_refused_for_their_names<M: Memory>(store:
         matches!(forced, Guarded::Blocked { .. }),
         "the token an exact handle's refusal minted clears nothing"
     );
+    numbered_siblings_with_added_parts(store).await;
+    numbered_siblings_when_relabelled(store).await;
+}
+
+async fn numbered_siblings_with_added_parts<M: Memory>(store: &M) {
+    let parent = EntityId("topic:contract-version-series".into());
+    add(
+        store,
+        NewEntity::new(parent.clone(), "Version releases", "contract-fixture"),
+    )
+    .await;
+    for (handle, name) in [
+        ("work:contract-deploy-9", "Deploy 9"),
+        ("work:contract-deploy-9-3-6", "Deploy 9.3.6: mail"),
+        ("work:contract-deploy-9-3", "Deploy 9.3: threads"),
+    ] {
+        let answer = store
+            .add_entity(NewEntity {
+                parent: Some(parent.clone()),
+                ..NewEntity::new(EntityId(handle.into()), name, "contract-fixture")
+            })
+            .await
+            .expect("the add answers");
+        assert!(
+            matches!(answer, Guarded::Written(_)),
+            "{handle}: {answer:?}"
+        );
+    }
+}
+
+async fn numbered_siblings_when_relabelled<M: Memory>(store: &M) {
+    let parent = EntityId("topic:contract-relabel-queue".into());
+    let elsewhere = EntityId("topic:contract-relabel-shelf".into());
+    for (id, name) in [(&parent, "Labelled items"), (&elsewhere, "Elsewhere names")] {
+        add(store, NewEntity::new(id.clone(), name, "contract-fixture")).await;
+    }
+    for (under, handle, name) in [
+        (&parent, "work:contract-q-2317", "Queue: card 2317 on dev8"),
+        (&parent, "work:contract-q-2318", "The second item"),
+        (&elsewhere, "work:contract-relabel-other", "Another item"),
+    ] {
+        add(
+            store,
+            NewEntity {
+                parent: Some(under.clone()),
+                ..NewEntity::new(EntityId(handle.into()), name, "contract-fixture")
+            },
+        )
+        .await;
+    }
+    let edited = EntityId("work:contract-q-2318".into());
+    let answer = store
+        .update_entity(
+            &edited,
+            EntityPatch {
+                name: Some("Queue: card 2318 on dev8".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("the relabel answers");
+    assert!(matches!(answer, Guarded::Written(_)), "{answer:?}");
+    for (handle, name) in [
+        (&edited, "Queue: card 2317 on dev8"),
+        (&edited, "Queue: card 2317 on dev8x"),
+        (
+            &EntityId("work:contract-relabel-other".into()),
+            "Queue: card 2319 on dev8",
+        ),
+    ] {
+        let answer = store
+            .update_entity(
+                handle,
+                EntityPatch {
+                    name: Some(name.into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("the relabel answers");
+        assert!(
+            matches!(answer, Guarded::Blocked { .. }),
+            "{handle}: {answer:?}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn numbered_siblings_keep_the_existing_contract() {
+        numbered_siblings_are_not_refused_for_their_names(
+            &crate::memory::testing::InMemoryMemory::booted(),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn numbered_siblings_with_added_parts_land() {
+        numbered_siblings_with_added_parts(&crate::memory::testing::InMemoryMemory::booted()).await;
+    }
+
+    #[tokio::test]
+    async fn numbered_siblings_can_be_relabelled() {
+        numbered_siblings_when_relabelled(&crate::memory::testing::InMemoryMemory::booted()).await;
+    }
 }

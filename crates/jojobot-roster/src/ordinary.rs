@@ -812,6 +812,16 @@ pub const ORDINARY: &[&str] = &[
     // Build cards and review passes filed under one queue, and one card under a
     // shelf; they name nobody.
     "topic:contract-card-queue",
+    // Numbered releases and relabelled queue cards are synthetic work fixtures.
+    "topic:contract-version-series",
+    "topic:contract-relabel-queue",
+    "topic:contract-relabel-shelf",
+    "work:contract-deploy-9",
+    "work:contract-deploy-9-3",
+    "work:contract-deploy-9-3-6",
+    "work:contract-q-2317",
+    "work:contract-q-2318",
+    "work:contract-relabel-other",
     "topic:contract-card-shelf",
     "work:contract-q-2700",
     "work:contract-q-2741",
