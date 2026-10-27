@@ -253,7 +253,12 @@ fn build_metrics_local_sample_setup_failure_keeps_the_command_and_its_verdict() 
 fn build_metrics_bar_records_wall_time_for_phases_and_each_test_binary() {
     let dir = std::env::temp_dir().join(jojobot_bar::scratch::name("build-metrics-bar"));
     std::fs::create_dir_all(&dir).unwrap();
-    support::git_init(&dir);
+    support::loop_repository(&dir);
+    std::fs::write(
+        dir.join("Cargo.toml"),
+        "[package]\nname = \"jojobot-domain\"\n",
+    )
+    .unwrap();
     std::fs::write(
         dir.join("metadata.json"),
         serde_json::json!({"workspace_root": dir, "packages": [{

@@ -455,7 +455,7 @@ fn unpushed_commits() -> Vec<(String, String)> {
 /// could not have known about would make the very first run of this check
 /// red on `main`, which is the one outcome this whole file exists to
 /// prevent. A message written AFTER this commit has no such excuse.
-const COMMIT_HANDLE_CHECK_BOUNDARY: &str = "99681a26";
+const COMMIT_HANDLE_CHECK_BOUNDARY: &str = jojobot_roster::COMMIT_HANDLE_CHECK_BOUNDARY;
 
 /// **Every commit this checkout has made since the handle check began**, as
 /// its short name and its message. [`off_roster_handles_in`] is asked of
@@ -958,13 +958,7 @@ fn a_block_naming_an_ordinary_word_roster_name_licenses_a_pronoun_about_nobody()
 #[test]
 fn no_handle_in_the_workspace_is_built_from_a_bare_slug() {
     let bare = bare_slugs_in(&scanned_files(&workspace_root()));
-    assert!(
-        bare.is_empty(),
-        "these hand a bare slug to a handle constructor, so the name never appears as \
-         `kind:slug` and the roster gate above has never seen it — write the handle \
-         whole:\n{}",
-        bare.join("\n")
-    );
+    assert!(bare.is_empty(), "{}", jojobot_roster::bare_refusal(&bare));
 }
 
 /// **Both halves, or the case above proves nothing.**
@@ -1077,11 +1071,8 @@ fn no_slug_under_a_declared_kind_is_off_the_lists() {
     let refused = unlisted_slugs_under_a_declared_kind_in(&scanned_files(&workspace_root()));
     assert!(
         refused.is_empty(),
-        "these hand a slug that is on neither ROSTER nor ORDINARY to a handle constructor \
-         under a kind the call does not write out. If the name is openly fictional, add a \
-         handle with it to ROSTER (a name from the shows) or ORDINARY (a handle that names \
-         nobody) in a conscious diff; otherwise use a slug that is already there:\n{}",
-        refused.join("\n")
+        "{}",
+        jojobot_roster::declared_refusal(&refused)
     );
 }
 

@@ -82,13 +82,14 @@ fn main() -> ExitCode {
         Some("rooms") => run_rooms(&args[1..], &known),
         Some("plan") => plan::run(&args[1..]),
         Some("size") => jojobot_bar::size::run(&args[1..]),
+        Some("static") => jojobot_bar::static_checks::run(&args[1..]),
         Some("bundle") => run_bundle(&args[1..]),
         Some("call") => run_call(&args[1..]),
         _ => {
             eprintln!(
                 "usage: bar check | bar report | bar dev | bar narrow --crate <name> [--filter <substring>] \
                  | bar rooms [--lane <name>] [--all-features] --test <name> [--test <name> ...] \
-                 | bar size [--write | --init] | bar bundle [--room <name> ...] | bar call ..."
+                 | bar size [--write | --init] | bar static | bar bundle [--room <name> ...] | bar call ..."
             );
             return ExitCode::from(2);
         }
@@ -1057,7 +1058,14 @@ fn run_dev(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
     let log_path = PathBuf::from("target/bar/dev.log");
     fresh_log(&log_path)?;
     let mut summary = Summary::new();
-    jojobot_bar::size::phase(&mut summary);
+    jojobot_bar::static_checks::phase(&mut summary);
+    if !summary.green {
+        for phase in ["fmt-check", "build", "test", "lint"] {
+            summary.phase_skipped(phase);
+        }
+        finish(&mut summary, &log_path);
+        return Ok(ExitCode::FAILURE);
+    }
 
     // **A branch that changed nothing has nothing to run**, and that is an
     // answer rather than a refusal: the loop is run from habit, on main as often
@@ -1379,7 +1387,11 @@ fn roster_report() -> String {
         .to_string();
     let then = match base.is_empty() {
         true => String::new(),
-        false => git_stdout(&["show", &format!("{base}:{ROSTER_FILE}")]),
+        false => [ROSTER_FILE, jojobot_roster::LEGACY_ROSTER_FILE]
+            .into_iter()
+            .map(|path| git_stdout(&["show", &format!("{base}:{path}")]))
+            .find(|source| !source.is_empty())
+            .unwrap_or_default(),
     };
     // A base that cannot show the file is no base: say unknown, not "all new".
     let base = match then.is_empty() {
@@ -1789,7 +1801,7 @@ fn run_narrow(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
     let log_path = PathBuf::from(format!("target/bar/narrow-{krate}.log"));
     fresh_log(&log_path)?;
     let mut summary = Summary::new();
-    jojobot_bar::size::phase(&mut summary);
+    jojobot_bar::static_checks::phase(&mut summary);
     if !summary.green {
         for phase in ["fmt-check", "build", "test", "lint"] {
             summary.phase_skipped(phase);

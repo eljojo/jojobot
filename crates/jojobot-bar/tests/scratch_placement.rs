@@ -122,7 +122,7 @@ fn scratch_dir(tag: &str) -> PathBuf {
     )));
 
     fs::create_dir_all(&dir).expect("create scratch dir");
-    support::git_init(&dir);
+    support::loop_repository(&dir);
     dir
 }
 

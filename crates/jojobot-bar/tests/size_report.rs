@@ -582,8 +582,87 @@ fn narrow_refuses_growth_in_another_crate_before_cargo_runs() {
 }
 
 #[test]
-fn snapshot_judges_rewritten_texts_and_keeps_a_generator_failure_red() {
-    let dir = repo("snapshot");
+fn narrow_refuses_an_off_roster_handle_outside_its_selected_crate() {
+    let dir = repo("roster");
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let path = "crates/jojobot-adapters/src/homer.rs";
+    let roster = jojobot_bar::ROSTER_FILE;
+    let ordinances = jojobot_roster::ORDINARY_FILE;
+    let base = commit_files(
+        &dir,
+        &[
+            ("size-ratchet.toml", ratchet("")),
+            (path, "// a fixture\n".into()),
+            (roster, fs::read_to_string(root.join(roster)).unwrap()),
+            (
+                ordinances,
+                fs::read_to_string(root.join(ordinances)).unwrap(),
+            ),
+        ],
+    );
+    let args = ["narrow", "--crate", "jojobot-bar"];
+    fs::write(dir.join(path), "const WHO: &str = \"person:homer\";\n").unwrap();
+    let listed = bar_with(&dir, &args, Some(&base));
+    assert_eq!(listed.code, Some(0), "{}", listed.stdout);
+    fs::remove_file(dir.join("argv.log")).unwrap();
+    let unlisted = ["person", ":", "not-on-the-roster"].concat();
+    fs::write(dir.join(path), format!("const WHO: &str = {unlisted:?};\n")).unwrap();
+    git(&dir, &["branch", "-m", "scratch"]);
+    for based_on in [Some(base.as_str()), None] {
+        for args in [&args[..], &["dev"][..]] {
+            let refused = bar_with(&dir, args, based_on);
+            assert_eq!(refused.code, Some(1), "{}", refused.stdout);
+            assert!(refused.stdout.contains(&unlisted), "{}", refused.stdout);
+            assert!(refused.stdout.contains(path), "{}", refused.stdout);
+            assert!(
+                !dir.join("argv.log").exists(),
+                "the roster refusal precedes every cargo phase"
+            );
+        }
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn narrow_refuses_an_off_roster_commit_message_before_cargo_runs() {
+    let dir = repo("commit-roster");
+    let path = "crates/jojobot-adapters/src/homer.rs";
+    let base = commit_files(
+        &dir,
+        &[
+            ("size-ratchet.toml", ratchet("")),
+            (path, "// fixture\n".into()),
+        ],
+    );
+    git(
+        &dir,
+        &["commit", "--allow-empty", "-q", "-m", "Keep person:homer"],
+    );
+    let args = ["narrow", "--crate", "jojobot-bar"];
+    let listed = bar_with(&dir, &args, Some(&base));
+    assert_eq!(listed.code, Some(0), "{}", listed.stdout);
+    fs::remove_file(dir.join("argv.log")).unwrap();
+    let unlisted = ["person", ":", "not-on-the-roster"].concat();
+    git(&dir, &["commit", "--allow-empty", "-q", "-m", &unlisted]);
+    let head = git(&dir, &["rev-parse", "--short", "HEAD"]);
+    git(&dir, &["branch", "-m", "scratch"]);
+    for based_on in [Some(base.as_str()), None] {
+        for args in [&args[..], &["dev"][..]] {
+            let refused = bar_with(&dir, args, based_on);
+            assert_eq!(refused.code, Some(1), "{}", refused.stdout);
+            assert!(refused.stdout.contains(&unlisted), "{}", refused.stdout);
+            assert!(refused.stdout.contains(&head), "{}", refused.stdout);
+            assert!(
+                !dir.join("argv.log").exists(),
+                "a bad commit is refused before every cargo phase"
+            );
+        }
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+fn makefile_repo(tag: &str) -> (PathBuf, PathBuf, String, &'static str) {
+    let dir = repo(tag);
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let path = "crates/jojobot-mcp/served-texts/tools.md";
     let base = commit_files(
@@ -605,6 +684,7 @@ fn snapshot_judges_rewritten_texts_and_keeps_a_generator_failure_red() {
     support::write_executable(
         &cargo,
         r#"#!/bin/sh
+echo "$*" >> "$(dirname "$0")/argv.log"
 case "$1" in
   run)
     while [ "$1" != -- ]; do shift; done
@@ -630,19 +710,35 @@ case "$1" in
 esac
 "#,
     );
+    (dir, cargo, base, path)
+}
+
+fn make_target(
+    dir: &Path,
+    cargo: &Path,
+    base: &str,
+    target: &str,
+    mode: &str,
+) -> std::process::Output {
+    support::output_fenced(
+        Command::new("make")
+            .arg(target)
+            .current_dir(dir)
+            .env("CARGO", cargo)
+            .env("BAR_CASE_BINARY", env!("CARGO_BIN_EXE_jojobot-bar"))
+            .env("SIZE_BASE", base)
+            .env("SNAPSHOT_CASE", mode)
+            .env_remove("JOJOBOT_DEV_METRICS_URL"),
+    )
+    .expect("run the real Makefile recipe")
+}
+
+#[test]
+fn snapshot_judges_rewritten_texts_and_keeps_a_generator_failure_red() {
+    let (dir, cargo, base, path) = makefile_repo("snapshot");
     for (mode, green) in [("same", true), ("grow", false), ("fail", false)] {
         fs::write(dir.join(path), lines_of(5001)).unwrap();
-        let output = support::output_fenced(
-            Command::new("make")
-                .arg("snapshot")
-                .current_dir(&dir)
-                .env("CARGO", &cargo)
-                .env("BAR_CASE_BINARY", env!("CARGO_BIN_EXE_jojobot-bar"))
-                .env("SIZE_BASE", &base)
-                .env("SNAPSHOT_CASE", mode)
-                .env_remove("JOJOBOT_DEV_METRICS_URL"),
-        )
-        .expect("run the real snapshot recipe");
+        let output = make_target(&dir, &cargo, &base, "snapshot", mode);
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert_eq!(output.status.success(), green, "{mode}: {stdout}");
         if mode == "grow" {
@@ -655,6 +751,42 @@ esac
     let _ = fs::remove_dir_all(&dir);
 }
 
+#[test]
+fn make_static_checks_size_sources_and_branch_commit_messages() {
+    let (dir, cargo, base, path) = makefile_repo("static");
+    let run = || make_target(&dir, &cargo, &base, "static", "same");
+    let clean = run();
+    assert!(clean.status.success(), "{clean:?}");
+    let calls = fs::read_to_string(dir.join("argv.log")).unwrap();
+    assert!(!calls.is_empty());
+    assert!(
+        calls.lines().all(|call| call.starts_with("run ")),
+        "{calls}"
+    );
+
+    fs::write(dir.join(path), lines_of(5002)).unwrap();
+    let growth = run();
+    assert!(!growth.status.success(), "{growth:?}");
+    assert!(String::from_utf8_lossy(&growth.stdout).contains(path));
+    fs::write(dir.join(path), lines_of(5001)).unwrap();
+
+    let source = dir.join("crates/jojobot-adapters/src/homer.rs");
+    fs::create_dir_all(source.parent().unwrap()).unwrap();
+    let unlisted = ["person", ":", "not-on-the-roster"].concat();
+    fs::write(&source, format!("const WHO: &str = {unlisted:?};\n")).unwrap();
+    let name = run();
+    assert!(!name.status.success(), "{name:?}");
+    assert!(String::from_utf8_lossy(&name.stdout).contains(&unlisted));
+    fs::write(&source, "// fixture\n").unwrap();
+
+    git(&dir, &["commit", "--allow-empty", "-q", "-m", &unlisted]);
+    let commit = run();
+    assert!(!commit.status.success(), "{commit:?}");
+    let stdout = String::from_utf8_lossy(&commit.stdout);
+    assert!(stdout.contains("commit-roster: FAILED"), "{stdout}");
+    assert!(stdout.contains(&unlisted), "{stdout}");
+    let _ = fs::remove_dir_all(&dir);
+}
 /// **The owned markers are judged through the bar.** The marker texts are built
 /// here so this file never matches its own scan.
 #[test]

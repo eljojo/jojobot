@@ -29,6 +29,11 @@ pub fn changed_paths() -> Option<(String, Vec<String>)> {
     let base_ref = std::env::var("BAR_DEV_BASE")
         .ok()
         .filter(|name| !name.is_empty())
+        .or_else(|| {
+            std::env::var("SIZE_BASE")
+                .ok()
+                .filter(|name| !name.is_empty())
+        })
         .unwrap_or_else(|| "main".to_string());
     let mut base = git_stdout(&["merge-base", &base_ref, "HEAD"]);
     // **The forge's checkout holds `origin/main` and no local `main`**, so the

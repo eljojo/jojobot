@@ -23,6 +23,7 @@ mod reading;
 mod recording;
 pub mod scratch;
 pub mod size;
+pub mod static_checks;
 pub mod sweep;
 pub use calls::{CALL_USAGE, Call, parse_call, write_call};
 pub use expectation::{BACKGROUND_TIMEOUT_MS, start_lines};
@@ -1101,6 +1102,16 @@ const ORDINARY: &[&str] = &[
             roster_entries(&source),
             names(&["bot:assistant", "person:gayle", "person:stan"])
         );
+    }
+
+    #[test]
+    fn the_leaf_source_reader_matches_the_compiled_catalog() {
+        let source = include_str!("../../jojobot-roster/src/cast.rs");
+        let compiled: Vec<String> = jojobot_roster::ROSTER
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(roster_entries(source), compiled);
     }
 
     /// **A name that arrives on the cast list is reported, and one that arrives on

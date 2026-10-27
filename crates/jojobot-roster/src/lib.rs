@@ -12,7 +12,11 @@ pub use scanner::{
 };
 
 pub const ROSTER_FILE: &str = "crates/jojobot-roster/src/cast.rs";
+pub const LEGACY_ROSTER_FILE: &str = "crates/jojobot-domain/tests/fixture_roster.rs";
 pub const ORDINARY_FILE: &str = "crates/jojobot-roster/src/ordinary.rs";
+
+/// Messages written before the handle gate existed are outside its audit.
+pub const COMMIT_HANDLE_CHECK_BOUNDARY: &str = "99681a26";
 
 /// A domain test holds this copy equal to EntityKind::ALL.
 pub const KINDS: &[&str] = &[
@@ -63,6 +67,27 @@ pub fn refusal(violations: &[String]) -> String {
          add it to ROSTER (a name from the shows) or ORDINARY (a handle that names nobody) in a conscious diff; if it names anything real from the \
          operator's life, it must not enter this repo at all:\n{}",
         violations.join("\n")
+    )
+}
+
+/// The constructor refusal is shared with the CI gate.
+pub fn bare_refusal(bare: &[String]) -> String {
+    format!(
+        "these hand a bare slug to a handle constructor, so the name never appears as \
+         `kind:slug` and the roster gate above has never seen it — write the handle \
+         whole:\n{}",
+        bare.join("\n")
+    )
+}
+
+/// Declared kinds still require a slug from the same catalog.
+pub fn declared_refusal(refused: &[String]) -> String {
+    format!(
+        "these hand a slug that is on neither ROSTER nor ORDINARY to a handle constructor \
+         under a kind the call does not write out. If the name is openly fictional, add a \
+         handle with it to ROSTER (a name from the shows) or ORDINARY (a handle that names \
+         nobody) in a conscious diff; otherwise use a slug that is already there:\n{}",
+        refused.join("\n")
     )
 }
 

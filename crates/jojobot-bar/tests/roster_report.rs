@@ -9,7 +9,7 @@ use std::process::Command;
 
 mod support;
 
-const ROSTER_FILE: &str = "crates/jojobot-domain/tests/fixture_roster.rs";
+const ROSTER_FILE: &str = jojobot_roster::ROSTER_FILE;
 
 fn write_fake_cargo_always_green(dir: &std::path::Path) -> std::path::PathBuf {
     let path = dir.join("cargo");
@@ -56,21 +56,27 @@ fn roster_source(cast: &[&str], ordinary: &[&str]) -> String {
 
 /// A repository whose `origin/main` holds one cast name and one ordinary name,
 /// with the working tree then changed to `cast` and `ordinary`.
-fn repo_with(tag: &str, cast: &[&str], ordinary: &[&str]) -> std::path::PathBuf {
+fn repo_with(tag: &str, cast: &[&str], ordinary: &[&str], base_file: &str) -> std::path::PathBuf {
     let dir = scratch_dir(tag);
     git(&dir, &["init", "-q"]);
     git(&dir, &["config", "user.email", "scratch@example.com"]);
     git(&dir, &["config", "user.name", "scratch"]);
-    let path = dir.join(ROSTER_FILE);
+    let path = dir.join(base_file);
     fs::create_dir_all(path.parent().expect("a parent")).expect("directories");
     fs::write(
         &path,
         roster_source(&["person:stan"], &["thing:gravel-bike"]),
     )
     .expect("base");
-    git(&dir, &["add", ROSTER_FILE]);
+    git(&dir, &["add", base_file]);
     git(&dir, &["commit", "-q", "-m", "base"]);
     git(&dir, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+    if base_file != ROSTER_FILE {
+        fs::write(&path, "// The catalog lives in its leaf.\n").unwrap();
+        git(&dir, &["add", base_file]);
+    }
+    let path = dir.join(ROSTER_FILE);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(&path, roster_source(cast, ordinary)).expect("changed roster");
     git(&dir, &["add", ROSTER_FILE]);
     git(&dir, &["commit", "-q", "-m", "change"]);
@@ -100,6 +106,7 @@ fn a_new_cast_name_is_printed_and_a_new_ordinary_name_is_not() {
         "both",
         &["person:stan", "person:kyle"],
         &["thing:gravel-bike", "thing:folding-chairs"],
+        ROSTER_FILE,
     );
     let (green, stdout) = run_check(&dir);
     assert!(
@@ -135,11 +142,32 @@ fn a_change_that_adds_no_cast_name_prints_none() {
         "ordinary-only",
         &["person:stan"],
         &["thing:gravel-bike", "thing:folding-chairs"],
+        ROSTER_FILE,
     );
     let (green, stdout) = run_check(&dir);
     assert!(green, "{stdout}");
     assert!(stdout.contains("roster names new since"), "{stdout}");
     assert!(stdout.contains(": 0"), "{stdout}");
     assert!(!stdout.contains("folding-chairs"), "{stdout}");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn moving_the_catalog_keeps_old_names_out_of_the_arrivals() {
+    let dir = repo_with(
+        "moved",
+        &["person:stan", "person:kyle"],
+        &["thing:gravel-bike"],
+        jojobot_roster::LEGACY_ROSTER_FILE,
+    );
+    let (green, stdout) = run_check(&dir);
+    assert!(green, "{stdout}");
+    assert!(stdout.contains("person:kyle"), "{stdout}");
+    assert!(!stdout.contains("person:stan"), "{stdout}");
+    let header = stdout
+        .lines()
+        .find(|line| line.starts_with("roster names new since"))
+        .unwrap();
+    assert!(header.ends_with(": 1"), "{header}");
     let _ = fs::remove_dir_all(&dir);
 }

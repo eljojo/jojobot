@@ -48,10 +48,11 @@ pub fn write_executable(path: &Path, script: &str) {
 /// through here, so this is the one place that decides how they start.
 pub fn fenced_spawn(cmd: &mut Command) -> std::io::Result<Child> {
     let _fence = FORK_FENCE.read().unwrap_or_else(|e| e.into_inner());
-    // CI exports SIZE_BASE for the checkout; a child in a scratch repo must not
-    // inherit it unless the case sets one itself.
-    if !cmd.get_envs().any(|(key, _)| key == "SIZE_BASE") {
-        cmd.env_remove("SIZE_BASE");
+    // A scratch repo has its own base; the checkout's base must not leak in.
+    for name in ["SIZE_BASE", "BAR_DEV_BASE"] {
+        if !cmd.get_envs().any(|(key, _)| key == name) {
+            cmd.env_remove(name);
+        }
     }
     cmd.spawn()
 }
@@ -78,4 +79,28 @@ pub fn status_fenced(cmd: &mut Command) -> std::io::Result<ExitStatus> {
 pub fn git_init(dir: &Path) {
     status_fenced(Command::new("git").args(["init", "-q"]).current_dir(dir))
         .expect("git init in a scratch directory");
+}
+
+/// Local-loop gates need a branch base even when a case changes no source file.
+pub fn loop_repository(dir: &Path) {
+    for args in [
+        &["init", "-q", "-b", "main"][..],
+        &[
+            "-c",
+            "user.name=scratch",
+            "-c",
+            "user.email=scratch@example.com",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "--allow-empty",
+            "-q",
+            "-m",
+            "scratch",
+        ][..],
+    ] {
+        let status = status_fenced(Command::new("git").args(args).current_dir(dir))
+            .expect("prepare a local-loop repository");
+        assert!(status.success(), "git {args:?} in {dir:?}");
+    }
 }

@@ -29,7 +29,7 @@ AT_ROOT = $(if $(CI_ROOT),scripts/ci-root $(CI_ROOT) ,)
 BAR = $(if $(BAR_BUNDLE),cargo-target/debug/jojobot-bar,$(CARGO) run -q --locked -p jojobot-bar --)
 
 .DEFAULT_GOAL := help
-.PHONY: help check dev report narrow test lint fmt fmt-check build bundle integration rooms room prepush argument-coverage paid replay refresh-upgrade-fixture carried snapshot size
+.PHONY: help check dev report narrow test lint fmt fmt-check build bundle integration rooms room prepush argument-coverage paid replay refresh-upgrade-fixture carried snapshot size static
 
 help: ## List the targets
 	@grep -hE '^[a-z-]+:.*##' $(MAKEFILE_LIST) \
@@ -92,6 +92,10 @@ SIZE_ARGS ?=
 size: ## The size ratchet: no new file over the cap, no listed file grows
 	CARGO=$(CARGO) $(CARGO) run -q --locked -p jojobot-bar -- size $(SIZE_ARGS)
 
+# The local pre-push gate shares its file and commit scans with dev and narrow.
+static: ## Cheap pre-push checks: size, fictional roster and commit messages
+	CARGO=$(CARGO) SIZE_BASE=$(or $(SIZE_BASE),$(BASE),main) $(BAR) static
+
 # **The files of every text a model reads.** A tool's description, an argument's
 # description, the instructions, the orientation essay, a skill, a teaching and
 # the refusal of each error kind are rendered into `crates/jojobot-mcp/served-texts/`,
@@ -106,8 +110,8 @@ snapshot: ## Rewrite the checked-in files of every text a model reads
 	SIZE_BASE=$(or $(SIZE_BASE),$(BASE),main) $(MAKE) size || status=$$?; \
 	exit $$status
 
-# **The dev bar.** The everyday loop, a level below the report: the format check,
-# a build, then the unit tests and the fast test files of the packages the
+# **The dev bar.** The everyday loop, a level below the report: the cheap size,
+# source-roster and commit-message gates, then format, a build and the fast tests the
 # branch touches. The touched packages are the ones holding a path that differs
 # from the merge base with `main` (committed, uncommitted or untracked). **The
 # packages that depend on them are not tested here**: their tests are the branch
@@ -131,8 +135,8 @@ dev: ## The dev bar: format, build, and the tests and lint of what the branch to
 
 # **The inner loop, scoped to one crate.** Run it between edits.
 #
-# It checks size against the branch base before any cargo phase, then the
-# format, that crate's tests and its lint. BASE names a base other than main;
+# It checks size, source handles and branch commit messages before any cargo
+# phase, then format, that crate's tests and lint. BASE names a base other than main;
 # an explicit SIZE_BASE takes precedence, as it does for the boundary bar.
 # The size check also sees growth outside the selected crate.
 #
