@@ -58,6 +58,7 @@ jobs:
   # Cheap refusals precede the served-text build and every expensive job.
   static:
     runs-on: nix
+    timeout-minutes: 120
     steps:
       - name: Level
         run: |
@@ -168,12 +169,15 @@ jobs:
           JOJOBOT_METRICS_OUTCOME: ${{ job.status }}
 
   check:
-    needs: build
+    needs: [static, build]
+    if: ${{ always() }}
     runs-on: nix-x86_64
     steps:
       - name: Level
         run: |
           echo 'level: boundary; workflow jobs: static, build, check, rooms, year; left to boundary: none'
+          test '${{ needs.static.result }}' = success || { echo 'static prerequisite did not succeed'; exit 1; }
+          test '${{ needs.build.result }}' = success || { echo 'build prerequisite did not succeed'; exit 1; }
       # The whole history, not the default depth of one commit. The fixture
       # roster test reads the commit messages since a fixed boundary and fails
       # when it cannot read the range, so a one-commit checkout is red on every
@@ -231,12 +235,15 @@ jobs:
   # Every room suite except the year room. A room spawns the built server,
   # which the bundle carries.
   rooms:
-    needs: build
+    needs: [static, build]
+    if: ${{ always() }}
     runs-on: nix-x86_64
     steps:
       - name: Level
         run: |
           echo 'level: boundary; workflow jobs: static, build, check, rooms, year; left to boundary: none'
+          test '${{ needs.static.result }}' = success || { echo 'static prerequisite did not succeed'; exit 1; }
+          test '${{ needs.build.result }}' = success || { echo 'build prerequisite did not succeed'; exit 1; }
       - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
@@ -278,12 +285,15 @@ jobs:
   # The year room is the slowest suite and no other target runs it. It runs as
   # one binary: it caches its furnished seed per process.
   year:
-    needs: build
+    needs: [static, build]
+    if: ${{ always() }}
     runs-on: nix-x86_64
     steps:
       - name: Level
         run: |
           echo 'level: boundary; workflow jobs: static, build, check, rooms, year; left to boundary: none'
+          test '${{ needs.static.result }}' = success || { echo 'static prerequisite did not succeed'; exit 1; }
+          test '${{ needs.build.result }}' = success || { echo 'build prerequisite did not succeed'; exit 1; }
       - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0

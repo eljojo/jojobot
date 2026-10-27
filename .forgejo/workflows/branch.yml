@@ -59,6 +59,7 @@ jobs:
   # Cheap refusals precede the served-text build and every expensive job.
   static:
     runs-on: nix
+    timeout-minutes: 120
     steps:
       - name: Level
         run: |

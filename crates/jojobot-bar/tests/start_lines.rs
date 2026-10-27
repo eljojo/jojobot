@@ -167,7 +167,7 @@ fn the_startup_static_gate_stops_expensive_jobs_before_they_start() {
         }
         if workflow == "pull-request" {
             for name in ["check", "rooms", "year"] {
-                assert!(workflow_job(&text, name).contains("    needs: build"));
+                assert!(workflow_job(&text, name).contains("    needs: [static, build]"));
             }
         }
         let dir = scratch();
@@ -261,6 +261,63 @@ test "$SNAPSHOT_MODE" != red
         }
         fs::remove_dir_all(dir).unwrap();
     }
+}
+
+#[test]
+fn ci_static_jobs_have_a_bounded_timeout() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    for workflow in ["branch", "pull-request"] {
+        let text =
+            fs::read_to_string(root.join(format!(".forgejo/workflows/{workflow}.yml"))).unwrap();
+        assert!(
+            workflow_job(&text, "static")
+                .lines()
+                .any(|line| line == "    timeout-minutes: 120")
+        );
+    }
+}
+
+#[test]
+fn ci_required_statuses_fail_when_static_did_not_succeed() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let text = fs::read_to_string(root.join(".forgejo/workflows/pull-request.yml")).unwrap();
+    let dir = scratch();
+    for name in ["check", "rooms", "year"] {
+        let job = workflow_job(&text, name);
+        assert!(
+            job.lines()
+                .any(|line| line.starts_with("    if: ${{ always()")),
+            "{name}: {job}"
+        );
+        assert!(job.contains("    needs: [static, build]"), "{job}");
+        let step = workflow_step(&job, "Level");
+        assert!(step.contains("${{ needs.static.result }}"), "{step}");
+        assert!(step.contains("${{ needs.build.result }}"), "{step}");
+        for (static_result, build_result, success) in [
+            ("success", "success", true),
+            ("failure", "skipped", false),
+            ("skipped", "skipped", false),
+            ("cancelled", "skipped", false),
+            ("success", "failure", false),
+        ] {
+            let rendered = step
+                .replace("${{ needs.static.result }}", static_result)
+                .replace("${{ needs.build.result }}", build_result);
+            let out = support::output_fenced(
+                Command::new("bash")
+                    .args(["-euc", &rendered])
+                    .current_dir(&dir),
+            )
+            .unwrap();
+            assert_eq!(out.status.success(), success, "{name}: {out:?}");
+            let text = String::from_utf8_lossy(&out.stdout);
+            assert!(text.starts_with("level:"), "{text}");
+            if static_result != "success" {
+                assert!(text.contains("static prerequisite"), "{text}");
+            }
+        }
+    }
+    fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]
