@@ -37,6 +37,7 @@ use jojobot_bar::{
 mod local_upgrade;
 mod plan;
 mod selection;
+mod room_server;
 
 /// **The tests that are red and already have a card**, read from the directory
 /// the bar runs in, which is the repository root.
@@ -640,12 +641,7 @@ fn run_rooms(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
     if prebuilt.is_some() {
         summary.phase_ok("build", "prebuilt bundle");
     } else {
-        let (ok, text) = run_phase(
-            &log_path,
-            "cargo build --workspace --locked",
-            &cargo,
-            &["build", "--workspace", "--locked"],
-        )?;
+        let (ok, text) = room_server::build(&log_path, &cargo)?;
         if !ok {
             let verdict = summarize_test_output(&text);
             if verdict.compiled {
@@ -835,6 +831,9 @@ fn run_bundle(args: &[String]) -> std::io::Result<ExitCode> {
         );
     }
 
+    if let Some(stopped) = room_server::bundle(&log_path, &cargo, &mut summary)? {
+        return Ok(stopped);
+    }
     // The profile directory, `target/debug`, holds the binaries a test spawns.
     let mut files: Vec<String> = exes.iter().map(|exe| exe.path.clone()).collect();
     if let Some(profile) = exes

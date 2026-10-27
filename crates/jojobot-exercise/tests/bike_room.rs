@@ -103,7 +103,7 @@ fn saying(outcomes: &[Outcome]) -> String {
 /// that note ahead of the brief.
 async fn brief_in_the_box(room: &Surface) -> String {
     let board = room
-        .call(
+        .read(
             "search",
             json!({"query": "*", "include_mail": true, "limit": 200}),
         )

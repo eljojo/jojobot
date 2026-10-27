@@ -573,7 +573,7 @@ fn with_details(mut args: Value) -> Value {
 async fn answer_records(seen: &Observed<'_>, subject: &str) -> Result<Vec<Value>, String> {
     let read = seen
         .room
-        .call(
+        .read(
             "recall",
             with_details(json!({"subject":subject,"facts":true})),
         )
@@ -654,7 +654,7 @@ const PILE: usize = 3;
 /// A box is not made: it opens with the bot that owns it, in the one act. The
 /// occupant is never told that, which is what this is watching.
 async fn a_colleague_exists_with_its_box(seen: &Observed<'_>) -> Result<(), String> {
-    let board = seen.room.call("start_here", json!({"brief": true})).await;
+    let board = seen.room.read("start_here", json!({"brief": true})).await;
     let bots = bots_on(&board);
     // ⚠️ **Nothing exercises this, and nothing can.** The shipped identity is
     // seeded before the server answers anything and no verb removes a bot, so
@@ -748,7 +748,7 @@ async fn what_became_of_the_pile_is_on_the_record(seen: &Observed<'_>) -> Result
     }
     let read = seen
         .room
-        .call(
+        .read(
             "recall",
             with_details(json!({"subject": colleague, "facts": true})),
         )
@@ -843,7 +843,7 @@ fn carried<'a>(fact: &'a Value, key: &str) -> Option<&'a Value> {
 
 /// The colleague's handle — whichever bot is not the one that ships.
 async fn colleague_of(seen: &Observed<'_>) -> Option<String> {
-    let board = seen.room.call("start_here", json!({"brief": true})).await;
+    let board = seen.room.read("start_here", json!({"brief": true})).await;
     bots_on(&board)
         .iter()
         .filter(|bot| made_by_the_run(bot))
@@ -863,7 +863,7 @@ fn bots_on(board: &str) -> Vec<Value> {
 async fn mail(seen: &Observed<'_>) -> Vec<Value> {
     let board = seen
         .room
-        .call(
+        .read(
             "search",
             json!({"query": "*", "include_mail": true, "limit": 200}),
         )
@@ -884,7 +884,7 @@ async fn mail(seen: &Observed<'_>) -> Vec<Value> {
 async fn the_brief_left_the_box(seen: &Observed<'_>) -> Result<(), String> {
     let board = seen
         .room
-        .call(
+        .read(
             "search",
             json!({"query": "*", "include_mail": true, "limit": 200}),
         )
@@ -923,7 +923,7 @@ async fn one_place_after_the_correction(seen: &Observed<'_>) -> Result<Option<St
     for handle in PLACES {
         let read = seen
             .room
-            .call(
+            .read(
                 "recall",
                 with_details(json!({"subject": handle, "facts": true})),
             )
@@ -1001,7 +1001,7 @@ const BIKE_BRIEF: &str = "the bikes, and a few things I want off them";
 async fn the_service_day_is_a_value(seen: &Observed<'_>) -> Result<(), String> {
     let read = seen
         .room
-        .call(
+        .read(
             "recall",
             with_details(json!({"subject": RIDDEN, "facts": true})),
         )
@@ -1034,7 +1034,7 @@ async fn the_service_day_is_a_value(seen: &Observed<'_>) -> Result<(), String> {
 async fn a_handoff_is_waiting(seen: &Observed<'_>) -> Result<(), String> {
     let board = seen
         .room
-        .call(
+        .read(
             "search",
             json!({"query": "*", "include_mail": true, "limit": 200}),
         )
@@ -1054,7 +1054,7 @@ async fn a_handoff_is_waiting(seen: &Observed<'_>) -> Result<(), String> {
     // being offered one is exactly how the next session would meet it.
     let door = seen
         .room
-        .call("start_here", json!({"bot": "assistant", "brief": true}))
+        .read("start_here", json!({"bot": "assistant", "brief": true}))
         .await;
     let parsed: Value = read_json(&door)?;
     let open = parsed["session"]["choices"].as_array().is_some_and(|runs| {
@@ -1144,7 +1144,7 @@ async fn what_points_at(
 ) -> Result<Vec<(String, Vec<String>)>, String> {
     let read = seen
         .room
-        .call(
+        .read(
             "recall",
             with_details(json!({"subject": machine, "follow": {"direction": "in", "depth": 1}, "facts": true})),
         )
@@ -1438,7 +1438,7 @@ async fn septembers_account_of_the_skate_tool_is_superseded_by_a_derived_correct
     };
     let read = seen
         .room
-        .call(
+        .read(
             "recall",
             with_details(
                 json!({"subject": "thing:skate-tool", "facts": true, "history_record": address}),
@@ -1754,7 +1754,7 @@ async fn the_service_landed_on_the_loop_that_already_existed(
 ) -> Result<(), String> {
     let read = seen
         .room
-        .call("recall", json!({"kind": "rhythm", "history": TURNS}))
+        .read("recall", json!({"kind": "rhythm", "history": TURNS}))
         .await;
     let parsed: Value = read_json(&read)?;
     let Some(loops) = parsed["objects"].as_array() else {
@@ -2018,7 +2018,7 @@ async fn januarys_note_drew_a_standing_location_edge_to_springfield(
 async fn aprils_move_archives_the_springfield_claim(seen: &Observed<'_>) -> Result<(), String> {
     let read = seen
         .room
-        .call(
+        .read(
             "recall",
             with_details(json!({"subject": "person:milhouse", "facts": true})),
         )
@@ -2238,7 +2238,7 @@ async fn octobers_note_drew_a_standing_location_edge_to_the_gorge(
 async fn late_octobers_note_retracts_nelsons_attendance(seen: &Observed<'_>) -> Result<(), String> {
     let read = seen
         .room
-        .call(
+        .read(
             "recall",
             with_details(json!({"subject": "person:nelson", "facts": true})),
         )
@@ -2613,7 +2613,7 @@ const OUTCOME: &str = "outcome";
 async fn the_years_turns_are_on_file_as_derivations(seen: &Observed<'_>) -> Result<(), String> {
     let read = seen
         .room
-        .call(
+        .read(
             "recall",
             with_details(json!({"kind": "rhythm", "facts": true})),
         )
@@ -2763,7 +2763,7 @@ async fn a_records_trace_matches_the_writes_the_run_made(
 
     let read = seen
         .room
-        .call(
+        .read(
             "recall",
             with_details(json!({"subject": UNTOUCHED, "history_record": UNTOUCHED_RECORD})),
         )
@@ -2801,7 +2801,7 @@ const LATER_DECEMBER: &str = "Phase 16";
 async fn longboards_facts(seen: &Observed<'_>) -> Vec<Value> {
     let read = seen
         .room
-        .call(
+        .read(
             "recall",
             with_details(json!({"subject": LONGBOARD, "facts": true, "stood_for": true})),
         )
@@ -3101,7 +3101,7 @@ const BOARD_LOCK: &str = "thing:board-lock";
 async fn the_board_locks_mistake_is_rewritten_in_place(seen: &Observed<'_>) -> Result<(), String> {
     let read = seen
         .room
-        .call(
+        .read(
             "recall",
             with_details(json!({"subject": BOARD_LOCK, "facts": true})),
         )
@@ -3136,7 +3136,7 @@ async fn the_board_locks_mistake_is_rewritten_in_place(seen: &Observed<'_>) -> R
     };
     let trace = seen
         .room
-        .call(
+        .read(
             "recall",
             with_details(
                 json!({"subject": BOARD_LOCK, "history_record": address, "history_most": 1}),
@@ -3248,7 +3248,7 @@ async fn decembers_note_is_reachable_by_the_walk_back_from_the_cadence(
 ) -> Result<(), String> {
     let read = seen
         .room
-        .call(
+        .read(
             "recall",
             with_details(json!({"kind": "rhythm", "fields": [{"key": "cadence_days", "value": "90"}], "facts": true})),
         )
@@ -3261,7 +3261,7 @@ async fn decembers_note_is_reachable_by_the_walk_back_from_the_cadence(
     };
     let built = seen
         .room
-        .call(
+        .read(
             "recall",
             with_details(json!({"kind": "rhythm", "built_on": cadence, "facts": true})),
         )
@@ -3655,7 +3655,7 @@ async fn late_decembers_corrections_name_the_jobs_they_replace(
     for (subject, cost) in JOBS {
         let read = seen
             .room
-            .call(
+            .read(
                 "recall",
                 with_details(json!({"subject": subject, "facts": true})),
             )
@@ -3750,7 +3750,7 @@ fn listed(fields: &Value, key: &str) -> Vec<String> {
 /// **The folded fields of one thing, or the plain statement that it could not
 /// be read** — never an empty map standing in for a thing nobody read.
 async fn folded_fields(seen: &Observed<'_>, handle: &str) -> Result<Value, String> {
-    let read = seen.room.call("recall", json!({"subject": handle})).await;
+    let read = seen.room.read("recall", json!({"subject": handle})).await;
     if read.contains("\"status\":\"blocked\"") {
         return Err(format!(
             "{handle} is not readable, so nothing was measured: {read}"
@@ -3780,11 +3780,11 @@ async fn word_is_bound(seen: &Observed<'_>, project: &str, word: &str) -> Result
     if SHIPPED_STATUSES.contains(&mapped) {
         return Ok(true);
     }
-    let projects = read_json(&seen.room.call("recall", json!({"kind": "project"})).await)?;
+    let projects = read_json(&seen.room.read("recall", json!({"kind": "project"})).await)?;
     for governing in ids_of(&projects) {
         let governs = governing == project
             || ids_of(&read_json(
-                &seen.room.call("recall", json!({"parent": governing})).await,
+                &seen.room.read("recall", json!({"parent": governing})).await,
             )?)
             .iter()
             .any(|child| child == project);
@@ -3816,7 +3816,7 @@ async fn statuses_written(
     }
     let read = seen
         .room
-        .call("recall", json!({"subject": project, "history": "status"}))
+        .read("recall", json!({"subject": project, "history": "status"}))
         .await;
     if read.contains("\"status\":\"blocked\"") {
         return Err(format!(
@@ -3918,14 +3918,14 @@ async fn the_my_bikes_view_returns_exactly_the_bikes_still_owned(
     seen: &Observed<'_>,
 ) -> Result<(), String> {
     const OWNED: [&str; 2] = ["thing:fat-bike", "thing:gravel-bike"];
-    let views = read_json(&seen.room.call("recall", json!({"kind": "view"})).await)?;
+    let views = read_json(&seen.room.read("recall", json!({"kind": "view"})).await)?;
     let named = ids_of(&views);
     if named.is_empty() {
         return Err("no view exists, so \"my bikes\" is whatever was typed out in January".into());
     }
     let mut found = Vec::new();
     for view in &named {
-        let ran = read_json(&seen.room.call("recall", json!({"view": view})).await)?;
+        let ran = read_json(&seen.room.read("recall", json!({"view": view})).await)?;
         let ids = ids_of(&ran);
         if ids == OWNED {
             return Ok(());
@@ -3950,7 +3950,7 @@ async fn the_move_is_open_only_on_the_utilities(seen: &Observed<'_>) -> Result<(
     let work = read_json(
         &seen
             .room
-            .call("recall", json!({"kind": "work", "keys": ["status"]}))
+            .read("recall", json!({"kind": "work", "keys": ["status"]}))
             .await,
     )?;
     let items: Vec<(String, String, String)> = work["objects"]
@@ -4036,7 +4036,7 @@ async fn the_party_was_attended_by_those_who_came_and_nobody_else(
     let walked = read_json(
         &seen
             .room
-            .call(
+            .read(
                 "recall",
                 json!({"kind": "event", "follow": {"shape": "attendance", "direction": "in"}}),
             )
@@ -4110,7 +4110,7 @@ async fn the_routines_behind_are_the_chain_and_randy_by_their_check_ins(
     let behind = last_check_ins(&read_json(
         &seen
             .room
-            .call(
+            .read(
                 "recall",
                 json!({"kind": "rhythm", "overdue": {"as_of": AS_OF}, "keys": ["last_check_in"]}),
             )
@@ -4129,7 +4129,7 @@ async fn the_routines_behind_are_the_chain_and_randy_by_their_check_ins(
     let every = last_check_ins(&read_json(
         &seen
             .room
-            .call(
+            .read(
                 "recall",
                 json!({"kind": "rhythm", "keys": ["last_check_in"]}),
             )
@@ -4171,7 +4171,7 @@ async fn louise_is_the_april_plus_one_under_her_new_name(
     let people = read_json(
         &seen
             .room
-            .call(
+            .read(
                 "recall",
                 with_details(json!({"kind": "person", "facts": true, "status": "active"})),
             )
@@ -4214,7 +4214,7 @@ async fn louise_is_the_april_plus_one_under_her_new_name(
     let party = read_json(
         &seen
             .room
-            .call(
+            .read(
                 "recall",
                 with_details(json!({"subject": "event:goodbye-party", "facts": true})),
             )
@@ -4290,7 +4290,7 @@ async fn the_bins_turned_four_times_alternating(seen: &Observed<'_>) -> Result<(
     let read = read_json(
         &seen
             .room
-            .call(
+            .read(
                 "recall",
                 json!({"parent": "thing:the-bins", "ticks": true, "history_most": 500}),
             )

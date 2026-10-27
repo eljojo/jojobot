@@ -9,6 +9,8 @@ pub mod logging;
 pub mod metrics;
 pub mod push;
 pub mod request_log;
+#[cfg(feature = "room-harness")]
+mod room_harness;
 pub mod routes;
 pub mod storage_check;
 pub mod ui;
@@ -321,5 +323,7 @@ fn build_app_with(
             metrics::track_request,
         ));
     }
+    #[cfg(feature = "room-harness")]
+    let app = app.merge(room_harness::router(state.clone()));
     app.with_state(state)
 }

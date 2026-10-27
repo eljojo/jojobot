@@ -87,6 +87,8 @@ pub trait Expectation: Send + Sync {
 /// purpose. So a run records what it can see at each boundary, and an
 /// expectation asks across the one it cares about.
 pub struct Boundary {
+    /// Change notices since the previous boundary, read without a participant.
+    pub changes: serde_json::Value,
     /// The phase this was taken before.
     pub before: String,
     /// Every mailbox as the board reports it, with nothing taken.
@@ -95,11 +97,7 @@ pub struct Boundary {
     pub world: String,
     /// How many runs the door offers this identity here.
     pub runs_offered: usize,
-    /// **What the door offers this identity here.** A session's record is
-    /// readable only on the boot path — there is no verb that reads one by id —
-    /// so a claim about a run has to be taken while the run is still offered.
-    /// A boot that resumes nothing writes nothing, so taking this costs the
-    /// room no state.
+    /// The identity and offerable runs, read without booting a participant.
     pub board: String,
     /// **Every bot the room names, from the boot that names them all.** A boot as
     /// the assistant lists only the assistant and counts the rest, so the roster
@@ -1494,7 +1492,7 @@ pub async fn boundary_asking(
         // An argument list this cannot read is kept as the answer rather than
         // skipped, so the lock that asked says why nothing was measured.
         let answer = match serde_json::from_str::<serde_json::Value>(args) {
-            Ok(sent) => room.call(verb, sent).await,
+            Ok(sent) => room.read(verb, sent).await,
             Err(e) => format!(
                 "{{\"status\":\"blocked\",\"how_to_proceed\":\"the query is not json: {e}\"}}"
             ),
@@ -1506,35 +1504,40 @@ pub async fn boundary_asking(
             answer,
         });
     }
-    let entities = room.call("list_entities", json!({})).await;
+    let entities = room.read("list_entities", json!({})).await;
     // **Details asked for**: a search leaves a claim's `details` out unless told,
     // and the locks that read what a sitting wrote to explain itself read them
     // out of this snapshot.
     // The edge and fold locks also need the relationship data search omits by default.
     let everything = room
-        .call(
+        .read(
             "search",
             json!({"query": "*", "limit": 200, "details": true, "include_links": true}),
         )
         .await;
     let mail = room
-        .call(
+        .read(
             "search",
             json!({"query": "*", "include_mail": true, "limit": 200}),
         )
         .await;
     let board = room
-        .call("start_here", json!({"bot": "assistant", "brief": true}))
+        .read("start_here", json!({"bot": "assistant", "brief": true}))
         .await;
-    let roster = room.call("start_here", json!({"brief": true})).await;
+    let roster = room.read("start_here", json!({"brief": true})).await;
     let charters = room
-        .call("recall", json!({"kind": "bot", "charter": true}))
+        .read("recall", json!({"kind": "bot", "charter": true}))
         .await;
     let runs_offered = serde_json::from_str::<serde_json::Value>(&board)
         .ok()
         .and_then(|b| b["session"]["choices"].as_array().map(Vec::len))
         .unwrap_or(0);
+    let changes = match room.changes().await {
+        Ok(notices) => notices,
+        Err(error) => serde_json::json!({"harness_error":error.to_string()}),
+    };
     Boundary {
+        changes,
         runs_offered,
         before: before.to_string(),
         mail,
@@ -1566,6 +1569,7 @@ mod tests {
 
     fn boundary_labelled(before: &str) -> Boundary {
         Boundary {
+            changes: serde_json::Value::Null,
             before: before.to_string(),
             mail: String::new(),
             world: String::new(),
@@ -2094,6 +2098,7 @@ mod tests {
     fn what_the_door_offered_at_each_phase_is_in_the_kept_run() {
         let mut run = ran(&["Phase 1 — the opening"]);
         run.boundaries = vec![super::Boundary {
+            changes: serde_json::Value::Null,
             before: "Phase 2 — the close".into(),
             world: "what the index could see".into(),
             mail: "what the board reported".into(),

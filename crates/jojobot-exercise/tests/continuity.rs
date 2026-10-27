@@ -11,6 +11,7 @@ use jojobot_exercise::run::{Boundary, Outcome, Results, Said};
 
 fn boundary(runs: usize) -> Boundary {
     Boundary {
+        changes: serde_json::Value::Null,
         before: String::new(),
         mail: String::new(),
         world: String::new(),

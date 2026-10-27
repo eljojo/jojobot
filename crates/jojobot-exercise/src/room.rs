@@ -14,10 +14,10 @@
 //! rows, which is exactly the thing a run of this tier must not do. A room that
 //! was never dirty needs no cleaning.
 //!
-//! The instance is the shipped binary, unmodified: it brings up its own store,
-//! applies its own schema and seeds its own default identity before it serves.
-//! Nothing here writes to that store. Everything a run puts in a room goes in
-//! through the verbs, over MCP, like any other caller.
+//! The room build keeps the production boot, store and default identity.
+//! Its compile-time harness feature adds the grader route inside this process;
+//! grading and seeding use its query and write code without an account. The
+//! occupant still reaches the normal MCP surface and boots itself.
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -83,9 +83,9 @@ pub struct Room {
 impl Room {
     /// Bring one up and wait until it answers.
     ///
-    /// `binary` is the shipped server. Nothing about the room is compiled in:
-    /// the directory, both ports and the open-on-loopback permission all reach
-    /// the server the way an operator's service manager passes them.
+    /// `binary` is the server's room build, with the grader feature. The
+    /// directory, both ports and the open-on-loopback permission still reach
+    /// it the way an operator's service manager passes them.
     pub async fn open(binary: &Path) -> Result<Room> {
         sweep_once();
         Room::spawn(binary, DeathSignal::Ask).await

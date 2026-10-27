@@ -60,31 +60,14 @@
 //!   a refusal's words holds on the room it was written about and on the room
 //!   that failed to get there.
 //!
-//! # 🚨 A lock carries no session, and that is what a lock IS
+//! # The grader is software, not a participant
 //!
-//! **A lock's query goes to the room with no `sid`**, so it can ask only the
-//! verbs that need no identity. `read_mailbox` opens the box of whoever is
-//! asking, and a lock is nobody.
-//!
-//! **This is deliberate rather than a gap to close.** A lock observes the state
-//! a phase left behind. The moment it carries an identity it becomes a
-//! participant, and what it can see starts to depend on whose identity the
-//! harness pretended to be — which is the harness coaching the occupant by
-//! another route.
-//!
-//! **The identity-free path is usually there.** To assert about mail, read the
-//! board rather than a box:
-//!
-//! ```text
-//! search  {"query": "*", "include_mail": true, "limit": 200}
-//! carries the subject the room posted
-//! lacks   "state":"new"
-//! say     the brief is still sitting new in the box, so nobody took delivery
-//! ```
-//!
-//! **A state that no identity-free verb can reach is a finding about the
-//! surface**, not a gap in the harness. Report it rather than working around
-//! it.
+//! A lock reads through the room's compiled harness route. Its query runs
+//! inside that server through jojobot's own query code, with no account,
+//! session or MCP dispatch. It takes no delivery, counts no usage, marks
+//! nothing shown or taught and never boots the occupant. The route is absent
+//! from production builds. The occupant still reaches the room over MCP and
+//! boots itself; the cold phase proves what that later session can retrieve.
 //!
 //! # ⚠️ Name the key, always
 //!
@@ -582,7 +565,7 @@ impl Lock {
             let Ok(sent) = serde_json::from_str::<serde_json::Value>(args) else {
                 continue;
             };
-            let next = seen.room.call(verb, sent).await;
+            let next = seen.room.read(verb, sent).await;
             if !holds_nothing(&next) {
                 return next;
             }
@@ -669,7 +652,7 @@ impl crate::run::Expectation for Lock {
         };
         let answer = match self.when {
             When::Live => {
-                let first = seen.room.call(verb, args).await;
+                let first = seen.room.read(verb, args).await;
                 self.first_kept(seen, first).await
             }
             // **The answer the run took when this phase ended**, found by the
@@ -1682,7 +1665,7 @@ pub async fn needle_verdicts_over(
         };
         let answer = match kept {
             Some(kept) => kept,
-            None => room.call(verb, sent).await,
+            None => room.read(verb, sent).await,
         };
         // **Dropped, not substituted** — the same shape the two arms above
         // already take for a lock with no query to ask or arguments this
@@ -2306,6 +2289,7 @@ mod standing_tests {
     /// everything the index sees.
     fn reading(before: &str, entities: &str) -> crate::run::Boundary {
         crate::run::Boundary {
+            changes: serde_json::Value::Null,
             before: before.to_string(),
             mail: String::new(),
             world: format!("{entities}\n{{\"results\":[]}}"),

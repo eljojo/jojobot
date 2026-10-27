@@ -55,6 +55,7 @@ fn world(records: &[(&str, &str)]) -> String {
 /// A boundary named for the phase it was taken before, holding one world.
 fn at(before: &str, world: &str) -> Boundary {
     Boundary {
+        changes: serde_json::Value::Null,
         before: before.to_string(),
         mail: String::new(),
         world: world.to_string(),

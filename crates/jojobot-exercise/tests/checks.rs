@@ -452,7 +452,7 @@ async fn messages_posted_back_to_back_on_a_stated_day_are_stamped_in_the_order_p
     }
 
     let board = surface
-        .call(
+        .read(
             "search",
             json!({"query": "*", "include_mail": true, "limit": 200}),
         )

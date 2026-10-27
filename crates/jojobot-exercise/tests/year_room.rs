@@ -3905,7 +3905,7 @@ async fn the_cached_year_reads_the_same_as_a_live_furnish() {
     // furnish actually wrote, which is what this test is proving matches.
     async fn opening_message_snippet(surface: &Surface, label: &str) -> (Value, Value) {
         let found = surface
-            .call(
+            .read(
                 "search",
                 json!({"query": "invoiced, paid, or waived", "include_mail": true}),
             )

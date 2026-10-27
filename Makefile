@@ -343,6 +343,7 @@ PLAYBOOK ?=
 MODEL ?=
 TRANSCRIPT ?=
 paid: build ## Drive a REAL model through a playbook — reaches the network and COSTS MONEY
+	$(CARGO) build --locked -p jojobot --features room-harness
 	$(CARGO) run -q --locked -p jojobot-exercise -- \
 		$(if $(PLAYBOOK),--playbook $(PLAYBOOK),) $(if $(MODEL),--model $(MODEL),) \
 		$(if $(TRANSCRIPT),--transcript $(TRANSCRIPT),)

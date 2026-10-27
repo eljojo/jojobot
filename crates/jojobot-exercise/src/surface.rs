@@ -1,11 +1,8 @@
 //! **The served surface, reached the way a client reaches it.**
 //!
-//! Everything a run does to a room — seeding it, driving a model through it,
-//! reading it back to assert — goes through this one door, over MCP. There is
-//! no path here that writes a row, and that is not an accident: a starting
-//! state the software could not have produced proves nothing, and an assertion
-//! read out of the database proves nothing about whether a later session could
-//! have retrieved it.
+//! The occupant uses MCP. The harness seeds and grades through the room's
+//! feature-gated route, whose queries and writes run inside that server.
+//! Neither path writes raw rows; a cold occupant still proves retrieval.
 
 use anyhow::{Context, Result};
 use rmcp::ServiceExt;
@@ -18,6 +15,9 @@ type Client = rmcp::service::RunningService<rmcp::RoleClient, ClientInfo>;
 /// A connection to a room.
 pub struct Surface {
     client: Client,
+    harness: reqwest::Client,
+    harness_url: String,
+    position: tokio::sync::Mutex<Value>,
 }
 
 impl Surface {
@@ -31,7 +31,12 @@ impl Surface {
         .serve(transport)
         .await
         .with_context(|| format!("connecting to the room at {endpoint}"))?;
-        Ok(Surface { client })
+        Ok(Surface {
+            client,
+            harness: reqwest::Client::new(),
+            harness_url: format!("{}/_room_harness", endpoint.trim_end_matches("/mcp")),
+            position: tokio::sync::Mutex::new(Value::Null),
+        })
     }
 
     /// **Call a verb and hand back whatever the room said**, refusals included.
@@ -73,7 +78,7 @@ impl Surface {
     /// `None` is a server on the real clock, which is the state a room that
     /// meant to pin its day must never be in.
     pub async fn stated_day(&self) -> Option<String> {
-        let answer = self.call("ping", json!({})).await;
+        let answer = self.read("ping", json!({})).await;
         let body: Value = serde_json::from_str(&answer).ok()?;
         body["clock"]["stated_day"].as_str().map(str::to_string)
     }
@@ -116,6 +121,43 @@ impl Surface {
     pub async fn finish(self) {
         let _ = self.client.cancel().await;
     }
+
+    /// An observation enters no MCP dispatch and carries no identity.
+    pub async fn read(&self, verb: &str, arguments: Value) -> String {
+        match self
+            .harness_request(json!({"operation":"read", "verb":verb, "arguments":arguments}))
+            .await
+        {
+            Ok(value) => value.to_string(),
+            Err(error) => {
+                json!({"status":"blocked", "harness_error":error.to_string()}).to_string()
+            }
+        }
+    }
+
+    /// The harness holds the cursor; reading notices changes no server state.
+    pub async fn changes(&self) -> Result<Value> {
+        let mut position = self.position.lock().await;
+        let mut answer = self
+            .harness_request(json!({"operation":"changes", "position":*position}))
+            .await?;
+        *position = answer["position"].take();
+        Ok(answer["notices"].take())
+    }
+
+    async fn harness_request(&self, request: Value) -> Result<Value> {
+        let response = self
+            .harness
+            .post(&self.harness_url)
+            .json(&request)
+            .send()
+            .await
+            .context("reaching the room's compiled harness route")?;
+        let status = response.status();
+        let answer: Value = response.json().await.context("the harness answers JSON")?;
+        anyhow::ensure!(status.is_success(), "room harness {status}: {answer}");
+        Ok(answer)
+    }
 }
 
 /// **What a room is furnished with before a run starts.**
@@ -149,19 +191,17 @@ const FILL_WORDS: &[&str] = &[
 pub const OCCUPANT: &str = "assistant";
 
 /// **One piece of furniture, and who writes it.**
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 enum Write {
-    /// A verb the shipped identity calls, exactly as a session would.
+    /// A fixture write attributed to the scenario's author.
     AsTheOccupant(String, Value),
-    /// **A second bot**, stood up by the occupant, chartered, and left holding
-    /// whatever sittings follow it.
+    /// A second bot and its charter, before any occupant boots.
     HouseBot {
         handle: String,
         name: String,
         charter: String,
     },
-    /// **One sitting that second bot already had**: booted as that bot on a
-    /// stated day, one beat written, and wrapped.
+    /// One completed sitting the scenario gives that bot as history.
     HouseSitting {
         bot: String,
         day: String,
@@ -468,166 +508,13 @@ impl Seed {
         Ok(self)
     }
 
-    /// **Furnish the room, through the verbs, as the shipped identity.**
-    ///
-    /// It boots `assistant` to get a handle, because every write names a
-    /// session — which is the same door a run's model goes through, and the
-    /// same door an operator's first session goes through.
+    /// Furniture is scenario data, authored without opening a harness run.
     pub async fn furnish(&self, room: &Surface) -> Result<()> {
-        let booted = room
-            .must("start_here", json!({"bot": "assistant", "brief": true}))
-            .await?;
-        let sid = booted["session"]["sid"]
-            .as_str()
-            .context("the shipped identity booted without handing back a handle")?
-            .to_string();
-        for write in &self.writes {
-            match write {
-                Write::AsTheOccupant(verb, arguments) => {
-                    let mut arguments = arguments.clone();
-                    arguments["sid"] = json!(sid);
-                    Self::write_entity(room, verb, arguments).await?;
-                }
-                // **The occupant stands the second bot up and charters it**, the
-                // way an operator's assistant stands a colleague up: one
-                // `add_entity` of kind `bot`, which opens its box with it, and
-                // one `set_charter`.
-                Write::HouseBot {
-                    handle,
-                    name,
-                    charter,
-                } => {
-                    Self::write_entity(
-                        room,
-                        "add_entity",
-                        json!({"kind": "bot", "handle": handle, "name": name,
-                               "source": "the room", "sid": sid}),
-                    )
-                    .await?;
-                    room.must(
-                        "set_charter",
-                        json!({"bot": handle, "prose": charter, "sid": sid}),
-                    )
-                    .await?;
-                }
-                // **A sitting is that bot's own run**: booted as it on the day
-                // it states, one beat, wrapped. It is the bot's, not the
-                // occupant's, so the occupant's runs are untouched.
-                Write::HouseSitting {
-                    bot,
-                    day,
-                    focus,
-                    entry,
-                } => {
-                    let house = Self::boot_for_a_sitting(room, bot, day).await?;
-                    room.must(
-                        "journal",
-                        json!({"entry": entry, "focus": focus, "sid": house}),
-                    )
-                    .await?;
-                    room.must("wrap_session", json!({"story": entry, "sid": house}))
-                        .await?;
-                }
-            }
-        }
-        // **The furnishing wraps its own run.** Everything above is written
-        // through a session, and a session nobody closed is offered to the next
-        // boot and lingers in every count of what is open — so a check asking
-        // whether a WRAPPED run stops being offered found this one still there
-        // and reported the product had failed. It failed on every run, whatever
-        // jojobot did.
-        //
-        // **Wrapped rather than excluded by id.** The room should look like a
-        // room somebody left tidy; an exception list is a rule the next reader
-        // has to know about, and this one had already sent a paid run's
-        // diagnosis to the wrong place once.
-        room.must(
-            "wrap_session",
-            json!({
-                "sid": sid,
-                "story": "Furnished the room for a run: the records and mail a phase needs \
-                          before it starts.",
-            }),
-        )
+        room.harness_request(json!({
+            "operation": "seed", "author": "bot:assistant", "writes": self.writes,
+        }))
         .await?;
         Ok(())
-    }
-
-    /// **A fresh session of a house bot on a stated day**, answering the
-    /// resume-or-new choice with `new` when an earlier sitting is still offered.
-    async fn boot_for_a_sitting(room: &Surface, bot: &str, day: &str) -> Result<String> {
-        let booted = room
-            .must(
-                "start_here",
-                json!({"bot": bot, "brief": true, "today": day}),
-            )
-            .await?;
-        if let Some(sid) = booted["session"]["sid"].as_str() {
-            return Ok(sid.to_string());
-        }
-        let answered = room
-            .must(
-                "start_here",
-                json!({"bot": bot, "brief": true, "today": day, "resume": "new"}),
-            )
-            .await?;
-        answered["session"]["sid"]
-            .as_str()
-            .map(str::to_string)
-            .with_context(|| format!("booting {bot} on {day} handed back no handle: {answered}"))
-    }
-
-    /// **One seed write, done the way a real caller recovers from a
-    /// resemblance refusal — but only for a pair the room DECLARED.**
-    ///
-    /// Furnishing is a privileged setup act, and the refusal it can meet on
-    /// `add_entity` is not a bug: two same-kind names two edits apart is
-    /// exactly the guard a real caller meets too. But overriding it with the
-    /// `override_token` the refusal mints is a JUDGEMENT — "yes, these are
-    /// two different people" — and a real caller makes that judgement by
-    /// hand. A room's world block is a document; nobody is standing there at
-    /// furnish time to make it. So this retries a resemblance refusal only
-    /// when [`Seed::resembling`] declared the write's own pair, stripping
-    /// that declaration before either send since `add_entity` carries no
-    /// such argument; an undeclared collision — a typo included — still
-    /// fails the room loudly, exactly as every other refusal does.
-    async fn write_entity(room: &Surface, verb: &str, mut arguments: Value) -> Result<Value> {
-        let declared_near = arguments
-            .as_object_mut()
-            .and_then(|object| object.remove("declared_near"));
-        let text = room.call(verb, arguments.clone()).await;
-        let body: Value = serde_json::from_str(&text)
-            .with_context(|| format!("{verb} answered something that is not JSON: {text}"))?;
-        if verb != "add_entity" || body["status"] != "blocked" {
-            anyhow::ensure!(
-                body["status"] != "blocked" && body["transport_error"].is_null(),
-                "{verb} was refused, so the room did not reach its starting state: {text}",
-            );
-            return Ok(body);
-        }
-        let Some(resembles) = declared_near else {
-            anyhow::bail!(
-                "{verb} was refused as a resemblance to something already in the room, and \
-                 nothing declared this pair as intentional — the room did not reach its \
-                 starting state: {text}",
-            );
-        };
-        let token = body["how_to_proceed"]
-            .as_str()
-            .unwrap_or_default()
-            .split_once("override_token: \"")
-            .and_then(|(_, rest)| rest.split_once('"'))
-            .map(|(token, _)| token);
-        let Some(token) = token else {
-            anyhow::bail!(
-                "add_entity was refused with no override token to retry with, even though \
-                 {resembles} was declared as its resemblance, so the room did not reach its \
-                 starting state: {text}",
-            );
-        };
-        let mut retried = arguments;
-        retried["override_token"] = json!(token);
-        room.must(verb, retried).await
     }
 }
 
