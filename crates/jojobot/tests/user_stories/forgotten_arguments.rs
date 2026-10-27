@@ -19,6 +19,27 @@ use serde_json::json;
 use super::dsl::Story;
 
 #[tokio::test]
+async fn a_guessed_message_id_reads_the_message_and_teaches_the_published_name() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    let sent = s
+        .call(
+            "post_message",
+            json!({"to": "otto", "body": "The job is finished."}),
+        )
+        .await;
+    let id = sent.json()["id"].as_str().unwrap().to_string();
+    let canonical = s.call("read_message", json!({"message_id": id})).await;
+    assert_eq!(canonical.json()["body"], "The job is finished.");
+    let guessed = s.call("read_message", json!({"id": id})).await;
+    assert_eq!(guessed.json()["body"], canonical.json()["body"]);
+    guessed.says("message_id");
+    let again = s.call("read_message", json!({"id": id})).await;
+    assert_eq!(again.json()["body"], canonical.json()["body"]);
+    assert!(!again.json()["teaching"].to_string().contains("message_id"));
+}
+
+#[tokio::test]
 async fn a_call_missing_a_required_argument_names_it_and_what_the_verb_takes() {
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;

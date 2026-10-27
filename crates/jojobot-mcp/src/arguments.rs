@@ -26,6 +26,8 @@
 
 use super::*;
 
+pub(crate) mod aliases;
+
 /// How deep the walk follows a schema before it stops. A struct that referred
 /// to itself would otherwise resolve for ever; stopping leaves that level
 /// unresolvable, which the coverage test turns into a red bar rather than a
@@ -123,12 +125,7 @@ struct Level {
 /// was earned by a run of the vault room, where the name was sent for the same
 /// value the verb takes under the second one. A name with no row here gets no
 /// guess, because a guess that is wrong sends the next call to the wrong place.
-pub(crate) const MEANS: &[(&str, &str, &str)] = &[
-    ("recall", "handle", "subject"),
-    ("recall", "subjects", "subject"),
-    ("read_message", "id", "message_id"),
-    ("add_entity", "slug", "handle"),
-];
+pub(crate) const MEANS: &[(&str, &str, &str)] = &[("recall", "subjects", "subject")];
 
 /// **The argument that means `sent` on `verb`**, when the table has one and the
 /// verb publishes it, and the call has not already sent it. A call that already
@@ -142,6 +139,7 @@ fn meant_by(
 ) -> Option<&'static str> {
     MEANS
         .iter()
+        .chain(aliases::NAMES)
         .find(|(v, s, _)| *v == verb && *s == sent)
         .map(|(_, _, meant)| *meant)
         .filter(|meant| takes.iter().any(|t| t == meant))
@@ -496,6 +494,9 @@ pub(crate) fn published_argument_names() -> std::collections::BTreeSet<String> {
 }
 
 #[cfg(test)]
+mod aliases_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::harness::*;
@@ -562,7 +563,7 @@ mod tests {
     #[tokio::test]
     async fn a_name_the_table_knows_is_answered_with_the_argument_that_means_it() {
         let jojobot = handler();
-        for (verb, sent, meant) in MEANS {
+        for (verb, sent, meant) in MEANS.iter().chain(aliases::NAMES) {
             let said = advice(jojobot.unimplemented_arguments(&call(
                 verb,
                 serde_json::json!({ *sent: "x", "sid": "any" }),
@@ -596,7 +597,7 @@ mod tests {
     #[test]
     fn every_row_of_the_means_table_matches_the_published_schema() {
         let tools = Jojobot::tool_router().list_all();
-        for (verb, sent, meant) in MEANS {
+        for (verb, sent, meant) in MEANS.iter().chain(aliases::NAMES) {
             let tool = tools
                 .iter()
                 .find(|tool| tool.name == *verb)

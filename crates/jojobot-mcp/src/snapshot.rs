@@ -339,6 +339,16 @@ fn teachings(doc: &mut Doc) {
     }
     doc.text(
         3,
+        "Teaching a guessed argument's canonical spelling (with a sample verb and names)",
+        "text",
+        &sentence_per_line(&crate::arguments::aliases::teaching(
+            "read_message",
+            "id",
+            "message_id",
+        )),
+    );
+    doc.text(
+        3,
         "Teaching `session_id_teaching` (with a sample sid and session)",
         "text",
         &sentence_per_line(&session_id_teaching("a1b2", "c3d4")),

@@ -764,7 +764,7 @@ impl Jojobot {
     /// See [`ServerHandler::call_tool`], which counts what this says to.
     async fn serve_call(
         &self,
-        request: CallToolRequestParams,
+        mut request: CallToolRequestParams,
         context: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> (Result<CallToolResponse, McpError>, bool) {
         // Read before dispatch, because dispatch consumes the request. Every
@@ -802,6 +802,7 @@ impl Jojobot {
             self.finish(&mut answered, sid.as_deref(), structured).await;
             return (Ok(answered), true);
         }
+        let aliases = arguments::aliases::accept_names(&mut request);
         if let Some(refused) = self
             .unimplemented_arguments(&request)
             .or_else(|| self.missing_arguments(&request))
@@ -840,6 +841,8 @@ impl Jojobot {
             Ok(answered) => answered,
             Err(error) => return (Err(error), true),
         };
+        self.teach_argument_names(&aliases, &mut answered, sid.as_deref())
+            .await;
         self.finish_unshaped(&mut answered, sid.as_deref()).await;
         // **What a spent id stores is the answer as the caller was told it**, so a
         // repeat gives back the same words. Taken before the answer is shaped for
