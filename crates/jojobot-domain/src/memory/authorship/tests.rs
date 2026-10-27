@@ -35,7 +35,7 @@ fn claim(edge: Option<Edge>, written_by_another: bool) -> Fact {
 /// row is asked of the one test and of the two partitions built on it.
 #[test]
 fn a_claim_on_a_bot_is_its_thought_or_its_rule_or_neither() {
-    let object = EntityId("thing:ledger".into());
+    let object = EntityId("thing:the-fern".into());
     let edge = |shape| Some(Edge::new(shape, object.clone()));
     //   (edge, written by another, thought, rule)
     let table = [
