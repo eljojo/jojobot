@@ -546,6 +546,32 @@ async fn a_numbered_root_refused_beside_another_is_told_to_make_the_series_under
     story.finish().await;
 }
 
+/// An added numeric part names another member of a series, whose refusal at
+/// the root still explains how to put both members under one parent.
+#[tokio::test]
+async fn a_numbered_root_with_an_added_part_is_told_to_make_the_series_under_one_parent() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("work:contract-deploy-9", "Deploy 9").await;
+    let refused = s
+        .refused(
+            "add_entity",
+            json!({
+                "kind": "work", "handle": "contract-deploy-9-3", "name": "Deploy 9.3",
+                "source": "user-named",
+            }),
+        )
+        .await;
+    refused
+        .says("work:contract-deploy-9")
+        .says("`parent`")
+        .says("rename_entity")
+        .says("override_token");
+    s.wrap("an added numbered part at the root named its way forward")
+        .await;
+    story.finish().await;
+}
+
 /// **A pair that differs by a letter is not a series**, so its refusal does not
 /// send the caller to a parent.
 #[tokio::test]

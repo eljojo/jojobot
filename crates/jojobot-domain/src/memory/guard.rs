@@ -1994,7 +1994,7 @@ mod tests {
     }
 
     #[test]
-    fn numbered_siblings_fix_keeps_the_existing_label_channel() {
+    fn numbered_siblings_fix_keeps_existing_creation_labels() {
         let parent = EntityId("topic:contract-card-queue".into());
         let existing = Entity {
             parent: Some(parent.clone()),

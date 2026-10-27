@@ -261,14 +261,4 @@ mod tests {
         )
         .await;
     }
-
-    #[tokio::test]
-    async fn numbered_siblings_with_added_parts_land() {
-        numbered_siblings_with_added_parts(&crate::memory::testing::InMemoryMemory::booted()).await;
-    }
-
-    #[tokio::test]
-    async fn numbered_siblings_can_be_relabelled() {
-        numbered_siblings_when_relabelled(&crate::memory::testing::InMemoryMemory::booted()).await;
-    }
 }
