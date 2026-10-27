@@ -858,6 +858,87 @@ async fn a_supplied_field_default_sits_under_what_the_operator_wrote() {
     );
 }
 
+/// The fields a thing's one scan and the listing of every scan carry.
+async fn scanned_fields(
+    over: &Provisioned<InMemoryMemory>,
+    bot: &EntityId,
+) -> (BTreeMap<String, String>, BTreeMap<String, String>) {
+    let one = over
+        .scan_entity(bot)
+        .await
+        .expect("the entity scans")
+        .expect("the thing is there");
+    let listed = over
+        .scan()
+        .await
+        .expect("everything scans")
+        .into_iter()
+        .find(|doc| doc.entity.as_ref().is_some_and(|e| &e.id == bot))
+        .expect("the thing is listed");
+    (one.fields, listed.fields)
+}
+
+/// **A scan carries the shipped default the way a read of the fields does.**
+/// The graph takes a thing's fields from its scan, so a default that only the
+/// field read folds in goes missing from every answer the graph gives: the
+/// shipped one-liner and manager of a bot the store holds vanished together.
+/// The default answers where the operator wrote nothing, in both scans, and
+/// the operator's own write replaces it.
+#[tokio::test]
+async fn a_scan_carries_a_supplied_field_default_under_what_the_operator_wrote() {
+    let store = InMemoryMemory::booted();
+    let bot = EntityId("bot:gamma".into());
+    store
+        .add_entity(NewEntity::new(bot.clone(), "Gamma", "jojobot"))
+        .await
+        .expect("the identity is created")
+        .written()
+        .expect("an empty board blocks nothing");
+    let over = Provisioned::new(
+        store,
+        Provisions::new(vec![Provision::field(
+            bot.clone(),
+            "one_liner",
+            "The disposable implementer.",
+        )]),
+    );
+    let (one, listed) = scanned_fields(&over, &bot).await;
+    for fields in [&one, &listed] {
+        assert_eq!(
+            fields.get("one_liner").map(String::as_str),
+            Some("The disposable implementer."),
+            "the shipped default is in the scan: {fields:?}",
+        );
+    }
+
+    over.inner
+        .capture(jojobot_domain::memory::testing::contract::state(NewFact {
+            fields: [(
+                "one_liner".to_string(),
+                "Files the weekly note.".to_string(),
+            )]
+            .into_iter()
+            .collect(),
+            ..NewFact::about(
+                bot.clone(),
+                "gamma's own one-liner",
+                Date::constant(2026, 4, 18),
+            )
+        }))
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("nothing collides");
+    let (one, listed) = scanned_fields(&over, &bot).await;
+    for fields in [&one, &listed] {
+        assert_eq!(
+            fields.get("one_liner").map(String::as_str),
+            Some("Files the weekly note."),
+            "the operator's write replaces the default in the scan: {fields:?}",
+        );
+    }
+}
+
 /// **The three answers an echoed default has to keep apart, in one read
 /// of the store**: a written value equal to today's default is named and
 /// then frozen at exactly what was written, through an upgrade that

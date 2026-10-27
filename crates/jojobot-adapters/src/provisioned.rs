@@ -172,16 +172,6 @@ impl<M: Memory + Send + Sync> Provisioned<M> {
         }
     }
 
-    /// Resolve a scanned document's prose, if the build supplies any for it.
-    fn resolve(&self, doc: &mut search::DocScan) {
-        let Some(entity) = doc.entity.as_ref() else {
-            return;
-        };
-        if let Some(shipped) = self.provisions.prose_for(&entity.id) {
-            doc.prose = extended(shipped, &doc.prose);
-        }
-    }
-
     /// **What this entity's fields would fold to if the store held nothing
     /// of its own** — a whole shipped record's own fields, narrowed by any
     /// per-key default over the same entity, exactly as [`fields`](Self::fields)
@@ -231,6 +221,27 @@ impl<M: Memory + Send + Sync> Provisioned<M> {
     }
 }
 
+/// Resolve a scanned document's prose and fields, if the build supplies any for
+/// it. **The fields fold as [`Provisioned::fields`] folds them**: the shipped
+/// per-key defaults sit under what the store holds, because the graph takes a
+/// thing's fields from its scan. A stored row at a handle the build ships whole
+/// reads back only its own keys (rule 508), so it takes none.
+pub(crate) fn resolve_scan(provisions: &Provisions, doc: &mut search::DocScan) {
+    let Some(entity) = doc.entity.as_ref() else {
+        return;
+    };
+    if let Some(shipped) = provisions.prose_for(&entity.id) {
+        doc.prose = extended(shipped, &doc.prose);
+    }
+    if provisions.record_for(&entity.id).is_none() {
+        let mut folded = provisions.fields_for(&entity.id);
+        if !folded.is_empty() {
+            folded.extend(std::mem::take(&mut doc.fields));
+            doc.fields = without_overlay(folded);
+        }
+    }
+}
+
 mod scans;
 
 #[async_trait]
@@ -251,7 +262,7 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
             return Ok(scanned);
         }
         for doc in &mut scanned {
-            self.resolve(doc);
+            resolve_scan(&self.provisions, doc);
         }
         for (entity, _) in self.provisions.records() {
             let stored = scanned
@@ -265,7 +276,7 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
     }
 
     /// **What a boot will serve for this charter**, the build's layer joined to
-    /// `own` by the same function [`resolve`](Self::resolve) joins a stored
+    /// `own` by the same function [`resolve_scan`] joins a stored
     /// doc's prose with.
     async fn composed_prose(&self, entity: &EntityId, own: &str) -> Result<String, MemoryError> {
         match self.provisions.prose_for(entity) {
@@ -277,7 +288,7 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
     async fn scan_entity(&self, entity: &EntityId) -> Result<Option<search::DocScan>, MemoryError> {
         match self.inner.scan_entity(entity).await? {
             Some(mut doc) => {
-                self.resolve(&mut doc);
+                resolve_scan(&self.provisions, &mut doc);
                 Ok(Some(doc))
             }
             // The store holds no row, so a supplied record is the whole answer.

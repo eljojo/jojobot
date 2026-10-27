@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use async_trait::async_trait;
 use jojobot_domain::memory::boot_reader::{BootReader, FieldsVersioned};
-use jojobot_domain::memory::owned::{Provisions, extended, is_overlay_key, without_overlay};
+use jojobot_domain::memory::owned::{Provisions, is_overlay_key, without_overlay};
 use jojobot_domain::memory::search::DocScan;
 use jojobot_domain::memory::{
     ClaimWrite, EntityId, EntityVersion, FactId, FieldAges, FieldBacking, KeyTrails, MemoryError,
@@ -75,11 +75,7 @@ impl<R: BootReader> BootReader for ProvisionedBootReader<R> {
     ) -> Result<HashMap<EntityId, DocScan>, MemoryError> {
         let mut held = self.plain(self.inner.scans_many(things).await?);
         for doc in held.values_mut() {
-            if let Some(entity) = doc.entity.as_ref()
-                && let Some(shipped) = self.provisions.prose_for(&entity.id)
-            {
-                doc.prose = extended(shipped, &doc.prose);
-            }
+            crate::provisioned::resolve_scan(&self.provisions, doc);
         }
         Ok(held)
     }
