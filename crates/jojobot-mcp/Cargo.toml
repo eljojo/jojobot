@@ -7,6 +7,9 @@ rust-version.workspace = true
 
 # The MCP adapter: the only crate that imports rmcp. It maps MCP tool calls to
 # the domain and back. rmcp's breaking majors are absorbed here.
+[features]
+room-harness = ["jojobot-domain/room-harness"]
+
 [dependencies]
 jojobot-domain.workspace = true
 rmcp.workspace = true

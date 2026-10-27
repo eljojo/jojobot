@@ -45,6 +45,8 @@ pub mod orientation;
 mod refusal_statistics_tests;
 pub mod release_notes;
 mod request;
+#[cfg(feature = "room-harness")]
+pub mod room_harness;
 mod stopped;
 #[cfg(test)]
 mod stopped_tests;
@@ -161,6 +163,8 @@ use session::wire::*;
 
 #[derive(Clone)]
 pub struct Jojobot {
+    #[cfg(feature = "room-harness")]
+    grading: bool,
     /// The verb table this handler dispatches through, and the source the
     /// argument gate reads a verb's published arguments from.
     tool_router: ToolRouter<Jojobot>,
@@ -382,6 +386,8 @@ impl Jojobot {
         carriers: Vec<Box<dyn jojobot_domain::attention::Carrier>>,
     ) -> Self {
         Self {
+            #[cfg(feature = "room-harness")]
+            grading: false,
             tool_router: Self::tool_router(),
             memory,
             search,
