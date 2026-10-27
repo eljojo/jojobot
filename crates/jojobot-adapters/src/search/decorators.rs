@@ -337,6 +337,7 @@ impl IndexedMemory {
     }
 }
 
+/// TEMPORARY(9.3.2) the memory write-reaction follow-up. Subscribers replace it in 9.3.2-2.
 impl IndexedMemory {
     /// **The one door every write that changes a document goes through.** A write
     /// the store committed whose fold could not follow answers
@@ -376,6 +377,7 @@ impl IndexedMemory {
     }
 }
 
+/// TEMPORARY(9.3.2) the memory write-reaction wrappers. Subscribers replace these in 9.3.2-2.
 #[async_trait]
 impl Memory for IndexedMemory {
     fn image_field(&self, entity: &EntityId, key: &str) -> Option<Option<String>> {
@@ -1122,6 +1124,7 @@ pub struct IndexedMailboxes {
 /// The value of [`IndexedMailboxes::board_seen_at`] before a board read landed.
 const NOT_SEEN: u64 = u64::MAX;
 
+/// TEMPORARY(9.3.2) the mail write-reaction helpers. Subscribers replace these in 9.3.2-2.
 impl IndexedMailboxes {
     /// Wrap a store, writing into the index the Memory half already uses. **One
     /// index, not two** — that is what makes one ranked list possible at all.
@@ -1409,6 +1412,7 @@ impl Refresh for IndexedSessions {
     }
 }
 
+/// TEMPORARY(9.3.2) the mail refresh wrapper. A subscriber replaces it in 9.3.2-2.
 #[async_trait]
 impl Refresh for IndexedMailboxes {
     /// **`scan_messages`, never a delivering read.** Reading IS delivery on the
@@ -1489,6 +1493,7 @@ fn indexing(e: MemoryError) -> MailboxError {
     MailboxError::Store(format!("search index: {e}"))
 }
 
+/// TEMPORARY(9.3.2) the mail write-reaction wrappers. Subscribers replace these in 9.3.2-2.
 #[async_trait]
 impl Mailboxes for IndexedMailboxes {
     /// **Forwarded**: the count of the port beneath is the one that matters.
