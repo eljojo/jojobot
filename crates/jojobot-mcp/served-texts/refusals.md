@@ -851,7 +851,7 @@ answer: {
   "attempted": "dev",
   "fix_by": "retry",
   "holder": "4nfx",
-  "how_to_proceed": "Nothing was written: 'dev' is held by '4nfx' until 1970-01-01T00:00:00Z. Wait until 1970-01-01T00:00:00Z, or ask '4nfx' to release 'dev' by wrapping its session.",
+  "how_to_proceed": "Nothing was written: 'dev' is held by '4nfx' until 1970-01-01T00:00:00Z. Run '4nfx' holds 'dev'; its lease was last renewed at 1969-12-31T23:15:00Z (a write renews it, at most once every 4 minutes 30 seconds) and runs until 1970-01-01T00:00:00Z. The role changes hands when '4nfx' wraps its session, or at 1970-01-01T00:00:00Z if it writes nothing more, or when the operator's code is presented: ask for one with start_here's ask_for_code, then boot again with the challenge, the code and this claim.",
   "status": "blocked",
   "until": "1970-01-01T00:00:00Z",
   "wrote": false

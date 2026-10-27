@@ -208,7 +208,7 @@ pub struct RecallArgs {
     /// its records: naming a handle asks for that object, and a filter asks
     /// which objects. **`overdue` and `unreviewed` also filter a named subject**.
     /// A handle naming nothing is blocked with nearest handles, never an empty answer.
-    /// A missing `work:q-N` offers work holding `card` number N first.
+    /// A missing `work:q-N` offers work holding number N first.
     #[serde(default)]
     pub(crate) subject: Option<String>,
     /// Every entity of one kind. `session` reads your own past runs.

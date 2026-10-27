@@ -468,7 +468,7 @@ pub(crate) fn blocked_result(
             .iter()
             .filter(|c| c.reason == guard::MatchReason::CardNumber)
         {
-            how_to_proceed.push_str(&format!(" {} is card numbered {number}.", card.handle));
+            how_to_proceed.push_str(&format!(" {} holds number {number}.", card.handle));
         }
     }
     blocked_body(attempted, candidates, how_to_proceed)
