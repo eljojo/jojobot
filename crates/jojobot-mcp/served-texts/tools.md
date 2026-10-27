@@ -5825,8 +5825,8 @@ it. Sent with `code` and `bot` on a boot.
 want jojobot to refuse a second claimant while your claim is fresh —
 **`taken` means your claim succeeded and YOU hold the role; it never
 means somebody else has it, which is `refused`.** **A fresh lease held
-by another run, of your own bot or any other, refuses you, naming the run, when it
-last wrote and when the lease runs out: the role changes hands when that run
+by another run, of your own bot or any other, refuses you, naming the run, when its
+lease was last renewed and when it runs out: the role changes hands when that run
 wraps, when the lease runs out, or at the operator's word. A claim that
 presents the operator's code (`ask_for_code`, then `challenge` and `code`)
 takes it, and the answer says `took_over_from` that run and

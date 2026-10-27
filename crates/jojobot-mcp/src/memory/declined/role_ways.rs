@@ -5,14 +5,14 @@ pub(crate) fn role_taken_way_forward(
     role: &str,
     holder: &str,
     until: &str,
-    last_wrote: &str,
+    renewed_at: &str,
 ) -> String {
     format!(
-        "Run '{holder}' holds '{role}' and last wrote at {last_wrote}; its lease runs until \
-         {until}. The role changes hands when '{holder}' wraps its session, or at {until} if \
-         it writes nothing more, or when the operator's code is presented: ask for one with \
-         start_here's ask_for_code, then boot again with the challenge, the code and this \
-         claim."
+        "Run '{holder}' holds '{role}'; its lease was last renewed at {renewed_at} (a write \
+         renews it, at most once every 4 minutes 30 seconds) and runs until {until}. The role \
+         changes hands when '{holder}' wraps its session, or at {until} if it writes nothing \
+         more, or when the operator's code is presented: ask for one with start_here's \
+         ask_for_code, then boot again with the challenge, the code and this claim."
     )
 }
 
