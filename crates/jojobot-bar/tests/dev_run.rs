@@ -206,19 +206,20 @@ fn dev_run(repo: &Path, markers: &[&str], envs: &[(&str, &str)]) -> Ran {
     }
     let cargo = write_cargo(&stub_dir);
     let calls_file = stub_dir.join("argv.log");
-    let out = Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
-        .arg("dev")
-        .current_dir(repo)
-        .env("TMPDIR", &stub_dir)
-        .env("CARGO", &cargo)
-        .env("BAR_HISTORY_DIR", repo.join("history-none"))
-        .env_remove("BAR_JOBS")
-        // A `make dev BASE=...` that runs these cases must not name their base.
-        .env_remove("BAR_DEV_BASE")
-        .env_remove("SIZE_BASE")
-        .envs(envs.iter().copied())
-        .output()
-        .expect("run bar");
+    let out = support::output_fenced(
+        Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
+            .arg("dev")
+            .current_dir(repo)
+            .env("TMPDIR", &stub_dir)
+            .env("CARGO", &cargo)
+            .env("BAR_HISTORY_DIR", repo.join("history-none"))
+            .env_remove("BAR_JOBS")
+            // A `make dev BASE=...` that runs these cases must not name their base.
+            .env_remove("BAR_DEV_BASE")
+            .env_remove("SIZE_BASE")
+            .envs(envs.iter().copied()),
+    )
+    .expect("run bar");
     let calls = fs::read_to_string(&calls_file)
         .unwrap_or_default()
         .lines()
