@@ -99,9 +99,8 @@ pub fn handles_in_value(value: &str) -> Vec<EntityId> {
 /// name is refused with the full handle to write, before lowering can mistake
 /// it for an opaque id.
 ///
-/// **A key any declaration calls a reference counts**, which is the question
-/// the relation walk asks: two types may name one key, and one of them calling
-/// it a reference is what makes it walkable.
+/// **Whatever the key**: no declaration is read, so a key any type calls a
+/// reference and a key nobody declared name their handles the same way.
 pub fn referenced_by(fields: &BTreeMap<String, String>) -> Vec<EntityId> {
     at_write::referenced_by(fields)
 }
