@@ -237,7 +237,7 @@ async fn lean_receipts_token_saving_old_argument_is_unpublished_and_refused_on_a
     for (verb, args) in [
         (
             "add_entity",
-            json!({"kind":"thing", "handle":"map", "name":"The Map", "source":"user-named", "token_saving":true}),
+            json!({"kind":"thing", "handle":"brass-bell", "name":"Brass bell", "source":"user-named", "token_saving":true}),
         ),
         (
             "capture",

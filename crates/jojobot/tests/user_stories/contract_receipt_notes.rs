@@ -131,11 +131,11 @@ async fn lean_receipts_keep_each_calls_warning_while_teaching_the_static_note_on
 async fn lean_receipts_nested_warnings_survive_an_earlier_warning_in_the_session() {
     let (story, store) = Story::begin_over_a_store_that_can_go_away("bot:otto").await;
     let s = story.session().await;
-    s.add("work:alpha", "Alpha").await;
+    s.add("work:alpha-queue", "Alpha").await;
     let first = s
         .call(
             "capture",
-            json!({"subject":"work:alpha", "content":"plays chess"}),
+            json!({"subject":"work:alpha-queue", "content":"plays chess"}),
         )
         .await
         .json();
@@ -158,7 +158,7 @@ async fn lean_receipts_nested_warnings_survive_an_earlier_warning_in_the_session
     let first_warning = s
         .call(
             "capture",
-            json!({"subject":"work:alpha", "content":"plays darts"}),
+            json!({"subject":"work:alpha-queue", "content":"plays darts"}),
         )
         .await
         .json();
@@ -174,7 +174,7 @@ async fn lean_receipts_nested_warnings_survive_an_earlier_warning_in_the_session
         let receipt = s
             .call(
                 "capture",
-                json!({"subject":"work:alpha", "content":content, "sets":{"status":"doing"}}),
+                json!({"subject":"work:alpha-queue", "content":content, "sets":{"status":"doing"}}),
             )
             .await
             .json();
@@ -203,14 +203,14 @@ async fn lean_receipts_nested_warnings_survive_an_earlier_warning_in_the_session
 async fn lean_receipts_nested_warnings_both_survive_on_one_receipt() {
     let (story, store) = Story::begin_over_a_store_that_can_go_away("bot:otto").await;
     let s = story.session().await;
-    s.add("work:alpha", "Alpha").await;
+    s.add("work:alpha-queue", "Alpha").await;
     store.goes_away();
     store.the_instance_fields_cannot_be_read();
     for (n, content) in ["plays chess", "plays go"].into_iter().enumerate() {
         let receipt = s
             .call(
                 "capture",
-                json!({"subject":"work:alpha", "content":content, "sets":{"status":"doing"}}),
+                json!({"subject":"work:alpha-queue", "content":content, "sets":{"status":"doing"}}),
             )
             .await
             .json();
