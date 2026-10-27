@@ -661,6 +661,95 @@ fn narrow_refuses_an_off_roster_commit_message_before_cargo_runs() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+fn quoted_source_refusal(tracked: bool, based: bool) {
+    for path in [
+        "crates/jojobot-mcp/tests/café.rs",
+        "crates/jojobot-mcp/tests/a\"tab\tline\n.rs",
+    ] {
+        let dir = repo("quoted-roster");
+        git(&dir, &["config", "core.quotePath", "true"]);
+        let base = commit_files(&dir, &[("size-ratchet.toml", ratchet(""))]);
+        fs::create_dir_all(dir.join(path).parent().unwrap()).unwrap();
+        fs::write(dir.join(path), "const WHO: &str = \"person:homer\";\n").unwrap();
+        if tracked {
+            git(&dir, &["add", path]);
+            git(&dir, &["commit", "-qm", "listed source"]);
+        }
+        if !based {
+            git(&dir, &["branch", "-m", "scratch"]);
+        }
+        let args = ["narrow", "--crate", "jojobot-bar"];
+        let base = based.then_some(base.as_str());
+        let listed = bar_with(&dir, &args, base);
+        assert_eq!(listed.code, Some(0), "{}", listed.stdout);
+        fs::remove_file(dir.join("argv.log")).unwrap();
+        let unlisted = ["person", ":", "not-on-the-roster"].concat();
+        fs::write(dir.join(path), format!("const WHO: &str = {unlisted:?};\n")).unwrap();
+        let refused = bar_with(&dir, &args, base);
+        assert_eq!(refused.code, Some(1), "{}", refused.stdout);
+        assert!(refused.stdout.contains(path), "{}", refused.stdout);
+        assert!(refused.stdout.contains(&unlisted), "{}", refused.stdout);
+        assert!(!dir.join("argv.log").exists());
+        let _ = fs::remove_dir_all(dir);
+    }
+}
+
+#[test]
+fn quoted_tracked_source_is_refused_with_a_branch_base() {
+    quoted_source_refusal(true, true);
+}
+
+#[test]
+fn quoted_untracked_source_is_refused_with_a_branch_base() {
+    quoted_source_refusal(false, true);
+}
+
+#[test]
+fn quoted_sources_are_refused_without_a_branch_base() {
+    for tracked in [true, false] {
+        quoted_source_refusal(tracked, false);
+    }
+}
+
+#[test]
+fn a_failed_branch_path_listing_is_refused_before_cargo() {
+    let dir = repo("failed-roster-list");
+    let base = commit_files(&dir, &[("size-ratchet.toml", ratchet(""))]);
+    let cargo = write_fake_cargo_always_green(&dir);
+    let old_path = std::env::var_os("PATH").unwrap();
+    let real_git = std::env::split_paths(&old_path)
+        .map(|dir| dir.join("git"))
+        .find(|path| path.is_file())
+        .unwrap();
+    let bin = dir.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    support::write_executable(
+        &bin.join("git"),
+        r#"#!/bin/sh
+if [ "$1" = diff ] && [ "$2" = --name-only ]; then exit 9; fi
+exec "$BAR_CASE_GIT" "$@"
+"#,
+    );
+    let path =
+        std::env::join_paths(std::iter::once(bin).chain(std::env::split_paths(&old_path))).unwrap();
+    let output = support::output_fenced(
+        Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
+            .args(["narrow", "--crate", "jojobot-bar"])
+            .current_dir(&dir)
+            .env("CARGO", cargo)
+            .env("SIZE_BASE", base)
+            .env("PATH", path)
+            .env("BAR_CASE_GIT", real_git)
+            .env("BAR_HISTORY_DIR", dir.join("history")),
+    )
+    .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(output.status.code(), Some(1), "{stdout}");
+    assert!(stdout.contains("roster: FAILED"), "{stdout}");
+    assert!(!dir.join("argv.log").exists());
+    let _ = fs::remove_dir_all(dir);
+}
+
 fn makefile_repo(tag: &str) -> (PathBuf, PathBuf, String, &'static str) {
     let dir = repo(tag);
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");

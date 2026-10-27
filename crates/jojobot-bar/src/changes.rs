@@ -18,11 +18,35 @@ pub fn git_stdout(args: &[&str]) -> String {
         .unwrap_or_default()
 }
 
+/// Read a Git path list requested with -z; quoting and line breaks are path bytes.
+pub fn git_paths(args: &[&str]) -> std::io::Result<Vec<String>> {
+    let out = Command::new("git").args(args).output()?;
+    if !out.status.success() {
+        return Err(std::io::Error::other(format!(
+            "git {} failed ({}): {}",
+            args.join(" "),
+            out.status,
+            String::from_utf8_lossy(&out.stderr).trim()
+        )));
+    }
+    let text = String::from_utf8(out.stdout).map_err(std::io::Error::other)?;
+    Ok(text
+        .split('\0')
+        .filter(|path| !path.is_empty())
+        .map(str::to_string)
+        .collect())
+}
+
 /// **The paths the branch changed**, for `bar dev`: everything that differs
 /// from the merge base with `main`, committed or not, and the files git does
 /// not track yet, with the merge base they were taken from. `None` when there is
 /// no merge base to take.
 pub fn changed_paths() -> Option<(String, Vec<String>)> {
+    checked_changed_paths().ok().flatten()
+}
+
+/// The roster gate must distinguish a missing base from a failed path listing.
+pub fn checked_changed_paths() -> std::io::Result<Option<(String, Vec<String>)>> {
     // **The ref the branch is measured against.** `main` unless `BAR_DEV_BASE`
     // names another: a branch built on a release line holds that line's own
     // commits, and against `main` they read as the branch's changes.
@@ -43,16 +67,18 @@ pub fn changed_paths() -> Option<(String, Vec<String>)> {
     }
     let base = base.trim();
     if base.is_empty() {
-        return None;
+        return Ok(None);
     }
-    let mut paths: Vec<String> = git_stdout(&["diff", "--name-only", base])
-        .lines()
-        .chain(git_stdout(&["ls-files", "--others", "--exclude-standard"]).lines())
-        .map(str::to_string)
-        .collect();
+    let mut paths = git_paths(&["diff", "--name-only", "-z", base])?;
+    paths.extend(git_paths(&[
+        "ls-files",
+        "-z",
+        "--others",
+        "--exclude-standard",
+    ])?);
     paths.sort();
     paths.dedup();
-    Some((base.to_string(), paths))
+    Ok(Some((base.to_string(), paths)))
 }
 
 /// **The paths the push being reported changed.** With the commit the forge says
@@ -74,12 +100,7 @@ pub fn pushed_paths() -> Option<Vec<String>> {
             .trim()
             .is_empty()
         {
-            return Some(
-                git_stdout(&["diff", "--name-only", before, "HEAD"])
-                    .lines()
-                    .map(str::to_string)
-                    .collect(),
-            );
+            return git_paths(&["diff", "--name-only", "-z", before, "HEAD"]).ok();
         }
     }
     changed_paths().map(|(_, paths)| paths)

@@ -35,25 +35,34 @@ fn source_path(path: &Path) -> bool {
 }
 
 fn roster(summary: &mut Summary) {
-    let (base, paths) = match changes::changed_paths() {
-        Some((base, paths)) => (Some(base), paths),
-        None => {
-            let out = match Command::new("git")
-                .args(["ls-files", "--cached", "--others", "--exclude-standard"])
-                .output()
-            {
-                Ok(out) if out.status.success() => out,
-                _ => {
-                    summary.phase_failed("roster", "source files could not be listed");
+    let (base, paths) = match changes::checked_changed_paths() {
+        Ok(Some((base, paths))) => (Some(base), paths),
+        Ok(None) => {
+            let paths = match changes::git_paths(&[
+                "ls-files",
+                "-z",
+                "--cached",
+                "--others",
+                "--exclude-standard",
+            ]) {
+                Ok(paths) => paths,
+                Err(error) => {
+                    summary.phase_failed(
+                        "roster",
+                        &format!("source files could not be listed: {error}"),
+                    );
                     return;
                 }
             };
             summary.note("roster: no branch base; scanning all current source files");
-            let paths = String::from_utf8_lossy(&out.stdout)
-                .lines()
-                .map(str::to_string)
-                .collect();
             (None, paths)
+        }
+        Err(error) => {
+            summary.phase_failed(
+                "roster",
+                &format!("source files could not be listed: {error}"),
+            );
+            return;
         }
     };
     let files: Vec<PathBuf> = paths
