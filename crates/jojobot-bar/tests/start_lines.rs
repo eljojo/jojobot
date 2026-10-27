@@ -83,7 +83,7 @@ fn the_startup_workflow_banner_precedes_checkout_and_its_plan_follows_checkout()
     for workflow in ["branch", "pull-request", "prepush", "targeted"] {
         let text = fs::read_to_string(root.join(format!(".forgejo/workflows/{workflow}.yml")))
             .expect("the workflow");
-        for job in text.split("    steps:\n").skip(1) {
+        for (index, job) in text.split("    steps:\n").skip(1).enumerate() {
             let starts: Vec<_> = job.match_indices("      - ").map(|(at, _)| at).collect();
             let steps: Vec<_> = starts
                 .iter()
@@ -96,12 +96,170 @@ fn the_startup_workflow_banner_precedes_checkout_and_its_plan_follows_checkout()
                 .position(|s| s.contains("/checkout@"))
                 .expect("the checkout step");
             assert!(checkout > 0, "{workflow}: checkout precedes the banner");
+            let static_gate = matches!(workflow, "branch" | "pull-request") && index == 0;
             assert!(
-                steps[checkout + 1].contains(" plan "),
+                if static_gate {
+                    steps[checkout + 1].contains("make static")
+                } else {
+                    steps[checkout + 1].contains(" plan ")
+                },
                 "{workflow}: first step after checkout is {}",
                 steps[checkout + 1]
             );
         }
+    }
+}
+
+fn workflow_job(text: &str, name: &str) -> String {
+    let marker = format!("\n  {name}:\n");
+    text.split_once(&marker)
+        .unwrap_or_else(|| panic!("missing {name} job"))
+        .1
+        .lines()
+        .take_while(|line| line.is_empty() || line.starts_with("    ") || line.starts_with("  #"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn workflow_step(job: &str, name: &str) -> String {
+    job.split_once(&format!("      - name: {name}\n        run: |\n"))
+        .expect("named shell step")
+        .1
+        .lines()
+        .take_while(|line| line.starts_with("          "))
+        .map(|line| &line[10..])
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[test]
+fn the_startup_static_gate_stops_expensive_jobs_before_they_start() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    for (workflow, dependents) in [
+        ("branch", &["report", "rooms"][..]),
+        ("pull-request", &["build"][..]),
+    ] {
+        let text =
+            fs::read_to_string(root.join(format!(".forgejo/workflows/{workflow}.yml"))).unwrap();
+        let gate = workflow_job(&text, "static");
+        let first_job = text
+            .split_once("\njobs:\n")
+            .unwrap()
+            .1
+            .lines()
+            .find(|line| {
+                line.starts_with("  ") && !line.starts_with("    ") && !line.starts_with("  #")
+            });
+        assert_eq!(first_job, Some("  static:"), "{workflow}");
+        assert!(!gate.contains("id: plan"), "{workflow}: {gate}");
+        let cheap = gate.find("make static").expect("the build-free gate");
+        let oracle = gate
+            .find("name: Served text snapshot")
+            .expect("the existing oracle");
+        assert!(cheap < oracle, "{workflow}: {gate}");
+        assert!(!gate[..cheap].contains("cargo test"), "{workflow}: {gate}");
+        for name in dependents {
+            let job = workflow_job(&text, name);
+            assert!(
+                job.lines().any(|line| line == "    needs: static"),
+                "{workflow}/{name}: {job}"
+            );
+        }
+        if workflow == "pull-request" {
+            for name in ["check", "rooms", "year"] {
+                assert!(workflow_job(&text, name).contains("    needs: build"));
+            }
+        }
+        let dir = scratch();
+        support::write_executable(&dir.join("nix"), "#!/bin/sh\nshift 2\nexec \"$@\"\n");
+        support::write_executable(
+            &dir.join("make"),
+            "#!/bin/sh\necho \"fmt-check: $STATIC_STATE\"\ntest \"$STATIC_STATE\" = ok\n",
+        );
+        for (state, success) in [("ok", true), ("FAILED", false)] {
+            let out = support::output_fenced(
+                Command::new("bash")
+                    .args(["-euc", &workflow_step(&gate, "Build-free gates")])
+                    .current_dir(&dir)
+                    .env("STATIC_STATE", state)
+                    .env(
+                        "PATH",
+                        format!("{}:{}", dir.display(), std::env::var("PATH").unwrap()),
+                    ),
+            )
+            .unwrap();
+            assert_eq!(out.status.success(), success, "{workflow}/{state}: {out:?}");
+            assert!(
+                String::from_utf8_lossy(&out.stdout).contains(&format!("fmt-check: {state}")),
+                "the job must print its refusal: {out:?}"
+            );
+        }
+        fs::remove_dir_all(dir).unwrap();
+    }
+}
+
+#[test]
+fn the_startup_snapshot_step_refuses_zero_cases_and_keeps_a_red_oracle_red() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut same_step = None;
+    for workflow in ["branch", "pull-request"] {
+        let text =
+            fs::read_to_string(root.join(format!(".forgejo/workflows/{workflow}.yml"))).unwrap();
+        let gate = workflow_job(&text, "static");
+        let step = workflow_step(&gate, "Served text snapshot");
+        if let Some(previous) = &same_step {
+            assert_eq!(
+                previous, &step,
+                "the two workflows must run the same oracle"
+            );
+        }
+        same_step = Some(step.clone());
+        let dir = scratch();
+        support::write_executable(&dir.join("nix"), "#!/bin/sh\nshift 2\nexec \"$@\"\n");
+        support::write_executable(
+            &dir.join("cargo"),
+            r#"#!/bin/sh
+echo "$SNAPSHOT_UPDATE $*" >> argv.log
+case " $* " in
+  *" --list "*)
+    if [ "$SNAPSHOT_MODE" != empty ]; then
+      echo 'snapshot::every_text_a_model_reads_matches_the_snapshot: test'
+    fi
+    exit 0 ;;
+esac
+test "$SNAPSHOT_MODE" != red
+"#,
+        );
+        for (mode, success) in [("same", true), ("empty", false), ("red", false)] {
+            fs::write(dir.join("argv.log"), "").unwrap();
+            let out = support::output_fenced(
+                Command::new("bash")
+                    .args(["-euc", &step])
+                    .current_dir(&dir)
+                    .env("SNAPSHOT_MODE", mode)
+                    .env("SNAPSHOT_UPDATE", "1")
+                    .env(
+                        "PATH",
+                        format!("{}:{}", dir.display(), std::env::var("PATH").unwrap()),
+                    ),
+            )
+            .unwrap();
+            assert_eq!(out.status.success(), success, "{workflow}/{mode}: {out:?}");
+            let calls = fs::read_to_string(dir.join("argv.log")).unwrap();
+            assert!(calls.lines().all(|line| line.starts_with("0 test --locked -p jojobot-mcp --lib snapshot::every_text_a_model_reads_matches_the_snapshot -- --exact")), "{calls}");
+            assert_eq!(
+                calls.lines().count(),
+                if mode == "empty" { 1 } else { 2 },
+                "{calls}"
+            );
+            if mode == "empty" {
+                assert!(
+                    String::from_utf8_lossy(&out.stdout).contains("snapshot case was not listed"),
+                    "{out:?}"
+                );
+            }
+        }
+        fs::remove_dir_all(dir).unwrap();
     }
 }
 

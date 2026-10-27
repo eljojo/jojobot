@@ -56,7 +56,57 @@ env:
   JOJOBOT_BUILD_METRICS_FILE: target/bar/metrics-${{ forgejo.run_id }}-${{ forgejo.job }}.jsonl
 
 jobs:
+  # Cheap refusals precede the served-text build and every expensive job.
+  static:
+    runs-on: nix
+    steps:
+      - name: Level
+        run: |
+          echo "level: report; workflow jobs: static, $BAR_WORKFLOW_JOBS; left to boundary: $BAR_BOUNDARY_LEFT"
+      - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - name: Build-free gates
+        run: |
+          mkdir -p target/bar
+          status=0
+          nix develop -c make static >target/bar/static.log 2>&1 || status=$?
+          cat target/bar/static.log
+          exit "$status"
+      - name: Served text snapshot
+        run: |
+          mkdir -p target/bar
+          status=0
+          nix develop -c bash -euc '
+            export SNAPSHOT_UPDATE=0
+            case=snapshot::every_text_a_model_reads_matches_the_snapshot
+            cargo test --locked -p jojobot-mcp --lib "$case" -- --exact --list >target/bar/snapshot-list.log
+            if ! grep -Fx "$case: test" target/bar/snapshot-list.log; then
+              cat target/bar/snapshot-list.log
+              echo "snapshot case was not listed: $case"
+              exit 1
+            fi
+            cargo test --locked -p jojobot-mcp --lib "$case" -- --exact
+          ' >target/bar/snapshot.log 2>&1 || status=$?
+          cat target/bar/snapshot.log
+          exit "$status"
+      - if: ${{ !cancelled() }}
+        continue-on-error: true
+        uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5
+        with:
+          name: bar-logs-static
+          path: target/bar/*.log
+          retention-days: 7
+          if-no-files-found: ignore
+      # Samples cannot change the gate's verdict.
+      - if: ${{ always() }}
+        continue-on-error: true
+        run: nix develop -c python3 scripts/build-metrics ci
+        env:
+          JOJOBOT_METRICS_OUTCOME: ${{ job.status }}
+
   report:
+    needs: static
     # A push runs it, and so does a dispatch that names no job or names this one.
     if: ${{ forgejo.event_name != 'workflow_dispatch' || forgejo.event.inputs.job == '' || forgejo.event.inputs.job == 'report' }}
     # A host executor: see pull-request.yml for what the runner sees.
@@ -73,7 +123,7 @@ jobs:
     steps:
       - name: Level
         run: |
-          echo "level: report; workflow jobs: $BAR_WORKFLOW_JOBS; left to boundary: $BAR_BOUNDARY_LEFT"
+          echo "level: report; workflow jobs: static, $BAR_WORKFLOW_JOBS; left to boundary: $BAR_BOUNDARY_LEFT"
       # The whole history, for the same reason as the pull-request jobs: the
       # fixture roster test reads the commit range.
       - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -129,6 +179,7 @@ jobs:
   # builds the workspace in the same command, because a room spawns the built
   # server.
   rooms:
+    needs: static
     if: ${{ forgejo.event_name != 'workflow_dispatch' || forgejo.event.inputs.job == '' || forgejo.event.inputs.job == 'rooms' }}
     runs-on: nix
     # About twice the tail of its run under load, so a hung job still fails inside
@@ -143,7 +194,7 @@ jobs:
     steps:
       - name: Level
         run: |
-          echo "level: report; workflow jobs: $BAR_WORKFLOW_JOBS; left to boundary: $BAR_BOUNDARY_LEFT"
+          echo "level: report; workflow jobs: static, $BAR_WORKFLOW_JOBS; left to boundary: $BAR_BOUNDARY_LEFT"
       - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0

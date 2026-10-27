@@ -55,17 +55,67 @@ env:
 # the Forgejo host. The flake is the toolchain, so each job enters it with
 # `nix develop`. Nothing is installed by the job.
 jobs:
+  # Cheap refusals precede the served-text build and every expensive job.
+  static:
+    runs-on: nix
+    steps:
+      - name: Level
+        run: |
+          echo 'level: boundary; workflow jobs: static, build, check, rooms, year; left to boundary: none'
+      - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - name: Build-free gates
+        run: |
+          mkdir -p target/bar
+          status=0
+          nix develop -c make static >target/bar/static.log 2>&1 || status=$?
+          cat target/bar/static.log
+          exit "$status"
+      - name: Served text snapshot
+        run: |
+          mkdir -p target/bar
+          status=0
+          nix develop -c bash -euc '
+            export SNAPSHOT_UPDATE=0
+            case=snapshot::every_text_a_model_reads_matches_the_snapshot
+            cargo test --locked -p jojobot-mcp --lib "$case" -- --exact --list >target/bar/snapshot-list.log
+            if ! grep -Fx "$case: test" target/bar/snapshot-list.log; then
+              cat target/bar/snapshot-list.log
+              echo "snapshot case was not listed: $case"
+              exit 1
+            fi
+            cargo test --locked -p jojobot-mcp --lib "$case" -- --exact
+          ' >target/bar/snapshot.log 2>&1 || status=$?
+          cat target/bar/snapshot.log
+          exit "$status"
+      - if: ${{ !cancelled() }}
+        continue-on-error: true
+        uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5
+        with:
+          name: bar-logs-static
+          path: target/bar/*.log
+          retention-days: 7
+          if-no-files-found: ignore
+      # Samples cannot change the gate's verdict.
+      - if: ${{ always() }}
+        continue-on-error: true
+        run: nix develop -c python3 scripts/build-metrics ci
+        env:
+          JOJOBOT_METRICS_OUTCOME: ${{ job.status }}
+
   # **The one job that compiles the test binaries.** `check`, `rooms` and `year`
   # run these binaries side by side and compile no test of their own. A test
   # binary reads its files by the checkout path it was compiled in, so every
   # job runs its command through `CI_ROOT`, which shows its own checkout at that
   # one path (`scripts/ci-root`).
   build:
+    needs: static
     runs-on: nix-x86_64
     steps:
       - name: Level
         run: |
-          echo 'level: boundary; workflow jobs: build, check, rooms, year; left to boundary: none'
+          echo 'level: boundary; workflow jobs: static, build, check, rooms, year; left to boundary: none'
       # The whole history, for the same reason as the jobs below.
       - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -123,7 +173,7 @@ jobs:
     steps:
       - name: Level
         run: |
-          echo 'level: boundary; workflow jobs: build, check, rooms, year; left to boundary: none'
+          echo 'level: boundary; workflow jobs: static, build, check, rooms, year; left to boundary: none'
       # The whole history, not the default depth of one commit. The fixture
       # roster test reads the commit messages since a fixed boundary and fails
       # when it cannot read the range, so a one-commit checkout is red on every
@@ -186,7 +236,7 @@ jobs:
     steps:
       - name: Level
         run: |
-          echo 'level: boundary; workflow jobs: build, check, rooms, year; left to boundary: none'
+          echo 'level: boundary; workflow jobs: static, build, check, rooms, year; left to boundary: none'
       - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
@@ -233,7 +283,7 @@ jobs:
     steps:
       - name: Level
         run: |
-          echo 'level: boundary; workflow jobs: build, check, rooms, year; left to boundary: none'
+          echo 'level: boundary; workflow jobs: static, build, check, rooms, year; left to boundary: none'
       - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0

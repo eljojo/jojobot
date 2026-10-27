@@ -438,9 +438,12 @@ fn build_metrics_real_libtest_times_are_readable_and_absent_when_not_requested()
 fn build_metrics_every_workflow_job_ends_with_a_non_gating_push() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     for (workflow, jobs) in [
-        ("branch", &["report", "rooms"][..]),
+        ("branch", &["static", "report", "rooms"][..]),
         ("prepush", &["prepush"][..]),
-        ("pull-request", &["build", "check", "rooms", "year"][..]),
+        (
+            "pull-request",
+            &["static", "build", "check", "rooms", "year"][..],
+        ),
     ] {
         let text = std::fs::read_to_string(root.join(format!(".forgejo/workflows/{workflow}.yml")))
             .unwrap();
