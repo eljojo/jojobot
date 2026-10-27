@@ -162,7 +162,10 @@ fn the_selected_job_plan_is_announced_before_those_jobs_run() {
         let printed = fs::read_to_string(&stdout).expect("the bar output");
         assert!(output.status.success(), "{printed}\n{output:?}");
         let calls = fs::read_to_string(dir.join("argv.log")).expect("the jobs ran");
-        assert!(calls.contains("test --workspace --test beta"), "{calls}");
+        assert!(
+            calls.contains("test --workspace --features=jojobot/room-harness --test beta"),
+            "{calls}"
+        );
         let early = fs::read_to_string(&plan).expect("the jobs inspected the output");
         assert!(early.contains(expected), "{target}: {early:?}\n{printed}");
         if target == "report" {
