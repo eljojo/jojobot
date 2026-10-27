@@ -4,6 +4,116 @@
 
 use super::*;
 
+async fn a_location_to_read_in_history(jojobot: &Jojobot) -> String {
+    let written = capture_ok(
+        jojobot,
+        CaptureArgs {
+            shape: Some("location".into()),
+            object: Some("place:daredevil-gorge".into()),
+            ..capture_args("person:alpha", "spends the afternoon at the gorge")
+        },
+    )
+    .await;
+    written["address"]
+        .as_str()
+        .expect("the claim's address")
+        .into()
+}
+
+async fn read_location_history(jojobot: &Jojobot, address: &str) -> serde_json::Value {
+    json_of(
+        &jojobot
+            .recall(Parameters(RecallArgs {
+                history_record: Some(address.into()),
+                ..of("person:alpha")
+            }))
+            .await
+            .expect("history answers"),
+    )
+}
+
+/// **A history edge is a writable edge**, with the same public handle an
+/// ordinary record serves. Copying it must reach the object it names.
+#[tokio::test]
+async fn a_record_history_edge_can_be_copied_into_capture() {
+    let jojobot = handler();
+    let address = a_location_to_read_in_history(&jojobot).await;
+    let history = read_location_history(&jojobot, &address).await;
+    let edge = &history["objects"][0]["record_history"]["writes"][0]["edge"];
+    let copied = json_of(
+        &jojobot
+            .capture(Parameters(CaptureArgs {
+                shape: Some(edge["type"].as_str().expect("shape").into()),
+                object: Some(edge["object"].as_str().expect("object").into()),
+                ..capture_args("person:alpha", "returns to the same place")
+            }))
+            .await
+            .expect("a copied history edge is accepted"),
+    );
+    assert_ne!(copied["status"], "blocked", "{copied}");
+    assert_eq!(copied["edge"], history["objects"][0]["facts"][0]["edge"]);
+    assert_eq!(edge["object"], "place:daredevil-gorge", "{history}");
+}
+
+/// **The historical pointer follows a rename**, just as the same claim's
+/// current edge does; the old handle is not the object's public name today.
+#[tokio::test]
+async fn a_record_history_edge_names_the_object_under_its_current_handle() {
+    let jojobot = handler();
+    let address = a_location_to_read_in_history(&jojobot).await;
+    let renamed = json_of(
+        &jojobot
+            .rename_entity(Parameters(RenameEntityArgs {
+                request_id: None,
+                handle: "place:daredevil-gorge".into(),
+                to: "place:shelbyville".into(),
+                parent: None,
+                recorded_at: None,
+                override_token: None,
+                override_reason: None,
+                sid: Some(writing_as(&jojobot)),
+            }))
+            .await
+            .expect("rename answers"),
+    );
+    assert_ne!(renamed["status"], "blocked", "{renamed}");
+    let history = read_location_history(&jojobot, &address).await;
+    let ordinary = &history["objects"][0]["facts"][0]["edge"];
+    assert_eq!(ordinary["object"], "place:shelbyville", "{history}");
+    assert_eq!(
+        history["objects"][0]["record_history"]["writes"][0]["edge"], *ordinary,
+        "{history}"
+    );
+}
+
+/// **Archiving the far end leaves both reads naming the same thing**; a
+/// historical pointer does not become an opaque id when the thing is archived.
+#[tokio::test]
+async fn a_record_history_edge_to_an_archived_object_matches_the_ordinary_edge() {
+    let jojobot = handler();
+    let address = a_location_to_read_in_history(&jojobot).await;
+    let archived = json_of(
+        &jojobot
+            .archive_entity(Parameters(ArchiveEntityArgs {
+                request_id: None,
+                handle: "place:daredevil-gorge".into(),
+                reason: "no longer visited".into(),
+                restore: None,
+                sid: Some(writing_as(&jojobot)),
+            }))
+            .await
+            .expect("archive answers"),
+    );
+    assert_ne!(archived["status"], "blocked", "{archived}");
+    let history = read_location_history(&jojobot, &address).await;
+    let ordinary = &history["objects"][0]["facts"][0]["edge"];
+    assert_eq!(ordinary["object"], "place:daredevil-gorge", "{history}");
+    assert_eq!(
+        history["objects"][0]["record_history"]["writes"][0]["edge"], *ordinary,
+        "{history}"
+    );
+}
+
 /// **An older record that kept a dependency as its own field is walked by what
 /// the thing holds now.** On a store from before own fields stayed on their
 /// record, such a key reaches its thing, so a later write that shortens it

@@ -514,6 +514,36 @@ pub async fn an_edge_follows_a_thing_that_is_rehandled<M: Memory + ?Sized, B: Me
         Some(was.clone()),
         "the edge reads as the handle it was drawn with",
     );
+    for history in [
+        mentioning
+            .claim_history(&written.address())
+            .await
+            .expect("history reads"),
+        bare.claim_history(&written.address())
+            .await
+            .expect("history reads"),
+    ] {
+        assert_eq!(
+            history[0].edge.as_ref().map(|edge| &edge.object),
+            Some(&was),
+            "a historical edge must serve the public handle: {history:?}",
+        );
+        let mut copy = NewFact::about(
+            subject.clone(),
+            "copied a historical edge",
+            date(2026, 4, 20),
+        );
+        copy.edge = history[0].edge.clone();
+        assert_eq!(
+            capture(bare, copy)
+                .await
+                .edge
+                .as_ref()
+                .map(|edge| &edge.object),
+            Some(&was),
+            "copying the historical edge must reach the same object",
+        );
+    }
 
     rehandles.rehandle(&was, &now).await;
     rehandles
@@ -552,6 +582,46 @@ pub async fn an_edge_follows_a_thing_that_is_rehandled<M: Memory + ?Sized, B: Me
         "the bare store did not follow the rename, so the fix is still only in the decorator: \
          {stored:?}",
     );
+    for history in [
+        mentioning
+            .claim_history(&written.address())
+            .await
+            .expect("history reads"),
+        bare.claim_history(&written.address())
+            .await
+            .expect("history reads"),
+    ] {
+        assert_eq!(
+            history[0].edge.as_ref().map(|edge| &edge.object),
+            Some(&now),
+            "a historical edge must follow the same rename: {history:?}",
+        );
+    }
+    bare.archive_entity(&now, "no longer in scope", None)
+        .await
+        .expect("archive answers");
+    let ordinary = bare
+        .recall(&subject)
+        .await
+        .expect("the store answers")
+        .into_iter()
+        .find(|fact| fact.id == written.id)
+        .expect("the claim is there")
+        .edge;
+    for history in [
+        mentioning
+            .claim_history(&written.address())
+            .await
+            .expect("history reads"),
+        bare.claim_history(&written.address())
+            .await
+            .expect("history reads"),
+    ] {
+        assert_eq!(
+            history[0].edge, ordinary,
+            "archiving the object must leave history and ordinary edges in agreement: {history:?}",
+        );
+    }
 }
 
 /// 🚨 **A ref follows a rehandled thing exactly as an edge does**, for

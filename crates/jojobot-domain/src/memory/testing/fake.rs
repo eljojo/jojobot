@@ -3583,6 +3583,9 @@ impl Memory for InMemoryMemory {
         // other** — stored under its source's storage key, served under the
         // handle that key answers to today.
         for write in &mut mine {
+            if let Some(edge) = &mut write.edge {
+                edge.object = self.current_handle(&edge.object);
+            }
             // **The bot that made the write is served under the handle it wears
             // today**, as every other pointer is.
             if let Some(bot) = &write.bot {
