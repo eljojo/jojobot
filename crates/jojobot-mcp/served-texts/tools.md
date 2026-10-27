@@ -6039,6 +6039,7 @@ On a record the build supplies (a shipped view), `name` and `aliases` are yours,
 `source` and `crm` stay the build's, refused with no token.
 A handle that names nothing comes back blocked with the nearest handles — it never creates.
 Aliases or `sets` that would leave the thing, or its claim, too big to be read back whole in one answer are refused with nothing written.
+The receipt's `changed` lists changes.
 ```
 
 #### `update_entity` — structure
@@ -6275,6 +6276,7 @@ Naming an own key in `sets` moves it.
 An unknown address is blocked with candidates.
 `sets_add` and `sets_remove` change a list key by its items.
 `after` moves a list entry (`first`, `last`, an address) or a section.
+The receipt is read back from the store; `changed` lists what moved.
 ```
 
 #### `update_fact` — structure

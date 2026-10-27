@@ -418,7 +418,7 @@ impl Jojobot {
                        to settled needs a `receipt` (`check` or `confirmed`), which \
                        leaves provenance alone. A call naming no change is refused; keep: true alone touches it. \
                        expected_revision (recall's revision_count): a stale edit is refused with retry. find, replace, field (content or \
-                       details): change one span, if find occurs once. Naming an own key in `sets` moves it. An unknown address is blocked with candidates. `sets_add` and `sets_remove` change a list key by its items. `after` moves a list entry (`first`, `last`, an address) or a section."
+                       details): change one span, if find occurs once. Naming an own key in `sets` moves it. An unknown address is blocked with candidates. `sets_add` and `sets_remove` change a list key by its items. `after` moves a list entry (`first`, `last`, an address) or a section. The receipt is read back from the store; `changed` lists what moved."
     )]
     pub(crate) async fn update_fact(
         &self,
