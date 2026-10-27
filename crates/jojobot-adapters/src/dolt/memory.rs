@@ -2318,11 +2318,7 @@ impl DoltMemory {
                 };
                 // **Read against the survivor**: the folded thing's claims are
                 // thoughts of the survivor's only if the survivor's bot wrote them.
-                if fact
-                    .edge
-                    .as_ref()
-                    .is_some_and(|e| e.shape == EdgeShape::Connection)
-                {
+                if jojobot_domain::memory::authorship::is_connection(fact.edge.as_ref()) {
                     fact.written_by_another = self
                         .another_bots_claim(tx, &folded.key, &fact.id, entity)
                         .await?;
@@ -2756,20 +2752,15 @@ impl DoltMemory {
             Some(bot) => Some(self.stored_writer(tx, bot).await?),
             None => None,
         };
-        let written_by_another = match (&edge, &writer, fact.session.as_deref()) {
-            (Some(e), Some(bot), _) if e.shape == EdgeShape::Connection => {
-                self.bot_is_another(tx, bot.as_str(), &home).await?
-            }
-            (Some(e), None, Some(run)) if e.shape == EdgeShape::Connection => {
-                self.run_is_another_bots(tx, run, &home).await?
-            }
+        let connection = jojobot_domain::memory::authorship::is_connection(edge.as_ref());
+        let written_by_another = match (connection, &writer, fact.session.as_deref()) {
+            (true, Some(bot), _) => self.bot_is_another(tx, bot.as_str(), &home).await?,
+            (true, None, Some(run)) => self.run_is_another_bots(tx, run, &home).await?,
             _ => false,
         };
-        if !written_by_another
-            && edge
-                .as_ref()
-                .is_some_and(|e| e.shape == EdgeShape::Connection)
-        {
+        // TEMPORARY(9.3.3) this store's witness that it calls the domain's rule on
+        // a capture; the write path moves into the domain's pipeline there.
+        if jojobot_domain::memory::authorship::is_thought_of(edge.as_ref(), written_by_another) {
             let held = self.held_by(tx, &home).await?;
             // **The body cap, checked before the room has anything to say.**
             // A thought over its container's cap is refused whether or not
@@ -2911,7 +2902,7 @@ impl DoltMemory {
         let id = Self::mint(tx, &home).await?;
         let stored = Fact {
             app_stamp: fact.app_stamp,
-            written_by_another: false,
+            written_by_another,
             sets: Default::default(),
             reaching: Default::default(),
             field_links: Default::default(),
@@ -3190,11 +3181,7 @@ impl DoltMemory {
             // **Whether another bot wrote this claim, looked up only for a claim
             // that could be a thought**: a claim drawing a `connection` edge. Every
             // other read costs nothing here.
-            if served
-                .edge
-                .as_ref()
-                .is_some_and(|e| e.shape == EdgeShape::Connection)
-            {
+            if jojobot_domain::memory::authorship::is_connection(served.edge.as_ref()) {
                 served.written_by_another = self
                     .another_bots_claim_asked(
                         tx,
@@ -4765,11 +4752,7 @@ impl jojobot_domain::memory::merge::MergeReads for DoltFoldReads<'_, '_> {
         // survivor's only if the survivor's bot wrote them, whoever wrote them on
         // the duplicate.
         for claim in &mut claims {
-            if claim
-                .edge
-                .as_ref()
-                .is_some_and(|e| e.shape == EdgeShape::Connection)
-            {
+            if jojobot_domain::memory::authorship::is_connection(claim.edge.as_ref()) {
                 claim.written_by_another = self
                     .store
                     .another_bots_claim(self.tx, self.folded_key, &claim.id, self.survivor_key)
@@ -6226,10 +6209,7 @@ impl Memory for DoltMemory {
         // This is what tells an edit that merely touches an EXISTING thought
         // apart from one that MAKES a claim into a thought — the cap and the
         // room only have anything to say about the second.
-        let was_thought = fact
-            .edge
-            .as_ref()
-            .is_some_and(|e| e.shape == EdgeShape::Connection);
+        let was_thought = jojobot_domain::memory::authorship::is_connection(fact.edge.as_ref());
         // **Every claim a mark names faces the existence rule a source
         // does** — a mark is a set of citations, and a citation to nothing
         // is exactly the failure `derived_from` is screened against below,
@@ -6503,11 +6483,7 @@ impl Memory for DoltMemory {
             .await?;
         let was_thought = was_thought && !another_bots;
         let becomes_thought = fact.status == FactStatus::Active
-            && !another_bots
-            && fact
-                .edge
-                .as_ref()
-                .is_some_and(|e| e.shape == EdgeShape::Connection);
+            && jojobot_domain::memory::authorship::is_thought_of(fact.edge.as_ref(), another_bots);
         // **The cap runs on a content change, or on newly becoming a
         // thought — never on an edit that leaves an existing thought's
         // content exactly as it was.** An edit seeded over the cap, or over

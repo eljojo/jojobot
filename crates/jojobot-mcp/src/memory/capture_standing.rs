@@ -71,10 +71,7 @@ impl Jojobot {
         // **Decided from the input the write used**: the caller's bot against the
         // subject, by the domain's one test. The record the store returns is read
         // back, and a read of a claim cannot always name the run that wrote it.
-        let a_thought = fact
-            .edge
-            .as_ref()
-            .is_some_and(|e| e.shape == jojobot_domain::memory::EdgeShape::Connection)
+        let a_thought = jojobot_domain::memory::authorship::is_connection(fact.edge.as_ref())
             && !jojobot_domain::memory::authorship::another_bots_claim(
                 &fact.subject,
                 Some(writer),

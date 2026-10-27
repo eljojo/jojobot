@@ -1576,10 +1576,7 @@ impl InMemoryMemory {
     fn served_in(&self, resolution: &Resolution<'_>, mut f: Fact, handle: &EntityId) -> Fact {
         // **Read against the stored key, before it is served under the handle**: the
         // first write's session is kept under the key the claim was made under.
-        f.written_by_another = f
-            .edge
-            .as_ref()
-            .is_some_and(|e| e.shape == crate::memory::EdgeShape::Connection)
+        f.written_by_another = crate::memory::authorship::is_connection(f.edge.as_ref())
             && self.another_bots_claim(&f.home, &f.id, handle);
         f.home = handle.clone();
         f.subject = handle.clone();
@@ -3099,11 +3096,9 @@ impl Memory for InMemoryMemory {
                 .and_then(|(bots, run)| bots.bot_of_run(run))
         });
         let written_by_another = self.another_bot(writer.as_ref(), &subject_entity.id);
-        if !written_by_another
-            && edge
-                .as_ref()
-                .is_some_and(|e| e.shape == crate::memory::EdgeShape::Connection)
-        {
+        // TEMPORARY(9.3.3) this store's witness that it calls the domain's rule on
+        // a capture; the write path moves into the domain's pipeline there.
+        if crate::memory::authorship::is_thought_of(edge.as_ref(), written_by_another) {
             let folded =
                 super::super::folded_fields(&self.writes_on(&home, &facts), &self.declarations());
             // **The body cap, checked before the room has anything to say.**
@@ -3267,7 +3262,7 @@ impl Memory for InMemoryMemory {
             .collect();
         let stored = Fact {
             app_stamp: fact.app_stamp.clone(),
-            written_by_another: false,
+            written_by_another,
             sets: Default::default(),
             reaching: Default::default(),
             field_links: Default::default(),

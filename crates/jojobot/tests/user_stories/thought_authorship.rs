@@ -172,3 +172,78 @@ async fn a_claim_another_bot_writes_on_an_over_full_room_is_not_told_it_used_the
     .never_says("emergency reserve");
     story.finish().await;
 }
+
+/// **A starred connection claim another bot writes on a bot is neither that bot's
+/// rule nor its thought.** Milhouse has one seat, one starred rule of its own and
+/// a room of one. Lisa's starred connection claim on Milhouse lands, rides no
+/// boot, takes no seat and no place in the room: the boot still carries the one
+/// rule, and Milhouse's own second thought is refused only because its own first
+/// one fills the room.
+#[tokio::test]
+async fn a_starred_connection_claim_another_bot_writes_is_neither_the_bots_rule_nor_its_thought() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    for (handle, name) in [
+        ("bot:milhouse", "Milhouse"),
+        ("bot:lisa", "Lisa"),
+        ("thing:the-fern", "The Fern"),
+        ("thing:the-couch", "The Couch"),
+    ] {
+        s.add(handle, name).await;
+    }
+    s.call(
+        "capture",
+        json!({"subject": "bot:milhouse", "content": "keep the ledger tidy",
+               "provenance": "testimony", "fields": {"starred": "true"}}),
+    )
+    .await;
+    s.call(
+        "capture",
+        json!({"subject": "bot:milhouse", "content": "one seat and one thought",
+               "sets": {"rule_seats": "1", "thought_capacity": "1"}}),
+    )
+    .await;
+    let (milhouse, lisa) = (
+        story.as_bot("bot:milhouse").await,
+        story.as_bot("bot:lisa").await,
+    );
+    milhouse
+        .call(
+            "capture",
+            json!({"subject": "bot:milhouse", "content": "the fern needs water",
+                   "shape": "connection", "object": "thing:the-fern"}),
+        )
+        .await;
+    lisa.call(
+        "capture",
+        json!({"subject": "bot:milhouse", "content": "lisa asks for the couch to be moved",
+               "shape": "connection", "object": "thing:the-couch",
+               "fields": {"starred": "true"}}),
+    )
+    .await;
+
+    let (boot, _) = story
+        .call("start_here", json!({"bot": "milhouse", "brief": true}))
+        .await;
+    let rules = boot.json()["identity"]["rules"].to_string();
+    assert!(rules.contains("ledger"), "the own rule is carried: {rules}");
+    assert!(
+        !rules.contains("couch"),
+        "the other bot's claim is not a rule: {rules}"
+    );
+    s.call(
+        "recall",
+        json!({"subject": "bot:milhouse", "facts": true, "status": "active"}),
+    )
+    .await
+    .says("lisa asks for the couch to be moved");
+    // Milhouse's own room holds its one thought; a second of its own is refused.
+    milhouse
+        .refused(
+            "capture",
+            json!({"subject": "bot:milhouse", "content": "the couch needs a leg",
+                   "shape": "connection", "object": "thing:the-couch"}),
+        )
+        .await;
+    story.finish().await;
+}

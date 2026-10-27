@@ -3389,15 +3389,12 @@ pub fn thought_room(captured: &[Fact]) -> Vec<Fact> {
 /// edge and no other bot is known to have written it. The one test (rule 498)
 /// behind [`thought_room`], a write's own check and an edit's.
 pub fn is_thought(fact: &Fact) -> bool {
-    !fact.written_by_another
-        && fact
-            .edge
-            .as_ref()
-            .is_some_and(|e| e.shape == EdgeShape::Connection)
+    authorship::is_thought_of(fact.edge.as_ref(), fact.written_by_another)
 }
 
-/// **Which of a bot's own claims are rules currently binding it** — active,
-/// not a thought ([`thought_room`]'s own edge carve, read the other way). The
+/// **Which claims on a bot are rules currently binding it** — active and drawing
+/// no `connection` edge ([`authorship::is_connection`]), so another bot's
+/// connection claim is neither this bot's rule nor, by [`is_thought`], its thought. The
 /// boot and a write that stars a rule both need exactly this filter to decide whether the seats
 /// are full; shared here so the two cannot drift apart.
 pub fn rules_in_force(recalled: &[Fact]) -> Vec<Fact> {

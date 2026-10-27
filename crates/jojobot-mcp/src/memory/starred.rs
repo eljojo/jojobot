@@ -61,6 +61,7 @@ impl Jojobot {
     pub(crate) async fn refuses_a_star_for_capture(&self, new: &NewFact) -> Option<MemoryError> {
         if new.subject.kind() != Some(EntityKind::BOT)
             || new.fields.get("starred").is_none_or(|v| v != "true")
+            || jojobot_domain::memory::authorship::is_connection(new.edge.as_ref())
         {
             return None;
         }
@@ -82,7 +83,9 @@ impl Jojobot {
         let held = self.memory.recall(&address.home).await.ok()?;
         let mut edited = held.iter().find(|fact| fact.id == address.local)?.clone();
         jojobot_domain::memory::apply_fact_patch(&mut edited, patch).ok()?;
-        if edited.fields.get("starred").is_none_or(|v| v != "true") {
+        if edited.fields.get("starred").is_none_or(|v| v != "true")
+            || jojobot_domain::memory::authorship::is_connection(edited.edge.as_ref())
+        {
             return None;
         }
         self.refuses_a_star_over(&address.home, held, Some(address))

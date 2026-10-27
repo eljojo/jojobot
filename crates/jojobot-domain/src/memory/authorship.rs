@@ -12,7 +12,7 @@
 //! keeps only its own session lookup and its own way of telling a bot's key from
 //! its handle.
 
-use super::{EntityId, EntityKind};
+use super::{Edge, EdgeShape, EntityId, EntityKind};
 
 /// **Whether a connection claim on `home` was written by a bot other than
 /// `home`.** `writer` is the bot behind the run that first wrote the claim, or
@@ -51,3 +51,21 @@ pub fn stored_writer(
 ) -> EntityId {
     key_of(bot).unwrap_or_else(|| bot.clone())
 }
+
+/// **Whether a claim draws a `connection` edge**: the one test every site asks
+/// before it asks whose the claim is (rule 498). A claim that draws one is never a
+/// rule of its home's ([`super::rules_in_force`]); it is that home's thought only
+/// when no other bot wrote it ([`is_thought_of`]).
+pub fn is_connection(edge: Option<&Edge>) -> bool {
+    edge.is_some_and(|edge| edge.shape == EdgeShape::Connection)
+}
+
+/// **Whether a claim is a thought of its home's**: a connection claim no other
+/// bot wrote. Another bot's connection claim on a bot is an ordinary linked claim,
+/// neither that bot's thought nor its rule.
+pub fn is_thought_of(edge: Option<&Edge>, written_by_another: bool) -> bool {
+    !written_by_another && is_connection(edge)
+}
+
+#[cfg(test)]
+mod tests;

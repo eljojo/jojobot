@@ -1080,9 +1080,7 @@ impl Jojobot {
         // thought: the kind check is a string parse, no store reached, so a
         // capture on anything else pays nothing for it.
         let aged_before = if subject.kind() == Some(EntityKind::BOT)
-            && edge
-                .as_ref()
-                .is_some_and(|e| e.shape == EdgeShape::Connection)
+            && jojobot_domain::memory::authorship::is_connection(edge.as_ref())
         {
             let ages_after = match self.ages_after_runs_of(&subject).await {
                 Ok(runs) => runs,

@@ -55,10 +55,7 @@ impl crate::memory::merge::MergeReads for FakeFoldReads<'_> {
             .map(|f| {
                 // **Read against the survivor**, because the duplicate's claims are
                 // thoughts of the survivor's only if the survivor's bot wrote them.
-                let another = f
-                    .edge
-                    .as_ref()
-                    .is_some_and(|e| e.shape == crate::memory::EdgeShape::Connection)
+                let another = crate::memory::authorship::is_connection(f.edge.as_ref())
                     && self
                         .store
                         .another_bots_claim(&f.home, &f.id, self.survivor_handle);

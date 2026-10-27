@@ -101,10 +101,7 @@ impl Jojobot {
     /// already is a thought and the edit touches it. A record that cannot be read
     /// counts as one that could, so a doubt costs a read and never a missed check.
     pub(crate) async fn could_join_a_room(&self, address: &FactAddress, patch: &FactPatch) -> bool {
-        if patch
-            .edge
-            .as_ref()
-            .is_some_and(|e| e.shape == EdgeShape::Connection)
+        if jojobot_domain::memory::authorship::is_connection(patch.edge.as_ref())
             || patch.status == Some(FactStatus::Active)
         {
             return true;

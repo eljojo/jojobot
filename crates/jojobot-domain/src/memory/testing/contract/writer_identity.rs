@@ -67,6 +67,12 @@ pub async fn a_bot_renamed_twice_still_reads_its_own_thought_as_its_own<M: Memor
         },
     )
     .await;
+    // **The capture returns the flag it computed**, so a receipt built from it
+    // cannot tell one bot it spent another's reserve.
+    assert!(
+        others.written_by_another && !own.written_by_another,
+        "the claims captured say whose they are: {own:?} {others:?}"
+    );
     rename(&second, &third).await;
 
     let read = store.recall(&third).await.expect("recall should succeed");

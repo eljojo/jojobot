@@ -487,11 +487,7 @@ impl DoltBootReader {
         let mut served = fact_from(row, key.clone(), id, fields, refs, stands_for)?;
         // Whether another bot wrote a claim that could be a thought: one drawing a
         // connection edge.
-        if served
-            .edge
-            .as_ref()
-            .is_some_and(|edge| edge.shape == EdgeShape::Connection)
-        {
+        if jojobot_domain::memory::authorship::is_connection(served.edge.as_ref()) {
             let by_another = match writers.get(&claim) {
                 None => false,
                 Some((recorded, of_the_run)) => {

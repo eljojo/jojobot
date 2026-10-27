@@ -8,7 +8,7 @@
 //! it: the recall argument, the shipped view and the boot's front page all call
 //! this one function (rule 498).
 
-use super::{EdgeShape, EntityId, Fact, FactStatus, FieldAges, Provenance};
+use super::{EntityId, Fact, FactStatus, FieldAges, Provenance};
 
 /// A record generated to carry settings, never a caller's authored claim.
 /// Kept on the record alone, so the label never becomes one of the settings.
@@ -30,10 +30,7 @@ pub const WORKING_ON_RECORD: &str = "What this bot is working on now";
 /// the label existed. A setting bag on authored words is still a rule.
 pub fn is_rule(fact: &Fact) -> bool {
     fact.status == FactStatus::Active
-        && !fact
-            .edge
-            .as_ref()
-            .is_some_and(|edge| edge.shape == EdgeShape::Connection)
+        && !super::authorship::is_connection(fact.edge.as_ref())
         && !super::capacity::takes_no_slot(&fact.fields)
         && !is_settings_record(fact)
         && !is_working_on_record(fact)
