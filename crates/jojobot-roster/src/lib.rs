@@ -4,7 +4,7 @@ mod cast;
 mod ordinary;
 mod scanner;
 
-pub use cast::ROSTER;
+pub use cast::{GREEK, ROSTER};
 pub use ordinary::{ORDINANCES, ORDINARY};
 pub use scanner::{
     bare_slugs_in, handles_in, is_listed_slug, off_roster_handles_in, two_part_handles_in,
@@ -57,7 +57,10 @@ pub fn ordinary() -> Vec<&'static str> {
 }
 
 pub fn is_listed(handle: &str) -> bool {
-    listed().any(|entry| entry == handle)
+    handle
+        .split_once(':')
+        .is_some_and(|(kind, slug)| KINDS.contains(&kind) && GREEK.contains(&slug))
+        || listed().any(|entry| entry == handle)
 }
 
 /// The same refusal appears in the local gate and the CI source check.
@@ -94,6 +97,20 @@ pub fn declared_refusal(refused: &[String]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_greek_letter_is_listed_under_every_known_kind() {
+        let letters = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau upsilon phi chi psi omega";
+        for letter in letters.split_whitespace() {
+            assert!(is_listed_slug(letter), "{letter}");
+            for kind in KINDS {
+                let handle = format!("{kind}:{letter}");
+                assert!(is_listed(&handle), "{handle}");
+            }
+        }
+        assert!(!is_listed(&format!("not-a-kind:{}", "alpha")));
+        assert!(!is_listed(&format!("project:{}", "homer")));
+    }
 
     #[test]
     fn a_handle_has_a_boundary_and_an_unlisted_one_is_refused() {

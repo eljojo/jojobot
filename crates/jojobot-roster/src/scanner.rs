@@ -209,11 +209,12 @@ pub fn unlisted_slugs_under_a_declared_kind_in(files: &[PathBuf]) -> Vec<String>
 /// is not read: a kind a caller declared is not one the domain's set holds, so a
 /// slug under one can be compared with the lists by its slug alone.
 pub fn is_listed_slug(slug: &str) -> bool {
-    listed().any(|entry| {
-        entry
-            .split_once(':')
-            .is_some_and(|(_, listed)| listed == slug)
-    })
+    crate::GREEK.contains(&slug)
+        || listed().any(|entry| {
+            entry
+                .split_once(':')
+                .is_some_and(|(_, listed)| listed == slug)
+        })
 }
 
 /// **Every off-roster handle in these messages**, as `commit: handle`.

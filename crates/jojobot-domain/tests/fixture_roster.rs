@@ -252,6 +252,14 @@ fn violations_in(files: &[PathBuf]) -> Vec<String> {
 /// person.
 fn character_names() -> Vec<String> {
     let mut names = Vec::new();
+    for letter in jojobot_roster::GREEK
+        .iter()
+        .filter(|letter| letter.len() >= 4)
+    {
+        let mut capitalized = letter.to_string();
+        capitalized[..1].make_ascii_uppercase();
+        names.push(capitalized);
+    }
     for entry in listed() {
         let Some((kind, slug)) = entry.split_once(':') else {
             continue;
