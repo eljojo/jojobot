@@ -20,7 +20,7 @@ const RENAMED: &[(&str, &str, &str, &str)] = &[
         "capture",
         "text",
         "content",
-        "none named: a list entry serves its words as text",
+        "the release 10 vocabulary pass",
     ),
     (
         "update_entity",
@@ -42,8 +42,30 @@ const RENAMED: &[(&str, &str, &str, &str)] = &[
     ),
 ];
 
+/// What a receipt reports about its own write.
+const RECEIPT: &[&str] = &[
+    "changed",
+    "reached_the_thing",
+    "stayed_on_the_record",
+    "success",
+    "id",
+    "a_key_stayed_off_the_thing",
+    "dropped_keys",
+    "dropped_keys_note",
+    "address",
+    "derived",
+    "possible_subject_note",
+    "teaching",
+];
+
+/// Keys the server writes itself: a copy of one is dropped and named. The domain
+/// decides the whole set; these three are the floor this case holds it to.
+const SERVER_KEYS: &[&str] = &["engine_record", "merged_from", "retracts"];
+
 /// Served keys no write sets: (verb, served keys, why).
 const READ_ONLY: &[(&str, &[&str], &str)] = &[
+    ("capture", RECEIPT, "a receipt reports its own write"),
+    ("update_entity", RECEIPT, "a receipt reports its own write"),
     (
         "capture",
         &[
@@ -183,6 +205,11 @@ async fn whatever_a_read_serves_the_write_that_sets_it_accepts_as_served() {
         let facts = json!({"subject": subject, "facts": true, "details": true});
         reads.push(s.call("recall", facts).await.json());
     }
+    assert!(
+        SERVER_KEYS
+            .iter()
+            .all(|k| jojobot_domain::memory::copied_read_key(None, k))
+    );
     let mut records = Vec::new();
     reads.iter().for_each(|read| records_in(read, &mut records));
     assert!(
@@ -219,6 +246,16 @@ async fn whatever_a_read_serves_the_write_that_sets_it_accepts_as_served() {
         }
         let receipt = s.attempt(verb, Value::Object(args.clone())).await;
         landed.push((*verb, args, receipt));
+    }
+    for (verb, _, receipt) in &landed {
+        for key in receipt.as_object().expect("a receipt is an object").keys() {
+            let read_only = READ_ONLY
+                .iter()
+                .any(|r| r.0 == *verb && r.1.contains(&key.as_str()));
+            if !read_only && !s.takes(verb, key).await {
+                unaccounted.push(format!("{verb} receipt: {key}"));
+            }
+        }
     }
     unaccounted.sort();
     unaccounted.dedup();
@@ -263,12 +300,27 @@ async fn whatever_a_read_serves_the_write_that_sets_it_accepts_as_served() {
                 .as_object()
                 .filter(|_| key == "fields" || key == "sets")
             {
+                // On a claim: a server key must be dropped, a dropped key must read
+                // back absent, any other key as sent. A thing may already hold the
+                // value, so a dropped key there is only not sent on.
                 Some(bag) => bag
                     .iter()
-                    .filter(|(k, v)| kept.get(k) != Some(v) && !dropped.contains(&json!(k)))
+                    .filter(|(k, v)| {
+                        let gone = dropped.contains(&json!(k));
+                        let server = jojobot_domain::memory::copied_read_key(None, k);
+                        if *verb != "capture" {
+                            return !gone && kept.get(k) != Some(v);
+                        }
+                        gone != server
+                            || if gone {
+                                kept.get(k).is_some()
+                            } else {
+                                kept.get(k) != Some(v)
+                            }
+                    })
                     .map(|(k, _)| k.clone())
                     .collect(),
-                None if kept == sent || sent.as_array().is_some_and(Vec::is_empty) => vec![],
+                None if kept == sent || (sent == &json!([]) && kept.is_null()) => vec![],
                 None => vec![key.clone()],
             };
             if !lost.is_empty() {
@@ -276,6 +328,12 @@ async fn whatever_a_read_serves_the_write_that_sets_it_accepts_as_served() {
                     "{verb} sent {key} {sent} and read back {kept} in {held}"
                 ));
             }
+        }
+    }
+    for (verb, _, receipt) in &landed {
+        let named = receipt["dropped_keys"].is_array();
+        if named && !receipt["dropped_keys_note"].is_string() {
+            changed.push(format!("{verb} dropped keys with no note: {receipt}"));
         }
     }
     assert!(changed.is_empty(), "{}", changed.join("\n"));
