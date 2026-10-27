@@ -700,8 +700,6 @@ pub const ORDINARY: &[&str] = &[
     "topic:stunt-schedule",
     "topic:the-five-words",
     "topic:widgets",
-    "thread:alpha",
-    "thread:beta",
     "thread:contract-ageing-line",
     "thread:contract-identity-empty",
     "thread:contract-identity-filled",

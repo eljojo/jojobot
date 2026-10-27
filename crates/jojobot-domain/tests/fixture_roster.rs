@@ -693,10 +693,14 @@ fn every_exemption_is_on_ordinary_without_a_prefix_and_says_why() {
 /// alone.
 #[test]
 fn no_handle_is_on_both_the_cast_and_the_ordinary_list() {
-    let both: Vec<&str> = ROSTER
-        .iter()
-        .copied()
-        .filter(|handle| ordinary().contains(handle))
+    let both: Vec<&str> = ordinary()
+        .into_iter()
+        .filter(|handle| {
+            ROSTER.contains(handle)
+                || handle
+                    .split_once(':')
+                    .is_some_and(|(_, slug)| jojobot_roster::GREEK.contains(&slug))
+        })
         .collect();
     assert!(
         both.is_empty(),
