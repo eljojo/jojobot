@@ -13,6 +13,8 @@
 pub const ROSTER: &[&str] = &[
     // The Simpsons.
     "person:maggie",
+    "person:moe",
+    "person:kent-brockman",
     "person:abe-simpson",
     "person:smithers",
     "person:patty",

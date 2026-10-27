@@ -116,6 +116,8 @@ mod tests {
     fn the_recurring_cast_is_typed_and_available_without_ordinary_exceptions() {
         for (kind, slug) in [
             ("person", "maggie"),
+            ("person", "moe"),
+            ("person", "kent-brockman"),
             ("person", "cartman"),
             ("person", "peter"),
             ("person", "bob"),
