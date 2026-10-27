@@ -12,7 +12,7 @@
 
 use jojobot_exercise::room::{Room, server_binary};
 use jojobot_exercise::run::starting_identity;
-use jojobot_exercise::surface::{Seed, Surface};
+use jojobot_exercise::surface::Seed;
 
 /// **A room comes up from nothing and serves the instance as it ships.**
 ///
@@ -63,10 +63,8 @@ async fn a_room_shares_nothing_with_the_room_beside_it() {
         "two rooms were handed one port, so they are one room",
     );
 
-    let one = Surface::connect(furnished.endpoint())
-        .await
-        .expect("client");
-    let other = Surface::connect(bare.endpoint()).await.expect("client");
+    let one = furnished.connect().await.expect("client");
+    let other = bare.connect().await.expect("client");
     Seed::new()
         .entity("place", "shelbyville", "Shelbyville")
         .expect("a place is furniture")

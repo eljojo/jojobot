@@ -17,6 +17,7 @@ pub struct Surface {
     client: Client,
     harness: reqwest::Client,
     harness_url: String,
+    harness_token: Option<String>,
     position: tokio::sync::Mutex<Value>,
 }
 
@@ -35,8 +36,14 @@ impl Surface {
             client,
             harness: reqwest::Client::new(),
             harness_url: format!("{}/_room_harness", endpoint.trim_end_matches("/mcp")),
+            harness_token: None,
             position: tokio::sync::Mutex::new(Value::Null),
         })
+    }
+
+    pub(crate) fn with_harness_token(mut self, token: String) -> Self {
+        self.harness_token = Some(token);
+        self
     }
 
     /// **Call a verb and hand back whatever the room said**, refusals included.
@@ -145,11 +152,19 @@ impl Surface {
         Ok(answer["notices"].take())
     }
 
+    pub(crate) async fn refusal_count(&self) -> Result<u64> {
+        self.harness_request(json!({"operation":"refusals"}))
+            .await?["refused"]
+            .as_u64()
+            .context("the room did not report its grader refusal count")
+    }
+
     async fn harness_request(&self, request: Value) -> Result<Value> {
-        let response = self
-            .harness
-            .post(&self.harness_url)
-            .json(&request)
+        let mut sending = self.harness.post(&self.harness_url).json(&request);
+        if let Some(token) = &self.harness_token {
+            sending = sending.header("x-jojobot-room-harness", token);
+        }
+        let response = sending
             .send()
             .await
             .context("reaching the room's compiled harness route")?;

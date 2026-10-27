@@ -260,6 +260,8 @@ pub struct Results {
     pub playbook: String,
     pub model: String,
     pub outcomes: Vec<Outcome>,
+    /// Unauthorized grader requests observed while each named phase ran.
+    pub harness_refusals: Vec<(String, u64)>,
     pub transcript: Vec<Said>,
     /// **Phases nobody wrote an expectation for.** Named in the results, so a
     /// phase with no check reads as uncovered and never as passed.
@@ -389,6 +391,7 @@ impl Results {
     /// called a pass.
     pub fn held(&self) -> bool {
         self.incomplete.is_none()
+            && self.harness_refusals.is_empty()
             && self.the_room_changed()
             && self.lost_continuity().is_empty()
             && self.steps_unanswered().is_empty()
@@ -851,6 +854,12 @@ impl Results {
                  negative assertion by itself."
             );
         }
+        for (phase, refused) in &self.harness_refusals {
+            let _ = writeln!(
+                out,
+                "  [FAILED] grader route — {refused} refused calls during {phase}"
+            );
+        }
         for outcome in &self.outcomes {
             let mark = match (
                 self.incomplete
@@ -1012,9 +1021,11 @@ pub async fn go(
     let before = boundaries[0].world.clone();
 
     let mut transcript = Vec::new();
+    let mut harness_refusals = Vec::new();
     let mut conversation = Conversation::fresh();
     let mut incomplete: Option<Incomplete> = None;
     for (at, phase) in playbook.phases.iter().enumerate() {
+        let refused_before = surface.refusal_count().await?;
         // **The playbook decides how many sessions a run uses.** The first
         // phase starts one; after that, a phase carries the last conversation
         // on unless it says it must meet jojobot with no memory of it.
@@ -1059,6 +1070,10 @@ pub async fn go(
             if hit_limit.is_some() {
                 break;
             }
+        }
+        let refused_after = surface.refusal_count().await?;
+        if refused_after > refused_before {
+            harness_refusals.push((phase.name.clone(), refused_after - refused_before));
         }
         transcript.push(Said {
             phase: phase.name.clone(),
@@ -1137,6 +1152,7 @@ pub async fn go(
         playbook: playbook.source.clone(),
         model: agent.model().to_string(),
         outcomes,
+        harness_refusals,
         transcript,
         uncovered,
         hatches,
@@ -1644,6 +1660,7 @@ mod tests {
             playbook: "rooms/whatever.md".into(),
             model: "some-model".into(),
             outcomes: Vec::new(),
+            harness_refusals: Vec::new(),
             transcript: phases
                 .iter()
                 .map(|phase| Said {
@@ -1664,6 +1681,21 @@ mod tests {
             incomplete: None,
             timing: crate::timing::Timing::default(),
         }
+    }
+
+    #[test]
+    fn room_harness_token_probes_are_a_finding_in_the_kept_results() {
+        let mut run = ran(&["Phase 1 — the question"]);
+        run.before = "before".into();
+        run.after = "after".into();
+        run.outcomes.push(outcome("the lock holds", true));
+        assert!(run.held(), "the unprobed run holds");
+        run.harness_refusals
+            .push(("Phase 1 — the question".into(), 2));
+        assert!(!run.held(), "a probed grader cannot report a passing run");
+        let kept = run.rendered(None);
+        assert!(kept.contains("[FAILED] grader route"), "{kept}");
+        assert!(kept.contains("2 refused calls during Phase 1"), "{kept}");
     }
 
     fn outcome(name: &str, held: bool) -> Outcome {

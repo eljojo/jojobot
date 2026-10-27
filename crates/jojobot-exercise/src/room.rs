@@ -54,6 +54,7 @@ pub async fn pause_before_retry() {
 /// **Every test that waits for a real binary to boot uses this one value**, so
 /// a boot a busy host slows down fails the same way everywhere or nowhere.
 pub const READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+pub(crate) const HARNESS_TOKEN: &str = "JOJOBOT_ROOM_HARNESS_TOKEN";
 
 /// **A running jojobot nobody else shares.** Its endpoint is what the driver
 /// connects to; dropping it takes the process and the directory with it.
@@ -74,6 +75,7 @@ pub struct Room {
     reader: Option<std::thread::JoinHandle<()>>,
     dir: PathBuf,
     endpoint: String,
+    harness_token: String,
     /// **The two ports this room's server was given, kept claimed for as long
     /// as the room lives**, so another run of this harness is not offered them
     /// between the listener's release and the server's own bind or afterwards.
@@ -202,7 +204,7 @@ impl Room {
                     continue;
                 }
             };
-            match crate::surface::Surface::connect(room.endpoint()).await {
+            match room.connect().await {
                 Ok(surface) => return Ok((room, surface)),
                 Err(e) => last = Some(e),
             }
@@ -288,7 +290,7 @@ impl Room {
                     continue;
                 }
             };
-            match crate::surface::Surface::connect(room.endpoint()).await {
+            match room.connect().await {
                 Ok(surface) => return Ok((room, surface)),
                 // **The room goes with the attempt.** Dropping it takes the
                 // server and its directory, so a retry starts from nothing
@@ -409,6 +411,9 @@ impl Room {
         let (served, served_held) = free_port()?;
         let (store, store_held) = free_port()?;
         let endpoint = format!("http://127.0.0.1:{served}/mcp");
+        let mut secret = [0u8; 32];
+        getrandom::fill(&mut secret).expect("OS entropy");
+        let harness_token: String = secret.iter().map(|byte| format!("{byte:02x}")).collect();
 
         // **Two conditions, not one.** The server refuses to start with no
         // issuer unless it is told to run open, and only then checks that the
@@ -416,6 +421,7 @@ impl Room {
         // never be the thing that serves somebody's memory unauthenticated.
         let mut spawning = std::process::Command::new(binary);
         spawning
+            .env(HARNESS_TOKEN, &harness_token)
             .env("STATE_DIRECTORY", dir.path())
             .env("JOJOBOT_BIND", format!("127.0.0.1:{served}"))
             .env("JOJOBOT_STORE_PORT", store.to_string())
@@ -465,6 +471,7 @@ impl Room {
             reader,
             dir: dir.into_path(),
             endpoint,
+            harness_token,
             _claims: claims,
         };
         room.wait_until_answering().await?;
@@ -474,6 +481,13 @@ impl Room {
     /// Where a client reaches this room.
     pub fn endpoint(&self) -> &str {
         &self.endpoint
+    }
+
+    /// The grader credential stays with this client, never with the occupant.
+    pub async fn connect(&self) -> Result<crate::surface::Surface> {
+        Ok(crate::surface::Surface::connect(self.endpoint())
+            .await?
+            .with_harness_token(self.harness_token.clone()))
     }
 
     /// **Every line the server has printed so far**, oldest first. A copy, so
@@ -1656,6 +1670,7 @@ mod tests {
             reader: Some(reader),
             dir: super::scratch().expect("a room directory").into_path(),
             endpoint: "http://127.0.0.1:9/mcp".to_string(),
+            harness_token: String::new(),
             _claims: Vec::new(),
         };
 
@@ -1713,6 +1728,7 @@ mod tests {
             reader: None,
             dir: super::scratch().expect("a room directory").into_path(),
             endpoint: format!("http://127.0.0.1:{port}/mcp"),
+            harness_token: String::new(),
             _claims: Vec::new(),
         };
         let waited = tokio::time::timeout(

@@ -102,6 +102,7 @@ impl Invocation {
         let mut command = tokio::process::Command::new(&self.program);
         command.args(&self.args).current_dir(&self.cwd);
         command.envs(self.env.iter().map(|(key, value)| (key, value)));
+        command.env_remove(crate::room::HARNESS_TOKEN);
         command
     }
 }
@@ -496,6 +497,22 @@ mod tests {
         assert!(
             String::from_utf8_lossy(&answered.stdout).contains("the phase answered"),
             "…and what it said is what comes back",
+        );
+    }
+
+    #[test]
+    fn room_harness_token_is_absent_from_the_occupant_environment() {
+        let mut invocation = running("true", &[]);
+        invocation
+            .env
+            .push(("JOJOBOT_ROOM_HARNESS_TOKEN".into(), "alpha".into()));
+        let command = invocation.command();
+        assert!(
+            command
+                .as_std()
+                .get_envs()
+                .any(|(key, value)| { key == "JOJOBOT_ROOM_HARNESS_TOKEN" && value.is_none() }),
+            "the occupant must explicitly discard the grader credential"
         );
     }
 

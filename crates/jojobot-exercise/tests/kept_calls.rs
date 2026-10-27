@@ -23,6 +23,7 @@ fn said(phase: &str, output: &str, raw: &str) -> Said {
 
 fn run(transcript: Vec<Said>) -> Results {
     Results {
+        harness_refusals: Vec::new(),
         playbook: "rooms/ledger.md".into(),
         model: "some-model".into(),
         outcomes: Vec::new(),
