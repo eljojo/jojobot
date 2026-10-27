@@ -211,7 +211,7 @@ impl DoltMemory {
             )
             .await?;
         }
-        super::commit_native(tx).await.map_err(store)?;
+        tx.commit().await.map_err(store)?;
         // Said after the commit, so a change that did not land is never logged.
         for (address, row_key, old_target, new_target) in &changed {
             tracing::info!(
@@ -357,7 +357,7 @@ impl DoltMemory {
             );
             written += 1;
         }
-        super::commit_native(tx).await.map_err(store)?;
+        tx.commit().await.map_err(store)?;
         tracing::info!(
             written,
             left,

@@ -434,7 +434,7 @@ impl DoltMemory {
                 .await
                 .map_err(store)?;
             append_entity_write(&mut tx, &EntityId(handle.clone()), &self.clock, None).await?;
-            commit_native(tx).await.map_err(store)?;
+            tx.commit().await.map_err(store)?;
             given += 1;
         }
         Ok(given)
@@ -497,7 +497,7 @@ impl DoltMemory {
             }
             let mut tx = self.pool.begin().await.map_err(store)?;
             Self::rekey_to_badge(&mut tx, &handle, &badge).await?;
-            commit_native(tx).await.map_err(store)?;
+            tx.commit().await.map_err(store)?;
             rekeyed += 1;
         }
         Ok(rekeyed)
@@ -825,7 +825,7 @@ impl DoltMemory {
             }
             report.repointed += Self::repoint_field_links(&mut tx, &declared, badge, to).await?;
         }
-        commit_native(tx).await.map_err(store)?;
+        tx.commit().await.map_err(store)?;
         report.reported = Self::tell_once(
             &self.pool,
             FORWARDED_LINKS_REPORTED,
@@ -1075,7 +1075,7 @@ impl DoltMemory {
                 report.renamed += 1;
             }
         }
-        commit_native(tx).await.map_err(store)?;
+        tx.commit().await.map_err(store)?;
         report.reported = Self::tell_once(
             &self.pool,
             FORWARD_NAMES_REPORTED,
@@ -1263,7 +1263,7 @@ impl DoltMemory {
             .map_err(store)?;
             report.linked += 1;
         }
-        commit_native(tx).await.map_err(store)?;
+        tx.commit().await.map_err(store)?;
         if !lowered_before {
             super::finish_pass(&self.pool, FIELD_LOWERING_PASS).await;
         }
