@@ -70,19 +70,26 @@ async fn alias_collisions_and_unknown_names_still_refuse_without_delivery() {
     owning(&jojobot, "gamma").await;
     let sent = send(&jojobot, "otto", "gamma", "not delivered by a refused call").await;
     let id = sent["id"].as_str().unwrap();
-    for arguments in [
-        json!({"id": id, "message_id": id, "sid": sid}),
-        json!({"id": "a different message", "message_id": id, "sid": sid}),
-        json!({"id": id, "unknown_name": true, "sid": sid}),
+    let other = send(&jojobot, "otto", "gamma", "the other message").await;
+    let other_id = other["id"].as_str().unwrap();
+    for (arguments, refused_name) in [
+        (json!({"id": other_id, "message_id": id, "sid": sid}), "id"),
+        (
+            json!({"id": id, "unknown_name": true, "sid": sid}),
+            "unknown_name",
+        ),
     ] {
         let refused = served(&jojobot, "read_message", arguments).await;
         assert_eq!(refused["status"], "blocked", "{refused}");
         assert_eq!(refused["wrote"], false, "{refused}");
-        assert!(
-            refused["how_to_proceed"].to_string().contains("message_id"),
-            "{refused}"
-        );
-        assert_eq!(counts(&jojobot, "otto").await["counts"]["new"], 1);
+        let names: Vec<_> = refused["how_to_proceed"]
+            .as_str()
+            .unwrap()
+            .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+            .collect();
+        assert!(names.contains(&refused_name), "{refused}");
+        assert!(names.contains(&"message_id"), "{refused}");
+        assert_eq!(counts(&jojobot, "otto").await["counts"]["new"], 2);
     }
     let canonical = served(
         &jojobot,
@@ -91,6 +98,55 @@ async fn alias_collisions_and_unknown_names_still_refuse_without_delivery() {
     )
     .await;
     assert_eq!(canonical["body"], "not delivered by a refused call");
+}
+
+#[tokio::test]
+async fn equal_alias_and_canonical_values_are_accepted() {
+    let jojobot = handler();
+    let sid = owning(&jojobot, "otto").await;
+    owning(&jojobot, "gamma").await;
+    let sent = send(&jojobot, "otto", "gamma", "both names ask for this message").await;
+    let id = sent["id"].as_str().unwrap();
+    let canonical = served(
+        &jojobot,
+        "read_message",
+        json!({"message_id": id, "sid": sid}),
+    )
+    .await;
+    assert_eq!(canonical["body"], "both names ask for this message");
+    let together = served(
+        &jojobot,
+        "read_message",
+        json!({"id": id, "message_id": id, "sid": sid}),
+    )
+    .await;
+    assert_eq!(together["body"], canonical["body"], "{together}");
+    assert!(
+        together["teaching"].to_string().contains("message_id"),
+        "{together}"
+    );
+}
+
+#[tokio::test]
+async fn wrap_session_accepts_story_as_its_closing_text() {
+    let jojobot = handler();
+    let sid = owning(&jojobot, "otto").await;
+    let story = "Finished the argument check.";
+    let wrapped = served(
+        &jojobot,
+        "wrap_session",
+        json!({"story": story, "sid": sid}),
+    )
+    .await;
+    assert_eq!(wrapped["session"]["state"], "wrapped", "{wrapped}");
+    let run = jojobot
+        .sessions
+        .read_session(&jojobot_domain::session::SessionId(
+            wrapped["session"]["id"].as_str().unwrap().to_string(),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(run.entries.last().unwrap().text, story);
 }
 
 async fn closing_alias(sent_name: &str, canonical: &str) {

@@ -37,6 +37,10 @@ async fn a_guessed_message_id_reads_the_message_and_teaches_the_published_name()
     let again = s.call("read_message", json!({"id": id})).await;
     assert_eq!(again.json()["body"], canonical.json()["body"]);
     assert!(!again.json()["teaching"].to_string().contains("message_id"));
+    let together = s
+        .call("read_message", json!({"id": id, "message_id": id}))
+        .await;
+    assert_eq!(together.json()["body"], canonical.json()["body"]);
 }
 
 #[tokio::test]

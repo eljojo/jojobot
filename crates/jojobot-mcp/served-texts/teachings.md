@@ -104,11 +104,10 @@ A `waiting_on` handle also keeps work out of ready.
 start_here with skill: "projects" has the examples.
 ```
 
-### Teaching a guessed argument's canonical spelling (with a sample verb and names)
+### Teaching the canonical argument spelling (with a sample verb and argument)
 
 ```text
-read_message understood `id` as `message_id`.
-Use `message_id` on this verb.
+Use `message_id` on read_message.
 ```
 
 ### Teaching `session_id_teaching` (with a sample sid and session)
