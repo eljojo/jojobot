@@ -46,12 +46,11 @@ pub const DOMAIN_WIDTH: usize = 64;
 /// **Records, never gates.** Nothing here withholds anything or answers
 /// `blocked` — a caller decides what to do with a `true`; this only tells the
 /// truth about whether it has said so before.
-#[jojobot_forward::forwardable(
+#[jojobot_forward::port(
     callback = forward_teachings,
     scope = "teaching",
     uses(crate::session::Sid, ::jiff::Timestamp)
 )]
-#[async_trait::async_trait]
 pub trait Teachings: Send + Sync {
     /// Record that `domain` has reached this session, and say whether this is
     /// the first time.

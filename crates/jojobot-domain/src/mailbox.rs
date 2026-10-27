@@ -989,18 +989,13 @@ impl std::fmt::Display for SupersedeRefusal {
 ///   nearest candidates. Only [`create_mailbox`](Mailboxes::create_mailbox)
 ///   brings a box into existence, because a typo that mints a box is a message
 ///   posted where nobody is listening.
-#[jojobot_forward::forwardable(
+#[jojobot_forward::port(
     callback = forward_mailboxes,
     scope = "mailbox",
     uses(
         ::jiff::civil::Date,
-        ::std::collections::BTreeMap,
-        ::std::collections::BTreeSet,
-        ::std::collections::HashMap,
-        ::std::sync::Arc
     )
 )]
-#[async_trait::async_trait]
 pub trait Mailboxes: Send + Sync {
     /// **How many times this port has been written through, when it counts.**
     /// A reader that keeps something current from the board asks it instead of

@@ -20,8 +20,7 @@ macro_rules! scenario {
         mod $module {
             use super::*;
 
-            #[jojobot_forward::forwardable(callback = $callback, scope = "names")]
-            #[async_trait]
+            #[jojobot_forward::port(callback = $callback, scope = "names")]
             pub trait Port: Send + Sync {
                 async fn name(&self) -> String;
                 async fn count(&self, by: u32) -> Result<u32, String>;

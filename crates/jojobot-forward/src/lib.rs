@@ -3,7 +3,7 @@
 //!
 //! Three pieces, in the order they run:
 //!
-//! 1. [`forwardable`] sits on a port trait. It leaves the trait as it is and
+//! 1. [`port`] sits on a port trait. It leaves the trait as it is and
 //!    writes a `macro_rules!` beside it that carries the trait's method list.
 //! 2. [`forward`] sits on the `impl` of a double. It hands the impl to that macro.
 //! 3. [`__finish`] receives the method list and the impl together, and adds a
@@ -33,7 +33,7 @@ use syn::{
     ReturnType, Token, TraitItem, TraitItemFn, Type, braced, parse_macro_input,
 };
 
-/// The arguments of [`forwardable`]: `callback = <name>, scope = "<module>"`.
+/// The arguments of [`port`]: `callback = <name>, scope = "<module>"`.
 struct PortArgs {
     name: Ident,
     scope: String,
@@ -83,13 +83,14 @@ impl Parse for PortArgs {
 }
 
 /// **Put a port's method list where a double can reach it.** Written on the trait:
-/// `#[forwardable(callback = forward_memory, scope = "memory", uses(::std::sync::Arc))]`.
+/// `#[port(callback = forward_memory, scope = "memory", uses(::jiff::civil::Date))]`.
 /// The trait is emitted unchanged. Beside it comes an exported macro of the given
 /// name, which is what [`forward`] calls; `scope` is the module of the crate that
 /// declares the trait, whose public names the added signatures are read in, and
-/// `uses` names the other paths the signatures spell without a prefix.
+/// `uses` names the other paths the signatures spell without a prefix (the
+/// standard maps and `Arc` are always in scope).
 #[proc_macro_attribute]
-pub fn forwardable(args: TokenStream, item: TokenStream) -> TokenStream {
+pub fn port(args: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(args as PortArgs);
     let port = parse_macro_input!(item as ItemTrait);
     let signatures: Vec<TokenStream2> = port
@@ -113,6 +114,7 @@ pub fn forwardable(args: TokenStream, item: TokenStream) -> TokenStream {
     let uses_of_the_port = &args.uses;
     let uses = from_this_crate(quote! { #(#uses_of_the_port),* });
     quote! {
+        #[::async_trait::async_trait]
         #port
 
         #[doc(hidden)]
@@ -348,7 +350,7 @@ fn returns_a_result(sig: &syn::Signature) -> bool {
     }
 }
 
-/// **Not for direct use**: the last step, called by the macro [`forwardable`]
+/// **Not for direct use**: the last step, called by the macro [`port`]
 /// writes. It adds the method for each port method the impl leaves out, and puts
 /// the impl in a block that reads the port's names.
 #[proc_macro]
@@ -456,6 +458,10 @@ pub fn __finish(input: TokenStream) -> TokenStream {
         const _: () = {
             #[allow(unused_imports)]
             use #scope :: * ;
+            #[allow(unused_imports)]
+            use ::std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+            #[allow(unused_imports)]
+            use ::std::sync::Arc;
             #( #[allow(unused_imports)] use #uses ; )*
             #[::async_trait::async_trait]
             #double

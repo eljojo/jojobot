@@ -72,9 +72,6 @@ pub use links::*;
 pub use receipt::Receipt;
 pub use seats::{CarriedSeats, carried_seats_status};
 
-#[cfg(any(test, feature = "testing"))]
-pub mod testing;
-
 /// **A kind: the namespace in a handle, and the schema of what it names**
 /// (rule 213).
 ///
@@ -6521,18 +6518,7 @@ pub struct WriteSummary {
 ///   back blocked, with the nearest candidates. Guessing is how two people
 ///   become one; auto-provisioning is how one typo becomes a second person.
 ///   Only [`add_entity`](Memory::add_entity) brings an entity into existence.
-#[jojobot_forward::forwardable(
-    callback = forward_memory,
-    scope = "memory",
-    uses(
-        ::jiff::civil::Date,
-        ::std::collections::BTreeMap,
-        ::std::collections::BTreeSet,
-        ::std::collections::HashMap,
-        ::std::sync::Arc
-    )
-)]
-#[async_trait::async_trait]
+#[jojobot_forward::port(callback = forward_memory, scope = "memory", uses(::jiff::civil::Date,))]
 pub trait Memory: Send + Sync {
     /// Read a field from RAM only. `None` means no image; `Some(None)` means unset.
     /// Never falls back to a store read. Decorators forward this capability.
@@ -7608,15 +7594,7 @@ pub trait Memory: Send + Sync {
 }
 
 #[cfg(any(test, feature = "testing"))]
-#[path = "memory/testing/served_in_id_text_order.rs"]
-mod served_in_id_text_order;
-/// **The doubles of this crate that wrap a store, declared after the port.** The
-/// macro the port's attribute writes is in scope only for code that follows it in
-/// this file, and a double states only the methods it changes, so these two
-/// modules sit here and `testing` re-exports them.
-#[cfg(any(test, feature = "testing"))]
-#[path = "memory/testing/without_built_on.rs"]
-mod without_built_on;
+pub mod testing;
 
 #[cfg(test)]
 mod stored_describing_keys;

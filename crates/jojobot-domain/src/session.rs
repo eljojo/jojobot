@@ -1469,20 +1469,15 @@ pub enum SessionError {
 /// * **nothing is created as a side effect** — [`begin`](Sessions::begin) is the
 ///   only thing that brings a session card into being, and the caller decides
 ///   when. A boot that never works leaves no card.
-#[jojobot_forward::forwardable(
+#[jojobot_forward::port(
     callback = forward_sessions,
     scope = "session",
     uses(
         crate::memory::EntityId,
         ::jiff::Timestamp,
         ::jiff::civil::Date,
-        ::std::collections::BTreeMap,
-        ::std::collections::BTreeSet,
-        ::std::collections::HashMap,
-        ::std::sync::Arc
     )
 )]
-#[async_trait::async_trait]
 pub trait Sessions: Send + Sync {
     /// Every session of one bot, whatever its state, newest start first. What
     /// attaching reads, and what the sweep walks.
