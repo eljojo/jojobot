@@ -3154,17 +3154,22 @@ fn after_the_brief<'a>(seen: &'a Observed<'a>) -> Result<&'a crate::run::Boundar
 
 /// **Every active claim the brief's sitting left on the board.**
 ///
-/// A default `search` answers active records only, so a claim taken back or
-/// archived is not read. An unreadable snapshot fails loudly: reading none
-/// would look like a model that wrote nothing.
+/// A default `search` answers archived records too, so each hit's own status
+/// is read. An unreadable snapshot fails loudly: reading none would look like
+/// a model that wrote nothing.
 fn active_claims(seen: &Observed<'_>) -> Result<Vec<Value>, String> {
-    let world = &after_the_brief(seen)?.world;
-    let hits = search_hits(world)
-        .ok_or_else(|| format!("the snapshot after {BRIEF} carried no results list"))?;
-    Ok(hits
-        .into_iter()
-        .filter(|hit| hit["hit"] == "fact")
-        .collect())
+    active_facts(&after_the_brief(seen)?.world)
+        .ok_or_else(|| format!("the snapshot after {BRIEF} carried no results list"))
+}
+
+/// The active fact hits of one boundary's world, `None` without a results list.
+fn active_facts(world: &str) -> Option<Vec<Value>> {
+    let hits = search_hits(world)?;
+    Some(
+        hits.into_iter()
+            .filter(|hit| hit["hit"] == "fact" && hit["status"] == "active")
+            .collect(),
+    )
 }
 
 /// **The words a claim says, one lowercase token each, split on whitespace.**
