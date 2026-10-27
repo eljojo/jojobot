@@ -2462,15 +2462,10 @@ pub async fn a_merge_cannot_fold_a_bot_into_one_that_sits_below_it<M: Memory>(st
         .expect("a merge of two bots on nobody's chain lands");
 }
 
-/// **The chart is judged against the chain read inside the write.** A bot
-/// changes who it reports to only through the bots above it; a bot with no
-/// manager takes the one named by that manager or a bot above it; and nobody is
-/// put under one of its own reports. The three paths that change the fold
-/// without a caller's spelling are covered: an edit, a retraction and a merge.
-/// Each is refused for a stranger and for the bot itself, and lands for the
-/// bots the chain allows, so the guard reads who is calling and what the chart
-/// is, not merely what changed. A chart that loops answers instead of
-/// hanging.
+/// **Each edit, retraction and merge judges the chart inside its write.**
+/// Only a managed bot's chain moves it; only the assistant adopts an unmanaged
+/// leaf. Refused and permitted callers are paired, and cycles answer rather
+/// than hanging.
 pub async fn the_chart_is_judged_against_the_chain_read_inside_the_write<M: Memory>(store: &M) {
     let top = EntityId("bot:contract-chart-apex".into());
     let mid = EntityId("bot:contract-chart-midway".into());
@@ -2479,6 +2474,7 @@ pub async fn the_chart_is_judged_against_the_chain_read_inside_the_write<M: Memo
     let orphan = EntityId("bot:contract-chart-foundling".into());
     let orphan_two = EntityId("bot:contract-chart-waif".into());
     let donor = EntityId("bot:contract-chart-benefactor".into());
+    let head = EntityId(crate::memory::ASSISTANT.into());
     for (id, name) in [
         (&top, "Apex"),
         (&mid, "Midway"),
@@ -2490,13 +2486,13 @@ pub async fn the_chart_is_judged_against_the_chain_read_inside_the_write<M: Memo
     ] {
         add(store, NewEntity::new(id.clone(), name, "contract-fixture")).await;
     }
+    ensure(store, &head).await;
     let reporting = |manager: &EntityId| -> std::collections::BTreeMap<String, String> {
         [(crate::memory::REPORTS_TO.to_string(), manager.to_string())]
             .into_iter()
             .collect()
     };
-    // The chart is laid down through the store, which guards nothing at a
-    // fresh capture: mid reports to top, low reports to mid.
+    // Fresh captures lay down mid -> top and low -> mid.
     capture(
         store,
         state(NewFact {
@@ -2564,7 +2560,7 @@ pub async fn the_chart_is_judged_against_the_chain_read_inside_the_write<M: Memo
         );
     }
 
-    // ── adoption: a bot with no manager takes the one named ─────────────────
+    // ── adoption: a non-head refuses; the assistant places the leaf ──────────
     let adopted = capture(
         store,
         NewFact::about(orphan.clone(), "orphan has no manager", date(2026, 10, 2)),
@@ -2578,9 +2574,13 @@ pub async fn the_chart_is_judged_against_the_chain_read_inside_the_write<M: Memo
     store
         .update_fact(&adopted.address(), to(&mid), &mid)
         .await
-        .expect("mid adopts the orphan")
+        .expect_err("mid cannot adopt the orphan by naming itself");
+    store
+        .update_fact(&adopted.address(), to(&mid), &head)
+        .await
+        .expect("the assistant adopts")
         .written()
-        .expect("the bot named may adopt");
+        .expect("written");
 
     // ── a retraction: taking back a manager is a change to the chart ────────
     let err = store
@@ -2630,9 +2630,9 @@ pub async fn the_chart_is_judged_against_the_chain_read_inside_the_write<M: Memo
         "expected MergeCarriesGuardedKeys, got {err:?}"
     );
     store
-        .merge(&donor, &orphan_two, None, date(2026, 10, 4), &mid, None)
+        .merge(&donor, &orphan_two, None, date(2026, 10, 4), &head, None)
         .await
-        .expect("mid may adopt orphan two by merging its donor in");
+        .expect("the assistant adopts orphan two by merging its donor in");
 
     // ── a chart that loops answers instead of hanging ───────────────────────
     let one = EntityId("bot:contract-chart-ouroboros".into());

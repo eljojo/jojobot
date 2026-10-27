@@ -1646,9 +1646,9 @@ mod tests {
     /// 🚨 **A guarded key in a creation's `sets` is judged as a capture judges
     /// it.** `reports_to` is written only by whom its declaration licenses, and
     /// a creation that carried it in `sets` once skipped the check, so any
-    /// caller could place a new bot under any manager. A caller who is neither
-    /// the manager named nor above it is refused and nothing is created; the
-    /// manager itself creates the same bot and the chart reads back.
+    /// caller could place a new bot under any manager. A non-head caller is
+    /// refused and nothing is created; the assistant creates the same bot and
+    /// the chart reads back.
     #[tokio::test]
     async fn a_creation_naming_a_manager_is_licensed_as_a_capture_is() {
         let jojobot = handler();
@@ -1663,7 +1663,7 @@ mod tests {
             ..add_args("bot", "sigma", "Sigma")
         };
 
-        // `TEST_SID` is bot:otto, who is neither bot:omega nor above it.
+        // `TEST_SID` is bot:otto, who cannot adopt.
         let refused = blocked(
             &jojobot
                 .add_entity(Parameters(placing(TEST_SID.into())))
@@ -1674,7 +1674,7 @@ mod tests {
         assert!(
             refused["how_to_proceed"]
                 .as_str()
-                .is_some_and(|how| how.contains("bot:omega")),
+                .is_some_and(|how| how.contains("bot:assistant")),
             "the refusal names the bot that may place it: {refused}"
         );
         let after = json_of(
@@ -1693,11 +1693,11 @@ mod tests {
             "a refused creation leaves nothing behind: {after}"
         );
 
-        // The positive: the manager named creates the same bot, and it lands.
-        let omega = as_bot(&jojobot, "omega");
+        // The assistant creates the same bot, and it lands.
+        let assistant = as_bot(&jojobot, "assistant");
         let landed = json_of(
             &jojobot
-                .add_entity(Parameters(placing(omega)))
+                .add_entity(Parameters(placing(assistant)))
                 .await
                 .expect("add ok"),
         );

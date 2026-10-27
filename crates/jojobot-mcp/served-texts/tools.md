@@ -5088,7 +5088,7 @@ One ranked list over entities, claims, free prose AND mail you sent or in your o
 It is optional when a filter narrows: kind, status (unset: active claims, then archived ones ranked below them, retracted ones left out; `active` is current truth only; `archived` reads the archive, retracted claims too), provenance, standing (`open` asks which claims are still in doubt), subject, edge {shape, object}, answers_type or fits_type (one of the two, never both; prefer answers_type, which names each thing's gaps).
 A call with neither a query nor one of those filters is refused, and include_mail is not a filter.
 kind + edge walks typed edges.
-A claim carries its matching passage, its address (feed it to update_fact), and its parent (and a different subject when present); an entity or prose hit carries the entity's names; include_links adds relationships and references.
+A claim carries its matching passage and update_fact address; see details and include_links for more.
 A message hit carries its box, state (new, read or processed), sender and the id read_message takes, plus a snippet; section hits come grouped with a document block.
 MAIL IS OPT-IN: pass include_mail: true to search messages too.
 Read the `mail` and `memory` fields of the answer: searched: false means nothing there was searched, not the same as nothing matching; a `note` says which case.
@@ -5345,6 +5345,8 @@ details (the reasons under a claim) are a paragraph the reader has not
 asked for. `details_left_out` counts the omitted fields and names their
 records. The note that says how to ask is taught once per session.
 Send `true` to read them. Words in a claim's details still match.
+Fact hits also name their parent (and a different subject when present);
+entity and prose hits carry the entity's names.
 ```
 
 #### `search` — argument `/inputSchema.edge`
@@ -5397,11 +5399,9 @@ Omitted by default.
 
 ```text
 Whether messages left in mailboxes are searched too. **Defaults to
-false, and worth passing true** when you are looking for what a session
-knows: a report filed for another session is exactly the context you
-would not know to go looking for, and this is the one call that finds
-it. It is off unless you ask, because a message hit carries somebody's
-box, sender and a snippet, and this verb is the one to reach for first.
+false.** With sid, this reaches your outbox and your own or descendant
+boxes along reports_to; other mail above or beside you stays out.
+Person mail is never searched; without sid, no mail is returned.
 
 Mail is off unless you ask, because a message hit carries somebody's box,
 sender and a snippet and this is the verb to reach for first. Reach for it
@@ -5529,7 +5529,7 @@ A bot that does not exist comes back status: blocked with the nearest handles �
 Rules are not written here either: a rule is a claim about the bot: capture it.
 Neither is a short self-description for the colleagues view: capture sets.one_liner on this bot instead — that is the key view:colleagues reads, and a bot nobody has written one for shows up there with nothing to say.
 Who the bot reports to goes the same way: capture sets.reports_to on this bot, holding its manager's handle, and the colleagues view shows whom each bot reports to.
-The bot itself does not write it, except a bot that heads a chart, which has reports and no manager above it, and places itself: otherwise a bot above it on the chart does, and a bot with no manager is adopted by the manager named or by a bot above that manager.
+The bot itself does not write it, except a bot that heads a chart, which has reports and no manager above it, and places itself: otherwise a bot above it on the chart does; only the operator's assistant adopts a bot with no manager.
 The refusal names who may.
 Who reports to a bot is the other direction, a second call: recall that bot with follow, relation reports_to, direction in.
 ```

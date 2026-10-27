@@ -2405,11 +2405,10 @@ pub enum MayWrite {
     DifferentIdentity,
     /// **Only a bot above the thing on its chain.**
     Ancestor,
-    /// **The chart's own relation: a bot above the thing, and a bot that
-    /// adopts it.** A thing with a manager changes it only through the bots
-    /// above it. A thing with none takes the manager named by that manager, or
-    /// by a bot above it. And nobody puts a thing under one of its own reports,
-    /// whoever asks (decision log 381).
+    /// **The chart's own relation.** A managed bot is moved only by its chain;
+    /// an unmanaged leaf is adopted only by the operator's assistant. A chart
+    /// head places itself. Nobody puts a thing under its own report, whoever
+    /// asks (decision log 381).
     Superior,
     /// **On a thread: only a bot above the bots that write into it; on anything
     /// else: only a different identity.** A thread's ceiling binds the bots that
@@ -2470,9 +2469,8 @@ pub const OPERATOR: &str = "operator";
 /// declares, so a case pins the literal.
 pub const ASSISTANT: &str = "bot:assistant";
 
-/// **Whether this writer is the assistant**, the one identity exempt from the
-/// rule that holds the writers of a container to its record number (see
-/// [`MayWrite::WritersSuperior`]).
+/// **Whether this writer is the operator's assistant**, which adopts unmanaged
+/// bots and is exempt from the container writers' rule ([`MayWrite::WritersSuperior`]).
 pub fn is_the_assistant(writer: &EntityId) -> bool {
     writer.as_str() == ASSISTANT
 }
@@ -2856,17 +2854,13 @@ fn licensed(
             match (l.above.is_empty(), &l.named) {
                 // A thing with a manager: only the bots above it change that.
                 (false, _) => l.above.contains(caller),
-                // A thing with none adopts the manager named: by that manager,
-                // or by a bot above it. **Unless it heads a chart**: with
-                // reports of its own and a manager from nobody, it is the top,
-                // and a bot that named itself the manager would take the chart
-                // over without the cycle check seeing it, since neither side has
-                // a chain. The head places itself, and no other bot does.
-                (true, Some(named)) => {
+                // A head places itself. Only the operator's assistant adopts
+                // an unmanaged leaf: adoption also grants its mailbox.
+                (true, Some(_)) => {
                     if l.has_reports {
                         caller == subject
                     } else {
-                        caller == named || l.above_named.contains(caller)
+                        is_the_assistant(caller)
                     }
                 }
                 // Nothing to change: no manager, and none named.
@@ -2903,12 +2897,7 @@ fn who_may_write(may: MayWrite, key: &str, subject: &EntityId, lineage: Managers
         (MayWrite::Superior, Some(l)) if l.has_reports && l.named.is_some() => {
             vec![subject.to_string()]
         }
-        (MayWrite::Superior, Some(l)) => l
-            .named
-            .iter()
-            .map(ToString::to_string)
-            .chain(names(&l.above_named))
-            .collect(),
+        (MayWrite::Superior, Some(l)) if l.named.is_some() => vec![ASSISTANT.to_string()],
         _ => Vec::new(),
     }
 }

@@ -2044,10 +2044,12 @@ mod tests {
         // **A different operator is named by the bot that heads the chart**, so
         // epsilon is given a report and nothing above it.
         let epsilon = as_bot(&jojobot, "epsilon");
+        owning(&jojobot, "assistant").await;
+        let assistant = as_bot(&jojobot, "assistant");
         crate::memory::testing::ensure(&jojobot, "bot:omega").await;
         crate::memory::testing::capture_as(
             &jojobot,
-            &epsilon,
+            &assistant,
             CaptureArgs {
                 sets: Some([("reports_to".to_string(), "bot:epsilon".to_string())].into()),
                 ..crate::memory::testing::capture_args("bot:omega", "omega reports to epsilon")
@@ -2257,10 +2259,12 @@ mod tests {
         // **Changing the operator once one is named is the head of the chart's**,
         // so the sender is given a report and nothing above it.
         let head = as_bot(&jojobot, "epsilon");
+        owning(&jojobot, "assistant").await;
+        let assistant = as_bot(&jojobot, "assistant");
         crate::memory::testing::ensure(&jojobot, "bot:omega").await;
         crate::memory::testing::capture_as(
             &jojobot,
-            &head,
+            &assistant,
             CaptureArgs {
                 sets: Some([("reports_to".to_string(), "bot:epsilon".to_string())].into()),
                 ..crate::memory::testing::capture_args("bot:omega", "omega reports to epsilon")

@@ -440,10 +440,11 @@ async fn twenty_read_and_open_messages_are_told_once_and_nineteen_are_not() {
 async fn the_pile_says_whom_to_tell() {
     let jojobot = mailbox_handler();
     let sid = owning(&jojobot, "otto").await;
-    let manager = owning(&jojobot, "gamma").await;
+    owning(&jojobot, "gamma").await;
+    let assistant = owning(&jojobot, "assistant").await;
     crate::memory::testing::capture_as(
         &jojobot,
-        &manager,
+        &assistant,
         crate::memory::capture::CaptureArgs {
             sets: Some([("reports_to".to_string(), "bot:gamma".to_string())].into()),
             ..crate::memory::testing::capture_args("bot:otto", "otto reports to gamma")

@@ -1182,8 +1182,8 @@ async fn solvable_what_the_year_decided_is_on_record_with_its_day_oldest_first()
     );
 }
 
-/// **Case 6. Lisa's charter reads, and her mailbox does not.** A message left in
-/// her box is not the assistant's to open: the read is refused and says who
+/// **Case 6. Lisa's charter reads, and her mailbox does not.** A message Lisa leaves in
+/// her own box is not the assistant's outbox: the read is refused and says who
 /// can, and the assistant's own box and its own counts are read as ever.
 #[tokio::test]
 async fn solvable_lisas_charter_reads_and_her_mailbox_does_not() {
@@ -1197,17 +1197,23 @@ async fn solvable_lisas_charter_reads_and_her_mailbox_does_not() {
         .await;
     assert!(charter.contains("paperwork"), "{charter}");
 
+    let lisa = surface
+        .must("start_here", json!({"bot": "lisa", "brief": true}))
+        .await
+        .expect("Lisa's earlier sittings are wrapped");
+    let lisa_sid = lisa["session"]["sid"].as_str().expect("Lisa's key");
     let posted: Value = serde_json::from_str(
         &surface
             .call(
                 "post_message",
-                json!({"to": "lisa", "subject": "a question", "body": "a note for Lisa", "sid": sid}),
+                json!({"to": "lisa", "subject": "a question", "body": "a note for Lisa", "sid": lisa_sid}),
             )
             .await,
     )
     .expect("json");
     let id = posted["id"].as_str().expect("the post answers with an id");
     assert_eq!(posted["mailbox"], "lisa", "{posted}");
+    assert_eq!(posted["sender"], "bot:lisa", "{posted}");
 
     let refused: Value = serde_json::from_str(
         &surface

@@ -602,10 +602,11 @@ mod tests {
         // **Changing the operator once one is named is the head of the chart's**,
         // so otto is given a report and nothing above it.
         let head = as_bot(&jojobot, "otto");
+        make_bot(&jojobot, "assistant").await;
         ensure(&jojobot, "bot:omega").await;
         capture_as(
             &jojobot,
-            &head,
+            &as_bot(&jojobot, "assistant"),
             CaptureArgs {
                 sets: Some([("reports_to".to_string(), "bot:otto".to_string())].into()),
                 ..capture_args("bot:omega", "omega reports to otto")

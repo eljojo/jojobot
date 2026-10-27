@@ -106,11 +106,9 @@ pub struct SearchArgs {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) fits_type: Option<String>,
     /// Whether messages left in mailboxes are searched too. **Defaults to
-    /// false, and worth passing true** when you are looking for what a session
-    /// knows: a report filed for another session is exactly the context you
-    /// would not know to go looking for, and this is the one call that finds
-    /// it. It is off unless you ask, because a message hit carries somebody's
-    /// box, sender and a snippet, and this verb is the one to reach for first.
+    /// false.** With sid, this reaches your outbox and your own or descendant
+    /// boxes along reports_to; other mail above or beside you stays out.
+    /// Person mail is never searched; without sid, no mail is returned.
     ///
     /// Mail is off unless you ask, because a message hit carries somebody's box,
     /// sender and a snippet and this is the verb to reach for first. Reach for it
@@ -158,6 +156,8 @@ pub struct SearchArgs {
     /// asked for. `details_left_out` counts the omitted fields and names their
     /// records. The note that says how to ask is taught once per session.
     /// Send `true` to read them. Words in a claim's details still match.
+    /// Fact hits also name their parent (and a different subject when present);
+    /// entity and prose hits carry the entity's names.
     #[serde(default)]
     pub(crate) details: Option<bool>,
     /// **Whether a thing's review mark is among the hits.** Off by default: the

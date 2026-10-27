@@ -20,7 +20,17 @@ async fn mail_visible_story_a_manager_reads_a_new_report_without_taking_it() {
     let lisa = story.as_bot("bot:lisa").await;
     let marge = story.as_bot("bot:marge").await;
     let otto = story.as_bot("bot:otto").await;
-    homer
+    let assistant = story.as_bot("bot:assistant").await;
+    assistant
+        .call(
+            "capture",
+            json!({
+                "subject": "bot:homer", "content": "Homer reports to the assistant",
+                "sets": {"reports_to": "bot:assistant"},
+            }),
+        )
+        .await;
+    assistant
         .call(
             "capture",
             json!({
@@ -29,14 +39,15 @@ async fn mail_visible_story_a_manager_reads_a_new_report_without_taking_it() {
             }),
         )
         .await;
-    bart.call(
-        "capture",
-        json!({
-            "subject": "bot:lisa", "content": "Lisa reports to Bart",
-            "sets": {"reports_to": "bot:bart"},
-        }),
-    )
-    .await;
+    assistant
+        .call(
+            "capture",
+            json!({
+                "subject": "bot:lisa", "content": "Lisa reports to Bart",
+                "sets": {"reports_to": "bot:bart"},
+            }),
+        )
+        .await;
     let id = otto.post("lisa", "The report", "chartneedle").await;
     let found = homer.find_including_mail("chartneedle").await.json();
     assert_eq!(found["results"][0]["id"], id, "{found}");
@@ -102,5 +113,6 @@ async fn mail_visible_story_a_manager_reads_a_new_report_without_taking_it() {
         .wrap("asked for the report instead of reading beside the chart")
         .await;
     otto.wrap("sent the report").await;
+    assistant.wrap("placed the reports on the chart").await;
     story.finish().await;
 }

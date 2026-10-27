@@ -30,10 +30,11 @@ async fn chart() -> (Jojobot, [String; 4]) {
     let bart = owning(&jojobot, "bart").await;
     let lisa = owning(&jojobot, "lisa").await;
     let marge = owning(&jojobot, "marge").await;
-    for (bot, manager, sid) in [("bart", "homer", &homer), ("lisa", "bart", &bart)] {
+    let assistant = owning(&jojobot, "assistant").await;
+    for (bot, manager) in [("homer", "assistant"), ("bart", "homer"), ("lisa", "bart")] {
         capture_as(
             &jojobot,
-            sid,
+            &assistant,
             crate::memory::capture::CaptureArgs {
                 sets: Some([("reports_to".into(), format!("bot:{manager}"))].into()),
                 ..capture_args(&format!("bot:{bot}"), "who manages this bot")
@@ -287,6 +288,47 @@ async fn mail_visible_other_sender_lists_withhold_a_peers_message_and_its_digest
     assert_eq!(listed["messages"][0]["id"], visible["id"], "{listed}");
     assert_eq!(listed["withheld"], 1, "{listed}");
     assert_eq!(listed["sent_total"], 1, "{listed}");
+}
+
+#[tokio::test]
+async fn mail_visible_a_non_head_cannot_adopt_a_peer_and_read_its_mail() {
+    let (jojobot, [_, bart, _, _]) = chart().await;
+    let note = send(&jojobot, "marge", "otto", "chartneedle").await;
+    let id = note["id"].as_str().unwrap();
+    let adoption = || crate::memory::capture::CaptureArgs {
+        sets: Some([("reports_to".into(), "bot:bart".into())].into()),
+        ..capture_args("bot:marge", "Marge reports to Bart")
+    };
+    let refused = json_of(
+        &jojobot
+            .capture(Parameters(crate::memory::capture::CaptureArgs {
+                sid: Some(bart.clone()),
+                ..adoption()
+            }))
+            .await
+            .unwrap(),
+    );
+    assert_eq!(refused["status"], "blocked", "{refused}");
+    assert_eq!(refused["wrote"], false, "{refused}");
+    assert!(
+        !jojobot
+            .memory
+            .fields(&EntityId("bot:marge".into()))
+            .await
+            .unwrap()
+            .contains_key("reports_to")
+    );
+    assert_eq!(open(&jojobot, &bart, id, false).await["status"], "blocked");
+    assert!(found_boxes(&find(&jojobot, Some(&bart), 0, 20).await).is_empty());
+    let hidden = sent(&jojobot, &bart, "bot:otto", true).await;
+    assert_eq!(hidden["messages"], serde_json::json!([]), "{hidden}");
+    assert_eq!(hidden["withheld"], 1, "{hidden}");
+    let assistant = as_bot(&jojobot, "assistant");
+    capture_as(&jojobot, &assistant, adoption()).await;
+    let permitted = open(&jojobot, &bart, id, false).await;
+    assert_eq!(permitted["body"], "chartneedle", "{permitted}");
+    assert_eq!(permitted["state"], "new", "{permitted}");
+    assert_eq!(permitted["taken"], false, "{permitted}");
 }
 
 #[tokio::test]

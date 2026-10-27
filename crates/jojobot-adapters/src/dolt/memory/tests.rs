@@ -995,9 +995,9 @@ impl Merged {
                 &self.survivor,
                 Some("filed twice"),
                 date(2026, 9, 2),
-                // The manager the folded thing reports to is the one who may
-                // fold it into another thing.
-                &self.pointing,
+                // The folded thing has no manager, so only the operator's
+                // assistant may fold in the manager it names.
+                &EntityId(jojobot_domain::memory::ASSISTANT.into()),
                 Some("run-a"),
             )
             .await

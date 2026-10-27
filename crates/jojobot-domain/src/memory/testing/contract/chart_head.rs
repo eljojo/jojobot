@@ -5,14 +5,14 @@
 //! judged against the chart read inside its own transaction, so the head has to
 //! be recognised there, by the fake and by the real store alike.
 
-use super::support::{add, capture, state, state_patch};
+use super::support::{add, capture, ensure, state, state_patch};
 use super::*;
 
 /// **The head of a chart places itself, and no other bot places it.** A bot with
 /// no manager cannot name itself the manager of a chart's head, by an edit or by a
 /// merge, and the refusal names the head as the one who may. The head itself
 /// writes its own manager and it lands. A thing with no reports is still adopted
-/// by the manager it names. Paired, or a store that refused every adoption would
+/// by the assistant. Paired, or a store that refused every adoption would
 /// pass the first half.
 pub async fn the_head_of_a_chart_places_itself<M: Memory>(store: &M) {
     let omega = EntityId("bot:contract-head-omega".into());
@@ -22,6 +22,7 @@ pub async fn the_head_of_a_chart_places_itself<M: Memory>(store: &M) {
     let twin = EntityId("bot:contract-head-twin".into());
     let second = EntityId("bot:contract-head-second".into());
     let follower = EntityId("bot:contract-head-follower".into());
+    let assistant = EntityId(crate::memory::ASSISTANT.into());
     for (id, name) in [
         (&omega, "Head Omega"),
         (&alpha, "Head Alpha"),
@@ -33,6 +34,7 @@ pub async fn the_head_of_a_chart_places_itself<M: Memory>(store: &M) {
     ] {
         add(store, NewEntity::new(id.clone(), name, "contract-fixture")).await;
     }
+    ensure(store, &assistant).await;
     let reporting = |manager: &EntityId| -> std::collections::BTreeMap<String, String> {
         [(crate::memory::REPORTS_TO.to_string(), manager.to_string())]
             .into_iter()
@@ -107,18 +109,18 @@ pub async fn the_head_of_a_chart_places_itself<M: Memory>(store: &M) {
         "the head's own placement reads back: {placed:?}"
     );
 
-    // A thing with no reports is adopted by the manager it names.
+    // The assistant adopts a thing with no reports.
     let leaf = capture(
         store,
         NewFact::about(gamma.clone(), "gamma has no manager", date(2026, 10, 2)),
     )
     .await;
     store
-        .update_fact(&leaf.address(), to(&omega), &omega)
+        .update_fact(&leaf.address(), to(&omega), &assistant)
         .await
-        .expect("omega adopts a thing with no reports")
+        .expect("the assistant adopts a thing with no reports")
         .written()
-        .expect("the guard must not block the manager named");
+        .expect("the guard must not block the assistant");
     let adopted = store.fields(&gamma).await.expect("gamma is readable");
     assert_eq!(
         manager_in(&adopted),

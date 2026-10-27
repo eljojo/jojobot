@@ -338,9 +338,8 @@ impl Jojobot {
                        both; prefer answers_type, which names each thing's gaps). A call with neither a \
                        query nor one of those filters is refused, and include_mail is not a \
                        filter. kind + edge walks typed edges. A \
-                       claim carries its matching passage, its address (feed it to update_fact), and \
-                       its parent (and a different subject when present); an entity or prose hit carries the \
-                       entity's names; include_links adds relationships and references. A message hit carries its box, state (new, \
+                       claim carries its matching passage and update_fact address; see details and \
+                       include_links for more. A message hit carries its box, state (new, \
                        read or processed), sender and the id read_message takes, plus a \
                        snippet; section hits come grouped with a document \
                        block. MAIL IS OPT-IN: pass include_mail: true to search messages \

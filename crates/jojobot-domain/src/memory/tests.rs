@@ -390,17 +390,15 @@ fn reporting_to(manager: &str) -> BTreeMap<String, String> {
 }
 
 /// **A bot cannot be put under one of its own reports, whoever asks.** The
-/// assistant is at the top of the chain and has no manager, so the write that
-/// names a bot below it as its manager would be allowed by adoption (the bot
-/// named is the caller) and would invert the chart. Written before the rule,
+/// assistant is at the top of the chain and has no manager, so naming a bot
+/// below it as its manager would invert the chart. Written before the rule,
 /// and refused for the named bot, for the assistant itself and for a bot
 /// naming itself.
 #[test]
 fn a_write_that_puts_a_bot_under_its_own_report_is_refused_whoever_asks() {
     let top = handle("bot:assistant");
     let line = handle("bot:sigma");
-    // The line names itself the assistant's manager: it is the bot named, so
-    // adoption would let it, and it sits below the assistant.
+    // The cycle is refused before the caller's adoption licence is checked.
     let inverted = lineage(&[], Some("bot:sigma"), &["bot:assistant"]);
     for caller in [&line, &top] {
         let refused =
@@ -424,8 +422,8 @@ fn a_write_that_puts_a_bot_under_its_own_report_is_refused_whoever_asks() {
 /// itself: not the bot named, not a bot above that one. The cycle check cannot
 /// see this, because neither side has a chain. The refusal names the head as the
 /// one who may. Paired with the leaf, or a rule that refused every adoption
-/// would pass: a thing with no manager and no reports is still adopted by the bot
-/// named. A merge that would give the head a manager follows the same rule.
+/// would pass: the assistant still adopts an unmanaged leaf. A merge that
+/// would give the head a manager follows the same rule.
 #[test]
 fn the_head_of_a_chart_places_itself() {
     let omega = handle("bot:omega");
@@ -455,12 +453,12 @@ fn the_head_of_a_chart_places_itself() {
     assert!(
         refuses_unlicensed_write(
             &handle("bot:gamma"),
-            &omega,
+            &handle(ASSISTANT),
             &reporting_to("bot:omega"),
             Some(&leaf)
         )
         .is_none(),
-        "a thing with no reports is adopted by the manager it names"
+        "the assistant adopts a thing with no reports"
     );
 
     // A merge that would carry a manager onto the head: refused for a stranger,
@@ -510,10 +508,8 @@ fn a_record_ceiling_refused_on_the_assistant_does_not_name_it() {
     assert!(allowed("bot:assistant").is_empty());
 }
 
-/// **Adoption: a bot with no manager takes the one named by that bot or by one
-/// above it, and a bot that has one changes it only through its chain.** Every
-/// branch is asked of both of its answers, since a rule that refused
-/// everything, or allowed everything, would pass the half that agrees.
+/// **Only the assistant adopts; only a managed bot's chain moves it.** Both
+/// halves have permitted and refused callers.
 #[test]
 fn a_first_manager_is_adopted_and_a_changed_one_stays_with_the_chain() {
     let orphan = handle("bot:sigma");
@@ -526,9 +522,10 @@ fn a_first_manager_is_adopted_and_a_changed_one_stays_with_the_chain() {
             Some(&lineage(&[], Some(named), above_named)),
         )
     };
-    // The bot named adopts its report; a bot above it may place one under it.
-    assert!(adopts("bot:gamma", &["bot:omega"]).is_none());
-    assert!(adopts("bot:omega", &["bot:omega"]).is_none());
+    // Neither the named manager nor its non-head superior can adopt.
+    assert!(adopts(ASSISTANT, &[]).is_none());
+    assert!(adopts("bot:gamma", &["bot:omega"]).is_some());
+    assert!(adopts("bot:omega", &["bot:omega"]).is_some());
     // A stranger, and the orphan naming its own boss, are refused.
     assert!(adopts("bot:delta", &["bot:omega"]).is_some());
     assert!(adopts("bot:sigma", &["bot:omega"]).is_some());
@@ -582,7 +579,7 @@ fn a_refused_chart_write_names_the_bots_that_may_make_it() {
     for who in ["bot:rho", "bot:omega"] {
         assert!(said.contains(who), "{who} may: {said}");
     }
-    // A bot without one: the bot being named, and the bots above it.
+    // A bot without one: only the operator's assistant.
     let said = refuses_unlicensed_write(
         &orphan,
         &stranger,
@@ -591,9 +588,9 @@ fn a_refused_chart_write_names_the_bots_that_may_make_it() {
     )
     .expect("a stranger may not adopt")
     .to_string();
-    for who in ["bot:gamma", "bot:omega"] {
-        assert!(said.contains(who), "{who} may: {said}");
-    }
+    assert!(said.contains(ASSISTANT), "{said}");
+    assert!(!said.contains("bot:gamma"), "{said}");
+    assert!(!said.contains("bot:omega"), "{said}");
     assert!(!said.contains("operator"), "{said}");
 }
 

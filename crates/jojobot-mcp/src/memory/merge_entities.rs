@@ -1057,6 +1057,7 @@ mod tests {
         capture_ok(
             &jojobot,
             CaptureArgs {
+                sid: Some(assistant.clone()),
                 sets: Some(
                     [("reports_to".to_string(), "bot:otto".to_string())]
                         .into_iter()

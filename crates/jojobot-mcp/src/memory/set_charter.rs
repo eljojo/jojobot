@@ -74,8 +74,8 @@ impl Jojobot {
                        shows whom each bot reports to. The bot itself does not write it, \
                        except a bot that heads a chart, which has reports and no manager \
                        above it, and places itself: otherwise a bot above it on the chart \
-                       does, and a bot with no manager is adopted by the manager named or by \
-                       a bot above that manager. The refusal names who may. Who reports to a bot is the other \
+                       does; only the operator's assistant adopts a bot with no manager. \
+                       The refusal names who may. Who reports to a bot is the other \
                        direction, a second call: recall that bot with follow, relation \
                        reports_to, direction in."
     )]
