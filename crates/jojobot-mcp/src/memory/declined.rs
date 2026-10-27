@@ -103,7 +103,8 @@ impl TokenSlot {
 }
 
 impl Jojobot {
-    /// A numbered-card guess stays a miss; its held number supplies candidates.
+    /// TEMPORARY(9.3.5) the card-number lookup. A numbered-card guess stays a miss;
+    /// its held number supplies candidates. The one resolver of 9.3.5 owns it.
     pub(crate) async fn recall_declined(
         &self,
         mut error: MemoryError,
@@ -471,6 +472,7 @@ pub(crate) fn blocked_result(
              Display names are not unique and never have to be; the handle is what has to be.",
         ),
     };
+    // TEMPORARY(9.3.5) the card-number advice, which retires with the lookup above.
     if let Some(number) = attempted.as_str().strip_prefix("work:q-") {
         for card in candidates
             .iter()
