@@ -448,6 +448,15 @@ impl mailbox::Mailboxes for DownMailboxes {
     fn changes(&self) -> Option<u64> {
         None
     }
+    async fn unchanged_delivery(
+        &self,
+        _: &mailbox::MailboxName,
+        _: mailbox::TakenBy,
+    ) -> Result<Option<mailbox::Delivery>, mailbox::MailboxError> {
+        Err(mailbox::MailboxError::Store(
+            "the mailbox world is down".into(),
+        ))
+    }
     async fn create_mailbox(
         &self,
         _: &mailbox::MailboxName,
@@ -578,6 +587,13 @@ impl mailbox::Mailboxes for UnopenableMailboxes {
     fn changes(&self) -> Option<u64> {
         self.0.changes()
     }
+    async fn unchanged_delivery(
+        &self,
+        name: &mailbox::MailboxName,
+        taken_by: mailbox::TakenBy,
+    ) -> Result<Option<mailbox::Delivery>, mailbox::MailboxError> {
+        self.0.unchanged_delivery(name, taken_by).await
+    }
     async fn create_mailbox(
         &self,
         _: &mailbox::MailboxName,
@@ -684,6 +700,13 @@ impl mailbox::Mailboxes for UnopenableMailboxes {
 impl mailbox::Mailboxes for CountingMailboxes {
     fn changes(&self) -> Option<u64> {
         self.inner.changes()
+    }
+    async fn unchanged_delivery(
+        &self,
+        name: &mailbox::MailboxName,
+        taken_by: mailbox::TakenBy,
+    ) -> Result<Option<mailbox::Delivery>, mailbox::MailboxError> {
+        self.inner.unchanged_delivery(name, taken_by).await
     }
     async fn create_mailbox(
         &self,
@@ -859,6 +882,13 @@ impl mailbox::Mailboxes for CountingMailboxes {
 impl mailbox::Mailboxes for RenamingMailboxes {
     fn changes(&self) -> Option<u64> {
         self.inner.changes()
+    }
+    async fn unchanged_delivery(
+        &self,
+        name: &mailbox::MailboxName,
+        taken_by: mailbox::TakenBy,
+    ) -> Result<Option<mailbox::Delivery>, mailbox::MailboxError> {
+        self.inner.unchanged_delivery(name, taken_by).await
     }
     async fn create_mailbox(
         &self,
