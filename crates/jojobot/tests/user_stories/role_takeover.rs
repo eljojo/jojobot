@@ -40,8 +40,8 @@ fn claim_args() -> serde_json::Value {
 }
 
 /// **A new boot is refused while its own earlier run holds the role, and the
-/// holder's wrap frees it at once.** The refusal names the holder's run, when it
-/// last wrote, when the lease runs out and what frees the role. Another bot is
+/// holder's wrap frees it at once.** The refusal names the holder's run, when its
+/// lease was last renewed, when the lease runs out and what frees the role. Another bot is
 /// refused the same way, so the exemption for the same bot is gone and nothing else
 /// changed.
 #[tokio::test]
@@ -74,7 +74,7 @@ async fn a_new_boot_is_refused_while_its_own_earlier_run_holds_the_role() {
     assert_eq!(claim["holder"], first_run.run(), "{claim}");
     assert!(claim.get("took_over_from").is_none(), "{claim}");
     let how = claim["how_to_proceed"].as_str().expect("a way forward");
-    for word in ["last wrote", "lease", "wraps", "ask_for_code"] {
+    for word in ["last renewed", "lease", "wraps", "ask_for_code"] {
         assert!(how.contains(word), "the refusal says {word}: {how}");
     }
     assert_eq!(holder_of(&s).await.as_deref(), Some(first_run.run()));
@@ -143,7 +143,8 @@ async fn the_operators_code_takes_a_live_role_and_the_old_run_reads_abandoned_by
     first_run
         .refused("journal", json!({"entry": "still here", "focus": "x"}))
         .await
-        .says(taker.run());
+        .says(taker.run())
+        .says("at the operator's word");
     let runs = bystander.call("list_runs", json!({})).await.json();
     assert_eq!(
         state_in(&runs, first_run.run()).as_deref(),

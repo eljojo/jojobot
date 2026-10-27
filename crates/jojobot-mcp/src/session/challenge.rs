@@ -929,6 +929,58 @@ mod tests {
         assert_eq!(fields["state"], "replaced", "{fields:?}");
     }
 
+    /// **A code that cannot be spent takes no role.** The holder claims a role and
+    /// writes. A new run presents a right code with the same claim, but the write
+    /// that spends the challenge fails: the claim is not taken, the holder is still
+    /// active and the challenge is still issued, so the code has displaced nobody.
+    #[tokio::test]
+    async fn a_code_that_cannot_be_spent_displaces_nobody() {
+        let (jojobot, scripted) = scripted_instance().await;
+        let mut plain = boot_with_code("gamma", "none", "none");
+        plain.challenge = None;
+        plain.code = None;
+        plain.claim = Some("dev-dispatch".into());
+        plain.resume = Some("new".into());
+        let holder = json_of(
+            &jojobot
+                .start_here(Parameters(plain))
+                .await
+                .expect("start_here ok"),
+        );
+        assert_eq!(holder["session"]["claim"]["status"], "taken", "{holder}");
+        let (handle, code) = asked(&jojobot).await;
+
+        scripted.script(|s| s.update_fails = true);
+        let mut coded = boot_with_code("gamma", handle.as_str(), &code);
+        coded.claim = Some("dev-dispatch".into());
+        coded.resume = Some("new".into());
+        let second = json_of(
+            &jojobot
+                .start_here(Parameters(coded))
+                .await
+                .expect("start_here ok"),
+        );
+        scripted.script(|s| *s = Default::default());
+
+        assert_ne!(second["session"]["claim"]["status"], "taken", "{second}");
+        let holder_run = holder["session"]["run"].as_str().expect("a run name");
+        let runs = jojobot
+            .sessions
+            .all_sessions()
+            .await
+            .expect("the runs read");
+        assert!(
+            runs.iter().any(|run| run.state == SessionState::Active
+                && run
+                    .sid
+                    .as_ref()
+                    .is_some_and(|sid| sid.as_str() == holder_run)),
+            "the holder was displaced by a code that was not spent: {runs:?}"
+        );
+        let fields = jojobot.memory.fields(&handle).await.expect("fields ok");
+        assert_eq!(fields["state"], "issued", "{fields:?}");
+    }
+
     /// **P2: an ask that cannot read the standing challenge makes no second
     /// one.** The read fails, and creating a new challenge would leave two issued.
     #[tokio::test]

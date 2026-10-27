@@ -646,6 +646,7 @@ impl Jojobot {
         // known.** A role named without a resulting handle (the resume-or-new
         // choice came back instead) decides nothing — there is no claimant
         // yet, and the caller answers the choice, then names the role again.
+        let mut spent_early: Option<serde_json::Value> = None;
         if let (Some(bot), Some(role)) = (bot, claim) {
             // **The claimant is the run's public NAME**, which a role's holder
             // may carry and anybody may read; the key only proves the call.
@@ -667,8 +668,33 @@ impl Jojobot {
                 // is called.
                 let gate = self.registry.gate(bot.as_str());
                 let _serialized = gate.lock().await;
+                // **The code is spent before it is allowed to take anything.** A
+                // code that is only checked takes no role: if the spend fails, the
+                // challenge stays issued and the holder keeps the role, so the same
+                // code cannot displace a second holder later.
+                let mut word = None;
+                if let Some(verified) = redeem.filter(|v| v.bot == *bot) {
+                    spent_early = Some(
+                        match self.redeem_code(verified, &run, today_or_clock).await {
+                            Ok(granted) => {
+                                word = Some(verified);
+                                granted
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    error = %crate::session::challenge::loggable(&e), run,
+                                    "a verified code could not be spent"
+                                );
+                                serde_json::json!({
+                                    "error": "The code was checked but the voucher could not be \
+                                              written. Ask for a new code.",
+                                })
+                            }
+                        },
+                    );
+                }
                 let outcome = self
-                    .decide_role_claim(bot, role, &run, now, today_or_clock, redeem)
+                    .decide_role_claim(bot, role, &run, now, today_or_clock, word)
                     .await;
                 // **A GRANTED claim has done something, so its session record
                 // is written now, through the same lazy path any first write
@@ -720,8 +746,10 @@ impl Jojobot {
             // a voucher record is readable by anybody, and the key must never
             // be written into one. The key only proves this call.
             let run = session.get("run").and_then(|v| v.as_str());
-            let mut redeemed = None;
-            if let (Some(verified), Some(_), Some(run)) = (redeem, sid.as_deref(), run) {
+            let mut redeemed = spent_early;
+            if let (None, Some(verified), Some(_), Some(run)) =
+                (&redeemed, redeem, sid.as_deref(), run)
+            {
                 let day = today.unwrap_or_else(|| self.clock().today_in(&frame_zone()));
                 redeemed = Some(match self.redeem_code(verified, run, day).await {
                     Ok(granted) => granted,
@@ -1225,7 +1253,19 @@ impl Jojobot {
         {
             let holder = holder.clone();
             match self
-                .abandon_run_and_release(bot, &holder, claimant, role)
+                .abandon_run_and_release(
+                    bot,
+                    &holder,
+                    // **The run closed at the operator's word keeps that in the
+                    // column that names its displacer**, as `op:` and the run: the
+                    // column holds sixteen characters.
+                    &if by_word.is_some() {
+                        format!("op:{claimant}")
+                    } else {
+                        claimant.to_string()
+                    },
+                    role,
+                )
                 .await
             {
                 Ok(Some(displaced)) => {

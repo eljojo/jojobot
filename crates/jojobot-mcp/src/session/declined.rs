@@ -132,19 +132,26 @@ fn session_declined_arms(e: SessionError, sid: &str) -> Result<CallToolResult, M
             state: SessionState::Abandoned,
             displaced_by: Some(by),
             ..
-        } => blocked(
-            sid,
-            format!(
-                "Nothing was written. Session '{sid}' was displaced: run {by} of your bot \
-                 claimed a role this run held, which closed this run. That is not a failure. \
+        } => {
+            let (by, operator) = match by.as_str().strip_prefix("op:") {
+                Some(run) => (run, " at the operator's word"),
+                None => (by.as_str(), ""),
+            };
+            blocked(
+                sid,
+                format!(
+                    "Nothing was written. Session '{sid}' was displaced: run {by} of your bot \
+                 claimed a role this run held{operator}, which closed this run. That is not a \
+                 failure. \
                  Resuming this run reopens it where it left off and its chronology continues, \
                  but a resume does not bring the role back: it stays with run {by} until \
                  that run releases it or its lease ends. Call start_here with your bot name \
                  and pass resume with this run's name, '{sid}', to take it, or boot a run of \
                  your own."
+                )
+                .into(),
             )
-            .into(),
-        ),
+        }
         SessionError::Closed {
             state: SessionState::Abandoned,
             ..
