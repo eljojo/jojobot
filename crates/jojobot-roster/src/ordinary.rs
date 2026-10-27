@@ -14,10 +14,6 @@
 /// convenient.** A handle of that kind that names somebody belongs on
 /// [`crate::ROSTER`], where the bar shows it, or nowhere.
 pub const ORDINARY: &[&str] = &[
-    // The receipt card's exact build example, retained for its measured set.
-    "work:revisit-release-field-storage",
-    "project:right-fact-right-place",
-    "bot:pm",
     // A numbered queue of work items, filed under a queue named for a greek
     // letter. They name nobody.
     "work:alpha-queue",
