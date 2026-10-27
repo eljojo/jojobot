@@ -269,14 +269,7 @@
               "--skip=a_store_holding_a_row_at_a_handle_the_build_supplies_boots_and_the_row_answers"
               "--skip=what_the_operator_wrote_on_a_handle_the_build_stopped_supplying_reads_back_as_a_thing"
               "--skip=everything_naming_a_handle_the_build_stopped_supplying_follows_the_row_the_boot_gave_it"
-              "--skip=deploy_8_1::a_dependency_list_rewritten_over_three_records_walks_as_the_newest_holds_it"
-              "--skip=deploy_9_1::a_bot_is_not_told_again_a_note_it_held_before_the_upgrade"
-              "--skip=deploy_9_1::the_current_binary_boots_with_the_link_rule_on_over_the_last_deployed_store"
-              "--skip=deploy_9_2_1::read_mail_the_last_deployed_build_left_open_is_closed_by_the_batch_close"
               "--skip=runs_in_moment_order::the_runs_of_the_last_deployed_store_read_in_moment_order_on_the_head"
-              "--skip=deploy_9_2_1::repair_pass::an_old_merge_under_a_later_one_gets_its_event_once_across_boots"
-              "--skip=deploy_9_2_1::repair_pass::an_old_merge_chain_with_its_event_in_place_gets_none_written"
-              "--skip=deploy_9_1::the_helper_that_shapes_a_recording_takes_one_marker_off_and_moves_no_row"
             ];
           }
         );

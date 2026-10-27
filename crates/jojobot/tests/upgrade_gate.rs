@@ -8,16 +8,12 @@ use std::process::Stdio;
 use std::time::Duration;
 #[path = "upgrade_gate/deaths.rs"]
 mod deaths;
-#[path = "upgrade_gate/deploy_8_1.rs"]
-mod deploy_8_1;
-#[path = "upgrade_gate/deploy_9_1.rs"]
-mod deploy_9_1;
-#[path = "upgrade_gate/deploy_9_2_1.rs"]
-mod deploy_9_2_1;
 #[path = "upgrade_gate/kitchen_sink.rs"]
 mod kitchen_sink;
 #[path = "upgrade_gate/oracle.rs"]
 mod oracle;
+#[path = "upgrade_gate/recorded_r1.rs"]
+mod recorded_r1;
 #[path = "upgrade_gate/runs_in_moment_order.rs"]
 mod runs_in_moment_order;
 mod support;
@@ -737,7 +733,7 @@ fn degradations<'a>(
         .filter(|line| {
             let expected = line.contains(WARNING_THE_GATE_CAUSES)
                 || is_the_recorded_ambiguous_handle(line)
-                || deploy_9_1::is_recorded_r1_warning(line)
+                || recorded_r1::is_recorded_r1_warning(line)
                 || (stored_over_the_ceiling && line.contains("OVER THE CEILING"))
                 || tolerated_warnings.iter().any(|named| line.contains(named));
             line.contains("ERROR") || (line.contains("WARN") && !expected)
@@ -887,7 +883,7 @@ async fn boot_current_with(
     tolerated_warnings: &[&str],
 ) -> Booted {
     let (marked_before, expected_r1) =
-        deploy_9_1::recorded_r1_before_boot(state_dir, store_port).await;
+        recorded_r1::recorded_r1_before_boot(state_dir, store_port).await;
     let binary = jojobot_exercise::room::server_binary().expect("a jojobot binary to run");
     let mut child = tokio::process::Command::new(&binary)
         .env("STATE_DIRECTORY", state_dir)
@@ -960,7 +956,7 @@ async fn boot_current_with(
          boot failed: {warned:?}"
     );
     assert!(
-        deploy_9_1::recorded_r1_counts_match(&seen, &expected_r1),
+        recorded_r1::recorded_r1_counts_match(&seen, &expected_r1),
         "recorded at {git_ref}: expected R1 reports {expected_r1:?}: {seen:?}"
     );
     // An ambiguous plain handle is reported on the first marking boot only.
@@ -1319,7 +1315,7 @@ async fn assert_every_thing_holds_what_it_held(
                      and holds nothing under it after: {read}"
             )
         });
-        deploy_9_1::assert_still_held(git_ref, handle, key, was, now);
+        recorded_r1::assert_still_held(git_ref, handle, key, was, now);
     }
 }
 
