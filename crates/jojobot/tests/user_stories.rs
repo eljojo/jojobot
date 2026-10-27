@@ -582,6 +582,8 @@ mod wrap_code;
 #[path = "user_stories/contract_lean_receipts.rs"]
 mod contract_lean_receipts;
 
+#[path = "user_stories/contract_read_is_writable.rs"]
+mod contract_read_is_writable;
 #[path = "user_stories/contract_receipt_notes.rs"]
 mod contract_receipt_notes;
 
