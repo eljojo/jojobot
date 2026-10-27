@@ -79,3 +79,91 @@ async fn an_existing_card_number_handle_reads_itself() {
     assert_eq!(exact["objects"][0]["id"], "work:q-2742", "{exact}");
     story.finish().await;
 }
+
+#[tokio::test]
+async fn an_archived_card_number_holder_is_not_suggested() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("work:q-reference-link-rule", "Reference link rule")
+        .await;
+    s.call("capture", json!({"subject":"work:q-reference-link-rule", "content":"numbered card", "sets":{"card":"2742"}})).await;
+    let before = s
+        .refused("recall", json!({"subject":"work:q-2742"}))
+        .await
+        .json();
+    assert_eq!(
+        before["candidates"][0]["handle"], "work:q-reference-link-rule",
+        "{before}"
+    );
+    s.call(
+        "archive_entity",
+        json!({"handle":"work:q-reference-link-rule", "reason":"the item is retired"}),
+    )
+    .await;
+    let held = s
+        .call("recall", json!({"subject":"work:q-reference-link-rule"}))
+        .await
+        .json();
+    assert!(held["objects"][0]["archived"].is_object(), "{held}");
+    assert_eq!(held["objects"][0]["fields"]["card"], "2742", "{held}");
+    let after = s
+        .refused("recall", json!({"subject":"work:q-2742"}))
+        .await
+        .json();
+    assert!(
+        after["candidates"]
+            .as_array()
+            .expect("candidates")
+            .iter()
+            .all(
+                |candidate| candidate["handle"] != "work:q-reference-link-rule"
+                    && candidate["reason"] != "card-number"
+            ),
+        "{after}"
+    );
+    story.finish().await;
+}
+
+#[tokio::test]
+async fn live_card_number_holders_precede_ordinary_candidates() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    for (handle, name) in [
+        ("work:q-entity-lifecycle", "Entity lifecycle"),
+        ("work:q-reference-link-rule", "Reference link rule"),
+    ] {
+        s.add(handle, name).await;
+        s.call(
+            "capture",
+            json!({"subject":handle, "content":"numbered card", "sets":{"card":"2742"}}),
+        )
+        .await;
+    }
+    s.add("work:q-2743", "Nearby numbered work").await;
+    let answer = s
+        .refused("recall", json!({"subject":"work:q-2742"}))
+        .await
+        .json();
+    let candidates = answer["candidates"].as_array().expect("candidates");
+    let handles: Vec<_> = candidates
+        .iter()
+        .map(|candidate| candidate["handle"].as_str().expect("handle"))
+        .collect();
+    assert_eq!(
+        handles,
+        [
+            "work:q-entity-lifecycle",
+            "work:q-reference-link-rule",
+            "work:q-2743"
+        ],
+        "{answer}"
+    );
+    assert!(
+        candidates[..2]
+            .iter()
+            .all(|candidate| candidate["reason"] == "card-number"),
+        "{answer}"
+    );
+    assert_ne!(candidates[2]["reason"], "card-number", "{answer}");
+    story.finish().await;
+}
