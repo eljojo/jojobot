@@ -707,7 +707,6 @@ pub(crate) async fn a_role_and_an_ordinary_claim_under_a_former_handle(
     (claim, ordinary)
 }
 
-mod down_guard;
 mod down_memory;
 pub(crate) use down_memory::DownMemory;
 

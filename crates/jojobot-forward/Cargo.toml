@@ -16,3 +16,9 @@ proc-macro = true
 proc-macro2 = "1"
 quote = "1"
 syn = { version = "2", features = ["full"] }
+
+# The cases stamp one port twice, with and without a method added after the
+# double was written, and need an async trait and a runtime to call it.
+[dev-dependencies]
+async-trait = { workspace = true }
+tokio = { workspace = true }

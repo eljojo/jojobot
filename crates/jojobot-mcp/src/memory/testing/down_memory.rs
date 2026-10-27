@@ -1,7 +1,8 @@
 //! **A Memory whose one read fails and everything else works**, forwarding every
 //! other port method to a real in-memory store. A method the double leaves to the
-//! trait's default body would be a case that tests the default and not the store
-//! (`down_guard` holds that).
+//! trait's default body would be a case that tests the default and not the store,
+//! so the forwarding is generated from the port (`jojobot-forward`) and the double
+//! states only the reads it fails.
 
 use super::*;
 

@@ -440,145 +440,15 @@ pub(crate) async fn broken_bot(jojobot: &Jojobot, slug: &str) {
         .expect("the store writes it");
 }
 
-#[async_trait]
+#[jojobot_domain::forward(
+    jojobot_domain::forward_mailboxes,
+    down = MailboxError::Store("the mailbox world is down".into())
+)]
 impl mailbox::Mailboxes for DownMailboxes {
     /// A mailbox world that answers nothing keeps no count, which is the trait's
-    /// default said out loud so that the guard beside the doubles can tell a
-    /// default left alone from a default meant.
+    /// default said out loud.
     fn changes(&self) -> Option<u64> {
         None
-    }
-    async fn unchanged_delivery(
-        &self,
-        _: &mailbox::MailboxName,
-        _: mailbox::TakenBy,
-    ) -> Result<Option<mailbox::Delivery>, mailbox::MailboxError> {
-        Err(mailbox::MailboxError::Store(
-            "the mailbox world is down".into(),
-        ))
-    }
-    async fn create_mailbox(
-        &self,
-        _: &mailbox::MailboxName,
-        _: &EntityId,
-        _: Option<&str>,
-    ) -> Result<mailbox::Guarded<mailbox::Mailbox>, mailbox::MailboxError> {
-        Err(mailbox::MailboxError::Store(
-            "the mailbox world is down".into(),
-        ))
-    }
-    async fn repoint_owner(
-        &self,
-        _: &EntityId,
-        _: &EntityId,
-    ) -> Result<Option<mailbox::Mailbox>, mailbox::MailboxError> {
-        Err(mailbox::MailboxError::Store(
-            "the mailbox world is down".into(),
-        ))
-    }
-    async fn list_mailboxes(&self) -> Result<Vec<mailbox::Mailbox>, mailbox::MailboxError> {
-        Err(mailbox::MailboxError::Store(
-            "the mailbox world is down".into(),
-        ))
-    }
-    async fn post_message(
-        &self,
-        _: mailbox::NewMessage,
-    ) -> Result<mailbox::Guarded<mailbox::Message>, mailbox::MailboxError> {
-        Err(mailbox::MailboxError::Store(
-            "the mailbox world is down".into(),
-        ))
-    }
-    async fn read_mailbox(
-        &self,
-        _: &mailbox::MailboxName,
-        _: mailbox::TakenBy,
-        _acting: jojobot_domain::mailbox::Acting<'_>,
-    ) -> Result<mailbox::Guarded<mailbox::Delivery>, mailbox::MailboxError> {
-        Err(mailbox::MailboxError::Store(
-            "the mailbox world is down".into(),
-        ))
-    }
-    async fn scan_messages(&self) -> Result<Vec<mailbox::Message>, mailbox::MailboxError> {
-        Err(mailbox::MailboxError::Store(
-            "the mailbox world is down".into(),
-        ))
-    }
-    async fn message_by_id(
-        &self,
-        _: &mailbox::MessageId,
-    ) -> Result<Option<mailbox::Message>, mailbox::MailboxError> {
-        Err(mailbox::MailboxError::Store(
-            "the mailbox world is down".into(),
-        ))
-    }
-    async fn messages_by_id(
-        &self,
-        _: &[mailbox::MessageId],
-    ) -> Result<Vec<mailbox::Message>, mailbox::MailboxError> {
-        Err(mailbox::MailboxError::Store(
-            "the mailbox world is down".into(),
-        ))
-    }
-    async fn sent_by(&self, _: &[&str]) -> Result<Vec<mailbox::Message>, mailbox::MailboxError> {
-        Err(mailbox::MailboxError::Store(
-            "the mailbox world is down".into(),
-        ))
-    }
-    async fn read_message(
-        &self,
-        _: &mailbox::MessageId,
-        _acting: jojobot_domain::mailbox::Acting<'_>,
-    ) -> Result<mailbox::Delivered, mailbox::MailboxError> {
-        Err(mailbox::MailboxError::Store(
-            "the mailbox world is down".into(),
-        ))
-    }
-    async fn mark_processed(
-        &self,
-        _: &mailbox::MessageId,
-        _: &mailbox::MailboxName,
-        _: Option<&str>,
-        _acting: jojobot_domain::mailbox::Acting<'_>,
-    ) -> Result<mailbox::Message, mailbox::MailboxError> {
-        Err(mailbox::MailboxError::Store(
-            "the mailbox world is down".into(),
-        ))
-    }
-    async fn quarantine(
-        &self,
-        _: &mailbox::MessageId,
-        _: &mailbox::MailboxName,
-        _: &str,
-        _acting: jojobot_domain::mailbox::Acting<'_>,
-    ) -> Result<mailbox::Quarantined, mailbox::MailboxError> {
-        Err(mailbox::MailboxError::Store(
-            "the mailbox world is down".into(),
-        ))
-    }
-
-    async fn message_history(
-        &self,
-        _id: &jojobot_domain::mailbox::MessageId,
-    ) -> Result<Vec<jojobot_domain::mailbox::MessageEvent>, jojobot_domain::mailbox::MailboxError>
-    {
-        Err(jojobot_domain::mailbox::MailboxError::Store(
-            "the mailbox world is down".into(),
-        ))
-    }
-
-    async fn scan_message_events(
-        &self,
-    ) -> Result<
-        Vec<(
-            jojobot_domain::mailbox::MessageId,
-            Vec<jojobot_domain::mailbox::MessageEvent>,
-        )>,
-        jojobot_domain::mailbox::MailboxError,
-    > {
-        Err(jojobot_domain::mailbox::MailboxError::Store(
-            "the mailbox world is down".into(),
-        ))
     }
 }
 

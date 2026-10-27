@@ -1,5 +1,6 @@
 //! **A Memory whose writes land and whose fold never confirms**, forwarding every
-//! other port method to a real in-memory store (`down_guard` holds that).
+//! other port method to a real in-memory store, generated from the port
+//! (`jojobot-forward`).
 
 use super::*;
 
