@@ -1117,6 +1117,18 @@ impl Jojobot {
     ///
     /// Naming no role never reaches this — see the call site in
     /// [`Jojobot::orient`].
+    /// Whether the run named `holder` of `bot` is an active run. A run that cannot
+    /// be read counts as active, so a doubt keeps the holder's role.
+    async fn holder_is_active(&self, bot: &EntityId, holder: &str) -> bool {
+        match self.sessions.sessions_of(bot).await {
+            Ok(runs) => runs.iter().any(|run| {
+                run.sid.as_ref().is_some_and(|sid| sid.as_str() == holder)
+                    && run.state == jojobot_domain::session::SessionState::Active
+            }),
+            Err(_) => true,
+        }
+    }
+
     async fn decide_role_claim(
         &self,
         bot: &EntityId,
@@ -1200,9 +1212,16 @@ impl Jojobot {
         // say it replaces a stuck run; a stuck run is one whose lease ran out.
         let mut took_over_from = None;
         let by_word = operator.filter(|word| word.bot == *bot);
+        // **A holder that is no longer running keeps nothing live**: a run that
+        // wrapped with its release failing, or that was swept, loses the role to
+        // the next claim as before. Only a holder still active is protected.
+        let holder_runs = match &written {
+            Err(MemoryError::RoleTaken { holder, .. }) => self.holder_is_active(bot, holder).await,
+            _ => false,
+        };
         if let Err(MemoryError::RoleTaken { holder, .. }) = &written
             && holder != claimant
-            && by_word.is_some()
+            && (by_word.is_some() || !holder_runs)
         {
             let holder = holder.clone();
             match self
@@ -1236,7 +1255,7 @@ impl Jojobot {
                     taken["took_over_from"] = run.clone().into();
                     taken["note"] =
                         super::takeover_note::of(&run, displaced.was, displaced.left_open).into();
-                    if let Some(word) = by_word {
+                    if let Some(word) = by_word.filter(|_| holder_runs) {
                         taken["abandoned_by"] = "the operator's word".into();
                         taken["challenge"] = word.handle.as_str().into();
                     }

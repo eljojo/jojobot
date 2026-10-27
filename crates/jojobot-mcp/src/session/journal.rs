@@ -1887,10 +1887,7 @@ mod tests {
         age_role_lease(&memory, "dev-dispatch", 44);
         let inside = claim_as_rival(&jojobot).await;
         // A lease 44 minutes old is still held.
-        assert!(
-            inside["session"]["claim"]["took_over_from"].is_string(),
-            "{inside}"
-        );
+        assert_eq!(inside["session"]["claim"]["status"], "refused", "{inside}");
 
         age_role_lease(&memory, "dev-dispatch", 46);
         let past = claim_as_rival(&jojobot).await;

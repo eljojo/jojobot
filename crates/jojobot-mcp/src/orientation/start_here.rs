@@ -1483,10 +1483,10 @@ mod tests {
         assert_lease_was_held(&refused, &run_name(&jojobot, &first_sid));
     }
 
-    /// **A second claim by the same bot takes over a fresh lease and names the
-    /// run it abandoned — through the real door.**
+    /// **A second claim by the same bot is refused a fresh lease and names the
+    /// run that holds it — through the real door.**
     #[tokio::test]
-    async fn a_second_run_of_the_bot_takes_over_a_fresh_lease_at_the_door() {
+    async fn a_second_run_of_the_bot_is_refused_a_fresh_lease_at_the_door() {
         let jojobot = handler();
         make_bot(&jojobot, "gamma").await;
 
@@ -1545,8 +1545,10 @@ mod tests {
         );
         assert_lease_was_held(&second, &run_name(&jojobot, &holder_sid));
         assert!(
-            second["session"]["claim"]["note"].is_string(),
-            "…and it says the old run is abandoned: {second}"
+            second["session"]["claim"]["how_to_proceed"]
+                .as_str()
+                .is_some_and(|how| how.contains("wraps its session")),
+            "…and it says what frees the role: {second}"
         );
     }
 
@@ -2226,11 +2228,10 @@ mod tests {
             // A read renews after its answer; the lease is read once it has.
             server.registry.role_renewals().settled().await;
             let rival = rival_at(&world, 3000).await;
-            assert!(
-                rival["session"]["claim"]["took_over_from"].is_string(),
+            assert_eq!(
+                rival["session"]["claim"]["status"], "refused",
                 "{verb} must renew the holder's claim: {rival}"
             );
-            assert_eq!(rival["session"]["claim"]["status"], "taken", "{rival}");
         }
 
         // Control 1: a holder that does nothing at all goes stale.
