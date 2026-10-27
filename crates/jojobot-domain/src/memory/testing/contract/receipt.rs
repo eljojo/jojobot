@@ -520,6 +520,42 @@ pub async fn a_settled_inference_reopens_when_another_session_rewrites_its_words
         .expect("nothing blocks it");
     assert_eq!(promoted.provenance, Provenance::Testimony, "{promoted:?}");
     assert_eq!(promoted.standing, Standing::Settled, "{promoted:?}");
+
+    // **A rewrite that reads the words in a system is no carry-over either**: the
+    // inference's receipt does not certify them.
+    let seen = capture(
+        store,
+        NewFact {
+            session: Some("session-a".to_string()),
+            ..NewFact::about(subject.clone(), "the bike has a rack", date(2026, 10, 1))
+        },
+    )
+    .await;
+    store
+        .update_fact(&seen.address(), settled("saw the rack"), &other_caller())
+        .await
+        .expect("a check settles it")
+        .written()
+        .expect("nothing blocks it");
+    let read = store
+        .update_fact(
+            &seen.address(),
+            FactPatch {
+                content: Some("the bike has two racks".to_string()),
+                provenance: Some(Provenance::Observation),
+                fields: [("read_from".to_string(), "the bike shop".to_string())].into(),
+                session: Some("session-b".to_string()),
+                ..FactPatch::default()
+            },
+            &other_caller(),
+        )
+        .await
+        .expect("an observation names its system")
+        .written()
+        .expect("nothing blocks it");
+    assert_eq!(read.provenance, Provenance::Observation, "{read:?}");
+    assert_eq!(read.standing, Standing::Open, "{read:?}");
+    assert_eq!(read.receipt, None, "{read:?}");
 }
 
 /// Every spec above, in one call — see [`base::run_all`].
