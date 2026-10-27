@@ -111,8 +111,8 @@ snapshot: ## Rewrite the checked-in files of every text a model reads
 	exit $$status
 
 # **The dev bar.** The everyday loop, a level below the report: the cheap size,
-# source-roster and commit-message gates, then format, a build and the fast tests the
-# branch touches. The touched packages are the ones holding a path that differs
+# source-roster and commit-message gates, then format, a build and the fast tests
+# of the packages the branch touches. The touched packages hold a path that differs
 # from the merge base with `main` (committed, uncommitted or untracked). **The
 # packages that depend on them are not tested here**: their tests are the branch
 # run's, and the verdict names them and the run to read. A test file counts as
@@ -139,6 +139,9 @@ dev: ## The dev bar: format, build, and the tests and lint of what the branch to
 # phase, then format, that crate's tests and lint. BASE names a base other than main;
 # an explicit SIZE_BASE takes precedence, as it does for the boundary bar.
 # The size check also sees growth outside the selected crate.
+# Without CI's UPGRADE_FIXTURE_DIR, narrow names the deployed-store upgrade cases
+# skipped by design. The other upgrade cases still run; selecting only CI cases
+# is refused because nothing would run.
 #
 # **It refuses when no crate is named.** A scoped target that widened to the
 # workspace by itself would make the narrow command and the full bar the same

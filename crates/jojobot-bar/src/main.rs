@@ -33,6 +33,7 @@ use jojobot_bar::{
     summarize_test_output, test_healthy, test_jobs, write_call,
 };
 
+mod local_upgrade;
 mod plan;
 
 /// **The tests that are red and already have a card**, read from the directory
@@ -1891,19 +1892,62 @@ fn run_narrow(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
         finish(&mut summary, &log_path);
         return Ok(ExitCode::FAILURE);
     }
-    let ignored = count_listed_tests(&ignored_text);
-    let selected = listed.saturating_sub(ignored);
-    if selected == 0 {
-        let detail = match (&filter, listed) {
-            (Some(f), 0) => format!(
-                "FILTER='{f}' selected no tests in {krate} — FILTER is a substring of a test's \
-                 full path, not a regex"
-            ),
-            (None, 0) => format!("{krate} has no tests"),
-            (Some(f), _) => {
-                format!("FILTER='{f}' matched only ignored tests in {krate} — nothing would run")
+    let mut ignored_names: Vec<_> = ignored_text.lines().map(str::trim_end).collect();
+    let runnable: Vec<_> = list_text
+        .lines()
+        .map(str::trim_end)
+        .filter(|name| name.ends_with(": test"))
+        .filter(|name| {
+            if let Some(at) = ignored_names.iter().position(|ignored| ignored == name) {
+                ignored_names.remove(at);
+                false
+            } else {
+                true
             }
-            (None, _) => format!("every test in {krate} is ignored — nothing would run"),
+        })
+        .map(|name| name.trim_end_matches(": test"))
+        .collect();
+    let skipped: Vec<_> = if krate == "jojobot" && std::env::var_os("UPGRADE_FIXTURE_DIR").is_none()
+    {
+        runnable
+            .iter()
+            .copied()
+            .filter(|name| local_upgrade::CASES.contains(name))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    // Libtest's --skip is a substring, so a duplicate or a longer name must
+    // not silently exclude a case that can run without the fixture.
+    for name in &skipped {
+        if runnable.iter().filter(|other| other.contains(name)).count() != 1 {
+            summary.phase_failed("test", &format!("ambiguous CI-only skip: {name}"));
+            summary.phase_skipped("lint");
+            finish(&mut summary, &log_path);
+            return Ok(ExitCode::FAILURE);
+        }
+        println!("skipped by design: {name} — needs CI-supplied UPGRADE_FIXTURE_DIR");
+    }
+    let selected = runnable.len() - skipped.len();
+    if selected == 0 {
+        let detail = if !skipped.is_empty() {
+            format!(
+                "only CI upgrade cases selected in {krate}; UPGRADE_FIXTURE_DIR is absent — nothing would run"
+            )
+        } else {
+            match (&filter, listed) {
+                (Some(f), 0) => format!(
+                    "FILTER='{f}' selected no tests in {krate} — FILTER is a substring of a test's \
+                 full path, not a regex"
+                ),
+                (None, 0) => format!("{krate} has no tests"),
+                (Some(f), _) => {
+                    format!(
+                        "FILTER='{f}' matched only ignored tests in {krate} — nothing would run"
+                    )
+                }
+                (None, _) => format!("every test in {krate} is ignored — nothing would run"),
+            }
         };
         summary.phase_failed("test", &detail);
         summary.phase_skipped("lint");
@@ -1918,23 +1962,17 @@ fn run_narrow(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
         "level: boundary, narrow {krate}, FILTER={}; {selected} runnable cases; left to full boundary: other tests",
         filter.as_deref().unwrap_or("all")
     );
-    let mut ignored_names: Vec<_> = ignored_text.lines().map(str::trim_end).collect();
-    for name in list_text
-        .lines()
-        .map(str::trim_end)
-        .filter(|name| name.ends_with(": test"))
-    {
-        if let Some(at) = ignored_names.iter().position(|ignored| *ignored == name) {
-            ignored_names.remove(at);
-        } else {
-            println!("selected: {}", name.trim_end_matches(": test"));
-        }
+    for name in runnable.iter().filter(|name| !skipped.contains(name)) {
+        println!("selected: {name}");
     }
     std::io::stdout().flush()?;
     let mut test_args: Vec<&str> = vec!["test", "-p", &krate, "--all-features"];
-    if !filters.is_empty() {
+    if !filters.is_empty() || !skipped.is_empty() {
         test_args.push("--");
         test_args.extend(&filters);
+        for name in &skipped {
+            test_args.extend(["--skip", name]);
+        }
     }
     let (ok, text) = run_phase(
         &log_path,

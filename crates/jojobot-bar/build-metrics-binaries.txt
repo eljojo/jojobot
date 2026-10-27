@@ -103,6 +103,7 @@ test-metrics
 test-metrics_store
 test-narrow_ignored
 test-narrow_loop
+test-narrow_upgrade
 test-needle_hygiene_coverage
 test-newest_stamp_from_a_day
 test-no_forgotten_guards
