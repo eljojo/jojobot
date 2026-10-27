@@ -477,7 +477,7 @@ impl Jojobot {
             (args.override_token.clone(), args.override_reason.clone());
         // **A section's place is the server's to mint.** A move changes `order`
         // without the say-so of the session that wrote the section, so a caller's
-        // own value for it, which could be anything, is refused: `after` is the
+        // own value for it, which could be anything, is dropped: `after` is the
         // way to move.
         // **A move is planned before anything is written**, so a refusal leaves the
         // document as it was. The section itself takes its new place in this edit;
@@ -538,14 +538,26 @@ impl Jojobot {
             }
         }
         let declared = Declared::of(&args);
-        let cleared = args.clear_fields.clone().unwrap_or_default();
+        let mut cleared = args.clear_fields.clone().unwrap_or_default();
         let mut fields = args.fields.unwrap_or_default();
-        // **What this call sent as the claim's own fields**, kept apart from the
-        // setting bag for the receipt's hint.
-        let own_sent: Vec<String> = fields.keys().cloned().collect();
         // **The setting bag joins `fields` for everything below**, exactly as
         // `capture`'s own copy does; the keys that are the bag travel apart.
         let mut sets_sent = args.sets.unwrap_or_default();
+        let dropped_keys = match self
+            .drop_read_keys(
+                &address.home,
+                Some(&address.local),
+                [&mut fields, &mut sets_sent],
+                &mut cleared,
+            )
+            .await
+        {
+            Ok(dropped) => dropped,
+            Err(e) => return memory_declined("update_fact", e),
+        };
+        // **What remains of the caller's own fields**, apart from the setting
+        // bag for the receipt's hint; copied server keys are not caller fields.
+        let own_sent: Vec<String> = fields.keys().cloned().collect();
         // **An item added to or taken off a list is resolved against the thing's
         // fold, held under its lock from the read to the write.** The thing is the
         // one the claim is about. A move already holds the lock on the claim's
@@ -606,20 +618,8 @@ impl Jojobot {
         // reason `capture`'s own copy is: this is about what the CALLER
         // sent, never what jojobot added on its own.
         let sent_field_keys: Vec<String> = fields.keys().cloned().collect();
-        // **Keys only the engine writes are refused once every route has been
-        // resolved** (fields, settings, list deltas and clears): what is judged is
-        // what the call would write.
-        let named: Vec<&str> = sent_field_keys
-            .iter()
-            .map(String::as_str)
-            .chain(cleared.iter().map(String::as_str))
-            .collect();
-        if let Some(done) = self
-            .refuses_placement("update_fact", &address.home, Some(&address.local), &named)
-            .await
-        {
-            return done;
-        }
+        // **A planned move supplies the server's place**, after copied places
+        // have been dropped from the caller's bags and clears.
         if let Some(plan) = &move_plan {
             fields.insert(
                 jojobot_domain::memory::document::ORDER.to_string(),
@@ -1125,6 +1125,7 @@ impl Jojobot {
                     .await;
                 let mut body =
                     fact_receipt_json(&fact, self.dated(None, args.sid.as_deref()).await?);
+                dropped_keys.note(&mut body);
                 if let Some(marked) = &marked {
                     super::archive_mark::note_the_mark(&mut body, marked);
                 }

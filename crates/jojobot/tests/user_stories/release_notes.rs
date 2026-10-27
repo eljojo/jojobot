@@ -604,7 +604,7 @@ async fn a_search_leaves_the_record_of_what_a_bot_was_told_out_until_asked() {
 }
 
 /// **No caller writes the record of what a bot was told, by any of the four write
-/// verbs.** Each refusal names the key and writes nothing. The paired positive is
+/// verbs.** Each copy of the key is dropped and named. The paired positive is
 /// an ordinary key on the same bot, which each verb takes.
 #[tokio::test]
 async fn no_caller_writes_the_record_of_what_a_bot_was_told() {
@@ -614,31 +614,53 @@ async fn no_caller_writes_the_record_of_what_a_bot_was_told() {
     let later = story.restarted().await;
     let delta = later.as_bot("bot:delta").await;
     let note = json!({"release_notes_told": "release-notes"});
+    let before = delta
+        .call(
+            "recall",
+            json!({"subject": "bot:delta", "keys": ["release_notes_told"]}),
+        )
+        .await
+        .json()["objects"][0]["fields"]["release_notes_told"]
+        .clone();
 
-    delta
-        .refused(
+    let captured = delta
+        .call(
             "capture",
             json!({"subject": "bot:delta", "content": "told nothing", "provenance": "testimony",
                    "sets": note}),
         )
         .await
-        .says("release_notes_told")
-        .says("\"wrote\":false");
-    delta
-        .refused(
+        .json();
+    assert_eq!(
+        captured["dropped_keys"],
+        json!(["release_notes_told"]),
+        "{captured}"
+    );
+    let made = delta
+        .call(
             "add_entity",
             json!({"kind": "bot", "handle": "sigma", "name": "Sigma", "source": "user-named",
                    "sets": note}),
         )
         .await
-        .says("release_notes_told");
-    delta
-        .refused(
+        .json();
+    assert_eq!(
+        made["dropped_keys"],
+        json!(["release_notes_told"]),
+        "{made}"
+    );
+    let updated = delta
+        .call(
             "update_entity",
             json!({"handle": "bot:delta", "sets": note}),
         )
         .await
-        .says("release_notes_told");
+        .json();
+    assert_eq!(
+        updated["dropped_keys"],
+        json!(["release_notes_told"]),
+        "{updated}"
+    );
     let kept = delta
         .call(
             "capture",
@@ -647,13 +669,26 @@ async fn no_caller_writes_the_record_of_what_a_bot_was_told() {
         )
         .await
         .json();
-    delta
-        .refused(
+    let edited = delta
+        .call(
             "update_fact",
-            json!({"address": kept["address"], "fields": note}),
+            json!({"address": kept["address"], "content": "an ordinary key, still green", "fields": note}),
+        )
+        .await.json();
+    assert_eq!(
+        edited["dropped_keys"],
+        json!(["release_notes_told"]),
+        "{edited}"
+    );
+    let after = delta
+        .call(
+            "recall",
+            json!({"subject": "bot:delta", "keys": ["release_notes_told"]}),
         )
         .await
-        .says("release_notes_told");
+        .json()["objects"][0]["fields"]["release_notes_told"]
+        .clone();
+    assert_eq!(after, before, "copied keys changed the real ledger");
     later.finish().await;
 }
 

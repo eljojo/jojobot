@@ -41,20 +41,18 @@ pub const HELD_SINCE: &str = "held_since";
 /// **Whether a record field is the server's to mint when it places an entry or a
 /// section**: the order key and the two a move of an entry writes. One list, so a
 /// gate that lets a move rewrite them without the writer's say-so, and one that
-/// refuses a caller's own copy, ask the same question.
+/// drops a caller's own copy, ask the same question.
 pub fn is_placement_key(key: &str) -> bool {
     matches!(key.trim(), document::ORDER | HELD_TURN | HELD_SINCE)
 }
 
-/// **The refusal of a key only the engine writes, or none.** A write on a thing whose
-/// records are placed (a list or a document) that names a placement key, in a
-/// claim's own fields, its settings or the keys it clears, is refused: the server
-/// mints the place and a caller's copy would be dropped without a word or land on
-/// the thing itself. A write on a SECTION of a document that names its `edges` is
-/// refused for the same reason; `section` says whether the record written is one,
+/// **The refusal of a section's engine-owned edges, or none.** Copied placement
+/// keys are dropped with a receipt before writing. A write on a SECTION of a
+/// document that names its `edges` is refused; `section` says whether the record
+/// written is one,
 /// and a plain claim about a document is not (rule 598). `kind` is the kind the
 /// store holds for the thing, never the one an address was typed with: the check
-/// is asked through `Jojobot::refuses_placement`, the one entry every verb that
+/// is asked through `Jojobot::drop_read_keys`, the one entry every verb that
 /// writes a caller's keys uses.
 pub fn refuses_a_callers_placement<'a>(
     kind: Option<EntityKind>,
@@ -62,15 +60,6 @@ pub fn refuses_a_callers_placement<'a>(
     named: impl IntoIterator<Item = &'a str>,
 ) -> Option<crate::memory::MemoryError> {
     let named: Vec<&str> = named.into_iter().collect();
-    if places_its_records(kind) && named.iter().any(|key| is_placement_key(key)) {
-        return Some(crate::memory::MemoryError::InvalidFact(
-            "a section's or an entry's place (`order`, `held_turn`, `held_since`) is minted by \
-             the server and a caller never sends it. A new entry is placed by `capture` with \
-             `after`, the address of the entry it should follow (or `first`; with none it goes \
-             last). An entry or a section that exists is moved by `update_fact` with `after`"
-                .into(),
-        ));
-    }
     // **A section's edges are the engine's alone**: the blank lines it keeps around
     // the section's words. A caller's copy, or a clear, would frame another
     // session's words with text the reader takes for part of the document.
@@ -90,7 +79,7 @@ pub fn refuses_a_callers_placement<'a>(
 /// **Whether a record field is one the server mints on a list or a document
 /// write**: the placement keys and the three a tick records. A caller never
 /// sends one, so a receipt does not report one as the caller's own field. The
-/// receipt's reach report reads this one set; the gate that refuses a caller's
+/// receipt's reach report reads this one set; the gate that drops a caller's
 /// copy of a placement key asks [`is_placement_key`], which this set contains.
 pub fn is_minted_key(key: &str) -> bool {
     is_placement_key(key) || matches!(key.trim(), TICK_ENTRY | TICK_ACT | TICK_SESSION)
@@ -1560,21 +1549,21 @@ mod tests {
         assert_eq!(Act::of("finished"), None);
     }
 
-    /// **The one gate refuses a caller's own place on a list or a document, in any
+    /// **The one gate drops a caller's own place on a list or a document, in any
     /// of the three ways a write names a key, and nothing else.** The paired
     /// positives are an ordinary key on a list and a placement key on a thing whose
     /// records are not placed.
     #[test]
-    fn a_callers_own_place_is_refused_on_a_placed_thing_only() {
+    fn a_callers_own_place_is_dropped_on_a_placed_thing_only() {
         for key in ["order", "held_turn", "held_since"] {
             for kind in [EntityKind::LIST, EntityKind::DOCUMENT] {
                 assert!(
-                    refuses_a_callers_placement(Some(kind), false, [key]).is_some(),
+                    super::super::copied_read_key(Some(kind), key),
                     "{key} on {kind:?}"
                 );
             }
             assert!(
-                refuses_a_callers_placement(Some(EntityKind::PERSON), false, [key]).is_none(),
+                !super::super::copied_read_key(Some(EntityKind::PERSON), key),
                 "{key} on a person"
             );
         }

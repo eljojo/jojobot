@@ -134,8 +134,8 @@ async fn a_document_section_naming_a_members_number_links_the_member_or_is_refus
     story.finish().await;
 }
 
-/// **A reason cannot carry the stored mark**, the rule every other text a caller
-/// writes faces: the mark is a link nothing checked.
+/// **A reason cannot carry an unknown stored mark**: a mark whose badge nobody
+/// wears remains an unchecked link, as in every other text a caller writes.
 #[tokio::test]
 async fn an_archive_reason_carrying_the_stored_mark_is_refused() {
     let story = Story::begin("bot:otto").await;

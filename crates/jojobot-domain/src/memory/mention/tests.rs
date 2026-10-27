@@ -20,7 +20,7 @@ fn thing(handle: &str, badge: Option<&str>) -> Entity {
 
 /// **The words of a claim are screened before a write, the way a capture
 /// screens them.** A handle naming something passes, one naming nothing is
-/// refused with the handle, the stored mark is refused, and a handle in code
+/// refused with the handle, an unknown stored mark is refused, and a handle in code
 /// is not a mention at all.
 #[test]
 fn text_is_screened_for_the_mark_and_for_handles_that_name_nothing() {
@@ -35,8 +35,9 @@ fn text_is_screened_for_the_mark_and_for_handles_that_name_nothing() {
         }),
         Some("person:ralph".to_string()),
     );
+    assert!(refusal_for_text(&["copied @#k7h2mn"], &known).is_none());
     assert!(matches!(
-        refusal_for_text(&["forged @#k7h2mn"], &known),
+        refusal_for_text(&["forged @#dead1"], &known),
         Some(super::super::MemoryError::InvalidFact(_))
     ));
 }
@@ -317,7 +318,7 @@ async fn a_caller_cannot_write_the_stored_mark_into_text() {
     let refused = |what: &str, outcome: Result<_, crate::memory::MemoryError>| {
         assert!(
             matches!(outcome, Err(crate::memory::MemoryError::InvalidFact(_))),
-            "{what} carrying the stored mark is refused: {:?}",
+            "{what} carrying an unknown stored mark is refused: {:?}",
             outcome.map(|_: ()| ()),
         );
     };
@@ -411,7 +412,7 @@ async fn a_caller_cannot_write_the_stored_mark_into_text() {
 }
 
 /// **The first claim of a new thing is a caller's text too.** Creating a
-/// thing with its first claim refuses the stored mark in the claim's words
+/// thing with its first claim refuses an unknown stored mark in the claim's words
 /// and in its details, exactly as a capture does, and nothing is made. The
 /// same call with plain words lands the thing and its claim.
 #[tokio::test]
@@ -461,7 +462,7 @@ async fn a_first_claim_cannot_carry_the_stored_mark() {
             .await;
         assert!(
             matches!(outcome, Err(crate::memory::MemoryError::InvalidFact(_))),
-            "a first claim's {what} carrying the stored mark is refused: {:?}",
+            "a first claim's {what} carrying an unknown stored mark is refused: {:?}",
             outcome.map(|_| ()),
         );
         assert!(!listed(&id).await, "a refused first claim made {id}");

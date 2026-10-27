@@ -4,8 +4,9 @@
 //! **Only an archive writes a claim's `archive_reason`.** The reason rides on
 //! the archived record's own fields, so a caller who sends the key beside a
 //! claim that stands would make an active claim read as archived with a reason,
-//! and a caller who clears it would take a real reason off. Both are refused,
-//! naming the key and the way a reason is given. The way a reason is given, the
+//! and a caller who clears it would take a real reason off. Copies and clears
+//! of the key are dropped; an edit with nothing left still needs `keep`. The
+//! way a reason is given, the
 //! details of the archive, still records it and reads it back.
 //!
 //! The roster names are the cast: a thread of deploys, Marge's word, and two
@@ -15,8 +16,8 @@ use serde_json::json;
 
 use super::dsl::Story;
 
-/// **A caller cannot send or clear `archive_reason`, and an archive's details
-/// still record one.** Paired in one case: the refusal on a claim that stands,
+/// **A caller cannot overwrite or clear `archive_reason`, and an archive's details
+/// still record one.** Paired in one case: the empty-edit refusal on a claim that stands,
 /// the refusal of a clear on an archived claim whose reason must survive, and the
 /// archive with a reason that reads back.
 #[tokio::test]
@@ -60,8 +61,7 @@ async fn a_caller_cannot_send_or_clear_archive_reason_and_an_archive_still_recor
             json!({"address": &standing, "fields": {"archive_reason": "not true"}}),
         )
         .await
-        .says("archive_reason")
-        .says("details");
+        .says("keep");
     // ── nor take a real reason off an archived one ───────────────────────────
     other
         .refused(
@@ -69,7 +69,7 @@ async fn a_caller_cannot_send_or_clear_archive_reason_and_an_archive_still_recor
             json!({"address": &archived, "clear_fields": ["archive_reason"]}),
         )
         .await
-        .says("archive_reason");
+        .says("keep");
 
     // ── nothing moved: the claim stands, the reason is there ─────────────────
     let read = writer

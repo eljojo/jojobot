@@ -245,8 +245,8 @@ async fn after_on_a_subject_that_is_not_a_list_is_refused() {
     story.finish().await;
 }
 
-/// **A caller never sends an entry's order key; the server mints it.** The
-/// refusal names `after`. The paired positive is an edit of the entry's words by
+/// **A copied entry order is dropped; the server mints it.** With no other edit
+/// the call names no change. The paired positive is an edit of the entry's words by
 /// the session that wrote it, which lands and leaves the entry where it was.
 #[tokio::test]
 async fn a_caller_sending_an_order_key_on_an_entry_is_refused_and_an_edit_of_its_words_is_not() {
@@ -261,7 +261,7 @@ async fn a_caller_sending_an_order_key_on_an_entry_is_refused_and_an_edit_of_its
         json!({"address": stove, "fields": {"order": "zzz"}}),
     )
     .await
-    .says("after")
+    .says("keep")
     .says("\"wrote\":false");
     assert_eq!(read_back(&s, "list:packing").await, ["stove", "lantern"]);
 

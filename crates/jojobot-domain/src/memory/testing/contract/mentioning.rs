@@ -3000,8 +3000,8 @@ pub async fn a_find_that_cuts_a_link_is_refused_and_one_that_covers_it_replaces_
 ///
 /// A handle in the replacement outside code becomes a link, a handle inside
 /// code stays the words that were typed (rule 450), one that names nothing is
-/// blocked with nothing written, and a stored mark is never accepted from a
-/// caller. Bytes before and after are as stored.
+/// blocked with nothing written, and a copied stored mark links the same known
+/// target. An unknown badge is refused. Bytes before and after are as stored.
 pub async fn the_words_that_replace_a_find_are_resolved_where_they_land<
     M: Memory + ?Sized,
     B: Memory + ?Sized,
@@ -3067,8 +3067,8 @@ pub async fn the_words_that_replace_a_find_are_resolved_where_they_land<
     );
     assert_eq!(kept_details(bare, &author, &claim.id).await, stored);
 
-    // A stored mark is never accepted from a caller.
-    let forged = edit_by_find(
+    // A copied stored mark names the same existing thing as its public handle.
+    let copied = edit_by_find(
         mentioning,
         &claim.address(),
         TextField::Details,
@@ -3076,9 +3076,31 @@ pub async fn the_words_that_replace_a_find_are_resolved_where_they_land<
         &format!("{}{badge}", mention::MARK),
     )
     .await;
+    copied
+        .expect("known stored link")
+        .written()
+        .expect("the edit lands");
+    assert_eq!(
+        kept_details(bare, &author, &claim.id).await,
+        format!("before {}{badge} after", mention::MARK)
+    );
+
+    // A badge nobody wears remains refused, so a copied mark is no authority.
+    let claim = staged(bare, &author, &stored, date(2026, 10, 12)).await;
+    let forged = edit_by_find(
+        mentioning,
+        &claim.address(),
+        TextField::Details,
+        "TAIL",
+        "@#dead1",
+    )
+    .await;
     assert!(
-        !matches!(forged, Ok(Guarded::Written(_))),
-        "a stored mark was accepted from a caller: {forged:?}",
+        matches!(
+            forged,
+            Err(super::super::super::MemoryError::InvalidFact(_))
+        ),
+        "an unknown stored link was accepted: {forged:?}"
     );
     assert_eq!(kept_details(bare, &author, &claim.id).await, stored);
 }

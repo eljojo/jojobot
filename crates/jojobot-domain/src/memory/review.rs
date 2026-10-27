@@ -73,6 +73,17 @@ pub const DEFRAGGED_AT: &str = "defragged_at";
 /// outside this process declares it, so a case pins the literal.
 pub const REVIEW_MARK: &str = "review_mark";
 
+/// Keys the server writes on accounts of its own acts. A public write drops
+/// copied values; the account writers still mint their own after that boundary.
+pub const SERVER_WRITTEN_KEYS: [&str; 6] = [
+    DEFRAGGED_AT,
+    REVIEW_MARK,
+    SETTINGS_RECORD,
+    super::capacity::ENGINE_RECORD,
+    super::RELEASE_NOTES_TOLD,
+    super::ARCHIVE_REASON,
+];
+
 /// **Whether a record is a thing's review mark**, by its fields. The mark holds
 /// no content a reader chose to keep, so it takes no slot under a record ceiling
 /// (see `capacity::live_records`).

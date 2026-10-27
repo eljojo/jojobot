@@ -258,13 +258,10 @@ async fn manual() -> (Story, Session) {
     (story, a)
 }
 
-/// **A caller's own place for a section is refused on every verb that writes
-/// settings, not only on `capture` and `update_fact`.** `update_entity` and
-/// `add_entity` carry the same `sets`, and a capture's `sets` is the bag the
-/// place would ride in. Each is refused with nothing written, and the manual
-/// reads back as it was.
+/// Copied places are dropped on every write, while the section's framing stays
+/// protected. A copied order alone makes an ordinary note, never a section.
 #[tokio::test]
-async fn a_callers_place_for_a_section_is_refused_on_every_verb_that_sets_keys() {
+async fn copied_places_are_dropped_on_every_verb_and_section_edges_stay_protected() {
     let (story, a) = manual().await;
     let held = sections(&a).await;
     let b = story.as_bot("bot:gamma").await;
@@ -274,38 +271,50 @@ async fn a_callers_place_for_a_section_is_refused_on_every_verb_that_sets_keys()
         json!({"handle": "document:homer", "sets": {"order": "a0", "edges": framing("INJECTED")}}),
     )
     .await
-    .says("order");
-    b.refused(
-        "capture",
-        json!({"subject": "document:homer", "content": "a section nobody wrote",
+    .says("edges");
+    let note = b
+        .call(
+            "capture",
+            json!({"subject": "document:homer", "content": "a section nobody wrote",
                "sets": {"order": "a0"}}),
-    )
-    .await
-    .says("order");
-    b.refused(
-        "add_entity",
-        json!({"kind": "document", "handle": "marge", "name": "Marge", "source": "user-named",
+        )
+        .await
+        .json();
+    assert_eq!(note["dropped_keys"], json!(["order"]), "{note}");
+    let made = b
+        .call(
+            "add_entity",
+            json!({"kind": "document", "handle": "marge", "name": "Marge", "source": "user-named",
                "sets": {"order": "a0"}}),
-    )
-    .await
-    .says("order");
-    assert_eq!(read(&b).await, MANUAL, "a refused write placed nothing");
-    assert_eq!(sections(&b).await, held, "and added no section");
+        )
+        .await
+        .json();
+    assert_eq!(made["dropped_keys"], json!(["order"]), "{made}");
+    assert_eq!(read(&b).await, MANUAL, "a copied key changes no framing");
+    assert_eq!(
+        sections(&b).await.len(),
+        held.len() + 1,
+        "the capture added one ordinary note"
+    );
 
     // The batch form reaches the same gate: it writes one capture per entry.
     a.add("list:checklist", "Checklist").await;
-    b.refused(
+    let batch = b.call(
         "capture",
         json!({"subject": "list:checklist", "entries": ["one", "two"], "fields": {"order": "a0"}}),
     )
-    .await
-    .says("order");
+    .await.json();
+    assert_eq!(batch["dropped_keys"], json!(["order"]), "{batch}");
+    assert_eq!(
+        super::lists::read_back(&b, "list:checklist").await,
+        ["one", "two"]
+    );
     story.finish().await;
 }
 
 /// **The gate judges the kind the store holds, not the kind the address was typed
 /// with.** A thing typed `thing:` and retyped into a document still answers to its
-/// old handle; a caller's place or edges sent under that handle are refused, and
+/// old handle; a section's edges sent under that handle are refused, and
 /// the document reads back as it was.
 #[tokio::test]
 async fn a_thing_retyped_into_a_document_is_judged_as_a_document_under_its_old_handle() {
@@ -335,10 +344,10 @@ async fn a_thing_retyped_into_a_document_is_judged_as_a_document_under_its_old_h
     a.refused(
         "capture",
         json!({"subject": "thing:sigma", "content": "a section nobody wrote",
-               "fields": {"order": "a0"}}),
+               "fields": {"order": "a0", "edges": framing("INJECTED")}}),
     )
     .await
-    .says("order");
+    .says("edges");
     a.refused(
         "update_fact",
         json!({"address": section, "fields": {"edges": framing("INJECTED")}}),

@@ -2,6 +2,447 @@ use super::*;
 use crate::harness::*;
 use crate::memory::testing::*;
 
+/// Copying a served place does not move the new entry or refuse its words.
+#[tokio::test]
+async fn read_keys_written_back_placement() {
+    let jojobot = handler();
+    a_list(&jojobot, "packing").await;
+    let first = capture_ok(&jojobot, capture_args("list:packing", "tent")).await;
+    let moved = json_of(
+        &jojobot
+            .update_fact(Parameters(UpdateFactArgs {
+                after: Some("first".into()),
+                ..update_args(&address_of(&first))
+            }))
+            .await
+            .expect("move answers"),
+    );
+    assert_ne!(moved["status"], "blocked", "{moved}");
+    let read = json_of(
+        &jojobot
+            .recall(Parameters(recall_args("list:packing")))
+            .await
+            .expect("read"),
+    );
+    let fields: std::collections::BTreeMap<String, String> =
+        serde_json::from_value(read["objects"][0]["facts"][0]["fields"].clone())
+            .expect("served fields");
+    for key in ["order", "held_turn", "held_since"] {
+        assert!(
+            fields.contains_key(key),
+            "the moved entry serves {key}: {read}"
+        );
+    }
+    let copied_order = fields["order"].clone();
+    let landed = capture_ok(
+        &jojobot,
+        CaptureArgs {
+            fields: Some(fields),
+            ..capture_args("list:packing", "stove")
+        },
+    )
+    .await;
+    assert_eq!(
+        landed["dropped_keys"],
+        serde_json::json!(["held_since", "held_turn", "order"]),
+        "{landed}"
+    );
+    assert!(
+        landed["dropped_keys_note"]
+            .as_str()
+            .unwrap_or("")
+            .contains("server"),
+        "{landed}"
+    );
+    let read = json_of(
+        &jojobot
+            .recall(Parameters(recall_args("list:packing")))
+            .await
+            .expect("read"),
+    );
+    let copied = read["objects"][0]["facts"]
+        .as_array()
+        .expect("claims")
+        .iter()
+        .find(|fact| fact["content"] == "stove")
+        .expect("copied claim");
+    assert_ne!(
+        copied["fields"]["order"], copied_order,
+        "a fresh place: {read}"
+    );
+}
+
+/// A merge account can be quoted without forging another merge account.
+#[tokio::test]
+async fn read_keys_written_back_merged_from() {
+    copied_merge_fields(true).await;
+}
+
+#[tokio::test]
+async fn read_keys_written_back_merged_marker_only() {
+    copied_merge_fields(false).await;
+}
+
+#[tokio::test]
+async fn read_keys_written_back_retraction_account() {
+    let jojobot = handler();
+    let original = capture_ok(
+        &jojobot,
+        capture_args("thing:kettle", "the label says steel"),
+    )
+    .await;
+    let taken_back = json_of(
+        &jojobot
+            .retract(Parameters(crate::memory::retract::RetractArgs {
+                address: address_of(&original),
+                reason: Some("misread the label".into()),
+                recorded_at: None,
+                sid: Some(TEST_SID.into()),
+                request_id: None,
+            }))
+            .await
+            .expect("retract"),
+    );
+    assert_ne!(taken_back["status"], "blocked", "{taken_back}");
+    let read = json_of(
+        &jojobot
+            .recall(Parameters(recall_args("thing:kettle")))
+            .await
+            .expect("read"),
+    );
+    let account = read["objects"][0]["facts"]
+        .as_array()
+        .expect("claims")
+        .iter()
+        .find(|fact| fact["fields"].get("retracts").is_some())
+        .expect("retraction account");
+    let fields = serde_json::from_value(account["fields"].clone()).expect("served fields");
+    let copied = capture_ok(
+        &jojobot,
+        CaptureArgs {
+            fields: Some(fields),
+            ..capture_args("thing:kettle", "a copy of the retraction account")
+        },
+    )
+    .await;
+    assert_eq!(
+        copied["dropped_keys"],
+        serde_json::json!(["retracts"]),
+        "{copied}"
+    );
+    let held = jojobot
+        .memory
+        .recall(&EntityId("thing:kettle".into()))
+        .await
+        .expect("claims");
+    let copy = held
+        .iter()
+        .find(|fact| fact.address().to_string() == address_of(&copied))
+        .expect("copy");
+    assert!(
+        !copy.fields.contains_key("retracts"),
+        "the copy is no retraction: {copy:?}"
+    );
+    assert!(
+        held.iter().any(|fact| fact.fields.contains_key("retracts")),
+        "the original account remains"
+    );
+}
+
+/// The same account rule covers the server's settings, archive and review
+/// labels. None may turn a copied claim into an exempt record or a review.
+#[tokio::test]
+async fn read_keys_written_back_account_bookkeeping() {
+    let jojobot = handler();
+    let keys = [
+        "archive_reason",
+        "defragged_at",
+        "engine_record",
+        "release_notes_told",
+        "review_mark",
+        "settings_record",
+    ];
+    let mut fields: std::collections::BTreeMap<String, String> = keys
+        .into_iter()
+        .map(|key| (key.into(), "copied account value".into()))
+        .collect();
+    fields.insert("colour".into(), "green".into());
+    let copied = capture_ok(
+        &jojobot,
+        CaptureArgs {
+            fields: Some(fields),
+            ..capture_args("thing:kettle", "a copy of account labels")
+        },
+    )
+    .await;
+    assert_eq!(copied["dropped_keys"], serde_json::json!(keys), "{copied}");
+    let held = jojobot
+        .memory
+        .recall(&EntityId("thing:kettle".into()))
+        .await
+        .expect("claims");
+    let copy = held
+        .iter()
+        .find(|fact| fact.address().to_string() == address_of(&copied))
+        .expect("copy");
+    for key in keys {
+        assert!(
+            !copy.fields.contains_key(key),
+            "copied {key} became metadata: {copy:?}"
+        );
+    }
+    assert_eq!(copy.fields.get("colour").map(String::as_str), Some("green"));
+}
+
+async fn copied_merge_fields(whole: bool) {
+    let jojobot = handler();
+    ensure(&jojobot, "thing:kettle").await;
+    ensure(&jojobot, "thing:handcart").await;
+    let merged = merging(&jojobot, "thing:handcart", "thing:kettle").await;
+    assert_ne!(merged["status"], "blocked", "{merged}");
+    let read = json_of(
+        &jojobot
+            .recall(Parameters(recall_args("thing:kettle")))
+            .await
+            .expect("read"),
+    );
+    let account = read["objects"][0]["facts"]
+        .as_array()
+        .expect("claims")
+        .iter()
+        .find(|fact| fact["fields"].get("merged_from").is_some())
+        .expect("served merge account");
+    let mut fields: std::collections::BTreeMap<String, String> =
+        serde_json::from_value(account["fields"].clone()).expect("fields");
+    if !whole {
+        fields.retain(|key, _| key == "merged_from");
+    }
+    fields.insert("source".into(), "copied account".into());
+    let landed = capture_ok(
+        &jojobot,
+        CaptureArgs {
+            fields: Some(fields),
+            ..capture_args("thing:kettle", "a copy of the account")
+        },
+    )
+    .await;
+    assert_eq!(
+        landed["dropped_keys"],
+        if whole {
+            serde_json::json!(["engine_record", "merged_from"])
+        } else {
+            serde_json::json!(["merged_from"])
+        },
+        "{landed}"
+    );
+    assert!(
+        landed["dropped_keys_note"]
+            .as_str()
+            .unwrap_or("")
+            .contains("server"),
+        "{landed}"
+    );
+    let read = json_of(
+        &jojobot
+            .recall(Parameters(recall_args("thing:kettle")))
+            .await
+            .expect("read"),
+    );
+    let copied = read["objects"][0]["facts"]
+        .as_array()
+        .expect("claims")
+        .iter()
+        .find(|fact| fact["content"] == "a copy of the account")
+        .expect("copied claim");
+    assert!(copied["fields"].get("merged_from").is_none(), "{copied}");
+    assert!(copied["fields"].get("engine_record").is_none(), "{copied}");
+    assert_eq!(copied["fields"]["source"], "copied account", "{copied}");
+}
+
+/// A known stored link pasted into words follows the same target as its handle.
+#[tokio::test]
+async fn read_keys_written_back_stored_link() {
+    let memory = Arc::new(InMemoryMemory::booted());
+    let jojobot = handler_over_mentions(memory.clone());
+    ensure(&jojobot, "thing:handcart").await;
+    capture_ok(
+        &jojobot,
+        capture_args("thing:kettle", "see @thing:handcart"),
+    )
+    .await;
+    let held = memory
+        .recall(&EntityId("thing:kettle".into()))
+        .await
+        .expect("stored claims");
+    let words = held
+        .iter()
+        .find(|fact| fact.content.starts_with("see "))
+        .expect("stored link")
+        .content
+        .clone();
+    assert!(words.contains("@#"), "a real stored link: {words}");
+    let landed = capture_ok(&jojobot, capture_args("thing:kettle", &words)).await;
+    let read = json_of(
+        &jojobot
+            .recall(Parameters(recall_args("thing:kettle")))
+            .await
+            .expect("read"),
+    );
+    assert!(
+        read["objects"][0]["facts"]
+            .as_array()
+            .expect("claims")
+            .iter()
+            .any(|fact| fact["address"] == landed["address"]
+                && fact["content"] == "see @thing:handcart"),
+        "{read}"
+    );
+}
+
+/// Dropping a copied place leaves an otherwise empty setting bag empty: creating
+/// or relabelling the list must not invent an entry to carry the dropped keys.
+#[tokio::test]
+async fn read_keys_written_back_other_write_doors() {
+    let jojobot = handler();
+    ensure(&jojobot, "thing:kettle").await;
+    let copied = || Some([("order".into(), "copied".into())].into());
+    let added = json_of(
+        &jojobot
+            .add_entity(Parameters(AddEntityArgs {
+                parent: Some("thing:kettle".into()),
+                sets: copied(),
+                ..add_args("list", "packing", "packing")
+            }))
+            .await
+            .expect("add"),
+    );
+    assert_ne!(added["status"], "blocked", "{added}");
+    assert_eq!(
+        added["dropped_keys"],
+        serde_json::json!(["order"]),
+        "{added}"
+    );
+    assert!(
+        jojobot
+            .memory
+            .recall(&EntityId("list:packing".into()))
+            .await
+            .expect("entries")
+            .is_empty(),
+        "creation with no remaining settings invents no entry: {added}"
+    );
+    let updated = json_of(
+        &jojobot
+            .update_entity(Parameters(
+                serde_json::from_value(serde_json::json!({
+                    "handle": "list:packing", "sets": {"order": "copied"}, "sid": TEST_SID,
+                }))
+                .expect("update arguments"),
+            ))
+            .await
+            .expect("update"),
+    );
+    assert_ne!(updated["status"], "blocked", "{updated}");
+    assert_eq!(
+        updated["dropped_keys"],
+        serde_json::json!(["order"]),
+        "{updated}"
+    );
+    assert!(
+        jojobot
+            .memory
+            .recall(&EntityId("list:packing".into()))
+            .await
+            .expect("entries")
+            .is_empty(),
+        "an empty setting edit invents no entry: {updated}"
+    );
+    let entry = capture_ok(
+        &jojobot,
+        CaptureArgs {
+            fields: copied(),
+            sets: copied(),
+            ..capture_args("list:packing", "tent")
+        },
+    )
+    .await;
+    assert_eq!(
+        entry["dropped_keys"],
+        serde_json::json!(["order"]),
+        "{entry}"
+    );
+    let edited = json_of(
+        &jojobot
+            .update_fact(Parameters(UpdateFactArgs {
+                fields: copied(),
+                sets: copied(),
+                clear_fields: Some(vec!["order".into()]),
+                content: Some("tent kept dry".into()),
+                ..update_args(&address_of(&entry))
+            }))
+            .await
+            .expect("edit"),
+    );
+    assert_ne!(edited["status"], "blocked", "{edited}");
+    assert_eq!(
+        edited["dropped_keys"],
+        serde_json::json!(["order"]),
+        "{edited}"
+    );
+    let read = jojobot
+        .memory
+        .recall(&EntityId("list:packing".into()))
+        .await
+        .expect("entries");
+    assert!(
+        read[0].fields.contains_key("order"),
+        "a copied clear did not remove the place: {read:?}"
+    );
+}
+
+/// Copied bookkeeping cannot turn a setting rewrite into another live record.
+#[tokio::test]
+async fn read_keys_written_back_preserves_setting_reuse() {
+    let jojobot = handler();
+    ensure(&jojobot, "thing:kettle").await;
+    for copied in [false, true] {
+        let mut sets = serde_json::json!({"colour": "blue"});
+        if copied {
+            let facts = jojobot
+                .memory
+                .recall(&EntityId("thing:kettle".into()))
+                .await
+                .expect("settings read");
+            sets["settings_record"] = facts[0].fields["settings_record"].clone().into();
+        }
+        let answer = json_of(
+            &jojobot
+                .update_entity(Parameters(
+                    serde_json::from_value(serde_json::json!({
+                        "handle": "thing:kettle", "sets": sets, "sid": TEST_SID,
+                    }))
+                    .expect("update arguments"),
+                ))
+                .await
+                .expect("update"),
+        );
+        assert_ne!(answer["status"], "blocked", "{answer}");
+        let facts = jojobot
+            .memory
+            .recall(&EntityId("thing:kettle".into()))
+            .await
+            .expect("settings read");
+        assert_eq!(facts.len(), 1, "the setting record was reused: {facts:?}");
+        if copied {
+            assert_eq!(
+                answer["dropped_keys"],
+                serde_json::json!(["settings_record"]),
+                "{answer}"
+            );
+        }
+    }
+}
+
 /// A rhythm with a whole schedule on it, ready to take a check-in.
 async fn a_weekly_rhythm(jojobot: &Jojobot, handle: &str, counts_from: &str, advances: &str) {
     ensure(jojobot, "thing:kettle").await;

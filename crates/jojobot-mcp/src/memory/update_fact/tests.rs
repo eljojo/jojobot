@@ -1565,19 +1565,17 @@ async fn clearing_counts_from_alone_gets_no_half_cleared_advisory() {
     );
 }
 
-/// **The key jojobot writes itself is refused here too.** A verb that
-/// could set `retracts` would be a way to mark somebody else's record
-/// taken back without going through the verb that decides whether it may
-/// be — so the gate is on both write paths, not on the one somebody
-/// thought of first.
+/// A copied retraction marker is dropped here too. The words still change,
+/// while the record gains none of an engine account's authority.
 #[tokio::test]
-async fn update_fact_refuses_the_reserved_key() {
+async fn update_fact_drops_the_copied_reserved_key() {
     let jojobot = handler();
     let captured = capture_ok(&jojobot, capture_args("alpha", "a claim")).await;
 
-    let refused = blocked(
+    let edited = json_of(
         &jojobot
             .update_fact(Parameters(UpdateFactArgs {
+                content: Some("a claim, clarified".into()),
                 sets: Some(
                     [("retracts".to_string(), "person:alpha#f1".to_string())]
                         .into_iter()
@@ -1588,13 +1586,11 @@ async fn update_fact_refuses_the_reserved_key() {
             .await
             .expect("a caller mistake is an answer, not a protocol failure"),
     );
-    assert_eq!(refused["wrote"], false, "{refused}");
-    assert!(
-        refused["how_to_proceed"]
-            .as_str()
-            .expect("advice")
-            .contains("retracts"),
-        "the refusal names the key: {refused}"
+    assert_ne!(edited["status"], "blocked", "{edited}");
+    assert_eq!(
+        edited["dropped_keys"],
+        serde_json::json!(["retracts"]),
+        "{edited}"
     );
 }
 

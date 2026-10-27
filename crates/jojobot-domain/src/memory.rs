@@ -1762,23 +1762,18 @@ pub const MERGED_FROM: &str = "merged_from";
 /// and the longest this software ships is under twenty characters.
 pub const MAX_KEY_CHARS: usize = 128;
 
-/// **Whether a field key is one jojobot writes itself.**
-///
-/// The bag is flat and free with exactly one exception, and it is the key that
-/// says a record takes another one back. jojobot writes that key and a caller
-/// may not: a record naming what it retracts is the only record on this rail
-/// that changes the standing of a different row, so a caller able to write the
-/// key could mark somebody else's record taken back.
-///
-/// Refused rather than renamed. Renaming it would hand back a record the caller
-/// did not write, and what a type is gets derived from what accumulates here,
-/// so a silently moved key is a corrupted sample.
+/// **Keys only engine accounts may carry.** Neither a copied merge marker nor
+/// a caller's retraction marker may acquire the authority of an engine account.
 pub fn reserved_key(key: &str) -> bool {
-    // **[`MERGED_FROM`] is reserved for the same reason**: the account of a
-    // merge is the only other record that says something about a row other than
-    // itself, and a caller able to write the key could claim somebody else's
-    // thing was merged away.
     matches!(key.trim(), RETRACTS | MERGED_FROM)
+}
+
+/// **Read metadata a public write drops before validation**, with a receipt.
+/// Internal accounts still carry their reserved markers and bookkeeping keys.
+pub fn copied_read_key(kind: Option<EntityKind>, key: &str) -> bool {
+    reserved_key(key)
+        || review::SERVER_WRITTEN_KEYS.contains(&key.trim())
+        || (entries::places_its_records(kind) && entries::is_placement_key(key))
 }
 
 /// **Where a machine-read claim was read**, and it is required on one.

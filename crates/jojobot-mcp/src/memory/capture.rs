@@ -916,13 +916,25 @@ impl Jojobot {
         }
 
         let mut fields = args.fields.unwrap_or_default();
-        // **What this call sent as the claim's own fields**, kept apart from the
-        // setting bag for the receipt's hint.
-        let own_sent: Vec<String> = fields.keys().cloned().collect();
         // **The setting bag joins `fields` for everything below**, so every guard
         // that reads a claim's keys reads these too, and the keys that are the bag
         // travel apart in `sets` so a store can tell them from the claim's own.
         let mut sets_sent = args.sets.unwrap_or_default();
+        let dropped_keys = match self
+            .drop_read_keys(
+                &subject,
+                None,
+                [&mut fields, &mut sets_sent],
+                &mut Vec::new(),
+            )
+            .await
+        {
+            Ok(dropped) => dropped,
+            Err(e) => return memory_declined("capture", e),
+        };
+        // **What remains of the caller's own fields**, apart from the setting
+        // bag for the receipt's hint; copied server keys are not caller fields.
+        let own_sent: Vec<String> = fields.keys().cloned().collect();
         // **Held from the read of the thing's fold to the write**, on the one lock a
         // document's sections and a list's entries are placed under, so two callers
         // changing one list read one after the other. A list takes it for its
@@ -990,13 +1002,6 @@ impl Jojobot {
         // **The review stamp is jojobot's too**, set when the writer is defrag.
         if let Some(refused) = self.refuses_a_hand_written_review_stamp(&subject, &fields, &[]) {
             return Ok(refused);
-        }
-        let named: Vec<&str> = fields.keys().map(String::as_str).collect();
-        if let Some(done) = self
-            .refuses_placement("capture", &subject, None, &named)
-            .await
-        {
-            return done;
         }
         // **The keys jojobot computes below reach the thing**: they are its own
         // arithmetic on the thing, not words a caller wrote on a record.
@@ -1404,6 +1409,7 @@ impl Jojobot {
                 // claim's day contradicts it inside one session.
                 let mut body =
                     fact_receipt_json(&fact, self.dated(None, args.sid.as_deref()).await?);
+                dropped_keys.note(&mut body);
                 let changed = match fold_behind {
                     Some(_) => crate::changed::Changed::not_read(),
                     None => self.changed_on(&before, &fact.subject).await,

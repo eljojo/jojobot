@@ -276,7 +276,7 @@ pub fn edited_stored(
     edit: &TextEdit,
     known: &[Entity],
 ) -> Result<Result<String, EntityId>, super::MemoryError> {
-    refuse_forged(&[&edit.replace])?;
+    refuse_forged(&[&edit.replace], known)?;
     if any_unknowable(&[&edit.replace]) {
         return Err(unloaded(KindsUnloaded));
     }
@@ -525,9 +525,9 @@ pub use roster::{render_roster, roster_for, served_names};
 
 /// **Whether a caller's text carries the stored mark.** [`rendered`] reads an
 /// `@` and `#` followed by a badge as a link to whatever wears that badge, so
-/// text a caller wrote in that shape would be a link nothing checked. The mark
-/// is jojobot's to write, and this is the question every write of a caller's
-/// text asks first. A mark with no badge after it reads as ordinary text and is
+/// text a caller wrote in that shape needs its target checked. The question
+/// identifies the stored spelling; each text owner decides whether its target
+/// is known. A mark with no badge after it reads as ordinary text and is
 /// not one.
 pub fn forged_mark(text: &str) -> bool {
     text.match_indices('@').any(|(at, _)| {
@@ -541,26 +541,31 @@ fn unloaded(_: KindsUnloaded) -> super::MemoryError {
     super::MemoryError::KindsNeverLoaded { attempted: None }
 }
 
-/// **The refusal a caller's text gets when it carries the stored mark** (see
-/// [`forged_mark`]). One spelling for every write that takes text.
-fn refuse_forged(text: &[&str]) -> Result<(), super::MemoryError> {
-    match text.iter().any(|part| forged_mark(part)) {
-        false => Ok(()),
-        true => Err(super::MemoryError::InvalidFact(format!(
-            "the text carries '{MARK}' followed by a badge, which is how jojobot stores a link \
-             to a thing, and only jojobot writes it. Write @kind:slug to link a \
-             thing, or leave the '{MARK}' off."
-        ))),
+/// **A copied stored link is checked against the same roster as a handle.**
+/// The mark is not authority: an unknown badge is refused, including in code,
+/// where a stored link still renders. Known badges already are resolved links.
+fn refuse_forged(text: &[&str], known: &[Entity]) -> Result<(), super::MemoryError> {
+    for part in text {
+        for (at, _) in part.match_indices(MARK) {
+            let badge = run_of(part, at + MARK.len(), is_badge_byte);
+            if !badge.is_empty() && !known.iter().any(|e| e.badge.as_deref() == Some(badge)) {
+                return Err(super::MemoryError::InvalidFact(format!(
+                    "the stored link '{MARK}{badge}' names no thing jojobot knows. \
+                     Write @kind:slug to link an existing thing, or leave the '{MARK}' off."
+                )));
+            }
+        }
     }
+    Ok(())
 }
 
 /// **What the words of a claim would be refused for, asked before anything is
-/// written.** The stored mark is jojobot's and a handle that names nothing is
-/// refused with candidates: the two refusals [`Mentioning`] gives a capture, for
+/// written.** An unknown stored badge is refused, and a handle that names nothing
+/// is refused with candidates: the two refusals [`Mentioning`] gives a capture, for
 /// a caller that has many claims to write and must know none is refused before
 /// it writes the first.
 pub fn refusal_for_text(text: &[&str], known: &[Entity]) -> Option<super::MemoryError> {
-    refuse_forged(text)
+    refuse_forged(text, known)
         .err()
         .or_else(|| Mentioning::screen_or_unknown(text, known))
 }
@@ -664,7 +669,7 @@ pub fn refusal_for_words(
     known: &[Entity],
 ) -> Option<super::MemoryError> {
     let parts: Vec<&str> = std::iter::once(content).chain(details).collect();
-    refuse_forged(&parts).err().or_else(|| {
+    refuse_forged(&parts, known).err().or_else(|| {
         let texts = words_text(content, details);
         let texts: Vec<&str> = texts.iter().map(String::as_str).collect();
         Mentioning::screen_or_unknown(&texts, known)
@@ -1073,11 +1078,6 @@ impl super::Memory for Mentioning {
         new: super::NewEntity,
         first: super::NewFact,
     ) -> Result<super::Guarded<(Entity, super::Fact)>, super::MemoryError> {
-        refuse_forged(&[
-            first.content.as_str(),
-            first.details.as_deref().unwrap_or(""),
-            first.drop_because.as_deref().unwrap_or(""),
-        ])?;
         let known = self
             .known_for(&[
                 first.content.as_str(),
@@ -1085,6 +1085,14 @@ impl super::Memory for Mentioning {
                 first.drop_because.as_deref().unwrap_or(""),
             ])
             .await?;
+        refuse_forged(
+            &[
+                first.content.as_str(),
+                first.details.as_deref().unwrap_or(""),
+                first.drop_because.as_deref().unwrap_or(""),
+            ],
+            &known,
+        )?;
         if let Some(blocked) = Self::screen_words(&first.content, first.details.as_deref(), &known)
         {
             return Ok(blocked);
@@ -1127,11 +1135,6 @@ impl super::Memory for Mentioning {
         patch: super::EntityPatch,
         claim: super::NewFact,
     ) -> Result<super::Guarded<(Entity, super::Fact)>, super::MemoryError> {
-        refuse_forged(&[
-            claim.content.as_str(),
-            claim.details.as_deref().unwrap_or(""),
-            claim.drop_because.as_deref().unwrap_or(""),
-        ])?;
         let known = self
             .known_for(&[
                 claim.content.as_str(),
@@ -1139,6 +1142,14 @@ impl super::Memory for Mentioning {
                 claim.drop_because.as_deref().unwrap_or(""),
             ])
             .await?;
+        refuse_forged(
+            &[
+                claim.content.as_str(),
+                claim.details.as_deref().unwrap_or(""),
+                claim.drop_because.as_deref().unwrap_or(""),
+            ],
+            &known,
+        )?;
         if let Some(blocked) = Self::screen_words(&claim.content, claim.details.as_deref(), &known)
         {
             return Ok(blocked);
@@ -1209,8 +1220,8 @@ impl super::Memory for Mentioning {
         reason: &str,
         session: Option<&str>,
     ) -> Result<Entity, super::MemoryError> {
-        refuse_forged(&[reason])?;
         let known = self.known_for(&[reason]).await?;
+        refuse_forged(&[reason], &known)?;
         let reason = resolved(reason, &known).map_err(unloaded)?;
         let mut archived = self.inner.archive_entity(id, &reason, session).await?;
         self.render_reasons(std::slice::from_mut(&mut archived))
@@ -1235,13 +1246,6 @@ impl super::Memory for Mentioning {
         &self,
         fact: super::NewFact,
     ) -> Result<super::Guarded<super::Fact>, super::MemoryError> {
-        refuse_forged(&[
-            fact.content.as_str(),
-            fact.details.as_deref().unwrap_or(""),
-            // A store keeps the reason a thought is dropped as the details of the
-            // claim it archives.
-            fact.drop_because.as_deref().unwrap_or(""),
-        ])?;
         let known = self
             .known_for(&[
                 fact.content.as_str(),
@@ -1249,6 +1253,16 @@ impl super::Memory for Mentioning {
                 fact.drop_because.as_deref().unwrap_or(""),
             ])
             .await?;
+        refuse_forged(
+            &[
+                fact.content.as_str(),
+                fact.details.as_deref().unwrap_or(""),
+                // A store keeps the reason a thought is dropped as the details of the
+                // claim it archives.
+                fact.drop_because.as_deref().unwrap_or(""),
+            ],
+            &known,
+        )?;
         if let Some(blocked) = Self::screen_words(&fact.content, fact.details.as_deref(), &known) {
             return Ok(blocked);
         }
@@ -1318,7 +1332,6 @@ impl super::Memory for Mentioning {
                 .filter(|_| editing != Some(TextField::Details))
                 .unwrap_or(""),
         ];
-        refuse_forged(&screened)?;
         let known = self
             .known_for(&[
                 screened[0],
@@ -1329,6 +1342,7 @@ impl super::Memory for Mentioning {
                     .map_or("", |edit| edit.replace.as_str()),
             ])
             .await?;
+        refuse_forged(&screened, &known)?;
         // **What is code is decided over the claim's content and details as one
         // text**, so an edit to one of them is read beside the other as stored:
         // a details written under a content line that opens a fence is code.
@@ -1645,8 +1659,8 @@ impl super::Memory for Mentioning {
         caller: &super::EntityId,
         session: Option<&str>,
     ) -> Result<super::Retraction, super::MemoryError> {
-        refuse_forged(&[reason.unwrap_or("")])?;
         let known = self.known_for(&[reason.unwrap_or("")]).await?;
+        refuse_forged(&[reason.unwrap_or("")], &known)?;
         if let Some(err) = Self::screen_or_unknown(&[reason.unwrap_or("")], &known) {
             return Err(err);
         }
@@ -1676,8 +1690,8 @@ impl super::Memory for Mentioning {
         caller: &EntityId,
         session: Option<&str>,
     ) -> Result<super::Merge, super::MemoryError> {
-        refuse_forged(&[reason.unwrap_or("")])?;
         let known = self.known_for(&[reason.unwrap_or("")]).await?;
+        refuse_forged(&[reason.unwrap_or("")], &known)?;
         if let Some(err) = Self::screen_or_unknown(&[reason.unwrap_or("")], &known) {
             return Err(err);
         }
@@ -1704,8 +1718,8 @@ impl super::Memory for Mentioning {
         prose: &str,
         session: Option<&str>,
     ) -> Result<String, super::MemoryError> {
-        refuse_forged(&[prose])?;
         let known = self.known_for(&[prose]).await?;
+        refuse_forged(&[prose], &known)?;
         let stored = self
             .inner
             .set_prose(entity, &resolved(prose, &known).map_err(unloaded)?, session)

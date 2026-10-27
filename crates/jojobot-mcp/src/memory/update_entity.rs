@@ -142,7 +142,7 @@ impl Jojobot {
     )]
     pub(crate) async fn update_entity(
         &self,
-        Parameters(args): Parameters<UpdateEntityArgs>,
+        Parameters(mut args): Parameters<UpdateEntityArgs>,
     ) -> Result<CallToolResult, McpError> {
         // Refused here, before anything is written — see
         // [`Jojobot::attributable`].
@@ -169,6 +169,18 @@ impl Jojobot {
             Ok(handle) => handle,
             Err(e) => return memory_declined("update_entity", e),
         };
+        // Copied bookkeeping must not change whether this write reuses a record.
+        // The rewrite receives the original bag so its receipt names the drops.
+        let sent_sets = args.sets.clone();
+        let mut sets = args.sets.take().unwrap_or_default();
+        let dropped_keys = match self
+            .drop_read_keys(&handle, None, [&mut sets], &mut Vec::new())
+            .await
+        {
+            Ok(dropped) => dropped,
+            Err(e) => return memory_declined("update_entity", e),
+        };
+        args.sets = (!sets.is_empty()).then_some(sets);
         // **The review stamp of a write by defrag**, and the one mark that sets
         // it alone. Only defrag marks a thing reviewed, and only with `true`.
         let stamp = self.review_stamp(&caller.bot);
@@ -253,6 +265,7 @@ impl Jojobot {
             return self
                 .update_fact(Parameters(super::update_fact::UpdateFactArgs {
                     address: standing.address().to_string(),
+                    sets: sent_sets.clone(),
                     sid: args.sid.clone(),
                     ..Default::default()
                 }))
@@ -275,7 +288,7 @@ impl Jojobot {
                 .update_fact_checking_revision(
                     super::update_fact::UpdateFactArgs {
                         address: own.to_string(),
-                        sets: Some(sets.clone()),
+                        sets: sent_sets.clone(),
                         expected_revision: Some(revision),
                         sid: args.sid.clone(),
                         ..Default::default()
@@ -333,13 +346,6 @@ impl Jojobot {
                     jojobot_domain::memory::refuses_role_fields(&handle, fields.keys())
                 {
                     return memory_declined("update_entity", refused);
-                }
-                let named: Vec<&str> = fields.keys().map(String::as_str).collect();
-                if let Some(done) = self
-                    .refuses_placement("update_entity", &handle, None, &named)
-                    .await
-                {
-                    return done;
                 }
                 // **A guarded key is licensed here as on a capture**, through
                 // the same call: the store's combined write takes no caller, so
@@ -489,6 +495,7 @@ impl Jojobot {
                 self.fill_working_on(&caller, &entity.id, &moves_to_now, &unread)
                     .await;
                 let mut body = entity_json(&entity);
+                dropped_keys.note(&mut body);
                 // **The claim's receipt**, so the claim has an address a later edit
                 // goes through, and the answer says the claim exists.
                 if let (Some(fact), Some(obj)) = (&claim, body.as_object_mut()) {

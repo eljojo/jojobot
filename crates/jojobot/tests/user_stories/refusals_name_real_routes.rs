@@ -1,7 +1,7 @@
 //! "The refusal told me to send `after` to a verb that takes none."
 //!
 //! **A refusal that names a way forward names one the surface has.** The
-//! placement refusals tell a caller how to put an entry or a section where it
+//! section-edge refusals tell a caller how to put a section where it
 //! belongs, and every verb they name has to be a served verb that publishes
 //! `after`. A move of a section that already exists is `update_fact`'s; a
 //! `put_document` writes new text and is never offered for a move.
@@ -29,13 +29,10 @@ async fn verbs_named(session: &Session, refusal: &Answer) -> Vec<String> {
         .collect()
 }
 
-/// **A caller's own place on `add_entity`, `update_entity`, `capture` and
-/// `update_fact` is refused, and each refusal names `capture` for a new entry
-/// and `update_fact` for a move, both of which take `after`.** The paired
-/// positive is the route the refusal names: a capture with `after` lands and the
-/// server places it.
+/// All four writes drop copied placement keys. An explicit `after` still asks
+/// the server to place an entry through the verbs that publish it.
 #[tokio::test]
-async fn a_refused_place_names_the_verbs_that_take_after() {
+async fn copied_places_are_dropped_and_moves_use_the_verbs_that_take_after() {
     let story = Story::begin("bot:gamma").await;
     let s = story.session().await;
     a_list_on_the_trip(&s, "packing", json!({"tick": "sink"})).await;
@@ -51,55 +48,56 @@ async fn a_refused_place_names_the_verbs_that_take_after() {
         .expect("an entry address")
         .to_string();
 
-    let refusals = [
-        s.refused(
+    let answers = [
+        s.call(
             "add_entity",
             json!({"kind": "list", "handle": "list:errands", "name": "Errands",
                    "source": "user-named", "parent": "thing:springfield-camping",
                    "sets": {"order": "n"}}),
         )
         .await,
-        s.refused(
+        s.call(
             "update_entity",
             json!({"handle": "list:packing", "sets": {"held_turn": "1"}}),
         )
         .await,
-        s.refused(
+        s.call(
             "capture",
             json!({"subject": "list:packing", "content": "stove",
                    "provenance": "testimony", "fields": {"held_since": "1"}}),
         )
         .await,
-        s.refused(
+        s.call(
             "update_fact",
-            json!({"address": first, "fields": {"order": "n"}}),
+            json!({"address": first, "content": "tent repacked", "fields": {"order": "n"}}),
         )
         .await,
     ];
 
     let taking_after = s.verbs_publishing("after").await;
-    for refusal in &refusals {
-        let named = verbs_named(&s, refusal).await;
-        for route in ["capture", "update_fact"] {
-            assert!(
-                named.iter().any(|verb| verb == route),
-                "the refusal names {route}: {named:?} in {}",
-                refusal.json()
-            );
-        }
-        for verb in &named {
-            assert!(
-                taking_after.contains(verb),
-                "{verb} is named as a way to place something and publishes no `after`: {taking_after:?}"
-            );
-        }
+    for (answer, key) in answers
+        .iter()
+        .zip(["order", "held_turn", "held_since", "order"])
+    {
+        assert_eq!(
+            answer.json()["dropped_keys"],
+            json!([key]),
+            "{}",
+            answer.raw()
+        );
+    }
+    for route in ["capture", "update_fact"] {
+        assert!(
+            taking_after.iter().any(|verb| verb == route),
+            "{taking_after:?}"
+        );
     }
 
-    // ── the positive the refusals point to ───────────────────────────────────
+    // ── an explicit placement still lands ───────────────────────────────────
     let placed = s
         .call(
             "capture",
-            json!({"subject": "list:packing", "content": "stove",
+            json!({"subject": "list:packing", "content": "lantern",
                    "provenance": "testimony", "after": "first"}),
         )
         .await

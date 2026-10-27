@@ -884,8 +884,8 @@ async fn a_caller_cannot_label_its_own_record_as_one_that_takes_no_slot() {
     .number("/live", 3)
     .number("/ceiling", 3);
 
-    // The negative, for each key jojobot alone writes: refused for the key, not
-    // for the number, and nothing written.
+    // Copies of the server's labels are dropped, so each is an ordinary fourth
+    // note and is refused for the same number. None can claim an exemption.
     for key in ["engine_record", "review_mark", "defragged_at"] {
         let refused = s
             .refused(
@@ -897,14 +897,10 @@ async fn a_caller_cannot_label_its_own_record_as_one_that_takes_no_slot() {
             )
             .await;
         refused
-            .says(key)
+            .number("/live", 3)
+            .number("/ceiling", 3)
             .holds_at("/fix_by", "change")
             .says("\"wrote\":false");
-        let body = refused.json();
-        assert!(
-            body.pointer("/live").is_none(),
-            "{key} was refused for the number, not as a key: {body}"
-        );
     }
     let (_, records, _) = held(&s, THREAD).await;
     assert_eq!(records, 3, "nothing was written");

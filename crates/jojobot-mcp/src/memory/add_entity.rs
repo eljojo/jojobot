@@ -427,7 +427,7 @@ impl Jojobot {
         // first claim in the same act**, through the store's own combined write:
         // the store runs the guards of a capture inside the transaction that
         // creates the thing, and a refusal takes the creation back with it.
-        let first_fields = {
+        let (first_fields, dropped_keys) = {
             let mut sets = args.sets.clone().unwrap_or_default();
             if let Some(reason) = override_reason {
                 // A new thing holds only what this call sent.
@@ -439,7 +439,17 @@ impl Jojobot {
             }
             // **A creation by defrag carries the review stamp**, so the first claim
             // is written for it even when the caller set nothing.
-            (!sets.is_empty() || self.review_stamp(&caller.bot).is_some()).then_some(sets)
+            let dropped = match self
+                .drop_read_keys(&creating, None, [&mut sets], &mut Vec::new())
+                .await
+            {
+                Ok(dropped) => dropped,
+                Err(e) => return memory_declined("add_entity", e),
+            };
+            (
+                (!sets.is_empty() || self.review_stamp(&caller.bot).is_some()).then_some(sets),
+                dropped,
+            )
         };
         let mut fold_behind = None;
         let mut due_moved = jojobot_domain::attention::DueMove::Unchanged;
@@ -544,13 +554,6 @@ impl Jojobot {
                     jojobot_domain::memory::refuses_role_fields(&creating, fields.keys())
                 {
                     return memory_declined("add_entity", refused);
-                }
-                let named: Vec<&str> = fields.keys().map(String::as_str).collect();
-                if let Some(done) = self
-                    .refuses_placement("add_entity", &creating, None, &named)
-                    .await
-                {
-                    return done;
                 }
                 // **A guarded key is licensed here as on a capture**, through
                 // the same call: the store's combined write takes no caller, so
@@ -718,6 +721,7 @@ impl Jojobot {
                 self.fill_working_on(&caller, &entity.id, &moves_to_now, &unread)
                     .await;
                 let mut body = entity_json(&entity);
+                dropped_keys.note(&mut body);
                 // **The first claim's receipt**, so the claim has an address a
                 // later edit goes through, and the answer says the claim exists.
                 if let (Some(fact), Some(obj)) = (&first_claim, body.as_object_mut()) {

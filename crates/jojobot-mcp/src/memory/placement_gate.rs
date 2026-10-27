@@ -1,49 +1,88 @@
 //! **The one entry every verb that writes a caller's keys asks before it writes
 //! a place.** A section's or an entry's place and a section's `edges` are the
-//! engine's alone, and the refusal is judged here on the kind the STORE holds for
+//! engine's alone, and copied places are dropped on the kind the STORE holds for
 //! the thing, not on the kind its address was typed with: a thing retyped into a
 //! document still answers to its old handle, and a handle typed with the old kind
 //! must not walk a caller's place past the gate.
 //!
 //! `add_entity`, `update_entity`, `capture` (and `capture_batch`, which writes one
 //! capture per item) and `update_fact` each make this one call (rule 598). The
-//! pure test of the keys is the domain's `refuses_a_callers_placement`.
+//! domain owns which read keys are copied and which section keys stay refused.
 
 use super::*;
 use jojobot_domain::memory::{FactAddress, FactId, document, entries};
 
+#[derive(Default)]
+pub(super) struct DroppedKeys(std::collections::BTreeSet<String>);
+
+impl DroppedKeys {
+    pub(super) fn note(&self, body: &mut serde_json::Value) {
+        if !self.0.is_empty() {
+            body["dropped_keys"] = serde_json::json!(self.0);
+            body["dropped_keys_note"] =
+                "These keys are written by the server; their copied values were dropped.".into();
+        }
+    }
+}
+
 impl Jojobot {
-    /// **The refusal of a caller's own place, ready to return, or none.**
+    /// **Drop copied server keys and retain the refusal of section edges.**
     /// `record` is the local id of the claim an edit changes, when the write is an
-    /// edit; a new claim has none. `named` is every key the call writes: its fields
-    /// and settings and the keys it clears.
+    /// edit; a new claim has none. Both bags and clears are judged before they
+    /// join, so a copied key in both bags cannot cause a conflict.
     ///
     /// **Nothing is read unless a guarded key is named**, so the common write pays
     /// nothing for this gate. When one is, the kind is the one of the claim that is
     /// edited, else of the handle the thing answers to now. A new claim is a section
     /// when it carries `order`; an edited claim is one when the store holds it as
     /// one. A store that cannot answer refuses rather than passes.
-    pub(crate) async fn refuses_placement(
+    pub(super) async fn drop_read_keys<'a>(
         &self,
-        verb: &'static str,
         thing: &EntityId,
         record: Option<&FactId>,
-        named: &[&str],
-    ) -> Option<Result<CallToolResult, McpError>> {
-        if !named
+        bags: impl IntoIterator<Item = &'a mut std::collections::BTreeMap<String, String>>,
+        cleared: &mut Vec<String>,
+    ) -> Result<DroppedKeys, MemoryError> {
+        let mut bags: Vec<_> = bags.into_iter().collect();
+        let named: Vec<&str> = bags
+            .iter()
+            .flat_map(|bag| bag.keys().map(String::as_str))
+            .chain(cleared.iter().map(String::as_str))
+            .collect();
+        if !named.iter().any(|key| {
+            entries::is_placement_key(key)
+                || key.trim() == document::EDGES
+                || jojobot_domain::memory::copied_read_key(None, key)
+        }) {
+            return Ok(DroppedKeys::default());
+        }
+        let (kind, section) = if named
             .iter()
             .any(|key| entries::is_placement_key(key) || key.trim() == document::EDGES)
         {
-            return None;
-        }
-        let (kind, section) = match self.stored_kind(thing, record).await {
-            Ok(held) => held,
-            Err(e) => return Some(memory_declined(verb, e)),
+            self.stored_kind(thing, record).await?
+        } else {
+            (None, None)
         };
         let section =
             section.unwrap_or_else(|| named.iter().any(|key| key.trim() == document::ORDER));
-        entries::refuses_a_callers_placement(kind, section, named.iter().copied())
-            .map(|refused| memory_declined(verb, refused))
+        if let Some(refused) = entries::refuses_a_callers_placement(kind, section, named) {
+            return Err(refused);
+        }
+        let mut dropped = DroppedKeys::default();
+        let mut keep = |key: &String| {
+            if jojobot_domain::memory::copied_read_key(kind, key) {
+                dropped.0.insert(key.trim().to_string());
+                false
+            } else {
+                true
+            }
+        };
+        for bag in &mut bags {
+            bag.retain(|key, _| keep(key));
+        }
+        cleared.retain(keep);
+        Ok(dropped)
     }
 
     /// The kind the store holds for `thing`, and whether `record` is a section.

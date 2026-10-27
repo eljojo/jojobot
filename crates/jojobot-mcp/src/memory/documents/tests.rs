@@ -1210,14 +1210,14 @@ async fn another_session_may_move_a_testimony_section_but_not_rewrite_it() {
             .await
             .expect("update_fact answers");
         assert!(
-            blocked(&refused).to_string().contains("after"),
-            "a caller's own order in {what} is refused with the way to move"
+            blocked(&refused).to_string().contains("keep"),
+            "after dropping a copied {what}, the edit names no change"
         );
     }
     assert_eq!(
         read_all(&jojobot, "document:alpha").await,
         "# Two\n\nsecond\n\n# One\n\nfirst\n\n",
-        "nothing of the refused calls was written"
+        "the copied placement keys do not move the sections"
     );
 }
 /// A fact hit on a record of a thing, as the index ranks it.

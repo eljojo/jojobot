@@ -133,45 +133,45 @@ async fn a_thing_another_bot_writes_to_waits_for_defrag_until_defrag_writes_or_m
         "a longer queue names the call that reads the rest: {fronted}"
     );
 
-    // ── the stamp is jojobot's: nobody writes it, and only defrag marks ─────
+    // ── copied stamps are dropped; only defrag's write mints the stamp ───────
     let written = dev
-        .refused(
+        .call(
             "capture",
             json!({"subject": "person:homer", "content": "x", "provenance": "testimony",
                    "sets": {"defragged_at": "2026-01-01T00:00:00Z"}}),
         )
         .await;
-    written.says("defragged_at");
+    assert_eq!(written.json()["dropped_keys"], json!(["defragged_at"]));
     let by_defrag = defrag
-        .refused(
+        .call(
             "capture",
             json!({"subject": "person:homer", "content": "x", "provenance": "inference",
                    "sets": {"defragged_at": "2026-01-01T00:00:00Z"}}),
         )
         .await;
-    by_defrag.says("defragged_at");
+    assert_eq!(by_defrag.json()["dropped_keys"], json!(["defragged_at"]));
     let created = dev
-        .refused(
+        .call(
             "add_entity",
             json!({"kind": "person", "handle": "milhouse", "name": "Milhouse", "source": "user-named",
                    "sets": {"defragged_at": "2026-01-01T00:00:00Z"}}),
         )
         .await;
-    created.says("defragged_at").says("\"wrote\":false");
+    assert_eq!(created.json()["dropped_keys"], json!(["defragged_at"]));
     let edited = dev
         .refused(
             "update_fact",
             json!({"address": "person:homer#f1", "sets": {"defragged_at": "2026-01-01T00:00:00Z"}}),
         )
         .await;
-    edited.says("defragged_at").says("\"wrote\":false");
+    edited.says("keep").says("\"wrote\":false");
     let set = dev
-        .refused(
+        .call(
             "update_entity",
             json!({"handle": "person:homer", "sets": {"defragged_at": "2026-01-01T00:00:00Z"}}),
         )
         .await;
-    set.says("defragged_at").says("\"wrote\":false");
+    assert_eq!(set.json()["dropped_keys"], json!(["defragged_at"]));
     let marked = dev
         .refused(
             "update_entity",
@@ -329,7 +329,7 @@ async fn defrag_marks_a_full_thread_reviewed_with_one_standing_record_that_takes
                    "fields": {"review_mark": "true"}}),
         )
         .await;
-    forged.says("review_mark");
+    forged.number("/live", 3).number("/ceiling", 3);
     story.finish().await;
 }
 

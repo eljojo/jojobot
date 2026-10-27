@@ -35,14 +35,7 @@ impl Jojobot {
         sent: &std::collections::BTreeMap<String, String>,
         cleared: &[String],
     ) -> Option<CallToolResult> {
-        let keys = [
-            review::DEFRAGGED_AT,
-            review::REVIEW_MARK,
-            review::SETTINGS_RECORD,
-            jojobot_domain::memory::capacity::ENGINE_RECORD,
-            jojobot_domain::memory::RELEASE_NOTES_TOLD,
-            jojobot_domain::memory::ARCHIVE_REASON,
-        ];
+        let keys = review::SERVER_WRITTEN_KEYS;
         let (key, writes) = keys.iter().find_map(|key| {
             let writes = sent.keys().any(|sent| sent.trim() == *key);
             (writes || cleared.iter().any(|sent| sent.trim() == *key)).then_some((*key, writes))
