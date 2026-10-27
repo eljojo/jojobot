@@ -57,7 +57,7 @@ pub fn parse_job(text: &str) -> JobRecord {
 
 /// **`test a::b ... ok <0.013s>` → a record.** Any other line, a benchmark
 /// result included, is not a test line and gives `None`.
-fn parse_test_line(line: &str) -> Option<TestRecord> {
+pub(crate) fn parse_test_line(line: &str) -> Option<TestRecord> {
     let (test, outcome) = line.strip_prefix("test ")?.split_once(" ... ")?;
     let (outcome, duration_ms) = match outcome.rsplit_once(" <") {
         Some((before, time)) => match time.strip_suffix("s>") {
@@ -189,9 +189,7 @@ mod tests {
         assert_eq!(job.duration_ms, Some(12_840));
     }
 
-    /// **A failing line carries its time too**, and the line is a failed test
-    /// rather than an unreadable one: the bar's own `... FAILED` reader does
-    /// not see this shape, and this one must.
+    /// A timed failure remains a failed test in the shared history/verdict reader.
     #[test]
     fn a_failing_timed_line_is_a_failed_test_with_its_time() {
         let job = parse_job(FAILING_WITH_TIMES);

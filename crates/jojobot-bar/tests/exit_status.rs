@@ -9,6 +9,56 @@ use std::process::Command;
 
 mod support;
 
+#[test]
+fn the_ci_verdict_names_ten_timed_failures_and_counts_the_rest() {
+    let dir = scratch_dir("ci-names");
+    let cargo = dir.join("cargo");
+    support::write_executable(
+        &cargo,
+        r#"#!/bin/sh
+case " $* " in *" --no-run "*) exit 0 ;; esac
+if [ "$1" = test ]; then cat "$BAR_CASE_FAILURES"; exit 101; fi
+"#,
+    );
+    let output = support::output_fenced(
+        Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
+            .arg("check")
+            .current_dir(&dir)
+            .env("CARGO", cargo)
+            .env("TMPDIR", &dir)
+            .env("BAR_HISTORY_DIR", dir.join("history"))
+            .env(
+                "BAR_CASE_FAILURES",
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures/timed-failures.txt"),
+            ),
+    )
+    .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(output.status.code(), Some(1), "{stdout}");
+    assert!(
+        stdout.contains("test: FAILED — 2 suites, 2601 passed, 13 failed"),
+        "{stdout}"
+    );
+    assert_eq!(
+        stdout
+            .lines()
+            .filter(|line| line.starts_with("  FAILED: "))
+            .count(),
+        10,
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(
+            "  FAILED: working_on_page::a_bot_whose_writer_wrapped_moves_to_the_past_list"
+        ),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("  FAILED: working_on_page::a_live_bot_is_on_the_page_of_its_work_and_of_the_project_above_it"), "{stdout}");
+    assert!(stdout.contains("...and 3 more"), "{stdout}");
+    let _ = fs::remove_dir_all(dir);
+}
+
 /// **A fake `cargo` that mimics a crashed sibling suite.** `fmt`, `build`
 /// and `clippy` succeed silently; a real `-- --list` still lists one test,
 /// so `narrow`'s zero-selection guard does not fire before the phase this

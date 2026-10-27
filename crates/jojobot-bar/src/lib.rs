@@ -120,11 +120,10 @@ pub fn summarize_test_output(output: &str) -> TestVerdict {
                 verdict.passed += passed;
                 verdict.failed += failed;
             }
-        } else if let Some(name) = line
-            .strip_prefix("test ")
-            .and_then(|rest| rest.strip_suffix(" ... FAILED"))
+        } else if let Some(record) = history::parse_test_line(line)
+            && record.verdict == Verdict::Failed
         {
-            verdict.failed_names.push(name.to_string());
+            verdict.failed_names.push(record.test);
         }
     }
     verdict.compiled = verdict.suites > 0;
@@ -429,7 +428,7 @@ impl Summary {
             "test: FAILED — {} suites, {} passed, {} failed",
             verdict.suites, verdict.passed, verdict.failed
         ));
-        const SHOWN: usize = 5;
+        const SHOWN: usize = 10;
         // **A known red that says more than it expects is new**, and is listed
         // with the ones that were never known.
         let (listed, unlisted): (Vec<&String>, Vec<&String>) =
@@ -526,6 +525,7 @@ mod tests {
 
     const GREEN: &str = include_str!("../tests/fixtures/green-full-check.txt");
     const ONE_FAILING: &str = include_str!("../tests/fixtures/one-failing-test.txt");
+    const TIMED_FAILING: &str = include_str!("../tests/fixtures/timed-failures.txt");
     const COMPILE_ERROR: &str = include_str!("../tests/fixtures/compile-error.txt");
     /// A verbatim `cargo test --workspace --no-run` capture on this workspace.
     const NO_RUN_LISTING: &str = include_str!("../tests/fixtures/no-run-listing.txt");
@@ -704,6 +704,24 @@ mod tests {
         assert_eq!(
             verdict.passed, 258,
             "the 258 that passed are still counted beside the one that did not",
+        );
+        assert!(!verdict.ok());
+    }
+
+    #[test]
+    fn the_ci_capture_with_timings_names_all_thirteen_failures() {
+        let verdict = summarize_test_output(TIMED_FAILING);
+        assert_eq!(verdict.suites, 2);
+        assert_eq!(verdict.failed, 13);
+        assert_eq!(verdict.passed, 2601);
+        assert_eq!(verdict.failed_names.len(), 13);
+        assert_eq!(
+            verdict.failed_names[0],
+            "memory::update_fact::tests::another_session_rewriting_the_words_must_restate_provenance"
+        );
+        assert_eq!(
+            verdict.failed_names[12],
+            "working_on_page::the_past_list_dates_a_run_in_the_instances_zone"
         );
         assert!(!verdict.ok());
     }
@@ -898,7 +916,7 @@ mod tests {
     /// a list of known reds can never push a new red below the cap.
     #[test]
     fn an_unknown_failure_is_listed_ahead_of_known_ones() {
-        let known: Vec<String> = (0..6).map(|n| format!("m::tests::known_{n}")).collect();
+        let known: Vec<String> = (0..12).map(|n| format!("m::tests::known_{n}")).collect();
         let text: String = known
             .iter()
             .map(|name| {
@@ -912,7 +930,7 @@ mod tests {
             compiled: true,
             suites: 1,
             passed: 0,
-            failed: 7,
+            failed: 13,
             failed_names: known
                 .iter()
                 .cloned()
@@ -930,7 +948,7 @@ mod tests {
         let new = rendered.find("m::tests::brand_new").expect(&rendered);
         let first_known = rendered.find("m::tests::known_0").expect(&rendered);
         assert!(new < first_known, "{rendered}");
-        assert!(rendered.contains("...and 2 more"), "{rendered}");
+        assert!(rendered.contains("...and 3 more"), "{rendered}");
     }
 
     /// A run with one failing test, as `cargo test` prints it: the line, then the
