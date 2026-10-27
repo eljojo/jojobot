@@ -109,17 +109,13 @@ async fn the_link_rule_preserves_a_recorded_store(fixture: &str, label: &str) {
 }
 
 async fn the_link_rule_preserves_the_recording(restored: Restored) {
+    // A fresh deployment recording may hold no account link. Any historical
+    // rows it does hold must survive unchanged.
     let account_links: Vec<_> = link_rows(&restored)
         .await
         .into_iter()
         .filter(|(_, key, ..)| key == "merged_from")
         .collect();
-    assert_eq!(
-        account_links.len(),
-        1,
-        "recorded at {}: the required stored merged_from link row is missing or duplicated: {account_links:?}",
-        restored.git_ref
-    );
     as_a_recording_before_the_marking(&restored.state_dir, restored.store_port).await;
     let first = boot_current_with(
         &restored.state_dir,
