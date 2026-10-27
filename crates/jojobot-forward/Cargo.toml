@@ -1,0 +1,18 @@
+[package]
+name = "jojobot-forward"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+# **The generator that writes a test double's forwarding.** A port is declared
+# once, and a double that wraps a store names only the methods it changes; the
+# rest is generated from the port's own method list, so a method added to the
+# port needs no edit in any double. It reads Rust syntax and touches nothing else.
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full"] }

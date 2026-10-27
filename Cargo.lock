@@ -1613,6 +1613,7 @@ dependencies = [
  "getrandom 0.4.3",
  "jiff",
  "jojobot-domain",
+ "jojobot-forward",
  "jojobot-roster",
  "rrule",
  "serde",
@@ -1635,6 +1636,15 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+]
+
+[[package]]
+name = "jojobot-forward"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]

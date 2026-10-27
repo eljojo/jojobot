@@ -6521,6 +6521,7 @@ pub struct WriteSummary {
 ///   back blocked, with the nearest candidates. Guessing is how two people
 ///   become one; auto-provisioning is how one typo becomes a second person.
 ///   Only [`add_entity`](Memory::add_entity) brings an entity into existence.
+#[jojobot_forward::forwardable(callback = forward_memory, scope = "memory")]
 #[async_trait::async_trait]
 pub trait Memory: Send + Sync {
     /// Read a field from RAM only. `None` means no image; `Some(None)` means unset.

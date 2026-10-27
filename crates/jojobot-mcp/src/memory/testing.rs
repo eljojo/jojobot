@@ -1175,7 +1175,7 @@ async fn yield_like_a_store() {
     }
 }
 
-#[async_trait]
+#[jojobot_domain::forward(jojobot_domain::forward_memory, via = inner)]
 impl Memory for YieldsLikeAStore {
     async fn former_handles(
         &self,
@@ -1195,81 +1195,6 @@ impl Memory for YieldsLikeAStore {
         yield_like_a_store().await;
         read
     }
-    async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
-        self.inner.add_entity(new).await
-    }
-    /// A bot's creation is its first claim in one act (it carries its ledger), so the
-    /// stand-in forwards it.
-    async fn add_entity_with_first_claim(
-        &self,
-        new: NewEntity,
-        first: jojobot_domain::memory::NewFact,
-    ) -> Result<Guarded<(Entity, jojobot_domain::memory::Fact)>, MemoryError> {
-        self.inner.add_entity_with_first_claim(new, first).await
-    }
-    async fn declare_type(
-        &self,
-        declared: jojobot_domain::memory::types::DeclaredType,
-        by_session: Option<&str>,
-    ) -> Result<jojobot_domain::memory::types::DeclaredType, MemoryError> {
-        self.inner.declare_type(declared, by_session).await
-    }
-    async fn declare_kind(
-        &self,
-        token: &str,
-        origin: jojobot_domain::memory::types::Origin,
-        fields: Vec<jojobot_domain::memory::types::Field>,
-    ) -> Result<bool, MemoryError> {
-        self.inner.declare_kind(token, origin, fields).await
-    }
-    async fn declared_kinds(
-        &self,
-    ) -> Result<Vec<(String, jojobot_domain::memory::types::Origin)>, MemoryError> {
-        self.inner.declared_kinds().await
-    }
-    async fn reclaim_kind(&self, token: &str) -> Result<(), MemoryError> {
-        self.inner.reclaim_kind(token).await
-    }
-    async fn declared_types(
-        &self,
-    ) -> Result<Vec<jojobot_domain::memory::types::DeclaredType>, MemoryError> {
-        self.inner.declared_types().await
-    }
-    async fn update_entity(
-        &self,
-        id: &EntityId,
-        patch: EntityPatch,
-    ) -> Result<Guarded<Entity>, MemoryError> {
-        self.inner.update_entity(id, patch).await
-    }
-    async fn rename_entity(
-        &self,
-        from: &EntityId,
-        to: &EntityId,
-        parent: Option<EntityId>,
-        date: jiff::civil::Date,
-        resemblance: jojobot_domain::memory::Override<'_>,
-        session: Option<&str>,
-    ) -> Result<Guarded<Entity>, MemoryError> {
-        self.inner
-            .rename_entity(from, to, parent, date, resemblance, session)
-            .await
-    }
-    async fn archive_entity(
-        &self,
-        id: &EntityId,
-        reason: &str,
-        session: Option<&str>,
-    ) -> Result<Entity, MemoryError> {
-        self.inner.archive_entity(id, reason, session).await
-    }
-    async fn restore_entity(
-        &self,
-        id: &EntityId,
-        session: Option<&str>,
-    ) -> Result<(Entity, jojobot_domain::memory::Archived), MemoryError> {
-        self.inner.restore_entity(id, session).await
-    }
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
         yield_like_a_store().await;
         if let Some(pause) = &self.write_pause
@@ -1286,69 +1211,6 @@ impl Memory for YieldsLikeAStore {
         let read = self.inner.recall(subject).await;
         yield_like_a_store().await;
         read
-    }
-    async fn history(
-        &self,
-        entity: &EntityId,
-        key: &str,
-    ) -> Result<Vec<jojobot_domain::memory::FieldWrite>, MemoryError> {
-        self.inner.history(entity, key).await
-    }
-    async fn claim_history(
-        &self,
-        address: &jojobot_domain::memory::FactAddress,
-    ) -> Result<Vec<jojobot_domain::memory::ClaimWrite>, MemoryError> {
-        self.inner.claim_history(address).await
-    }
-    async fn fields(
-        &self,
-        entity: &EntityId,
-    ) -> Result<std::collections::BTreeMap<String, String>, MemoryError> {
-        self.inner.fields(entity).await
-    }
-    async fn update_fact(
-        &self,
-        address: &FactAddress,
-        patch: FactPatch,
-        caller: &EntityId,
-    ) -> Result<Guarded<Fact>, MemoryError> {
-        self.inner.update_fact(address, patch, caller).await
-    }
-    async fn retract(
-        &self,
-        address: &FactAddress,
-        reason: Option<&str>,
-        date: jiff::civil::Date,
-        caller: &EntityId,
-        session: Option<&str>,
-    ) -> Result<jojobot_domain::memory::Retraction, MemoryError> {
-        self.inner
-            .retract(address, reason, date, caller, session)
-            .await
-    }
-    async fn merge(
-        &self,
-        folded: &EntityId,
-        survivor: &EntityId,
-        reason: Option<&str>,
-        date: jiff::civil::Date,
-        caller: &EntityId,
-        session: Option<&str>,
-    ) -> Result<jojobot_domain::memory::Merge, MemoryError> {
-        self.inner
-            .merge(folded, survivor, reason, date, caller, session)
-            .await
-    }
-    async fn set_prose(
-        &self,
-        entity: &EntityId,
-        prose: &str,
-        session: Option<&str>,
-    ) -> Result<String, MemoryError> {
-        self.inner.set_prose(entity, prose, session).await
-    }
-    async fn scan(&self) -> Result<Vec<jojobot_domain::memory::search::DocScan>, MemoryError> {
-        self.inner.scan().await
     }
 }
 
