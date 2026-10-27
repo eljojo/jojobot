@@ -291,14 +291,15 @@ mod tests {
     }
 
     /// **An empty `RUST_LOG` is the default, and one the operator sets wins.**
-    /// A value that names tantivy at info brings its info lines back.
+    /// A value that names tantivy at info brings its info lines back, and a value
+    /// that does not parse (a level that is no level) falls back to the default.
     #[test]
     fn a_rust_log_the_operator_sets_wins_and_an_empty_one_is_the_default() {
         for (rust_log, tantivy_info_kept) in [
             (Some("  "), false),
             (Some(""), false),
             (Some("info,tantivy=info"), true),
-            (Some("not a ( directive"), false),
+            (Some("info,tantivy=loud"), false),
         ] {
             let kept = Kept::default();
             let subscriber = logging(kept.clone(), false, filter_for(rust_log));
