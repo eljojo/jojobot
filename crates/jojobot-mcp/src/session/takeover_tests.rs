@@ -41,6 +41,63 @@ async fn boot_new(jojobot: &Jojobot, bot: &str, role: Option<&str>) -> serde_jso
     )
 }
 
+/// **A new run of `bot` that claims `role` at the operator's word**: the code is
+/// asked for, read from the operator's box and presented on the boot, as the
+/// operator types it into a session. The only way a claim takes a live role.
+async fn claiming_at_the_operators_word(
+    jojobot: &Jojobot,
+    bot: &str,
+    role: &str,
+) -> serde_json::Value {
+    crate::mailboxes::testing::name_the_operator(jojobot, "milhouse").await;
+    let today = jojobot.clock().today_in(&jiff::tz::TimeZone::UTC);
+    let asked = json_of(
+        &jojobot
+            .ask_for_code(
+                &jojobot_domain::memory::EntityId(format!("bot:{bot}")),
+                today,
+            )
+            .await
+            .expect("ask answers"),
+    );
+    let handle = asked["challenge"]["handle"]
+        .as_str()
+        .unwrap_or_else(|| panic!("a challenge was made: {asked}"))
+        .to_string();
+    let mut mail = jojobot.mailboxes.scan_messages().await.expect("scan ok");
+    mail.sort_by_key(|message| message.sent_at);
+    let code = mail
+        .iter()
+        .rev()
+        .find_map(|message| message.body.split("Code: ").nth(1))
+        .and_then(|rest| rest.split_whitespace().next())
+        .expect("the code is in the operator's mail")
+        .trim_end_matches('.')
+        .to_string();
+    json_of(
+        &jojobot
+            .start_here(Parameters(OrientArgs {
+                request_id: None,
+                compacted: None,
+                claim: Some(role.into()),
+                timezone: None,
+                bot: Some(bot.into()),
+                brief: None,
+                skill: None,
+                section: None,
+                resume: Some("new".into()),
+                sid: None,
+                today: None,
+                ask_for_code: None,
+                challenge: Some(handle),
+                code: Some(code),
+                offer_code: None,
+            }))
+            .await
+            .expect("start_here ok"),
+    )
+}
+
 async fn wrapped(jojobot: &Jojobot, sid: String) -> serde_json::Value {
     json_of(
         &jojobot
@@ -205,7 +262,7 @@ async fn a_holder_that_lost_only_the_claimed_role_is_told_at_once() {
     let more = claiming_more(&healthy, "gamma", &first_sid, "dev-review").await;
     assert_eq!(more["session"]["claim"]["status"], "taken", "{more}");
 
-    let second = claiming(&blind, "gamma", "dev-dispatch").await;
+    let second = claiming_at_the_operators_word(&blind, "gamma", "dev-dispatch").await;
     assert_eq!(
         second["session"]["claim"]["status"], "taken",
         "the claimed role moved, so it is taken: {second}"
@@ -230,7 +287,7 @@ async fn a_holder_whose_close_cannot_be_kept_is_named_to_the_claimant() {
     let first = claiming(&jojobot, "gamma", "dev-dispatch").await;
     let first_run = run_of(&first).expect("a run");
     store.refuse_displaced_close(true);
-    let second = claiming(&jojobot, "gamma", "dev-dispatch").await;
+    let second = claiming_at_the_operators_word(&jojobot, "gamma", "dev-dispatch").await;
     assert_eq!(
         second["session"]["claim"]["status"], "taken",
         "every role was released, so the role is free and the claim lands: {second}"
