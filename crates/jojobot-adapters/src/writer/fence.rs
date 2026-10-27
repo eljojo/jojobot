@@ -11,10 +11,19 @@ pub(crate) const LOCK: &str = "jojobot-owned-writer";
 const WAIT_SECONDS: u32 = 1;
 const CONNECT_WITHIN: Duration = Duration::from_secs(5);
 
+// Advisory names are server-wide; a database's fence must not exclude another store.
+pub(super) fn lock_name(options: &MySqlConnectOptions) -> String {
+    jojobot_domain::request::digest_of(&format!(
+        "{LOCK}:{}",
+        options.get_database().unwrap_or_default()
+    ))
+}
+
 pub(super) struct Session {
     options: Arc<MySqlConnectOptions>,
     pub(super) pool: MySqlPool,
     old_id: Arc<AtomicU64>,
+    lock: String,
 }
 
 impl Session {
@@ -22,6 +31,8 @@ impl Session {
         let options = source.connect_options();
         let old_id = Arc::new(AtomicU64::new(0));
         let recorded = old_id.clone();
+        let lock = lock_name(&options);
+        let acquiring = lock.clone();
         let pool = MySqlPoolOptions::new()
             .max_connections(1)
             .min_connections(0)
@@ -30,9 +41,10 @@ impl Session {
             .acquire_timeout(CONNECT_WITHIN)
             .after_connect(move |connection, _| {
                 let recorded = recorded.clone();
+                let lock = acquiring.clone();
                 Box::pin(async move {
                     let held: Option<i64> = sqlx::query_scalar("SELECT GET_LOCK(?, ?)")
-                        .bind(LOCK)
+                        .bind(&lock)
                         .bind(WAIT_SECONDS)
                         .fetch_one(&mut *connection)
                         .await?;
@@ -53,6 +65,7 @@ impl Session {
             options,
             pool,
             old_id,
+            lock,
         }
     }
 
@@ -90,7 +103,7 @@ impl Session {
             }
         }
         let mut held: Option<i64> = sqlx::query_scalar("SELECT GET_LOCK(?, 0)")
-            .bind(LOCK)
+            .bind(&self.lock)
             .fetch_one(&mut fence)
             .await?;
         if held != Some(1) {
@@ -102,7 +115,7 @@ impl Session {
                 "recovery fence waits for the old connection"
             );
             held = sqlx::query_scalar("SELECT GET_LOCK(?, ?)")
-                .bind(LOCK)
+                .bind(&self.lock)
                 .bind(WAIT_SECONDS)
                 .fetch_one(&mut fence)
                 .await?;

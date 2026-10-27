@@ -15,10 +15,45 @@ use crate::dolt::teaching::DoltTeachings;
 use crate::fold::teachings::FoldedTeachings;
 use crate::testing::{Scratch, free_port, migrated_database};
 
+#[tokio::test]
+async fn writer_recovery_independent_databases_do_not_share_a_native_fence() {
+    let scratch = Scratch::new("writer-database-fence");
+    let mut server = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("native store");
+    let alpha = migrated_database(&server, "fence_alpha")
+        .await
+        .expect("first database");
+    let beta = migrated_database(&server, "fence_beta")
+        .await
+        .expect("independent database");
+    let first = super::fence::Session::new(&alpha);
+    let held = first
+        .pool
+        .acquire()
+        .await
+        .expect("first writer owns its fence");
+    let duplicate = super::fence::Session::new(&alpha);
+    assert!(
+        duplicate.pool.acquire().await.is_err(),
+        "a second writer acquired the same database's fence"
+    );
+    let independent = super::fence::Session::new(&beta);
+    let other = independent
+        .pool
+        .acquire()
+        .await
+        .expect("a different database is not blocked by the retained first writer");
+    held.close().await.expect("close first physical connection");
+    other.close().await.expect("close independent connection");
+    server.stop().await;
+}
+
 struct GatedTeaching {
     inner: DoltTeachings,
     pool: sql::Pool,
     observer: MySqlPool,
+    lock: String,
     old_id: AtomicU64,
     writes: AtomicUsize,
     reads: AtomicUsize,
@@ -42,13 +77,13 @@ impl Teachings for GatedTeaching {
             .expect("the old connection id");
         self.old_id.store(id, Ordering::SeqCst);
         let owner: Option<u64> = sqlx::query_scalar("SELECT IS_USED_LOCK(?)")
-            .bind(sql::LOCK)
+            .bind(&self.lock)
             .fetch_one(&mut *conn)
             .await
             .expect("read the lock owner");
         if owner != Some(id) {
             let acquired: Option<i64> = sqlx::query_scalar("SELECT GET_LOCK(?, 0)")
-                .bind(sql::LOCK)
+                .bind(&self.lock)
                 .fetch_one(&mut *conn)
                 .await
                 .expect("hold the connection-lifetime lock");
@@ -117,7 +152,7 @@ impl Teachings for GatedTeaching {
     async fn taught(&self) -> Result<Option<Vec<(Sid, String)>>, TeachingError> {
         if self.lost.load(Ordering::SeqCst) {
             let owner: Option<u64> = sqlx::query_scalar("SELECT IS_USED_LOCK(?)")
-                .bind(sql::LOCK)
+                .bind(&self.lock)
                 .fetch_one(&self.observer)
                 .await
                 .expect("observe the recovery fence");
@@ -157,6 +192,7 @@ async fn gated_commit(release_before_receipt: bool) {
         inner: native.clone(),
         pool: pool.clone().into(),
         observer: pool.clone(),
+        lock: super::fence::lock_name(&pool.connect_options()),
         old_id: AtomicU64::new(0),
         writes: AtomicUsize::new(0),
         reads: AtomicUsize::new(0),
@@ -182,7 +218,7 @@ async fn gated_commit(release_before_receipt: bool) {
     assert!(writer.rail_uncertain("teachings"));
     assert_eq!(writer.recovery_counts().recovered, 0);
     let owner: Option<u64> = sqlx::query_scalar("SELECT IS_USED_LOCK(?)")
-        .bind(sql::LOCK)
+        .bind(&store.lock)
         .fetch_one(&pool)
         .await
         .expect("the old lock is still held");

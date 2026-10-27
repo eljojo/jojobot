@@ -12,8 +12,6 @@ use sqlx::mysql::{MySqlQueryResult, MySqlRow, MySqlStatement, MySqlTypeInfo};
 use sqlx::{Either, Execute, Executor, MySql, MySqlPool, SqlStr, Transaction};
 
 use super::Writer;
-#[cfg(test)]
-pub(crate) use super::fence::LOCK;
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub(super) enum Phase {
