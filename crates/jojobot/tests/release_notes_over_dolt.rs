@@ -118,6 +118,8 @@ async fn over_the_real_store_a_start_sends_the_notes_and_the_next_start_sends_no
     );
 
     // ── a second start, over stores opened anew, sends nothing ──────────────
+    // A restart ends the old writer before opening its successor.
+    drop((memory, mailboxes));
     let (memory, mailboxes) = a_start(&pool);
     send_unsent_notes(&memory, &mailboxes, &Clock::default()).await;
     for slug in ["homer", "marge", "lisa"] {
@@ -206,6 +208,7 @@ async fn over_the_real_store_a_start_sends_the_notes_and_the_next_start_sends_no
         })
         .await
         .expect("the record is written");
+    drop((memory, mailboxes));
     let (memory, mailboxes) = a_start(&pool);
     send_unsent_notes(&memory, &mailboxes, &Clock::default()).await;
     assert_eq!(
