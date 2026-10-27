@@ -222,6 +222,25 @@ async fn a_starred_connection_claim_another_bot_writes_is_neither_the_bots_rule_
     )
     .await;
 
+    // The edit path is held to the same line: a star put on another bot's
+    // connection claim by an edit lands as well.
+    let moved = lisa
+        .call(
+            "capture",
+            json!({"subject": "bot:milhouse", "content": "lisa asks for the fern to be moved",
+                   "shape": "connection", "object": "thing:the-fern"}),
+        )
+        .await
+        .json()["address"]
+        .as_str()
+        .expect("the capture names its address")
+        .to_string();
+    lisa.call(
+        "update_fact",
+        json!({"address": moved, "fields": {"starred": "true"}}),
+    )
+    .await;
+
     let (boot, _) = story
         .call("start_here", json!({"bot": "milhouse", "brief": true}))
         .await;
