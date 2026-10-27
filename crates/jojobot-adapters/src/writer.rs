@@ -31,11 +31,11 @@ type Job = Pin<Box<dyn Future<Output = ()> + Send>>;
 // Ports borrow their arguments; an accepted write must own them after the caller
 // stops waiting. A nested rail already runs in this same owner.
 macro_rules! owned {
-    ($port:expr, $this:ident, [$($name:ident = $value:expr),* $(,)?], $work:expr) => {
+    ($port:expr, $this:ident, [$($name:ident = $value:expr),* $(,)?], $operation:expr) => {
         if !$port.writer.inside() {
             let $this = $port.clone();
             $(let $name = $value;)*
-            return $port.writer.run(async move { $work }).await;
+            return $port.writer.run(async move { $operation }).await;
         }
     };
 }
