@@ -1311,8 +1311,8 @@ impl EdgeShape {
         }
     }
 
-    /// The **response** name — schema.org's word for this edge. Names only: the
-    /// recognition benefit is the vocabulary, not the machinery.
+    /// A legacy schema.org alias accepted by shape filters. Answers use
+    /// [`Self::as_token`] so their shape can be copied into writes.
     pub fn as_name(self) -> &'static str {
         match self {
             EdgeShape::Location => "location",
@@ -1334,8 +1334,8 @@ impl EdgeShape {
     }
 
     /// **The one place a word naming a shape is understood when a caller
-    /// FILTERS by it**: the token it was written with or the name a read
-    /// served for it, so a name copied from an answer is understood. Writes
+    /// FILTERS by it**: the writable token or a legacy schema.org alias.
+    /// Both filter the same shape. Writes
     /// stay on [`Self::from_token`], because a drawn edge is only ever drawn
     /// by its token.
     pub fn from_word(word: &str) -> Option<Self> {

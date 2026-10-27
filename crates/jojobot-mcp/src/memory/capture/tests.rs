@@ -1740,7 +1740,7 @@ async fn every_edge_shape_returned_by_a_read_can_be_copied_to_capture() {
     for (shape, object) in [
         ("connection", "person:beta"),
         ("membership", "org:springfield-town-council"),
-        ("attendance", "event:duff-fest"),
+        ("attendance", "event:krusty-fest"),
         ("location", "place:daredevil-gorge"),
         ("about", "person:beta"),
     ] {
@@ -1814,8 +1814,14 @@ async fn every_edge_shape_returned_by_a_read_can_be_copied_to_capture() {
             match copied {
                 Ok(result) => {
                     let body = json_of(&result);
-                    assert_ne!(body["status"], "blocked", "{shape}/{source}: {body}");
-                    assert_eq!(body["edge"], *edge, "{shape}/{source}");
+                    if body["status"] == "blocked" {
+                        failures.push(format!("{shape}/{source} blocked: {body}"));
+                    }
+                    if body["edge"] != *edge {
+                        failures.push(format!(
+                            "{shape}/{source} returned a different edge: {body}"
+                        ));
+                    }
                 }
                 Err(error) => failures.push(format!("{shape}/{source}: {error}")),
             }
