@@ -1,12 +1,12 @@
-//! "I archived the agent mid-run and the next run could not take its role."
+//! "My agent is still writing and the next run wants its role."
 //!
-//! A boot of a bot that claims a role takes it from that bot's own earlier run,
-//! which it abandons, instead of waiting out the lease. Another bot is still
-//! refused while the lease is fresh, the abandoned run can be resumed, and
-//! resuming it does not take the lease back.
+//! A role changes hands only when its holder wraps, when its lease runs out, or
+//! at the operator's word. A boot of the same bot is refused while its own earlier
+//! run holds the role, and a code the operator typed takes it and says so.
 
 use serde_json::json;
 
+use super::chain_of_trust::{an_instance_with_an_operator, ask_and_read};
 use super::dsl::Story;
 
 /// The state a run is listed in.
@@ -35,14 +35,22 @@ async fn holder_of(asker: &super::dsl::Session) -> Option<String> {
         .map(str::to_string)
 }
 
+fn claim_args() -> serde_json::Value {
+    json!({"bot": "gamma", "brief": true, "claim": "carpool", "resume": "new"})
+}
+
+/// **A new boot is refused while its own earlier run holds the role, and the
+/// holder's wrap frees it at once.** The refusal names the holder's run, when it
+/// last wrote, when the lease runs out and what frees the role. Another bot is
+/// refused the same way, so the exemption for the same bot is gone and nothing else
+/// changed.
 #[tokio::test]
-async fn a_new_boot_takes_the_role_from_its_own_earlier_run() {
+async fn a_new_boot_is_refused_while_its_own_earlier_run_holds_the_role() {
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
     s.add("bot:gamma", "Gamma").await;
     s.add("bot:delta", "Delta").await;
 
-    // ── the first run claims the role and writes ────────────────────────────
     let (first, first_run) = story
         .call(
             "start_here",
@@ -57,100 +65,100 @@ async fn a_new_boot_takes_the_role_from_its_own_earlier_run() {
             json!({"entry": "took the carpool", "focus": "x"}),
         )
         .await;
+
+    // ── a new boot of the same bot is refused, naming the holder ────────────
+    let (second, _) = story.call("start_here", claim_args()).await;
+    let body = second.json();
+    let claim = &body["session"]["claim"];
+    assert_eq!(claim["status"], "refused", "{claim}");
+    assert_eq!(claim["holder"], first_run.run(), "{claim}");
+    assert!(claim.get("took_over_from").is_none(), "{claim}");
+    let how = claim["how_to_proceed"].as_str().expect("a way forward");
+    for word in ["last wrote", "lease", "wraps", "ask_for_code"] {
+        assert!(how.contains(word), "the refusal says {word}: {how}");
+    }
     assert_eq!(holder_of(&s).await.as_deref(), Some(first_run.run()));
-
-    // ── a new boot of the same bot claims it and is given it ────────────────
-    let (second, second_run) = story
-        .call(
-            "start_here",
-            json!({"bot": "gamma", "brief": true, "claim": "carpool", "resume": "new"}),
-        )
-        .await;
-    let second = second.json();
-    let second_run = second_run.expect("the second boot hands back a run");
-    assert_eq!(second["session"]["claim"]["status"], "taken", "{second}");
+    let runs = first_run.call("list_runs", json!({})).await.json();
     assert_eq!(
-        second["session"]["claim"]["took_over_from"],
-        first_run.run(),
-        "the answer names the run it abandoned: {second}"
+        state_in(&runs, first_run.run()).as_deref(),
+        Some("active"),
+        "the holder was not touched"
     );
-    assert_eq!(
-        holder_of(&s).await.as_deref(),
-        Some(second_run.run()),
-        "the lease is the new run's"
-    );
-    let runs = second_run.call("list_runs", json!({})).await.json();
-    let state_of = |run: &str| state_in(&runs, run);
-    assert_eq!(state_of(first_run.run()).as_deref(), Some("abandoned"));
-    assert_eq!(state_of(second_run.run()).as_deref(), Some("active"));
 
-    // ── another bot is refused while the new lease is fresh ─────────────────
-    let (rival, _) = story
-        .call(
-            "start_here",
-            json!({"bot": "delta", "brief": true, "claim": "carpool"}),
-        )
-        .await;
-    assert_eq!(rival.json()["session"]["claim"]["status"], "refused");
-
-    // ── resuming the abandoned run does not take the lease back ─────────────
-    let (resumed, _) = story
-        .call(
-            "start_here",
-            json!({"bot": "gamma", "brief": true, "resume": first_run.run()}),
-        )
-        .await;
-    assert_eq!(resumed.json()["session"]["resumed"], true);
-    assert_eq!(
-        holder_of(&s).await.as_deref(),
-        Some(second_run.run()),
-        "a resume claims nothing"
-    );
-    s.wrap("took a role over").await;
+    // ── the holder's wrap frees the role at once ────────────────────────────
+    let held = first_run.run().to_string();
+    first_run.wrap("done with the carpool").await;
+    let (third, third_run) = story.call("start_here", claim_args()).await;
+    let body = third.json();
+    let claim = &body["session"]["claim"];
+    assert_eq!(claim["status"], "taken", "{claim}");
+    assert!(claim.get("took_over_from").is_none(), "{claim}");
+    assert_ne!(holder_of(&s).await.as_deref(), Some(held.as_str()));
+    drop(third_run);
+    s.wrap("held a role").await;
     story.finish().await;
 }
 
-/// **Only the run that holds the lease is abandoned**: another live run of the
-/// same bot, one that holds no role, keeps running.
+/// **The operator's code takes a live role and says so.** Gamma's first run holds
+/// the role and writes. The operator's code for gamma is typed into a new run,
+/// which claims the role: it takes it, the old run reads abandoned by the
+/// operator's word with the challenge named, and a live run that held no lease
+/// keeps running. The same code, spent, takes nothing.
 #[tokio::test]
-async fn a_takeover_abandons_only_the_run_that_holds_the_lease() {
+async fn the_operators_code_takes_a_live_role_and_the_old_run_reads_abandoned_by_the_word() {
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
+    an_instance_with_an_operator(&s).await;
     s.add("bot:gamma", "Gamma").await;
 
-    let holder = story.as_bot("bot:gamma").await;
-    holder
+    let bystander = story.as_bot("bot:gamma").await;
+    bystander
         .call("journal", json!({"entry": "idle", "focus": "x"}))
         .await;
-    let (first, first_run) = story
+    let (_, first_run) = story
         .call(
             "start_here",
             json!({"bot": "gamma", "brief": true, "claim": "carpool", "resume": "new"}),
         )
         .await;
-    assert_eq!(first.json()["session"]["claim"]["status"], "taken");
     let first_run = first_run.expect("a run");
     first_run
         .call("journal", json!({"entry": "holding", "focus": "x"}))
         .await;
 
-    let (second, _) = story
-        .call(
-            "start_here",
-            json!({"bot": "gamma", "brief": true, "claim": "carpool", "resume": "new"}),
-        )
-        .await;
-    assert_eq!(second.json()["session"]["claim"]["status"], "taken");
-
-    let runs = holder.call("list_runs", json!({})).await.json();
-    let state_of = |run: &str| state_in(&runs, run);
-    assert_eq!(state_of(first_run.run()).as_deref(), Some("abandoned"));
+    let (challenge, code) = ask_and_read(&story, "gamma").await;
+    let mut with_code = claim_args();
+    with_code["challenge"] = json!(challenge);
+    with_code["code"] = json!(code);
+    let (taken, taker) = story.call("start_here", with_code.clone()).await;
+    let body = taken.json();
+    let claim = &body["session"]["claim"];
+    assert_eq!(claim["status"], "taken", "{claim}");
+    assert_eq!(claim["took_over_from"], first_run.run(), "{claim}");
+    assert_eq!(claim["abandoned_by"], "the operator's word", "{claim}");
+    assert_eq!(claim["challenge"], challenge, "{claim}");
+    let taker = taker.expect("the coded boot hands back a run");
+    assert_eq!(holder_of(&s).await.as_deref(), Some(taker.run()));
+    // The displaced run is refused naming the run that took its role.
+    first_run
+        .refused("journal", json!({"entry": "still here", "focus": "x"}))
+        .await
+        .says(taker.run());
+    let runs = bystander.call("list_runs", json!({})).await.json();
     assert_eq!(
-        state_of(holder.run()).as_deref(),
+        state_in(&runs, first_run.run()).as_deref(),
+        Some("abandoned")
+    );
+    assert_eq!(
+        state_in(&runs, bystander.run()).as_deref(),
         Some("active"),
         "a live run that held no lease keeps running"
     );
-    s.wrap("took a role over").await;
+
+    // ── the spent code takes nothing ────────────────────────────────────────
+    story.refused_at_the_door("start_here", with_code).await;
+    assert_eq!(holder_of(&s).await.as_deref(), Some(taker.run()));
+    s.wrap("took a role at the operator's word").await;
     story.finish().await;
 }
 

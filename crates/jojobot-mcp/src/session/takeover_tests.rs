@@ -71,7 +71,11 @@ async fn a_wrapped_run_whose_release_failed_is_taken_over_like_an_open_one() {
     );
 
     let second = claiming(&healthy, "gamma", "dev-dispatch").await;
-    assert_lease_was_held(&second, &first_run);
+    assert_eq!(second["session"]["claim"]["status"], "taken", "{second}");
+    assert_eq!(
+        second["session"]["claim"]["took_over_from"], first_run,
+        "{second}"
+    );
 
     let (healthy, _) = healthy_and_down(Down::RoleRelease);
     make_bot(&healthy, "gamma").await;
@@ -98,33 +102,15 @@ async fn journalled(jojobot: &Jojobot, sid: &str) -> serde_json::Value {
     )
 }
 
-/// **A run the next run of its bot took the role from is refused with the run
-/// that took it**, so the refusal does not say the run went quiet. A run the
-/// sweep closed is refused without any displacing run, which is the positive the
-/// first half depends on.
+/// **A run the sweep closed is refused without any displacing run.** A run that
+/// the operator's code displaced is refused naming the run that took its role; that
+/// half is a story (`role_takeover`), because only the operator's code can displace
+/// an active run.
 #[tokio::test]
-async fn a_displaced_run_is_refused_naming_the_run_that_displaced_it() {
+async fn a_swept_run_is_refused_naming_no_displacing_run() {
     let store = Arc::new(InMemorySessions::new());
     let jojobot = with_sessions(store.clone());
     make_bot(&jojobot, "gamma").await;
-
-    let first = claiming(&jojobot, "gamma", "dev-dispatch").await;
-    let first_sid = sid_of(&first).expect("a handle");
-    journalled(&jojobot, &first_sid).await;
-    let second = claiming(&jojobot, "gamma", "dev-dispatch").await;
-    assert_lease_was_held(&second, &run_of(&first).expect("a run"));
-    let second_run = run_of(&second).expect("a run");
-
-    let refused = journalled(&jojobot, &first_sid).await;
-    assert_eq!(refused["status"], "blocked", "{refused}");
-    assert_eq!(refused["wrote"], false, "{refused}");
-    assert!(
-        refused["how_to_proceed"]
-            .as_str()
-            .is_some_and(|how| how.contains(&second_run)),
-        "the refusal names the run that took the role: {refused}"
-    );
-
     // A run the sweep closed: no displacing run, so no run is named.
     let quiet = sid_of(&boot_new(&jojobot, "gamma", None).await).expect("a handle");
     journalled(&jojobot, &quiet).await;
@@ -148,7 +134,7 @@ async fn a_displaced_run_is_refused_naming_the_run_that_displaced_it() {
     assert!(
         !swept["how_to_proceed"]
             .as_str()
-            .is_some_and(|how| how.contains(&second_run)),
+            .is_some_and(|how| how.contains("was displaced")),
         "a swept run names no displacing run: {swept}"
     );
 }

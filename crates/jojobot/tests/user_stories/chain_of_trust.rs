@@ -365,7 +365,7 @@ async fn a_bot_cannot_rename_merge_or_archive_a_voucher_nor_rename_into_one() {
 
 /// An instance whose operator is named, with the colleagues a story needs. The
 /// bot that sets it up is `otto`, who is never a party to a code.
-async fn an_instance_with_an_operator(s: &super::dsl::Session) {
+pub(super) async fn an_instance_with_an_operator(s: &super::dsl::Session) {
     s.add("person:lisa", "Lisa").await;
     s.event_with(
         "topic:instance",
@@ -382,7 +382,7 @@ async fn an_instance_with_an_operator(s: &super::dsl::Session) {
 /// **Ask for a code as a hand-started session does**, and read the code the way
 /// the operator does, from the operator's own box. Returns the challenge's
 /// handle and the code. The code is in the box and nowhere in the answer.
-async fn ask_and_read(story: &Story, bot: &str) -> (String, String) {
+pub(super) async fn ask_and_read(story: &Story, bot: &str) -> (String, String) {
     let before = story.operators_mail("person:lisa").await.len();
     let (asked, session) = story
         .call("start_here", json!({"bot": bot, "ask_for_code": true}))

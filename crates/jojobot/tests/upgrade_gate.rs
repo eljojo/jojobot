@@ -1146,9 +1146,9 @@ async fn assert_a_claim_shaped_lease_renews_in_place(
         );
     }
     // **The lease is still the holder's, shown by a rival**: another run of the
-    // owning bot claims the role, finds the renewed lease held, and is told which
-    // run it took the role from. A boot that carried the holder and lost the lease
-    // would take it from nobody.
+    // owning bot claims the role, finds the renewed lease held, and is refused,
+    // told which run holds it. A boot that carried the holder and lost the lease
+    // would take the role from nobody.
     let rival = surface
         .call(
             "start_here",
@@ -1162,11 +1162,11 @@ async fn assert_a_claim_shaped_lease_renews_in_place(
         .await;
     let rival: serde_json::Value =
         serde_json::from_str(&rival).unwrap_or_else(|_| fail("the rival's boot", &rival));
-    if rival["session"]["claim"]["status"] != "taken"
-        || rival["session"]["claim"]["took_over_from"] != role_holder
+    if rival["session"]["claim"]["status"] != "refused"
+        || rival["session"]["claim"]["holder"] != role_holder
     {
         fail(
-            "a rival taking the renewed lease from the holder",
+            "a rival refused the renewed lease of the holder",
             &rival.to_string(),
         );
     }
