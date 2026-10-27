@@ -267,7 +267,8 @@ pub async fn declarations_on(
     let mut found = Vec::new();
     let mut incomplete = false;
     // **A write of a key that names a thing is kept as that thing's permanent id**,
-    // so a stored value is turned back into the handle the thing wears now.
+    // behind the mark that says it is a link, so a stored value is turned back
+    // into the handle the thing wears now.
     let known = match memory.list_entities(None).await {
         Ok(known) => known,
         Err(_) => return (found, true),
@@ -297,7 +298,10 @@ pub async fn declarations_on(
         let newest = values.len().saturating_sub(1);
         for (at, (write, claim)) in values.iter().zip(&chain).enumerate() {
             let Some(on) = write.value.as_deref().map(|stored| {
-                jojobot_domain::memory::entity_wearing(stored, &known)
+                let badge = stored
+                    .strip_prefix(jojobot_domain::memory::mention::MARK)
+                    .unwrap_or(stored);
+                jojobot_domain::memory::entity_wearing(badge, &known)
                     .map_or_else(|| EntityId(stored.to_string()), |thing| thing.id.clone())
             }) else {
                 continue;
