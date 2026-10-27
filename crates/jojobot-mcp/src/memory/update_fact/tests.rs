@@ -49,18 +49,31 @@ async fn a_rewrite_says_the_words_it_replaced_are_still_readable() {
 }
 
 /// **A session that wrote a claim keeps its provenance when it rewrites the
-/// words without sending one; another session must restate it, and an edit that
-/// leaves the words alone keeps it.** New words say how they are known, even
-/// when that is unchanged, unless the session that already stood behind the
-/// claim is the one rewriting.
+/// words without sending one; another session must restate an observation's, and
+/// an edit that leaves the words alone keeps it.** New words say how they are
+/// known, unless the session that already stood behind the claim is the one
+/// rewriting, or the claim is an inference, which stays one.
 #[tokio::test]
 async fn another_session_rewriting_the_words_must_restate_provenance() {
     let jojobot = handler();
     capture_ok(
         &jojobot,
         CaptureArgs {
-            provenance: Some("inference".into()),
+            provenance: Some("observation".into()),
+            fields: Some(
+                [("read_from".to_string(), "the kiln log".to_string())]
+                    .into_iter()
+                    .collect(),
+            ),
             ..capture_args("alpha", "works at the old place")
+        },
+    )
+    .await;
+    capture_ok(
+        &jojobot,
+        CaptureArgs {
+            provenance: Some("inference".into()),
+            ..capture_args("alpha", "lives near the old place")
         },
     )
     .await;
@@ -105,7 +118,7 @@ async fn another_session_rewriting_the_words_must_restate_provenance() {
     .await;
     assert_ne!(kept["status"], "blocked", "{kept}");
     let claim = recalled_claim(&jojobot).await;
-    assert_eq!(claim["provenance"], "inference", "{claim}");
+    assert_eq!(claim["provenance"], "observation", "{claim}");
     assert_eq!(claim["content"], "works at the old place", "{claim}");
 
     // The writer's own session rewrites the words without sending provenance and
@@ -118,8 +131,17 @@ async fn another_session_rewriting_the_words_must_restate_provenance() {
         },
     )
     .await;
-    assert_eq!(own["provenance"], "inference", "{own}");
+    assert_eq!(own["provenance"], "observation", "{own}");
     assert_eq!(own["content_head"], "works at the new place", "{own}");
+
+    // **An inference is not asked**: another session rewrites it and it stays one.
+    let guess = by_other(UpdateFactArgs {
+        content: Some("lives near the new place".into()),
+        ..update_args("person:alpha#f2")
+    })
+    .await;
+    assert_ne!(guess["status"], "blocked", "{guess}");
+    assert_eq!(guess["provenance"], "inference", "{guess}");
 }
 
 /// 🚨 **Negating a claim about something that already happened names the

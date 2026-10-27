@@ -123,8 +123,9 @@ pub struct UpdateFactArgs {
     /// A claim that already carries one does not have to name it again.
     ///
     /// A session that wrote a claim keeps its provenance when it rewrites the
-    /// words and sends none. Another session rewriting the words must restate
-    /// it, even when unchanged. An edit that leaves the words alone keeps it.
+    /// words and sends none, and any session keeps an inference's. Another
+    /// session rewriting an observation's words must restate its provenance,
+    /// even when unchanged. An edit that leaves the words alone keeps it.
     #[serde(default)]
     pub(crate) provenance: Option<String>,
     /// `settled` or `open`. **Moving a claim that is ALREADY open to settled

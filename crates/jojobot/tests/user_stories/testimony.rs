@@ -204,7 +204,8 @@ async fn a_run_still_needs_the_operators_word_to_make_its_own_guess_testimony() 
 }
 
 /// **Only testimony is protected.** A later run rewrites an earlier run's
-/// inference in place, as it always has, and still has to say how it knows.
+/// inference in place, as it always has. It need not say how it knows: an
+/// inference stays an inference.
 #[tokio::test]
 async fn a_later_run_still_rewrites_an_earlier_runs_inference_in_place() {
     let story = Story::begin("bot:gamma").await;
@@ -225,23 +226,12 @@ async fn a_later_run_still_rewrites_an_earlier_runs_inference_in_place() {
     first.wrap("guessed a colour").await;
 
     let later = story.session_in("UTC", Some("new")).await;
-    // Without a provenance it is refused as it is today: the later run did not
-    // write the claim, so it cannot keep what it did not say.
-    later
-        .refused(
-            "update_fact",
-            json!({"address": guess, "content": "the handcart is yellow"}),
-        )
-        .await
-        .says("blocked")
-        .says("provenance");
+    // Without a provenance it lands as an inference: an agent's new words are
+    // an inference whoever writes them.
     let landed = later
         .call(
             "update_fact",
-            json!({
-                "address": guess, "content": "the handcart is yellow",
-                "provenance": "inference",
-            }),
+            json!({"address": guess, "content": "the handcart is yellow"}),
         )
         .await
         .json();
