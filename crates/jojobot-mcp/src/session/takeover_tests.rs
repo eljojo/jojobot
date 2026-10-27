@@ -207,7 +207,7 @@ async fn a_holder_is_not_displaced_when_the_claimants_release_of_its_role_fails(
 
     let first = claiming(&healthy, "gamma", "dev-dispatch").await;
     let first_sid = sid_of(&first).expect("a handle");
-    let second = claiming(&blind, "gamma", "dev-dispatch").await;
+    let second = claiming_at_the_operators_word(&blind, "gamma", "dev-dispatch").await;
     assert_eq!(
         second["session"]["claim"]["status"], "refused",
         "the role did not move, so the claim is refused: {second}"
@@ -319,7 +319,7 @@ async fn a_holder_that_kept_the_claimed_role_is_not_closed_when_another_role_mov
     let more = claiming_more(&healthy, "gamma", &first_sid, "dev-review").await;
     assert_eq!(more["session"]["claim"]["status"], "taken", "{more}");
 
-    let second = claiming(&blind, "gamma", "dev-dispatch").await;
+    let second = claiming_at_the_operators_word(&blind, "gamma", "dev-dispatch").await;
     assert_eq!(
         second["session"]["claim"]["status"], "refused",
         "the claimed role did not move, so the claim is refused: {second}"
