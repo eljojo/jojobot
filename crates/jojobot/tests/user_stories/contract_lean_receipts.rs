@@ -218,6 +218,70 @@ async fn lean_receipts_keep_derivations_and_changed_keys_without_echoes() {
 }
 
 #[tokio::test]
+async fn lean_receipts_sets_only_edits_do_not_repeat_claim_labels() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    s.add("thing:handcart", "The Handcart").await;
+    let captured = s
+        .call(
+            "capture",
+            json!({"subject":"thing:handcart", "content":"the wheel squeaks",
+                "provenance":"inference", "sets":{"colour":"red"}}),
+        )
+        .await
+        .json();
+    let address = captured["address"].as_str().expect("claim address");
+    let edited = s
+        .call(
+            "update_fact",
+            json!({"address":address, "sets":{"colour":"blue"}}),
+        )
+        .await
+        .json();
+    for key in ["provenance", "standing"] {
+        assert!(edited.get(key).is_none(), "{key}: {edited}");
+    }
+    let read = s.recall("thing:handcart").await;
+    assert_eq!(read.json()["objects"][0]["fields"]["colour"], "blue");
+    let claim = read.claim(address).json();
+    assert_eq!(claim["content"], "the wheel squeaks");
+    assert_eq!(claim["provenance"], "inference");
+    story.finish().await;
+}
+
+#[tokio::test]
+async fn lean_receipts_details_only_edits_do_not_repeat_claim_labels() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    s.add("thing:handcart", "The Handcart").await;
+    let captured = s
+        .call(
+            "capture",
+            json!({"subject":"thing:handcart", "content":"the wheel squeaks",
+                "provenance":"inference"}),
+        )
+        .await
+        .json();
+    let address = captured["address"].as_str().expect("claim address");
+    for (resend_words, details) in [(false, "checked empty"), (true, "checked with a load")] {
+        let mut args = json!({"address":address, "details":details});
+        if resend_words {
+            args["content"] = "the wheel squeaks".into();
+        }
+        let edited = s.call("update_fact", args).await.json();
+        for key in ["provenance", "standing"] {
+            assert!(edited.get(key).is_none(), "{key}: {edited}");
+        }
+        let read = s.recall_with_details("thing:handcart").await;
+        let claim = read.claim(address).json();
+        assert_eq!(claim["content"], "the wheel squeaks");
+        assert_eq!(claim["details"], details);
+        assert_eq!(claim["provenance"], "inference");
+    }
+    story.finish().await;
+}
+
+#[tokio::test]
 async fn lean_receipts_show_generated_claims_only_when_asked() {
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;

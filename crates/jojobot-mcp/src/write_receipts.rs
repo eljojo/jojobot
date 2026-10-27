@@ -205,6 +205,11 @@ impl Call {
                 warnings(body, reasons);
             }
         }
+        let words_changed = body["changed"].as_array().is_some_and(|changes| {
+            changes.iter().any(|change| {
+                change["on"] == body["address"] && change["what"] == crate::changed::WORDS
+            })
+        });
         if let Some(changes) = body.get("changed").and_then(Value::as_array) {
             let mut grouped: std::collections::BTreeMap<String, Value> =
                 std::collections::BTreeMap::new();
@@ -255,13 +260,20 @@ impl Call {
         if derived.contains_key("due_on") {
             body["falls_due"] = true.into();
         }
-        // A rewrite that omits these learns whether the claim kept its label
-        // or reopened after its words changed.
-        let decided: Vec<_> = ["provenance", "standing"]
-            .into_iter()
-            .filter(|key| self.verb == "update_fact" && !self.args.contains_key(*key))
-            .filter_map(|key| body.get(key).cloned().map(|value| (key, value)))
-            .collect();
+        // New words require a label decision only when the caller supplied
+        // neither label; edits to other parts merely keep stored state.
+        let decided: Vec<_> = if self.verb == "update_fact"
+            && words_changed
+            && !self.args.contains_key("provenance")
+            && !self.args.contains_key("standing")
+        {
+            ["provenance", "standing"]
+                .into_iter()
+                .filter_map(|key| body.get(key).cloned().map(|value| (key, value)))
+                .collect()
+        } else {
+            Vec::new()
+        };
         trim_record(body);
         for (key, value) in decided {
             body[key] = value;

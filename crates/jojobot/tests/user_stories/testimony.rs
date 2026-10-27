@@ -208,6 +208,7 @@ async fn a_run_still_needs_the_operators_word_to_make_its_own_guess_testimony() 
         .await
         .json();
     assert!(promoted.get("provenance").is_none(), "{promoted}");
+    assert!(promoted.get("standing").is_none(), "{promoted}");
     assert_eq!(
         s.recall("thing:handcart").await.claim(&guess).json()["provenance"],
         "testimony"
