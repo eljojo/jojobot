@@ -62,6 +62,14 @@ const RECEIPT: &[&str] = &[
 /// decides the whole set; these three are the floor this case holds it to.
 const SERVER_KEYS: &[&str] = &["engine_record", "merged_from", "retracts"];
 
+/// A server key sent ALONE beside a caller key, which no served record shows:
+/// (key, value). Each is copied as a claim's fields and must land with the caller
+/// key kept and the server key dropped.
+const ALONE: &[(&str, &str)] = &[
+    ("merged_from", "thing:kappa"),
+    ("retracts", "thing:sigma#f12"),
+];
+
 /// Served keys no write sets: (verb, served keys, why).
 const READ_ONLY: &[(&str, &[&str], &str)] = &[
     ("capture", RECEIPT, "a receipt reports its own write"),
@@ -212,6 +220,12 @@ async fn whatever_a_read_serves_the_write_that_sets_it_accepts_as_served() {
     );
     let mut records = Vec::new();
     reads.iter().for_each(|read| records_in(read, &mut records));
+    for (key, value) in ALONE {
+        let fields = json!({ (*key): *value, "source": "copied account" });
+        let copy =
+            json!({"content": format!("{key} alone"), "provenance": "testimony", "fields": fields});
+        records.push(("capture", copy));
+    }
     assert!(
         RENAMED.iter().all(|row| !row.3.is_empty())
             && READ_ONLY.iter().all(|row| !row.2.is_empty())
@@ -287,6 +301,24 @@ async fn whatever_a_read_serves_the_write_that_sets_it_accepts_as_served() {
             .as_array()
             .cloned()
             .unwrap_or_default();
+        if *verb == "capture" {
+            // The dropped keys are exactly the server keys sent, with the server's note.
+            let mut sent: Vec<&str> = ["fields", "sets"]
+                .iter()
+                .filter_map(|bag| args.get(*bag)?.as_object())
+                .flat_map(|bag| bag.keys().map(String::as_str))
+                .filter(|k| jojobot_domain::memory::copied_read_key(None, k))
+                .collect();
+            let mut got: Vec<&str> = dropped.iter().filter_map(Value::as_str).collect();
+            sent.sort();
+            got.sort();
+            let noted = receipt["dropped_keys_note"].as_str().unwrap_or("");
+            if got != sent || (!got.is_empty() && !noted.contains("server")) {
+                changed.push(format!(
+                    "{verb} dropped {got:?} of {sent:?}, note {noted:?}"
+                ));
+            }
+        }
         for (key, sent) in args {
             let renamed = RENAMED.iter().find(|row| row.0 == *verb && row.2 == key);
             let served = renamed.map_or(key.as_str(), |row| row.1);
@@ -330,10 +362,30 @@ async fn whatever_a_read_serves_the_write_that_sets_it_accepts_as_served() {
             }
         }
     }
-    for (verb, _, receipt) in &landed {
-        let named = receipt["dropped_keys"].is_array();
-        if named && !receipt["dropped_keys_note"].is_string() {
-            changed.push(format!("{verb} dropped keys with no note: {receipt}"));
+    // A copy of an account leaves the original account as it was.
+    for (_, record) in records.iter().filter(|(verb, _)| *verb == "capture") {
+        let (Some(address), Some(fields)) =
+            (record["address"].as_str(), record["fields"].as_object())
+        else {
+            continue;
+        };
+        // A list serves its claims as entries, which a page of facts does not hold.
+        if let (Some((subject, n)), true) = (
+            address
+                .split_once("#f")
+                .filter(|(of, _)| !of.starts_with("list:")),
+            fields
+                .keys()
+                .any(|k| jojobot_domain::memory::copied_read_key(None, k)),
+        ) {
+            let at = n.parse::<u32>().unwrap_or(1) - 1;
+            let page = json!({"subject": subject, "facts": true, "details": true, "offset": at, "limit": 1});
+            let held = s.call("recall", page).await.json()["objects"][0]["facts"][0].clone();
+            if held["fields"] != record["fields"] {
+                changed.push(format!(
+                    "the account {address} changed after a copy: {held}"
+                ));
+            }
         }
     }
     assert!(changed.is_empty(), "{}", changed.join("\n"));
