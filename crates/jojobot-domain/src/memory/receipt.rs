@@ -9,7 +9,7 @@
 use jiff::civil::Date;
 use serde::{Deserialize, Serialize};
 
-use super::{MemoryError, Standing};
+use super::{Fact, FactPatch, MemoryError, Provenance, Standing};
 
 /// **A receipt rides only a claim that will stand settled** (rule 498). It
 /// records why a claim is settled, so it goes with a move to settled, a claim
@@ -25,6 +25,22 @@ pub fn rides_only_settled(
         return Err(MemoryError::ReceiptWithoutSettling);
     }
     Ok(())
+}
+
+/// **What a rewrite of a claim's words keeps when it names nothing.** The
+/// writing session keeps its claim's provenance, and any session keeps an
+/// inference's: an agent's new words are an inference whoever writes them. A
+/// receipt certifies the words that were checked, so another session's rewrite
+/// of a settled inference opens it again, and takes the receipt off, unless the
+/// rewrite brings its own receipt or names a standing.
+pub fn keep_on_rewrite(fact: &Fact, patch: &mut FactPatch, own: bool) {
+    let inference = fact.provenance == Provenance::Inference;
+    if patch.provenance.is_none() && (own || inference) {
+        patch.provenance = Some(fact.provenance);
+    }
+    if inference && !own && fact.standing == Standing::Settled && patch.receipt.is_none() {
+        patch.standing.get_or_insert(Standing::Open);
+    }
 }
 
 /// What a promotion to settled carries. The serialized form is what a store

@@ -383,6 +383,84 @@ pub async fn a_capture_that_lands_open_is_refused_a_receipt<M: Memory>(store: &M
     );
 }
 
+/// **A receipt certifies the words that were checked.** Another session that
+/// rewrites a settled inference and sends no provenance leaves it an inference
+/// and open again, the receipt off. A rewrite that brings its own receipt stays
+/// settled, on the new receipt.
+pub async fn a_settled_inference_reopens_when_another_session_rewrites_its_words<M: Memory>(
+    store: &M,
+) {
+    let subject = EntityId("thing:contract-receipt-reopen".to_string());
+    let guess = capture(
+        store,
+        NewFact {
+            session: Some("session-a".to_string()),
+            ..NewFact::about(subject.clone(), "the bike has two locks", date(2026, 10, 1))
+        },
+    )
+    .await;
+    let rewrite = |receipt: Option<Receipt>| FactPatch {
+        content: Some("the bike has three locks".to_string()),
+        receipt,
+        session: Some("session-b".to_string()),
+        ..FactPatch::default()
+    };
+    let settled = |check: &str| FactPatch {
+        session: Some("session-a".to_string()),
+        ..settle(Some(Receipt::Check(check.to_string())))
+    };
+    store
+        .update_fact(
+            &guess.address(),
+            settled("counted two locks"),
+            &other_caller(),
+        )
+        .await
+        .expect("a check settles it")
+        .written()
+        .expect("nothing blocks it");
+
+    let reopened = store
+        .update_fact(&guess.address(), rewrite(None), &other_caller())
+        .await
+        .expect("another session rewrites an inference")
+        .written()
+        .expect("nothing blocks it");
+    assert_eq!(reopened.provenance, Provenance::Inference);
+    assert_eq!(reopened.standing, Standing::Open, "{reopened:?}");
+    assert_eq!(reopened.receipt, None, "the receipt came off: {reopened:?}");
+    let read = read_back(store, &subject, &guess.id).await;
+    assert_eq!(read.content, "the bike has three locks");
+    assert_eq!(read.standing, Standing::Open);
+
+    store
+        .update_fact(
+            &guess.address(),
+            settled("counted three locks"),
+            &other_caller(),
+        )
+        .await
+        .expect("a check settles it again")
+        .written()
+        .expect("nothing blocks it");
+    let brought = Receipt::Check("counted three locks again".to_string());
+    let kept = store
+        .update_fact(
+            &guess.address(),
+            FactPatch {
+                content: Some("the bike has four locks".to_string()),
+                ..rewrite(Some(brought.clone()))
+            },
+            &other_caller(),
+        )
+        .await
+        .expect("a rewrite that brings its receipt")
+        .written()
+        .expect("nothing blocks it");
+    assert_eq!(kept.standing, Standing::Settled, "{kept:?}");
+    assert_eq!(kept.receipt, Some(brought));
+}
+
 /// Every spec above, in one call — see [`base::run_all`].
 pub async fn run_all_receipt<M: Memory>(store: &M) {
     a_capture_that_lands_open_is_refused_a_receipt(store).await;
@@ -392,4 +470,5 @@ pub async fn run_all_receipt<M: Memory>(store: &M) {
     reopening_takes_the_receipt_off_and_the_history_keeps_it(store).await;
     a_receipt_survives_edits_that_do_not_name_it_and_a_capture_may_carry_one(store).await;
     a_receipt_goes_only_with_a_claim_that_stands_settled(store).await;
+    a_settled_inference_reopens_when_another_session_rewrites_its_words(store).await;
 }

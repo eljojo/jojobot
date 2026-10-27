@@ -125,3 +125,50 @@ async fn a_later_run_rewriting_testimony_with_no_provenance_is_still_refused() {
         .never_says("the handcart is blue");
     story.finish().await;
 }
+
+/// **A receipt certifies the words that were checked.** A later run that
+/// rewrites a settled inference with no receipt leaves it an inference and open
+/// again; a rewrite that brings its own receipt leaves it settled.
+#[tokio::test]
+async fn a_later_runs_rewrite_reopens_a_settled_inference_unless_it_brings_a_receipt() {
+    let story = Story::begin("bot:gamma").await;
+    let first = story.session().await;
+    first.add("thing:handcart", "The Handcart").await;
+    let note = address_of(
+        &first
+            .call(
+                "capture",
+                json!({"subject": "thing:handcart", "content": "the wheel squeaks",
+                       "provenance": "inference"}),
+            )
+            .await
+            .json(),
+    );
+    first
+        .settle_on_a_check(&note, "listened to the wheel")
+        .await;
+    first.wrap("wrote a note and checked it").await;
+
+    let later = story.session_in("UTC", Some("new")).await;
+    let reopened = later
+        .call(
+            "update_fact",
+            json!({"address": note, "content": "the wheel squeaks when loaded"}),
+        )
+        .await
+        .json();
+    assert_eq!(reopened["provenance"], "inference", "{reopened}");
+    assert_eq!(reopened["standing"], "open", "{reopened}");
+
+    later.settle_on_a_check(&note, "listened with a load").await;
+    let kept = later
+        .call(
+            "update_fact",
+            json!({"address": note, "content": "the wheel squeaks when the cart is loaded",
+                   "receipt": {"check": "listened again with a load"}}),
+        )
+        .await
+        .json();
+    assert_eq!(kept["standing"], "settled", "{kept}");
+    story.finish().await;
+}

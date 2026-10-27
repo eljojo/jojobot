@@ -2048,7 +2048,8 @@ pub fn validate_happened_span(
 ///
 /// A rewrite of the words that sends no provenance keeps the claim's own when
 /// the session wrote the claim or the claim is an inference. Any other session
-/// must say how the new words are known ([`apply_fact_patch`] asks).
+/// must say how the new words are known ([`apply_fact_patch`] asks). Another
+/// session's rewrite reopens a settled inference unless it brings a receipt.
 ///
 /// `written_in` is the session of the claim's FIRST write: the session that
 /// brought the claim in. `declared` is the types the store holds, which say which
@@ -2141,11 +2142,8 @@ pub fn settle_rewrite(
             address: address.to_string(),
         });
     }
-    // The writing session keeps its claim's provenance, and any session keeps an
-    // inference's: an agent's new words are an inference whoever writes them.
-    let keeps = own || fact.provenance == Provenance::Inference;
-    if rewrites_words && keeps && patch.provenance.is_none() {
-        patch.provenance = Some(fact.provenance);
+    if rewrites_words {
+        receipt::keep_on_rewrite(fact, &mut patch, own);
     }
     Ok(patch)
 }
