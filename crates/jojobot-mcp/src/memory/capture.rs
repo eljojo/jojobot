@@ -645,6 +645,7 @@ impl Jojobot {
         };
         if !super::unlocks::takes_a_check_in(subject) {
             return Ok(Err(blocked_body(
+                "CheckIn",
                 subject,
                 &[],
                 format!(
@@ -659,6 +660,7 @@ impl Jojobot {
         // and picking either would make the other silently untrue.
         if let Some(key) = COMPUTED.iter().find(|key| sent.contains_key(**key)) {
             return Ok(Err(blocked_body(
+                "CheckIn",
                 subject,
                 &[],
                 format!(
@@ -678,6 +680,7 @@ impl Jojobot {
             on,
         ) {
             return Ok(Err(blocked_body(
+                "CheckIn",
                 subject,
                 &[],
                 format!("Nothing was written: {why}."),
@@ -749,6 +752,7 @@ impl Jojobot {
             // check-in supplies, and sending the caller to type it is the
             // move this whole path exists to remove.
             Err(why) if why.names_its_own_way_through() => Ok(Err(blocked_body(
+                "CheckIn",
                 subject,
                 &[],
                 format!("Nothing was written: {why}."),
@@ -761,6 +765,7 @@ impl Jojobot {
             // the value a working check-in already supplies and the exact
             // move rule 261 exists to stop.
             Err(why) => Ok(Err(blocked_body(
+                "CheckIn",
                 subject,
                 &[],
                 format!(

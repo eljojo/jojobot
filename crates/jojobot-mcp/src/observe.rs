@@ -66,7 +66,7 @@ impl CallEnd {
     pub(crate) fn of(outcome: &CallOutcome) -> Self {
         match outcome {
             CallOutcome::Landed => CallEnd::Answered,
-            CallOutcome::Refused { fix_by } => match fix_by.as_deref() {
+            CallOutcome::Refused { fix_by, .. } => match fix_by.as_deref() {
                 Some(word) if word == FixBy::Retry.as_token() => CallEnd::Retry,
                 Some(word) if word == FixBy::Change.as_token() => CallEnd::Change,
                 Some(word) if word == FixBy::Person.as_token() => CallEnd::Person,
@@ -80,7 +80,27 @@ impl CallEnd {
 pub trait CallObserver: Send + Sync {
     /// `verb` is the name the call is counted under, which the router bounds:
     /// a name it serves, or `unserved`.
-    fn call_answered(&self, verb: &str, end: CallEnd, elapsed: Duration);
+    fn call_answered(&self, verb: &str, end: CallEnd, refusal_code: &str, elapsed: Duration);
+}
+
+/// The bounded label on the same event the weekly and run counts keep.
+pub fn refusal_code(outcome: &CallOutcome) -> &str {
+    match outcome {
+        CallOutcome::Landed => "",
+        CallOutcome::Refused { code: None, .. } => "",
+        CallOutcome::Refused {
+            code: Some(code), ..
+        } => bounded_refusal_code(code),
+    }
+}
+
+/// Only the served closed vocabulary can become a metric label.
+pub fn bounded_refusal_code(code: &str) -> &str {
+    if code.is_empty() || crate::answer::listed_refusal_code(code) {
+        code
+    } else {
+        "unlisted"
+    }
 }
 
 #[cfg(test)]
@@ -92,6 +112,7 @@ mod tests {
         let refused = |word: Option<&str>| {
             CallEnd::of(&CallOutcome::Refused {
                 fix_by: word.map(str::to_string),
+                code: None,
             })
         };
         assert_eq!(CallEnd::of(&CallOutcome::Landed), CallEnd::Answered);

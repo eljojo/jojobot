@@ -682,6 +682,7 @@ impl Jojobot {
             ),
         };
         Some(blocked_body(
+            "RefusesAHandWrittenDueMoment",
             subject,
             &[],
             format!(

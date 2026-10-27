@@ -8,6 +8,9 @@
 //! they should never have to parse a failure.
 
 use super::*;
+
+mod codes;
+pub(crate) use codes::{MEMORY_REFUSAL_CODES, memory_refusal_code};
 use jojobot_domain::memory::filter;
 
 mod numbers;
@@ -314,6 +317,11 @@ pub(crate) fn blocked_result(
     // because a secret a caller has to be told separately about is one nobody
     // uses — the sentence that says what to do names the thing to do it with
     // (rule 68). An exact collision mints none: there is nothing to lift.
+    let code = match &gate {
+        Blocked::MustExist(_) => "UnknownEntity",
+        Blocked::Creating(_) if exact => "HandleTaken",
+        _ => "NearName",
+    };
     let token = guard::override_token(attempted, candidates);
     let mut how_to_proceed = match gate {
         Blocked::Creating(_) if exact => format!(
@@ -471,19 +479,24 @@ pub(crate) fn blocked_result(
             how_to_proceed.push_str(&format!(" {} holds number {number}.", card.handle));
         }
     }
-    blocked_body(attempted, candidates, how_to_proceed)
+    blocked_body(code, attempted, candidates, how_to_proceed)
 }
 
 /// The blocked envelope itself, once — so every gate's advice arrives in one
 /// shape and a client branches on `status`, never on which gate fired.
 pub(crate) fn blocked_body(
+    code: &'static str,
     attempted: &EntityId,
     candidates: &[EntityMatch],
     how_to_proceed: impl Into<WayForward>,
 ) -> CallToolResult {
+    assert!(
+        crate::answer::listed_refusal_code(code),
+        "unlisted refusal code"
+    );
     let how_to_proceed = how_to_proceed.into();
     let mut body = serde_json::json!({
-        "status": "blocked",
+        "status": "blocked", "refusal_code": code,
         "attempted": attempted.as_str(),
         "wrote": false,
         "candidates": candidates.iter().map(candidate_json).collect::<Vec<_>>(),
@@ -504,7 +517,7 @@ fn too_big_to_read(
     how_to_proceed: impl Into<WayForward>,
 ) -> CallToolResult {
     let mut body = serde_json::json!({
-        "status": "blocked",
+        "status": "blocked", "refusal_code": "TooBigToRead",
         "attempted": subject,
         "wrote": false,
         "candidates": [],
@@ -618,8 +631,11 @@ pub(crate) fn memory_declined(
     verb: &'static str,
     e: MemoryError,
 ) -> Result<CallToolResult, McpError> {
+    let code = memory_refusal_code(&e);
     let word = memory_fix_by(&e);
-    memory_declined_arms(verb, e).map(|answered| stamp(answered, word))
+    memory_declined_arms(verb, e)
+        .map(|answered| stamp(answered, word, code))
+        .map_err(|error| crate::answer::stamp_error_code(error, word, code))
 }
 
 /// **A miss and a block speak one shape.** An id, handle or address that names
@@ -657,6 +673,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                 )
             };
             Ok(blocked_body(
+                "MemoryDeclinedArms",
                 &EntityId(attempted.clone()),
                 &[],
                 format!(
@@ -679,6 +696,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
         // be retracted" here denies a state the store is holding, and a
         // caller who believes it treats an archived record as live.
         MemoryError::AlreadyRetracted { attempted } => Ok(blocked_body(
+            "MemoryDeclinedArms",
             &EntityId(attempted.clone()),
             &[],
             format!(
@@ -695,6 +713,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
         // archive writes nothing rather than overwriting the reason already
         // on record.
         MemoryError::AlreadyArchived { attempted } => Ok(blocked_body(
+            "MemoryDeclinedArms",
             &EntityId(attempted.clone()),
             &[],
             format!(
@@ -707,6 +726,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
         // **The mirror of the answer above:** the entity jojobot holds is
         // already the one the caller wanted back.
         MemoryError::NotArchived { attempted } => Ok(blocked_body(
+            "MemoryDeclinedArms",
             &EntityId(attempted.clone()),
             &[],
             format!(
@@ -719,6 +739,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
         // ways out** (rule 68): name where it was read, or file it as the
         // derivation it would otherwise be.
         MemoryError::UnsourcedObservation => Ok(blocked_body(
+            "MemoryDeclinedArms",
             &EntityId(String::new()),
             &[],
             // **Worded by the verb**: put_document takes the system as `source`
@@ -738,6 +759,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             },
         )),
         MemoryError::NotRetractable { attempted, why } => Ok(blocked_body(
+            "MemoryDeclinedArms",
             &EntityId(attempted.clone()),
             &[],
             format!("Nothing was written. '{attempted}' cannot be retracted: {why}."),
@@ -757,6 +779,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
         // is advice that cannot succeed here, and a model follows it round a
         // loop with no end. This says who repairs it instead.
         MemoryError::KindsNeverLoaded { .. } => Ok(blocked_body(
+            "MemoryDeclinedArms",
             &EntityId(String::new()),
             &[],
             format!(
@@ -768,6 +791,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
         // **The way forward is a different pair of calls, not this one again**: the
         // key stays in the bag it was first written under until it is cleared.
         MemoryError::KeyInOtherBag { ref key, .. } => Ok(blocked_body(
+            "MemoryDeclinedArms",
             &EntityId(key.clone()),
             &[],
             format!(
@@ -782,6 +806,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
         // **The caller named no revision, so the sentence does not talk about one.**
         // It says the text changed under the edit and names the read.
         MemoryError::TextChangedWhileEditing { ref address, .. } => Ok(blocked_body(
+            "MemoryDeclinedArms",
             &EntityId(address.clone()),
             &[],
             WayForward::retry(format!(
@@ -811,7 +836,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                 )
             };
             let mut body = serde_json::json!({
-                "status": "blocked",
+                "status": "blocked", "refusal_code": "MemoryRefusal",
                 "attempted": address,
                 "wrote": false,
                 "candidates": [],
@@ -830,6 +855,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             current,
             ..
         } => Ok(blocked_body(
+            "MemoryDeclinedArms",
             &EntityId(address.clone()),
             &[],
             WayForward::retry(format!(
@@ -840,6 +866,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
         )),
         MemoryError::TestimonyRewritten { ref address }
         | MemoryError::AppClaimRewritten { ref address } => Ok(blocked_body(
+            "MemoryDeclinedArms",
             &EntityId(address.clone()),
             &[],
             format!(
@@ -855,6 +882,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
         | MemoryError::InvalidQuery(_)
         | MemoryError::InvalidType(_)
         | MemoryError::UnstatedProvenance => Ok(blocked_body(
+            "MemoryDeclinedArms",
             &EntityId(String::new()),
             &[],
             format!(
@@ -868,6 +896,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
         // else.** The message names the route; the tail every other malformed
         // call gets would tell the caller to send this one again.
         MemoryError::WeekOfUsageWritten(ref subject) => Ok(blocked_body(
+            "MemoryDeclinedArms",
             subject,
             &[],
             format!("{}: {e}.", nothing_for(verb)),
@@ -894,6 +923,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
         // a typo from a thing it may not read, and would retry the first
         // forever. This says which it is and that retrying will not help.
         MemoryError::NotYours { ref attempted, .. } => Ok(blocked_body(
+            "MemoryDeclinedArms",
             &EntityId(attempted.clone()),
             &[],
             format!(
@@ -909,6 +939,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             ),
         )),
         MemoryError::RepeatsShipped => Ok(blocked_body(
+            "MemoryDeclinedArms",
             &EntityId(String::new()),
             &[],
             format!(
@@ -921,6 +952,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             ref name,
             ref displaced,
         } => Ok(blocked_body(
+            "MemoryDeclinedArms",
             &EntityId(name.clone()),
             &[],
             format!(
@@ -952,6 +984,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
         // actually has: leave the key, or say the same thing somewhere the
         // type can still see it.
         MemoryError::BreaksFit { ref name, ref keys } => Ok(blocked_body(
+            "MemoryDeclinedArms",
             &EntityId(String::new()),
             &[],
             format!(
@@ -978,6 +1011,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             // asks of it, since a value is what changes there.
             let send = must_send(rule, missing, unmet);
             Ok(blocked_body(
+                "MemoryDeclinedArms",
                 &EntityId(String::new()),
                 &[],
                 format!(
@@ -1038,7 +1072,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                 ),
             });
             let mut body = serde_json::json!({
-                "status": "blocked",
+                "status": "blocked", "refusal_code": "MemoryRefusal",
                 "attempted": subject,
                 "wrote": false,
                 "candidates": [],
@@ -1082,6 +1116,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
         // calendar rule. A caller who sends one now makes the loop whole in one
         // write instead of two. A loop with no schedule at all is allowed.
         MemoryError::BreaksSchedule { ref missing, .. } => Ok(blocked_body(
+            "MemoryDeclinedArms",
             &EntityId(String::new()),
             &[],
             format!(
@@ -1102,6 +1137,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
         // (`graph::Narrowing`). A key written `$name` narrows only when its input
         // is sent, which is how a view that does narrow comes to be refused.
         MemoryError::ViewNarrowsNothing { ref view } => Ok(blocked_body(
+            "MemoryDeclinedArms",
             &EntityId(view.clone()),
             &[],
             super::view_run::narrows_nothing_words(view),
@@ -1117,6 +1153,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             next,
             ..
         } => Ok(blocked_body(
+            "MemoryDeclinedArms",
             &EntityId(String::new()),
             &[],
             format!(
@@ -1133,6 +1170,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             next,
             ..
         } => Ok(blocked_body(
+            "MemoryDeclinedArms",
             &EntityId(String::new()),
             &[],
             number_retired_advice(&e.to_string(), collection, next),
@@ -1147,11 +1185,13 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             taken_back,
             ..
         } => Ok(blocked_body(
+            "MemoryDeclinedArms",
             &EntityId(String::new()),
             &[],
             number_freed_advice(verb, &e.to_string(), collection, holder, number, taken_back),
         )),
         MemoryError::NotANumber { ref collection, .. } => Ok(blocked_body(
+            "MemoryDeclinedArms",
             &EntityId(String::new()),
             &[],
             format!(
@@ -1169,6 +1209,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             ref key,
             ..
         } => Ok(blocked_body(
+            "MemoryDeclinedArms",
             &EntityId(String::new()),
             &[],
             format!(
@@ -1190,6 +1231,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             ref wanted,
             ..
         } => Ok(blocked_body(
+            "MemoryDeclinedArms",
             &EntityId(String::new()),
             &[],
             format!(
@@ -1204,6 +1246,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
         // caller's own** (rule 261). The five are named so the mapping can be
         // written whole in the next call.
         MemoryError::RemapsShippedWord { ref word, .. } => Ok(blocked_body(
+            "MemoryDeclinedArms",
             &EntityId(String::new()),
             &[],
             format!(
@@ -1218,6 +1261,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
         // **A receipt without the move it records is a call that must change**: the
         // standing is what the receipt is for.
         MemoryError::ReceiptWithoutSettling => Ok(blocked_body(
+            "MemoryDeclinedArms",
             &EntityId(String::new()),
             &[],
             format!(
@@ -1229,6 +1273,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
         // a check that ran is the caller's to record, and the operator's word is
         // recorded the same way, as the `confirmed` shape.
         MemoryError::UnreceiptedSettling => Ok(blocked_body(
+            "MemoryDeclinedArms",
             &EntityId(String::new()),
             &[],
             format!(
@@ -1242,6 +1287,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
         // the call would invite them to set the confirmation flag themselves,
         // which is the one thing the gate exists to stop.
         MemoryError::UnconfirmedPromotion => Ok(blocked_body(
+            "MemoryDeclinedArms",
             &EntityId(String::new()),
             &[],
             format!(
@@ -1261,6 +1307,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
         // **Two sides of one handle** is not a resemblance: the destination
         // is fine, it names exactly what the source already answers to.
         MemoryError::NothingToRename { ref attempted } => Ok(blocked_body(
+            "MemoryDeclinedArms",
             &EntityId(attempted.clone()),
             &[],
             format!(
@@ -1278,6 +1325,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             ref attempted,
             ref now,
         } => Ok(blocked_body(
+            "MemoryDeclinedArms",
             &EntityId(attempted.clone()),
             &[],
             format!(
@@ -1290,6 +1338,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
         // build-supplied record has nothing for `rename_entity` or `merge`
         // to move, on either side of a fold.
         MemoryError::SuppliedHandle { ref attempted } => Ok(blocked_body(
+            "MemoryDeclinedArms",
             &EntityId(attempted.clone()),
             &[],
             format!(
@@ -1310,6 +1359,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
         // **Two sides of one handle** is not a resemblance: the survivor is
         // fine, it names exactly what the duplicate already answers to.
         MemoryError::NothingToMerge { ref attempted } => Ok(blocked_body(
+            "MemoryDeclinedArms",
             &EntityId(attempted.clone()),
             &[],
             format!(
@@ -1325,6 +1375,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             ref document,
             ref other,
         } => Ok(blocked_body(
+            "MemoryDeclinedArms",
             &EntityId(document.clone()),
             &[],
             format!(
@@ -1343,6 +1394,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             ref folded,
             ref survivor,
         } => Ok(blocked_body(
+            "MemoryDeclinedArms",
             &EntityId(folded.clone()),
             &[],
             format!(
@@ -1359,6 +1411,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             ref attempted,
             ref into,
         } => Ok(blocked_body(
+            "MemoryDeclinedArms",
             &EntityId(attempted.clone()),
             &[],
             format!(
@@ -1453,7 +1506,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                     )
                 }));
             let mut body = serde_json::json!({
-                "status": "blocked",
+                "status": "blocked", "refusal_code": "MemoryRefusal",
                 "attempted": subject,
                 "wrote": false,
                 "room": room
@@ -1506,7 +1559,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             ref seated,
         } => {
             let mut body = serde_json::json!({
-                "status": "blocked",
+                "status": "blocked", "refusal_code": "MemoryRefusal",
                 "attempted": subject,
                 "wrote": false,
                 "seats": seats,
@@ -1587,7 +1640,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                 },
             )));
             let mut body = serde_json::json!({
-                "status": "blocked",
+                "status": "blocked", "refusal_code": "MemoryRefusal",
                 "attempted": subject,
                 "wrote": false,
                 "live": live,
@@ -1641,7 +1694,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                 )
             });
             let mut body = serde_json::json!({
-                "status": "blocked",
+                "status": "blocked", "refusal_code": "MemoryRefusal",
                 "attempted": subject,
                 "wrote": false,
                 "room": room
@@ -1721,6 +1774,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             len,
             cap,
         } => Ok(blocked_body(
+            "MemoryDeclinedArms",
             &EntityId(subject.clone()),
             &[],
             format!(
@@ -1741,6 +1795,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             len,
             cap,
         } => Ok(blocked_body(
+            "MemoryDeclinedArms",
             &EntityId(subject.clone()),
             &[],
             format!(
@@ -1764,6 +1819,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             may,
             ref allowed,
         } => Ok(blocked_body(
+            "MemoryDeclinedArms",
             &EntityId(subject.clone()),
             &[],
             // **The bots that may make the write are named** (rule 261), and
@@ -1850,6 +1906,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             ref subject,
             ref manager,
         } => Ok(blocked_body(
+            "MemoryDeclinedArms",
             &EntityId(subject.clone()),
             &[],
             format!(
@@ -1870,85 +1927,90 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             may,
             ref allowed,
             clear_opens,
-        } => Ok(blocked_body(&EntityId(duplicate.clone()), &[], {
-            // **The route of taking the keys off the duplicate is named only
-            // when the caller may take them off**: the domain asked the
-            // licence a clear meets. Named to a caller it refuses, the clear
-            // would loop back here (rule 68).
-            let clear = if clear_opens {
-                format!(
-                    " Or take {keys} off '{duplicate}' first: update_fact the record that \
-                         sets it with clear_fields, then merge again."
-                )
-            } else {
-                String::new()
-            };
-            let who = allowed.join(" or ");
-            // **The assistant holds the head of the chart**, so a refusal that
-            // names it says so: that is true on every instance, whoever it
-            // acts for.
-            let operator = if allowed
-                .iter()
-                .any(|bot| bot == jojobot_domain::memory::ASSISTANT)
+        } => Ok(blocked_body(
+            "MemoryDeclinedArms",
+            &EntityId(duplicate.clone()),
+            &[],
             {
-                " The assistant holds the head of the chart."
-            } else {
-                ""
-            };
-            match may {
-                jojobot_domain::memory::MayWrite::HeadOnceHeld { .. } => format!(
-                    "Nothing was written. '{duplicate}' carries {keys}, and '{survivor}' \
+                // **The route of taking the keys off the duplicate is named only
+                // when the caller may take them off**: the domain asked the
+                // licence a clear meets. Named to a caller it refuses, the clear
+                // would loop back here (rule 68).
+                let clear = if clear_opens {
+                    format!(
+                        " Or take {keys} off '{duplicate}' first: update_fact the record that \
+                         sets it with clear_fields, then merge again."
+                    )
+                } else {
+                    String::new()
+                };
+                let who = allowed.join(" or ");
+                // **The assistant holds the head of the chart**, so a refusal that
+                // names it says so: that is true on every instance, whoever it
+                // acts for.
+                let operator = if allowed
+                    .iter()
+                    .any(|bot| bot == jojobot_domain::memory::ASSISTANT)
+                {
+                    " The assistant holds the head of the chart."
+                } else {
+                    ""
+                };
+                match may {
+                    jojobot_domain::memory::MayWrite::HeadOnceHeld { .. } => format!(
+                        "Nothing was written. '{duplicate}' carries {keys}, and '{survivor}' \
                          already holds it, so merging them would change it, which only the bot \
                          that heads the chart may do. Ask that bot to make this merge.{clear}"
-                ),
-                // **A thread, judged by the bots that write into it.** The
-                // survivor's key is the writers' superiors', and on a record
-                // ceiling the assistant's too, so they are the ones named. A
-                // different identity is not enough here, and the survivor is
-                // not the caller's own bot.
-                jojobot_domain::memory::MayWrite::WritersSuperior if allowed.is_empty() => {
-                    format!(
-                        "Nothing was written. '{duplicate}' carries {keys}, and no bot is \
+                    ),
+                    // **A thread, judged by the bots that write into it.** The
+                    // survivor's key is the writers' superiors', and on a record
+                    // ceiling the assistant's too, so they are the ones named. A
+                    // different identity is not enough here, and the survivor is
+                    // not the caller's own bot.
+                    jojobot_domain::memory::MayWrite::WritersSuperior if allowed.is_empty() => {
+                        format!(
+                            "Nothing was written. '{duplicate}' carries {keys}, and no bot is \
                              recorded above the bots that write into '{survivor}', so no bot may \
                              make this merge yet. Place one of them under a manager, and that \
                              manager can.{clear}"
-                    )
-                }
-                jojobot_domain::memory::MayWrite::WritersSuperior => format!(
-                    "Nothing was written. '{duplicate}' carries {keys}, and merging it into \
+                        )
+                    }
+                    jojobot_domain::memory::MayWrite::WritersSuperior => format!(
+                        "Nothing was written. '{duplicate}' carries {keys}, and merging it into \
                          '{survivor}' would set it there, which none of the bots that write into \
                          '{survivor}' may do, only {who}. Ask {who} to make this merge.\
                          {operator}{clear}"
-                ),
-                // **The chart, not a ceiling.** The merge would change who the
-                // survivor reports to, which only the bots that may place it
-                // may do, so they are the ones named.
-                jojobot_domain::memory::MayWrite::Ancestor
-                | jojobot_domain::memory::MayWrite::Superior
-                    if allowed.is_empty() =>
-                {
-                    format!(
-                        "Nothing was written. '{duplicate}' carries {keys}, which names no \
+                    ),
+                    // **The chart, not a ceiling.** The merge would change who the
+                    // survivor reports to, which only the bots that may place it
+                    // may do, so they are the ones named.
+                    jojobot_domain::memory::MayWrite::Ancestor
+                    | jojobot_domain::memory::MayWrite::Superior
+                        if allowed.is_empty() =>
+                    {
+                        format!(
+                            "Nothing was written. '{duplicate}' carries {keys}, which names no \
                              bot, and '{survivor}' has no manager recorded to change, so no bot \
                              may make this merge yet. Place '{survivor}' under a manager first: \
                              reports_to is set by the manager it names or by a bot above that \
                              one. Then merge again.{clear}"
-                    )
-                }
-                jojobot_domain::memory::MayWrite::Ancestor
-                | jojobot_domain::memory::MayWrite::Superior => format!(
-                    "Nothing was written. '{duplicate}' carries {keys}, and merging it into \
+                        )
+                    }
+                    jojobot_domain::memory::MayWrite::Ancestor
+                    | jojobot_domain::memory::MayWrite::Superior => format!(
+                        "Nothing was written. '{duplicate}' carries {keys}, and merging it into \
                          '{survivor}' would change who '{survivor}' reports to, which only {who} \
                          may do. Ask {who} to make this merge.{clear}"
-                ),
-                _ => format!(
-                    "Nothing was written. '{duplicate}' carries {keys}, and merging it into \
+                    ),
+                    _ => format!(
+                        "Nothing was written. '{duplicate}' carries {keys}, and merging it into \
                          '{survivor}', your own bot, would raise your own ceiling, which only a \
                          different identity may do. Ask a different identity to make this \
                          merge.{clear}"
-                ),
-            }
-        })),
+                    ),
+                }
+            },
+        )),
         // **A role's own two fields, named on the ordinary surface.** The
         // subject named here is not an entity handle — `blocked_body` wants
         // one to check for candidates, and a role has none — so this is its
@@ -1962,7 +2024,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                      opens through."
             ));
             let mut body = serde_json::json!({
-                "status": "blocked",
+                "status": "blocked", "refusal_code": "MemoryRefusal",
                 "attempted": key,
                 "wrote": false,
             });
@@ -1983,7 +2045,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                  operator types in."
             ));
             let mut body = serde_json::json!({
-                "status": "blocked",
+                "status": "blocked", "refusal_code": "MemoryRefusal",
                 "attempted": subject,
                 "wrote": false,
             });
@@ -2000,7 +2062,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                  asks for a new code with start_here's ask_for_code."
             ));
             let mut body = serde_json::json!({
-                "status": "blocked",
+                "status": "blocked", "refusal_code": "MemoryRefusal",
                 "attempted": subject,
                 "wrote": false,
             });
@@ -2021,7 +2083,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                 known.join(", ")
             ));
             let mut body = serde_json::json!({
-                "status": "blocked",
+                "status": "blocked", "refusal_code": "MemoryRefusal",
                 "attempted": right,
                 "wrote": false,
             });
@@ -2050,7 +2112,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                 )
             ));
             let mut body = serde_json::json!({
-                "status": "blocked",
+                "status": "blocked", "refusal_code": "MemoryRefusal",
                 "attempted": role,
                 "wrote": false,
                 "holder": holder,
@@ -2068,8 +2130,9 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
 /// Map a domain [`MemoryError`] to an MCP error, splitting client mistakes
 /// (invalid params) from server-side failures.
 pub(crate) fn memory_error(e: MemoryError) -> McpError {
+    let code = memory_refusal_code(&e);
     let word = memory_fix_by(&e);
-    stamp_error(memory_error_arms(e), word)
+    crate::answer::stamp_error_code(memory_error_arms(e), word, code)
 }
 
 fn memory_error_arms(e: MemoryError) -> McpError {
@@ -2201,7 +2264,12 @@ pub(crate) mod tests {
     #[test]
     #[should_panic(expected = "way forward")]
     fn blocked_body_cannot_be_built_with_an_empty_way_forward() {
-        blocked_body(&EntityId("person:homer".into()), &[], String::new());
+        blocked_body(
+            "InvalidArguments",
+            &EntityId("person:homer".into()),
+            &[],
+            String::new(),
+        );
     }
 
     /// **A caller mistake never leaves this rail through the error channel**

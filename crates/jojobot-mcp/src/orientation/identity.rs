@@ -62,7 +62,7 @@ pub(crate) fn booting_unknown(
     }
     .into();
     let mut body = serde_json::json!({
-        "status": "blocked",
+        "status": "blocked", "refusal_code": "BootingUnknown",
         "attempted": attempted.as_str(),
         "wrote": false,
         // **The roster, not only the near misses.** `candidates` answers "did

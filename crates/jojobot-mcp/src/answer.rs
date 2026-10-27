@@ -8,6 +8,81 @@
 
 use super::*;
 
+/// Codes owned by context constructors rather than an error enum.
+pub(crate) const CONTEXT_REFUSAL_CODES: &[&str] = &[
+    "AddEntity",
+    "AskForCode",
+    "AskedByName",
+    "BlockedResult",
+    "BoardUnread",
+    "BootingUnknown",
+    "BoxMoved",
+    "CheckIn",
+    "Declared",
+    "DeclinedOrLifted",
+    "ExchangeLegacyName",
+    "HandleDeclined",
+    "HandleTaken",
+    "InvalidArguments",
+    "ListSent",
+    "MailboxBlocked",
+    "MailboxBlockedBody",
+    "MailboxDeclinedArms",
+    "MailboxMalformed",
+    "MailboxNotYourMessage",
+    "MailboxQuarantined",
+    "MailboxQuarantinedOnPurpose",
+    "MailboxRenameWouldChangeWhoMayRead",
+    "MailboxRenameWouldCollide",
+    "MarkReviewedInBulk",
+    "MemoryDeclinedArms",
+    "MemoryRefusal",
+    "NearName",
+    "NoBoxFor",
+    "NoSuchAddressee",
+    "NoSuchView",
+    "NotYours",
+    "OperatorsBox",
+    "PrivateBox",
+    "ProtocolError",
+    "RefusalForFoldMoves",
+    "RefusesAHandWrittenDueMoment",
+    "RefusesAHandWrittenReviewStamp",
+    "RefusesAMessageId",
+    "RefusesANonPersonOperator",
+    "RenameEntity",
+    "RenameWouldUnseatTheOperator",
+    "SessionNothingToAmend",
+    "SessionRefusal",
+    "SessionUnbound",
+    "SubjectDeclined",
+    "TooBigToRead",
+    "UnknownArgument",
+    "UnknownOwner",
+    "Unreadable",
+    "UpdateEntity",
+    "VerifyCode",
+    "WindowUnjudged",
+    "WrapSession",
+];
+
+pub(crate) fn listed_refusal_code(code: &str) -> bool {
+    CONTEXT_REFUSAL_CODES.contains(&code)
+        || crate::memory::declined::MEMORY_REFUSAL_CODES.contains(&code)
+        || crate::mailboxes::declined::MAILBOXES_REFUSAL_CODES.contains(&code)
+        || crate::session::declined::SESSION_REFUSAL_CODES.contains(&code)
+}
+
+macro_rules! lane_refusal_codes {
+    ($function:ident, $catalog:ident, $error:ident; $( $variant:ident $(($($tuple:tt)*))? $({$($fields:tt)*})? ),* $(,)?) => {
+        pub(crate) const $catalog: &[&str] = &[$(stringify!($variant)),*];
+        pub(crate) fn $function(error: &$error) -> &'static str {
+            match error { $( $error::$variant $(($($tuple)*))? $({$($fields)*})? => stringify!($variant) ),* }
+        }
+    };
+}
+pub(crate) use lane_refusal_codes;
+
 /// **What a refusal unlocks — never a deficit to avoid** (decision log 261,
 /// 262). Every `status: "blocked"` body on this surface carries one, built
 /// through this type rather than a bare `String`, so a caller sees a next
@@ -25,6 +100,7 @@ pub(crate) struct WayForward {
     /// The word. `None` only for a storage failure whose switch is off: see
     /// [`memory_store_failure_word`] and [`other_store_failure_word`].
     fix_by: Option<FixBy>,
+    refusal_code: Option<&'static str>,
 }
 
 /// **Who fixes a refusal, in one word a caller reads before the prose.** A
@@ -106,7 +182,11 @@ impl WayForward {
             "a refusal was built with no way forward — every blocked result must say what it \
              unlocks (decision log 261, 262)",
         );
-        WayForward { text, fix_by }
+        WayForward {
+            text,
+            fix_by,
+            refusal_code: None,
+        }
     }
 
     /// A refusal only a person can resolve: stored damage, or a decision that
@@ -136,7 +216,16 @@ impl WayForward {
     /// **The one place a blocked body gets its way forward and its word.** A
     /// constructor calls this and never inserts `how_to_proceed` by hand, so a
     /// refusal cannot leave without a word.
+    pub(crate) fn coded(mut self, code: &'static str) -> Self {
+        assert!(listed_refusal_code(code), "unlisted refusal code");
+        self.refusal_code = Some(code);
+        self
+    }
+
     pub(crate) fn write_into(&self, body: &mut serde_json::Value) {
+        if let Some(code) = self.refusal_code {
+            body["refusal_code"] = code.into();
+        }
         if let Some(fix_by) = self.fix_by {
             body[FixBy::KEY] = fix_by.as_token().into();
         }
@@ -149,7 +238,11 @@ impl WayForward {
 /// the result here, so the word served is the word the match says and an arm
 /// cannot disagree with it. A body that is not a blocked answer is left alone;
 /// a `None` word takes any word off.
-pub(crate) fn stamp(result: CallToolResult, word: Option<FixBy>) -> CallToolResult {
+pub(crate) fn stamp(
+    result: CallToolResult,
+    word: Option<FixBy>,
+    code: &'static str,
+) -> CallToolResult {
     let Some(text) = result.content.first().and_then(|b| b.as_text()) else {
         return result;
     };
@@ -159,6 +252,7 @@ pub(crate) fn stamp(result: CallToolResult, word: Option<FixBy>) -> CallToolResu
     if body["status"] != "blocked" {
         return result;
     }
+    body["refusal_code"] = code.into();
     match word {
         Some(word) => body[FixBy::KEY] = word.as_token().into(),
         None => {
@@ -181,9 +275,37 @@ pub(crate) fn fix_by_of(error: &McpError) -> Option<FixBy> {
         .and_then(FixBy::of_token)
 }
 
-/// **Put the word on a protocol error**, in its `data` object, beside the prose
-/// the error already carries. A `None` word leaves the error as it was.
-pub(crate) fn stamp_error(mut error: McpError, word: Option<FixBy>) -> McpError {
+/// Router errors have no domain lane to name their reason.
+pub(crate) fn stamp_missing_code(error: McpError) -> McpError {
+    if error
+        .data
+        .as_ref()
+        .and_then(|v| v.get("refusal_code"))
+        .is_some()
+    {
+        return error;
+    }
+    let word = fix_by_of(&error);
+    stamp_error(error, word)
+}
+
+pub(crate) fn stamp_error(error: McpError, word: Option<FixBy>) -> McpError {
+    stamp_error_code(error, word, "ProtocolError")
+}
+
+/// Keep the lane's reason beside its word without changing the error's prose.
+pub(crate) fn stamp_error_code(
+    mut error: McpError,
+    word: Option<FixBy>,
+    code: &'static str,
+) -> McpError {
+    let mut data = error
+        .data
+        .take()
+        .and_then(|v| v.as_object().cloned())
+        .unwrap_or_default();
+    data.insert("refusal_code".into(), code.into());
+    error.data = Some(data.into());
     if let Some(word) = word {
         let mut data = match error.data.take() {
             Some(serde_json::Value::Object(fields)) => fields,
@@ -250,7 +372,7 @@ impl From<&str> for WayForward {
 pub(crate) fn misused(how_to_proceed: impl Into<WayForward>) -> CallToolResult {
     let how_to_proceed = how_to_proceed.into();
     let mut body = serde_json::json!({
-        "status": "blocked",
+        "status": "blocked", "refusal_code": "InvalidArguments",
         "wrote": false,
     });
     how_to_proceed.write_into(&mut body);
@@ -1200,15 +1322,19 @@ mod tests {
             )])
         };
         assert_eq!(
-            json_of(&stamp(refusal(), Some(FixBy::Person)))["fix_by"],
+            json_of(&stamp(refusal(), Some(FixBy::Person), "InvalidArguments"))["fix_by"],
             "person"
         );
-        assert!(json_of(&stamp(refusal(), None)).get("fix_by").is_none());
+        assert!(
+            json_of(&stamp(refusal(), None, "InvalidArguments"))
+                .get("fix_by")
+                .is_none()
+        );
         let receipt = CallToolResult::success(vec![ContentBlock::text(
             serde_json::json!({"id": "x"}).to_string(),
         )]);
         assert!(
-            json_of(&stamp(receipt, Some(FixBy::Retry)))
+            json_of(&stamp(receipt, Some(FixBy::Retry), "InvalidArguments"))
                 .get("fix_by")
                 .is_none()
         );

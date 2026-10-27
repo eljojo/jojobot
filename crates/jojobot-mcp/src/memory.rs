@@ -260,6 +260,7 @@ impl Jojobot {
         }
         let names: Vec<&str> = known.iter().map(|t| t.name.as_str()).collect();
         Ok(Err(blocked_body(
+            "Declared",
             &EntityId(String::new()),
             &[],
             format!(

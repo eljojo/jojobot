@@ -152,6 +152,8 @@ const ALL_VERSIONS: &[&str] = &[
     "0109_fact_write_bot",
     "0110_merge_event_by_survivor",
     "0111_type_field_must",
+    "0112_tool_call_refusal_code",
+    "0113_run_call_refusal_code",
 ];
 
 /// **The versions a start on a fresh store records and does not issue.** An

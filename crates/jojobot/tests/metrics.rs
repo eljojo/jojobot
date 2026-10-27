@@ -285,6 +285,9 @@ async fn a_scrape_reads_the_numbers_of_the_calls_made_and_the_main_listener_has_
                 }
                 "status" => value.len() == 3 && value.chars().all(|c| c.is_ascii_digit()),
                 "verb" => verbs.contains(value) || value == "unserved",
+                "refusal_code" => {
+                    jojobot_mcp::observe::bounded_refusal_code(value) == value.as_str()
+                }
                 "outcome" if family.starts_with("jojobot_store_operation") => {
                     matches!(value.as_str(), "ok" | "refused" | "store_error")
                 }

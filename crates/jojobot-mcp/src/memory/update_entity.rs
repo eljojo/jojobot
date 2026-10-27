@@ -176,6 +176,7 @@ impl Jojobot {
             && (!reviewed || stamp.is_none())
         {
             return Ok(blocked_body(
+                "UpdateEntity",
                 &handle,
                 &[],
                 "Nothing was written. `reviewed` marks a thing reviewed and only the bot \
@@ -632,6 +633,7 @@ impl Jojobot {
         // is refused there, before any thing is marked.
         if args.reviewed != Some(true) {
             return Ok(blocked_body(
+                "MarkReviewedInBulk",
                 &listed,
                 &[],
                 "Nothing was written. A list of handles marks things reviewed, and only the \
@@ -648,6 +650,7 @@ impl Jojobot {
             || args.override_reason.is_some()
         {
             return Ok(blocked_body(
+                "MarkReviewedInBulk",
                 &listed,
                 &[],
                 "Nothing was written. A list of handles takes `reviewed` and nothing else, \
@@ -659,6 +662,7 @@ impl Jojobot {
         for item in args.handle.split(',').map(str::trim) {
             if item.is_empty() {
                 return Ok(blocked_body(
+                    "MarkReviewedInBulk",
                     &listed,
                     &[],
                     "Nothing was written. The list holds an empty item. Send the handles \
@@ -671,6 +675,7 @@ impl Jojobot {
         }
         if handles.len() > super::capture::BATCH_CAP {
             return Ok(blocked_body(
+                "MarkReviewedInBulk",
                 &listed,
                 &[],
                 format!(

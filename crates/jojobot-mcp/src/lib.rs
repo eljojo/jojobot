@@ -41,6 +41,8 @@ pub mod mailboxes;
 pub mod memory;
 pub mod observe;
 pub mod orientation;
+#[cfg(test)]
+mod refusal_statistics_tests;
 pub mod release_notes;
 mod request;
 mod stopped;
@@ -619,6 +621,7 @@ impl ServerHandler for Jojobot {
         let (result, counted) = write_receipts::TOKEN_SAVING
             .scope(setting, self.serve_call(request, context))
             .await;
+        let result = result.map_err(crate::answer::stamp_missing_code);
         if counted {
             self.count_call(verb, caller, named_bot, &result, started.elapsed())
                 .await;

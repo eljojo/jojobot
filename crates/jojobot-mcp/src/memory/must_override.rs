@@ -142,5 +142,10 @@ pub(crate) fn declined_or_lifted(
              this claim named, and no other."
         )
     };
-    Ok(blocked_body(&EntityId(String::new()), &[], how_to))
+    Ok(blocked_body(
+        super::declined::memory_refusal_code(&refused),
+        &EntityId(String::new()),
+        &[],
+        how_to,
+    ))
 }

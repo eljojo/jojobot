@@ -410,13 +410,16 @@ impl Jojobot {
         } else {
             format!(" {means}")
         };
-        Some(misused(format!(
-            "{NOTHING_RAN}. {} does not implement {named} — {takes}.{means} An argument this \
+        Some(misused(
+            WayForward::from(format!(
+                "{NOTHING_RAN}. {} does not implement {named} — {takes}.{means} An argument this \
              surface does not have is refused rather than dropped, because a call that quietly \
              ignored it would report success for work it did not do. Send the call again without \
              it, or use the argument above that means what you meant.",
-            request.name,
-        )))
+                request.name,
+            ))
+            .coded("UnknownArgument"),
+        ))
     }
 }
 

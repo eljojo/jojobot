@@ -850,6 +850,16 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../../migrations/0111_type_field_must.sql"),
         leaves: Leaves::Column("type_field", "must"),
     },
+    Migration {
+        version: "0112_tool_call_refusal_code",
+        sql: include_str!("../../migrations/0112_tool_call_refusal_code.sql"),
+        leaves: Leaves::Column("tool_call_count", "code"),
+    },
+    Migration {
+        version: "0113_run_call_refusal_code",
+        sql: include_str!("../../migrations/0113_run_call_refusal_code.sql"),
+        leaves: Leaves::Column("run_call_count", "code"),
+    },
 ];
 
 /// The table recording what has run. Created by hand rather than by a

@@ -15,7 +15,7 @@ use crate::*;
 pub(crate) fn run_unreadable(card: &SessionId, why: &str) -> CallToolResult {
     tracing::warn!(run = %card, why, "a run could not be read to judge a write");
     let mut body = serde_json::json!({
-        "status": "blocked",
+        "status": "blocked", "refusal_code": "Unreadable",
         "attempted": card.as_str(),
         "wrote": false,
     });
@@ -39,7 +39,7 @@ pub(crate) fn board_unread(
     if let SessionError::Unreadable { what } = e {
         tracing::warn!(%bot, what, "a run of the bot could not be read to list its runs");
         let mut body = serde_json::json!({
-            "status": "blocked",
+            "status": "blocked", "refusal_code": "BoardUnread",
             "attempted": bot.as_str(),
             "wrote": false,
         });
@@ -59,7 +59,7 @@ pub(crate) fn board_unread(
 /// The refusal of a write whose run's window could not be judged: `retry`.
 pub(crate) fn window_unjudged(card: &SessionId, what: &str) -> CallToolResult {
     let mut body = serde_json::json!({
-        "status": "blocked",
+        "status": "blocked", "refusal_code": "WindowUnjudged",
         "attempted": card.as_str(),
         "wrote": false,
     });

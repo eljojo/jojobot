@@ -426,6 +426,7 @@ pub async fn walk_every_kind_of_session_write(p: &SessionRails<'_>) {
             "capture",
             CallOutcome::Refused {
                 fix_by: Some("change".into()),
+                code: None,
             },
         ),
         counted_under(None, "start_here", CallOutcome::Landed),

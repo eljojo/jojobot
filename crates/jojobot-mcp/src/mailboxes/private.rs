@@ -124,7 +124,7 @@ pub(crate) fn private_box(id: &MessageId) -> CallToolResult {
     )
     .into();
     let mut body = serde_json::json!({
-        "status": "blocked",
+        "status": "blocked", "refusal_code": "PrivateBox",
         "attempted": id.as_str(),
         "wrote": false,
     });
@@ -141,7 +141,7 @@ pub(crate) fn box_moved(id: &MessageId) -> CallToolResult {
          its name while this call ran, so it could not be judged. Send the same call again."
     ));
     let mut body = serde_json::json!({
-        "status": "blocked",
+        "status": "blocked", "refusal_code": "BoxMoved",
         "attempted": id.as_str(),
         "wrote": false,
     });
@@ -170,6 +170,7 @@ impl Jojobot {
         let operator = self.instance_operator().await.ok().flatten()?;
         (&operator == addressee).then(|| {
             blocked_body(
+                "RefusesANonPersonOperator",
                 addressee,
                 &[],
                 format!(
@@ -195,6 +196,7 @@ impl Jojobot {
             Err(e) => {
                 tracing::warn!(error = %e, "the instance's record could not be read for a post");
                 return Err(blocked_body(
+                    "OperatorsBox",
                     addressee,
                     &[],
                     crate::answer::WayForward::memory_store_failure(format!(
@@ -208,6 +210,7 @@ impl Jojobot {
             OperatorIs::Person(operator) => operator,
             OperatorIs::NotAPerson(held) => {
                 return Err(blocked_body(
+                    "OperatorsBox",
                     addressee,
                     &[],
                     format!(
@@ -218,6 +221,7 @@ impl Jojobot {
             }
             OperatorIs::Nobody => {
                 return Err(blocked_body(
+                    "OperatorsBox",
                     addressee,
                     &[],
                     format!(
@@ -230,6 +234,7 @@ impl Jojobot {
         };
         if &operator != addressee {
             return Err(blocked_body(
+                "OperatorsBox",
                 addressee,
                 &[],
                 "Nothing was written. Only the operator has a mailbox among people, and this \
@@ -241,6 +246,7 @@ impl Jojobot {
             OwnBox::The(name) => return Ok(name),
             OwnBox::Several(boxes) => {
                 return Err(blocked_body(
+                    "OperatorsBox",
                     addressee,
                     &[],
                     WayForward::person(format!(
@@ -256,6 +262,7 @@ impl Jojobot {
             }
             OwnBox::Unreadable => {
                 return Err(blocked_body(
+                    "OperatorsBox",
                     addressee,
                     &[],
                     WayForward::mailbox_store_failure(
@@ -307,6 +314,7 @@ impl Jojobot {
             }
         }
         Err(blocked_body(
+            "OperatorsBox",
             addressee,
             &[],
             "Nothing was written. The operator has no mailbox yet and it could not be opened \

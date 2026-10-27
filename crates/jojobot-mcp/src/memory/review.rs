@@ -64,6 +64,7 @@ impl Jojobot {
              marks a thing reviewed with `update_entity` and `reviewed: true`."
         };
         Some(blocked_body(
+            "RefusesAHandWrittenReviewStamp",
             subject,
             &[],
             format!(

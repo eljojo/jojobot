@@ -1022,30 +1022,32 @@ impl Sessions for DoltSessions {
     /// whole transaction (decision log 292).
     async fn count_call(&self, key: &CallKey) -> Result<(), SessionError> {
         owned!(self, this, [key = key.clone()], this.count_call(&key).await);
-        let (outcome, fix_by) = key.outcome.tokens();
+        let (outcome, fix_by, code) = key.outcome.tokens();
         // **Both counts or neither**, so the counts of a bot and of its runs agree.
         let mut tx = self.pool.begin().await.map_err(store)?;
         sqlx::query(
-            "INSERT INTO tool_call_count (bot_key, day, verb, outcome, fix_by, calls) \
-             VALUES (?, ?, ?, ?, ?, 1) ON DUPLICATE KEY UPDATE calls = calls + 1",
+            "INSERT INTO tool_call_count (bot_key, day, verb, outcome, fix_by, code, calls) \
+             VALUES (?, ?, ?, ?, ?, ?, 1) ON DUPLICATE KEY UPDATE calls = calls + 1",
         )
         .bind(key.bot.as_ref().map_or("", EntityId::as_str))
         .bind(key.day.to_string())
         .bind(&key.verb)
         .bind(outcome)
         .bind(fix_by)
+        .bind(code)
         .execute(&mut *tx)
         .await
         .map_err(store)?;
         if let Some(run) = &key.run {
             sqlx::query(
-                "INSERT INTO run_call_count (run, verb, outcome, fix_by, calls) \
-                 VALUES (?, ?, ?, ?, 1) ON DUPLICATE KEY UPDATE calls = calls + 1",
+                "INSERT INTO run_call_count (run, verb, outcome, fix_by, code, calls) \
+                 VALUES (?, ?, ?, ?, ?, 1) ON DUPLICATE KEY UPDATE calls = calls + 1",
             )
             .bind(run)
             .bind(&key.verb)
             .bind(outcome)
             .bind(fix_by)
+            .bind(code)
             .execute(&mut *tx)
             .await
             .map_err(store)?;
@@ -1062,8 +1064,8 @@ impl Sessions for DoltSessions {
             Some(named) => {
                 let marks = vec!["?"; named.len()].join(", ");
                 let sql = format!(
-                    "SELECT run, verb, outcome, fix_by, calls FROM run_call_count \
-                     WHERE run IN ({marks}) ORDER BY run, verb, outcome, fix_by"
+                    "SELECT run, verb, outcome, fix_by, code, calls FROM run_call_count \
+                     WHERE run IN ({marks}) ORDER BY run, verb, outcome, fix_by, code"
                 );
                 let mut query = sqlx::query(AssertSqlSafe(sql.as_str()));
                 for name in named {
@@ -1073,8 +1075,8 @@ impl Sessions for DoltSessions {
             }
             None => {
                 sqlx::query(
-                    "SELECT run, verb, outcome, fix_by, calls FROM run_call_count \
-                     ORDER BY run, verb, outcome, fix_by",
+                    "SELECT run, verb, outcome, fix_by, code, calls FROM run_call_count \
+                     ORDER BY run, verb, outcome, fix_by, code",
                 )
                 .fetch_all(&self.pool)
                 .await
@@ -1085,14 +1087,17 @@ impl Sessions for DoltSessions {
             .map(|row| {
                 let outcome: String = row.try_get("outcome").map_err(store)?;
                 let fix_by: String = row.try_get("fix_by").map_err(store)?;
+                let code: String = row.try_get("code").map_err(store)?;
                 Ok(RunCall {
                     run: row.try_get("run").map_err(store)?,
                     verb: row.try_get("verb").map_err(store)?,
-                    outcome: CallOutcome::from_tokens(&outcome, &fix_by).ok_or_else(|| {
-                        SessionError::Store(format!(
-                            "a count of a run's calls holds the outcome {outcome:?}"
-                        ))
-                    })?,
+                    outcome: CallOutcome::from_tokens(&outcome, &fix_by, &code).ok_or_else(
+                        || {
+                            SessionError::Store(format!(
+                                "a count of a run's calls holds the outcome {outcome:?}"
+                            ))
+                        },
+                    )?,
                     count: row.try_get::<i64, _>("calls").map_err(store)?.max(0) as u64,
                 })
             })
@@ -1103,8 +1108,8 @@ impl Sessions for DoltSessions {
     /// read is stored damage and is named rather than skipped.
     async fn call_counts(&self) -> Result<Vec<CallCount>, SessionError> {
         let rows = sqlx::query(
-            "SELECT bot_key, day, verb, outcome, fix_by, calls FROM tool_call_count \
-                 ORDER BY bot_key, day, verb, outcome, fix_by",
+            "SELECT bot_key, day, verb, outcome, fix_by, code, calls FROM tool_call_count \
+                 ORDER BY bot_key, day, verb, outcome, fix_by, code",
         )
         .fetch_all(&self.pool)
         .await
@@ -1115,6 +1120,7 @@ impl Sessions for DoltSessions {
                 let day: String = row.try_get("day").map_err(store)?;
                 let outcome: String = row.try_get("outcome").map_err(store)?;
                 let fix_by: String = row.try_get("fix_by").map_err(store)?;
+                let code: String = row.try_get("code").map_err(store)?;
                 let unread = |what: &str, held: &str| {
                     SessionError::Store(format!("a count of calls holds {what} {held:?}"))
                 };
@@ -1123,7 +1129,7 @@ impl Sessions for DoltSessions {
                         bot: (!bot_key.is_empty()).then_some(EntityId(bot_key)),
                         day: day.parse().map_err(|_| unread("the day", &day))?,
                         verb: row.try_get("verb").map_err(store)?,
-                        outcome: CallOutcome::from_tokens(&outcome, &fix_by)
+                        outcome: CallOutcome::from_tokens(&outcome, &fix_by, &code)
                             .ok_or_else(|| unread("the outcome", &outcome))?,
                         run: None,
                     },

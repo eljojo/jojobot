@@ -940,6 +940,7 @@ impl Jojobot {
                 .any(|c| c.reason == guard::MatchReason::SelfParent) =>
             {
                 Ok(blocked_body(
+                    "AddEntity",
                     &attempted,
                     &candidates,
                     format!(
@@ -957,6 +958,7 @@ impl Jojobot {
                 candidates,
             } if attempted != creating && args.parent.as_deref() != Some(attempted.as_str()) => {
                 Ok(blocked_body(
+                    "AddEntity",
                     &attempted,
                     &candidates,
                     format!(
@@ -972,6 +974,7 @@ impl Jojobot {
                 attempted,
                 candidates,
             } if attempted != creating => Ok(blocked_body(
+                "AddEntity",
                 &attempted,
                 &candidates,
                 format!(

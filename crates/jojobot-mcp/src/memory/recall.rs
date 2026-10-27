@@ -1400,36 +1400,6 @@ fn writes_leaving_details_out(history: &graph::ClaimHistory, details_asked: bool
         .count()
 }
 
-/// **The refusal for a name that is no view.** The views that exist ride in the
-/// sentence rather than as candidates: a candidate carries a reason the guard
-/// flagged it, and none of these was flagged, they are simply what there is.
-/// A similarity screen would be worse still, since it answers a wild guess with
-/// nothing, which reads as "there are no views".
-fn no_such_view(handle: &EntityId, known: &[Entity]) -> CallToolResult {
-    let names = known
-        .iter()
-        .map(|e| e.id.to_string())
-        .collect::<Vec<_>>()
-        .join(", ");
-    blocked_body(
-        handle,
-        &[],
-        match names.is_empty() {
-            true => format!(
-                "Nothing was read: no view is named '{}', and there are no views \
-                 here yet. Declare one with add_entity of kind view.",
-                handle.as_str(),
-            ),
-            false => format!(
-                "Nothing was read: no view is named '{}'. The views here are: \
-                 {names}. Ask for one of those, or declare your own with \
-                 add_entity of kind view.",
-                handle.as_str(),
-            ),
-        },
-    )
-}
-
 /// **The handle a view is named by**, whether the call sent the whole handle or
 /// the bare slug.
 fn view_handle(named: &str) -> EntityId {
@@ -1523,7 +1493,14 @@ impl Jojobot {
         // handle names nothing.
         let given = match inputs_as_text(args.inputs.as_ref()) {
             Ok(given) => given,
-            Err(words) => return Err(ViewStop::said(blocked_body(&handle, &[], words))),
+            Err(words) => {
+                return Err(ViewStop::said(blocked_body(
+                    "AskedByName",
+                    &handle,
+                    &[],
+                    words,
+                )));
+            }
         };
         let known = self
             .memory
@@ -1540,6 +1517,7 @@ impl Jojobot {
                 Ok(filled) => filled,
                 Err(refused) => {
                     return Err(ViewStop::said(blocked_body(
+                        "AskedByName",
                         &handle,
                         &refused.nearest,
                         refused.words,
@@ -1561,6 +1539,7 @@ impl Jojobot {
             && let Err(why) = filter::expression::reads_saved(line)
         {
             return Err(ViewStop::said(blocked_body(
+                "AskedByName",
                 &handle,
                 &[],
                 format!(
@@ -1587,6 +1566,7 @@ impl Jojobot {
             }),
             Err(why) => {
                 return Err(ViewStop::said(blocked_body(
+                    "AskedByName",
                     &handle,
                     &[],
                     format!(
@@ -5512,6 +5492,8 @@ fn fit_records(body: &mut serde_json::Value, offset: usize) {
     }
 }
 
+mod refusal;
+use refusal::no_such_view;
 mod run_history;
 use run_history::fit_run_histories;
 mod entity_history;

@@ -89,6 +89,7 @@ impl Jojobot {
             Err(e) => {
                 tracing::warn!(error = %e, "the instance's record could not be read for a rename");
                 return Some(blocked_body(
+                    "RenameWouldUnseatTheOperator",
                     to,
                     &[],
                     crate::answer::WayForward::memory_store_failure(format!(
@@ -101,6 +102,7 @@ impl Jojobot {
         let now = self.current_handle(from).await.ok()?;
         (now == operator).then(|| {
             blocked_body(
+                "RenameWouldUnseatTheOperator",
                 to,
                 &[],
                 format!(
@@ -142,6 +144,7 @@ impl Jojobot {
             return Ok(None);
         }
         Ok(Some(blocked_body(
+            "MailboxRenameWouldChangeWhoMayRead",
             to,
             &[],
             format!(
@@ -187,6 +190,7 @@ impl Jojobot {
             return Ok(None);
         };
         Ok(Some(blocked_body(
+            "MailboxRenameWouldCollide",
             to,
             &[],
             format!(
@@ -384,6 +388,7 @@ impl Jojobot {
                 .any(|c| c.reason == guard::MatchReason::SelfParent) =>
             {
                 Ok(blocked_body(
+                    "RenameEntity",
                     &attempted,
                     &candidates,
                     format!(
@@ -398,6 +403,7 @@ impl Jojobot {
                 attempted,
                 candidates,
             } if attempted != to => Ok(blocked_body(
+                "RenameEntity",
                 &attempted,
                 &candidates,
                 format!(

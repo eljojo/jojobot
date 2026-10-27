@@ -24,6 +24,7 @@ answer: {
   "candidates": [],
   "fix_by": "change",
   "how_to_proceed": "Nothing was written: invalid fact: empty. Nothing is missing from the store and nothing here needs the operator — the call itself is what jojobot cannot carry out. Send the same capture call again with that fixed.",
+  "refusal_code": "InvalidFact",
   "status": "blocked",
   "wrote": false
 }
@@ -38,6 +39,7 @@ answer: {
   "candidates": [],
   "fix_by": "change",
   "how_to_proceed": "Nothing was written: invalid entity id x. Nothing is missing from the store and nothing here needs the operator — the call itself is what jojobot cannot carry out. Send the same capture call again with that fixed.",
+  "refusal_code": "InvalidSubject",
   "status": "blocked",
   "wrote": false
 }
@@ -53,6 +55,7 @@ answer: {
   "candidates": [],
   "fix_by": "change",
   "how_to_proceed": "Nothing was written: 'usage:bart-2026-w41' is a week of usage, computed from the history of runs when it is read, so nothing is written to it and no such record is made. Read it with recall: name the handle as the subject, or ask view: usage.",
+  "refusal_code": "WeekOfUsageWritten",
   "status": "blocked",
   "wrote": false
 }
@@ -68,6 +71,7 @@ answer: {
   "candidates": [],
   "fix_by": "change",
   "how_to_proceed": "Nothing was written: invalid fact address 'x': expected kind:slug#local-id, e.g. person:alpha#f3. Nothing is missing from the store and nothing here needs the operator — the call itself is what jojobot cannot carry out. Send the same capture call again with that fixed.",
+  "refusal_code": "InvalidAddress",
   "status": "blocked",
   "wrote": false
 }
@@ -82,6 +86,7 @@ answer: {
   "candidates": [],
   "fix_by": "change",
   "how_to_proceed": "Nothing was written: invalid entity: x. Nothing is missing from the store and nothing here needs the operator — the call itself is what jojobot cannot carry out. Send the same capture call again with that fixed.",
+  "refusal_code": "InvalidEntity",
   "status": "blocked",
   "wrote": false
 }
@@ -96,6 +101,7 @@ answer: {
   "candidates": [],
   "fix_by": "change",
   "how_to_proceed": "Nothing was written: invalid edge: x. Nothing is missing from the store and nothing here needs the operator — the call itself is what jojobot cannot carry out. Send the same capture call again with that fixed.",
+  "refusal_code": "InvalidEdge",
   "status": "blocked",
   "wrote": false
 }
@@ -110,6 +116,7 @@ answer: {
   "candidates": [],
   "fix_by": "change",
   "how_to_proceed": "Nothing was written: invalid query: x. Nothing is missing from the store and nothing here needs the operator — the call itself is what jojobot cannot carry out. Send the same capture call again with that fixed.",
+  "refusal_code": "InvalidQuery",
   "status": "blocked",
   "wrote": false
 }
@@ -124,6 +131,7 @@ answer: {
   "candidates": [],
   "fix_by": "change",
   "how_to_proceed": "Nothing was written: invalid type: x. Nothing is missing from the store and nothing here needs the operator — the call itself is what jojobot cannot carry out. Send the same capture call again with that fixed.",
+  "refusal_code": "InvalidType",
   "status": "blocked",
   "wrote": false
 }
@@ -139,6 +147,7 @@ answer: {
   "candidates": [],
   "fix_by": "change",
   "how_to_proceed": "Nothing was written: a claim's content cannot be replaced without saying how the new words are known: give 'provenance' — testimony, observation or inference — even to say it is known the same way as before. Only an inference you rewrite keeps its provenance when you send none. Nothing is missing from the store and nothing here needs the operator — the call itself is what jojobot cannot carry out. Send the same capture call again with that fixed.",
+  "refusal_code": "UnstatedProvenance",
   "status": "blocked",
   "wrote": false
 }
@@ -153,6 +162,7 @@ answer: {
   "candidates": [],
   "fix_by": "change",
   "how_to_proceed": "Nothing was written. 'person:lisa' is not an entity jojobot knows, and nothing resembles it. capture cannot create an entity: call add_entity to create 'person:lisa' first, then re-call capture.",
+  "refusal_code": "UnknownEntity",
   "status": "blocked",
   "wrote": false
 }
@@ -167,6 +177,7 @@ answer: {
   "candidates": [],
   "fix_by": "change",
   "how_to_proceed": "Nothing was written. 'person:alpha#f9' addresses no fact jojobot holds, and this verb never creates one. That entity holds no facts at all yet, so there is nothing here to edit — capture one first. Recall the entity if none of them is what you meant — every fact comes back carrying the address that edits it.",
+  "refusal_code": "UnknownFact",
   "status": "blocked",
   "wrote": false
 }
@@ -181,6 +192,7 @@ answer: {
   "candidates": [],
   "fix_by": "change",
   "how_to_proceed": "Nothing was read: 'zz99' is not yours to read. It is there, and it is not yours — sending this again will not change the answer. A session's chronology is its own bot's, and yours is what your own handle reaches.",
+  "refusal_code": "NotYours",
   "status": "blocked",
   "wrote": false
 }
@@ -195,6 +207,7 @@ answer: {
   "candidates": [],
   "fix_by": "change",
   "how_to_proceed": "'person:alpha#f1' is already archived — the record jojobot holds is the one you asked for. This call wrote nothing because there was nothing left to write, and a further attempt would say the same. Archiving is one-way: nothing takes a record back out of it. If that was itself a mistake, capture what is so now as a new record.",
+  "refusal_code": "AlreadyRetracted",
   "status": "blocked",
   "wrote": false
 }
@@ -209,6 +222,7 @@ answer: {
   "candidates": [],
   "fix_by": "change",
   "how_to_proceed": "'person:alpha' is already archived — the entity jojobot holds is the one you asked for. This call wrote nothing because there was nothing left to write, and a further attempt would say the same. Recall it by handle to read why and when it was archived.",
+  "refusal_code": "AlreadyArchived",
   "status": "blocked",
   "wrote": false
 }
@@ -223,6 +237,7 @@ answer: {
   "candidates": [],
   "fix_by": "change",
   "how_to_proceed": "'person:alpha' is not archived — it is already in every default read. This call wrote nothing because there was nothing to restore, and a further attempt would say the same.",
+  "refusal_code": "NotArchived",
   "status": "blocked",
   "wrote": false
 }
@@ -237,6 +252,7 @@ answer: {
   "candidates": [],
   "fix_by": "change",
   "how_to_proceed": "Nothing was written: a claim read out of a system of record has to name it: give the field 'read_from' the system that was read — and 'read_ref' what was read there, if you have it — or capture it as an inference instead. The claim itself is fine — send it again with `read_from` in `fields` naming the system, or with provenance inference.",
+  "refusal_code": "UnsourcedObservation",
   "status": "blocked",
   "wrote": false
 }
@@ -251,6 +267,7 @@ answer: {
   "candidates": [],
   "fix_by": "change",
   "how_to_proceed": "Nothing was written. 'person:alpha#f1' cannot be retracted: a rule.",
+  "refusal_code": "NotRetractable",
   "status": "blocked",
   "wrote": false
 }
@@ -265,6 +282,7 @@ answer: {
   "candidates": [],
   "fix_by": "retry",
   "how_to_proceed": "Nothing was written: the details of person:alpha#f1 changed while the edit was being applied; it is at revision 2 now. Read the claim again with recall (history_record: \"person:alpha#f1\") to see what changed, then send the edit again.",
+  "refusal_code": "TextChangedWhileEditing",
   "status": "blocked",
   "wrote": false
 }
@@ -280,6 +298,7 @@ answer: {
   "fix_by": "change",
   "how_to_proceed": "Nothing was written: the text to find occurs 2 times in the details of person:alpha#f1, and it has to occur exactly once. Send a longer `find`, with the words around the place you mean, so it names one place.",
   "matches": 2,
+  "refusal_code": "TextEditMatches",
   "status": "blocked",
   "wrote": false
 }
@@ -294,6 +313,7 @@ answer: {
   "candidates": [],
   "fix_by": "retry",
   "how_to_proceed": "Nothing was written: person:alpha#f1 is at revision 2, and this edit was made against revision 1. Read the claim again with recall (history_record: \"person:alpha#f1\") to see what changed, then send the edit again with expected_revision: 2 if it still stands.",
+  "refusal_code": "StaleRevision",
   "status": "blocked",
   "wrote": false
 }
@@ -309,6 +329,7 @@ answer: {
   "candidates": [],
   "fix_by": "change",
   "how_to_proceed": "Nothing was written: person:alpha#f1 is testimony from an earlier session, so its words, its details and its fields are not rewritten in place: archive it with a reason (update_fact, status: archived, details), then capture the corrected claim with derived_from naming it. The original stays readable: recall the subject with history_record: person:alpha#f1. Nothing is missing from the store and nothing here needs the operator.",
+  "refusal_code": "TestimonyRewritten",
   "status": "blocked",
   "wrote": false
 }
@@ -324,6 +345,7 @@ answer: {
   "candidates": [],
   "fix_by": "change",
   "how_to_proceed": "Nothing was written: person:alpha#f1 was recorded by an app, so its words, its details and its fields are not rewritten in place: archive it with a reason (update_fact, status: archived, details), then capture the corrected claim with derived_from naming it. The original stays readable: recall the subject with history_record: person:alpha#f1. Nothing is missing from the store and nothing here needs the operator.",
+  "refusal_code": "AppClaimRewritten",
   "status": "blocked",
   "wrote": false
 }
@@ -338,6 +360,7 @@ answer: {
   "candidates": [],
   "fix_by": "change",
   "how_to_proceed": "Nothing was written: this text repeats what the software already says here, so storing it would keep today's wording after the software has moved on. Sending this again will not change the answer. Send only the part you are adding — what you write is kept beside what is already there, and a read hands back both.",
+  "refusal_code": "RepeatsShipped",
   "status": "blocked",
   "wrote": false
 }
@@ -352,6 +375,7 @@ answer: {
   "candidates": [],
   "fix_by": "change",
   "how_to_proceed": "Nothing was written: 'entitlement' is a type that ships with the software, and a shipped type is closed to callers. A shipped type cannot be extended, shrunk or replaced from here, so sending this call again will not change the answer — changing one is a change to the software. To see the keys 'entitlement' already has, call recall with answers_type: 'entitlement'. To declare a type of your own instead, call capture with a different name, and that type is yours to declare and redeclare as you like.",
+  "refusal_code": "ShippedType",
   "status": "blocked",
   "wrote": false
 }
@@ -366,6 +390,7 @@ answer: {
   "candidates": [],
   "fix_by": "change",
   "how_to_proceed": "Nothing was written: this would leave 'pet' incomplete on this thing: it needs owner. This thing answers 'pet' now, and capture would take owner off it, so sending this call again will not change the answer. Leave the key where it is, or write what you meant under a key of your own — adding keys is never refused, and a thing may carry anything beyond what a type asks for.",
+  "refusal_code": "BreaksFit",
   "status": "blocked",
   "wrote": false
 }
@@ -380,6 +405,7 @@ answer: {
   "candidates": [],
   "fix_by": "change",
   "how_to_proceed": "Nothing was written: this would leave a rhythm holding 'advances_from' and no cadence ('cadence_days' or 'rrule'), so nothing could say when its next cycle falls due. Send 'cadence_days' in `sets` in the same call, as a number of days, or 'rrule' in `sets`, as a calendar rule such as FREQ=MONTHLY;BYMONTHDAY=1 (the rhythms skill has examples). To switch the schedule off, call update_fact with clear_fields naming 'advances_from': it is the one verb that clears a key, and on capture, add_entity or update_entity the way through is to send the cadence. A loop with no schedule at all is allowed and needs neither.",
+  "refusal_code": "BreaksSchedule",
   "status": "blocked",
   "wrote": false
 }
@@ -394,6 +420,7 @@ answer: {
   "candidates": [],
   "fix_by": "change",
   "how_to_proceed": "Nothing was read: the view 'view:plain-listing' narrows nothing as it is asked. A view narrows by one of these keys: selects, parent, asks: overdue, asks: ready or asks: plan, asks: unreviewed, answers_type, where. A key written `$name` narrows only when its input is sent. Or ask with a subject, kind, parent, answers_type or fields of your own beside the view, which win over it.",
+  "refusal_code": "ViewNarrowsNothing",
   "status": "blocked",
   "wrote": false
 }
@@ -408,6 +435,7 @@ answer: {
   "candidates": [],
   "fix_by": "change",
   "how_to_proceed": "Nothing was written: 'starts' holds date on anything that is a 'journey', and 'soon' is not one. This thing is a 'journey' now, so 'starts' has to go on holding date — sending the same value again will not change the answer. Write a value that holds date, or say what you meant under a key of your own: adding keys is never refused, and only the keys a type names are held to what it declared.",
+  "refusal_code": "BreaksType",
   "status": "blocked",
   "wrote": false
 }
@@ -422,6 +450,7 @@ answer: {
   "candidates": [],
   "fix_by": "change",
   "how_to_proceed": "Nothing was written: 'done' is a shipped status word and means itself, so it cannot be mapped to 'someday'. 'done' is one of the five words the software ships and it means itself on every instance, so sending this again will not change the answer. Map a word of your own instead: write `status_word/<your word>` in `sets`, set to the shipped word it should mean, one of someday, next, now, waiting, done.",
+  "refusal_code": "RemapsShippedWord",
   "status": "blocked",
   "wrote": false
 }
@@ -437,6 +466,7 @@ answer: {
   "fix_by": "change",
   "how_to_proceed": "Nothing was written: 'thing:gamma' would be 29000 characters as a read serves it before any record on it, and the most one answer can carry of it is 27000. The thing's own name, aliases and keys are what is over (2000 characters), not the claim you sent, and a read could not serve any claim on it until they are smaller. Shrink them: shorten its name or aliases with update_entity, take keys off with update_fact and clear_fields, move detail to the thing it is about, or keep the long text on a document (put_document) behind a pointer claim on another thing. Then send capture again.",
   "over": 2000,
+  "refusal_code": "ThingTooLarge",
   "room": 27000,
   "size": 29000,
   "status": "blocked",
@@ -455,6 +485,7 @@ answer: {
   "fix_by": "change",
   "how_to_proceed": "Nothing was written: this record would be 30000 characters as a read serves it, and the most one answer can carry of a record on 'thing:gamma' is 27000. Shorten it (3000 characters over); or split it into claims that each say one thing, which capture can write one after another; or keep the long text on a document (add_entity of kind document, then put_document) and write a pointer claim that names it.",
   "over": 3000,
+  "refusal_code": "ClaimTooLarge",
   "room": 27000,
   "size": 30000,
   "status": "blocked",
@@ -481,6 +512,7 @@ answer: {
   ],
   "how_to_proceed": "Nothing was written: this would leave the boot of 'bot:gamma' with 30000 characters it cannot cut, over the 28000 a boot may carry by 2000. The largest part of the floor is charter (20000 characters); floor_parts lists every part. A star is changed with update_fact on the rule's address and fields {starred: \"true\"} or {starred: \"false\"}; update_entity cannot, because starred stays on its claim. Unstar a rule on bot:gamma that way, shorten the rules that are starred or its charter with set_charter, or have a different identity lower rule_seats on bot:gamma — a bot cannot write rule_seats about itself. A rule that binds at one moment is better filed under a purpose that an index rule names with its moment (start_here skill: organizing) than carried in a seat, and a group of rules that all bind is better carried by one record that stands for the others: write it, mark it with stands_for naming them, keep the others unstarred, and read the boot back.",
   "over": 2000,
+  "refusal_code": "BootTooHeavy",
   "status": "blocked",
   "wrote": false
 }
@@ -495,6 +527,7 @@ answer: {
   "candidates": [],
   "fix_by": "change",
   "how_to_proceed": "Nothing was written: 'bot:gamma' cannot write reports_to: only 'bot:gamma' itself may write it. 'bot:gamma' has to write 'reports_to' itself.",
+  "refusal_code": "KeyNotYours",
   "status": "blocked",
   "wrote": false
 }
@@ -509,6 +542,7 @@ answer: {
   "candidates": [],
   "fix_by": "change",
   "how_to_proceed": "Nothing was written: naming 'bot:delta' as the manager of 'bot:gamma' would put 'bot:gamma' under one of its own reports. 'bot:delta' is at or below 'bot:gamma' in the chart. Name a manager that is not, or move 'bot:delta' out from under 'bot:gamma' first.",
+  "refusal_code": "ChartCycle",
   "status": "blocked",
   "wrote": false
 }
@@ -523,6 +557,7 @@ answer: {
   "candidates": [],
   "fix_by": "change",
   "how_to_proceed": "Nothing was written. 'bot:gamma' carries rule_seats, and merging it into 'bot:delta', your own bot, would raise your own ceiling, which only a different identity may do. Ask a different identity to make this merge. Or take rule_seats off 'bot:gamma' first: update_fact the record that sets it with clear_fields, then merge again.",
+  "refusal_code": "MergeCarriesGuardedKeys",
   "status": "blocked",
   "wrote": false
 }
@@ -536,6 +571,7 @@ answer: {
   "attempted": "holder",
   "fix_by": "change",
   "how_to_proceed": "Nothing was written: 'holder' is the boot door's own field: claim the dev role there, not here. Claim the 'dev' role through start_here's own claim argument — that is the only door either of a role's own two fields opens through.",
+  "refusal_code": "RoleFieldGuarded",
   "status": "blocked",
   "wrote": false
 }
@@ -549,6 +585,7 @@ answer: {
   "attempted": "voucher:boot-as-patty",
   "fix_by": "change",
   "how_to_proceed": "Nothing was written: 'voucher:boot-as-patty' is a voucher: vouchers are issued, not written. A voucher is a grant the engine issues for the operator's code; no record a caller writes is a grant. 'voucher:boot-as-patty' stays as it is, and nothing here creates, edits or takes one back. A session that needs one asks for a code with start_here's ask_for_code and boots with the code the operator types in.",
+  "refusal_code": "VoucherIssued",
   "status": "blocked",
   "wrote": false
 }
@@ -562,6 +599,7 @@ answer: {
   "attempted": "challenge:abcd",
   "fix_by": "change",
   "how_to_proceed": "Nothing was written: 'challenge:abcd' is a challenge: challenges are issued, not written. A challenge holds the hash of a code jojobot sent to the operator, and only the engine writes it. 'challenge:abcd' stays as it is; a boot asks for a new code with start_here's ask_for_code.",
+  "refusal_code": "ChallengeIssued",
   "status": "blocked",
   "wrote": false
 }
@@ -575,6 +613,7 @@ answer: {
   "attempted": "fly",
   "fix_by": "change",
   "how_to_proceed": "Nothing was written: no code knows the right 'fly'. A right grants only what code gives it, so a voucher for a word nothing implements is refused. The rights known here are: boot-as.",
+  "refusal_code": "UnknownRight",
   "status": "blocked",
   "wrote": false
 }
@@ -594,6 +633,7 @@ answer: {
   "attempted": "bot:gamma",
   "fix_by": "change",
   "how_to_proceed": "Nothing was written: 'bot:gamma's room already holds 3 of 3. Re-call capture naming drop (one of the addresses above) and drop_because (why it no longer earns its slot) — or, once and only once, borrow: true to let this one land over the ceiling anyway — or wait, and let this one go unwritten for now. The room's size is deliberate: choosing what to give up is the work. To fit more than this holds, read start_here skill: organizing.",
+  "refusal_code": "RoomFull",
   "room": [],
   "status": "blocked",
   "wrote": false
@@ -610,6 +650,7 @@ answer: {
   "fix_by": "change",
   "how_to_proceed": "Nothing was merged: 'bot:gamma's room holds 3 of 3, and this merge brings 1 more thoughts. Archive 1 of the thoughts above with update_fact (status: archived, and details saying why it no longer earns its slot), then re-call capture.",
   "incoming": 1,
+  "refusal_code": "MergeOverfillsRoom",
   "room": [],
   "status": "blocked",
   "wrote": false
@@ -625,6 +666,7 @@ answer: {
   "candidates": [],
   "fix_by": "change",
   "how_to_proceed": "Nothing was written: 'bot:gamma' holds a thought 900 characters long, over its cap of 500: put the substance on the thing it points at, and keep the thought itself short. Re-call capture with the substance captured onto the thing this thought points at, and the thought as a pointer at or under 500 characters (this one was 900). If you were editing a thought that already stands, a shorter edit in place with update_fact lands, except over another session's testimony; or archive it (status: archived) and capture the pointer as a new claim with the old one as its derived_from. The cap is deliberate, because a thought is a pointer: do not ask for a bigger cap or spread the text over several thoughts.",
+  "refusal_code": "ThoughtTooLong",
   "status": "blocked",
   "wrote": false
 }
@@ -639,6 +681,7 @@ answer: {
   "candidates": [],
   "fix_by": "change",
   "how_to_proceed": "Nothing was merged: 'bot:gamma' would hold the thought x, 900 characters long and over its cap of 500. Move the substance of x onto the thing it points at with capture, archive x with update_fact (status: archived, details saying where the substance went), and capture a pointer at or under 500 characters (it is 900) with x as its derived_from. Then re-call capture. The cap is deliberate, because a thought is a pointer: do not ask for a bigger cap or spread the text over several thoughts.",
+  "refusal_code": "MergeThoughtTooLong",
   "status": "blocked",
   "wrote": false
 }
@@ -653,6 +696,7 @@ answer: {
   "candidates": [],
   "fix_by": "change",
   "how_to_proceed": "Nothing was merged: 'person:alpha' cannot be folded into itself: name the other handle. Sending this again with the same handle on both sides will not change the answer — name a survivor that differs from 'person:alpha'.",
+  "refusal_code": "NothingToMerge",
   "status": "blocked",
   "wrote": false
 }
@@ -667,6 +711,7 @@ answer: {
   "candidates": [],
   "fix_by": "change",
   "how_to_proceed": "Nothing was merged: 'document:alpha' is a document and 'thing:handcart' is not: a document merges only into another document. Merge two documents to get one that holds both. To bring 'thing:handcart' and 'document:alpha' together anyway, carry over by hand what you want, in whichever direction: read 'document:alpha' with read_document and capture what is wanted as claims on 'thing:handcart', or write what is wanted from 'thing:handcart' into 'document:alpha' with put_document. Then put the one you no longer need away with archive_entity.",
+  "refusal_code": "DocumentMergedWithAThing",
   "status": "blocked",
   "wrote": false
 }
@@ -681,6 +726,7 @@ answer: {
   "candidates": [],
   "fix_by": "change",
   "how_to_proceed": "Nothing was written: 'topic:widgets' numbers its members by 'number', and this write would leave thing:handcart without 2. A number names one member for ever, so it stays with thing:handcart while it is a member of topic:widgets, and no token overrides this. Send the number it holds, or change something else. An archived member keeps its number. A number given by mistake is taken back by retracting the claim that gave it, and then the right one can be given. To read the holder, recall topic:widgets/2.",
+  "refusal_code": "NumberFreed",
   "status": "blocked",
   "wrote": false
 }
@@ -695,6 +741,7 @@ answer: {
   "candidates": [],
   "fix_by": "change",
   "how_to_proceed": "Nothing was written: 'topic:widgets' numbers its members by 'number', and 2 was issued before and taken back. A number is never reused, even when the claim that gave it was retracted, and no token overrides this. The next free number is 3: send that. To see the numbers in use, recall topic:widgets.",
+  "refusal_code": "NumberRetired",
   "status": "blocked",
   "wrote": false
 }
@@ -709,6 +756,7 @@ answer: {
   "candidates": [],
   "fix_by": "change",
   "how_to_proceed": "Nothing was written: 'topic:widgets' cannot number its members by 'number': thing:handcart (5), thing:handcart-2 (5). topic:widgets would promise that every member holds a positive whole number under number and that no two hold the same one, and the members named already break that. Give each a number nobody else holds (a number given by mistake is taken back by retracting the claim that gave it), or number topic:widgets by a key they do not hold, and then send numbers_by again.",
+  "refusal_code": "MembersBreakNumbering",
   "status": "blocked",
   "wrote": false
 }
@@ -723,6 +771,7 @@ answer: {
   "candidates": [],
   "fix_by": "change",
   "how_to_proceed": "Nothing was renamed: 'person:alpha' names no change: give a different handle, or a parent that differs from the one it already has. Sending this again with the same handle, the same parent and nothing else different will not change the answer — name a destination that differs from 'person:alpha', or a parent that differs from the one it already has.",
+  "refusal_code": "NothingToRename",
   "status": "blocked",
   "wrote": false
 }
@@ -737,6 +786,7 @@ answer: {
   "candidates": [],
   "fix_by": "change",
   "how_to_proceed": "Nothing was merged: 'org:springfield-cyclery' sits below 'org:springfield-town-council': 'org:springfield-town-council' cannot be folded into its own descendant. To fold them anyway, either call capture the other way, folding 'org:springfield-cyclery' into 'org:springfield-town-council', or move 'org:springfield-cyclery' out from under 'org:springfield-town-council' first with rename_entity and its parent argument, then fold.",
+  "refusal_code": "MergeIntoDescendant",
   "status": "blocked",
   "wrote": false
 }
@@ -751,6 +801,7 @@ answer: {
   "candidates": [],
   "fix_by": "change",
   "how_to_proceed": "Nothing was merged: 'person:alpha' was already folded into 'person:beta': name 'person:beta' instead. Re-call capture naming 'person:beta' instead of 'person:alpha' — that is where it resolves now.",
+  "refusal_code": "AlreadyMerged",
   "status": "blocked",
   "wrote": false
 }
@@ -765,6 +816,7 @@ answer: {
   "candidates": [],
   "fix_by": "change",
   "how_to_proceed": "Nothing was renamed: 'person:alpha' was renamed to 'person:beta': use 'person:beta' instead. Re-call capture with handle: \"person:beta\" — that is what 'person:alpha' answers to now.",
+  "refusal_code": "HandleMoved",
   "status": "blocked",
   "wrote": false
 }
@@ -779,6 +831,7 @@ answer: {
   "candidates": [],
   "fix_by": "change",
   "how_to_proceed": "Nothing changed: 'view:colleagues' is a record the build supplies: it exists, and there is no stored record under it to move. Sending this again will not change the answer — 'view:colleagues' is part of the software rather than something stored that capture could move. Facts and settings written to this record with capture are kept on top of what the build ships; only renaming, archiving or merging the record itself is refused.",
+  "refusal_code": "SuppliedHandle",
   "status": "blocked",
   "wrote": false
 }
@@ -795,6 +848,7 @@ answer: {
   "candidates": [],
   "fix_by": "change",
   "how_to_proceed": "Nothing was written: settling an open claim requires a receipt, one of two shapes: `check` (what was checked, written so another agent can run it again) or `confirmed` (the operator confirmed it: the day, and where, a message id or the session). A receipt records that a check ran or that the operator said so; it does not run the check, and settling never changes who backs the claim. confirmed_by_user no longer settles a claim: it only moves one to testimony. The claim is unchanged. Send capture again with `receipt` set to `{check: ...}` or `{confirmed: {on: YYYY-MM-DD, at: ...}}`.",
+  "refusal_code": "UnreceiptedSettling",
   "status": "blocked",
   "wrote": false
 }
@@ -810,6 +864,7 @@ answer: {
   "candidates": [],
   "fix_by": "change",
   "how_to_proceed": "Nothing was written: a receipt records why a claim is settled, so it goes with `standing: settled`: name both, or send neither. A claim that is settled already takes a new receipt without naming standing. The claim is unchanged. Send capture again with `standing` set to `settled` beside the receipt, or without the receipt.",
+  "refusal_code": "ReceiptWithoutSettling",
   "status": "blocked",
   "wrote": false
 }
@@ -825,6 +880,7 @@ answer: {
   "candidates": [],
   "fix_by": "person",
   "how_to_proceed": "Nothing was written: the kind set was never loaded, so no handle can be read: this process has seeded nothing. The repair is a boot that reaches the store, not a different handle — nothing about the one you sent is wrong. The call is not what is wrong, and sending it again will not help: jojobot loaded no kinds when it started, and nothing a caller does re-reads them. This one needs the operator.",
+  "refusal_code": "KindsNeverLoaded",
   "status": "blocked",
   "wrote": false
 }
@@ -839,6 +895,7 @@ answer: {
   "candidates": [],
   "fix_by": "person",
   "how_to_proceed": "Nothing was written: promoting inference → testimony requires the user's explicit confirmation (confirmed_by_user); jojobot infers freely but never blesses on its own. This is not a malformed call and re-sending it will not change the answer — what is missing is the operator's word. Ask, and re-call capture with confirmed_by_user only once they have actually said so.",
+  "refusal_code": "UnconfirmedPromotion",
   "status": "blocked",
   "wrote": false
 }
@@ -853,6 +910,7 @@ answer: {
   "fix_by": "retry",
   "holder": "4nfx",
   "how_to_proceed": "Nothing was written: 'dev' is held by '4nfx' until 1970-01-01T00:00:00Z. Run '4nfx' holds 'dev'; its lease was last renewed at 1969-12-31T23:15:00Z (a write renews it, at most once every 4 minutes 30 seconds) and runs until 1970-01-01T00:00:00Z. The role changes hands when '4nfx' wraps its session, or at 1970-01-01T00:00:00Z if it writes nothing more, or when the operator's code is presented: ask for one with start_here's ask_for_code, then boot again with the challenge, the code and this claim.",
+  "refusal_code": "RoleTaken",
   "status": "blocked",
   "until": "1970-01-01T00:00:00Z",
   "wrote": false
@@ -865,7 +923,8 @@ answer: {
 reads: this write collided with another that landed the same instant; nothing was written here — the store is working, and retrying the same call is the right response to a transient conflict rather than a mistake in what was sent
 answer: protocol error: this call was rejected: another write landed at the same instant, and the store's own concurrency check caught the collision before either could corrupt the other. Nothing was written here, the store is working correctly, and retrying the same call is the right response — this is a transient conflict, not a mistake in what was sent and not something a person needs to look at.
 {
-  "fix_by": "retry"
+  "fix_by": "retry",
+  "refusal_code": "Conflict"
 }
 ```
 
@@ -875,7 +934,8 @@ answer: protocol error: this call was rejected: another write landed at the same
 reads: the store refused this write on a rule it enforces (a key held twice); nothing was written, and sending the same call again will meet the same refusal
 answer: protocol error: this call was refused: it breaks a rule jojobot enforces (a key held twice). Nothing was written. Sending the same call again will meet the same refusal, so change the call; the rule in parentheses says what it breaks.
 {
-  "fix_by": "change"
+  "fix_by": "change",
+  "refusal_code": "Refused"
 }
 ```
 
@@ -885,7 +945,8 @@ answer: protocol error: this call was refused: it breaks a rule jojobot enforces
 reads: store error: connection refused
 answer: protocol error: this call could not be completed — jojobot's own storage failed, which is not something your call did wrong and not something you can fix by calling differently. Nothing was written that you should rely on. Try once more; if it fails again, tell the operator, because it needs a person.
 {
-  "fix_by": "retry"
+  "fix_by": "retry",
+  "refusal_code": "Store"
 }
 ```
 
@@ -895,7 +956,8 @@ answer: protocol error: this call could not be completed — jojobot's own stora
 reads: the store holds damage a person must repair: the merge events in the store lead back to where they began: person:alpha, person:beta
 answer: protocol error: this call could not be completed — what jojobot stores is damaged: the merge events in the store lead back to where they began: person:alpha, person:beta. The store is working and answered, so sending the same call again will meet the same damage, and nothing in the call changes it. Only a person can repair it, and it is not something you can do from here: tell the operator what is named here.
 {
-  "fix_by": "person"
+  "fix_by": "person",
+  "refusal_code": "StoredDamage"
 }
 ```
 
@@ -908,6 +970,7 @@ answer: {
   "candidates": [],
   "fix_by": "change",
   "how_to_proceed": "Nothing was written: invalid mailbox name 'In Box!': names are [a-z0-9-]+, starting and ending alphanumeric. Nothing about this needs the operator and nothing is missing from the board — the call itself is what jojobot cannot carry out. Send it again with that fixed.",
+  "refusal_code": "InvalidName",
   "status": "blocked",
   "wrote": false
 }
@@ -922,6 +985,7 @@ answer: {
   "candidates": [],
   "fix_by": "change",
   "how_to_proceed": "Nothing was written: invalid message id 'x': ids are [a-z0-9-]+. Nothing about this needs the operator and nothing is missing from the board — the call itself is what jojobot cannot carry out. Send it again with that fixed.",
+  "refusal_code": "InvalidMessageId",
   "status": "blocked",
   "wrote": false
 }
@@ -936,6 +1000,7 @@ answer: {
   "candidates": [],
   "fix_by": "change",
   "how_to_proceed": "Nothing was written: invalid message: empty. Nothing about this needs the operator and nothing is missing from the board — the call itself is what jojobot cannot carry out. Send it again with that fixed.",
+  "refusal_code": "InvalidMessage",
   "status": "blocked",
   "wrote": false
 }
@@ -950,6 +1015,7 @@ answer: {
   "candidates": [],
   "fix_by": "change",
   "how_to_proceed": "Nothing ran. No message jojobot holds has the id '9', in any mailbox. Ids are minted by jojobot and handed back by search, read_mailbox and post_message — use an id from one of those rather than composing one.",
+  "refusal_code": "UnknownMessage",
   "status": "blocked",
   "wrote": false
 }
@@ -964,6 +1030,7 @@ answer: {
   "fix_by": "change",
   "how_to_proceed": "Nothing was written. Message '9' is in 'gamma', not 'otto' — a message is finished or set aside only by the owner of the box it is in. To reach that owner, post_message writes into their box without reading it, which is the shape of a request.",
   "mailbox": "gamma",
+  "refusal_code": "NotYourMessage",
   "status": "blocked",
   "wrote": false
 }
@@ -978,6 +1045,7 @@ answer: {
   "candidates": [],
   "fix_by": "change",
   "how_to_proceed": "Nothing was written: message '9' is already processed and archived: there is nothing left to quarantine, and it stays readable. read_message returns it.",
+  "refusal_code": "AlreadyProcessed",
   "status": "blocked",
   "wrote": false
 }
@@ -990,7 +1058,8 @@ reads: the mailbox name 'gamma' already belongs to bot:gamma, so this rename wou
 Choose a destination whose slug is not already a mailbox name
 answer: protocol error: the mailbox name 'gamma' already belongs to bot:gamma, so this rename would collide with it. Choose a destination whose slug is not already a mailbox name
 {
-  "fix_by": "change"
+  "fix_by": "change",
+  "refusal_code": "NameTaken"
 }
 ```
 
@@ -1005,6 +1074,7 @@ answer: {
   "fix_by": "person",
   "how_to_proceed": "Nothing ran, and retrying will not help — this is not a missing message. jojobot can see 9 but cannot read it as a message, so no verb will act on it. Repairing it takes a person, and it is not something you can do from here: tell the operator. Until then, treat whatever it was carrying as unhandled and say so rather than reporting it delivered.",
   "reason": "message 9 exists but cannot be read as a record. Something about how it is stored was changed by hand, and only a person can put it back.",
+  "refusal_code": "Quarantined",
   "status": "blocked",
   "wrote": false
 }
@@ -1021,6 +1091,7 @@ answer: {
   "how_to_proceed": "Nothing ran, and retrying will not help — this is not damage. 'bot:gamma' quarantined 9 on purpose, saying \"not for me\". That is a decision, not a fault, and lifting it is not something this call can do.",
   "quarantine_reason": "not for me",
   "quarantined_by": "bot:gamma",
+  "refusal_code": "QuarantinedOnPurpose",
   "status": "blocked",
   "wrote": false
 }
@@ -1033,7 +1104,8 @@ reads: bot:gamma owns 2 mailboxes, not one, so a rename cannot tell which one to
 This is damage from before this guard existed — a person has to decide which box is the real one before the rename can proceed
 answer: protocol error: bot:gamma owns 2 mailboxes, not one, so a rename cannot tell which one to follow: gamma, kiln-spare. This is damage from before this guard existed — a person has to decide which box is the real one before the rename can proceed
 {
-  "fix_by": "person"
+  "fix_by": "person",
+  "refusal_code": "OwnerHasMultipleBoxes"
 }
 ```
 
@@ -1047,6 +1119,7 @@ answer: {
   "candidates": [],
   "fix_by": "person",
   "how_to_proceed": "Nothing ran: the kind set was never loaded, so no handle can be read: this process has seeded nothing. The repair is a boot that reaches the store, not a different handle — nothing about the one you sent is wrong. The call is not what is wrong, and sending it again will not help: jojobot loaded no kinds when it started, and nothing a caller does re-reads them. This one needs the operator.",
+  "refusal_code": "KindsNeverLoaded",
   "status": "blocked",
   "wrote": false
 }
@@ -1058,7 +1131,8 @@ answer: {
 reads: this write collided with another that landed the same instant; nothing was written here — the store is working, and retrying the same call is the right response to a transient conflict rather than a mistake in what was sent
 answer: protocol error: this call was rejected: another write landed at the same instant, and the store's own concurrency check caught the collision before either could corrupt the other. Nothing was written here, the store is working correctly, and retrying the same call is the right response — this is a transient conflict, not a mistake in what was sent and not something a person needs to look at.
 {
-  "fix_by": "retry"
+  "fix_by": "retry",
+  "refusal_code": "Conflict"
 }
 ```
 
@@ -1068,7 +1142,8 @@ answer: protocol error: this call was rejected: another write landed at the same
 reads: the store refused this write on a rule it enforces (a key held twice); nothing was written, and sending the same call again will meet the same refusal
 answer: protocol error: this call was refused: it breaks a rule jojobot enforces (a key held twice). Nothing was written. Sending the same call again will meet the same refusal, so change the call; the rule in parentheses says what it breaks.
 {
-  "fix_by": "change"
+  "fix_by": "change",
+  "refusal_code": "Refused"
 }
 ```
 
@@ -1078,7 +1153,8 @@ answer: protocol error: this call was refused: it breaks a rule jojobot enforces
 reads: store error: connection refused
 answer: protocol error: this call could not be completed — jojobot's own storage failed, which is not something your call did wrong and not something you can fix by calling differently. Nothing was written that you should rely on. Try once more; if it fails again, tell the operator, because it needs a person.
 {
-  "fix_by": "retry"
+  "fix_by": "retry",
+  "refusal_code": "Store"
 }
 ```
 
@@ -1090,6 +1166,7 @@ answer: {
   "attempted": "",
   "fix_by": "change",
   "how_to_proceed": "Nothing was written: invalid session id 'x': ids are [a-z0-9-]+. Nothing about this needs the operator and no session is missing — the call itself is what jojobot cannot carry out. Send it again with that fixed.",
+  "refusal_code": "InvalidId",
   "status": "blocked",
   "wrote": false
 }
@@ -1103,6 +1180,7 @@ answer: {
   "attempted": "",
   "fix_by": "change",
   "how_to_proceed": "Nothing was written: invalid entry: empty. Nothing about this needs the operator and no session is missing — the call itself is what jojobot cannot carry out. Send it again with that fixed.",
+  "refusal_code": "InvalidEntry",
   "status": "blocked",
   "wrote": false
 }
@@ -1116,6 +1194,7 @@ answer: {
   "attempted": "zz99",
   "fix_by": "change",
   "how_to_proceed": "Nothing was written. jojobot holds no session with the id 'zz99'. Ids are minted by jojobot and handed back by start_here when you boot as your identity — use the sid it gives you rather than composing one.",
+  "refusal_code": "UnknownSession",
   "status": "blocked",
   "wrote": false
 }
@@ -1131,6 +1210,7 @@ answer: {
   "attempted": "a1b2",
   "fix_by": "change",
   "how_to_proceed": "Nothing was written. Session 'a1b2' is abandoned — it stopped without being wrapped up, so it takes no write as it stands. That is not a failure and not the end of it: resume it. Call start_here with your bot name (with no bot it lists them), and either take it from the offer or pass resume with its name, 'a1b2' — it reopens where it left off and its chronology continues.",
+  "refusal_code": "Closed",
   "status": "blocked",
   "wrote": false
 }
@@ -1146,6 +1226,7 @@ answer: {
   "attempted": "a1b2",
   "fix_by": "change",
   "how_to_proceed": "Nothing was written. Session 'a1b2' was displaced: run yy88 of your bot claimed a role this run held, which closed this run. That is not a failure. Resuming this run reopens it where it left off and its chronology continues, but a resume does not bring the role back: it stays with run yy88 until that run releases it or its lease ends. Call start_here with your bot name and pass resume with this run's name, 'a1b2', to take it, or boot a run of your own.",
+  "refusal_code": "Closed",
   "status": "blocked",
   "wrote": false
 }
@@ -1161,6 +1242,7 @@ answer: {
   "attempted": "a1b2",
   "fix_by": "change",
   "how_to_proceed": "Nothing was written. Session 'a1b2' is wrapped: its story has been told. If you hold the wrap_code its wrap handed back, call start_here with your bot name and resume set to that code within 2 hours of the wrap: the run is then a normal session, with every write a live run takes, until the 2 hours end, a second wrap or a newer run of your bot. Otherwise there is more to say only in a new run: call start_here with your bot name and no resume.",
+  "refusal_code": "Closed",
   "status": "blocked",
   "wrote": false
 }
@@ -1172,7 +1254,8 @@ answer: {
 reads: session 'zz99' is active, so it has no wrap window: only a wrapped run does
 answer: protocol error: session 'zz99' is active, so it has no wrap window: only a wrapped run does
 {
-  "fix_by": "change"
+  "fix_by": "change",
+  "refusal_code": "NotWrapped"
 }
 ```
 
@@ -1185,6 +1268,7 @@ answer: {
   "attempted": "zz99",
   "fix_by": "change",
   "how_to_proceed": "Nothing was written. Session 'zz99' has no entry of its own yet, so there is no most-recent one to amend — journal it instead. Only an entry the session wrote can be amended, never a line jojobot wrote about its calls.",
+  "refusal_code": "NoEntries",
   "status": "blocked",
   "wrote": false
 }
@@ -1199,6 +1283,7 @@ answer: {
   "attempted": "e1",
   "fix_by": "change",
   "how_to_proceed": "Nothing was written. Entry 'e1' on session 'zz99' is one the session recorded itself, and those are append-only wherever they sit. Only the session's newest own entry can be amended, through amend_journal.",
+  "refusal_code": "NotABeat",
   "status": "blocked",
   "wrote": false
 }
@@ -1213,6 +1298,7 @@ answer: {
   "attempted": "",
   "fix_by": "person",
   "how_to_proceed": "Nothing was written: the kind set was never loaded, so no handle can be read: this process has seeded nothing. The repair is a boot that reaches the store, not a different handle — nothing about the one you sent is wrong. The call is not what is wrong, and sending it again will not help: jojobot loaded no kinds when it started, and nothing a caller does re-reads them. This one needs the operator.",
+  "refusal_code": "KindsNeverLoaded",
   "status": "blocked",
   "wrote": false
 }
@@ -1224,7 +1310,8 @@ answer: {
 reads: this write collided with another that landed the same instant; nothing was written here — the store is working, and retrying the same call is the right response to a transient conflict rather than a mistake in what was sent
 answer: protocol error: this call was rejected: another write landed at the same instant, and the store's own concurrency check caught the collision before either could corrupt the other. Nothing was written here, the store is working correctly, and retrying the same call is the right response — this is a transient conflict, not a mistake in what was sent and not something a person needs to look at.
 {
-  "fix_by": "retry"
+  "fix_by": "retry",
+  "refusal_code": "Conflict"
 }
 ```
 
@@ -1234,7 +1321,8 @@ answer: protocol error: this call was rejected: another write landed at the same
 reads: the store refused this write on a rule it enforces (a key held twice); nothing was written, and sending the same call again will meet the same refusal
 answer: protocol error: this call was refused: it breaks a rule jojobot enforces (a key held twice). Nothing was written. Sending the same call again will meet the same refusal, so change the call; the rule in parentheses says what it breaks.
 {
-  "fix_by": "change"
+  "fix_by": "change",
+  "refusal_code": "Refused"
 }
 ```
 
@@ -1244,7 +1332,8 @@ answer: protocol error: this call was refused: it breaks a rule jojobot enforces
 reads: store error: connection refused
 answer: protocol error: this call could not be completed — jojobot's own storage failed, which is not something your call did wrong and not something you can fix by calling differently. Nothing was written that you should rely on. Try once more; if it fails again, tell the operator, because it needs a person.
 {
-  "fix_by": "retry"
+  "fix_by": "retry",
+  "refusal_code": "Store"
 }
 ```
 
@@ -1256,6 +1345,7 @@ answer: {
   "attempted": "a1b2",
   "fix_by": "person",
   "how_to_proceed": "write could not be completed — what jojobot stores is damaged: run a1b2: its start time is no time. The store is working and answered, so sending the same call again will meet the same damage, and nothing in the call changes it. Only a person can repair it, and it is not something you can do from here: tell the operator what is named here.",
+  "refusal_code": "Unreadable",
   "status": "blocked",
   "wrote": false
 }
@@ -1267,6 +1357,7 @@ answer: {
 {
   "fix_by": "change",
   "how_to_proceed": "Nothing ran. This call carried no `sid`, and jojobot will not guess which session is asking. Call start_here with your bot name; if you were not told one, call start_here with no bot, which boots nobody and lists the bots you could boot as. A bot with a run in flight is handed a choice and no key: call start_here again with resume set to the name of the run you are picking up, or to \"new\" for a fresh session. Then pass the handle on every call — reads included. It is the only address, and it is what tells jojobot which bot is asking: most clients open a fresh connection per tool call, so nothing about who you are survives from your last one. IF START_HERE ALSO HANDS BACK NO HANDLE, this is not a call you can fix: the session world is unreachable, so no identity can be issued and no write can be attributed until it is back. Tell the operator — nothing is lost and nothing ran.",
+  "refusal_code": "SessionUnbound",
   "status": "blocked",
   "wrote": false
 }

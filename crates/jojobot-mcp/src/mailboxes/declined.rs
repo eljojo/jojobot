@@ -9,6 +9,9 @@
 
 use super::*;
 
+mod codes;
+pub(crate) use codes::{MAILBOXES_REFUSAL_CODES, mailbox_refusal_code};
+
 /// **Somebody else's message, addressed by id.**
 ///
 /// The read side has no box argument at all, so a caller cannot open another
@@ -28,7 +31,7 @@ pub(crate) fn not_yours(id: &MessageId, theirs: &MailboxName) -> CallToolResult 
     )
     .into();
     let mut body = serde_json::json!({
-        "status": "blocked",
+        "status": "blocked", "refusal_code": "NotYours",
         "attempted": id.as_str(),
         "wrote": false,
         "mailbox": theirs.as_str(),
@@ -71,7 +74,12 @@ pub(crate) fn mailbox_blocked(
              without an identity to drain it. Prefer an existing box, or ask the operator.",
         ),
     };
-    mailbox_blocked_body(attempted.as_str(), Some(candidates), how_to_proceed)
+    mailbox_blocked_body(
+        "MailboxBlocked",
+        attempted.as_str(),
+        Some(candidates),
+        how_to_proceed,
+    )
 }
 
 /// The mailbox blocked envelope itself, once. `None` candidates is a refusal
@@ -79,13 +87,18 @@ pub(crate) fn mailbox_blocked(
 /// present and empty, because a client that branches on its shape must not have
 /// to branch on whether it is there.
 pub(crate) fn mailbox_blocked_body(
+    code: &'static str,
     attempted: &str,
     candidates: Option<&[MailboxMatch]>,
     how_to_proceed: impl Into<WayForward>,
 ) -> CallToolResult {
+    assert!(
+        crate::answer::listed_refusal_code(code),
+        "unlisted refusal code"
+    );
     let how_to_proceed = how_to_proceed.into();
     let mut body = serde_json::json!({
-        "status": "blocked",
+        "status": "blocked", "refusal_code": code,
         "attempted": attempted,
         "wrote": false,
         "candidates": candidates
@@ -112,6 +125,7 @@ pub(crate) fn mailbox_blocked_body(
 /// one of them would be a catalogue that goes stale the day another is added.
 pub(crate) fn subject_declined(attempted: &str, said: &MailboxError) -> CallToolResult {
     mailbox_blocked_body(
+        "SubjectDeclined",
         attempted,
         None,
         format!(
@@ -148,7 +162,7 @@ pub(crate) fn mailbox_quarantined(attempted: &str, reason: &str) -> CallToolResu
     )
     .into();
     let mut body = serde_json::json!({
-        "status": "blocked",
+        "status": "blocked", "refusal_code": "MailboxQuarantined",
         "attempted": attempted,
         "wrote": false,
         "reason": crate::boundary::unreadable(&format!("message {attempted}"), reason),
@@ -172,7 +186,7 @@ pub(crate) fn mailbox_quarantined_on_purpose(
     )
     .into();
     let mut body = serde_json::json!({
-        "status": "blocked",
+        "status": "blocked", "refusal_code": "MailboxQuarantinedOnPurpose",
         "attempted": attempted,
         "wrote": false,
         "quarantined_by": by,
@@ -195,7 +209,7 @@ pub(crate) fn mailbox_not_your_message(attempted: &str, mailbox: &str, by: &str)
     )
     .into();
     let mut body = serde_json::json!({
-        "status": "blocked",
+        "status": "blocked", "refusal_code": "MailboxNotYourMessage",
         "attempted": attempted,
         "wrote": false,
         "mailbox": mailbox,
@@ -209,8 +223,11 @@ pub(crate) fn mailbox_not_your_message(attempted: &str, mailbox: &str, by: &str)
 /// — one is repairable by a better id, the other only by a person on the board
 /// — in one shape.
 pub(crate) fn mailbox_declined(e: MailboxError) -> Result<CallToolResult, McpError> {
+    let code = mailbox_refusal_code(&e);
     let word = mailbox_fix_by(&e);
-    mailbox_declined_arms(e).map(|answered| stamp(answered, word))
+    mailbox_declined_arms(e)
+        .map(|answered| stamp(answered, word, code))
+        .map_err(|error| crate::answer::stamp_error_code(error, word, code))
 }
 
 /// **The word every mailbox refusal wears, in one exhaustive match.** No
@@ -243,6 +260,7 @@ pub(crate) fn mailbox_fix_by(e: &MailboxError) -> Option<FixBy> {
 fn mailbox_declined_arms(e: MailboxError) -> Result<CallToolResult, McpError> {
     match e {
         MailboxError::UnknownMessage { attempted } => Ok(mailbox_blocked_body(
+            "MailboxDeclinedArms",
             &attempted,
             None,
             format!(
@@ -267,6 +285,7 @@ fn mailbox_declined_arms(e: MailboxError) -> Result<CallToolResult, McpError> {
         // **A processed message is archived and stays readable**, so there is
         // nothing to do but leave it: the error says so.
         MailboxError::AlreadyProcessed { ref attempted } => Ok(mailbox_blocked_body(
+            "MailboxDeclinedArms",
             attempted,
             None,
             format!("Nothing was written: {e}. read_message returns it."),
@@ -274,6 +293,7 @@ fn mailbox_declined_arms(e: MailboxError) -> Result<CallToolResult, McpError> {
         // The reason already says what was not written and what to send
         // instead, so it is the way forward as it stands.
         MailboxError::CannotSupersede(ref refusal) => Ok(mailbox_blocked_body(
+            "MailboxDeclinedArms",
             refusal.attempted(),
             None,
             refusal.to_string(),
@@ -292,6 +312,7 @@ fn mailbox_declined_arms(e: MailboxError) -> Result<CallToolResult, McpError> {
         // kind set is loaded at startup and no verb re-reads it, so "send it
         // again" is advice that cannot succeed. This says who repairs it.
         MailboxError::KindsNeverLoaded => Ok(mailbox_blocked_body(
+            "MailboxDeclinedArms",
             "",
             None,
             format!(
@@ -316,6 +337,7 @@ fn mailbox_declined_arms(e: MailboxError) -> Result<CallToolResult, McpError> {
 /// day it is added to (rule 106).
 fn mailbox_malformed(attempted: &str, said: &MailboxError) -> CallToolResult {
     mailbox_blocked_body(
+        "MailboxMalformed",
         attempted,
         None,
         format!(
@@ -329,8 +351,9 @@ fn mailbox_malformed(attempted: &str, said: &MailboxError) -> CallToolResult {
 /// Map a domain [`MailboxError`] to an MCP error, splitting client mistakes from
 /// server-side failures — the same split [`memory_error`] makes.
 pub(crate) fn mailbox_error(e: MailboxError) -> McpError {
+    let code = mailbox_refusal_code(&e);
     let word = mailbox_fix_by(&e);
-    stamp_error(mailbox_error_arms(e), word)
+    crate::answer::stamp_error_code(mailbox_error_arms(e), word, code)
 }
 
 fn mailbox_error_arms(e: MailboxError) -> McpError {
@@ -389,7 +412,7 @@ pub(crate) mod tests {
     #[test]
     #[should_panic(expected = "way forward")]
     fn mailbox_blocked_body_cannot_be_built_with_an_empty_way_forward() {
-        mailbox_blocked_body("inbox", None, String::new());
+        mailbox_blocked_body("InvalidArguments", "inbox", None, String::new());
     }
 
     /// **A caller mistake never leaves this rail through the error channel**

@@ -113,6 +113,7 @@ struct Route {
 struct VerbEnd {
     verb: String,
     outcome: &'static str,
+    refusal_code: String,
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
@@ -418,11 +419,17 @@ impl Metrics {
 }
 
 impl CallObserver for Metrics {
-    fn call_answered(&self, verb: &str, end: CallEnd, elapsed: Duration) {
+    fn call_answered(&self, verb: &str, end: CallEnd, refusal_code: &str, elapsed: Duration) {
         self.calls
             .get_or_create(&VerbEnd {
                 verb: verb.to_string(),
                 outcome: end.as_str(),
+                refusal_code: if end == CallEnd::Answered {
+                    ""
+                } else {
+                    jojobot_mcp::observe::bounded_refusal_code(refusal_code)
+                }
+                .to_string(),
             })
             .inc();
         self.call_duration
@@ -520,6 +527,51 @@ mod tests {
     use super::*;
     use jojobot_domain::mailbox::{MailboxName, StateCounts};
     use jojobot_domain::memory::{EntityId, NewEntity};
+
+    #[tokio::test]
+    async fn refusal_statistics_scrape_labels_the_reason_without_unbounded_values() {
+        let metrics = Metrics::new();
+        metrics.call_answered("capture", CallEnd::Change, "InvalidFact", Duration::ZERO);
+        metrics.call_answered(
+            "capture",
+            CallEnd::Change,
+            "caller-chose-this",
+            Duration::ZERO,
+        );
+        metrics.call_answered("recall", CallEnd::Answered, "", Duration::ZERO);
+        let ports = Ports {
+            memory: Arc::new(jojobot_domain::memory::testing::InMemoryMemory::booted()),
+            sessions: Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),
+            mailboxes: Arc::new(
+                jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner(),
+            ),
+        };
+        let text = metrics.scrape(&ports).await;
+        let lines: Vec<_> = text
+            .lines()
+            .filter(|line| line.starts_with("jojobot_mcp_calls_total{"))
+            .collect();
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("refusal_code=\"InvalidFact\"")),
+            "{text}"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("refusal_code=\"unlisted\"")),
+            "{text}"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("outcome=\"answered\"")
+                    && line.contains("refusal_code=\"\"")),
+            "{text}"
+        );
+        assert!(!text.contains("caller-chose-this"), "{text}");
+    }
 
     #[test]
     fn a_kind_or_a_bot_a_caller_made_is_counted_as_other() {

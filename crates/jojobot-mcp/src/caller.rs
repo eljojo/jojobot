@@ -75,7 +75,7 @@ pub(crate) fn session_unbound() -> CallToolResult {
     )
     .into();
     let mut body = serde_json::json!({
-        "status": "blocked",
+        "status": "blocked", "refusal_code": "SessionUnbound",
         "wrote": false,
     });
     how_to_proceed.write_into(&mut body);
@@ -92,7 +92,7 @@ pub(crate) fn handle_declined(
 ) -> CallToolResult {
     let how_to_proceed = how_to_proceed.into();
     let mut body = serde_json::json!({
-        "status": "blocked",
+        "status": "blocked", "refusal_code": "HandleDeclined",
         "attempted": attempted,
         "wrote": false,
     });
@@ -259,7 +259,7 @@ impl Jojobot {
         )
         .into();
         let mut body = serde_json::json!({
-            "status": "blocked",
+            "status": "blocked", "refusal_code": "ExchangeLegacyName",
             "attempted": "",
             "wrote": false,
             "exchanged": true,

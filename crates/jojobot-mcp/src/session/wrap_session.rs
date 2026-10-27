@@ -181,7 +181,7 @@ impl Jojobot {
             Ok(voided) => voided,
             Err(failure) => {
                 let mut body = serde_json::json!({
-                    "status": "blocked",
+                    "status": "blocked", "refusal_code": "WrapSession",
                     "attempted": caller.sid.as_str(),
                     "wrote": true,
                     "recorded": {"story_entry": entry.id.as_str()},
@@ -233,7 +233,7 @@ impl Jojobot {
         {
             tracing::warn!(error = %e, %session, "a wrapped run's key could not be ended");
             let mut body = serde_json::json!({
-                "status": "blocked",
+                "status": "blocked", "refusal_code": "WrapSession",
                 "attempted": caller.sid.as_str(),
                 "wrote": true,
                 "recorded": {"story_entry": entry.id.as_str(), "run_state": "wrapped"},

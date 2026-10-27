@@ -6,6 +6,9 @@
 
 use super::*;
 
+mod codes;
+pub(crate) use codes::{SESSION_REFUSAL_CODES, session_refusal_code};
+
 /// An amend on a session that has not begun. Refused rather than turned into a
 /// first entry.
 pub(crate) fn session_nothing_to_amend() -> CallToolResult {
@@ -25,7 +28,7 @@ pub(crate) fn session_nothing_to_amend() -> CallToolResult {
                            reports its state."
             .into();
     let mut body = serde_json::json!({
-        "status": "blocked",
+        "status": "blocked", "refusal_code": "SessionNothingToAmend",
         "wrote": false,
     });
     how_to_proceed.write_into(&mut body);
@@ -43,6 +46,7 @@ pub(crate) fn session_nothing_to_amend() -> CallToolResult {
 /// would leave a caller unable to tell that the run a status check just
 /// called `wrapped` is the same one this refusal is about.
 pub(crate) fn session_declined(e: SessionError, sid: &str) -> Result<CallToolResult, McpError> {
+    let code = session_refusal_code(&e);
     let word = session_fix_by(&e);
     // **A closed run's refusal is marked**, so `finish` lists what is in flight
     // beside it: the key still opens its run, and the run's bot is known.
@@ -50,13 +54,15 @@ pub(crate) fn session_declined(e: SessionError, sid: &str) -> Result<CallToolRes
         SessionError::Closed { state, .. } => Some(state.as_token()),
         _ => None,
     };
-    session_declined_arms(e, sid).map(|answered| {
-        let answered = stamp(answered, word);
-        match closed {
-            Some(state) => crate::orientation::in_flight::mark_ended_key(answered, state),
-            None => answered,
-        }
-    })
+    session_declined_arms(e, sid)
+        .map(|answered| {
+            let answered = stamp(answered, word, code);
+            match closed {
+                Some(state) => crate::orientation::in_flight::mark_ended_key(answered, state),
+                None => answered,
+            }
+        })
+        .map_err(|error| crate::answer::stamp_error_code(error, word, code))
 }
 
 /// **The word every session refusal wears, in one exhaustive match.** No
@@ -105,7 +111,7 @@ pub(crate) fn session_declined_for(
 fn session_declined_arms(e: SessionError, sid: &str) -> Result<CallToolResult, McpError> {
     let blocked = |attempted: &str, how: WayForward| {
         let mut body = serde_json::json!({
-            "status": "blocked",
+            "status": "blocked", "refusal_code": "SessionRefusal",
             "attempted": attempted,
             "wrote": false,
         });
@@ -241,8 +247,9 @@ fn session_declined_arms(e: SessionError, sid: &str) -> Result<CallToolResult, M
 /// Map a [`SessionError`] to an MCP error, splitting client mistakes from
 /// server-side failures — the same split the other two contexts make.
 pub(crate) fn session_error(e: SessionError) -> McpError {
+    let code = session_refusal_code(&e);
     let word = session_fix_by(&e);
-    stamp_error(session_error_arms(e), word)
+    crate::answer::stamp_error_code(session_error_arms(e), word, code)
 }
 
 fn session_error_arms(e: SessionError) -> McpError {

@@ -1442,6 +1442,7 @@ pub mod contract {
         use crate::usage::{CallKey, CallOutcome, RunCall};
         let refused = CallOutcome::Refused {
             fix_by: Some("change".to_string()),
+            code: None,
         };
         let key = |run: Option<&str>, verb: &str, outcome: CallOutcome| CallKey {
             bot: Some(bot("homer")),
@@ -1770,6 +1771,7 @@ pub mod contract {
         };
         let change = CallOutcome::Refused {
             fix_by: Some("change".to_string()),
+            code: None,
         };
         let counted = [
             key(Some("homer"), "2026-10-14", "recall", CallOutcome::Landed),
@@ -1784,7 +1786,10 @@ pub mod contract {
                 Some("homer"),
                 "2026-10-14",
                 "capture",
-                CallOutcome::Refused { fix_by: None },
+                CallOutcome::Refused {
+                    fix_by: None,
+                    code: None,
+                },
             ),
         ];
         for each in &counted {
@@ -1816,7 +1821,10 @@ pub mod contract {
                 Some("homer"),
                 "2026-10-14",
                 "capture",
-                CallOutcome::Refused { fix_by: None }
+                CallOutcome::Refused {
+                    fix_by: None,
+                    code: None
+                }
             ),
             1,
             "a refusal with no word is kept as one"

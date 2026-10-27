@@ -255,7 +255,7 @@ impl Jojobot {
         } else {
             WayForward::from(how_to_proceed)
         };
-        blocked_body(addressee, &nearby, how_to_proceed)
+        blocked_body("NoSuchAddressee", addressee, &nearby, how_to_proceed)
     }
 
     /// Every bot on the board, for a refusal that offers somewhere to go.

@@ -79,26 +79,32 @@ pub enum CallOutcome {
     Refused {
         /// `retry`, `change` or `person`.
         fix_by: Option<String>,
+        /// A closed refusal reason; absent on counts written before codes existed.
+        code: Option<String>,
     },
 }
 
 impl CallOutcome {
-    /// The two tokens a store keeps: the outcome, and the word that says who
-    /// fixes a refusal (empty when there is none).
-    pub fn tokens(&self) -> (&'static str, &str) {
+    /// The outcome, who fixes it, and the reason code; absent values use empty tokens.
+    pub fn tokens(&self) -> (&'static str, &str, &str) {
         match self {
-            CallOutcome::Landed => ("landed", ""),
-            CallOutcome::Refused { fix_by } => ("refused", fix_by.as_deref().unwrap_or("")),
+            CallOutcome::Landed => ("landed", "", ""),
+            CallOutcome::Refused { fix_by, code } => (
+                "refused",
+                fix_by.as_deref().unwrap_or(""),
+                code.as_deref().unwrap_or(""),
+            ),
         }
     }
 
-    /// The outcome a store's two tokens name, or `None` for a pair no call
+    /// The outcome a store's tokens name, or `None` for a combination no call
     /// makes.
-    pub fn from_tokens(outcome: &str, fix_by: &str) -> Option<Self> {
-        match (outcome, fix_by) {
-            ("landed", "") => Some(CallOutcome::Landed),
-            ("refused", word) => Some(CallOutcome::Refused {
+    pub fn from_tokens(outcome: &str, fix_by: &str, code: &str) -> Option<Self> {
+        match (outcome, fix_by, code) {
+            ("landed", "", "") => Some(CallOutcome::Landed),
+            ("refused", word, code) => Some(CallOutcome::Refused {
                 fix_by: (!word.is_empty()).then(|| word.to_string()),
+                code: (!code.is_empty()).then(|| code.to_string()),
             }),
             _ => None,
         }
@@ -223,6 +229,8 @@ pub struct VerbCalls {
     /// The refused calls by the word that says who fixes them. A refusal that
     /// carried no word is in `refused` and in none of these.
     pub by_word: BTreeMap<String, u64>,
+    /// Refusals by the closed code carried by the answer.
+    pub by_code: BTreeMap<String, u64>,
 }
 
 /// **One bot's week.**
@@ -383,8 +391,11 @@ pub fn tally_calls(
 ) {
     let held = verbs.entry(verb.to_string()).or_default();
     held.calls += count;
-    if let CallOutcome::Refused { fix_by } = outcome {
+    if let CallOutcome::Refused { fix_by, code } = outcome {
         held.refused += count;
+        if let Some(code) = code {
+            *held.by_code.entry(code.clone()).or_default() += count;
+        }
         if let Some(word) = fix_by {
             *held.by_word.entry(word.clone()).or_default() += count;
         }
@@ -425,6 +436,9 @@ pub fn call_fields(verbs: &BTreeMap<String, VerbCalls>) -> Vec<(String, String)>
         fields.push((format!("{CALLS}_{name}"), verb.calls.to_string()));
         if verb.refused > 0 {
             fields.push((format!("{REFUSED}_{name}"), verb.refused.to_string()));
+        }
+        for (code, count) in &verb.by_code {
+            fields.push((format!("{REFUSED}_{name}_code_{code}"), count.to_string()));
         }
         for (word, count) in &verb.by_word {
             fields.push((format!("{REFUSED}_{name}_{word}"), count.to_string()));
@@ -733,6 +747,7 @@ mod tests {
     fn refused(word: Option<&str>) -> CallOutcome {
         CallOutcome::Refused {
             fix_by: word.map(str::to_string),
+            code: None,
         }
     }
 
@@ -859,11 +874,11 @@ mod tests {
     #[test]
     fn an_outcome_survives_its_tokens() {
         for outcome in [CallOutcome::Landed, refused(Some("person")), refused(None)] {
-            let (kept, word) = outcome.tokens();
-            assert_eq!(CallOutcome::from_tokens(kept, word), Some(outcome));
+            let (kept, word, code) = outcome.tokens();
+            assert_eq!(CallOutcome::from_tokens(kept, word, code), Some(outcome));
         }
-        assert_eq!(CallOutcome::from_tokens("landed", "retry"), None);
-        assert_eq!(CallOutcome::from_tokens("lost", ""), None);
+        assert_eq!(CallOutcome::from_tokens("landed", "retry", ""), None);
+        assert_eq!(CallOutcome::from_tokens("lost", "", ""), None);
     }
 
     fn served(bot: &str, on: &str, chars: u64) -> ServedDay {

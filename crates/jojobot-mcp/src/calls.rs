@@ -43,9 +43,22 @@ fn outcome_of(result: &Result<CallToolResponse, McpError>) -> CallOutcome {
             .and_then(serde_json::Value::as_str)
             .map(str::to_string)
     };
+    let code = |body: &serde_json::Value| {
+        body.get("refusal_code")
+            .and_then(serde_json::Value::as_str)
+            .map(|code| {
+                if crate::answer::listed_refusal_code(code) {
+                    code
+                } else {
+                    "unlisted"
+                }
+                .to_string()
+            })
+    };
     match result {
         Err(error) => CallOutcome::Refused {
             fix_by: error.data.as_ref().and_then(word),
+            code: error.data.as_ref().and_then(code),
         },
         Ok(CallToolResponse::Complete(_)) => match body_of(result) {
             Some(body)
@@ -53,6 +66,7 @@ fn outcome_of(result: &Result<CallToolResponse, McpError>) -> CallOutcome {
             {
                 CallOutcome::Refused {
                     fix_by: word(&body),
+                    code: code(&body),
                 }
             }
             _ => CallOutcome::Landed,
@@ -120,7 +134,12 @@ impl Jojobot {
         // anything below can return early, so a call the store fails to count
         // is still seen by the scraper.
         if let Some(observer) = &self.observer {
-            observer.call_answered(&verb, crate::observe::CallEnd::of(&outcome), elapsed);
+            observer.call_answered(
+                &verb,
+                crate::observe::CallEnd::of(&outcome),
+                crate::observe::refusal_code(&outcome),
+                elapsed,
+            );
         }
         let caller = match resolved {
             Some(caller) => Some(caller),

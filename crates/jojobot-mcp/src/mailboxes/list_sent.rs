@@ -103,6 +103,7 @@ impl Jojobot {
         // the rest, so following that pointer repeated the same call.
         if args.limit == Some(0) {
             return Ok(mailbox_blocked_body(
+                "ListSent",
                 "list_sent",
                 None,
                 "limit must be at least 1: it is the size of a page. Leave it off for the \
@@ -146,6 +147,7 @@ impl Jojobot {
                     Err(e) => {
                         tracing::warn!(error = %e, "the instance's record could not be read for list_sent");
                         return Ok(blocked_body(
+                            "ListSent",
                             &addressee,
                             &[],
                             crate::answer::WayForward::memory_store_failure(format!(

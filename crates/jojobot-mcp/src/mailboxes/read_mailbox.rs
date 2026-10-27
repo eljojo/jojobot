@@ -138,7 +138,7 @@ fn no_box_for(attempted: &str, why: NoBox) -> CallToolResult {
         WayForward::from(how_to_proceed)
     };
     let mut body = serde_json::json!({
-        "status": "blocked",
+        "status": "blocked", "refusal_code": "NoBoxFor",
         "attempted": attempted,
         "wrote": false,
     });

@@ -56,6 +56,7 @@ impl Jojobot {
         jojobot_domain::mailbox::validate_message_id(&id).ok()?;
         let held = self.mailboxes.message_by_id(&id).await.ok().flatten()?;
         Some(crate::mailboxes::mailbox_blocked_body(
+            "RefusesAMessageId",
             held.id.as_str(),
             None,
             format!(

@@ -93,7 +93,7 @@ pub(crate) fn unknown_owner(attempted: &EntityId, candidates: &[EntityMatch]) ->
             nearest.join(", ")
         )
     };
-    blocked_body(attempted, candidates, how)
+    blocked_body("UnknownOwner", attempted, candidates, how)
 }
 
 /// A mailbox on the wire: its name, what is in it per state, and what is in it

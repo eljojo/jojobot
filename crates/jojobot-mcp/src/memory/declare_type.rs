@@ -546,7 +546,12 @@ fn refusal_for_fold_moves(
             incoming.name,
         )
     };
-    blocked_body(&EntityId(format!("type:{}", incoming.name)), &[], advice)
+    blocked_body(
+        "RefusalForFoldMoves",
+        &EntityId(format!("type:{}", incoming.name)),
+        &[],
+        advice,
+    )
 }
 
 /// **Why a `holds` token is no field**, in the token's own terms.

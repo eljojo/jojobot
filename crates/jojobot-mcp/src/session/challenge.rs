@@ -209,7 +209,7 @@ impl Jojobot {
                 let expires_at = held.issued_at + WINDOW;
                 if now <= expires_at {
                     let mut body = serde_json::json!({
-                        "status": "blocked",
+                        "status": "blocked", "refusal_code": "AskForCode",
                         "attempted": bot.as_str(),
                         "wrote": false,
                         "pending": {
@@ -382,7 +382,7 @@ impl Jojobot {
                 // was counted, and the third voided the challenge. The answer
                 // says both rather than "nothing was written".
                 let mut body = serde_json::json!({
-                    "status": "blocked",
+                    "status": "blocked", "refusal_code": "VerifyCode",
                     "attempted": handle.as_str(),
                     "wrote": true,
                     "recorded": {
