@@ -1382,10 +1382,9 @@ mod tests {
         );
         assert_eq!(error.message, "the store failed");
         assert_eq!(error.data.expect("data")["fix_by"], "retry");
-        assert!(
-            stamp_error(McpError::internal_error("x", None), None)
-                .data
-                .is_none()
+        assert_eq!(
+            stamp_error(McpError::internal_error("x", None), None).data,
+            Some(serde_json::json!({"refusal_code": "ProtocolError"}))
         );
         assert_eq!(
             memory_store_failure_word(),
