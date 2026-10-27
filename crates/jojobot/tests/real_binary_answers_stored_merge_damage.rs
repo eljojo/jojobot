@@ -228,7 +228,7 @@ async fn every_read_a_stored_merge_loop_touches_is_answered_as_damage_a_person_r
                 panic!("{label}: the damage was not answered as a refusal: {answer}")
             });
         assert!(
-            said.ends_with(r#"({"fix_by":"person"})"#),
+            said.ends_with(r#"({"fix_by":"person","refusal_code":"StoredDamage"})"#),
             "{label}: a person must repair it, and the answer says so: {said}"
         );
         assert!(
