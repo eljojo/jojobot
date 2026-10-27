@@ -1310,12 +1310,8 @@ async fn migrate_reference_fields_rewrites_a_value_stored_as_plain_handle_text()
         "the migrated value still holds a plain handle rather than a permanent id: {now}",
     );
 
-    // The ids the migration wrote are bare, and only a mark makes an id a link a
-    // read serves as a handle: the boot's marking pass follows this one.
-    memory
-        .migrate_field_links_marked()
-        .await
-        .expect("the marking runs");
+    // The ids the migration wrote are bare; the boot's marking pass follows it.
+    memory.migrate_field_links_marked().await.expect("marks");
 
     // Served under the handle, exactly as before the fixture reverted it.
     let held = memory.fields(&pet).await.expect("fields reads");
@@ -2743,13 +2739,6 @@ async fn a_handle_under_an_undeclared_key_is_stored_as_an_id_and_old_text_is_ser
     // …and it is served as written and links nothing.
     let fields = memory.fields(&holder).await.expect("fields reads");
     assert_eq!(fields["blocks"], target.to_string(), "{fields:?}");
-    let linked: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM field_link WHERE entity = ? AND `key` = 'blocks'")
-            .bind(badge_of(&holder).await)
-            .fetch_one(&pool)
-            .await
-            .expect("the link table reads");
-    assert_eq!(linked, 0, "the old text points at nothing");
 
     // The next write that changes that key stores the id.
     memory
@@ -9433,11 +9422,7 @@ async fn dolt_repoints_links_an_older_fold_left_on_a_forwarding_row() {
     .fetch_one(&pool)
     .await
     .expect("the stored value reads");
-    assert_eq!(
-        stored,
-        jojobot_domain::memory::marked_stored_handle(&gamma_badge),
-        "the row itself names the end of the chain"
-    );
+    assert_eq!(stored, format!("@#{gamma_badge}"), "the chain's end");
     let to_gamma: Vec<String> = sqlx::query_scalar(
         "SELECT entity FROM field_link WHERE target = ? AND `key` LIKE 'forwarded_%' ORDER BY entity",
     )

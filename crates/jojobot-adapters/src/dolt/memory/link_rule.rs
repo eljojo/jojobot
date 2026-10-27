@@ -1,6 +1,5 @@
 //! The link decision of rule 646 in the Dolt store: the write, the boot pass and the
-//! repoint of a merge. The store runs it when the process switch is on; until then
-//! it only computes what it would do, for the log.
+//! repoint of a merge.
 
 use super::*;
 use jojobot_domain::memory::reserved_key;
@@ -213,7 +212,7 @@ impl DoltMemory {
                 ));
             }
             for item in &marking.older {
-                // Historical R1 is counted at INFO by the boot diagnostics.
+                // Only a claim that stands warns; a historical value is not named.
                 if !current.contains(&(entity.as_str(), key.as_str(), *ordinal)) {
                     continue;
                 }

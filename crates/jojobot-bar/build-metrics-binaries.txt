@@ -92,6 +92,7 @@ test-kind_schema
 test-kind_set
 test-known_reds
 test-link_rule_on
+test-link_rule_text_values
 test-lint_runs_whatever_the_tests_say
 test-locked_build
 test-loop_room

@@ -9306,15 +9306,9 @@ async fn every_payload_value_that_is_a_handle_is_walkable_and_nothing_else_is() 
             ("mood".to_string(), "delighted".to_string()),
             ("nearly".to_string(), "person:".to_string()),
         ]
-        .into_iter()
-        .collect(),
-        refs: vec![EntityId("place:daredevil-gorge".into())],
-        // The link the store decides at the write, for the one value that is a handle.
-        field_links: [(
-            "mechanic".to_string(),
-            vec![EntityId("person:milhouse".into())],
-        )]
         .into(),
+        refs: vec![EntityId("place:daredevil-gorge".into())],
+        field_links: [("mechanic".into(), vec![EntityId("person:milhouse".into())])].into(),
         ..fact("person:alpha", "f1", "the kiln was lit", date(2026, 1, 1))
     };
     let index = index_of(vec![scan(

@@ -68,10 +68,9 @@ pub fn lone_reference_names<'a>(
 }
 
 /// **The handles one field value names**, whatever its key: the value itself
-/// when it is, whole, a handle, or every item of a comma-joined list of which
-/// EVERY item is a handle (decision log 374). A handle inside a longer string is
-/// prose, and so is a list with one item that is not a handle, because a reader
-/// cannot tell which of its items were meant as links.
+/// when it is, whole, a handle, or each item of a comma-joined list that is a
+/// handle (decision log 374, rule 646). Loose items beside them stay text, and a
+/// handle inside a longer string is prose.
 ///
 /// **One rule for the read and the write.** The unscoped walk and the search
 /// index read links through this, and the write guard asks of every value it is

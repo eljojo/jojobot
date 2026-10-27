@@ -92,11 +92,9 @@ pub(super) fn assert_still_held(git_ref: &str, handle: &str, key: &str, was: &st
 
 /// **A boot with the link rule on, over the last deployed release's store.**
 /// The repairs of stored rows run first, the marking pass runs once and is marked
-/// finished, and a second boot changes no row. Every gate boot explicitly selects
-/// On; this case also checks its marker and repeat stability. **Over a recording
-/// whose values are marked already, the first boot marks none**: the case then shows
-/// that the marker is written back and that later boots change nothing, and the
-/// round trip of the rollback module is the case that shows a value marked.
+/// finished, and a second boot changes no row. **Over a recording whose values
+/// are marked already, the first boot marks none**: the case then shows that the
+/// marker is written back and that later boots change nothing.
 #[tokio::test]
 async fn the_current_binary_boots_with_the_link_rule_on_over_the_last_deployed_store() {
     the_link_rule_preserves_a_recorded_store(&fixture_dir(), "boots-deploy9-1-link-rule-on").await;
