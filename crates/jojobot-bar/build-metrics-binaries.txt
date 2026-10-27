@@ -136,6 +136,7 @@ test-report_level
 test-report_touched_first
 test-request_id_survives_a_restart
 test-room
+test-room_harness
 test-room_log_filter
 test-room_sentences
 test-room_template_vanished
