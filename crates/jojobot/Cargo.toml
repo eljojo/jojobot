@@ -6,6 +6,11 @@ license.workspace = true
 rust-version.workspace = true
 default-run = "jojobot"
 
+[features]
+default = []
+# Only the exercise harness enables this; shipped builds expose no grader.
+room-harness = []
+
 # The composition root: wires the MCP adapter onto an HTTP transport and owns
 # the resource-server auth. This is the only place rmcp's transport and the
 # auth layer meet. Nothing user-specific is compiled in — issuer, audience and
