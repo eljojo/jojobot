@@ -75,7 +75,11 @@ pub fn forwardable(args: TokenStream, item: TokenStream) -> TokenStream {
         .filter_map(|item| match item {
             TraitItem::Fn(method) => {
                 let sig = &method.sig;
-                Some(from_this_crate(quote! { #sig ; }))
+                let marked = match method.default {
+                    Some(_) => quote! { #[has_default] },
+                    None => quote! {},
+                };
+                Some(from_this_crate(quote! { #marked #sig ; }))
             }
             _ => None,
         })
@@ -110,6 +114,8 @@ pub fn forward(args: TokenStream, item: TokenStream) -> TokenStream {
     struct Args {
         callback: Path,
         via: Member,
+        required_only: bool,
+        also: Vec<Ident>,
     }
     impl Parse for Args {
         fn parse(input: ParseStream) -> syn::Result<Self> {
@@ -120,15 +126,46 @@ pub fn forward(args: TokenStream, item: TokenStream) -> TokenStream {
                 return Err(syn::Error::new(key.span(), "expected `via = <field>`"));
             }
             input.parse::<Token![=]>()?;
+            let via: Member = input.parse()?;
+            let mut required_only = false;
+            let mut also = Vec::new();
+            while input.parse::<Token![,]>().is_ok() && !input.is_empty() {
+                let option: Ident = input.parse()?;
+                if option == "required_only" {
+                    required_only = true;
+                } else if option == "also" {
+                    let names;
+                    syn::parenthesized!(names in input);
+                    also = names
+                        .parse_terminated(Ident::parse, Token![,])?
+                        .into_iter()
+                        .collect();
+                } else {
+                    return Err(syn::Error::new(
+                        option.span(),
+                        "expected `required_only` or `also(<method>, ...)`",
+                    ));
+                }
+            }
             Ok(Self {
                 callback,
-                via: input.parse()?,
+                via,
+                required_only,
+                also,
             })
         }
     }
-    let Args { callback, via } = parse_macro_input!(args as Args);
+    let Args {
+        callback,
+        via,
+        required_only,
+        also,
+    } = parse_macro_input!(args as Args);
     let item = TokenStream2::from(item);
-    quote! { #callback ! { via #via ; #item } }.into()
+    quote! {
+        #callback ! { via #via ; required_only #required_only ; also [ #(#also),* ] ; #item }
+    }
+    .into()
 }
 
 /// **`crate::` in the port's signatures means the port's crate**, and the double
@@ -167,6 +204,8 @@ struct Finish {
     scope: TokenStream2,
     methods: Vec<TraitItemFn>,
     via: Member,
+    required_only: bool,
+    also: Vec<Ident>,
     double: ItemImpl,
 }
 
@@ -197,11 +236,26 @@ impl Parse for Finish {
         assert_eq!(key, "via");
         let via: Member = input.parse()?;
         input.parse::<Token![;]>()?;
+        let key: Ident = input.parse()?;
+        assert_eq!(key, "required_only");
+        let required_only = input.parse::<syn::LitBool>()?.value;
+        input.parse::<Token![;]>()?;
+        let key: Ident = input.parse()?;
+        assert_eq!(key, "also");
+        let inside;
+        syn::bracketed!(inside in input);
+        let also = inside
+            .parse_terminated(Ident::parse, Token![,])?
+            .into_iter()
+            .collect();
+        input.parse::<Token![;]>()?;
         Ok(Self {
             port,
             scope,
             methods,
             via,
+            required_only,
+            also,
             double: input.parse()?,
         })
     }
@@ -217,6 +271,8 @@ pub fn __finish(input: TokenStream) -> TokenStream {
         scope,
         methods,
         via,
+        required_only,
+        also,
         mut double,
     } = parse_macro_input!(input as Finish);
     let written: Vec<String> = double
@@ -242,6 +298,15 @@ pub fn __finish(input: TokenStream) -> TokenStream {
     for method in &methods {
         let name = method.sig.ident.to_string();
         if written.contains(&name) {
+            continue;
+        }
+        // A double that forwards only what the port requires leaves each method
+        // with a default body to that body, unless it names the method in `also`.
+        let has_default = method
+            .attrs
+            .iter()
+            .any(|attr| attr.path().is_ident("has_default"));
+        if required_only && has_default && !also.iter().any(|keep| keep == &name) {
             continue;
         }
         let sig = method.sig.clone();

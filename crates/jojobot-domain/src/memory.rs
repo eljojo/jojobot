@@ -7597,6 +7597,17 @@ pub trait Memory: Send + Sync {
     async fn declared_kinds(&self) -> Result<Vec<(String, types::Origin)>, MemoryError>;
 }
 
+#[cfg(any(test, feature = "testing"))]
+#[path = "memory/testing/served_in_id_text_order.rs"]
+mod served_in_id_text_order;
+/// **The doubles of this crate that wrap a store, declared after the port.** The
+/// macro the port's attribute writes is in scope only for code that follows it in
+/// this file, and a double states only the methods it changes, so these two
+/// modules sit here and `testing` re-exports them.
+#[cfg(any(test, feature = "testing"))]
+#[path = "memory/testing/without_built_on.rs"]
+mod without_built_on;
+
 #[cfg(test)]
 mod stored_describing_keys;
 #[cfg(test)]

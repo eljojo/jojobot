@@ -183,15 +183,8 @@ impl Blindable {
     }
 }
 
-#[async_trait::async_trait]
+#[jojobot_domain::forward(jojobot_domain::forward_memory, via = inner)]
 impl jojobot_domain::memory::Memory for Blindable {
-    async fn former_handles(
-        &self,
-    ) -> Result<Vec<jojobot_domain::memory::FormerHandle>, jojobot_domain::memory::MemoryError>
-    {
-        self.inner.former_handles().await
-    }
-
     async fn scan(
         &self,
     ) -> Result<Vec<jojobot_domain::memory::search::DocScan>, jojobot_domain::memory::MemoryError>
@@ -231,163 +224,6 @@ impl jojobot_domain::memory::Memory for Blindable {
         self.inner.scan_entity(entity).await
     }
 
-    async fn add_entity(
-        &self,
-        new: jojobot_domain::memory::NewEntity,
-    ) -> Result<
-        jojobot_domain::memory::Guarded<jojobot_domain::memory::Entity>,
-        jojobot_domain::memory::MemoryError,
-    > {
-        self.inner.add_entity(new).await
-    }
-
-    async fn list_entities(
-        &self,
-        kind: Option<jojobot_domain::memory::EntityKind>,
-    ) -> Result<Vec<jojobot_domain::memory::Entity>, jojobot_domain::memory::MemoryError> {
-        self.inner.list_entities(kind).await
-    }
-
-    async fn declare_type(
-        &self,
-        declared: jojobot_domain::memory::types::DeclaredType,
-        by_session: Option<&str>,
-    ) -> Result<jojobot_domain::memory::types::DeclaredType, jojobot_domain::memory::MemoryError>
-    {
-        self.inner.declare_type(declared, by_session).await
-    }
-
-    async fn declared_types(
-        &self,
-    ) -> Result<Vec<jojobot_domain::memory::types::DeclaredType>, jojobot_domain::memory::MemoryError>
-    {
-        self.inner.declared_types().await
-    }
-
-    async fn declare_kind(
-        &self,
-        token: &str,
-        origin: jojobot_domain::memory::types::Origin,
-        fields: Vec<jojobot_domain::memory::types::Field>,
-    ) -> Result<bool, jojobot_domain::memory::MemoryError> {
-        self.inner.declare_kind(token, origin, fields).await
-    }
-
-    async fn declared_kinds(
-        &self,
-    ) -> Result<
-        Vec<(String, jojobot_domain::memory::types::Origin)>,
-        jojobot_domain::memory::MemoryError,
-    > {
-        self.inner.declared_kinds().await
-    }
-
-    async fn reclaim_kind(&self, token: &str) -> Result<(), jojobot_domain::memory::MemoryError> {
-        self.inner.reclaim_kind(token).await
-    }
-
-    async fn update_entity(
-        &self,
-        handle: &jojobot_domain::memory::EntityId,
-        patch: jojobot_domain::memory::EntityPatch,
-    ) -> Result<
-        jojobot_domain::memory::Guarded<jojobot_domain::memory::Entity>,
-        jojobot_domain::memory::MemoryError,
-    > {
-        self.inner.update_entity(handle, patch).await
-    }
-    async fn add_entity_with_first_claim(
-        &self,
-        new: jojobot_domain::memory::NewEntity,
-        first: jojobot_domain::memory::NewFact,
-    ) -> Result<
-        jojobot_domain::memory::Guarded<(
-            jojobot_domain::memory::Entity,
-            jojobot_domain::memory::Fact,
-        )>,
-        jojobot_domain::memory::MemoryError,
-    > {
-        self.inner.add_entity_with_first_claim(new, first).await
-    }
-    async fn update_entity_with_claim(
-        &self,
-        handle: &jojobot_domain::memory::EntityId,
-        patch: jojobot_domain::memory::EntityPatch,
-        claim: jojobot_domain::memory::NewFact,
-    ) -> Result<
-        jojobot_domain::memory::Guarded<(
-            jojobot_domain::memory::Entity,
-            jojobot_domain::memory::Fact,
-        )>,
-        jojobot_domain::memory::MemoryError,
-    > {
-        self.inner
-            .update_entity_with_claim(handle, patch, claim)
-            .await
-    }
-    async fn rename_entity(
-        &self,
-        from: &jojobot_domain::memory::EntityId,
-        to: &jojobot_domain::memory::EntityId,
-        parent: Option<jojobot_domain::memory::EntityId>,
-        date: jiff::civil::Date,
-        resemblance: jojobot_domain::memory::Override<'_>,
-        session: Option<&str>,
-    ) -> Result<
-        jojobot_domain::memory::Guarded<jojobot_domain::memory::Entity>,
-        jojobot_domain::memory::MemoryError,
-    > {
-        self.inner
-            .rename_entity(from, to, parent, date, resemblance, session)
-            .await
-    }
-    async fn archive_entity(
-        &self,
-        id: &jojobot_domain::memory::EntityId,
-        reason: &str,
-        session: Option<&str>,
-    ) -> Result<jojobot_domain::memory::Entity, jojobot_domain::memory::MemoryError> {
-        self.inner.archive_entity(id, reason, session).await
-    }
-    async fn restore_entity(
-        &self,
-        id: &jojobot_domain::memory::EntityId,
-        session: Option<&str>,
-    ) -> Result<
-        (
-            jojobot_domain::memory::Entity,
-            jojobot_domain::memory::Archived,
-        ),
-        jojobot_domain::memory::MemoryError,
-    > {
-        self.inner.restore_entity(id, session).await
-    }
-
-    async fn capture(
-        &self,
-        fact: jojobot_domain::memory::NewFact,
-    ) -> Result<
-        jojobot_domain::memory::Guarded<jojobot_domain::memory::Fact>,
-        jojobot_domain::memory::MemoryError,
-    > {
-        self.inner.capture(fact).await
-    }
-
-    async fn recall(
-        &self,
-        subject: &jojobot_domain::memory::EntityId,
-    ) -> Result<Vec<jojobot_domain::memory::Fact>, jojobot_domain::memory::MemoryError> {
-        self.inner.recall(subject).await
-    }
-
-    async fn history(
-        &self,
-        entity: &jojobot_domain::memory::EntityId,
-        key: &str,
-    ) -> Result<Vec<jojobot_domain::memory::FieldWrite>, jojobot_domain::memory::MemoryError> {
-        self.inner.history(entity, key).await
-    }
-
     async fn key_trails(
         &self,
         entity: &jojobot_domain::memory::EntityId,
@@ -414,15 +250,6 @@ impl jojobot_domain::memory::Memory for Blindable {
         Ok(writes)
     }
 
-    async fn keys_holding(
-        &self,
-        key: &str,
-        test: &jojobot_domain::memory::filter::Test,
-        kind: Option<jojobot_domain::memory::EntityKind>,
-    ) -> Result<Vec<jojobot_domain::memory::EntityId>, jojobot_domain::memory::MemoryError> {
-        self.inner.keys_holding(key, test, kind).await
-    }
-
     async fn fields(
         &self,
         entity: &jojobot_domain::memory::EntityId,
@@ -438,54 +265,6 @@ impl jojobot_domain::memory::Memory for Blindable {
             ));
         }
         self.inner.fields(entity).await
-    }
-
-    async fn update_fact(
-        &self,
-        address: &jojobot_domain::memory::FactAddress,
-        patch: jojobot_domain::memory::FactPatch,
-        caller: &jojobot_domain::memory::EntityId,
-    ) -> Result<
-        jojobot_domain::memory::Guarded<jojobot_domain::memory::Fact>,
-        jojobot_domain::memory::MemoryError,
-    > {
-        self.inner.update_fact(address, patch, caller).await
-    }
-
-    async fn retract(
-        &self,
-        address: &jojobot_domain::memory::FactAddress,
-        reason: Option<&str>,
-        date: jiff::civil::Date,
-        caller: &jojobot_domain::memory::EntityId,
-        session: Option<&str>,
-    ) -> Result<jojobot_domain::memory::Retraction, jojobot_domain::memory::MemoryError> {
-        self.inner
-            .retract(address, reason, date, caller, session)
-            .await
-    }
-
-    async fn merge(
-        &self,
-        folded: &jojobot_domain::memory::EntityId,
-        survivor: &jojobot_domain::memory::EntityId,
-        reason: Option<&str>,
-        date: jiff::civil::Date,
-        caller: &jojobot_domain::memory::EntityId,
-        session: Option<&str>,
-    ) -> Result<jojobot_domain::memory::Merge, jojobot_domain::memory::MemoryError> {
-        self.inner
-            .merge(folded, survivor, reason, date, caller, session)
-            .await
-    }
-
-    async fn set_prose(
-        &self,
-        entity: &jojobot_domain::memory::EntityId,
-        prose: &str,
-        session: Option<&str>,
-    ) -> Result<String, jojobot_domain::memory::MemoryError> {
-        self.inner.set_prose(entity, prose, session).await
     }
 }
 
