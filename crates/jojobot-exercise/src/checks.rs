@@ -182,6 +182,8 @@ use serde_json::{Value, json};
 use crate::run::{Checks, Observed, checked, checked_noting};
 
 mod packing;
+#[cfg(test)]
+mod standing_edge;
 
 /// **Read a live reply as JSON, or say plainly that it could not be read —
 /// never substitute a value and carry on.**
@@ -1785,21 +1787,17 @@ const JUNE: &str = "Phase 6";
 /// sitting also renames it. One body for every edge-window check in this
 /// room, so a second shape is a call rather than a second copy of the walk.
 ///
-/// ⛔️ **No status check here, and that is not an oversight.** `world` comes
-/// from a default `search`, and a default search already answers active
-/// records only — so a status clause on a hit that already passed through
-/// it can only ever read `active`, and asking it again decides nothing. What
-/// actually tells a standing edge from one gone since is the WINDOW: found
-/// in `after`, absent from `before`. A status clause here has shipped once
-/// already, in five checks and a comment that called it a correlation this
-/// function draws — it correlates nothing, because there is nothing left to
-/// disagree with it once search has already filtered.
+/// ⛔️ **The hit's own status is read.** `world` comes from a default
+/// `search`, which answers active records first and then archived ones, so
+/// an archived edge is in the world and does not stand. The WINDOW (found in
+/// `after`, absent from `before`) tells a new edge from an old one.
 fn has_standing_edge(world: &str, subject: Option<&str>, shape: &str, object: &str) -> bool {
     search_hits(world).into_iter().flatten().any(|hit| {
         let Some(found) = crate::isolate::fact_subject(&hit) else {
             return false;
         };
         subject.is_none_or(|subject| found == subject)
+            && hit["status"].as_str() == Some("active")
             && hit["edge"]["type"].as_str() == Some(shape)
             && hit["edge"]["object"].as_str() == Some(object)
     })
@@ -1816,12 +1814,11 @@ fn has_standing_edge(world: &str, subject: Option<&str>, shape: &str, object: &s
 /// colon (`"event:"`), which is what makes this a prefix test rather than an
 /// accidental match on a handle that merely starts the same way.
 ///
-/// No status check, for the reason [`has_standing_edge`]'s own doc gives: a
-/// hit reached through a default `search` is active by construction, and the
-/// WINDOW is what tells a standing edge from one gone since.
+/// Active hits only, for the reason [`has_standing_edge`]'s own doc gives.
 fn has_standing_edge_to_a(world: &str, subject: &str, shape: &str, kind: &str) -> bool {
     search_hits(world).into_iter().flatten().any(|hit| {
         crate::isolate::fact_subject(&hit) == Some(subject)
+            && hit["status"].as_str() == Some("active")
             && hit["edge"]["type"].as_str() == Some(shape)
             && hit["edge"]["object"]
                 .as_str()
@@ -1836,9 +1833,8 @@ fn has_standing_edge_to_a(world: &str, subject: &str, shape: &str, kind: &str) -
 /// two `location` edges, one per place he has lived) makes a bare
 /// `carries "status":...` ambiguous about WHICH of them it is talking
 /// about; this picks the one the claim is actually about, live, from a
-/// fresh read rather than a window's own world snapshot — archived facts do
-/// not appear in a default search at all, so no window can see this
-/// correlation either way.
+/// fresh read rather than a window's own world snapshot, which does not
+/// correlate a record's status with its retraction.
 fn fact_drawing<'a>(facts: &'a [Value], shape: &str, object: Option<&str>) -> Option<&'a Value> {
     facts.iter().find(|f| {
         f["edge"]["type"].as_str() == Some(shape)
@@ -1910,9 +1906,8 @@ async fn januarys_note_drew_a_standing_location_edge_to_springfield(
 /// still pass having correlated nothing between them. This finds
 /// Springfield's own address, live, and asks both questions of it alone: is
 /// IT archived, and does no OTHER record retract IT specifically. Live
-/// rather than window-scoped, for the reason [`has_standing_edge`]'s own
-/// doc gives: an archived fact does not appear in a default search at all,
-/// so no boundary snapshot could ever answer this.
+/// rather than window-scoped: a boundary snapshot does not correlate one
+/// record's status with its retraction.
 async fn aprils_move_archives_the_springfield_claim(seen: &Observed<'_>) -> Result<(), String> {
     let read = seen
         .room
@@ -2131,8 +2126,8 @@ async fn octobers_note_drew_a_standing_location_edge_to_the_gorge(
 /// same gap June's own attendance walk carried before its fix, on the shape
 /// rather than the status. This finds the one record whose edge is the
 /// attendance shape and asks both questions of it alone. Live rather than
-/// window-scoped: an archived fact does not appear in a default search at
-/// all, so no boundary snapshot could answer this either way.
+/// window-scoped: a boundary snapshot does not correlate one record's status
+/// with its retraction.
 async fn late_octobers_note_retracts_nelsons_attendance(seen: &Observed<'_>) -> Result<(), String> {
     let read = seen
         .room
@@ -4209,12 +4204,12 @@ mod tests {
         let world = format!(
             "{{}}\n{}",
             json!({"results": [
-                {"hit": "fact", "parent": {"id": "person:milhouse"},
+                {"hit": "fact", "status": "active", "parent": {"id": "person:milhouse"},
                  "edge": {"type": "location", "object": "place:springfield"}},
-                {"hit": "fact", "parent": {"id": "person:milhouse"},
+                {"hit": "fact", "status": "active", "parent": {"id": "person:milhouse"},
                  "subject": {"id": "person:bart"},
                  "edge": {"type": "location", "object": "place:shelbyville"}},
-                {"hit": "fact", "parent": {"id": "event:inspection"},
+                {"hit": "fact", "status": "active", "parent": {"id": "event:inspection"},
                  "subject": {"id": "person:nelson"},
                  "edge": {"type": "attendance", "object": "event:inspection"}},
                 {"hit": "entity", "parent": {"id": "person:milhouse"},
