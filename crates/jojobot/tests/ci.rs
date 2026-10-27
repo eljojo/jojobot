@@ -704,9 +704,9 @@ fn every_action_is_fetched_from_the_mirror_at_a_pinned_commit() {
 /// **The pull request compiles its test binaries once, and the three bars run
 /// them side by side.**
 ///
-/// `build` is the one job that compiles (`make bundle`). `check`, `rooms` and
-/// `year` each need `build` and nothing else, so none waits for another, and
-/// each unpacks the bundle and runs its own `make` target on it with
+/// `build` is the one job that compiles (`make bundle`), after `static`.
+/// `check`, `rooms` and `year` each need `static` and `build`, so none waits
+/// for another bar, and each unpacks the bundle and runs its own target with
 /// `BAR_BUNDLE` set. Every job that runs a bar names `CI_ROOT`: a binary reads
 /// its files by the path it was compiled in, and `CI_ROOT` is what puts the
 /// job's checkout at that path. A job that left either out would compile the
@@ -724,9 +724,14 @@ fn the_pull_request_builds_once_and_runs_the_three_bars_side_by_side() {
         build.contains("make bundle CI_ROOT="),
         "the build job does not compile the bundle at the shared path:\n{build}"
     );
-    assert!(
-        !build.contains("needs:"),
-        "the build job waits on another job:\n{build}"
+    assert_eq!(
+        build
+            .lines()
+            .filter(|line| line.trim_start().starts_with("needs:"))
+            .map(str::trim)
+            .collect::<Vec<_>>(),
+        ["needs: static"],
+        "the build job must wait for static and for nothing else:\n{build}"
     );
 
     for (job, target) in [("check", "check"), ("rooms", "rooms"), ("year", "year")] {
@@ -738,8 +743,8 @@ fn the_pull_request_builds_once_and_runs_the_three_bars_side_by_side() {
                 .filter(|line| line.trim_start().starts_with("needs:"))
                 .map(str::trim)
                 .collect::<Vec<_>>(),
-            ["needs: build"],
-            "{job} must wait for the build and for nothing else:\n{block}"
+            ["needs: [static, build]"],
+            "{job} must wait for static and the build, never another bar:\n{block}"
         );
         assert!(
             block.contains(&format!("nix develop -c make {target} CI_ROOT=")),
