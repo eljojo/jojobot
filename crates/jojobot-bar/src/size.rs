@@ -15,7 +15,8 @@
 //! - **The base** is where the change branched from `SIZE_BASE`, else
 //!   `GITHUB_BASE_REF`. Growth is read from git alone, so there is no list of
 //!   frozen counts to keep. **An unknown base is never ok:** growth cannot be
-//!   judged, so the phase fails and says why.
+//!   judged, so the phase fails and says why. A full dispatch whose legacy
+//!   default ref is absent keeps a note instead.
 //! - **The table** is the net lines of the change, by area and by kind, as git
 //!   counts them with renames off, so a move shows in both areas.
 //!
@@ -824,7 +825,8 @@ fn test_file_offences(limits: &Limits, base: &Base) -> Result<Vec<Offence>, Stri
 
 /// **The phase of `bar check`, `bar report` and `bar dev`**, run first. It
 /// fails the summary on any offence, on an unknown base, and on any measurement
-/// it could not make, and it skips none of the phases after it.
+/// it could not make, and it skips none of the phases after it. An absent
+/// legacy dispatch default keeps a note; its owned-marker checks still run.
 pub fn phase(summary: &mut Summary) {
     let measured = measure().and_then(|files| Ok((files, load(Path::new(RATCHET_FILE))?)));
     let (files, limits) = match measured {
@@ -851,18 +853,33 @@ pub fn phase(summary: &mut Summary) {
     }
     let Base::Known { rev, changes, .. } = &base else {
         let Base::Unknown(why) = &base else { return };
-        if in_ci() {
+        let dispatch_note = in_ci()
+            && std::env::var("GITHUB_EVENT_NAME").is_ok_and(|v| v == "workflow_dispatch")
+            && std::env::var(BASE_VARIABLE).is_ok_and(|v| v == "origin/deploy-9")
+            && git_output(&[
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                "origin/deploy-9^{commit}",
+            ])
+            .is_none();
+        if in_ci() && !dispatch_note {
             summary.phase_failed("size", &format!("no usable CI base: {why}"));
             return;
         }
-        // Not ok, and not a failure of the run: growth was not judged, and the line
-        // says so. A workflow that means to judge it sets SIZE_BASE.
-        summary.note(&format!(
-            "size: unknown — {why}; growth was not judged, so the size is not ok"
-        ));
-        // A base that was named and cannot be read is a broken workflow, not a dev host.
-        if std::env::var(BASE_VARIABLE).is_ok_and(|v| !v.is_empty()) {
-            summary.phase_failed("size", "the named base could not be used");
+        if dispatch_note {
+            // A full dispatch has no PR base; the legacy default may no longer exist.
+            summary.note("size: not judged — dispatch default origin/deploy-9 is absent; growth was not measured");
+        } else {
+            // Not ok, and not a failure of the run: growth was not judged, and the line
+            // says so. A workflow that means to judge it sets SIZE_BASE.
+            summary.note(&format!(
+                "size: unknown — {why}; growth was not judged, so the size is not ok"
+            ));
+            // A base that was named and cannot be read is a broken workflow, not a dev host.
+            if std::env::var(BASE_VARIABLE).is_ok_and(|v| !v.is_empty()) {
+                summary.phase_failed("size", "the named base could not be used");
+            }
         }
         for offence in &verdict.offences {
             summary.note(&format!("  {}", offence.line()));

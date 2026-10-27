@@ -33,6 +33,7 @@ pub fn size_and_roster(summary: &mut Summary) {
 }
 
 pub fn format_and_allowlist(summary: &mut Summary) -> Option<serde_json::Value> {
+    // These read-only calls inherit TMPDIR; the build/test phases own the stores.
     let started = std::time::Instant::now();
     let args = ["fmt", "--all", "--check"];
     let output = Command::new(crate::cargo_bin())

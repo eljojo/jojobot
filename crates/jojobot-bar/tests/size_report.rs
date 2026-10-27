@@ -426,11 +426,16 @@ fn with_no_base_the_size_line_says_unknown_and_never_ok() {
 }
 
 fn ci_size(dir: &Path, base: Option<&str>) -> Ran {
+    ci_size_event(dir, base, "push")
+}
+
+fn ci_size_event(dir: &Path, base: Option<&str>, event: &str) -> Ran {
     let mut command = Command::new(env!("CARGO_BIN_EXE_jojobot-bar"));
     command
         .arg("size")
         .current_dir(dir)
         .env("GITHUB_ACTIONS", "true")
+        .env("GITHUB_EVENT_NAME", event)
         .env_remove("SIZE_BASE")
         .env_remove("GITHUB_BASE_REF");
     if let Some(base) = base {
@@ -516,6 +521,61 @@ fn ci_without_a_main_base_refuses_instead_of_claiming_unknown() {
         "{}",
         refused.stdout
     );
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn ci_dispatch_missing_release_default_is_a_note_and_keeps_marker_checks() {
+    let dir = repo("dispatch-default");
+    commit_files(&dir, &[("size-ratchet.toml", ratchet(""))]);
+    let run = || ci_size_event(&dir, Some("origin/deploy-9"), "workflow_dispatch");
+    let note = run();
+    assert_eq!(note.code, Some(0), "{}", note.stdout);
+    assert!(note.stdout.contains("size: not judged"), "{}", note.stdout);
+    assert!(!note.stdout.contains("unknown"), "{}", note.stdout);
+    let path = "crates/jojobot/tests/user_stories/x.rs";
+    commit_files(&dir, &[(path, ["// GA", "P — x\n"].concat())]);
+    let marker = run();
+    assert_eq!(marker.code, Some(1), "{}", marker.stdout);
+    assert!(marker.stdout.contains(path), "{}", marker.stdout);
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn ci_dispatch_note_is_not_given_to_a_push_or_pull_request() {
+    let dir = repo("dispatch-event");
+    commit_files(&dir, &[("size-ratchet.toml", ratchet(""))]);
+    for event in ["push", "pull_request"] {
+        let red = ci_size_event(&dir, Some("origin/deploy-9"), event);
+        assert_eq!(red.code, Some(1), "{}", red.stdout);
+        assert!(size_line(&red.stdout).starts_with("size: FAILED"));
+    }
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn ci_dispatch_missing_explicit_base_stays_red() {
+    let dir = repo("dispatch-explicit");
+    commit_files(&dir, &[("size-ratchet.toml", ratchet(""))]);
+    let red = ci_size_event(&dir, Some("missing"), "workflow_dispatch");
+    assert_eq!(red.code, Some(1), "{}", red.stdout);
+    assert!(size_line(&red.stdout).starts_with("size: FAILED"));
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn ci_dispatch_disconnected_existing_release_default_stays_red() {
+    let dir = repo("dispatch-disconnected");
+    commit_files(&dir, &[("size-ratchet.toml", ratchet(""))]);
+    let tree = git(&dir, &["rev-parse", "HEAD^{tree}"]);
+    let other = git(&dir, &["commit-tree", &tree, "-m", "other root"]);
+    git(
+        &dir,
+        &["update-ref", "refs/remotes/origin/deploy-9", &other],
+    );
+    let red = ci_size_event(&dir, Some("origin/deploy-9"), "workflow_dispatch");
+    assert_eq!(red.code, Some(1), "{}", red.stdout);
+    assert!(size_line(&red.stdout).starts_with("size: FAILED"));
     let _ = fs::remove_dir_all(dir);
 }
 

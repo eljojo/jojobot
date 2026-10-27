@@ -168,7 +168,7 @@ fn say_what_was_swept(parent: &Path, swept: jojobot_bar::sweep::Swept) {
 /// The directory this run gives its children as their temp directory.
 static RUN_ROOT: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
 
-/// **A temp directory for everything this run starts, removed when the run
+/// **A temp directory for the build and test phases, removed when the run
 /// ends.** The test processes make directories in their temp directory and do
 /// not all remove them, and a killed one removes none. Pointing them all at one
 /// directory of this run's own, and removing that, is what makes the cleanup
@@ -177,8 +177,8 @@ static RUN_ROOT: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
 ///
 /// **It is made under the memory-backed directory when that has room** (see
 /// [`jojobot_bar::scratch`]), so the test stores do not wait on a disk. This is
-/// the one place the bar chooses it: every child gets it through
-/// [`in_the_run_root`], and no case sets a temp directory of its own.
+/// the one place the bar chooses it: build and test children get it through
+/// [`in_the_run_root`]; read-only fmt and metadata inherit their caller's TMPDIR.
 struct RunRoot(PathBuf);
 
 impl RunRoot {
