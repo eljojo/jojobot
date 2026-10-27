@@ -599,8 +599,8 @@ async fn where_a_piece_of_work_stands_is_kept_on_the_keys_the_skill_names() {
         )
         .await;
     next.says("work:phi");
-    next.never_says("work:sigma");
-    next.never_says("work:first-mix");
+    next.never_selects("work:sigma");
+    next.never_selects("work:first-mix");
 
     let waiting = s
         .call(

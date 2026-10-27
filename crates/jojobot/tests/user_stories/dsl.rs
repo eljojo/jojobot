@@ -2771,6 +2771,18 @@ impl Answer {
         self
     }
 
+    /// **The answer's selection leaves this thing out.** A thing can still be
+    /// named elsewhere in the answer, as a link or in what is held for another,
+    /// so a selection is read by the objects it holds.
+    pub fn never_selects(&self, handle: &str) -> &Self {
+        let objects = self.json()["objects"].clone();
+        let held = objects
+            .as_array()
+            .is_some_and(|all| all.iter().any(|object| object["id"] == handle));
+        assert!(!held, "the {} selects {handle:?}: {}", self.what, self.body);
+        self
+    }
+
     /// **One named table on a page**, so an assertion says which part of it it
     /// is about.
     ///

@@ -145,8 +145,8 @@ async fn a_cold_session_finds_what_is_next_and_what_waits_on_whom_from_the_keys(
         )
         .await;
     next.says("work:phi");
-    next.never_says("work:sigma");
-    next.never_says("work:loop-check-in");
+    next.never_selects("work:sigma");
+    next.never_selects("work:loop-check-in");
 
     let inbox = cold
         .shape(
@@ -210,8 +210,8 @@ async fn a_cold_session_finds_what_is_next_and_what_waits_on_whom_from_the_keys(
 /// two things names both. A reader who walks IN from either one, or searches
 /// for what points at it, finds the work, the same as the relation walk does by
 /// the key's own name (decision log 374: a link is any field that names another
-/// thing). A list with one item that is not a handle is prose, and the work
-/// holding it is found from neither.
+/// thing). In a list with an item that is not a handle, each item that is a
+/// handle still links (rule 646): the work holding it is found from that one.
 #[tokio::test]
 async fn a_work_item_depending_on_two_things_is_found_from_each_of_them() {
     let story = Story::begin("bot:otto").await;
@@ -246,15 +246,14 @@ async fn a_work_item_depending_on_two_things_is_found_from_each_of_them() {
         .await
         .says("work:first-mix");
     }
-    // …and the list with an item that is not a handle reaches nobody, which
-    // the first walk above would not show on its own: it asked about the one
-    // thing both lists name.
+    // …and the list with an item that is not a handle links the handle in it,
+    // so the work holding it is found from the one thing it names.
     s.call(
         "recall",
         json!({"subject": "work:phi", "follow": {"direction": "in"}}),
     )
     .await
-    .never_says("work:loop-check-in");
+    .says("work:loop-check-in");
 
     // ── the search edge, by the other end of the list ───────────────────────
     s.call(
