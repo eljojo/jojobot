@@ -205,15 +205,15 @@ async fn mark_processed_accepts_note() {
 #[tokio::test]
 async fn recall_accepts_handle() {
     let jojobot = handler();
-    ensure(&jojobot, "thing:chain").await;
+    ensure(&jojobot, "thing:kettle").await;
     for name in ["subject", "handle"] {
         let answer = served(
             &jojobot,
             "recall",
-            json!({name: "thing:chain", "sid": TEST_SID}),
+            json!({name: "thing:kettle", "sid": TEST_SID}),
         )
         .await;
-        assert_eq!(answer["objects"][0]["id"], "thing:chain", "{answer}");
+        assert_eq!(answer["objects"][0]["id"], "thing:kettle", "{answer}");
         if name == "handle" {
             assert!(
                 answer["teaching"].to_string().contains("subject"),
@@ -225,12 +225,12 @@ async fn recall_accepts_handle() {
 
 async fn document_alias(name: &str) {
     let jojobot = handler();
-    ensure(&jojobot, "document:chain").await;
+    ensure(&jojobot, "document:alpha").await;
     let markdown = "# Chain\nKeep it oiled.\n";
     let written = served(
         &jojobot,
         "put_document",
-        json!({"document": "document:chain", "markdown": markdown, "sid": TEST_SID}),
+        json!({"document": "document:alpha", "markdown": markdown, "sid": TEST_SID}),
     )
     .await;
     assert_ne!(written["status"], "blocked", "{written}");
@@ -238,7 +238,7 @@ async fn document_alias(name: &str) {
         let answer = served(
             &jojobot,
             "read_document",
-            json!({spelling: "document:chain", "sid": TEST_SID}),
+            json!({spelling: "document:alpha", "sid": TEST_SID}),
         )
         .await;
         assert_eq!(answer["markdown"], markdown, "{answer}");
@@ -264,18 +264,18 @@ async fn read_document_accepts_subject() {
 #[tokio::test]
 async fn two_aliases_for_one_argument_are_refused_with_both_names() {
     let jojobot = handler();
-    ensure(&jojobot, "document:chain").await;
+    ensure(&jojobot, "document:alpha").await;
     let canonical = served(
         &jojobot,
         "read_document",
-        json!({"document": "document:chain", "sid": TEST_SID}),
+        json!({"document": "document:alpha", "sid": TEST_SID}),
     )
     .await;
-    assert_eq!(canonical["document"], "document:chain", "{canonical}");
+    assert_eq!(canonical["document"], "document:alpha", "{canonical}");
     let refused = served(
         &jojobot,
         "read_document",
-        json!({"handle": "document:chain", "subject": "document:wheel", "sid": TEST_SID}),
+        json!({"handle": "document:alpha", "subject": "document:beta", "sid": TEST_SID}),
     )
     .await;
     assert_eq!(refused["status"], "blocked", "{refused}");
