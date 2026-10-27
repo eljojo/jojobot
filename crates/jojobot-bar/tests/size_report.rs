@@ -425,6 +425,100 @@ fn with_no_base_the_size_line_says_unknown_and_never_ok() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+fn ci_size(dir: &Path, base: Option<&str>) -> Ran {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_jojobot-bar"));
+    command
+        .arg("size")
+        .current_dir(dir)
+        .env("GITHUB_ACTIONS", "true")
+        .env_remove("SIZE_BASE")
+        .env_remove("GITHUB_BASE_REF");
+    if let Some(base) = base {
+        command.env("SIZE_BASE", base);
+    }
+    let output = support::output_fenced(&mut command).unwrap();
+    Ran {
+        code: output.status.code(),
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+    }
+}
+
+fn ci_branch_base_case(wanted: Option<&str>) {
+    let dir = repo("ci-base");
+    let base = commit_files(
+        &dir,
+        &[
+            ("size-ratchet.toml", ratchet("")),
+            ("homer.rs", lines_of(5001)),
+        ],
+    );
+    git(&dir, &["update-ref", "refs/remotes/origin/main", &base]);
+    git(&dir, &["branch", "-m", "scratch"]);
+    let clean = ci_size(&dir, wanted);
+    assert_eq!(clean.code, Some(0), "{}", clean.stdout);
+    assert!(
+        size_line(&clean.stdout).starts_with("size: ok"),
+        "{}",
+        clean.stdout
+    );
+    assert!(clean.stdout.contains(&base[..10]), "{}", clean.stdout);
+    assert!(!clean.stdout.contains("unknown"), "{}", clean.stdout);
+
+    fs::write(dir.join("homer.rs"), lines_of(5002)).unwrap();
+    let growth = ci_size(&dir, wanted);
+    assert_eq!(growth.code, Some(1), "{}", growth.stdout);
+    assert!(
+        growth
+            .stdout
+            .contains("homer.rs: red file grew from 5001 to 5002"),
+        "{}",
+        growth.stdout
+    );
+    assert!(!growth.stdout.contains("unknown"), "{}", growth.stdout);
+
+    git(&dir, &["add", "homer.rs"]);
+    git(&dir, &["commit", "-qm", "base with recorded size"]);
+    let explicit = git(&dir, &["rev-parse", "HEAD"]);
+    let named = ci_size(&dir, Some(&explicit));
+    assert_eq!(named.code, Some(0), "{}", named.stdout);
+    assert!(
+        size_line(&named.stdout).starts_with("size: ok"),
+        "{}",
+        named.stdout
+    );
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn ci_zero_before_uses_the_main_merge_base_for_size() {
+    ci_branch_base_case(Some("0000000000000000000000000000000000000000"));
+}
+
+#[test]
+fn ci_missing_before_uses_the_main_merge_base_for_size() {
+    ci_branch_base_case(None);
+}
+
+#[test]
+fn ci_without_a_main_base_refuses_instead_of_claiming_unknown() {
+    let dir = repo("ci-no-main");
+    commit_files(&dir, &[("size-ratchet.toml", ratchet(""))]);
+    git(&dir, &["branch", "-m", "scratch"]);
+    let refused = ci_size(&dir, None);
+    assert_eq!(refused.code, Some(1), "{}", refused.stdout);
+    assert!(
+        size_line(&refused.stdout).starts_with("size: FAILED"),
+        "{}",
+        refused.stdout
+    );
+    assert!(
+        !refused.stdout.contains("size: unknown"),
+        "{}",
+        refused.stdout
+    );
+    let _ = fs::remove_dir_all(dir);
+}
+
 /// **A tree the bar cannot list is a failure, never no growth.** A directory
 /// that is no git repository gives no tracked files to count.
 #[test]

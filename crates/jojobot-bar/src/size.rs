@@ -688,13 +688,30 @@ fn changes_since(joint: &str) -> Option<Changes> {
     })
 }
 
-/// **The base of this change**, as the commit it branched from: `SIZE_BASE`, else
-/// `GITHUB_BASE_REF`. No remote is guessed: a name git does not resolve here is
-/// unknown, and says so.
+fn in_ci() -> bool {
+    std::env::var("GITHUB_ACTIONS").is_ok_and(|value| value == "true")
+}
+
+/// CI's new-branch event has no before commit; measure from main in that case.
+/// A valid explicit base still wins, and local callers still name their base.
 pub fn read_base() -> Base {
-    let wanted = [BASE_VARIABLE, BASE_REF_VARIABLE]
+    let mut wanted = [BASE_VARIABLE, BASE_REF_VARIABLE]
         .iter()
         .find_map(|name| std::env::var(name).ok().filter(|v| !v.is_empty()));
+    let zero = wanted
+        .as_ref()
+        .is_some_and(|value| value.len() == 40 && value.bytes().all(|byte| byte == b'0'));
+    if in_ci() && (wanted.is_none() || zero) {
+        wanted = ["origin/main", "main"].into_iter().find_map(|name| {
+            git_output(&[
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                &format!("{name}^{{commit}}"),
+            ])
+            .map(|_| name.to_string())
+        });
+    }
     let Some(wanted) = wanted else {
         return Base::Unknown(format!(
             "neither {BASE_VARIABLE} nor {BASE_REF_VARIABLE} is set"
@@ -834,6 +851,10 @@ pub fn phase(summary: &mut Summary) {
     }
     let Base::Known { rev, changes, .. } = &base else {
         let Base::Unknown(why) = &base else { return };
+        if in_ci() {
+            summary.phase_failed("size", &format!("no usable CI base: {why}"));
+            return;
+        }
         // Not ok, and not a failure of the run: growth was not judged, and the line
         // says so. A workflow that means to judge it sets SIZE_BASE.
         summary.note(&format!(

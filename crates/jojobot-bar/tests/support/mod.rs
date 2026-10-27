@@ -48,8 +48,8 @@ pub fn write_executable(path: &Path, script: &str) {
 /// through here, so this is the one place that decides how they start.
 pub fn fenced_spawn(cmd: &mut Command) -> std::io::Result<Child> {
     let _fence = FORK_FENCE.read().unwrap_or_else(|e| e.into_inner());
-    // A scratch repo has its own base; the checkout's base must not leak in.
-    for name in ["SIZE_BASE", "BAR_DEV_BASE"] {
+    // A scratch repo has its own base and CI context.
+    for name in ["SIZE_BASE", "BAR_DEV_BASE", "GITHUB_ACTIONS"] {
         if !cmd.get_envs().any(|(key, _)| key == name) {
             cmd.env_remove(name);
         }
