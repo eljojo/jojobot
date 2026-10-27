@@ -7710,24 +7710,8 @@ impl Metered {
     }
 }
 
-#[async_trait]
+#[jojobot_domain::forward(jojobot_domain::forward_mailboxes, via = inner)]
 impl jojobot_domain::mailbox::Mailboxes for Metered {
-    async fn create_mailbox(
-        &self,
-        name: &MailboxName,
-        owner: &jojobot_domain::memory::EntityId,
-        token: Option<&str>,
-    ) -> Result<jojobot_domain::mailbox::Guarded<jojobot_domain::mailbox::Mailbox>, MailboxError>
-    {
-        self.inner.create_mailbox(name, owner, token).await
-    }
-    async fn repoint_owner(
-        &self,
-        from: &jojobot_domain::memory::EntityId,
-        to: &jojobot_domain::memory::EntityId,
-    ) -> Result<Option<jojobot_domain::mailbox::Mailbox>, MailboxError> {
-        self.inner.repoint_owner(from, to).await
-    }
     async fn list_mailboxes(&self) -> Result<Vec<jojobot_domain::mailbox::Mailbox>, MailboxError> {
         self.listings
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -7755,15 +7739,6 @@ impl jojobot_domain::mailbox::Mailboxes for Metered {
         }
         board
     }
-    async fn message_by_id(&self, id: &MessageId) -> Result<Option<Message>, MailboxError> {
-        self.inner.message_by_id(id).await
-    }
-    async fn messages_by_id(&self, ids: &[MessageId]) -> Result<Vec<Message>, MailboxError> {
-        self.inner.messages_by_id(ids).await
-    }
-    async fn sent_by(&self, senders: &[&str]) -> Result<Vec<Message>, MailboxError> {
-        self.inner.sent_by(senders).await
-    }
     async fn post_message(
         &self,
         message: jojobot_domain::mailbox::NewMessage,
@@ -7776,60 +7751,6 @@ impl jojobot_domain::mailbox::Mailboxes for Metered {
             self.post_release.notified().await;
         }
         self.inner.post_message(message).await
-    }
-    async fn read_mailbox(
-        &self,
-        name: &MailboxName,
-        taken_by: jojobot_domain::mailbox::TakenBy,
-        acting: jojobot_domain::mailbox::Acting<'_>,
-    ) -> Result<jojobot_domain::mailbox::Guarded<jojobot_domain::mailbox::Delivery>, MailboxError>
-    {
-        self.inner.read_mailbox(name, taken_by, acting).await
-    }
-    async fn read_message(
-        &self,
-        id: &MessageId,
-        acting: jojobot_domain::mailbox::Acting<'_>,
-    ) -> Result<jojobot_domain::mailbox::Delivered, MailboxError> {
-        self.inner.read_message(id, acting).await
-    }
-    async fn mark_processed(
-        &self,
-        id: &MessageId,
-        by: &MailboxName,
-        notes: Option<&str>,
-        acting: jojobot_domain::mailbox::Acting<'_>,
-    ) -> Result<Message, MailboxError> {
-        self.inner.mark_processed(id, by, notes, acting).await
-    }
-    async fn quarantine(
-        &self,
-        id: &MessageId,
-        by: &MailboxName,
-        reason: &str,
-        acting: jojobot_domain::mailbox::Acting<'_>,
-    ) -> Result<jojobot_domain::mailbox::Quarantined, MailboxError> {
-        self.inner.quarantine(id, by, reason, acting).await
-    }
-
-    async fn message_history(
-        &self,
-        id: &jojobot_domain::mailbox::MessageId,
-    ) -> Result<Vec<jojobot_domain::mailbox::MessageEvent>, jojobot_domain::mailbox::MailboxError>
-    {
-        self.inner.message_history(id).await
-    }
-
-    async fn scan_message_events(
-        &self,
-    ) -> Result<
-        Vec<(
-            jojobot_domain::mailbox::MessageId,
-            Vec<jojobot_domain::mailbox::MessageEvent>,
-        )>,
-        jojobot_domain::mailbox::MailboxError,
-    > {
-        self.inner.scan_message_events().await
     }
 }
 

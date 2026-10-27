@@ -758,6 +758,27 @@ impl Behind {
 /// re-read serves whatever it last saw — including a record the store has since
 /// lost, which nothing inside the process can observe. So a search takes a
 /// scan; it is I/O, and the port says so.
+#[jojobot_forward::forwardable(
+    callback = forward_search,
+    scope = "memory::search",
+    uses(
+        crate::mailbox::Message,
+        crate::memory::Edge,
+        crate::memory::EdgeShape,
+        crate::memory::Entity,
+        crate::memory::EntityId,
+        crate::memory::EntityKind,
+        crate::memory::Fact,
+        crate::memory::FactAddress,
+        crate::memory::FactStatus,
+        crate::memory::MemoryError,
+        crate::memory::Provenance,
+        crate::memory::Standing,
+        crate::memory::types,
+        crate::session::SessionId,
+        ::std::collections::HashSet
+    )
+)]
 #[async_trait::async_trait]
 pub trait Search: Send + Sync {
     /// Match using the projection's vocabulary; choosing the passage is domain policy.

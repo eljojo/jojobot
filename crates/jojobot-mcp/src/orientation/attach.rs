@@ -4014,20 +4014,9 @@ mod tests {
     /// was: still abandoned, and still opened by its old key.
     #[tokio::test]
     async fn a_resume_refused_before_the_key_moves_leaves_a_stopped_run_stopped() {
-        use jojobot_domain::teaching::{TeachingError, Teachings};
-
         struct CannotForget(jojobot_domain::teaching::testing::InMemoryTeachings);
-        #[async_trait::async_trait]
+        #[jojobot_domain::forward(jojobot_domain::forward_teachings, via = 0)]
         impl Teachings for CannotForget {
-            async fn first_contact(
-                &self,
-                sid: &Sid,
-                domain: &str,
-                at: jiff::Timestamp,
-            ) -> Result<bool, TeachingError> {
-                self.0.first_contact(sid, domain, at).await
-            }
-
             async fn forget(&self, _sid: &Sid) -> Result<(), TeachingError> {
                 Err(TeachingError::Store("the store is down".into()))
             }
@@ -4181,20 +4170,9 @@ mod tests {
     /// is not cut off by a store that was down.
     #[tokio::test]
     async fn a_pick_up_that_cannot_forget_what_the_run_was_taught_is_refused() {
-        use jojobot_domain::teaching::{TeachingError, Teachings};
-
         struct CannotForget(jojobot_domain::teaching::testing::InMemoryTeachings);
-        #[async_trait::async_trait]
+        #[jojobot_domain::forward(jojobot_domain::forward_teachings, via = 0)]
         impl Teachings for CannotForget {
-            async fn first_contact(
-                &self,
-                sid: &Sid,
-                domain: &str,
-                at: jiff::Timestamp,
-            ) -> Result<bool, TeachingError> {
-                self.0.first_contact(sid, domain, at).await
-            }
-
             async fn forget(&self, _sid: &Sid) -> Result<(), TeachingError> {
                 Err(TeachingError::Store("the store is down".into()))
             }

@@ -8,8 +8,6 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
-use async_trait::async_trait;
-use jiff::civil::Date;
 use jojobot_domain::memory::search::Behind;
 use jojobot_domain::memory::testing::InMemoryMemory;
 use jojobot_domain::memory::{EntityId, EntityKind, Landed, MemoryError};
@@ -225,7 +223,7 @@ impl Memory for Scripted {
 /// the boot says no handle was started.
 pub(crate) struct UnreachableRuns(pub(crate) jojobot_domain::session::testing::InMemorySessions);
 
-#[async_trait]
+#[jojobot_domain::forward(jojobot_domain::forward_sessions, via = 0)]
 impl jojobot_domain::session::Sessions for UnreachableRuns {
     async fn sessions_of(
         &self,
@@ -234,186 +232,5 @@ impl jojobot_domain::session::Sessions for UnreachableRuns {
         Err(jojobot_domain::session::SessionError::Store(
             "the runs cannot be read".into(),
         ))
-    }
-    async fn all_sessions(
-        &self,
-    ) -> Result<Vec<jojobot_domain::session::Session>, jojobot_domain::session::SessionError> {
-        self.0.all_sessions().await
-    }
-    async fn read_session(
-        &self,
-        id: &jojobot_domain::session::SessionId,
-    ) -> Result<jojobot_domain::session::Session, jojobot_domain::session::SessionError> {
-        self.0.read_session(id).await
-    }
-    async fn begin(
-        &self,
-        new: jojobot_domain::session::NewSession,
-    ) -> Result<jojobot_domain::session::Session, jojobot_domain::session::SessionError> {
-        self.0.begin(new).await
-    }
-    async fn set_key_hash(
-        &self,
-        id: &jojobot_domain::session::SessionId,
-        hash: &str,
-        trail: &jojobot_domain::session::KeyTrail,
-    ) -> Result<(), jojobot_domain::session::SessionError> {
-        self.0.set_key_hash(id, hash, trail).await
-    }
-    async fn note_minted(
-        &self,
-        run: &jojobot_domain::session::MintedRun,
-    ) -> Result<(), jojobot_domain::session::SessionError> {
-        self.0.note_minted(run).await
-    }
-
-    async fn minted_without_a_card(
-        &self,
-    ) -> Result<Vec<jojobot_domain::session::MintedRun>, jojobot_domain::session::SessionError>
-    {
-        self.0.minted_without_a_card().await
-    }
-
-    async fn prune_minted(
-        &self,
-        before: jiff::Timestamp,
-    ) -> Result<usize, jojobot_domain::session::SessionError> {
-        self.0.prune_minted(before).await
-    }
-
-    async fn append(
-        &self,
-        id: &jojobot_domain::session::SessionId,
-        entry: jojobot_domain::session::NewEntry,
-    ) -> Result<jojobot_domain::session::JournalEntry, jojobot_domain::session::SessionError> {
-        self.0.append(id, entry).await
-    }
-    async fn amend_last(
-        &self,
-        id: &jojobot_domain::session::SessionId,
-        text: &str,
-    ) -> Result<jojobot_domain::session::JournalEntry, jojobot_domain::session::SessionError> {
-        self.0.amend_last(id, text).await
-    }
-    async fn amend_beat(
-        &self,
-        id: &jojobot_domain::session::SessionId,
-        entry: &jojobot_domain::session::EntryId,
-        text: &str,
-        touched: jiff::Timestamp,
-    ) -> Result<jojobot_domain::session::JournalEntry, jojobot_domain::session::SessionError> {
-        self.0.amend_beat(id, entry, text, touched).await
-    }
-    async fn set_focus(
-        &self,
-        id: &jojobot_domain::session::SessionId,
-        focus: &str,
-    ) -> Result<jojobot_domain::session::Session, jojobot_domain::session::SessionError> {
-        self.0.set_focus(id, focus).await
-    }
-    async fn set_timezone(
-        &self,
-        id: &jojobot_domain::session::SessionId,
-        zone: Option<&str>,
-    ) -> Result<jojobot_domain::session::Session, jojobot_domain::session::SessionError> {
-        self.0.set_timezone(id, zone).await
-    }
-    async fn set_stated_day(
-        &self,
-        id: &jojobot_domain::session::SessionId,
-        day: Option<Date>,
-    ) -> Result<jojobot_domain::session::Session, jojobot_domain::session::SessionError> {
-        self.0.set_stated_day(id, day).await
-    }
-    async fn set_wrap_window(
-        &self,
-        id: &jojobot_domain::session::SessionId,
-        window: Option<jojobot_domain::session::WrapWindow>,
-    ) -> Result<jojobot_domain::session::Session, jojobot_domain::session::SessionError> {
-        self.0.set_wrap_window(id, window).await
-    }
-    async fn close(
-        &self,
-        id: &jojobot_domain::session::SessionId,
-        to: jojobot_domain::session::SessionState,
-    ) -> Result<jojobot_domain::session::Session, jojobot_domain::session::SessionError> {
-        self.0.close(id, to).await
-    }
-    async fn close_displaced(
-        &self,
-        id: &jojobot_domain::session::SessionId,
-        by: &jojobot_domain::session::Sid,
-    ) -> Result<jojobot_domain::session::Session, jojobot_domain::session::SessionError> {
-        self.0.close_displaced(id, by).await
-    }
-    async fn add_served(
-        &self,
-        id: &jojobot_domain::session::SessionId,
-        chars: u64,
-        day: jiff::civil::Date,
-    ) -> Result<(), jojobot_domain::session::SessionError> {
-        self.0.add_served(id, chars, day).await
-    }
-    async fn reset_served(
-        &self,
-        id: &jojobot_domain::session::SessionId,
-    ) -> Result<(), jojobot_domain::session::SessionError> {
-        self.0.reset_served(id).await
-    }
-    async fn reopen(
-        &self,
-        id: &jojobot_domain::session::SessionId,
-    ) -> Result<jojobot_domain::session::Session, jojobot_domain::session::SessionError> {
-        self.0.reopen(id).await
-    }
-    async fn set_charter_told(
-        &self,
-        id: &jojobot_domain::session::SessionId,
-        at: jiff::Timestamp,
-    ) -> Result<(), jojobot_domain::session::SessionError> {
-        self.0.set_charter_told(id, at).await
-    }
-
-    async fn scan_session_history(
-        &self,
-    ) -> Result<
-        jojobot_domain::session::history::SessionHistories,
-        jojobot_domain::session::SessionError,
-    > {
-        self.0.scan_session_history().await
-    }
-
-    async fn session_history(
-        &self,
-        id: &jojobot_domain::session::SessionId,
-    ) -> Result<
-        Vec<jojobot_domain::session::history::SessionChange>,
-        jojobot_domain::session::SessionError,
-    > {
-        self.0.session_history(id).await
-    }
-
-    async fn journal_history(
-        &self,
-        id: &jojobot_domain::session::SessionId,
-        entry: &jojobot_domain::session::EntryId,
-    ) -> Result<Vec<jojobot_domain::session::history::Wording>, jojobot_domain::session::SessionError>
-    {
-        self.0.journal_history(id, entry).await
-    }
-    async fn note_charter_change(
-        &self,
-        bot: &EntityId,
-        change: jojobot_domain::session::CharterChange,
-        by_session: Option<&str>,
-    ) -> Result<(), jojobot_domain::session::SessionError> {
-        self.0.note_charter_change(bot, change, by_session).await
-    }
-    async fn charter_change_of(
-        &self,
-        bot: &EntityId,
-    ) -> Result<Option<jojobot_domain::session::CharterChange>, jojobot_domain::session::SessionError>
-    {
-        self.0.charter_change_of(bot).await
     }
 }

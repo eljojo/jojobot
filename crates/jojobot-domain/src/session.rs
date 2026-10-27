@@ -1469,6 +1469,19 @@ pub enum SessionError {
 /// * **nothing is created as a side effect** — [`begin`](Sessions::begin) is the
 ///   only thing that brings a session card into being, and the caller decides
 ///   when. A boot that never works leaves no card.
+#[jojobot_forward::forwardable(
+    callback = forward_sessions,
+    scope = "session",
+    uses(
+        crate::memory::EntityId,
+        ::jiff::Timestamp,
+        ::jiff::civil::Date,
+        ::std::collections::BTreeMap,
+        ::std::collections::BTreeSet,
+        ::std::collections::HashMap,
+        ::std::sync::Arc
+    )
+)]
 #[async_trait::async_trait]
 pub trait Sessions: Send + Sync {
     /// Every session of one bot, whatever its state, newest start first. What
@@ -2824,71 +2837,8 @@ mod tests {
     async fn a_session_that_will_not_close_is_reported_and_left_active() {
         struct RefusesToClose(InMemorySessions);
 
-        #[async_trait::async_trait]
+        #[crate::forward(forward_sessions, via = 0)]
         impl Sessions for RefusesToClose {
-            async fn sessions_of(&self, bot: &EntityId) -> Result<Vec<Session>, SessionError> {
-                self.0.sessions_of(bot).await
-            }
-            async fn all_sessions(&self) -> Result<Vec<Session>, SessionError> {
-                self.0.all_sessions().await
-            }
-            async fn read_session(&self, id: &SessionId) -> Result<Session, SessionError> {
-                self.0.read_session(id).await
-            }
-            async fn begin(&self, new: NewSession) -> Result<Session, SessionError> {
-                self.0.begin(new).await
-            }
-            async fn set_timezone(
-                &self,
-                id: &SessionId,
-                timezone: Option<&str>,
-            ) -> Result<Session, SessionError> {
-                self.0.set_timezone(id, timezone).await
-            }
-            async fn set_stated_day(
-                &self,
-                id: &SessionId,
-                day: Option<Date>,
-            ) -> Result<Session, SessionError> {
-                self.0.set_stated_day(id, day).await
-            }
-            async fn append(
-                &self,
-                id: &SessionId,
-                entry: NewEntry,
-            ) -> Result<JournalEntry, SessionError> {
-                self.0.append(id, entry).await
-            }
-            async fn amend_last(
-                &self,
-                id: &SessionId,
-                text: &str,
-            ) -> Result<JournalEntry, SessionError> {
-                self.0.amend_last(id, text).await
-            }
-            async fn amend_beat(
-                &self,
-                id: &SessionId,
-                entry: &EntryId,
-                text: &str,
-                touched: Timestamp,
-            ) -> Result<JournalEntry, SessionError> {
-                self.0.amend_beat(id, entry, text, touched).await
-            }
-            async fn set_focus(
-                &self,
-                id: &SessionId,
-                focus: &str,
-            ) -> Result<Session, SessionError> {
-                self.0.set_focus(id, focus).await
-            }
-            async fn set_wrap_window(
-                &self,
-                id: &SessionId,
-                window: Option<WrapWindow>,
-            ) -> Result<Session, SessionError> {
-                self.0.set_wrap_window(id, window).await
-            }
             async fn close(&self, _: &SessionId, _: SessionState) -> Result<Session, SessionError> {
                 Err(SessionError::Store("the board said no".into()))
             }
@@ -2898,76 +2848,6 @@ mod tests {
                 _: &Sid,
             ) -> Result<Session, SessionError> {
                 Err(SessionError::Store("the board said no".into()))
-            }
-            async fn add_served(
-                &self,
-                id: &SessionId,
-                chars: u64,
-                day: jiff::civil::Date,
-            ) -> Result<(), SessionError> {
-                self.0.add_served(id, chars, day).await
-            }
-            async fn reset_served(&self, id: &SessionId) -> Result<(), SessionError> {
-                self.0.reset_served(id).await
-            }
-            async fn reopen(&self, id: &SessionId) -> Result<Session, SessionError> {
-                self.0.reopen(id).await
-            }
-            async fn set_charter_told(
-                &self,
-                id: &SessionId,
-                at: Timestamp,
-            ) -> Result<(), SessionError> {
-                self.0.set_charter_told(id, at).await
-            }
-            async fn scan_session_history(
-                &self,
-            ) -> Result<history::SessionHistories, SessionError> {
-                self.0.scan_session_history().await
-            }
-            async fn session_history(
-                &self,
-                id: &SessionId,
-            ) -> Result<Vec<history::SessionChange>, SessionError> {
-                self.0.session_history(id).await
-            }
-            async fn journal_history(
-                &self,
-                id: &SessionId,
-                entry: &EntryId,
-            ) -> Result<Vec<history::Wording>, SessionError> {
-                self.0.journal_history(id, entry).await
-            }
-            async fn set_key_hash(
-                &self,
-                id: &SessionId,
-                hash: &str,
-                trail: &KeyTrail,
-            ) -> Result<(), SessionError> {
-                self.0.set_key_hash(id, hash, trail).await
-            }
-            async fn note_minted(&self, run: &MintedRun) -> Result<(), SessionError> {
-                self.0.note_minted(run).await
-            }
-            async fn minted_without_a_card(&self) -> Result<Vec<MintedRun>, SessionError> {
-                self.0.minted_without_a_card().await
-            }
-            async fn prune_minted(&self, before: Timestamp) -> Result<usize, SessionError> {
-                self.0.prune_minted(before).await
-            }
-            async fn note_charter_change(
-                &self,
-                bot: &EntityId,
-                change: CharterChange,
-                by_session: Option<&str>,
-            ) -> Result<(), SessionError> {
-                self.0.note_charter_change(bot, change, by_session).await
-            }
-            async fn charter_change_of(
-                &self,
-                bot: &EntityId,
-            ) -> Result<Option<CharterChange>, SessionError> {
-                self.0.charter_change_of(bot).await
             }
         }
 

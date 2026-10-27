@@ -110,7 +110,8 @@ pub fn forwardable(args: TokenStream, item: TokenStream) -> TokenStream {
     let name = &args.name;
     let scope: TokenStream2 = args.scope.parse().expect("a module path");
     let trait_name = &port.ident;
-    let uses = &args.uses;
+    let uses_of_the_port = &args.uses;
+    let uses = from_this_crate(quote! { #(#uses_of_the_port),* });
     quote! {
         #port
 
@@ -121,7 +122,7 @@ pub fn forwardable(args: TokenStream, item: TokenStream) -> TokenStream {
                 $crate::__forward_finish! {
                     port #trait_name ;
                     scope $crate :: #scope ;
-                    uses { #(#uses),* }
+                    uses { #uses }
                     methods { #(#signatures)* }
                     $($double)*
                 }
@@ -244,7 +245,7 @@ fn from_this_crate(tokens: TokenStream2) -> TokenStream2 {
 struct Finish {
     port: Ident,
     scope: TokenStream2,
-    uses: Vec<Path>,
+    uses: Vec<TokenStream2>,
     methods: Vec<TraitItemFn>,
     mode: Mode,
     required_only: bool,
@@ -281,10 +282,16 @@ impl Parse for Finish {
         key(input, "uses")?;
         let inside;
         braced!(inside in input);
-        let uses = inside
-            .parse_terminated(Path::parse_mod_style, Token![,])?
-            .into_iter()
-            .collect();
+        // **Tokens, not paths**: a path may begin with `$crate`.
+        let mut uses = vec![TokenStream2::new()];
+        while !inside.is_empty() {
+            let token: TokenTree = inside.parse()?;
+            match &token {
+                TokenTree::Punct(p) if p.as_char() == ',' => uses.push(TokenStream2::new()),
+                _ => uses.last_mut().expect("one").extend([token]),
+            }
+        }
+        uses.retain(|path| !path.is_empty());
         key(input, "methods")?;
         let inside;
         braced!(inside in input);

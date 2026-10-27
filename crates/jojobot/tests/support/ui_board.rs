@@ -448,23 +448,10 @@ struct BehindSearch {
     behind: jojobot_domain::memory::search::Behind,
 }
 
-#[async_trait::async_trait]
+#[jojobot_domain::forward(jojobot_domain::forward_search, via = inner, required_only)]
 impl Search for BehindSearch {
-    async fn search_page(
-        &self,
-        query: &jojobot_domain::memory::search::SearchQuery,
-    ) -> Result<jojobot_domain::memory::search::RankedPage, jojobot_domain::memory::MemoryError>
-    {
-        self.inner.search_page(query).await
-    }
-    fn mail_coverage(&self) -> jojobot_domain::memory::search::Coverage {
-        self.inner.mail_coverage()
-    }
     fn memory_coverage(&self) -> jojobot_domain::memory::search::Coverage {
         jojobot_domain::memory::search::Coverage::Partial(self.behind)
-    }
-    fn session_coverage(&self) -> jojobot_domain::memory::search::Coverage {
-        self.inner.session_coverage()
     }
 }
 

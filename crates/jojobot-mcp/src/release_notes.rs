@@ -537,7 +537,7 @@ async fn keep_ledger(
 mod tests {
     use super::*;
     use jojobot_domain::mailbox::testing::InMemoryMailboxes;
-    use jojobot_domain::mailbox::{MailboxError, MailboxName, Message};
+    use jojobot_domain::mailbox::{MailboxName, Message};
     use jojobot_domain::memory::testing::InMemoryMemory;
     use jojobot_domain::memory::{EntityId, NewEntity, NewFact};
 
@@ -827,23 +827,8 @@ mod tests {
         fault: Fault,
     }
 
-    #[async_trait::async_trait]
+    #[jojobot_domain::forward(jojobot_domain::forward_mailboxes, via = inner)]
     impl Mailboxes for FailsOnce {
-        async fn create_mailbox(
-            &self,
-            name: &MailboxName,
-            owner: &EntityId,
-            note: Option<&str>,
-        ) -> Result<Guarded<jojobot_domain::mailbox::Mailbox>, MailboxError> {
-            self.inner.create_mailbox(name, owner, note).await
-        }
-        async fn repoint_owner(
-            &self,
-            from: &EntityId,
-            to: &EntityId,
-        ) -> Result<Option<jojobot_domain::mailbox::Mailbox>, MailboxError> {
-            self.inner.repoint_owner(from, to).await
-        }
         async fn list_mailboxes(
             &self,
         ) -> Result<Vec<jojobot_domain::mailbox::Mailbox>, MailboxError> {
@@ -866,76 +851,11 @@ mod tests {
             }
             self.inner.post_message(new).await
         }
-        async fn read_mailbox(
-            &self,
-            name: &MailboxName,
-            taken_by: jojobot_domain::mailbox::TakenBy,
-            acting: jojobot_domain::mailbox::Acting<'_>,
-        ) -> Result<Guarded<jojobot_domain::mailbox::Delivery>, MailboxError> {
-            self.inner.read_mailbox(name, taken_by, acting).await
-        }
-        async fn scan_messages(&self) -> Result<Vec<Message>, MailboxError> {
-            self.inner.scan_messages().await
-        }
-        async fn message_by_id(
-            &self,
-            id: &jojobot_domain::mailbox::MessageId,
-        ) -> Result<Option<Message>, MailboxError> {
-            self.inner.message_by_id(id).await
-        }
-        async fn messages_by_id(
-            &self,
-            ids: &[jojobot_domain::mailbox::MessageId],
-        ) -> Result<Vec<Message>, MailboxError> {
-            self.inner.messages_by_id(ids).await
-        }
         async fn sent_by(&self, senders: &[&str]) -> Result<Vec<Message>, MailboxError> {
             if self.fault == Fault::WhatWasSent {
                 return Err(MailboxError::InvalidMessage("the store went away".into()));
             }
             self.inner.sent_by(senders).await
-        }
-        async fn read_message(
-            &self,
-            id: &jojobot_domain::mailbox::MessageId,
-            acting: jojobot_domain::mailbox::Acting<'_>,
-        ) -> Result<jojobot_domain::mailbox::Delivered, MailboxError> {
-            self.inner.read_message(id, acting).await
-        }
-        async fn mark_processed(
-            &self,
-            id: &jojobot_domain::mailbox::MessageId,
-            by: &MailboxName,
-            notes: Option<&str>,
-            acting: jojobot_domain::mailbox::Acting<'_>,
-        ) -> Result<Message, MailboxError> {
-            self.inner.mark_processed(id, by, notes, acting).await
-        }
-        async fn quarantine(
-            &self,
-            id: &jojobot_domain::mailbox::MessageId,
-            by: &MailboxName,
-            reason: &str,
-            acting: jojobot_domain::mailbox::Acting<'_>,
-        ) -> Result<jojobot_domain::mailbox::Quarantined, MailboxError> {
-            self.inner.quarantine(id, by, reason, acting).await
-        }
-        async fn message_history(
-            &self,
-            id: &jojobot_domain::mailbox::MessageId,
-        ) -> Result<Vec<jojobot_domain::mailbox::MessageEvent>, MailboxError> {
-            self.inner.message_history(id).await
-        }
-        async fn scan_message_events(
-            &self,
-        ) -> Result<
-            Vec<(
-                jojobot_domain::mailbox::MessageId,
-                Vec<jojobot_domain::mailbox::MessageEvent>,
-            )>,
-            MailboxError,
-        > {
-            self.inner.scan_message_events().await
         }
     }
 

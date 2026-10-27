@@ -1662,7 +1662,7 @@ struct StallsWhenTold {
     stalled: std::sync::atomic::AtomicBool,
 }
 
-#[async_trait::async_trait]
+#[jojobot_domain::forward(jojobot_domain::forward_teachings, via = inner)]
 impl jojobot_domain::teaching::Teachings for StallsWhenTold {
     async fn first_contact(
         &self,
@@ -1674,13 +1674,6 @@ impl jojobot_domain::teaching::Teachings for StallsWhenTold {
             std::future::pending::<()>().await;
         }
         self.inner.first_contact(sid, domain, at).await
-    }
-
-    async fn forget(
-        &self,
-        sid: &jojobot_domain::session::Sid,
-    ) -> Result<(), jojobot_domain::teaching::TeachingError> {
-        self.inner.forget(sid).await
     }
 }
 
