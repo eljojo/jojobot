@@ -10,6 +10,7 @@
 //! handle and leaves the key.
 
 use crate::writer::owned;
+pub(crate) use crate::writer::sql::commit as commit_native;
 use jiff::Timestamp;
 use jojobot_domain::clock::Clock;
 use jojobot_domain::memory::EntityId;
@@ -27,7 +28,7 @@ fn stamp(at: Timestamp) -> String {
 
 fn store(e: sqlx::Error) -> RequestError {
     tracing::error!(error = %e, "the request store failed");
-    RequestError::Store("the request store could not be reached".into())
+    crate::writer::sql::store_error(e)
 }
 
 /// **A call under an id that another call spent first.** The ledger holds one
@@ -114,7 +115,7 @@ async fn bot_key(
 #[derive(Clone)]
 pub struct DoltRequests {
     writer: crate::writer::Writer,
-    pool: MySqlPool,
+    pool: crate::writer::sql::Pool,
     /// The clock a lookup measures the keep window against.
     clock: Clock,
 }
@@ -123,7 +124,7 @@ impl DoltRequests {
     pub fn new(pool: MySqlPool) -> Self {
         Self {
             writer: crate::writer::Writer::default(),
-            pool,
+            pool: pool.into(),
             clock: Clock::default(),
         }
     }
@@ -391,7 +392,7 @@ pub(crate) async fn commit(
     landed: impl FnOnce() -> String,
 ) -> Result<(), sqlx::Error> {
     let claim = claim(&mut tx, clock, landed).await?;
-    tx.commit().await?;
+    crate::writer::sql::commit(tx).await?;
     claim.committed();
     Ok(())
 }

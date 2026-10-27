@@ -747,6 +747,9 @@ impl<T> Guarded<T> {
 /// into these; the domain and the MCP layer speak only this vocabulary.
 #[derive(Debug, thiserror::Error)]
 pub enum MailboxError {
+    /// The commit may have landed, but no result can be reconstructed.
+    #[error("{}", crate::request::INDETERMINATE_WRITE)]
+    Indeterminate,
     /// The mailbox name is not well-formed.
     #[error("invalid mailbox name '{0}': names are [a-z0-9-]+, starting and ending alphanumeric")]
     InvalidName(String),

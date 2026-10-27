@@ -1338,6 +1338,9 @@ impl Session {
 /// into these; the domain and the MCP layer speak only this vocabulary.
 #[derive(Debug, thiserror::Error)]
 pub enum SessionError {
+    /// The commit may have landed, but no result can be reconstructed.
+    #[error("{}", crate::request::INDETERMINATE_WRITE)]
+    Indeterminate,
     /// The session id is not a well-formed token.
     #[error("invalid session id '{0}': ids are [a-z0-9-]+")]
     InvalidId(String),

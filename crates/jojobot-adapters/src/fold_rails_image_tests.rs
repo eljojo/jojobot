@@ -242,6 +242,7 @@ struct CommitsThenLoses {
     inner: Arc<InMemorySessions>,
     lost: Lost,
     once: std::sync::atomic::AtomicBool,
+    release: tokio::sync::Notify,
 }
 
 #[async_trait::async_trait]
@@ -253,7 +254,7 @@ impl jojobot_domain::session::Sessions for CommitsThenLoses {
         let begun = self.inner.begin(new).await?;
         if !self.once.swap(true, std::sync::atomic::Ordering::SeqCst) {
             match self.lost {
-                Lost::Cancelled => std::future::pending::<()>().await,
+                Lost::Cancelled => self.release.notified().await,
                 Lost::Unacknowledged => {
                     return Err(jojobot_domain::session::SessionError::Store(
                         "the row committed and the answer did not arrive".into(),
@@ -469,8 +470,9 @@ async fn begin_lost_then_retried(
         inner: store.clone(),
         lost,
         once: std::sync::atomic::AtomicBool::new(false),
+        release: tokio::sync::Notify::new(),
     });
-    let folded = FoldedSessions::new(losing, store.write_stamp(), Clock::Real);
+    let folded = FoldedSessions::new(losing.clone(), store.write_stamp(), Clock::Real);
     folded.rebuild().await.expect("the image loads");
     let new = || NewSession {
         bot: jojobot_domain::memory::EntityId("bot:gamma".into()),
@@ -488,6 +490,8 @@ async fn begin_lost_then_retried(
                 tokio::time::timeout(std::time::Duration::from_millis(50), folded.begin(new()))
                     .await;
             assert!(waited.is_err(), "the first begin is cancelled: {waited:?}");
+            losing.release.notify_one();
+            folded.wait_for_writes().await;
         }
         Lost::Unacknowledged => {
             let failed = folded.begin(new()).await;

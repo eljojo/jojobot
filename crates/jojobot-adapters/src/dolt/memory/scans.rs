@@ -56,7 +56,7 @@ impl DoltMemory {
                 unmapped: self.unmapped_under(&mut tx, &key).await?,
             });
         }
-        tx.commit().await.map_err(store)?;
+        super::commit_native(tx).await.map_err(store)?;
         Ok(scanned)
     }
 
@@ -75,7 +75,7 @@ impl DoltMemory {
         .await
         .map_err(store)?;
         let Some(row) = row else {
-            tx.commit().await.map_err(store)?;
+            super::commit_native(tx).await.map_err(store)?;
             return Ok(None);
         };
         let prose: String = row.try_get("prose").map_err(store)?;
@@ -147,7 +147,7 @@ impl DoltMemory {
             owner: None,
             unmapped: self.unmapped_under(&mut tx, &key).await?,
         };
-        tx.commit().await.map_err(store)?;
+        super::commit_native(tx).await.map_err(store)?;
         Ok(Some(doc))
     }
 }

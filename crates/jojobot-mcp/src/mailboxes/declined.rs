@@ -236,6 +236,7 @@ pub(crate) fn mailbox_fix_by(e: &MailboxError) -> Option<FixBy> {
         | MailboxError::KindsNeverLoaded => Some(FixBy::Person),
         MailboxError::Conflict => Some(FixBy::Retry),
         MailboxError::Store(_) => other_store_failure_word(),
+        MailboxError::Indeterminate => None,
     }
 }
 
@@ -334,6 +335,7 @@ pub(crate) fn mailbox_error(e: MailboxError) -> McpError {
 
 fn mailbox_error_arms(e: MailboxError) -> McpError {
     match e {
+        MailboxError::Indeterminate => McpError::internal_error(e.to_string(), None),
         // **Backstops, not the intended answer.** Every one of these is a
         // caller mistake and `mailbox_declined` answers all of them as blocked
         // results with a way forward (rule 68). They are reached only by a verb

@@ -11,7 +11,7 @@ pub(super) fn push_stamp(at: Timestamp) -> String {
 }
 
 pub(super) fn push_store(e: sqlx::Error) -> PushError {
-    PushError::Store(e.to_string())
+    crate::writer::sql::store_error(e)
 }
 
 pub(super) fn push_moment(text: &str) -> Result<Timestamp, PushError> {
@@ -114,7 +114,7 @@ impl Outbox for DoltMailboxes {
             )
             .await?;
         }
-        tx.commit().await.map_err(push_store)?;
+        crate::writer::sql::commit(tx).await.map_err(push_store)?;
         Ok(())
     }
 
@@ -153,7 +153,7 @@ impl DoltMailboxes {
         if changed > 0 {
             append_push_attempt(&mut tx, message, state, at, None).await?;
         }
-        tx.commit().await.map_err(push_store)?;
+        crate::writer::sql::commit(tx).await.map_err(push_store)?;
         Ok(())
     }
 }

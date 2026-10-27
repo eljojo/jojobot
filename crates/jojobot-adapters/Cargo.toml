@@ -25,6 +25,8 @@ tokio = { workspace = true }
 # The store. jojobot spawns `dolt sql-server` and talks to it over loopback TCP;
 # sqlx is the wire client.
 sqlx = { workspace = true }
+futures-core.workspace = true
+futures-util.workspace = true
 # The store's startup failures are a typed enum like every other error here.
 thiserror = { workspace = true }
 # The store's server is asked to die with jojobot, and that is a kernel flag set

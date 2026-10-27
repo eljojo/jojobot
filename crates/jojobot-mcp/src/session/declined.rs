@@ -80,6 +80,7 @@ pub(crate) fn session_fix_by(e: &SessionError) -> Option<FixBy> {
         SessionError::Unreadable { .. } => Some(FixBy::Person),
         SessionError::Conflict => Some(FixBy::Retry),
         SessionError::Store(_) => other_store_failure_word(),
+        SessionError::Indeterminate => None,
     }
 }
 
@@ -239,6 +240,7 @@ pub(crate) fn session_error(e: SessionError) -> McpError {
 
 fn session_error_arms(e: SessionError) -> McpError {
     match e {
+        SessionError::Indeterminate => McpError::internal_error(e.to_string(), None),
         // **Backstops, not the intended answer.** Every one of these is a
         // caller mistake and `session_declined` answers all of them as blocked
         // results with a way forward (rule 68). They are reached only by a verb

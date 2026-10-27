@@ -99,6 +99,9 @@ sqlx = { version = "0.9", default-features = false, features = [
     "macros",
 ] }
 
+futures-core = "0.3"
+futures-util = { version = "0.3", default-features = false, features = ["std", "async-await"] }
+
 # --- entropy: the session handle is minted here, and a handle a caller could
 # predict is a handle a caller could forge. OS entropy, no PRNG state to seed. ---
 getrandom = "0.4"

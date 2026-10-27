@@ -352,6 +352,11 @@ impl IndexedMemory {
     ) -> Result<T, MemoryError> {
         use jojobot_domain::memory::Landed;
         let result = write.await;
+        // Recovery can publish a rename without reconstructing its receipt.
+        // Dependent mail and session caches must re-read under the new names.
+        if matches!(&result, Err(MemoryError::Indeterminate)) {
+            self.index.names_changed();
+        }
         if let Err(MemoryError::FoldBehind { landed, .. }) = &result {
             let touched = match landed {
                 Landed::Fact(fact) => vec![fact.home.clone()],

@@ -662,7 +662,7 @@ impl BootReader for DoltBootReader {
         let context = Context::load(&mut tx, things).await?;
         let mut by_key = Self::writes_by_key(&mut tx, None).await?;
         let declared = DoltMemory::types_in(&mut tx).await?;
-        tx.commit().await.map_err(store)?;
+        super::commit_native(tx).await.map_err(store)?;
         Ok(context
             .plain
             .into_iter()
@@ -689,7 +689,7 @@ impl BootReader for DoltBootReader {
         .fetch_all(&mut *tx)
         .await
         .map_err(store)?;
-        tx.commit().await.map_err(store)?;
+        super::commit_native(tx).await.map_err(store)?;
         // The rows of each key, in the order they were read.
         let mut by_key: HashMap<String, Vec<&sqlx::mysql::MySqlRow>> = HashMap::new();
         for row in &rows {
@@ -741,7 +741,7 @@ impl BootReader for DoltBootReader {
         .fetch_all(&mut *tx)
         .await
         .map_err(store)?;
-        tx.commit().await.map_err(store)?;
+        super::commit_native(tx).await.map_err(store)?;
         let mut raw: HashMap<String, Vec<RawWrite>> = HashMap::new();
         for row in &writes {
             let entity: String = row.try_get("entity").map_err(store)?;
@@ -822,7 +822,7 @@ impl BootReader for DoltBootReader {
                 .await
                 .map_err(store)?;
         let versions = Self::versions_written(&mut tx, false).await?;
-        tx.commit().await.map_err(store)?;
+        super::commit_native(tx).await.map_err(store)?;
         let mut claims: HashMap<String, i64> = HashMap::with_capacity(counts.len());
         for row in &counts {
             claims.insert(
@@ -863,7 +863,7 @@ impl BootReader for DoltBootReader {
             .fetch_all(&mut *tx)
             .await
             .map_err(store)?;
-        tx.commit().await.map_err(store)?;
+        super::commit_native(tx).await.map_err(store)?;
         type Field = (String, Option<String>, String, Option<String>);
         let mut written: HashMap<String, Vec<Field>> = HashMap::new();
         for row in &fields {
@@ -922,7 +922,7 @@ impl BootReader for DoltBootReader {
         let mut tx = self.memory.pool.begin().await.map_err(store)?;
         let context = Context::load(&mut tx, things).await?;
         let versions = Self::versions_written(&mut tx, true).await?;
-        tx.commit().await.map_err(store)?;
+        super::commit_native(tx).await.map_err(store)?;
         let mut answered = HashMap::with_capacity(context.plain.len());
         'things: for (thing, key) in &context.plain {
             let Some(handle) = context.handle_of(key) else {
@@ -1055,7 +1055,7 @@ impl BootReader for DoltBootReader {
         .fetch_all(&mut *tx)
         .await
         .map_err(store)?;
-        tx.commit().await.map_err(store)?;
+        super::commit_native(tx).await.map_err(store)?;
 
         // The rows beside the claims, by the claim they belong to.
         type Claim = (String, String);

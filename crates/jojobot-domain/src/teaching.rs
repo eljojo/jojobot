@@ -104,6 +104,9 @@ pub trait Teachings: Send + Sync {
 /// this; the domain and the MCP layer speak only this vocabulary.
 #[derive(Debug, thiserror::Error)]
 pub enum TeachingError {
+    /// The commit may have landed, but no result can be reconstructed.
+    #[error("{}", crate::request::INDETERMINATE_WRITE)]
+    Indeterminate,
     /// The store could not be reached or answered with something this port
     /// cannot read.
     #[error("teaching store error: {0}")]

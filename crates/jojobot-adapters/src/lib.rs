@@ -57,3 +57,6 @@ mod fold_dropped_tests;
 
 #[cfg(test)]
 mod writer_recovery_tests;
+
+#[cfg(test)]
+mod writer_recovery_outcome_tests;

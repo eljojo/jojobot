@@ -13,13 +13,13 @@ use sqlx::MySqlPool;
 /// nobody set.
 #[derive(Clone)]
 pub struct DoltTeachings {
-    pool: MySqlPool,
+    pool: crate::writer::sql::Pool,
 }
 
 impl DoltTeachings {
     /// Open against an already-migrated pool.
     pub fn open(pool: MySqlPool) -> Self {
-        Self { pool }
+        Self { pool: pool.into() }
     }
 }
 
@@ -35,7 +35,7 @@ fn store(err: sqlx::Error) -> TeachingError {
         tracing::error!(error = %err, rule, "the teaching store refused a write on a rule it enforces");
         return TeachingError::Refused(rule.to_string());
     }
-    TeachingError::Store(err.to_string())
+    crate::writer::sql::store_error(err)
 }
 
 #[async_trait::async_trait]
@@ -55,7 +55,7 @@ impl Teachings for DoltTeachings {
                 .await
                 .map_err(store)?;
         if existing.is_some() {
-            tx.commit().await.map_err(store)?;
+            crate::writer::sql::commit(tx).await.map_err(store)?;
             return Ok(false);
         }
         sqlx::query("INSERT INTO session_teaching (sid, domain, taught_at) VALUES (?, ?, ?)")
@@ -65,7 +65,7 @@ impl Teachings for DoltTeachings {
             .execute(&mut *tx)
             .await
             .map_err(store)?;
-        tx.commit().await.map_err(store)?;
+        crate::writer::sql::commit(tx).await.map_err(store)?;
         Ok(true)
     }
 

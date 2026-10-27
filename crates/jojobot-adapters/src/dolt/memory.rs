@@ -57,7 +57,7 @@ use jojobot_domain::memory::{
 use sqlx::{AssertSqlSafe, MySql, MySqlPool, Row, Transaction};
 
 use super::ids::{self, Draw};
-use super::ordinal;
+use super::{ordinal, requests::commit_native};
 
 pub use adopt::AdoptionReport;
 pub use link_rule::{LinkRuleDiagnostics, LinkRuleSummary, OwnedNowField};
@@ -237,7 +237,7 @@ fn rekey_kept_list(column: &str, cell: &str, handle: &str, badge: &str) -> Optio
 /// set.
 #[derive(Clone)]
 pub struct DoltMemory {
-    pool: MySqlPool,
+    pool: crate::writer::sql::Pool,
     /// TEMPORARY(9.3.4) own_fields_reach. **Whether a key sent as an own field reaches its thing**, as it did
     /// before own fields stayed on their record — see [`WriteClass::Stays`].
     /// Off, as the deployed store is: an own field stays.
@@ -299,7 +299,7 @@ impl DoltMemory {
     /// exactly the failure the two refusals exist to name.
     pub fn open(pool: MySqlPool) -> Self {
         DoltMemory {
-            pool,
+            pool: pool.into(),
             own_fields_reach: false,
             index_listings: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             targeted_reads: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
@@ -386,7 +386,7 @@ impl DoltMemory {
     /// watched through the verb that mints**.
     pub fn open_drawing(pool: MySqlPool, draw: Draw) -> Self {
         DoltMemory {
-            pool,
+            pool: pool.into(),
             own_fields_reach: false,
             index_listings: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             targeted_reads: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
@@ -434,7 +434,7 @@ impl DoltMemory {
                 .await
                 .map_err(store)?;
             append_entity_write(&mut tx, &EntityId(handle.clone()), &self.clock, None).await?;
-            tx.commit().await.map_err(store)?;
+            commit_native(tx).await.map_err(store)?;
             given += 1;
         }
         Ok(given)
@@ -497,7 +497,7 @@ impl DoltMemory {
             }
             let mut tx = self.pool.begin().await.map_err(store)?;
             Self::rekey_to_badge(&mut tx, &handle, &badge).await?;
-            tx.commit().await.map_err(store)?;
+            commit_native(tx).await.map_err(store)?;
             rekeyed += 1;
         }
         Ok(rekeyed)
@@ -825,7 +825,7 @@ impl DoltMemory {
             }
             report.repointed += Self::repoint_field_links(&mut tx, &declared, badge, to).await?;
         }
-        tx.commit().await.map_err(store)?;
+        commit_native(tx).await.map_err(store)?;
         report.reported = Self::tell_once(
             &self.pool,
             FORWARDED_LINKS_REPORTED,
@@ -1075,7 +1075,7 @@ impl DoltMemory {
                 report.renamed += 1;
             }
         }
-        tx.commit().await.map_err(store)?;
+        commit_native(tx).await.map_err(store)?;
         report.reported = Self::tell_once(
             &self.pool,
             FORWARD_NAMES_REPORTED,
@@ -1263,7 +1263,7 @@ impl DoltMemory {
             .map_err(store)?;
             report.linked += 1;
         }
-        tx.commit().await.map_err(store)?;
+        commit_native(tx).await.map_err(store)?;
         if !lowered_before {
             super::finish_pass(&self.pool, FIELD_LOWERING_PASS).await;
         }
@@ -4469,7 +4469,7 @@ fn store(e: sqlx::Error) -> MemoryError {
         return MemoryError::Refused(rule.to_string());
     }
     tracing::error!(error = %e, "the memory store failed");
-    MemoryError::Store("the memory store could not be reached".into())
+    crate::writer::sql::store_error(e)
 }
 
 /// A row jojobot cannot read as the record it must be. **Its own failure rather
@@ -4890,7 +4890,7 @@ impl Memory for DoltMemory {
     async fn list_entities(&self, kind: Option<EntityKind>) -> Result<Vec<Entity>, MemoryError> {
         let mut tx = self.pool.begin().await.map_err(store)?;
         let all = self.index(&mut tx).await?;
-        tx.commit().await.map_err(store)?;
+        commit_native(tx).await.map_err(store)?;
         Ok(all
             .into_iter()
             .filter(|e| kind.is_none_or(|k| e.kind == k))
@@ -4901,7 +4901,7 @@ impl Memory for DoltMemory {
         let mut tx = self.pool.begin().await.map_err(store)?;
         let mut out = Self::former_handles_in(&mut tx).await?;
         out.extend(self.derived_formers_in(&mut tx).await?);
-        tx.commit().await.map_err(store)?;
+        commit_native(tx).await.map_err(store)?;
         Ok(out)
     }
 
@@ -5408,7 +5408,7 @@ impl Memory for DoltMemory {
             });
         };
         let facts = self.facts_of(&mut tx, &key).await?;
-        tx.commit().await.map_err(store)?;
+        commit_native(tx).await.map_err(store)?;
         Ok(facts)
     }
 
@@ -5436,7 +5436,7 @@ impl Memory for DoltMemory {
         };
         let mut held = self.held_by(&mut tx, &key).await?;
         self.compose_reference_fields(&mut tx, &mut held).await?;
-        tx.commit().await.map_err(store)?;
+        commit_native(tx).await.map_err(store)?;
         Ok(held)
     }
 
@@ -5495,7 +5495,7 @@ impl Memory for DoltMemory {
             .transpose()
             .map_err(store)?
             .unwrap_or(0);
-        tx.commit().await.map_err(store)?;
+        commit_native(tx).await.map_err(store)?;
         Ok((held, (written + signalled) as u64))
     }
 
@@ -5533,7 +5533,7 @@ impl Memory for DoltMemory {
         // finds its own ledger records by their label, so a merged bot's two id
         // spaces are never compared.
         newest = newest.max(Self::newest_change(&mut tx, &stored_at, &key).await?);
-        tx.commit().await.map_err(store)?;
+        commit_native(tx).await.map_err(store)?;
         Ok(FieldAges { newest, keys })
     }
 
@@ -5623,7 +5623,7 @@ impl Memory for DoltMemory {
                 ));
             }
         }
-        tx.commit().await.map_err(store)?;
+        commit_native(tx).await.map_err(store)?;
         Ok(events)
     }
 
@@ -5633,18 +5633,18 @@ impl Memory for DoltMemory {
     ) -> Result<Option<FactAddress>, MemoryError> {
         let mut tx = self.pool.begin().await.map_err(store)?;
         let moved = self.moved_in(&mut tx, address).await?;
-        tx.commit().await.map_err(store)?;
+        commit_native(tx).await.map_err(store)?;
         Ok(moved)
     }
 
     async fn unmapped_claims(&self, entity: &EntityId) -> Result<Vec<UnmappedClaim>, MemoryError> {
         let mut tx = self.pool.begin().await.map_err(store)?;
         let Some((key, _)) = self.resolve(&mut tx, entity).await? else {
-            tx.commit().await.map_err(store)?;
+            commit_native(tx).await.map_err(store)?;
             return Ok(Vec::new());
         };
         let found = self.unmapped_under(&mut tx, &key).await?;
-        tx.commit().await.map_err(store)?;
+        commit_native(tx).await.map_err(store)?;
         Ok(found)
     }
 
@@ -5763,7 +5763,7 @@ impl Memory for DoltMemory {
                 ));
             }
         }
-        tx.commit().await.map_err(store)?;
+        commit_native(tx).await.map_err(store)?;
         // **In the order they happened**, compared as moments because a stamp's
         // fractional digits vary in length and text order is not time order. A
         // version nobody stamped sorts first, where an older build left it. The
@@ -5887,7 +5887,7 @@ impl Memory for DoltMemory {
                 .await?;
             history.push(write);
         }
-        tx.commit().await.map_err(store)?;
+        commit_native(tx).await.map_err(store)?;
         Ok(history)
     }
 
@@ -5988,7 +5988,7 @@ impl Memory for DoltMemory {
                 .await?;
             histories.entry(id).or_default().push(write);
         }
-        tx.commit().await.map_err(store)?;
+        commit_native(tx).await.map_err(store)?;
         Ok(histories)
     }
 
@@ -6016,7 +6016,7 @@ impl Memory for DoltMemory {
         rows.sort_by_key(|write| write.ordinal);
         Self::forward_raw_values(&mut tx, &mut rows).await?;
         let facts = self.facts_of(&mut tx, &storage_key).await?;
-        tx.commit().await.map_err(store)?;
+        commit_native(tx).await.map_err(store)?;
 
         Ok(trails_from(&rows, &facts))
     }
@@ -6044,7 +6044,7 @@ impl Memory for DoltMemory {
         // The record a write arrived in says when it happened and what became
         // of it, so the claims are read alongside.
         let facts = self.facts_of(&mut tx, &storage_key).await?;
-        tx.commit().await.map_err(store)?;
+        commit_native(tx).await.map_err(store)?;
 
         let mut history = Vec::with_capacity(rows.len());
         for row in &rows {
@@ -6186,7 +6186,7 @@ impl Memory for DoltMemory {
             append_entity_write(&mut tx, &handle, &self.clock, patch.session.as_deref()).await?;
             // **Not an id's write**: a renewal overwrites a moment and is its own
             // repeat, so it spends no request id.
-            tx.commit().await.map_err(store)?;
+            commit_native(tx).await.map_err(store)?;
             let mut fields = fact.fields.clone();
             fields.insert(
                 jojobot_domain::session::ROLE_CLAIMED_AT.to_string(),
@@ -7186,7 +7186,7 @@ impl Memory for DoltMemory {
         };
         let writes = self.writes_on(&mut tx, &key).await?;
         let declared = Self::types_in(&mut tx).await?;
-        tx.commit().await.map_err(store)?;
+        commit_native(tx).await.map_err(store)?;
         Ok(jojobot_domain::memory::folded_backing(&writes, &declared))
     }
 
@@ -7258,7 +7258,7 @@ impl Memory for DoltMemory {
         standing_on.sort_by(|a, b| {
             (a.0.home.as_str(), a.0.local.as_str()).cmp(&(b.0.home.as_str(), b.0.local.as_str()))
         });
-        tx.commit().await.map_err(store)?;
+        commit_native(tx).await.map_err(store)?;
         Ok(standing_on.into_iter().map(|(_, fact)| fact).collect())
     }
 
@@ -7319,7 +7319,7 @@ impl Memory for DoltMemory {
                 }
             }
         }
-        tx.commit().await.map_err(store)?;
+        commit_native(tx).await.map_err(store)?;
         Ok(pointing)
     }
 
@@ -7331,7 +7331,7 @@ impl Memory for DoltMemory {
         validate_subject(thread)?;
         let mut tx = self.pool.begin().await.map_err(store)?;
         let writers = self.thought_writers_in(&mut tx, thread).await?;
-        tx.commit().await.map_err(store)?;
+        commit_native(tx).await.map_err(store)?;
         Ok(writers)
     }
 
@@ -7422,7 +7422,7 @@ impl Memory for DoltMemory {
             .fetch_one(&mut *tx)
             .await
             .map_err(store)?;
-        tx.commit().await.map_err(store)?;
+        commit_native(tx).await.map_err(store)?;
         Ok(Some(WriteSummary {
             entities: (
                 entity_count,
@@ -7727,7 +7727,7 @@ impl Memory for DoltMemory {
                 if origin == Origin::Declared {
                     append_type_write(&mut tx, token, &declared.fields, None, &self.clock).await?;
                 }
-                tx.commit().await.map_err(store)?;
+                commit_native(tx).await.map_err(store)?;
                 return Ok(changed);
             }
             changed = true;
@@ -7802,7 +7802,7 @@ impl Memory for DoltMemory {
         if origin == Origin::Declared {
             append_type_write(&mut tx, token, &declared.fields, None, &self.clock).await?;
         }
-        tx.commit().await.map_err(store)?;
+        commit_native(tx).await.map_err(store)?;
         Ok(changed)
     }
 
@@ -7831,7 +7831,7 @@ impl Memory for DoltMemory {
                 .await
                 .map_err(store)?;
         }
-        tx.commit().await.map_err(store)?;
+        commit_native(tx).await.map_err(store)?;
         Ok(())
     }
 
@@ -8514,7 +8514,7 @@ impl DoltMemory {
                 _ => store(e),
             });
         }
-        tx.commit().await.map_err(store)?;
+        commit_native(tx).await.map_err(store)?;
         Ok(AppOutcome::Landed(Box::new(Guarded::Written((
             entity, fact,
         )))))

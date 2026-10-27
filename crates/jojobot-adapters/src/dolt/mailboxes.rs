@@ -51,7 +51,7 @@ use super::ordinal;
 /// set.
 #[derive(Clone)]
 pub struct DoltMailboxes {
-    pool: MySqlPool,
+    pool: crate::writer::sql::Pool,
     owners: Arc<dyn OwnerIndex>,
     draw: Draw,
     /// **Whether a post to a person's box also writes a push**, in the same
@@ -85,7 +85,7 @@ impl DoltMailboxes {
     /// migrations the server applies on start — see [`crate::dolt::migrate`].
     pub fn open(pool: MySqlPool, owners: Arc<dyn OwnerIndex>) -> Self {
         DoltMailboxes {
-            pool,
+            pool: pool.into(),
             owners,
             draw: ids::drawing(),
             pushing: false,
@@ -221,7 +221,7 @@ impl DoltMailboxes {
     #[cfg(test)]
     pub(crate) fn drawing(pool: MySqlPool, owners: Arc<dyn OwnerIndex>, draw: Draw) -> Self {
         DoltMailboxes {
-            pool,
+            pool: pool.into(),
             owners,
             draw,
             pushing: false,
@@ -693,7 +693,7 @@ fn store(e: sqlx::Error) -> MailboxError {
         return MailboxError::Refused(rule.to_string());
     }
     tracing::error!(error = %e, "the mailbox store failed");
-    MailboxError::Store("the mailbox store could not be reached".into())
+    crate::writer::sql::store_error(e)
 }
 
 /// One row, as the domain's record — or as a card jojobot cannot read.
@@ -952,7 +952,7 @@ impl Mailboxes for DoltMailboxes {
             .await
             .map_err(store)?;
         let tally = self.tally(&mut tx).await?;
-        tx.commit().await.map_err(store)?;
+        crate::writer::sql::commit(tx).await.map_err(store)?;
         Ok(boxes_from(&rows, &tally))
     }
 
@@ -1200,7 +1200,7 @@ impl Mailboxes for DoltMailboxes {
     async fn scan_messages(&self) -> Result<Vec<Message>, MailboxError> {
         let mut tx = self.pool.begin().await.map_err(store)?;
         let cards = self.cards(&mut tx, Scope::Board).await?;
-        tx.commit().await.map_err(store)?;
+        crate::writer::sql::commit(tx).await.map_err(store)?;
         Ok(cards.iter().filter_map(Card::readable).cloned().collect())
     }
 
@@ -1209,7 +1209,7 @@ impl Mailboxes for DoltMailboxes {
         // the miss the delivering verb then refuses in its own words.
         let mut tx = self.pool.begin().await.map_err(store)?;
         let cards = self.cards(&mut tx, Scope::Message(id)).await?;
-        tx.commit().await.map_err(store)?;
+        crate::writer::sql::commit(tx).await.map_err(store)?;
         Ok(cards.iter().find_map(Card::readable).cloned())
     }
 
@@ -1219,7 +1219,7 @@ impl Mailboxes for DoltMailboxes {
         }
         let mut tx = self.pool.begin().await.map_err(store)?;
         let cards = self.cards(&mut tx, Scope::Messages(ids)).await?;
-        tx.commit().await.map_err(store)?;
+        crate::writer::sql::commit(tx).await.map_err(store)?;
         Ok(cards
             .iter()
             .filter_map(Card::readable)
@@ -1234,7 +1234,7 @@ impl Mailboxes for DoltMailboxes {
         }
         let mut tx = self.pool.begin().await.map_err(store)?;
         let cards = self.cards(&mut tx, Scope::Senders(senders)).await?;
-        tx.commit().await.map_err(store)?;
+        crate::writer::sql::commit(tx).await.map_err(store)?;
         Ok(cards
             .iter()
             .filter_map(Card::readable)
@@ -1306,7 +1306,7 @@ impl Mailboxes for DoltMailboxes {
                 .or((!seen_before).then_some(TakenBy::Reading)),
             ..message.clone()
         };
-        tx.commit().await.map_err(store)?;
+        crate::writer::sql::commit(tx).await.map_err(store)?;
         Ok(Delivered {
             message,
             seen_before,
@@ -1463,7 +1463,7 @@ impl Mailboxes for DoltMailboxes {
         .fetch_all(&mut *tx)
         .await
         .map_err(store)?;
-        tx.commit().await.map_err(store)?;
+        crate::writer::sql::commit(tx).await.map_err(store)?;
         rows.iter().map(event_from_row).collect()
     }
 
@@ -1478,7 +1478,7 @@ impl Mailboxes for DoltMailboxes {
         .fetch_all(&mut *tx)
         .await
         .map_err(store)?;
-        tx.commit().await.map_err(store)?;
+        crate::writer::sql::commit(tx).await.map_err(store)?;
         let mut all: Vec<(MessageId, Vec<MessageEvent>)> = Vec::new();
         for row in &rows {
             let id = MessageId(row.try_get::<String, _>("message_id").map_err(store)?);

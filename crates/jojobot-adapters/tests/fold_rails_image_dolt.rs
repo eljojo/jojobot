@@ -94,9 +94,14 @@ async fn the_session_image_answers_as_the_real_store_does_after_every_kind_of_wr
         .expect("the store comes up");
     let pool = database(&server, "sessions").await;
     let stamp = WriteStamp::new();
-    let store = Arc::new(DoltSessions::open(pool).stamped_by(stamp.clone()));
+    let writer = jojobot_adapters::writer::Writer::default();
+    let store = Arc::new(
+        DoltSessions::open(pool)
+            .stamped_by(stamp.clone())
+            .with_writer(writer.clone()),
+    );
     let counted = Arc::new(CountedSessions::new(store.clone()));
-    let folded = FoldedSessions::new(counted.clone(), stamp, Clock::Real);
+    let folded = FoldedSessions::new(counted.clone(), stamp, Clock::Real).with_writer(writer);
     folded.rebuild().await.expect("the image loads");
     let rails = SessionRails {
         folded: &folded,
@@ -115,9 +120,10 @@ async fn the_mail_image_answers_as_the_real_store_does_after_every_kind_of_write
         .await
         .expect("the store comes up");
     let pool = database(&server, "mail").await;
-    let store = Arc::new(DoltMailboxes::open(pool, Arc::new(AnyOwner)));
+    let writer = jojobot_adapters::writer::Writer::default();
+    let store = Arc::new(DoltMailboxes::open(pool, Arc::new(AnyOwner)).with_writer(writer.clone()));
     let counted = Arc::new(CountedMailboxes::new(store.clone()));
-    let folded = FoldedMailboxes::new(counted.clone());
+    let folded = FoldedMailboxes::new(counted.clone()).with_writer(writer);
     folded.rebuild().await.expect("the image loads");
     let rails = MailRails {
         folded: &folded,
@@ -165,7 +171,9 @@ async fn a_leftover_taken_before_deliveries_were_recorded_stays_without_a_way_it
         .await
         .expect("the store comes up");
     let pool = database(&server, "legacy_read").await;
-    let store = Arc::new(DoltMailboxes::open(pool.clone(), Arc::new(AnyOwner)));
+    let writer = jojobot_adapters::writer::Writer::default();
+    let store =
+        Arc::new(DoltMailboxes::open(pool.clone(), Arc::new(AnyOwner)).with_writer(writer.clone()));
     let inbox = MailboxName("gamma".into());
     store
         .create_mailbox(&inbox, &EntityId("bot:gamma".into()), None)
@@ -198,7 +206,7 @@ async fn a_leftover_taken_before_deliveries_were_recorded_stays_without_a_way_it
         .expect("the legacy state is written");
 
     let counted = Arc::new(CountedMailboxes::new(store.clone()));
-    let folded = FoldedMailboxes::new(counted.clone());
+    let folded = FoldedMailboxes::new(counted.clone()).with_writer(writer);
     folded.rebuild().await.expect("the image loads");
     folded
         .post_message(post("arrives later"))
@@ -283,7 +291,9 @@ async fn a_damaged_card_stays_named_by_its_box_while_the_board_moves() {
         .await
         .expect("the store comes up");
     let pool = database(&server, "damaged_card").await;
-    let store = Arc::new(DoltMailboxes::open(pool.clone(), Arc::new(AnyOwner)));
+    let writer = jojobot_adapters::writer::Writer::default();
+    let store =
+        Arc::new(DoltMailboxes::open(pool.clone(), Arc::new(AnyOwner)).with_writer(writer.clone()));
     let inbox = MailboxName("gamma".into());
     store
         .create_mailbox(&inbox, &EntityId("bot:gamma".into()), None)
@@ -301,7 +311,7 @@ async fn a_damaged_card_stays_named_by_its_box_while_the_board_moves() {
     .expect("the board takes the row");
 
     let counted = Arc::new(CountedMailboxes::new(store.clone()));
-    let folded = FoldedMailboxes::new(counted.clone());
+    let folded = FoldedMailboxes::new(counted.clone()).with_writer(writer);
     folded.rebuild().await.expect("the image loads");
     let boxes = folded.list_mailboxes().await.expect("list");
     assert_eq!(
@@ -358,7 +368,8 @@ async fn a_boot_over_events_already_stored_answers_every_history_with_the_store_
         .await
         .expect("the store comes up");
     let pool = database(&server, "history_boot").await;
-    let store = Arc::new(DoltMailboxes::open(pool, Arc::new(AnyOwner)));
+    let writer = jojobot_adapters::writer::Writer::default();
+    let store = Arc::new(DoltMailboxes::open(pool, Arc::new(AnyOwner)).with_writer(writer.clone()));
     let at = |second: i64| {
         jiff::Timestamp::from_second(1_790_000_000 + second).expect("a valid instant")
     };
@@ -410,7 +421,7 @@ async fn a_boot_over_events_already_stored_answers_every_history_with_the_store_
         .expect("quarantine");
 
     let counted = Arc::new(CountedMailboxes::new(store.clone()));
-    let folded = FoldedMailboxes::new(counted.clone());
+    let folded = FoldedMailboxes::new(counted.clone()).with_writer(writer);
     folded.rebuild().await.expect("the image loads");
     let mut asked = Vec::new();
     for id in &ids {
@@ -476,7 +487,12 @@ async fn a_boot_over_history_already_stored_answers_every_run_with_the_store_gon
         .expect("the store comes up");
     let pool = database(&server, "run_history_boot").await;
     let stamp = WriteStamp::new();
-    let store = Arc::new(DoltSessions::open(pool).stamped_by(stamp.clone()));
+    let writer = jojobot_adapters::writer::Writer::default();
+    let store = Arc::new(
+        DoltSessions::open(pool)
+            .stamped_by(stamp.clone())
+            .with_writer(writer.clone()),
+    );
     let at = |second: i64| {
         jiff::Timestamp::from_second(1_790_000_000 + second).expect("a valid instant")
     };
@@ -508,7 +524,7 @@ async fn a_boot_over_history_already_stored_answers_every_run_with_the_store_gon
         .expect("rekey");
 
     let counted = Arc::new(CountedSessions::new(store.clone()));
-    let folded = FoldedSessions::new(counted.clone(), stamp, Clock::Real);
+    let folded = FoldedSessions::new(counted.clone(), stamp, Clock::Real).with_writer(writer);
     folded.rebuild().await.expect("the image loads");
     let changes_from_store = store
         .session_history(&run.id)
@@ -594,9 +610,14 @@ async fn a_run_the_store_cannot_read_leaves_no_image_and_the_reads_go_to_the_sto
     .await
     .expect("the board takes the row");
     let stamp = WriteStamp::new();
-    let store = Arc::new(DoltSessions::open(pool).stamped_by(stamp.clone()));
+    let writer = jojobot_adapters::writer::Writer::default();
+    let store = Arc::new(
+        DoltSessions::open(pool)
+            .stamped_by(stamp.clone())
+            .with_writer(writer.clone()),
+    );
     let counted = Arc::new(CountedSessions::new(store.clone()));
-    let folded = FoldedSessions::new(counted.clone(), stamp, Clock::Real);
+    let folded = FoldedSessions::new(counted.clone(), stamp, Clock::Real).with_writer(writer);
     assert!(
         folded.rebuild().await.is_err(),
         "a board with a run nobody can read does not fill an image"

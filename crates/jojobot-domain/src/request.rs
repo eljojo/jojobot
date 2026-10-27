@@ -37,6 +37,8 @@ use crate::memory::EntityId;
 
 pub mod context;
 
+pub(crate) const INDETERMINATE_WRITE: &str = "the write outcome is indeterminate; if this call used a request_id, retry with that same id; otherwise read before writing again";
+
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 
@@ -137,6 +139,9 @@ pub trait Requests: Send + Sync {
 /// Why a request operation failed.
 #[derive(Debug, thiserror::Error)]
 pub enum RequestError {
+    /// The commit may have landed, but no result can be reconstructed.
+    #[error("{}", INDETERMINATE_WRITE)]
+    Indeterminate,
     /// The id is not one this build accepts.
     #[error("request id refused: {0}")]
     Invalid(String),

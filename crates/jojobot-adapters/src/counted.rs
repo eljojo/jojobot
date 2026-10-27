@@ -38,12 +38,14 @@ pub struct Counted {
     /// While set, a listing fails once this many have been made since the last
     /// reset: the stand-in for a store that goes down between two reads of one call.
     listing_down_after: std::sync::Mutex<Option<usize>>,
-    /// Set once: the next call of this name commits in the store and then never
-    /// answers.
+    /// Set once: the next call of this name commits, then pauses until released.
     hang_after: std::sync::Mutex<Option<&'static str>>,
     /// Told when a call has committed and begun to hang.
     hung: tokio::sync::Notify,
     released: tokio::sync::Notify,
+    lose_capture_reply: AtomicBool,
+    #[cfg(test)]
+    fresh_reload_only: AtomicBool,
 }
 
 impl Counted {
@@ -60,6 +62,9 @@ impl Counted {
             hang_after: std::sync::Mutex::new(None),
             hung: tokio::sync::Notify::new(),
             released: tokio::sync::Notify::new(),
+            lose_capture_reply: AtomicBool::new(false),
+            #[cfg(test)]
+            fresh_reload_only: AtomicBool::new(false),
         }
     }
 
@@ -112,6 +117,11 @@ impl Counted {
         self.released.notify_one();
     }
 
+    /// Lose a capture receipt after its real store has answered the write.
+    pub fn lose_next_capture_reply(&self) {
+        self.lose_capture_reply.store(true, Ordering::SeqCst);
+    }
+
     async fn hang_if_armed(&self, name: &'static str) {
         let armed = {
             let mut slot = self.hang_after.lock().expect("count lock");
@@ -140,9 +150,18 @@ impl Counted {
     pub fn reset(&self) {
         self.total.store(0, Ordering::SeqCst);
         self.by_name.lock().expect("count lock").clear();
+        #[cfg(test)]
+        self.fresh_reload_only.store(false, Ordering::SeqCst);
     }
 
     fn hit(&self, name: &'static str) {
+        #[cfg(test)]
+        if self.fresh_reload_only.load(Ordering::SeqCst) {
+            assert!(
+                crate::writer::sql::has_fresh_reader(),
+                "{name}: reload escaped its fresh reader"
+            );
+        }
         self.total.fetch_add(1, Ordering::SeqCst);
         *self
             .by_name
@@ -328,6 +347,11 @@ impl Memory for Counted {
         self.hit("capture");
         let landed = self.inner.capture(fact).await;
         self.hang_if_armed("capture").await;
+        if landed.is_ok() && self.lose_capture_reply.swap(false, Ordering::SeqCst) {
+            #[cfg(test)]
+            self.fresh_reload_only.store(true, Ordering::SeqCst);
+            return Err(MemoryError::Store("the commit reply was lost".into()));
+        }
         landed
     }
     async fn recall(&self, subject: &EntityId) -> Result<Vec<Fact>, MemoryError> {

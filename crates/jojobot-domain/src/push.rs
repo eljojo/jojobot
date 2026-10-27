@@ -54,6 +54,9 @@ pub struct Push {
 /// Why the outbox could not be read or written.
 #[derive(Debug, thiserror::Error)]
 pub enum PushError {
+    /// The commit may have landed, but no result can be reconstructed.
+    #[error("{}", crate::request::INDETERMINATE_WRITE)]
+    Indeterminate,
     /// The store behind the outbox failed.
     #[error("the push outbox could not be reached: {0}")]
     Store(String),

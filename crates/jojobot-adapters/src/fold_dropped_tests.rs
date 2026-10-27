@@ -1,21 +1,16 @@
 //! **Every write verb of every fold, dropped after the store committed, leaves
 //! the next read correct (decision log 292, rule 498).**
 //!
-//! The scope in `fold/uncertain.rs` runs each write of each fold. A caller that
-//! stops waiting drops the future after the store committed and before the
-//! image followed, so an image that kept answering would disagree with the
-//! store. These cases drop one call of each wrapped verb at that moment. The
-//! counting wrapper in front of the store commits the call and then never
-//! answers, a timeout drops the future, and the battery asks every read of the
-//! image and of the store. Taking the scope off a verb makes its row fail.
+//! The writer owns each accepted write through publication. These cases end
+//! the caller's wait after the store commits, then release the store's answer
+//! and drain the writer before comparing every held read with the source.
+//! Bypassing ownership cuts publication and makes the corresponding row fail.
 //!
 //! The same tables run over the real store (see the end of this file), where
 //! the commit is a real one and a slow write must not be cut off before it lands.
 //!
-//! Each row fills the image first. A dropped call leaves no image, so a row
-//! that started on an empty image would pass whether the scope ran or not. Each
-//! row also checks that the store changed, so a call that wrote nothing cannot
-//! pass for one that was dropped.
+//! Each row starts with a published image and proves that the store changed;
+//! a call that wrote nothing cannot pass for a cancelled write.
 
 use std::future::Future;
 use std::sync::Arc;
@@ -110,8 +105,8 @@ struct MemoryRow<'a> {
 
 impl MemoryRow<'_> {
     /// **One verb, dropped after the store committed it.** The image is filled
-    /// first, the call commits and hangs, the timeout drops it, and the battery
-    /// compares every read of the image with the store's own.
+    /// first, the call commits and hangs, and cancellation ends the caller's
+    /// wait. After release and drain, the battery compares the held reads.
     async fn dropped<T>(&self, verb: &'static str, call: impl Future<Output = T>) {
         self.folded
             .rebuild()
@@ -129,8 +124,7 @@ impl MemoryRow<'_> {
             "{verb}: the call did not commit in the store"
         );
         // The battery also holds the change signal to move after every write the
-        // image followed. A dropped write leaves no image, and the signal then
-        // is the store's own, which a type or kind declaration does not move.
+        // image followed, including type and kind declarations.
         *self.probe.last_signal.lock().expect("signal lock") = None;
         self.probe.agree(&format!("after a dropped {verb}")).await;
     }
@@ -418,13 +412,22 @@ fn new_run(slug: &str, sid: &str, run: &str, second: i64) -> NewSession {
 #[tokio::test]
 async fn a_run_write_dropped_after_the_store_committed_leaves_the_image_correct() {
     let store = Arc::new(InMemorySessions::new());
-    every_run_write_dropped(store.clone(), store.write_stamp()).await;
+    every_run_write_dropped(
+        store.clone(),
+        store.write_stamp(),
+        crate::writer::Writer::default(),
+    )
+    .await;
 }
 
 /// The runs table over any store, given the stamp the store reads its moment from.
-async fn every_run_write_dropped(store: Arc<dyn Sessions>, stamp: WriteStamp) {
+async fn every_run_write_dropped(
+    store: Arc<dyn Sessions>,
+    stamp: WriteStamp,
+    writer: crate::writer::Writer,
+) {
     let counted = Arc::new(CountedSessions::new(store.clone()));
-    let folded = FoldedSessions::new(counted.clone(), stamp, Clock::Real);
+    let folded = FoldedSessions::new(counted.clone(), stamp, Clock::Real).with_writer(writer);
     folded.rebuild().await.expect("the image loads");
     let rails = SessionRails {
         folded: &folded,
@@ -638,13 +641,17 @@ fn message(to: &str, sender: &str, body: &str, second: i64) -> NewMessage {
 #[tokio::test]
 async fn a_mail_write_dropped_after_the_store_committed_leaves_the_image_correct() {
     jojobot_domain::memory::kinds::load_shipped();
-    every_mail_write_dropped(Arc::new(InMemoryMailboxes::knowing_any_owner())).await;
+    every_mail_write_dropped(
+        Arc::new(InMemoryMailboxes::knowing_any_owner()),
+        crate::writer::Writer::default(),
+    )
+    .await;
 }
 
 /// The mail table over any store whose owners all resolve.
-async fn every_mail_write_dropped(store: Arc<dyn Mailboxes>) {
+async fn every_mail_write_dropped(store: Arc<dyn Mailboxes>, writer: crate::writer::Writer) {
     let counted = Arc::new(CountedMailboxes::new(store.clone()));
-    let folded = FoldedMailboxes::new(counted.clone());
+    let folded = FoldedMailboxes::new(counted.clone()).with_writer(writer);
     folded.rebuild().await.expect("the image loads");
     let rails = MailRails {
         folded: &folded,
@@ -870,9 +877,15 @@ mod over_the_real_store {
             .expect("the store comes up");
         let pool = database(&server, "dropped_runs").await;
         let stamp = WriteStamp::new();
+        let writer = crate::writer::Writer::default();
         every_run_write_dropped(
-            Arc::new(DoltSessions::open(pool).stamped_by(stamp.clone())),
+            Arc::new(
+                DoltSessions::open(pool)
+                    .stamped_by(stamp.clone())
+                    .with_writer(writer.clone()),
+            ),
             stamp,
+            writer,
         )
         .await;
         server.stop().await;
@@ -886,7 +899,12 @@ mod over_the_real_store {
             .expect("the store comes up");
         let pool = database(&server, "dropped_mail").await;
         jojobot_domain::memory::kinds::load_shipped();
-        every_mail_write_dropped(Arc::new(DoltMailboxes::open(pool, Arc::new(AnyOwner)))).await;
+        let writer = crate::writer::Writer::default();
+        every_mail_write_dropped(
+            Arc::new(DoltMailboxes::open(pool, Arc::new(AnyOwner)).with_writer(writer.clone())),
+            writer,
+        )
+        .await;
         server.stop().await;
     }
 

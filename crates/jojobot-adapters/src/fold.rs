@@ -142,6 +142,11 @@ impl Folded {
         let this = self.clone();
         self.writer
             .run(async move {
+                if this.writer.rail_uncertain("memory") {
+                    return Err(MemoryError::Store(
+                        "the rail is uncertain; rebuild requires its fence".into(),
+                    ));
+                }
                 // **Wanted from the first attempt, whether or not it succeeds**: a fill that
                 // failed leaves no image, and the next write fills it again.
                 this.wanted.store(true, Ordering::SeqCst);
@@ -153,7 +158,9 @@ impl Folded {
     /// The read behind [`rebuild`](Folded::rebuild), for a caller that already
     /// runs in the writer task. A failure leaves no image rather than a half one.
     async fn fill(&self) -> Result<usize, MemoryError> {
-        match Image::load(&self.inner, self.boot_reader.as_deref()).await {
+        match crate::writer::sql::reading(Image::load(&self.inner, self.boot_reader.as_deref()))
+            .await
+        {
             Ok(image) => {
                 let held = image.len();
                 {
@@ -164,9 +171,11 @@ impl Folded {
                 Ok(held)
             }
             Err(e) => {
-                let mut slot = self.image.write().expect("fold lock");
-                *slot = None;
-                self.generation.fetch_add(1, Ordering::SeqCst);
+                if !self.writer.rail_uncertain("memory") {
+                    let mut slot = self.image.write().expect("fold lock");
+                    *slot = None;
+                    self.generation.fetch_add(1, Ordering::SeqCst);
+                }
                 Err(e)
             }
         }
@@ -262,15 +271,13 @@ impl Folded {
         self.fill().await.map(|_| ())
     }
 
-    /// **Run a write and the image's following it inside the one scope every
-    /// write of every fold shares**: a write whose future is dropped, or that ends
-    /// with the store's outcome unknown, drops the image, and the next write fills
-    /// it again (see [`uncertain::guarded`]).
+    /// Keep the last published image until an uncertain write's rail has been
+    /// fenced and reloaded through its boot loader.
     async fn scoped<T>(
         &self,
         write: impl std::future::Future<Output = Result<T, MemoryError>>,
     ) -> Result<T, MemoryError> {
-        uncertain::guarded(&self.image, Some(&self.generation), "memory", write).await
+        crate::writer::recovery::guarded(&self.writer, "memory", write, self.fill()).await
     }
 
     /// A write that has no [`Landed`] to carry its own answer, whose image could
@@ -285,6 +292,21 @@ impl Folded {
                  the next write fills it again"
             );
         }
+    }
+    fn readable(&self) -> Result<(), MemoryError> {
+        if self.writer.rail_uncertain("memory") && self.image.read().expect("fold lock").is_none() {
+            self.unheld()?;
+        }
+        Ok(())
+    }
+
+    fn unheld(&self) -> Result<(), MemoryError> {
+        if self.writer.rail_uncertain("memory") {
+            return Err(MemoryError::Store(
+                "the uncertain rail has no published image".into(),
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -416,6 +438,7 @@ impl Memory for Folded {
     }
 
     async fn list_entities(&self, kind: Option<EntityKind>) -> Result<Vec<Entity>, MemoryError> {
+        self.readable()?;
         match self.held(|image| image.list(kind)) {
             Some(listing) => Ok(listing),
             None => self.inner.list_entities(kind).await,
@@ -423,6 +446,7 @@ impl Memory for Folded {
     }
 
     async fn former_handles(&self) -> Result<Vec<FormerHandle>, MemoryError> {
+        self.readable()?;
         match self.held(Image::former) {
             Some(former) => Ok(former),
             None => self.inner.former_handles().await,
@@ -566,6 +590,7 @@ impl Memory for Folded {
     }
 
     async fn recall(&self, subject: &EntityId) -> Result<Vec<Fact>, MemoryError> {
+        self.readable()?;
         match self.held(|image| image.doc(subject).map(|doc| doc.scan.facts.clone())) {
             Some(answer) => answer,
             None => self.inner.recall(subject).await,
@@ -573,6 +598,7 @@ impl Memory for Folded {
     }
 
     async fn history(&self, entity: &EntityId, key: &str) -> Result<Vec<FieldWrite>, MemoryError> {
+        self.readable()?;
         match self.held(|image| image.history(entity, key)) {
             Some(answer) => answer,
             None => self.inner.history(entity, key).await,
@@ -583,6 +609,7 @@ impl Memory for Folded {
         &self,
         entity: Option<&EntityId>,
     ) -> Result<Vec<jojobot_domain::memory::MergeEvent>, MemoryError> {
+        self.readable()?;
         match self.held(|image| image.merge_events(entity)) {
             Some(answer) => Ok(answer),
             None => self.inner.merge_events(entity).await,
@@ -593,6 +620,7 @@ impl Memory for Folded {
         &self,
         address: &FactAddress,
     ) -> Result<Option<FactAddress>, MemoryError> {
+        self.readable()?;
         match self.held(|image| image.moved(address)) {
             Some(answer) => Ok(answer?),
             None => self.inner.moved_address(address).await,
@@ -605,6 +633,7 @@ impl Memory for Folded {
         &self,
         entity: &EntityId,
     ) -> Result<Vec<jojobot_domain::memory::unmapped::UnmappedClaim>, MemoryError> {
+        self.readable()?;
         match self.held(|image| image.unmapped(entity)) {
             Some(answer) => Ok(answer),
             None => self.inner.unmapped_claims(entity).await,
@@ -615,13 +644,17 @@ impl Memory for Folded {
     /// events**, so a claim read costs the store nothing: the image names no
     /// claim of a folded thing, and the event's map says where the claim went.
     async fn claim_history(&self, address: &FactAddress) -> Result<Vec<ClaimWrite>, MemoryError> {
+        self.readable()?;
         match self.held(|image| image.claim_history(address)) {
             Some(Err(merged @ MemoryError::AlreadyMerged { .. })) => {
                 match self.held(|image| image.moved(address)) {
                     Some(Err(looped)) => Err(looped.into()),
                     Some(Ok(Some(moved))) => match self.held(|image| image.claim_history(&moved)) {
                         Some(answer) => answer,
-                        None => self.inner.claim_history(address).await,
+                        None => {
+                            self.unheld()?;
+                            self.inner.claim_history(address).await
+                        }
                     },
                     // **A claim the survivor names as one it cannot serve** is
                     // answered from the chain the image read when it filled the
@@ -630,14 +663,20 @@ impl Memory for Folded {
                     _ if self.held(|image| image.names_as_unmapped(address)) == Some(true) => {
                         match self.held(|image| image.unmapped_history(address)) {
                             Some(Some(chain)) => Ok(chain),
-                            _ => self.inner.claim_history(address).await,
+                            _ => {
+                                self.unheld()?;
+                                self.inner.claim_history(address).await
+                            }
                         }
                     }
                     _ => Err(merged),
                 }
             }
             Some(answer) => answer,
-            None => self.inner.claim_history(address).await,
+            None => {
+                self.unheld()?;
+                self.inner.claim_history(address).await
+            }
         }
     }
 
@@ -650,10 +689,14 @@ impl Memory for Folded {
         &self,
         entity: &EntityId,
     ) -> Result<Vec<jojobot_domain::memory::EntityVersion>, MemoryError> {
+        self.readable()?;
         match self.held(|image| image.entity_history(entity)) {
             Some(Ok(Some(versions))) => Ok(versions),
             Some(Err(unknown)) => Err(unknown),
-            Some(Ok(None)) | None => self.inner.entity_history(entity).await,
+            Some(Ok(None)) | None => {
+                self.unheld()?;
+                self.inner.entity_history(entity).await
+            }
         }
     }
 
@@ -661,6 +704,7 @@ impl Memory for Folded {
         &self,
         address: &FactAddress,
     ) -> Result<std::collections::BTreeSet<String>, MemoryError> {
+        self.readable()?;
         match self.held(|image| image.kept_off(address)) {
             Some(answer) => answer,
             None => self.inner.keys_kept_off_the_thing(address).await,
@@ -671,6 +715,7 @@ impl Memory for Folded {
         &self,
         entity: &EntityId,
     ) -> Result<jojobot_domain::memory::KeyTrails, MemoryError> {
+        self.readable()?;
         match self.held(|image| image.trails(entity)) {
             Some(answer) => answer,
             None => self.inner.key_trails(entity).await,
@@ -681,6 +726,7 @@ impl Memory for Folded {
         &self,
         entity: &EntityId,
     ) -> Result<HashMap<FactId, Vec<ClaimWrite>>, MemoryError> {
+        self.readable()?;
         match self.held(|image| image.doc(entity).map(|doc| doc.histories.clone())) {
             Some(answer) => answer,
             None => self.inner.claim_histories(entity).await,
@@ -719,6 +765,7 @@ impl Memory for Folded {
     }
 
     async fn fields(&self, entity: &EntityId) -> Result<BTreeMap<String, String>, MemoryError> {
+        self.readable()?;
         match self.held(|image| image.doc(entity).map(|doc| doc.fields.clone())) {
             Some(answer) => answer,
             None => self.inner.fields(entity).await,
@@ -729,6 +776,7 @@ impl Memory for Folded {
         &self,
         entity: &EntityId,
     ) -> Result<(BTreeMap<String, String>, u64), MemoryError> {
+        self.readable()?;
         match self.held(|image| {
             image
                 .doc(entity)
@@ -740,6 +788,7 @@ impl Memory for Folded {
     }
 
     async fn field_ages(&self, entity: &EntityId) -> Result<FieldAges, MemoryError> {
+        self.readable()?;
         match self.held(|image| image.doc(entity).map(|doc| doc.ages.clone())) {
             Some(answer) => answer,
             None => self.inner.field_ages(entity).await,
@@ -864,6 +913,7 @@ impl Memory for Folded {
     }
 
     async fn scan(&self) -> Result<Vec<DocScan>, MemoryError> {
+        self.readable()?;
         match self.held(Image::scan) {
             Some(scanned) => Ok(scanned),
             None => self.inner.scan().await,
@@ -871,6 +921,7 @@ impl Memory for Folded {
     }
 
     async fn scan_entity(&self, entity: &EntityId) -> Result<Option<DocScan>, MemoryError> {
+        self.readable()?;
         match self.held(|image| image.scan_one(entity)) {
             Some(doc) => Ok(doc),
             None => self.inner.scan_entity(entity).await,
@@ -878,6 +929,7 @@ impl Memory for Folded {
     }
 
     async fn has_prose(&self, entity: &EntityId) -> Result<bool, MemoryError> {
+        self.readable()?;
         match self.held(|image| image.has_prose(entity)) {
             Some(has) => Ok(has),
             None => self.inner.has_prose(entity).await,
@@ -898,6 +950,7 @@ impl Memory for Folded {
     /// through the image. A row changed past this process is seen after a
     /// restart, as the image itself is. With no image held the store answers.
     async fn write_summary(&self) -> Result<Option<WriteSummary>, MemoryError> {
+        self.readable()?;
         let held = {
             let slot = self.image.read().expect("fold lock");
             slot.as_ref()
@@ -932,6 +985,7 @@ impl Memory for Folded {
         &self,
         entity: &EntityId,
     ) -> Result<BTreeMap<String, FieldBacking>, MemoryError> {
+        self.readable()?;
         match self.held(|image| image.backing(entity)) {
             Some(answer) => answer,
             None => self.inner.backing(entity).await,
@@ -940,6 +994,7 @@ impl Memory for Folded {
 
     /// **Selected on the pointer in memory**, not by reading every record.
     async fn built_on(&self, source: &FactAddress) -> Result<Vec<Fact>, MemoryError> {
+        self.readable()?;
         // An address on a thing merged away is moved first, when the merge kept
         // an event.
         match self.held(|image| image.moved(source)) {
@@ -961,10 +1016,14 @@ impl Memory for Folded {
     /// **Selected on what a record's fields name, in memory**, not by reading
     /// every record.
     async fn referring_to(&self, target: &EntityId) -> Result<Vec<Fact>, MemoryError> {
+        self.readable()?;
         match self.held(|image| image.referring_to(target)) {
             // **Shadowed: the store is asked as well and the two are compared**;
             // the image's answer, the old way, is the one served.
-            Some(Ok(mine)) if self.shadow.watches(shadow::Family::ReferringTo) => {
+            Some(Ok(mine))
+                if self.shadow.watches(shadow::Family::ReferringTo)
+                    && !self.writer.rail_uncertain("memory") =>
+            {
                 if let Ok(theirs) = self.inner.referring_to(target).await {
                     self.shadow.compared_referring_to(target, &mine, &theirs);
                 }
@@ -983,6 +1042,7 @@ impl Memory for Folded {
     /// edges. The store's own check inside a ceiling write is its own and does
     /// not pass here.
     async fn thought_writers(&self, thread: &EntityId) -> Result<Vec<EntityId>, MemoryError> {
+        self.readable()?;
         match self.held(|image| image.thought_writers(thread)) {
             Some(answer) => answer,
             None => self.inner.thought_writers(thread).await,
@@ -996,6 +1056,7 @@ impl Memory for Folded {
         test: &jojobot_domain::memory::filter::Test,
         kind: Option<EntityKind>,
     ) -> Result<Vec<EntityId>, MemoryError> {
+        self.readable()?;
         match self.held(|image| image.keys_holding(key, test, kind)) {
             Some(answer) => Ok(answer),
             None => self.inner.keys_holding(key, test, kind).await,
@@ -1013,6 +1074,7 @@ impl Memory for Folded {
         among: Option<&[EntityId]>,
         k: usize,
     ) -> Result<jojobot_domain::memory::holders::OrderedHead, MemoryError> {
+        self.readable()?;
         match self.held(|image| image.ordered_first_k(key, holds, direction, kind, among, k)) {
             Some(answer) => Ok(answer),
             None => {
@@ -1072,6 +1134,7 @@ impl Memory for Folded {
     }
 
     async fn declared_types(&self) -> Result<Vec<DeclaredType>, MemoryError> {
+        self.readable()?;
         match self.held(Image::types) {
             Some(declared) => Ok(declared),
             None => self.inner.declared_types().await,
@@ -1081,6 +1144,7 @@ impl Memory for Folded {
     async fn declared_types_shared(
         &self,
     ) -> Result<std::sync::Arc<Vec<DeclaredType>>, MemoryError> {
+        self.readable()?;
         match self.held(Image::types_shared) {
             Some(declared) => Ok(declared),
             None => Ok(std::sync::Arc::new(self.inner.declared_types().await?)),
@@ -1088,6 +1152,7 @@ impl Memory for Folded {
     }
 
     async fn displaced_type(&self, name: &str) -> Result<Option<types::Displaced>, MemoryError> {
+        self.unheld()?;
         self.inner.displaced_type(name).await
     }
 
@@ -1120,6 +1185,7 @@ impl Memory for Folded {
     }
 
     async fn declared_kinds(&self) -> Result<Vec<(String, types::Origin)>, MemoryError> {
+        self.readable()?;
         match self.held(Image::kinds) {
             Some(kinds) => Ok(kinds),
             None => self.inner.declared_kinds().await,

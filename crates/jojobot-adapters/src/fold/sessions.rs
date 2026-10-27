@@ -26,7 +26,6 @@ use std::sync::Arc;
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use super::uncertain;
 use async_trait::async_trait;
 use jiff::Timestamp;
 use jiff::civil::Date;
@@ -234,6 +233,11 @@ impl FoldedSessions {
         let this = self.clone();
         self.writer
             .run(async move {
+                if this.writer.rail_uncertain("runs") {
+                    return Err(SessionError::Store(
+                        "the rail is uncertain; rebuild requires its fence".into(),
+                    ));
+                }
                 // **Wanted from the first attempt, whether or not it succeeds**: a fill that
                 // failed leaves no image, and the next write fills it again.
                 this.wanted.store(true, Ordering::SeqCst);
@@ -243,7 +247,7 @@ impl FoldedSessions {
     }
 
     async fn fill(&self) -> Result<usize, SessionError> {
-        let read = async {
+        let read = crate::writer::sql::reading(async {
             let runs = self.inner.all_sessions().await?;
             let changes = self.inner.charter_changes().await?;
             let histories = self.inner.scan_session_history().await?;
@@ -251,7 +255,7 @@ impl FoldedSessions {
             let run_calls = self.inner.run_calls(None).await?;
             let served = self.inner.served_days().await?;
             Ok::<_, SessionError>((runs, changes, histories, calls, run_calls, served))
-        }
+        })
         .await;
         match read {
             Ok((runs, changes, histories, calls, run_calls, served)) => {
@@ -262,19 +266,21 @@ impl FoldedSessions {
                 Ok(held)
             }
             Err(e) => {
-                *self.image.write().expect("fold lock") = None;
+                if !self.writer.rail_uncertain("runs") {
+                    *self.image.write().expect("fold lock") = None;
+                }
                 Err(e)
             }
         }
     }
 
-    /// **Run a write and the image's following it inside the one scope every
-    /// write of every fold shares** (see [`uncertain::guarded`]).
+    /// Keep the last published image until an uncertain write's rail has been
+    /// fenced and reloaded through its boot loader.
     async fn scoped<T>(
         &self,
         write: impl std::future::Future<Output = Result<T, SessionError>>,
     ) -> Result<T, SessionError> {
-        uncertain::guarded(&self.image, None, "runs", write).await
+        crate::writer::recovery::guarded(&self.writer, "runs", write, self.fill()).await
     }
 
     /// Answer from the image when one is held; `None` sends the read to the
@@ -309,11 +315,27 @@ impl FoldedSessions {
             tracing::warn!(verb, %error, "the in-memory image of the runs could not be filled again");
         }
     }
+    fn readable(&self) -> Result<(), SessionError> {
+        if self.writer.rail_uncertain("runs") && self.image.read().expect("fold lock").is_none() {
+            self.unheld()?;
+        }
+        Ok(())
+    }
+
+    fn unheld(&self) -> Result<(), SessionError> {
+        if self.writer.rail_uncertain("runs") {
+            return Err(SessionError::Store(
+                "the uncertain rail has no published image".into(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[async_trait]
 impl Sessions for FoldedSessions {
     async fn sessions_of(&self, bot: &EntityId) -> Result<Vec<Session>, SessionError> {
+        self.readable()?;
         match self.held(|image| {
             image
                 .runs
@@ -328,6 +350,7 @@ impl Sessions for FoldedSessions {
     }
 
     async fn summaries_of(&self, bot: &EntityId) -> Result<Vec<SessionSummary>, SessionError> {
+        self.readable()?;
         match self.held(|image| {
             image
                 .runs
@@ -342,6 +365,7 @@ impl Sessions for FoldedSessions {
     }
 
     async fn all_summaries(&self) -> Result<Vec<SessionSummary>, SessionError> {
+        self.readable()?;
         match self.held(|image| {
             image
                 .runs
@@ -355,6 +379,7 @@ impl Sessions for FoldedSessions {
     }
 
     async fn summary_of(&self, id: &SessionId) -> Result<Option<SessionSummary>, SessionError> {
+        self.readable()?;
         // An id that could never be a run's is no run, and is not an error.
         if validate_session_id(id).is_err() {
             return Ok(None);
@@ -366,6 +391,7 @@ impl Sessions for FoldedSessions {
     }
 
     async fn run_totals(&self) -> Result<Vec<RunTotals>, SessionError> {
+        self.readable()?;
         match self.held(|image| {
             jojobot_domain::session::run_totals_of(&image.runs, |id| {
                 image.changes.get(id).map(Vec::as_slice)
@@ -377,6 +403,7 @@ impl Sessions for FoldedSessions {
     }
 
     async fn served_days(&self) -> Result<Vec<ServedDay>, SessionError> {
+        self.readable()?;
         match self.held(|image| {
             image
                 .served
@@ -397,6 +424,7 @@ impl Sessions for FoldedSessions {
     }
 
     async fn call_counts(&self) -> Result<Vec<CallCount>, SessionError> {
+        self.readable()?;
         match self.held(|image| {
             image
                 .calls
@@ -413,6 +441,7 @@ impl Sessions for FoldedSessions {
     }
 
     async fn run_calls(&self, runs: Option<&[String]>) -> Result<Vec<RunCall>, SessionError> {
+        self.readable()?;
         match self.held(|image| {
             image
                 .run_calls
@@ -452,6 +481,7 @@ impl Sessions for FoldedSessions {
     }
 
     async fn run_counts(&self) -> Result<BTreeMap<EntityId, usize>, SessionError> {
+        self.readable()?;
         match self.held(|image| {
             let mut counts = BTreeMap::new();
             for run in &image.runs {
@@ -465,6 +495,7 @@ impl Sessions for FoldedSessions {
     }
 
     async fn all_sessions(&self) -> Result<Vec<Session>, SessionError> {
+        self.readable()?;
         match self.held(|image| image.runs.clone()) {
             Some(runs) => Ok(runs),
             None => self.inner.all_sessions().await,
@@ -472,10 +503,12 @@ impl Sessions for FoldedSessions {
     }
 
     async fn write_summary(&self) -> Result<Option<(i64, Option<Timestamp>)>, SessionError> {
+        self.readable()?;
         self.inner.write_summary().await
     }
 
     async fn read_session(&self, id: &SessionId) -> Result<Session, SessionError> {
+        self.readable()?;
         validate_session_id(id)?;
         match self.held(|image| image.run(id).cloned()) {
             Some(Some(run)) => Ok(run),
@@ -488,12 +521,8 @@ impl Sessions for FoldedSessions {
 
     async fn begin(&self, new: NewSession) -> Result<Session, SessionError> {
         owned!(self, this, [], this.begin(new).await);
-        // **A begin whose outcome is uncertain drops the image.** Cancelled while
-        // the store wrote, or answered with a store failure, the begin may have
-        // committed: the run is then in the store and out of the image, and a retry
-        // under the same sid writes nothing. Without the image the retry fills it
-        // again from the store, so the image holds the Begin the store holds rather
-        // than a second one stamped at the retry.
+        // An unacknowledged begin reloads the rail under the fence. A same-sid
+        // retry then sees the store's original Begin rather than stamping another.
         self.scoped(async {
             let (_held, at) = self.moment();
             let run = self.inner.begin(new).await?;
@@ -817,6 +846,7 @@ impl Sessions for FoldedSessions {
     }
 
     async fn scan_session_history(&self) -> Result<SessionHistories, SessionError> {
+        self.readable()?;
         match self.held(|image| SessionHistories {
             changes: image
                 .changes
@@ -835,6 +865,7 @@ impl Sessions for FoldedSessions {
     }
 
     async fn session_history(&self, id: &SessionId) -> Result<Vec<SessionChange>, SessionError> {
+        self.readable()?;
         validate_session_id(id)?;
         match self.held(|image| {
             image
@@ -854,6 +885,7 @@ impl Sessions for FoldedSessions {
         id: &SessionId,
         entry: &EntryId,
     ) -> Result<Vec<Wording>, SessionError> {
+        self.readable()?;
         validate_session_id(id)?;
         match self.held(|image| {
             image.run(id).map(|run| {
@@ -922,18 +954,19 @@ impl Sessions for FoldedSessions {
             [run = run.clone()],
             this.note_minted(&run).await
         );
-        self.inner.note_minted(run).await
+        self.scoped(self.inner.note_minted(run)).await
     }
 
     async fn minted_without_a_card(
         &self,
     ) -> Result<Vec<jojobot_domain::session::MintedRun>, SessionError> {
+        self.unheld()?;
         self.inner.minted_without_a_card().await
     }
 
     async fn prune_minted(&self, before: jiff::Timestamp) -> Result<usize, SessionError> {
         owned!(self, this, [], this.prune_minted(before).await);
-        self.inner.prune_minted(before).await
+        self.scoped(self.inner.prune_minted(before)).await
     }
 
     async fn note_charter_change(
@@ -976,6 +1009,7 @@ impl Sessions for FoldedSessions {
         &self,
         bot: &EntityId,
     ) -> Result<Option<CharterChange>, SessionError> {
+        self.readable()?;
         // A store that lists no changes is asked bot by bot, image or not.
         match self.held(|image| {
             image
@@ -984,13 +1018,23 @@ impl Sessions for FoldedSessions {
                 .map(|held| held.get(bot).cloned())
         }) {
             Some(Some(change)) => Ok(change),
-            _ => self.inner.charter_change_of(bot).await,
+            _ => {
+                self.unheld()?;
+                self.inner.charter_change_of(bot).await
+            }
         }
     }
 
     async fn charter_changes(
         &self,
     ) -> Result<Option<BTreeMap<EntityId, CharterChange>>, SessionError> {
+        self.readable()?;
+        if self.writer.rail_uncertain("runs") {
+            if let Some(Some(held)) = self.held(|image| image.charter_changes.clone()) {
+                return Ok(Some(held));
+            }
+            self.unheld()?;
+        }
         self.inner.charter_changes().await
     }
 }

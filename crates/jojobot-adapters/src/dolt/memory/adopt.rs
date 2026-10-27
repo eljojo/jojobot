@@ -109,7 +109,7 @@ impl DoltMemory {
             let mut tx = self.pool.begin().await.map_err(store)?;
             let badge = write_entity(&mut tx, &self.draw, &entity, &self.clock, None).await?;
             Self::rekey_adopted(&mut tx, id.as_str(), &badge).await?;
-            tx.commit().await.map_err(store)?;
+            super::commit_native(tx).await.map_err(store)?;
             report.adopted.push(id);
         }
         Ok(report)

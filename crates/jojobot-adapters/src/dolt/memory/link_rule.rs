@@ -228,7 +228,7 @@ impl DoltMemory {
             .map_err(store)?;
             report.linked += 1;
         }
-        tx.commit().await.map_err(store)?;
+        super::commit_native(tx).await.map_err(store)?;
         if !marked_before {
             crate::dolt::finish_pass(&self.pool, FIELD_MARKS_PASS).await;
         }

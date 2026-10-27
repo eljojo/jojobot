@@ -40,15 +40,28 @@ pub struct Calls {
     seen: std::sync::Mutex<BTreeMap<&'static str, (Kind, usize)>>,
     /// While set, the reads that fill an image fail.
     unreachable: std::sync::atomic::AtomicBool,
-    /// Set once: the next call of this name commits in the store and then never
-    /// answers.
+    /// Set once: the selected call pauses until the fixture releases it.
     hang_after: std::sync::Mutex<Option<&'static str>>,
-    /// Told when a call has committed and begun to hang.
+    /// Told when the selected call has paused.
     hung: tokio::sync::Notify,
     released: tokio::sync::Notify,
+    lose_post_reply: std::sync::atomic::AtomicBool,
+    lose_begin_reply: std::sync::atomic::AtomicBool,
 }
 
 impl Calls {
+    /// Lose a successful begin's receipt after its real commit.
+    pub fn lose_next_begin_reply(&self) {
+        self.lose_begin_reply
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Lose a successful post's reply after the real store has committed it.
+    pub fn lose_next_post_reply(&self) {
+        self.lose_post_reply
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
     fn hit(&self, name: &'static str, kind: Kind) {
         self.seen
             .lock()
@@ -109,9 +122,8 @@ impl Calls {
         *self.hang_after.lock().expect("count lock") = Some(name);
     }
 
-    /// **Resolves once a call has committed and begun to hang.** A caller that
-    /// drops the call then drops it after the commit, however long the store
-    /// took to commit: a timeout would drop a slow store's write before it landed.
+    /// Writes pause after their commit; `all_sessions` pauses before its read,
+    /// letting a fixture observe the rail during recovery.
     pub async fn hung(&self) {
         self.hung.notified().await;
     }
@@ -208,6 +220,7 @@ impl Sessions for CountedSessions {
     }
     async fn all_sessions(&self) -> Result<Vec<Session>, SessionError> {
         self.calls.hit("all_sessions", Kind::Read);
+        self.calls.hang_if_armed("all_sessions").await;
         self.calls.outage().map_err(SessionError::Store)?;
         self.inner.all_sessions().await
     }
@@ -223,6 +236,14 @@ impl Sessions for CountedSessions {
         self.calls.hit("begin", Kind::Write);
         let landed = self.inner.begin(new).await;
         self.calls.hang_if_armed("begin").await;
+        if landed.is_ok()
+            && self
+                .calls
+                .lose_begin_reply
+                .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            return Err(SessionError::Store("the commit reply was lost".into()));
+        }
         landed
     }
     async fn append(&self, id: &SessionId, entry: NewEntry) -> Result<JournalEntry, SessionError> {
@@ -489,6 +510,14 @@ impl Mailboxes for CountedMailboxes {
         self.calls.hit("post_message", Kind::Write);
         let landed = self.inner.post_message(message).await;
         self.calls.hang_if_armed("post_message").await;
+        if matches!(&landed, Ok(Guarded::Written(_)))
+            && self
+                .calls
+                .lose_post_reply
+                .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            return Err(MailboxError::Store("the commit reply was lost".into()));
+        }
         landed
     }
     async fn read_mailbox(

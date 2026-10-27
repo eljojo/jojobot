@@ -5429,6 +5429,9 @@ pub enum Landed {
 /// these; the domain and the MCP layer speak only this vocabulary.
 #[derive(Debug, thiserror::Error)]
 pub enum MemoryError {
+    /// The commit may have landed, but no result can be reconstructed.
+    #[error("{}", crate::request::INDETERMINATE_WRITE)]
+    Indeterminate,
     /// The claim is malformed for storage (empty, or spans multiple lines).
     #[error("invalid fact: {0}")]
     InvalidFact(String),
@@ -6377,16 +6380,9 @@ pub enum MemoryError {
          naming standing"
     )]
     ReceiptWithoutSettling,
-    /// The underlying store failed — it, or the layer that carries and parses
-    /// its answers. **A clean failure**: a write either commits or does not,
-    /// so the record is as it was and retrying is a reasonable next move.
-    ///
-    /// **Never a conflict** — see [`MemoryError::Conflict`] for the write
-    /// that landed on a store working correctly, rejected only because
-    /// another write committed the same instant. The two are told apart at
-    /// the adapter, because they call for different words: this one is
-    /// genuinely unexplained, and telling a caller to escalate a conflict as
-    /// if it were this is the wrong advice for the commoner case.
+    /// The store or its wire failed. An uncertain commit is
+    /// [`Indeterminate`](Self::Indeterminate); a rejected concurrent write is
+    /// [`Conflict`](Self::Conflict), which calls for a retry rather than repair.
     #[error("store error: {0}")]
     Store(String),
     /// **The store holds something a person has to repair.** It was reached and it

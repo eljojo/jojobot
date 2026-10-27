@@ -71,6 +71,11 @@ impl FoldedTeachings {
         let this = self.clone();
         self.writer
             .run(async move {
+                if this.writer.rail_uncertain("teachings") {
+                    return Err(TeachingError::Store(
+                        "the rail is uncertain; rebuild requires its fence".into(),
+                    ));
+                }
                 this.wanted.store(true, Ordering::SeqCst);
                 this.fill().await
             })
@@ -80,26 +85,28 @@ impl FoldedTeachings {
     /// The read behind [`rebuild`](Self::rebuild), already in the writer task.
     /// A read that fails leaves no set rather than a stale one.
     async fn fill(&self) -> Result<usize, TeachingError> {
-        match self.inner.taught().await {
+        match crate::writer::sql::reading(self.inner.taught()).await {
             Ok(all) => {
                 let held = all.as_ref().map_or(0, Vec::len);
                 *self.taught.write().expect("fold lock") = all.map(|all| all.into_iter().collect());
                 Ok(held)
             }
             Err(e) => {
-                *self.taught.write().expect("fold lock") = None;
+                if !self.writer.rail_uncertain("teachings") {
+                    *self.taught.write().expect("fold lock") = None;
+                }
                 Err(e)
             }
         }
     }
 
-    /// **Run a write and the set's following it inside the one scope every write
-    /// of every fold shares** (see [`super::uncertain::guarded`]).
+    /// Keep the last published image until an uncertain write's rail has been
+    /// fenced and reloaded through its boot loader.
     async fn scoped<T>(
         &self,
         write: impl std::future::Future<Output = Result<T, TeachingError>>,
     ) -> Result<T, TeachingError> {
-        super::uncertain::guarded(&self.taught, None, "teachings", write).await
+        crate::writer::recovery::guarded(&self.writer, "teachings", write, self.fill()).await
     }
 
     /// Bring the set up to date with a write that landed. With no set held, a
@@ -135,6 +142,16 @@ impl FoldedTeachings {
             .as_ref()
             .map(|taught| taught.contains(pair))
     }
+    fn readable(&self) -> Result<(), TeachingError> {
+        if self.writer.rail_uncertain("teachings")
+            && self.taught.read().expect("fold lock").is_none()
+        {
+            return Err(TeachingError::Store(
+                "the uncertain rail has no published image".into(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -145,6 +162,11 @@ impl Teachings for FoldedTeachings {
         domain: &str,
         at: Timestamp,
     ) -> Result<bool, TeachingError> {
+        if self.writer.rail_uncertain("teachings") {
+            return Err(TeachingError::Store(
+                "the teaching rail is uncertain; this contact was not written".into(),
+            ));
+        }
         let pair = (sid.clone(), domain.to_string());
         // A pair the ledger holds changes nothing, so it never reaches the store.
         if self.holds(&pair) == Some(true) {
@@ -171,6 +193,7 @@ impl Teachings for FoldedTeachings {
     }
 
     async fn has_contact(&self, sid: &Sid, domain: &str) -> Result<bool, TeachingError> {
+        self.readable()?;
         // Answered from the held set when there is one; a set that is not held
         // sends the ask to the store, which is slower and still correct.
         match self.holds(&(sid.clone(), domain.to_string())) {
@@ -191,6 +214,10 @@ impl Teachings for FoldedTeachings {
     }
 
     async fn taught(&self) -> Result<Option<Vec<(Sid, String)>>, TeachingError> {
+        self.readable()?;
+        if let Some(taught) = self.taught.read().expect("fold lock").as_ref() {
+            return Ok(Some(taught.iter().cloned().collect()));
+        }
         self.inner.taught().await
     }
 }

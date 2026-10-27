@@ -277,6 +277,11 @@ impl FoldedMailboxes {
         let this = self.clone();
         self.writer
             .run(async move {
+                if this.writer.rail_uncertain("mail") {
+                    return Err(MailboxError::Store(
+                        "the rail is uncertain; rebuild requires its fence".into(),
+                    ));
+                }
                 // **Wanted from the first attempt, whether or not it succeeds**: a fill that
                 // failed leaves no image, and the next write fills it again.
                 this.wanted.store(true, Ordering::SeqCst);
@@ -286,12 +291,12 @@ impl FoldedMailboxes {
     }
 
     async fn fill(&self) -> Result<usize, MailboxError> {
-        let read = async {
+        let read = crate::writer::sql::reading(async {
             let boxes = self.inner.list_mailboxes().await?;
             let messages = self.inner.scan_messages().await?;
             let events = self.inner.scan_message_events().await?;
             Ok::<_, MailboxError>((boxes, messages, events))
-        }
+        })
         .await;
         match read {
             Ok((boxes, messages, events)) => {
@@ -300,19 +305,21 @@ impl FoldedMailboxes {
                 Ok(held)
             }
             Err(e) => {
-                *self.image.write().expect("fold lock") = None;
+                if !self.writer.rail_uncertain("mail") {
+                    *self.image.write().expect("fold lock") = None;
+                }
                 Err(e)
             }
         }
     }
 
-    /// **Run a write and the image's following it inside the one scope every
-    /// write of every fold shares** (see [`super::uncertain::guarded`]).
+    /// Keep the last published image until an uncertain write's rail has been
+    /// fenced and reloaded through its boot loader.
     async fn scoped<T>(
         &self,
         write: impl std::future::Future<Output = Result<T, MailboxError>>,
     ) -> Result<T, MailboxError> {
-        super::uncertain::guarded(&self.image, None, "mail", write).await
+        crate::writer::recovery::guarded(&self.writer, "mail", write, self.fill()).await
     }
 
     /// Answer from the image when one is held; `None` sends the read to the
@@ -355,6 +362,14 @@ impl FoldedMailboxes {
                  store until the next write fills it again"
             );
         }
+    }
+    fn readable(&self) -> Result<(), MailboxError> {
+        if self.writer.rail_uncertain("mail") && self.image.read().expect("fold lock").is_none() {
+            return Err(MailboxError::Store(
+                "the uncertain rail has no published image".into(),
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -416,6 +431,7 @@ impl Mailboxes for FoldedMailboxes {
     }
 
     async fn list_mailboxes(&self) -> Result<Vec<Mailbox>, MailboxError> {
+        self.readable()?;
         match self.held(|image| {
             image
                 .boxes
@@ -434,6 +450,7 @@ impl Mailboxes for FoldedMailboxes {
     }
 
     async fn scan_messages(&self) -> Result<Vec<Message>, MailboxError> {
+        self.readable()?;
         match self.held(|image| image.messages.clone()) {
             Some(messages) => Ok(messages),
             None => self.inner.scan_messages().await,
@@ -441,6 +458,7 @@ impl Mailboxes for FoldedMailboxes {
     }
 
     async fn message_by_id(&self, id: &MessageId) -> Result<Option<Message>, MailboxError> {
+        self.readable()?;
         match self.held(|image| image.at.get(id).map(|place| image.messages[*place].clone())) {
             Some(message) => Ok(message),
             None => self.inner.message_by_id(id).await,
@@ -448,6 +466,7 @@ impl Mailboxes for FoldedMailboxes {
     }
 
     async fn messages_by_id(&self, ids: &[MessageId]) -> Result<Vec<Message>, MailboxError> {
+        self.readable()?;
         match self.held(|image| {
             // The image keeps the board in scan order, so the places in order
             // are the messages in the order `scan_messages` returns them.
@@ -468,6 +487,7 @@ impl Mailboxes for FoldedMailboxes {
     }
 
     async fn sent_by(&self, senders: &[&str]) -> Result<Vec<Message>, MailboxError> {
+        self.readable()?;
         if senders.is_empty() {
             return Ok(Vec::new());
         }
@@ -564,6 +584,7 @@ impl Mailboxes for FoldedMailboxes {
         name: &MailboxName,
         taken_by: TakenBy,
     ) -> Result<Option<Delivery>, MailboxError> {
+        self.readable()?;
         let cached = self
             .held(|image| image.leftovers_of(name, taken_by))
             .flatten();
@@ -708,6 +729,7 @@ impl Mailboxes for FoldedMailboxes {
     }
 
     async fn message_history(&self, id: &MessageId) -> Result<Vec<MessageEvent>, MailboxError> {
+        self.readable()?;
         match self.held(|image| image.history_of(id)) {
             Some(history) => history,
             None => self.inner.message_history(id).await,
@@ -717,6 +739,7 @@ impl Mailboxes for FoldedMailboxes {
     async fn scan_message_events(
         &self,
     ) -> Result<Vec<(MessageId, Vec<MessageEvent>)>, MailboxError> {
+        self.readable()?;
         match self.held(|image| {
             let mut all: Vec<_> = image
                 .events

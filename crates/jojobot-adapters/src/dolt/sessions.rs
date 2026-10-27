@@ -47,13 +47,13 @@ use moments::{
 /// nobody set.
 #[derive(Clone)]
 pub struct DoltSessions {
-    pool: MySqlPool,
+    pool: crate::writer::sql::Pool,
     draw: Draw,
     /// **Where the boundary marks are written**, which in production is the
     /// pool beside it. It is a field of its own because a mark that fails must
     /// leave the session standing, and the only way to watch that happen is to
     /// break the marking and nothing else — see [`Self::snapshotting`].
-    snapshots: MySqlPool,
+    snapshots: crate::writer::sql::Pool,
     /// **How many times [`Self::read_in`] ran** — the one seam every full
     /// read shares, whichever verb reached for it. Test-only instrumentation
     /// for the one property nothing else here can observe: whether a call
@@ -88,8 +88,8 @@ impl DoltSessions {
     /// [`crate::dolt::migrate`].
     pub fn open(pool: MySqlPool) -> Self {
         DoltSessions {
-            snapshots: pool.clone(),
-            pool,
+            snapshots: pool.clone().into(),
+            pool: pool.into(),
             draw: ids::drawing(),
             full_reads: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             entries_read: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
@@ -273,8 +273,8 @@ impl DoltSessions {
     #[cfg(test)]
     pub(crate) fn drawing(pool: MySqlPool, draw: Draw) -> Self {
         DoltSessions {
-            snapshots: pool.clone(),
-            pool,
+            snapshots: pool.clone().into(),
+            pool: pool.into(),
             draw,
             full_reads: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             entries_read: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
@@ -293,9 +293,9 @@ impl DoltSessions {
     #[cfg(test)]
     pub(crate) fn snapshotting(pool: MySqlPool, snapshots: MySqlPool) -> Self {
         DoltSessions {
-            pool,
+            pool: pool.into(),
             draw: ids::drawing(),
-            snapshots,
+            snapshots: snapshots.into(),
             full_reads: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             entries_read: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             existence_checks: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
@@ -407,11 +407,11 @@ impl DoltSessions {
                 .await?;
         }
         let session = self.read_in(&mut tx, id).await?;
-        tx.commit().await.map_err(store)?;
+        crate::writer::sql::commit(tx).await.map_err(store)?;
         // The far end of the span, whichever ending this was: a run that told
         // its story and one the sweep found stopped are both runs that ended.
         super::snapshot(
-            &self.snapshots,
+            &self.snapshots.writer(),
             &format!(
                 "session {} ({}) ended {}",
                 id.as_str(),
@@ -549,7 +549,7 @@ fn store(e: sqlx::Error) -> SessionError {
         return SessionError::Refused(rule.to_string());
     }
     tracing::error!(error = %e, "the session store failed");
-    SessionError::Store("the session store could not be reached".into())
+    crate::writer::sql::store_error(e)
 }
 
 /// One row plus its entries, as the domain's record.
@@ -882,7 +882,7 @@ impl Sessions for DoltSessions {
         for id in ids {
             found.push(self.read_listed(&mut tx, id).await?);
         }
-        tx.commit().await.map_err(store)?;
+        crate::writer::sql::commit(tx).await.map_err(store)?;
         Ok(found)
     }
 
@@ -897,7 +897,7 @@ impl Sessions for DoltSessions {
         for id in ids {
             found.push(self.read_listed(&mut tx, id).await?);
         }
-        tx.commit().await.map_err(store)?;
+        crate::writer::sql::commit(tx).await.map_err(store)?;
         Ok(found)
     }
 
@@ -1050,7 +1050,7 @@ impl Sessions for DoltSessions {
             .await
             .map_err(store)?;
         }
-        tx.commit().await.map_err(store)?;
+        crate::writer::sql::commit(tx).await.map_err(store)?;
         Ok(())
     }
 
@@ -1137,7 +1137,7 @@ impl Sessions for DoltSessions {
         validate_session_id(id)?;
         let mut tx = self.pool.begin().await.map_err(store)?;
         let session = self.read_in(&mut tx, id).await?;
-        tx.commit().await.map_err(store)?;
+        crate::writer::sql::commit(tx).await.map_err(store)?;
         Ok(session)
     }
 
@@ -1169,7 +1169,7 @@ impl Sessions for DoltSessions {
         .map_err(store)?;
         if let Some(id) = held {
             let session = self.read_in(&mut tx, &SessionId(id)).await?;
-            tx.commit().await.map_err(store)?;
+            crate::writer::sql::commit(tx).await.map_err(store)?;
             return Ok(session);
         }
 
@@ -1219,14 +1219,14 @@ impl Sessions for DoltSessions {
         self.keep_change(&mut tx, &id, Change::Begin(new.focus.trim()))
             .await?;
         let session = self.read_in(&mut tx, &id).await?;
-        tx.commit().await.map_err(store)?;
+        crate::writer::sql::commit(tx).await.map_err(store)?;
         // **The near end of the run's span.** It fixes what the store looked
         // like before this run touched anything, so a sitting is bounded at
         // both ends rather than inferred from wherever the last one stopped.
         // The retry above does not reach here: a caller offering a handle that
         // already holds a run began nothing.
         super::snapshot(
-            &self.snapshots,
+            &self.snapshots.writer(),
             &format!("session {} ({}) opened", id.as_str(), new.bot.as_str()),
         )
         .await;
@@ -1311,7 +1311,7 @@ impl Sessions for DoltSessions {
             .await?;
         let written = read_entry(&mut tx, id, &entry_id).await?;
         self.keep_wording(&mut tx, id, &written).await?;
-        tx.commit().await.map_err(store)?;
+        crate::writer::sql::commit(tx).await.map_err(store)?;
         Ok(written)
     }
 
@@ -1348,7 +1348,7 @@ impl Sessions for DoltSessions {
             .await?;
         let written = read_entry(&mut tx, id, entry).await?;
         self.keep_wording(&mut tx, id, &written).await?;
-        tx.commit().await.map_err(store)?;
+        crate::writer::sql::commit(tx).await.map_err(store)?;
         Ok(written)
     }
 
@@ -1395,7 +1395,7 @@ impl Sessions for DoltSessions {
         )
         .await?;
         let session = self.read_in(&mut tx, id).await?;
-        tx.commit().await.map_err(store)?;
+        crate::writer::sql::commit(tx).await.map_err(store)?;
         Ok(session)
     }
 
@@ -1416,7 +1416,7 @@ impl Sessions for DoltSessions {
         self.keep_change(&mut tx, id, Change::StatedDay(day))
             .await?;
         let session = self.read_in(&mut tx, id).await?;
-        tx.commit().await.map_err(store)?;
+        crate::writer::sql::commit(tx).await.map_err(store)?;
         Ok(session)
     }
 
@@ -1445,7 +1445,7 @@ impl Sessions for DoltSessions {
         self.keep_change(&mut tx, id, Change::WrapWindow(window.as_ref()))
             .await?;
         let session = self.read_in(&mut tx, id).await?;
-        tx.commit().await.map_err(store)?;
+        crate::writer::sql::commit(tx).await.map_err(store)?;
         Ok(session)
     }
 
@@ -1507,7 +1507,7 @@ impl Sessions for DoltSessions {
         // **No change is recorded here.** An answer is served many times a
         // run, and a record of each would grow with them: the reset records
         // the total instead.
-        tx.commit().await.map_err(store)?;
+        crate::writer::sql::commit(tx).await.map_err(store)?;
         Ok(())
     }
 
@@ -1577,7 +1577,7 @@ impl Sessions for DoltSessions {
                 });
             }
         };
-        tx.commit().await.map_err(store)?;
+        crate::writer::sql::commit(tx).await.map_err(store)?;
         Ok(session)
     }
 
@@ -1608,7 +1608,7 @@ impl Sessions for DoltSessions {
         .await
         .map_err(store)?;
         self.keep_change(&mut tx, id, Change::Key).await?;
-        tx.commit().await.map_err(store)?;
+        crate::writer::sql::commit(tx).await.map_err(store)?;
         Ok(())
     }
 
@@ -1697,7 +1697,7 @@ impl Sessions for DoltSessions {
             .map_err(store)?;
         self.keep_change(&mut tx, id, Change::CharterTold(at))
             .await?;
-        tx.commit().await.map_err(store)?;
+        crate::writer::sql::commit(tx).await.map_err(store)?;
         Ok(())
     }
 
@@ -1752,7 +1752,7 @@ impl Sessions for DoltSessions {
         .fetch_all(&mut *tx)
         .await
         .map_err(store)?;
-        tx.commit().await.map_err(store)?;
+        crate::writer::sql::commit(tx).await.map_err(store)?;
         rows.iter().map(change_from_row).collect()
     }
 
@@ -1783,7 +1783,7 @@ impl Sessions for DoltSessions {
         .fetch_all(&mut *tx)
         .await
         .map_err(store)?;
-        tx.commit().await.map_err(store)?;
+        crate::writer::sql::commit(tx).await.map_err(store)?;
         rows.iter().map(wording_from_row).collect()
     }
 

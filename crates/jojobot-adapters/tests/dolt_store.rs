@@ -139,8 +139,14 @@ async fn calls_counted_at_once_under_one_key_are_all_counted() {
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
     let stamp = WriteStamp::new();
-    let stored = Arc::new(DoltSessions::open(pool).stamped_by(stamp.clone()));
-    let sessions = Arc::new(FoldedSessions::new(stored.clone(), stamp, Clock::Real));
+    let writer = jojobot_adapters::writer::Writer::default();
+    let stored = Arc::new(
+        DoltSessions::open(pool)
+            .stamped_by(stamp.clone())
+            .with_writer(writer.clone()),
+    );
+    let sessions =
+        Arc::new(FoldedSessions::new(stored.clone(), stamp, Clock::Real).with_writer(writer));
     sessions.rebuild().await.expect("the image loads");
     let key = |bot: Option<&str>| CallKey {
         bot: bot.map(|bot| jojobot_domain::memory::EntityId(bot.to_string())),

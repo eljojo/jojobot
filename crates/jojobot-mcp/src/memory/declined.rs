@@ -552,7 +552,7 @@ pub(crate) fn memory_fix_by(e: &MemoryError) -> Option<FixBy> {
         // The words do not occur once in the text: the call has to name them differently.
         MemoryError::TextEditMatches { .. } => Some(FixBy::Change),
         MemoryError::Store(_) => memory_store_failure_word(),
-        MemoryError::FoldBehind { .. } => None,
+        MemoryError::FoldBehind { .. } | MemoryError::Indeterminate => None,
     }
 }
 
@@ -2086,6 +2086,7 @@ fn memory_error_arms(e: MemoryError) -> McpError {
         MemoryError::Store(msg) => {
             McpError::internal_error(crate::boundary::store_failed("this call", &msg), None)
         }
+        MemoryError::Indeterminate => McpError::internal_error(e.to_string(), None),
         // **Damage is not an outage.** The store answered and what it holds is
         // wrong; the sentence names the damage and says a person must repair it,
         // and never says to try again.

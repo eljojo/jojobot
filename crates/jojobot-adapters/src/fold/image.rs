@@ -231,7 +231,9 @@ impl Image {
                 let inner = inner.clone();
                 let id = entity.id.clone();
                 let taken = parts.take(&id);
-                batch.spawn(async move { (id, Doc::read(&*inner, scan, taken).await) });
+                batch.spawn(crate::writer::sql::inherit_read(async move {
+                    (id, Doc::read(&*inner, scan, taken).await)
+                }));
             }
             if batch.is_empty() {
                 break;
@@ -1118,10 +1120,10 @@ pub(super) async fn ask_referring(
         for name in chunk {
             let inner = inner.clone();
             let name = name.clone();
-            batch.spawn(async move {
+            batch.spawn(crate::writer::sql::inherit_read(async move {
                 let answer = inner.referring_to(&EntityId(name.clone())).await;
                 (name, answer)
-            });
+            }));
         }
         while let Some(done) = batch.join_next().await {
             let (name, answer) = done.map_err(|e| MemoryError::Store(e.to_string()))?;
