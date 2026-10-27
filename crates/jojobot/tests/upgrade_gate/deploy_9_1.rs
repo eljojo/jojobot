@@ -109,6 +109,17 @@ async fn the_link_rule_preserves_a_recorded_store(fixture: &str, label: &str) {
 }
 
 async fn the_link_rule_preserves_the_recording(restored: Restored) {
+    let account_links: Vec<_> = link_rows(&restored)
+        .await
+        .into_iter()
+        .filter(|(_, key, ..)| key == "merged_from")
+        .collect();
+    assert_eq!(
+        account_links.len(),
+        1,
+        "recorded at {}: the required stored merged_from link row is missing or duplicated: {account_links:?}",
+        restored.git_ref
+    );
     as_a_recording_before_the_marking(&restored.state_dir, restored.store_port).await;
     let first = boot_current_with(
         &restored.state_dir,
@@ -120,6 +131,16 @@ async fn the_link_rule_preserves_the_recording(restored: Restored) {
     )
     .await;
     first.stop().await;
+    let kept_account_links: Vec<_> = link_rows(&restored)
+        .await
+        .into_iter()
+        .filter(|(_, key, ..)| key == "merged_from")
+        .collect();
+    assert_eq!(
+        kept_account_links, account_links,
+        "recorded at {}: the first marking boot changed an engine account link row",
+        restored.git_ref
+    );
     let after_first = dump_store(&restored.state_dir).await;
     let mut store = open_the_store(&restored.state_dir, restored.store_port).await;
     let markers: Vec<String> = sqlx::query_scalar("SELECT name FROM store_pass ORDER BY name")
@@ -600,7 +621,10 @@ pub(super) async fn recorded_r1_before_boot(
         .await
         .expect("the raw held values read before marking");
         for (holder, key, value) in held {
-            if RECORDED_R1.contains(&(holder.as_str(), key.as_str(), value.as_str())) {
+            // The audited merged_from values are engine history, never R1 warnings.
+            if key != "merged_from"
+                && RECORDED_R1.contains(&(holder.as_str(), key.as_str(), value.as_str()))
+            {
                 expected.push(r1_identity(&holder, &key, &value));
             }
         }
