@@ -338,7 +338,7 @@ impl Image {
                     && doc.scan.facts.iter().any(|fact| {
                         fact.fields
                             .contains_key(jojobot_domain::memory::capacity::ENGINE_RECORD)
-                            && jojobot_domain::memory::fact_names_target(fact, &self.types, &target)
+                            && jojobot_domain::memory::fact_names_target(fact, &target)
                     })
             })
             .collect()
@@ -362,34 +362,22 @@ impl Image {
                     && jojobot_domain::memory::validate_subject(&EntityId(name.clone())).is_ok()
             })
             .collect();
-        // On reads targets from stored marks; log-only retains declaration-based
-        // membership. The image keeps each existing holder and adds one when this
+        // Targets are read from stored marks. The image keeps each existing holder and adds one when this
         // write sends a key linking to the target. Sending the same value again
         // links; editing only another key does not. A declaration changes no list.
         let patch = names
             .into_iter()
             .map(|name| {
                 let target = EntityId(name.clone());
-                let on =
-                    jojobot_domain::memory::link_rule() == jojobot_domain::memory::LinkRule::On;
-                let names_it = |fact: &Fact| {
-                    jojobot_domain::memory::fact_names_target(fact, &self.types, &target)
-                };
+                let names_it =
+                    |fact: &Fact| jojobot_domain::memory::fact_names_target(fact, &target);
                 let sent_it = |fact: &Fact| {
                     wrote.iter().any(|(id, keys)| {
                         *id == fact.id
-                            && keys.iter().any(|key| match on {
-                                true => fact
-                                    .field_links
+                            && keys.iter().any(|key| {
+                                fact.field_links
                                     .get(key.trim())
-                                    .is_some_and(|ids| ids.contains(&target)),
-                                false => fact.fields.get(key.trim()).is_some_and(|value| {
-                                    jojobot_domain::memory::fields_name_target(
-                                        &BTreeMap::from([(key.trim().to_string(), value.clone())]),
-                                        &self.types,
-                                        &target,
-                                    )
-                                }),
+                                    .is_some_and(|ids| ids.contains(&target))
                             })
                     })
                 };
@@ -598,7 +586,7 @@ impl Image {
         let mut names = std::collections::BTreeSet::new();
         for doc in docs {
             for fact in &doc.scan.facts {
-                names.extend(jojobot_domain::memory::names_in_fact(fact, &self.types));
+                names.extend(jojobot_domain::memory::names_in_fact(fact));
             }
         }
         names.into_iter().collect()

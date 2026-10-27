@@ -49,7 +49,6 @@ async fn link_rows(pool: &sqlx::MySqlPool) -> Vec<(String, String, i64, String)>
 
 /// A store with a holder and two things it can name.
 async fn world(name: &str) -> (Scratch, Dolt, sqlx::MySqlPool, DoltMemory, [EntityId; 3]) {
-    jojobot_domain::memory::set_link_rule(jojobot_domain::memory::LinkRule::On);
     let scratch = Scratch::new(name);
     let store = Dolt::start(&scratch.0, free_port())
         .await
@@ -694,9 +693,6 @@ async fn engine_merge_accounts_are_never_lowered_or_reported_as_r1() {
         .execute(&pool)
         .await
         .unwrap();
-    let diagnostics = memory.link_rule_diagnostics().await.unwrap();
-    assert_eq!(diagnostics.summary.owned_now, 0, "{diagnostics:?}");
-    assert!(diagnostics.owned_now_fields.is_empty(), "{diagnostics:?}");
     let marked = memory.migrate_field_links_marked().await.unwrap();
     assert!(marked.left_as_text.is_empty(), "{marked:?}");
     assert_eq!(
@@ -780,9 +776,6 @@ async fn marked_engine_accounts_keep_their_rows_without_linking_or_warning() {
     assert_eq!(forwarded.repointed, 0, "{forwarded:?}");
     assert_eq!(stored(&pool, &survivor, "merged_from").await, value);
     assert_eq!(link_rows(&pool).await, before);
-    let diagnostics = memory.link_rule_diagnostics().await.unwrap();
-    assert_eq!(diagnostics.summary.owned_now, 0, "{diagnostics:?}");
-    assert_eq!(diagnostics.summary.links_dropped, 0, "{diagnostics:?}");
     let settled = memory.migrate_field_links_marked().await.unwrap();
     assert!(settled.settled && !settled.disagreed, "{settled:?}");
     assert!(settled.left_as_text.is_empty(), "{settled:?}");

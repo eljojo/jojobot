@@ -10,37 +10,6 @@ pub mod at_write;
 #[cfg(test)]
 mod link_rule_tests;
 
-/// **Which link decision a process runs.** `LogOnly` keeps the legacy rule: a declared
-/// reference key links every item, any other key links a value only when every
-/// item is a handle, and the new decision of rule 646 ([`at_write`]) is computed to
-/// be logged and changes nothing stored, linked or served. `On` is the new
-/// decision. One switch for the whole process, because the readers that draw
-/// links from a served value (walks, search, the fold) hold no store to ask.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LinkRule {
-    LogOnly,
-    On,
-}
-
-static LINK_RULE_ON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-/// TEMPORARY(9.3.1) the link-rule switch and link_rule(). The rule this process runs; [`LinkRule::LogOnly`] until [`set_link_rule`].
-pub fn link_rule() -> LinkRule {
-    match LINK_RULE_ON.load(std::sync::atomic::Ordering::SeqCst) {
-        true => LinkRule::On,
-        false => LinkRule::LogOnly,
-    }
-}
-
-/// Set the rule for the whole process, once, at start.
-pub fn set_link_rule(rule: LinkRule) {
-    LINK_RULE_ON.store(rule == LinkRule::On, std::sync::atomic::Ordering::SeqCst);
-}
-
-fn on() -> bool {
-    link_rule() == LinkRule::On
-}
-
 /// Resolve only marked items from the value owner's stored fields. A grouped
 /// reader can decline an unplaced id and leave that document to the full read.
 pub fn marked_field_links(
@@ -48,9 +17,6 @@ pub fn marked_field_links(
     mut handle: impl FnMut(&str) -> Option<EntityId>,
 ) -> Option<BTreeMap<String, Vec<EntityId>>> {
     let mut links = BTreeMap::new();
-    if !on() {
-        return Some(links);
-    }
     for (key, value) in stored {
         if reserved_key(key) {
             continue;
@@ -85,9 +51,6 @@ pub fn lone_reference_names<'a>(
     fields: &'a BTreeMap<String, String>,
     declared: &[types::DeclaredType],
 ) -> Vec<(&'a str, MemoryError)> {
-    if !on() {
-        return Vec::new();
-    }
     fields
         .iter()
         .filter_map(|(key, value)| {
@@ -115,21 +78,7 @@ pub fn lone_reference_names<'a>(
 /// handed whether what it names exists. Two copies would drift, and a link the
 /// walk draws would be one the guard never asked about.
 pub fn handles_in_value(value: &str) -> Vec<EntityId> {
-    if on() {
-        return at_write::handles_in_value(value);
-    }
-    let whole = EntityId(value.trim().to_string());
-    if validate_subject(&whole).is_ok() {
-        return vec![whole];
-    }
-    let items: Vec<EntityId> = value
-        .split(',')
-        .map(|item| EntityId(item.trim().to_string()))
-        .collect();
-    match items.len() > 1 && items.iter().all(|id| validate_subject(id).is_ok()) {
-        true => items,
-        false => Vec::new(),
-    }
+    at_write::handles_in_value(value)
 }
 
 /// **The entities a write names through its field values**, which must already
@@ -154,45 +103,8 @@ pub fn handles_in_value(value: &str) -> Vec<EntityId> {
 /// **A key any declaration calls a reference counts**, which is the question
 /// the relation walk asks: two types may name one key, and one of them calling
 /// it a reference is what makes it walkable.
-pub fn referenced_by(
-    fields: &BTreeMap<String, String>,
-    declared: &[types::DeclaredType],
-) -> Result<Vec<EntityId>, MemoryError> {
-    if on() {
-        return Ok(at_write::referenced_by(fields));
-    }
-    let mut named = Vec::new();
-    for (key, value) in fields {
-        let reference = declared
-            .iter()
-            .filter_map(|d| d.field(key))
-            .find(|f| f.holds == types::ValueType::Reference);
-        match reference {
-            // **Every item, because a list of references is a list of links.** A
-            // key holding several handles that was read as one string would name
-            // a handle nobody wrote and let each real one past unchecked.
-            Some(field) => {
-                for item in field.items(value) {
-                    let item = item.trim();
-                    // A bare name can spell an opaque id at link lowering, but
-                    // the caller must choose a handle before it can be a link.
-                    if slug_shaped(item) {
-                        return Err(bare_reference_name(key, item, field.points_at));
-                    }
-                    let id = EntityId(item.to_string());
-                    if id.kind().is_some() {
-                        named.push(id);
-                    }
-                }
-            }
-            // **Any other key names what it names too.** A field whose value
-            // is a handle is a link whether or not a type declared the key
-            // (decision log 355, 374), so a value naming nothing leaves the
-            // same hole.
-            None => named.extend(handles_in_value(value)),
-        }
-    }
-    Ok(named)
+pub fn referenced_by(fields: &BTreeMap<String, String>) -> Vec<EntityId> {
+    at_write::referenced_by(fields)
 }
 
 /// **Every reference-typed key on a fields map, with the items its value
@@ -283,50 +195,8 @@ pub fn stored_handle_id(item: &str) -> Option<&str> {
 /// nothing. An item of a reference key that is no id and no handle — loose prose
 /// under a reference key — names no thing and is left out. Ordered and
 /// deduplicated, so the same write always gives the same rows.
-pub fn field_link_targets(key: &str, value: &str, declared: &[types::DeclaredType]) -> Vec<String> {
-    if on() {
-        return at_write::field_link_targets(value);
-    }
-    legacy_field_link_targets(key, value, declared)
-}
-
-/// TEMPORARY(9.3.1) the log-only legacy link decision. **[`field_link_targets`] by the rule before rule 646**, whatever the switch
-/// says: the startup repairs of rows that rule wrote read them so.
-pub fn legacy_field_link_targets(
-    key: &str,
-    value: &str,
-    declared: &[types::DeclaredType],
-) -> Vec<String> {
-    let one = BTreeMap::from([(key.to_string(), value.to_string())]);
-    let mut targets: Vec<String> = match reference_field_values(&one, declared).pop() {
-        Some((_, items)) => items
-            .iter()
-            .map(|item| stored_handle_id(item).unwrap_or(item))
-            .filter(|id| {
-                !id.is_empty()
-                    && (EntityId((*id).to_string()).kind().is_some()
-                        || id.bytes().all(|b| crate::handle::ALPHABET.contains(&b)))
-            })
-            .map(str::to_string)
-            .collect(),
-        None => {
-            let items: Vec<&str> = value.split(',').collect();
-            match items
-                .iter()
-                .all(|item| stored_handle_id(item).is_some_and(|id| !id.is_empty()))
-            {
-                true => items
-                    .iter()
-                    .filter_map(|item| stored_handle_id(item))
-                    .map(str::to_string)
-                    .collect(),
-                false => Vec::new(),
-            }
-        }
-    };
-    targets.sort();
-    targets.dedup();
-    targets
+pub fn field_link_targets(value: &str) -> Vec<String> {
+    at_write::field_link_targets(value)
 }
 
 /// **The value of one stored field write with every link to `from` pointing at
@@ -334,74 +204,12 @@ pub fn legacy_field_link_targets(
 ///
 /// A fold uses it: a field naming the folded side is a link (rule 374), and it
 /// must name the survivor afterwards. An item keeps its own spelling, so a
-/// marked id stays marked and a bare id under a declared reference stays bare.
-/// **A list that already held `to` loses the repointed item**, so it never
-/// names the same thing twice; the remaining items keep their order. Only the
-/// items [`field_link_targets`] reads as links are touched, so loose prose under
-/// a reference key is left as it was written.
-pub fn repoint_field_value(
-    key: &str,
-    value: &str,
-    declared: &[types::DeclaredType],
-    from: &str,
-    to: &str,
-) -> Option<String> {
-    if on() {
-        return at_write::repoint_field_value(value, from, to);
-    }
-    legacy_repoint_field_value(key, value, declared, from, to)
-}
-
-/// **[`repoint_field_value`] by the rule before rule 646**, whatever the switch
-/// says.
-pub fn legacy_repoint_field_value(
-    key: &str,
-    value: &str,
-    declared: &[types::DeclaredType],
-    from: &str,
-    to: &str,
-) -> Option<String> {
-    if !legacy_field_link_targets(key, value, declared)
-        .iter()
-        .any(|id| id == from)
-    {
-        return None;
-    }
-    let reference = declared
-        .iter()
-        .filter_map(|d| d.field(key))
-        .find(|f| f.holds == types::ValueType::Reference);
-    let items: Vec<String> = match reference {
-        Some(field) => field.items(value).into_iter().map(str::to_string).collect(),
-        None => value.split(',').map(str::to_string).collect(),
-    };
-    let repointed: Vec<(String, String)> = items
-        .into_iter()
-        .map(|item| {
-            let item = item.trim().to_string();
-            let marked = stored_handle_id(&item).is_some();
-            let id = stored_handle_id(&item).unwrap_or(&item).to_string();
-            if id == from {
-                (
-                    to.to_string(),
-                    if marked {
-                        marked_stored_handle(to)
-                    } else {
-                        to.to_string()
-                    },
-                )
-            } else {
-                (id, item)
-            }
-        })
-        .collect();
-    let kept = list::name_each_once(repointed, |(id, _)| id.clone());
-    Some(
-        kept.into_iter()
-            .map(|(_, item)| item)
-            .collect::<Vec<_>>()
-            .join(", "),
-    )
+/// marked id stays marked. **A list that already held `to` loses the repointed
+/// item**, so it never names the same thing twice; the remaining items keep
+/// their order. Only the items [`field_link_targets`] reads as links are
+/// touched.
+pub fn repoint_field_value(value: &str, from: &str, to: &str) -> Option<String> {
+    at_write::repoint_field_value(value, from, to)
 }
 
 /// **The value of one stored field write with every link in it served as the
@@ -414,27 +222,10 @@ pub fn legacy_repoint_field_value(
 /// spelling and a list never names the same thing twice. `survivor_of` is asked
 /// for the survivor of one thing and answers `None` when nothing folded it.
 pub fn forward_field_value<E: From<claim_walk::MergeLoop>>(
-    key: &str,
     value: &str,
-    declared: &[types::DeclaredType],
-    mut survivor_of: impl FnMut(&EntityId) -> Result<Option<EntityId>, E>,
+    survivor_of: impl FnMut(&EntityId) -> Result<Option<EntityId>, E>,
 ) -> Result<Option<String>, E> {
-    if on() {
-        return at_write::forward_field_value(value, survivor_of);
-    }
-    let mut forwarded = value.to_string();
-    let mut changed = false;
-    for target in field_link_targets(key, value, declared) {
-        let end = claim_walk::follow_thing(EntityId(target.clone()), &mut survivor_of)?;
-        if end.as_str() == target {
-            continue;
-        }
-        if let Some(now) = repoint_field_value(key, &forwarded, declared, &target, end.as_str()) {
-            forwarded = now;
-            changed = true;
-        }
-    }
-    Ok(changed.then_some(forwarded))
+    at_write::forward_field_value(value, survivor_of)
 }
 
 /// **The order of the holders in a list of who points at a name, stated once.**
@@ -464,66 +255,30 @@ pub fn referring_holders(mut holders: Vec<EntityId>) -> Vec<EntityId> {
 /// the handles [`handles_in_value`] reads out of it, which is what keeps a
 /// handle inside a longer string, or in a list with an item that is no handle,
 /// from counting as more than it is.
-pub fn fields_name_target(
-    fields: &BTreeMap<String, String>,
-    declared: &[types::DeclaredType],
-    target: &EntityId,
-) -> bool {
-    if on() {
-        return at_write::fields_name_target(fields, target);
-    }
-    names_in_fields(fields, declared)
-        .iter()
-        .any(|named| named == target.as_str())
+pub fn fields_name_target(fields: &BTreeMap<String, String>, target: &EntityId) -> bool {
+    at_write::fields_name_target(fields, target)
 }
 
 /// **Every name a record's fields point at**, as [`fields_name_target`] reads
-/// them: the items of a declared reference key, and the handles
-/// [`handles_in_value`] reads out of any other key's value. The one definition
-/// of what a field names, so a reader that holds the records by what they name
-/// and a reader that asks one record cannot come to disagree.
-pub fn names_in_fields(
-    fields: &BTreeMap<String, String>,
-    declared: &[types::DeclaredType],
-) -> Vec<String> {
-    if on() {
-        return at_write::names_in_fields(fields);
-    }
-    let referenced = reference_field_values(fields, declared);
-    let mut names = Vec::new();
-    for (key, value) in fields {
-        match referenced
-            .iter()
-            .find(|(referenced_key, _)| referenced_key == key)
-        {
-            Some((_, items)) => names.extend(items.iter().cloned()),
-            None => names.extend(handles_in_value(value).into_iter().map(|named| named.0)),
-        }
-    }
-    names
+/// them: the handles [`handles_in_value`] reads out of any key's value. The one
+/// definition of what a field names, so a reader that holds the records by what
+/// they name and a reader that asks one record cannot come to disagree.
+pub fn names_in_fields(fields: &BTreeMap<String, String>) -> Vec<String> {
+    at_write::names_in_fields(fields)
 }
 
-/// **Whether a record's fields link to `target`**: under the rule before rule 646
-/// whether [`fields_name_target`] finds it in the served words, and with the rule
-/// on whether the marks the record was stored with say so
-/// ([`Fact::field_links`]).
-pub fn fact_names_target(fact: &Fact, declared: &[types::DeclaredType], target: &EntityId) -> bool {
-    match on() {
-        true => fact.field_links.values().flatten().any(|id| id == target),
-        false => fields_name_target(&fact.fields, declared, target),
-    }
+/// **Whether a record's fields link to `target`**: whether the marks the record
+/// was stored with say so ([`Fact::field_links`]).
+pub fn fact_names_target(fact: &Fact, target: &EntityId) -> bool {
+    fact.field_links.values().flatten().any(|id| id == target)
 }
 
 /// **Every name a record's fields link to**: the counterpart of
 /// [`fact_names_target`] for a reader that holds the records by what they name.
-pub fn names_in_fact(fact: &Fact, declared: &[types::DeclaredType]) -> Vec<String> {
-    match on() {
-        true => fact
-            .field_links
-            .values()
-            .flatten()
-            .map(|id| id.to_string())
-            .collect(),
-        false => names_in_fields(&fact.fields, declared),
-    }
+pub fn names_in_fact(fact: &Fact) -> Vec<String> {
+    fact.field_links
+        .values()
+        .flatten()
+        .map(|id| id.to_string())
+        .collect()
 }

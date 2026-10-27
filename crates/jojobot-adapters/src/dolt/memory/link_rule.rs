@@ -5,11 +5,54 @@
 use super::*;
 use jojobot_domain::memory::reserved_key;
 
-mod diagnostics;
-pub use diagnostics::{LinkRuleDiagnostics, OwnedNowField};
+/// One stored field write with the status of the claim it belongs to: entity,
+/// key, ordinal, value, status.
+pub(super) type FieldWriteRow = (String, String, i64, Option<String>, Option<String>);
+
+/// Every field write, newest ordinal first within each entity and key. Engine
+/// accounts name rows or former handles, never links needing repair, so their
+/// keys are left out.
+pub(super) async fn field_writes_in(
+    tx: &mut Transaction<'_, MySql>,
+) -> Result<Vec<FieldWriteRow>, MemoryError> {
+    let writes: Vec<FieldWriteRow> = sqlx::query_as(
+        "SELECT w.entity, w.`key`, w.ordinal, w.value, f.status FROM field_write w
+         LEFT JOIN fact f ON f.entity = w.entity AND f.id = w.fact_id
+         ORDER BY w.entity, w.`key`, w.ordinal DESC",
+    )
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(store)?;
+    Ok(writes
+        .into_iter()
+        .filter(|(_, key, ..)| !reserved_key(key))
+        .collect())
+}
+
+/// The first ACTIVE write per key, from `field_writes_in`'s newest-first rows.
+/// A write with no fact row holds nothing, like an inactive record's write.
+pub(super) fn held_ordinals(
+    writes: &[FieldWriteRow],
+) -> std::collections::BTreeSet<(&str, &str, i64)> {
+    let mut newest = std::collections::BTreeSet::new();
+    writes
+        .iter()
+        .filter_map(|(entity, key, ordinal, _, status)| {
+            // A clear is the newest ACTIVE write too; skipping it revives history.
+            let active = status
+                .as_deref()
+                .is_some_and(|status| FactStatus::from_token(status) == FactStatus::Active);
+            (active && newest.insert((entity, key))).then_some((
+                entity.as_str(),
+                key.as_str(),
+                *ordinal,
+            ))
+        })
+        .collect()
+}
 
 /// **The name the marking of every link in a stored field value is done under**
-/// in `store_pass`, when the link rule is on. The log-only boot never marks it.
+/// in `store_pass`.
 const FIELD_MARKS_PASS: &str = "field value links marked";
 
 impl DoltMemory {
@@ -24,7 +67,7 @@ impl DoltMemory {
                 return Err(refusal);
             }
         }
-        referenced_by(fields, &declared)
+        Ok(referenced_by(fields))
     }
 
     /// **Every handle a field value names, lowered from whatever the caller
@@ -125,8 +168,8 @@ impl DoltMemory {
         let mut directory = self.directory_in(&mut tx).await?;
         directory.keep_older = finished.contains(FIELD_LOWERING_PASS);
 
-        let mut writes = diagnostics::field_writes_in(&mut tx).await?;
-        let current = diagnostics::held_ordinals(&writes);
+        let mut writes = field_writes_in(&mut tx).await?;
+        let current = held_ordinals(&writes);
         let held: BTreeSet<(String, String, i64, String)> =
             sqlx::query_as::<_, (String, String, i64, String)>(
                 "SELECT entity, `key`, ordinal, target FROM field_link",
@@ -282,31 +325,16 @@ impl DoltMemory {
     /// see, so a fold's own moved writes are swept with the rest.
     pub(super) async fn repoint_field_links(
         tx: &mut Transaction<'_, MySql>,
-        declared: &[DeclaredType],
         from: &str,
         to: &str,
     ) -> Result<usize, MemoryError> {
-        Self::repoint_links_by(tx, declared, from, to, false).await
-    }
-
-    /// TEMPORARY(9.3.1) the legacy repoint in the bare-line repair. **[`repoint_field_links`] by the rule before rule 646**, whatever the switch
-    /// says: the repair of a bare name reads the rows that rule wrote, so it
-    /// rewrites them by it and the marking pass then finds the id it left.
-    pub(super) async fn repoint_field_links_legacy(
-        tx: &mut Transaction<'_, MySql>,
-        declared: &[DeclaredType],
-        from: &str,
-        to: &str,
-    ) -> Result<usize, MemoryError> {
-        Self::repoint_links_by(tx, declared, from, to, true).await
+        Self::repoint_links_by(tx, from, to).await
     }
 
     async fn repoint_links_by(
         tx: &mut Transaction<'_, MySql>,
-        declared: &[DeclaredType],
         from: &str,
         to: &str,
-        legacy: bool,
     ) -> Result<usize, MemoryError> {
         let held: Vec<(String, String, i64)> = sqlx::query_as(
             "SELECT DISTINCT entity, `key`, ordinal FROM field_link WHERE target = ?",
@@ -331,15 +359,7 @@ impl DoltMemory {
             .map_err(store)?
             .flatten();
             let Some(value) = value else { continue };
-            let repointed_value = match legacy {
-                true => jojobot_domain::memory::legacy_repoint_field_value(
-                    &key, &value, declared, from, to,
-                ),
-                false => {
-                    jojobot_domain::memory::repoint_field_value(&key, &value, declared, from, to)
-                }
-            };
-            let Some(now) = repointed_value else {
+            let Some(now) = jojobot_domain::memory::repoint_field_value(&value, from, to) else {
                 continue;
             };
             sqlx::query(
@@ -359,11 +379,7 @@ impl DoltMemory {
                 .execute(&mut **tx)
                 .await
                 .map_err(store)?;
-            let targets = match legacy {
-                true => jojobot_domain::memory::legacy_field_link_targets(&key, &now, declared),
-                false => jojobot_domain::memory::field_link_targets(&key, &now, declared),
-            };
-            for target in targets {
+            for target in jojobot_domain::memory::field_link_targets(&now) {
                 sqlx::query(
                     "INSERT INTO field_link (entity, `key`, ordinal, target) VALUES (?, ?, ?, ?)",
                 )
@@ -389,8 +405,6 @@ pub(super) struct Directory {
     handle_of: std::collections::BTreeMap<String, String>,
     ids: std::collections::BTreeSet<String>,
     reference_keys: std::collections::BTreeSet<String>,
-    row_handles: std::collections::BTreeSet<String>,
-    declared: Vec<DeclaredType>,
     /// Whether an older pass already decided the plain handle text of a value of
     /// only handles. Then a handle it left as text stays text: a thing that wears
     /// the spelling today is not evidence of what the value meant.
@@ -400,7 +414,7 @@ pub(super) struct Directory {
 /// **The link rows the marks of these writes imply**, as `(entity, key, ordinal,
 /// target)`. A write with no value implies none.
 fn links_implied(
-    writes: &[diagnostics::FieldWriteRow],
+    writes: &[FieldWriteRow],
 ) -> std::collections::BTreeSet<(String, String, i64, String)> {
     let mut implied = std::collections::BTreeSet::new();
     for (entity, key, ordinal, value, _) in writes {
@@ -434,10 +448,6 @@ pub(super) struct Marking {
 }
 
 impl Marking {
-    fn marked_or_mixed_links(&self) -> bool {
-        self.had_marks || (self.mixed && self.changed())
-    }
-
     pub(super) fn changed(&self) -> bool {
         self.handles + self.bare > 0
     }
@@ -527,7 +537,6 @@ impl DoltMemory {
                 .map_err(store)?;
         let mut names: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         let mut handle_of: BTreeMap<String, String> = BTreeMap::new();
-        let row_handles = entities.iter().map(|(handle, _)| handle.clone()).collect();
         for (handle, badge) in &entities {
             handle_of.insert(handle.clone(), handle.clone());
             if let Some(badge) = badge.as_deref().filter(|badge| !badge.is_empty()) {
@@ -562,78 +571,7 @@ impl DoltMemory {
             handle_of,
             ids,
             reference_keys,
-            row_handles,
-            declared,
             keep_older: false,
         })
-    }
-}
-
-/// **What the link rule would do to a store, counted.** Every count is of items
-/// or values and none names a value's text. Read from the stored writes alone,
-/// by [`DoltMemory::link_rule_diagnostics`]; nothing is written.
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct LinkRuleSummary {
-    /// Link-eligible stored writes with a value.
-    pub values_read: usize,
-    /// Bare ids under a declared reference key that would be marked.
-    pub bare_ids: usize,
-    /// Values with a loose item among them whose handle items would newly link.
-    pub mixed_lists: usize,
-    /// Handles that name exactly one thing and would be marked, all shapes.
-    pub handles: usize,
-    /// Handles that name nothing the store has held; they stay text.
-    pub unresolved: usize,
-    /// Handles that name more than one thing; they stay text.
-    pub ambiguous: usize,
-    /// **R1.** Handles in a value of only handles and marks that an older pass
-    /// left as text and that exactly one thing owns today. The rule would link
-    /// them to today's owner, who may not be the thing they meant.
-    /// Counts the newest active write of each entity and key, including clears.
-    pub owned_now: usize,
-    /// Link rows the table holds that the rule would not draw.
-    pub links_dropped: usize,
-    /// Link rows the rule would draw that the table lacks.
-    pub links_added: usize,
-}
-
-impl LinkRuleSummary {
-    /// **Which counts could be inflated, and by what.** `owned_now` is the R1
-    /// population: handles an older pass left as text that one thing wears now. The
-    /// marking pass leaves them as text, so they are in neither `handles` nor
-    /// `links_added`. Writes that continue under log-only store a bare id under a
-    /// declared reference key, so `bare_ids` can grow until the rule is on. The
-    /// review findings on reads (R2), on the bare id at the write (R3) and on the
-    /// settle check (R4) are fixed with the rule on and inflate none of them.
-    pub const INFLATED_BY: &'static str = "owned_now: r1 items left as text, in neither handles nor links_added; bare_ids: grows with \
-         log-only writes; r2, r3, r4: none";
-}
-
-impl DoltMemory {
-    /// **The log line of a write the rule would store differently.** Counts the
-    /// keys whose lowered value would differ; it names neither key nor value, and
-    /// it reads and writes nothing but a debug line.
-    pub(super) async fn log_would_store(
-        &self,
-        tx: &mut Transaction<'_, MySql>,
-        sent: &std::collections::BTreeMap<String, String>,
-        stored: &std::collections::BTreeMap<String, String>,
-    ) -> Result<(), MemoryError> {
-        if jojobot_domain::memory::at_write::referenced_by(sent).is_empty() {
-            return Ok(());
-        }
-        let mut would = sent.clone();
-        self.lower_marked_fields(tx, &mut would).await?;
-        let differing = would
-            .iter()
-            .filter(|(key, value)| stored.get(*key) != Some(*value))
-            .count();
-        if differing > 0 {
-            tracing::debug!(
-                differing,
-                "link rule (log-only): the write would be stored differently"
-            );
-        }
-        Ok(())
     }
 }

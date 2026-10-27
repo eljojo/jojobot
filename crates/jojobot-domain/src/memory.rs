@@ -4559,19 +4559,11 @@ impl Fact {
     }
 
     /// **The field values that name other things** — the half of
-    /// [`Fact::linked`] that sits under a key. With the link rule on, these are
-    /// the links decided at write and carried in [`Fact::field_links`]; served
-    /// text is never reinterpreted. With log-only, the legacy reader recognizes
-    /// a whole handle or a list whose every item is a handle. Graph and search
-    /// use this same read of the claim's field links.
+    /// [`Fact::linked`] that sits under a key: the links decided at write and
+    /// carried in [`Fact::field_links`]; served text is never reinterpreted.
+    /// Graph and search use this same read of the claim's field links.
     pub fn field_handles(&self) -> Vec<EntityId> {
-        if link_rule() == LinkRule::On {
-            return self.field_links.values().flatten().cloned().collect();
-        }
-        self.fields
-            .values()
-            .flat_map(|v| handles_in_value(v))
-            .collect()
+        self.field_links.values().flatten().cloned().collect()
     }
 
     /// **Whether this claim's own span covers a day** — the read a window
@@ -6857,11 +6849,10 @@ pub trait Memory: Send + Sync {
     /// overrides it, and one that cannot is still correct.
     async fn referring_to(&self, target: &EntityId) -> Result<Vec<Fact>, MemoryError> {
         validate_subject(target)?;
-        let declared = self.declared_types().await?;
         let mut pointing = Vec::new();
         for entity in self.list_entities(None).await? {
             for fact in self.recall(&entity.id).await? {
-                if fact_names_target(&fact, &declared, target) {
+                if fact_names_target(&fact, target) {
                     pointing.push(fact);
                 }
             }

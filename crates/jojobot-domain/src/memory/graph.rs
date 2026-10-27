@@ -3099,7 +3099,6 @@ impl<'a> Ctx<'a> {
     /// The entities a field value reaches from `id`, in the direction asked
     /// for — the mirror of [`Ctx::along_ref`], over a record's fields rather
     /// than its `refs`. **The write decides and stores each field link.**
-    /// On reads stored targets; log-only recognizes complete handle values.
     /// The existence retain in [`Ctx::neighbours`] drops targets naming nothing.
     fn along_field(
         &self,
@@ -3761,24 +3760,15 @@ where
     M: super::Memory + ?Sized,
 {
     let facts = store.recall(&entity.id).await?;
-    let marked = super::link_rule() == super::LinkRule::On;
-    let scanned = if prose || marked {
-        store.scan_entity(&entity.id).await?
-    } else {
-        None
-    };
+    let scanned = store.scan_entity(&entity.id).await?;
     // **Asked of the store, never folded from the records above.** What a thing
     // holds is decided in the order its keys were written, which the records have
     // already projected away — so a walk that folded them for itself would answer
     // with a value the store does not hold.
-    let (mut fields, mut field_links) = if marked {
-        scanned
-            .as_ref()
-            .map(|doc| (doc.fields.clone(), doc.field_links.clone()))
-            .unwrap_or_default()
-    } else {
-        (store.fields(&entity.id).await?, BTreeMap::new())
-    };
+    let (mut fields, mut field_links) = scanned
+        .as_ref()
+        .map(|doc| (doc.fields.clone(), doc.field_links.clone()))
+        .unwrap_or_default();
     let prose = if prose {
         scanned.map(|doc| doc.prose).unwrap_or_default()
     } else {

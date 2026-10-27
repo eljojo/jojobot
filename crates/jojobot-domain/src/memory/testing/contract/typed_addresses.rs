@@ -509,7 +509,6 @@ pub async fn what_a_numbered_address_stored_follows_the_members_rename<M: Memory
 /// Numbered references pass the same gate that refuses a lone unknown name
 /// and a former handle used as a whole target, on capture and edit alike.
 pub async fn a_numbered_reference_keeps_both_existence_gates<M: Memory>(store: &M) {
-    assert_eq!(crate::memory::link_rule(), crate::memory::LinkRule::On);
     let (o, author) = world(store).await;
     store
         .declare_type(

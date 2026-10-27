@@ -5,15 +5,12 @@
 //! process, so these get a binary to themselves, as the kind set does.
 
 use jojobot_domain::memory::testing::{InMemoryMemory, contract};
-use jojobot_domain::memory::{
-    EntityId, LinkRule, Memory, NewEntity, NewFact, Override, link_rule, set_link_rule,
-};
+use jojobot_domain::memory::{EntityId, Memory, NewEntity, NewFact, Override};
 
 macro_rules! typed_kind_cases {
     ($($test:ident => $case:ident),+ $(,)?) => {$(
         #[tokio::test]
         async fn $test() {
-            set_link_rule(LinkRule::On);
             contract::typed_kinds::$case(&InMemoryMemory::booted()).await;
         }
     )+};
@@ -31,39 +28,32 @@ typed_kind_cases!(
 
 #[tokio::test]
 async fn link_rule_carry_keeps_both_existence_gates() {
-    set_link_rule(LinkRule::On);
     contract::a_numbered_reference_keeps_both_existence_gates(&InMemoryMemory::booted()).await;
 }
 
 #[tokio::test]
 async fn the_fake_links_by_mark_when_the_rule_is_on() {
-    set_link_rule(LinkRule::On);
-    assert_eq!(link_rule(), LinkRule::On);
     contract::run_all_link_at_write(&InMemoryMemory::booted()).await;
 }
 
 #[tokio::test]
 async fn link_rule_leftovers_declarations_do_not_change_stored_links() {
-    set_link_rule(LinkRule::On);
     contract::a_declaration_replacement_and_key_removal_change_no_link(&InMemoryMemory::booted())
         .await;
 }
 
 #[tokio::test]
 async fn link_rule_leftovers_capture_and_edit_are_atomic_in_both_bags() {
-    set_link_rule(LinkRule::On);
     contract::an_edit_decides_links_at_the_write_as_a_capture_does(&InMemoryMemory::booted()).await;
 }
 
 #[tokio::test]
 async fn link_rule_leftovers_mixed_history_keeps_identity_when_a_spelling_is_reused() {
-    set_link_rule(LinkRule::On);
     contract::mixed_rename_reuse_and_merge_preserve_the_history(&InMemoryMemory::booted()).await;
 }
 
 #[tokio::test]
 async fn link_rule_leftovers_bare_ids_words_and_lone_names_remain_distinct() {
-    set_link_rule(LinkRule::On);
     contract::a_bare_id_links_only_under_a_declared_reference_key(&InMemoryMemory::booted()).await;
 }
 
@@ -147,7 +137,6 @@ async fn legacy_is_text(
 
 #[tokio::test]
 async fn link_rule_leftovers_unmarked_legacy_items_link_nowhere_after_rename_and_reuse() {
-    set_link_rule(LinkRule::On);
     let memory = InMemoryMemory::booted().with_own_fields_reaching();
     let [holder, alpha, beta, renamed] = [
         "thing:contract-links-holder",

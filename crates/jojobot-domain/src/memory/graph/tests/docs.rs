@@ -15,9 +15,13 @@ pub(super) fn doc(entity: Entity, prose: &str, facts: Vec<Fact>) -> DocScan {
 pub(super) fn doc_holding(
     entity: Entity,
     prose: &str,
-    facts: Vec<Fact>,
+    mut facts: Vec<Fact>,
     fields: BTreeMap<String, String>,
 ) -> DocScan {
+    for fact in &mut facts {
+        fact.field_links = links_of(&fact.fields);
+    }
+    let field_links = links_of(&fields);
     DocScan {
         doc_id: entity.id.to_string(),
         title: entity.name.clone(),
@@ -26,9 +30,21 @@ pub(super) fn doc_holding(
         facts,
         fields,
         owner: None,
-        field_links: Default::default(),
+        field_links,
         unmapped: Vec::new(),
     }
+}
+
+/// **The links a store decides at the write**, for a fixture that writes fields as
+/// text: every key whose value names a handle links to the handles it names.
+fn links_of(fields: &BTreeMap<String, String>) -> BTreeMap<String, Vec<EntityId>> {
+    fields
+        .iter()
+        .filter_map(|(key, value)| {
+            let named = crate::memory::handles_in_value(value);
+            (!named.is_empty()).then(|| (key.clone(), named))
+        })
+        .collect()
 }
 
 /// An owned document: readable by one identity and nobody else.

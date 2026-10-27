@@ -51,8 +51,6 @@ test-dolt_contract_parts
 test-dolt_due_pass_instance
 test-dolt_due_pass_unread
 test-dolt_id_case
-test-dolt_link_rule_log_only
-test-dolt_link_rule_round_trip
 test-dolt_links_by_mark
 test-dolt_must_back
 test-dolt_numbered_restart
@@ -93,11 +91,7 @@ test-killed_run
 test-kind_schema
 test-kind_set
 test-known_reds
-test-link_rule_default_boot
-test-link_rule_log_only_boot
-test-link_rule_log_only_double
 test-link_rule_on
-test-link_rule_on_repair_order
 test-lint_runs_whatever_the_tests_say
 test-locked_build
 test-loop_room

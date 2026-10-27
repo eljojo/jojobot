@@ -7,7 +7,6 @@ use jojobot_adapters::fold::Folded;
 async fn unmarked_person_alpha_links_nowhere_in_the_fake_after_rename_and_reuse() {
     use jojobot_domain::memory::testing::InMemoryMemory;
 
-    jojobot_domain::memory::set_link_rule(jojobot_domain::memory::LinkRule::On);
     let memory = Arc::new(InMemoryMemory::booted());
     let [holder, plain, marked] = [
         "thing:contract-links-holder",
@@ -109,7 +108,6 @@ async fn unmarked_person_alpha_links_nowhere_in_the_fake_after_rename_and_reuse(
 #[tokio::test]
 async fn unmarked_person_alpha_links_nowhere_before_and_after_a_store_restart() {
     const DATABASE: &str = "links_by_mark_reader_contract";
-    jojobot_domain::memory::set_link_rule(jojobot_domain::memory::LinkRule::On);
     let scratch = Scratch::new(DATABASE);
     let mut store = Dolt::start(&scratch.0, free_port()).await.unwrap();
     let mut pool = migrated_database(&store, DATABASE).await.unwrap();

@@ -175,7 +175,6 @@ fn claim(thing: &EntityId, owner: &EntityId, n: usize, anchor: Option<&EntityId>
 /// things name the same owner.**
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_capture_through_the_fold_costs_no_more_for_a_thing_of_48_claims() {
-    jojobot_domain::memory::set_link_rule(jojobot_domain::memory::LinkRule::LogOnly);
     let scratch = Scratch::new("write-cost");
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
@@ -243,7 +242,7 @@ async fn a_capture_through_the_fold_costs_no_more_for_a_thing_of_48_claims() {
             .await;
             writeln!(
                 std::io::stdout(),
-                "log-only: {label:<10} via {layer_name:<20} {statements:>6} statements {millis:>7} ms"
+                "{label:<10} via {layer_name:<20} {statements:>6} statements {millis:>7} ms"
             )
             .expect("the measured count is written");
             if layer_name == "fold" {
@@ -281,7 +280,6 @@ async fn a_capture_through_the_fold_costs_no_more_for_a_thing_of_48_claims() {
 /// is the domain's (`referring_holder_order`), and both obey it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn the_fold_lists_who_points_at_a_name_as_a_full_ask_does_after_each_claim_write() {
-    jojobot_domain::memory::set_link_rule(jojobot_domain::memory::LinkRule::LogOnly);
     let scratch = Scratch::new("write-cost-differential");
     let mut store = Dolt::start(&scratch.0, free_port())
         .await

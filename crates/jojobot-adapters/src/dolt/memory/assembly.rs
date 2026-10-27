@@ -9,8 +9,6 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use jojobot_domain::memory::types::DeclaredType;
-
 use super::*;
 
 /// How many claims one batched read names at most.
@@ -26,8 +24,6 @@ pub(super) struct Asked {
     current: HashMap<EntityId, EntityId>,
     pointers: HashMap<EntityId, EntityId>,
     addresses: HashMap<FactAddress, FactAddress>,
-    resolved: HashMap<EntityId, Option<(EntityId, EntityId)>>,
-    declared: Option<Vec<DeclaredType>>,
 }
 
 type Fields = jojobot_domain::memory::stored::RecordFields;
@@ -292,21 +288,6 @@ impl DoltMemory {
         Ok(served)
     }
 
-    /// [`resolve`](Self::resolve), asked once per handle.
-    async fn resolve_asked(
-        &self,
-        tx: &mut Transaction<'_, MySql>,
-        asked: &mut Asked,
-        id: &EntityId,
-    ) -> Result<Option<(EntityId, EntityId)>, MemoryError> {
-        if let Some(held) = asked.resolved.get(id) {
-            return Ok(held.clone());
-        }
-        let found = self.resolve(tx, id).await?;
-        asked.resolved.insert(id.clone(), found.clone());
-        Ok(found)
-    }
-
     /// **Every reference-typed field value, composed from the permanent id it is
     /// stored as to the handle it answers to today** — the mirror of
     /// [`Self::lower_reference_fields`], run once, right before a fields map
@@ -318,86 +299,12 @@ impl DoltMemory {
         asked: &mut Asked,
         fields: &mut BTreeMap<String, String>,
     ) -> Result<(), MemoryError> {
-        if jojobot_domain::memory::link_rule() == jojobot_domain::memory::LinkRule::On {
-            return self.compose_marked_asked(tx, asked, fields).await;
-        }
-        if asked.declared.is_none() {
-            asked.declared = Some(Self::types_in(tx).await?);
-        }
-        let declared = asked.declared.clone().unwrap_or_default();
-        let referenced = jojobot_domain::memory::reference_field_values(fields, &declared);
-        for (key, items) in &referenced {
-            let mut composed = Vec::with_capacity(items.len());
-            for item in items {
-                // A key declared a reference AFTER a handle was stored under it
-                // as an undeclared one holds that value behind the mark.
-                let stored = jojobot_domain::memory::stored_handle_id(item).unwrap_or(item);
-                composed.push(
-                    self.pointer_handle_asked(tx, asked, &EntityId(stored.to_string()))
-                        .await?,
-                );
-            }
-            fields.insert(key.clone(), Self::serve_list(composed));
-        }
-        // **Every other value, served as the handle it answers to now.** A value
-        // stored behind the mark is the thing's id. One stored as plain handle
-        // text, from before ids were kept, is resolved through the thing's
-        // rename history, so it keeps pointing at the thing it named and is
-        // lowered the next time the key is written.
-        for (key, value) in fields.clone() {
-            if referenced.iter().any(|(held, _)| held == &key) {
-                continue;
-            }
-            let items: Vec<&str> = value.split(',').collect();
-            if items
-                .iter()
-                .all(|item| jojobot_domain::memory::stored_handle_id(item).is_some())
-            {
-                let mut composed = Vec::with_capacity(items.len());
-                for item in items {
-                    if let Some(id) = jojobot_domain::memory::stored_handle_id(item) {
-                        composed.push(
-                            self.pointer_handle_asked(tx, asked, &EntityId(id.to_string()))
-                                .await?,
-                        );
-                    }
-                }
-                fields.insert(key, Self::serve_list(composed));
-            } else if items
-                .iter()
-                .any(|item| jojobot_domain::memory::stored_handle_id(item).is_some())
-            {
-                // **A list that mixes words with marked items**, which the rule
-                // that is on marks. Each marked item is served as the handle it
-                // answers to and each word as written, so a rollback reads what
-                // it read before the marks and no mark reaches a caller.
-                let mut one = BTreeMap::from([(key.clone(), value.clone())]);
-                self.compose_marked_asked(tx, asked, &mut one).await?;
-                if let Some(served) = one.remove(&key) {
-                    fields.insert(key, served);
-                }
-            } else {
-                let handles = jojobot_domain::memory::handles_in_value(&value);
-                if handles.is_empty() {
-                    continue;
-                }
-                let mut composed = Vec::with_capacity(handles.len());
-                for id in handles {
-                    composed.push(match self.resolve_asked(tx, asked, &id).await? {
-                        Some((_, current)) => current.to_string(),
-                        None => id.to_string(),
-                    });
-                }
-                fields.insert(key, composed.join(", "));
-            }
-        }
-        Ok(())
+        self.compose_marked_asked(tx, asked, fields).await
     }
 
     /// **What each key's stored value links to, by its marks**, as the handles the
     /// marked things answer to now: the answer a reader asks of a record and does not
-    /// work out again from the served words. Empty unless the link rule is on,
-    /// because the rule before rule 646 draws links from the words.
+    /// work out again from the served words.
     pub(super) async fn marked_links_asked(
         &self,
         tx: &mut Transaction<'_, MySql>,
@@ -405,9 +312,6 @@ impl DoltMemory {
         stored: &BTreeMap<String, String>,
     ) -> Result<BTreeMap<String, Vec<EntityId>>, MemoryError> {
         let mut links = BTreeMap::new();
-        if jojobot_domain::memory::link_rule() != jojobot_domain::memory::LinkRule::On {
-            return Ok(links);
-        }
         let targets =
             jojobot_domain::memory::marked_field_links(stored, |id| Some(EntityId(id.to_string())))
                 .expect("a stored id needs no resolution");

@@ -2322,9 +2322,10 @@ fn field_holders() -> Vec<DocScan> {
 /// handles** (decision log 374: a link is any field that names another thing).
 /// An unscoped walk in reaches the record whose value IS the handle and the one
 /// whose value is a list of handles, under keys no type declared, labelled as
-/// field links. The three values beside them that only look like links are not
-/// reached — the positives keep the three negatives from passing over an empty
-/// answer, and the list with one item that is not a handle stays prose.
+/// field links, and so does the list that mixes a handle with a loose item (rule
+/// 646: each item that is a handle links). The values beside them that only look
+/// like links are not reached — the positives keep the negatives from passing
+/// over an empty answer.
 #[test]
 fn an_unscoped_walk_in_reaches_a_handle_held_under_an_undeclared_key() {
     let scanned = field_holders();
@@ -2349,8 +2350,12 @@ fn an_unscoped_walk_in_reaches_a_handle_held_under_an_undeclared_key() {
 
     assert_eq!(
         handles(reached),
-        vec!["person:homer", "person:ned-flanders"],
-        "a value that is a handle, and a list that is only handles, are links: {reached:?}",
+        vec![
+            "person:barney-gumble",
+            "person:homer",
+            "person:ned-flanders"
+        ],
+        "a value that is a handle, a list of handles and a list with a loose item beside a handle are links: {reached:?}",
     );
     for one in reached {
         assert_eq!(
@@ -2435,9 +2440,10 @@ fn an_unscoped_walk_out_reaches_a_handle_held_under_an_undeclared_key() {
         "every handle in a list of handles is reached: {ned:?}"
     );
     let barney = out_of("person:barney-gumble");
-    assert!(
-        barney.is_empty(),
-        "a list with an item that is not a handle is prose: {barney:?}"
+    assert_eq!(
+        handles(&barney),
+        vec!["topic:all-rules"],
+        "the handle in a list with a loose item is a link and the loose item is prose: {barney:?}"
     );
 }
 

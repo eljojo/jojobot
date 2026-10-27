@@ -1,37 +1,21 @@
 //! **The startup repairs, proved by real boots of the current binary** on the
-//! store the last deployed release filled, amended with the damage the repairs
-//! exist for: bare line names stored as links, and a merge made before merge
-//! events existed. Each case boots the binary on the amended store, then again
-//! after an interruption that left the work done and its marker unwritten, then
-//! again with the markers in place.
+//! store the last deployed release filled, amended with the damage the repair
+//! exists for: a merge made before merge events existed. Each case boots the
+//! binary on the amended store, then again after an interruption that left the
+//! work done and its marker unwritten, then again with the marker in place.
 
 use super::super::*;
 use jiff::civil::date;
 use jojobot_adapters::dolt::memory::DoltMemory;
-use jojobot_domain::memory::types::{DeclaredType, Field};
-use jojobot_domain::memory::{EntityId, EntityKind, Guarded, Memory, NewEntity, NewFact};
+use jojobot_domain::memory::{EntityId, Guarded, Memory, NewEntity, NewFact};
 
 const FORWARDED_HOLDER: &str = "thing:upgrade-fixture-holder";
 const FORWARDED_FOLDED: &str = "thing:upgrade-fixture-husk";
 const FORWARDED_SURVIVOR: &str = "thing:upgrade-fixture-heir";
-const PASSES: [&str; 2] = ["bare line values", "old merge events"];
+const PASSES: [&str; 1] = ["old merge events"];
 
 /// The claims of the planted chain. An old build moved the folded thing's claims onto its survivor in the merge, so both sit on the middle thing and none on the old one.
 const LEDGERS: [&str; 2] = ["kept the first ledger", "kept the second ledger"];
-
-/// **The warnings a boot on the amended line store gives on purpose**: the repair
-/// leaves a name no bot wears and says so, the check that follows names it, and
-/// the planted bots were made without boxes.
-const LEFT_ON_PURPOSE: [&str; 3] = [
-    "BARE REFERENCE VALUE LEFT",
-    "STORAGE DAMAGE",
-    "no release notes sent",
-];
-
-/// **The warnings the boots after the first still give on purpose.** Storage damage
-/// is not among them: the first boot asserts the check finds none, and a later boot
-/// that found some would be a repair undone.
-const LEFT_ON_PURPOSE_LATER: [&str; 2] = ["BARE REFERENCE VALUE LEFT", "no release notes sent"];
 
 /// **A boot of the current binary** that may log the warnings in `allowed` and no
 /// others.
@@ -128,56 +112,6 @@ async fn said(pool: &sqlx::MySqlPool, sql: &str, bind: &[&str]) {
     query.execute(pool).await.expect(sql);
 }
 
-/// **Line values as the old build stored them**: two writes on one work item and
-/// one on another, each given a bot through the verbs and then edited so the
-/// stored value and its link hold the bare name. One name is a bot's, one is not.
-async fn plant_bare_line_names(pool: &sqlx::MySqlPool) {
-    as_a_store_before_the_repairs(pool).await;
-    let memory = opened(pool).await;
-    memory
-        .declare_type(
-            DeclaredType::new(
-                "upgrade-fixture-line",
-                vec![Field::pointing_at("line", EntityKind::BOT)],
-            ),
-            None,
-        )
-        .await
-        .expect("declare line");
-    let named = added(&memory, "bot:beta", "Beta").await;
-    let other = added(&memory, "bot:gamma", "Gamma").await;
-    for (handle, name, line, bare, times) in [
-        ("work:alpha-queue", "Alpha queue", &named, "beta", 2),
-        ("work:beta-queue", "Beta queue", &other, "zeta", 1),
-    ] {
-        let home = added(&memory, handle, name).await;
-        for _ in 0..times {
-            let mut fact = NewFact::about(home.clone(), "assigned a line", date(2026, 9, 1));
-            fact.fields.insert("line".into(), line.as_str().into());
-            fact.sets.insert("line".into());
-            memory
-                .capture(fact)
-                .await
-                .expect("capture")
-                .written()
-                .expect("the handle lands");
-        }
-        let key = badge_of(pool, home.as_str()).await;
-        said(
-            pool,
-            "UPDATE field_write SET value = ? WHERE entity = ? AND `key` = 'line'",
-            &[bare, &key],
-        )
-        .await;
-        said(
-            pool,
-            "UPDATE field_link SET target = ? WHERE entity = ? AND `key` = 'line'",
-            &[bare, &key],
-        )
-        .await;
-    }
-}
-
 /// **A merge made before merge events existed, with history behind it and a later
 /// merge over it.** The old thing folds into the middle one, which holds the
 /// claims an old build moved onto it, and the middle one folds into the last. The first
@@ -246,14 +180,13 @@ async fn chain_events(pool: &sqlx::MySqlPool) -> Vec<(i64, String, String)> {
 /// the last release left go on with them**, in the one place that writes them: the
 /// cases below count the repairs against a first boot that marks.
 async fn as_a_store_before_the_repairs(pool: &sqlx::MySqlPool) {
-    said(pool, "DELETE FROM store_pass WHERE name IN (?, ?)", &PASSES).await;
+    said(pool, "DELETE FROM store_pass WHERE name = ?", &PASSES).await;
     deploy_9_1::the_markers_the_last_release_left(pool).await;
 }
 
 async fn markers_of_the_repairs(pool: &sqlx::MySqlPool) -> Vec<String> {
-    sqlx::query_scalar("SELECT name FROM store_pass WHERE name IN (?, ?) ORDER BY name")
+    sqlx::query_scalar("SELECT name FROM store_pass WHERE name = ? ORDER BY name")
         .bind(PASSES[0])
-        .bind(PASSES[1])
         .fetch_all(pool)
         .await
         .expect("the markers read")
@@ -267,8 +200,8 @@ fn lines_about(log: &[String], words: &str, pass: &str) -> usize {
 }
 
 /// **The boots after the first change nothing.** The first boot has done the
-/// repairs and left `after_first`. An interruption is made by removing both
-/// markers, which is what a death between the conversion's commit and the marker
+/// repair and left `after_first`. An interruption is made by removing the
+/// marker, which is what a death between the conversion's commit and the marker
 /// leaves: the second boot repeats the work over rows already repaired. The third
 /// boot finds the markers. Both leave every table as the first boot left it.
 async fn later_boots_leave_the_tables_alone(
@@ -281,7 +214,7 @@ async fn later_boots_leave_the_tables_alone(
     let mut store = open_the_store(state_dir, store_port).await;
     said(
         store.pool(),
-        "DELETE FROM store_pass WHERE name IN (?, ?)",
+        "DELETE FROM store_pass WHERE name = ?",
         &PASSES,
     )
     .await;
@@ -293,7 +226,7 @@ async fn later_boots_leave_the_tables_alone(
         .map(|pass| lines_about(&second.log, "repair pass finished", pass))
         .collect();
     second.stop().await;
-    assert_eq!(repeated, [1, 1], "the second boot repeated both repairs");
+    assert_eq!(repeated, [1], "the second boot repeated the repair");
     let mut store = open_the_store(state_dir, store_port).await;
     assert_eq!(
         &tables(store.pool()).await,
@@ -303,7 +236,7 @@ async fn later_boots_leave_the_tables_alone(
     assert_eq!(
         markers_of_the_repairs(store.pool()).await,
         PASSES,
-        "both markers are back"
+        "the marker is back"
     );
     store.stop().await;
 
@@ -313,9 +246,7 @@ async fn later_boots_leave_the_tables_alone(
         .map(|pass| lines_about(&third.log, "repair pass already done", pass))
         .collect();
     third.stop().await;
-    // With the link rule on, the bare-name repair runs ahead of the marking and
-    // again in the ordinary sequence, so it finds its marker twice.
-    assert_eq!(settled, [2, 1], "the third boot found both markers");
+    assert_eq!(settled, [1], "the third boot found the marker");
     let mut store = open_the_store(state_dir, store_port).await;
     assert_eq!(
         &tables(store.pool()).await,
@@ -323,95 +254,6 @@ async fn later_boots_leave_the_tables_alone(
         "the marked boot changed a table"
     );
     store.stop().await;
-}
-
-/// **Bare line names stored as links are pointed at their bots by the first
-/// boot**, which says so; the storage check that follows names only the name no
-/// bot wears; the served read gives the handle; and later boots leave the tables
-/// as they were.
-#[tokio::test]
-async fn bare_line_names_are_pointed_at_their_bots_once_across_boots() {
-    for restored in deploy_9_1::both_recordings(&fixture_dir(), "repair-bare-lines").await {
-        bare_line_names_are_repaired_over(restored).await;
-    }
-}
-
-async fn bare_line_names_are_repaired_over(restored: Restored) {
-    let Restored {
-        scratch,
-        state_dir,
-        store_port,
-        git_ref,
-        ..
-    } = restored;
-    let mut store = open_the_store(&state_dir, store_port).await;
-    plant_bare_line_names(store.pool()).await;
-    let planted = tables(store.pool()).await;
-    let beta = badge_of(store.pool(), "bot:beta").await;
-    store.stop().await;
-
-    let first = boot_allowing(&state_dir, store_port, &git_ref, &LEFT_ON_PURPOSE).await;
-    let log = first.log.clone();
-    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", first.http_port))
-        .await
-        .expect("connecting to the current binary");
-    let read = surface
-        .call("recall", json!({"subject": "work:alpha-queue"}))
-        .await;
-    first.stop().await;
-    let read: serde_json::Value = serde_json::from_str(&read)
-        .unwrap_or_else(|_| panic!("recorded at {git_ref}: the read did not answer: {read}"));
-    assert_eq!(
-        read["objects"][0]["fields"]["line"], "bot:beta",
-        "the served read gives the handle: {read}"
-    );
-    assert_eq!(
-        lines_about(&log, "repair pass finished", PASSES[0]),
-        1,
-        "the first boot says it repaired the line names"
-    );
-    // With the link rule on, the marking removes the link row of the name no bot
-    // wears, so the repair names it when it leaves it and the check has no
-    // dangling link left to report.
-    let left: Vec<&String> = log
-        .iter()
-        .filter(|line| line.contains("BARE REFERENCE VALUE LEFT"))
-        .collect();
-    assert!(
-        left.len() == 1
-            && left[0].contains("address=work:beta-queue#")
-            && left[0].contains("target=zeta"),
-        "the repair names the one name no bot wears and not the repaired one: {left:?}"
-    );
-    assert!(
-        !log.iter().any(|line| line.contains("STORAGE DAMAGE")),
-        "the check finds nothing after the repair: {log:?}"
-    );
-
-    let mut store = open_the_store(&state_dir, store_port).await;
-    let after_first = tables(store.pool()).await;
-    store.stop().await;
-    assert_ne!(after_first, planted, "the first boot changed the tables");
-    let linked = after_first
-        .1
-        .iter()
-        .filter(|row| row.1 == "line" && row.3 == beta)
-        .count();
-    assert_eq!(
-        linked, 2,
-        "both writes link to the bot: {:?}",
-        after_first.1
-    );
-
-    later_boots_leave_the_tables_alone(
-        &state_dir,
-        store_port,
-        &git_ref,
-        &after_first,
-        &LEFT_ON_PURPOSE_LATER,
-    )
-    .await;
-    drop(scratch);
 }
 
 /// **A merge made before merge events existed gets its event on the first boot**,
@@ -468,7 +310,7 @@ async fn an_old_merge_gets_its_event_over(restored: Restored) {
         );
     }
     assert_eq!(
-        lines_about(&log, "repair pass finished", PASSES[1]),
+        lines_about(&log, "repair pass finished", PASSES[0]),
         1,
         "the first boot says it wrote the event"
     );

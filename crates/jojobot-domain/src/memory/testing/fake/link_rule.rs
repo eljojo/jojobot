@@ -21,7 +21,7 @@ impl InMemoryMemory {
                 }
             }
         }
-        crate::memory::referenced_by(fields, &declared)
+        Ok(crate::memory::referenced_by(fields))
     }
 
     /// **Every handle a field value names, lowered from whatever the caller

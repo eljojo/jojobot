@@ -501,10 +501,6 @@ pub async fn boot_store_observed(
     pushing: bool,
     observation: jojobot_adapters::observe::Observation,
 ) -> anyhow::Result<Booted> {
-    // **One switch for the link rule of rule 646**, read before the store is
-    // touched. On stores and serves links decided at the write; log-only computes
-    // and logs the new rule while keeping the legacy behavior.
-    set_link_rule_from(std::env::var("JOJOBOT_LINK_RULE").ok().as_deref())?;
     // **The SQL store jojobot runs itself**, brought up and migrated before
     // anything else is wired.
     let (store, applied) = timed("store-up", Dolt::ready(dir, port))
@@ -752,10 +748,9 @@ pub async fn boot_store_observed(
         ),
     }
 
-    // **The selected field-link step**, after reference fields and kinds load.
-    // On repairs bare line names before marking links and reconciling their rows;
-    // log-only runs the legacy lowering. Unresolved and ambiguous handles stay
-    // text and are reported, because neither pass guesses. A finished pass keeps
+    // **The field-link step**, after reference fields and kinds load. It marks
+    // links and reconciles their rows. Unresolved and ambiguous handles stay
+    // text and are reported, because the pass does not guess. A finished pass keeps
     // its text decisions; the link table is checked and rebuilt when it disagrees.
     // **Over an instance that is told what the build supplies**, which `badging`
     // is not: a value naming a shipped record has no row to resolve through, and
@@ -807,9 +802,7 @@ pub async fn boot_store_observed(
         ),
     }
 
-    // **The one-off repairs of stored rows**, including bare line names and old
-    // merges. Log-only reaches both here, after the legacy field-link pass. On
-    // repaired bare lines ahead of marking, so that repair is settled here.
+    // **The one-off repairs of stored rows**, such as old merges.
     // A row a repair cannot place is named and left for the storage check.
     for (pass, outcome) in timed("repair-stored-rows", linking.repair_stored_rows()).await {
         match outcome {
@@ -1306,21 +1299,6 @@ async fn the_day_of_this_boot(memory: &dyn Memory, clock: &Clock) -> jiff::civil
 }
 
 pub mod field_links;
-
-/// **The link rule a process runs, from `JOJOBOT_LINK_RULE`**: unset or `on`
-/// is on, `log-only` selects rollback, and any other word refuses the start rather than
-/// running a rule nobody named.
-pub fn set_link_rule_from(word: Option<&str>) -> anyhow::Result<()> {
-    use jojobot_domain::memory::{LinkRule, set_link_rule};
-    match word.map(str::trim) {
-        None | Some("") | Some("on") => set_link_rule(LinkRule::On),
-        Some("log-only") => set_link_rule(LinkRule::LogOnly),
-        Some(other) => {
-            anyhow::bail!("JOJOBOT_LINK_RULE is '{other}'; it is `on` (the default) or `log-only`")
-        }
-    }
-    Ok(())
-}
 
 #[cfg(test)]
 mod tests {

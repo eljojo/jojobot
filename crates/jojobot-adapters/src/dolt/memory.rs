@@ -60,7 +60,6 @@ use super::ids::{self, Draw};
 use super::{ordinal, requests::commit_native};
 
 pub use adopt::AdoptionReport;
-pub use link_rule::{LinkRuleDiagnostics, LinkRuleSummary, OwnedNowField};
 
 /// **What the field-link migration did, and what it left alone.**
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -567,8 +566,7 @@ impl DoltMemory {
         badge: &str,
     ) -> Result<(), MemoryError> {
         Self::rekey_to_badge(tx, handle, badge).await?;
-        let declared = Self::types_in(tx).await?;
-        Self::repoint_field_links(tx, &declared, handle, badge).await?;
+        Self::repoint_field_links(tx, handle, badge).await?;
         Ok(())
     }
 
@@ -754,7 +752,6 @@ impl DoltMemory {
             return Ok(report);
         }
         let mut tx = self.pool.begin().await.map_err(store)?;
-        let declared = Self::types_in(&mut tx).await?;
         let rows: Vec<(String, Option<String>, Option<String>)> =
             sqlx::query_as("SELECT id, badge, merged_into FROM entity")
                 .fetch_all(&mut *tx)
@@ -823,7 +820,7 @@ impl DoltMemory {
             if to == *badge {
                 continue;
             }
-            report.repointed += Self::repoint_field_links(&mut tx, &declared, badge, to).await?;
+            report.repointed += Self::repoint_field_links(&mut tx, badge, to).await?;
         }
         tx.commit().await.map_err(store)?;
         report.reported = Self::tell_once(
@@ -1130,7 +1127,6 @@ impl DoltMemory {
             report.disagreed = true;
         }
         let mut tx = self.pool.begin().await.map_err(store)?;
-        let declared = Self::types_in(&mut tx).await?;
 
         let entities: Vec<(String, Option<String>)> =
             sqlx::query_as("SELECT id, badge FROM entity")
@@ -1223,7 +1219,7 @@ impl DoltMemory {
 
         let mut expected: BTreeSet<(String, String, i64, String)> = BTreeSet::new();
         for (entity, key, ordinal, value) in &writes {
-            for target in jojobot_domain::memory::field_link_targets(key, value, &declared) {
+            for target in jojobot_domain::memory::field_link_targets(value) {
                 expected.insert((entity.clone(), key.clone(), *ordinal, target));
             }
         }
@@ -1745,23 +1741,21 @@ impl DoltMemory {
         if merges.is_empty() {
             return Ok(());
         }
-        let declared = Self::types_in(tx).await?;
         // The newest merge that folded a thing is where it went, as in every
         // other read of the events.
         let survivors: std::collections::HashMap<&str, &str> = merges
             .iter()
             .map(|(folded, survivor)| (folded.as_str(), survivor.as_str()))
             .collect();
-        for (key, value) in writes.iter_mut() {
+        for (_, value) in writes.iter_mut() {
             let Some(held) = value else { continue };
-            let forwarded =
-                jojobot_domain::memory::forward_field_value(key, held, &declared, |thing| {
-                    Ok::<_, MergeLoop>(
-                        survivors
-                            .get(thing.as_str())
-                            .map(|survivor| EntityId((*survivor).to_string())),
-                    )
-                });
+            let forwarded = jojobot_domain::memory::forward_field_value(held, |thing| {
+                Ok::<_, MergeLoop>(
+                    survivors
+                        .get(thing.as_str())
+                        .map(|survivor| EntityId((*survivor).to_string())),
+                )
+            });
             match forwarded {
                 Ok(Some(now)) => *held = now,
                 Ok(None) => {}
@@ -2005,49 +1999,7 @@ impl DoltMemory {
         tx: &mut Transaction<'_, MySql>,
         fields: &mut std::collections::BTreeMap<String, String>,
     ) -> Result<(), MemoryError> {
-        if jojobot_domain::memory::link_rule() == jojobot_domain::memory::LinkRule::On {
-            return self.lower_marked_fields(tx, fields).await;
-        }
-        let sent = fields.clone();
-        let declared = Self::types_in(tx).await?;
-        for (key, items) in jojobot_domain::memory::reference_field_values(fields, &declared) {
-            let mut lowered = Vec::with_capacity(items.len());
-            for item in items {
-                let id = EntityId(item);
-                let resolved = self
-                    .resolve(tx, &id)
-                    .await?
-                    .map(|(key, _)| key)
-                    .unwrap_or(id);
-                lowered.push(resolved.to_string());
-            }
-            fields.insert(key, lowered.join(", "));
-        }
-        // **A handle under a key nobody declared is lowered too**, behind the
-        // mark that tells a stored id from a word. Each item was already
-        // checked to exist by the caller of this function.
-        for (key, items) in jojobot_domain::memory::handle_field_values(fields, &declared) {
-            let mut lowered = Vec::with_capacity(items.len());
-            for item in items {
-                let id = EntityId(item);
-                let stored = self.resolve(tx, &id).await?.map_or(id, |(key, _)| key);
-                lowered.push(jojobot_domain::memory::marked_stored_handle(
-                    stored.as_str(),
-                ));
-            }
-            fields.insert(key, lowered.join(", "));
-        }
-        self.log_would_store(tx, &sent, fields).await
-    }
-
-    /// **A stored list served as a merge's repoint would leave it**: the domain's
-    /// rule for naming each thing once, joined the way a list is written.
-    fn serve_list(items: Vec<EntityId>) -> String {
-        jojobot_domain::memory::list::name_each_once(items, EntityId::clone)
-            .iter()
-            .map(EntityId::as_str)
-            .collect::<Vec<_>>()
-            .join(", ")
+        self.lower_marked_fields(tx, fields).await
     }
 
     /// **The other direction**: every reference-typed field value, composed
@@ -3941,10 +3893,6 @@ impl DoltMemory {
     ) -> Result<(), MemoryError> {
         // **The link rows ride the write that made them**, in its transaction, so
         // a write and the question of who points at its targets never disagree.
-        let declared = match wrote.iter().any(|(_, value)| value.is_some()) {
-            true => Self::types_in(tx).await?,
-            false => Vec::new(),
-        };
         // **One moment for the whole write.** The keys of one record's write are
         // one act, so none is a later change than another: the review stamp rides
         // such a write and reads as reviewed only if it is not earlier than the
@@ -3979,7 +3927,7 @@ impl DoltMemory {
             .await
             .map_err(store)?;
             if let Some(value) = &value {
-                for target in jojobot_domain::memory::field_link_targets(&key, value, &declared) {
+                for target in jojobot_domain::memory::field_link_targets(value) {
                     sqlx::query(
                         "INSERT INTO field_link (entity, `key`, ordinal, target)
                          VALUES (?, ?, ?, ?)",
@@ -7281,7 +7229,6 @@ impl Memory for DoltMemory {
             Some((key, _)) => key,
             None => target.clone(),
         };
-        let declared = Self::types_in(&mut tx).await?;
         // **A link left naming a thing that was merged into this one is a link
         // to this one**, as one the merge rewrote is.
         let mut names = vec![key.as_str().to_string()];
@@ -7314,7 +7261,7 @@ impl Memory for DoltMemory {
         let mut pointing = Vec::new();
         for holder in holders {
             for fact in self.facts_of(&mut tx, &holder).await? {
-                if jojobot_domain::memory::fact_names_target(&fact, &declared, target) {
+                if jojobot_domain::memory::fact_names_target(&fact, target) {
                     pointing.push(fact);
                 }
             }

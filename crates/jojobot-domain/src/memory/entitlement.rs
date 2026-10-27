@@ -173,15 +173,9 @@ fn backing(fact: &Fact) -> u8 {
 
 /// Does this record point at that thing through this key?
 fn points_at(fact: &Fact, key: &str, target: &EntityId) -> bool {
-    if super::link_rule() == super::LinkRule::On {
-        return fact
-            .field_links
-            .get(key)
-            .is_some_and(|targets| targets.contains(target));
-    }
-    fact.fields
+    fact.field_links
         .get(key)
-        .is_some_and(|value| value.trim() == target.as_str())
+        .is_some_and(|targets| targets.contains(target))
 }
 
 /// **Is it good on that day?**
@@ -219,6 +213,8 @@ mod tests {
     ) -> Fact {
         let mut fields = BTreeMap::new();
         fields.insert(key.to_string(), target.to_string());
+        // The link the store decides at the write, for the value this fixture writes.
+        let field_links = BTreeMap::from([(key.to_string(), vec![EntityId(target.into())])]);
         if let Some(from) = window.0 {
             fields.insert(VALID_FROM.to_string(), from.to_string());
         }
@@ -230,7 +226,7 @@ mod tests {
             written_by_another: false,
             sets: Default::default(),
             reaching: Default::default(),
-            field_links: Default::default(),
+            field_links,
             id: FactId(id.into()),
             home: EntityId(holder.into()),
             subject: EntityId(holder.into()),

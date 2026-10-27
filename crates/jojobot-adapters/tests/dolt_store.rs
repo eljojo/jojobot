@@ -1310,6 +1310,13 @@ async fn migrate_reference_fields_rewrites_a_value_stored_as_plain_handle_text()
         "the migrated value still holds a plain handle rather than a permanent id: {now}",
     );
 
+    // The ids the migration wrote are bare, and only a mark makes an id a link a
+    // read serves as a handle: the boot's marking pass follows this one.
+    memory
+        .migrate_field_links_marked()
+        .await
+        .expect("the marking runs");
+
     // Served under the handle, exactly as before the fixture reverted it.
     let held = memory.fields(&pet).await.expect("fields reads");
     let served = held.get("friends").cloned().unwrap_or_default();
@@ -2625,17 +2632,17 @@ async fn the_substrate_keeps_what_a_correction_overwrote() {
 }
 
 /// **A handle under a key nobody declared is stored as the thing's permanent
-/// id behind the mark, and a value stored as plain handle text before that keeps
-/// resolving.**
+/// id behind the mark, and a value stored as plain handle text before that is
+/// served as written.**
 ///
 /// The stored spelling is pinned here, off the raw column: nothing outside this
 /// process declares it, so a change to it is one every row already written
 /// disagrees with. A row written before ids were kept holds the handle it was
-/// typed with. It is not migrated. Reading it resolves the handle through the
-/// thing's rename history, so the link still points at the thing it named, and
-/// the next write to that key stores the id.
+/// typed with. It is not migrated. Text that wears no mark was never decided to
+/// be a link, so a read serves it as written and it follows no rename; the next
+/// write to that key stores the id.
 #[tokio::test]
-async fn a_handle_under_an_undeclared_key_is_stored_as_an_id_and_old_text_keeps_resolving() {
+async fn a_handle_under_an_undeclared_key_is_stored_as_an_id_and_old_text_is_served_as_written() {
     let scratch = Scratch::new("undeclared-handle-storage");
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
@@ -2724,21 +2731,25 @@ async fn a_handle_under_an_undeclared_key_is_stored_as_an_id_and_old_text_keeps_
     .execute(&pool)
     .await
     .expect("the pre-ids shape is written");
+    // Text that wears no mark has no link row.
+    sqlx::query("DELETE FROM field_link WHERE entity = ? AND `key` = 'blocks'")
+        .bind(badge_of(&holder).await)
+        .execute(&pool)
+        .await
+        .expect("the link row of the old text is dropped");
 
     // Not migrated: the column holds what it held…
     assert_eq!(stored("blocks").await, target.to_string());
-    // …and it still resolves, under the name the thing has now.
+    // …and it is served as written and links nothing.
     let fields = memory.fields(&holder).await.expect("fields reads");
-    assert_eq!(fields["blocks"], renamed.to_string(), "{fields:?}");
-    assert!(
-        memory
-            .referring_to(&renamed)
+    assert_eq!(fields["blocks"], target.to_string(), "{fields:?}");
+    let linked: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM field_link WHERE entity = ? AND `key` = 'blocks'")
+            .bind(badge_of(&holder).await)
+            .fetch_one(&pool)
             .await
-            .expect("referring_to reads")
-            .iter()
-            .any(|fact| fact.id == held.id),
-        "the old text still points at the renamed thing",
-    );
+            .expect("the link table reads");
+    assert_eq!(linked, 0, "the old text points at nothing");
 
     // The next write that changes that key stores the id.
     memory
@@ -9347,7 +9358,7 @@ async fn dolt_repoints_links_an_older_fold_left_on_a_forwarding_row() {
     let gamma_badge = badge_of(&pool, gamma.as_str()).await;
     let marked = jojobot_domain::memory::marked_stored_handle(&beta_badge);
     for (holder, key, spelling) in [
-        (&declared_holder, "forwarded_points_at", beta_badge.clone()),
+        (&declared_holder, "forwarded_points_at", marked.clone()),
         (&marked_holder, "forwarded_note_link", marked.clone()),
     ] {
         let badge = badge_of(&pool, holder.as_str()).await;
@@ -9423,7 +9434,8 @@ async fn dolt_repoints_links_an_older_fold_left_on_a_forwarding_row() {
     .await
     .expect("the stored value reads");
     assert_eq!(
-        stored, gamma_badge,
+        stored,
+        jojobot_domain::memory::marked_stored_handle(&gamma_badge),
         "the row itself names the end of the chain"
     );
     let to_gamma: Vec<String> = sqlx::query_scalar(

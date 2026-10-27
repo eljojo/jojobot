@@ -96,7 +96,6 @@ async fn statements_of_a_fill(store: &Dolt, name: &str, things: usize) -> i64 {
 /// many for the larger store.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn ten_times_the_things_fill_the_fold_in_the_same_statements() {
-    jojobot_domain::memory::set_link_rule(jojobot_domain::memory::LinkRule::LogOnly);
     const SMALL: usize = 20;
     const LARGE: usize = 200;
     // A fixed difference the fill may add for the larger store: the listing
@@ -112,7 +111,7 @@ async fn ten_times_the_things_fill_the_fold_in_the_same_statements() {
 
     writeln!(
         std::io::stdout(),
-        "log-only fill statements: {SMALL} things {small}, {LARGE} things {large}"
+        "fill statements: {SMALL} things {small}, {LARGE} things {large}"
     )
     .expect("the measured counts are written");
     assert!(

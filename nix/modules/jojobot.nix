@@ -146,14 +146,6 @@ in
         needs one; it is a credential, so it belongs in this file and nowhere else.
         Setting only one of the URL and the topic is refused at start, and setting
         neither pushes nothing.
-
-        The link rule is on unless this file says otherwise: set
-        JOJOBOT_LINK_RULE=log-only to roll it back: writes then decide links by the
-        earlier rule; the boot logs what the link rule would do, and runs the
-        earlier lowering pass, which stores plain handle text under undeclared keys
-        as ids behind the mark, once on a store. Values an earlier boot with the
-        rule on marked stay marked.
-        Any other word refuses to start.
       '';
     };
 

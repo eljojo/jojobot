@@ -1781,11 +1781,11 @@ async fn every_case_of_the_contract_holds_alone_on_a_store_of_its_own() {
 }
 
 /// **A handle stored as plain text under a key nobody declared, from before ids
-/// were kept, still follows its target through a rename in the fake**, as the
-/// real store's reads do: the fake lies where the real store lies, and tells the
-/// truth where it tells it.
+/// were kept, is served as written and follows no rename in the fake**, as the
+/// real store's reads serve it: text that wears no mark was never decided to be a
+/// link, and a read does not decide it.
 #[tokio::test]
-async fn a_plain_text_handle_under_an_undeclared_key_resolves_through_a_rename_in_the_fake() {
+async fn a_plain_text_handle_under_an_undeclared_key_is_served_as_written_in_the_fake() {
     let memory = InMemoryMemory::booted();
     let was = EntityId("work:contract-follows-was".into());
     let now = EntityId("work:contract-follows-relocated".into());
@@ -1814,7 +1814,8 @@ async fn a_plain_text_handle_under_an_undeclared_key_resolves_through_a_rename_i
         .expect("nothing collides");
 
     let fields = memory.fields(&holder).await.expect("fields reads");
-    assert_eq!(fields["blocks"], now.to_string(), "{fields:?}");
+    assert_eq!(fields["blocks"], was.to_string(), "{fields:?}");
+    assert_ne!(fields["blocks"], now.to_string(), "{fields:?}");
 }
 
 /// A role's exclusivity against the fake — the same suite the gated
@@ -2833,28 +2834,23 @@ fn a_field_value_is_forwarded_to_the_end_of_the_merges() {
     let chain: &'static [(&str, &str)] = &[("a", "b"), ("b", "c")];
 
     assert_eq!(
-        forward_field_value("friends", &marked(&["a"]), &[], survivor_of(chain)),
+        forward_field_value(&marked(&["a"]), survivor_of(chain)),
         Ok(Some(marked(&["c"]))),
         "a link is followed through a survivor folded in its turn"
     );
     assert_eq!(
-        forward_field_value(
-            "friends",
-            &marked(&["a", "c", "z"]),
-            &[],
-            survivor_of(chain)
-        ),
+        forward_field_value(&marked(&["a", "c", "z"]), survivor_of(chain)),
         Ok(Some(marked(&["c", "z"]))),
         "a list that comes to name a thing twice names it once"
     );
     assert_eq!(
-        forward_field_value("friends", &marked(&["c", "z"]), &[], survivor_of(chain)),
+        forward_field_value(&marked(&["c", "z"]), survivor_of(chain)),
         Ok(None),
         "a value naming no folded thing is left as it was"
     );
     let looped: &'static [(&str, &str)] = &[("a", "b"), ("b", "a")];
     assert_eq!(
-        forward_field_value("friends", &marked(&["a"]), &[], survivor_of(looped)),
+        forward_field_value(&marked(&["a"]), survivor_of(looped)),
         Err(MergeLoop {
             things: vec!["a".into(), "b".into()]
         }),

@@ -15,7 +15,6 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use jojobot_domain::memory::boot_reader::{BootReader, FieldsVersioned};
 use jojobot_domain::memory::search::DocScan;
-use jojobot_domain::memory::types::DeclaredType;
 use jojobot_domain::memory::{
     ClaimWrite, EntitySnapshot, EntityVersion, Fact, FieldAges, FieldBacking, KeyTrails,
 };
@@ -173,80 +172,11 @@ impl Context {
         self.merge_names.iter().any(|name| value.contains(name))
     }
 
-    /// **The handle a handle written in a value answers to now**, for a handle the
-    /// entity table lists; one it does not is left as it was written when no handle
-    /// was ever worn under that name, and to the read of one thing otherwise.
-    fn handle_written(&self, written: &EntityId) -> Option<String> {
-        if self.ids.contains(written) {
-            return Some(written.to_string());
-        }
-        let numbered = written
-            .as_str()
-            .rsplit_once('/')
-            .is_some_and(|(_, tail)| !tail.is_empty() && tail.bytes().all(|b| b.is_ascii_digit()));
-        (!self.former.contains_key(written.as_str()) && !numbered).then(|| written.to_string())
-    }
-
     /// **A thing's fields, every value naming a thing served as the handle it
     /// answers to now**, as the read of one thing serves them; `None` when a name in
     /// them is one the grouped reads cannot place.
-    fn composed(
-        &self,
-        declared: &[DeclaredType],
-        mut fields: BTreeMap<String, String>,
-    ) -> Option<BTreeMap<String, String>> {
-        if jojobot_domain::memory::link_rule() == jojobot_domain::memory::LinkRule::On {
-            return self.composed_marked(fields);
-        }
-        let referenced = jojobot_domain::memory::reference_field_values(&fields, declared);
-        for (key, items) in &referenced {
-            let mut composed = Vec::with_capacity(items.len());
-            for item in items {
-                let stored = jojobot_domain::memory::stored_handle_id(item).unwrap_or(item);
-                composed.push(self.handle_of(&EntityId(stored.to_string()))?);
-            }
-            fields.insert(key.clone(), DoltMemory::serve_list(composed));
-        }
-        for (key, value) in fields.clone() {
-            if referenced.iter().any(|(held, _)| held == &key) {
-                continue;
-            }
-            let items: Vec<&str> = value.split(',').collect();
-            if items
-                .iter()
-                .all(|item| jojobot_domain::memory::stored_handle_id(item).is_some())
-            {
-                let mut composed = Vec::with_capacity(items.len());
-                for item in items {
-                    if let Some(id) = jojobot_domain::memory::stored_handle_id(item) {
-                        composed.push(self.handle_of(&EntityId(id.to_string()))?);
-                    }
-                }
-                fields.insert(key, DoltMemory::serve_list(composed));
-            } else if items
-                .iter()
-                .any(|item| jojobot_domain::memory::stored_handle_id(item).is_some())
-            {
-                // A list that mixes words with marked items is served as the rule
-                // that is on serves it; see the per-thing reader.
-                let one = BTreeMap::from([(key.clone(), value.clone())]);
-                let mut one = self.composed_marked(one)?;
-                if let Some(served) = one.remove(&key) {
-                    fields.insert(key, served);
-                }
-            } else {
-                let handles = jojobot_domain::memory::handles_in_value(&value);
-                if handles.is_empty() {
-                    continue;
-                }
-                let mut composed = Vec::with_capacity(handles.len());
-                for id in handles {
-                    composed.push(self.handle_written(&id)?);
-                }
-                fields.insert(key, composed.join(", "));
-            }
-        }
-        Some(fields)
+    fn composed(&self, fields: BTreeMap<String, String>) -> Option<BTreeMap<String, String>> {
+        self.composed_marked(fields)
     }
 
     /// **[`Self::composed`] for the link rule that is on**: each comma item is served
@@ -467,7 +397,6 @@ impl DoltBootReader {
     fn claim_of(
         &self,
         context: &Context,
-        declared: &[DeclaredType],
         handle: &EntityId,
         key: &EntityId,
         row: &sqlx::mysql::MySqlRow,
@@ -553,7 +482,7 @@ impl DoltBootReader {
             return Ok(None);
         };
         served.field_links = field_links;
-        let Some(composed) = context.composed(declared, std::mem::take(&mut served.fields)) else {
+        let Some(composed) = context.composed(std::mem::take(&mut served.fields)) else {
             return Ok(None);
         };
         served.fields = composed;
@@ -835,7 +764,7 @@ impl BootReader for DoltBootReader {
             let writes = by_key.get_mut(key.as_str()).map(std::mem::take);
             let held =
                 jojobot_domain::memory::folded_fields(&writes.unwrap_or_default(), &declared);
-            let Some(held) = context.composed(&declared, held) else {
+            let Some(held) = context.composed(held) else {
                 continue;
             };
             let written = claims.get(key.as_str()).copied().unwrap_or(0);
@@ -1145,14 +1074,14 @@ impl BootReader for DoltBootReader {
             let Some(field_links) = context.marked_links(&stored) else {
                 continue;
             };
-            let Some(fields) = context.composed(&declared, stored) else {
+            let Some(fields) = context.composed(stored) else {
                 continue;
             };
             let mut facts = Vec::new();
             let mut whole = true;
             for row in standing.get(key.as_str()).into_iter().flatten() {
                 match self.claim_of(
-                    &context, &declared, &handle, key, row, &folded, &referred, &marked, &writers,
+                    &context, &handle, key, row, &folded, &referred, &marked, &writers,
                 ) {
                     Ok(Some(fact)) => facts.push(fact),
                     Ok(None) | Err(_) => {

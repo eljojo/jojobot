@@ -8,7 +8,7 @@ use std::sync::Arc;
 use jojobot_domain::memory::testing::InMemoryMemory;
 
 use jojobot_adapters::fold_agreement::{check_seed, landed_enough, run_through_fold};
-use jojobot_domain::memory::{EntityId, LinkRule, Memory, set_link_rule};
+use jojobot_domain::memory::{EntityId, Memory};
 
 /// The seeds a default run draws, and the steps each takes.
 const SEEDS: std::ops::Range<u64> = 0..60;
@@ -16,7 +16,6 @@ const STEPS: usize = 30;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn the_fold_the_writes_patched_serves_what_a_fold_filled_anew_and_the_store_serve() {
-    set_link_rule(LinkRule::On);
     let mut failures = Vec::new();
     let mut traces = Vec::new();
     for seed in SEEDS {
@@ -43,7 +42,6 @@ async fn the_fold_the_writes_patched_serves_what_a_fold_filled_anew_and_the_stor
 /// comparing empty claims; this reads the fold's own answers to the writes.
 #[tokio::test]
 async fn a_default_run_draws_every_kind_of_write_through_the_fold_and_most_of_them_land() {
-    set_link_rule(LinkRule::On);
     let mut traces = Vec::new();
     for seed in SEEDS {
         let store = Arc::new(InMemoryMemory::booted());
@@ -57,7 +55,6 @@ async fn a_default_run_draws_every_kind_of_write_through_the_fold_and_most_of_th
 
 #[tokio::test]
 async fn link_rule_leftovers_declarations_keep_the_same_links_through_the_fold() {
-    set_link_rule(LinkRule::On);
     let folded = jojobot_adapters::fold::Folded::new(Arc::new(InMemoryMemory::booted()));
     folded.rebuild().await.unwrap();
     jojobot_domain::memory::testing::contract::a_declaration_replacement_and_key_removal_change_no_link(
@@ -94,7 +91,6 @@ async fn link_rule_leftovers_declarations_keep_the_same_links_through_the_fold()
 
 #[tokio::test]
 async fn link_rule_leftovers_mixed_history_survives_a_fold_reload() {
-    set_link_rule(LinkRule::On);
     let folded = jojobot_adapters::fold::Folded::new(Arc::new(InMemoryMemory::booted()));
     folded.rebuild().await.unwrap();
     jojobot_domain::memory::testing::contract::mixed_rename_reuse_and_merge_preserve_the_history(

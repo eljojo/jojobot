@@ -1523,9 +1523,8 @@ impl FullTextIndex {
             // real, and what the link MEANS is deliberately unrecorded rather
             // than guessed.
             //
-            // On uses stored field-link metadata; log-only recognizes complete
-            // handles in served values. The key supplies relation meaning and
-            // does not decide whether a link exists.
+            // The stored field-link metadata says whether a link exists. The key
+            // supplies relation meaning and does not decide it.
             let linked = fact
                 .linked()
                 .into_iter()

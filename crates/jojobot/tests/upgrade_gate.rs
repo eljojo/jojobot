@@ -928,7 +928,6 @@ async fn boot_current_with(
         deploy_9_1::recorded_r1_before_boot(state_dir, store_port).await;
     let binary = jojobot_exercise::room::server_binary().expect("a jojobot binary to run");
     let mut child = tokio::process::Command::new(&binary)
-        .env("JOJOBOT_LINK_RULE", deploy_9_1::link_rule_word())
         .env("STATE_DIRECTORY", state_dir)
         .env("JOJOBOT_STORE_PORT", store_port.to_string())
         .env("JOJOBOT_BIND", "127.0.0.1:0")
@@ -2737,7 +2736,7 @@ async fn the_boots_over_a_store_the_deployed_build_filled_log_no_warning_and_no_
         .await
         .expect("the pass markers read");
     store.stop().await;
-    // The field-link pass of the rule the deployed build ran: log-only lowers, on marks.
+    // The field-link pass the deployed build ran: the lowering or the marking.
     let linked = |pass: &str| marked.iter().any(|name| name == pass);
     assert!(
         (linked("field value lowering") || linked("field value links marked"))

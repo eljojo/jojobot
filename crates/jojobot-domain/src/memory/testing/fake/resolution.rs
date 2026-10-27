@@ -11,16 +11,11 @@ pub(super) struct Resolution<'a> {
     pub(super) store: &'a InMemoryMemory,
     pub(super) declared: Vec<crate::memory::types::DeclaredType>,
     pub(super) known: std::sync::OnceLock<Vec<Entity>>,
-    pub(super) former: std::sync::OnceLock<Vec<FormerHandle>>,
 }
 
 impl Resolution<'_> {
     pub(super) fn known(&self) -> &[Entity] {
         self.known.get_or_init(|| self.store.known())
-    }
-
-    pub(super) fn former(&self) -> &[FormerHandle] {
-        self.former.get_or_init(|| self.store.former())
     }
 
     /// The handle a stored value answers to today, as

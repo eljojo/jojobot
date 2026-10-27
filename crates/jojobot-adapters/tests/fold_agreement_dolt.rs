@@ -20,7 +20,6 @@ const STEPS: usize = 30;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn the_fold_the_writes_patched_serves_what_a_fold_filled_anew_and_the_real_store_serve() {
-    jojobot_domain::memory::set_link_rule(jojobot_domain::memory::LinkRule::On);
     let scratch = Scratch::new("agreement");
     let mut server = Dolt::start(&scratch.0, free_port())
         .await

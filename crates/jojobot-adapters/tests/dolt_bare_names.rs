@@ -106,7 +106,7 @@ async fn a_bare_line_name_is_refused_without_a_dangling_link() {
     .fetch_all(&pool)
     .await
     .expect("writes");
-    assert_eq!(values, vec![bot_badge.clone()]);
+    assert_eq!(values, vec![format!("@#{bot_badge}")]);
     assert_eq!(
         link_rows(&pool).await,
         vec![(badge, "line".into(), 1, bot_badge)]
@@ -215,7 +215,10 @@ async fn a_bare_line_name_is_refused_on_update_without_a_dangling_link() {
     .fetch_all(&pool)
     .await
     .expect("writes");
-    assert_eq!(values, vec![first_badge.clone(), next_badge.clone()]);
+    assert_eq!(
+        values,
+        vec![format!("@#{first_badge}"), format!("@#{next_badge}")]
+    );
     assert_eq!(
         link_rows(&pool).await,
         vec![

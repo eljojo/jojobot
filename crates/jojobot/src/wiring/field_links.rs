@@ -1,57 +1,10 @@
-//! The field-link step of boot: log the mode, report the conversion before marking
-//! under On, or report after the legacy pass under log-only.
+//! The field-link step of boot: mark every stored field value's links and bring
+//! the link table into agreement with the marks.
 
-use jojobot_adapters::dolt::Migrated;
 use jojobot_adapters::dolt::memory::DoltMemory;
-use jojobot_domain::memory::{LinkRule, link_rule};
 
-mod diagnostics;
-
-/// TEMPORARY(9.3.1) the boot field-link step selection. **Run the selected field-link step and log its mode and conversion counts.**
-/// On repairs bare line values, reads the conversion summary, then marks.
-/// Log-only runs the legacy pass and reports without marking.
 pub async fn boot_field_links(linking: &DoltMemory) {
-    let rule = link_rule();
-    let mode = match rule {
-        LinkRule::On => "on",
-        LinkRule::LogOnly => "log-only",
-    };
-    tracing::info!(mode, "link rule: boot mode");
-    // **Under `on`, the repair of bare line values comes first**, with the rule
-    // before this one: it selects the bare-name link rows the marked reconcile
-    // removes, and it leaves a bare id for the marking to mark. The repairs the
-    // boot runs after this step find it settled. **A repair that could not run
-    // leaves the marking for the next boot**, because marking would delete the rows
-    // the repair is still owed.
-    if rule == LinkRule::On {
-        match linking.repair_bare_line_values_ahead().await {
-            Migrated::Failed(why) | Migrated::Skipped(why) => {
-                tracing::error!(
-                    pass = "bare line values",
-                    error = %why,
-                    "BARE LINE VALUES NOT REPAIRED — the marking of field links is left for the \
-                     next boot, so the rows the repair still owes are not removed under it."
-                );
-                return;
-            }
-            Migrated::Ran(rows) => {
-                tracing::info!(
-                    pass = "bare line values",
-                    rows,
-                    "store: repair pass finished"
-                )
-            }
-            Migrated::Settled => {
-                tracing::info!(pass = "bare line values", "store: repair pass already done")
-            }
-        }
-        diagnostics::read(linking, rule).await;
-    }
-    let field_links = match rule {
-        LinkRule::On => linking.migrate_field_links_marked().await,
-        LinkRule::LogOnly => linking.migrate_field_links().await,
-    };
-    match field_links {
+    match linking.migrate_field_links_marked().await {
         Ok(report) => {
             if report.disagreed {
                 tracing::warn!(
@@ -63,14 +16,7 @@ pub async fn boot_field_links(linking: &DoltMemory) {
                 );
             }
             if report.settled {
-                match jojobot_domain::memory::link_rule() {
-                    jojobot_domain::memory::LinkRule::On => {
-                        tracing::info!("store: field value links marked: already done")
-                    }
-                    jojobot_domain::memory::LinkRule::LogOnly => {
-                        tracing::info!("store: field value lowering: already done")
-                    }
-                }
+                tracing::info!("store: field value links marked: already done");
             }
             if report.lowered > 0 || report.linked > 0 || report.unlinked > 0 {
                 tracing::info!(
@@ -95,12 +41,5 @@ pub async fn boot_field_links(linking: &DoltMemory) {
             "FIELD LINKS NOT BUILT — who points at a thing is answered from the link table, so \
              some links may not be found. Nothing was lost; a restart repeats the pass."
         ),
-    }
-
-    // **What the link rule of rule 646 would do, counted and logged while it is
-    // log-only.** Read-only: it changes no byte, link row or pass marker. The
-    // counts name no value.
-    if rule == LinkRule::LogOnly {
-        diagnostics::read(linking, rule).await;
     }
 }

@@ -1112,10 +1112,8 @@ impl Merged {
             .expect("the mark goes back");
         }
         let mut tx = self.pool.begin().await.expect("a transaction");
-        let declared = DoltMemory::types_in(&mut tx).await.expect("types read");
         DoltMemory::repoint_field_links(
             &mut tx,
-            &declared,
             self.survivor_key.as_str(),
             self.folded_key.as_str(),
         )
@@ -1124,28 +1122,15 @@ impl Merged {
         tx.commit().await.expect("the pointers commit");
         // A list that named both sides was cut to one item by the merge, and
         // putting the link back cannot bring the other item back: each list is
-        // written as it stood, naming the folded thing and the survivor. An
-        // undeclared list keeps the mark on its ids; a declared one holds them
-        // bare.
+        // written as it stood, naming the folded thing and the survivor, each id
+        // behind the mark.
         let marked = |id: &EntityId| jojobot_domain::memory::marked_stored_handle(id.as_str());
-        for (key, both) in [
-            (
-                "friends",
-                format!(
-                    "{}, {}",
-                    marked(&self.folded_key),
-                    marked(&self.survivor_key)
-                ),
-            ),
-            (
-                "regulars",
-                format!(
-                    "{}, {}",
-                    self.folded_key.as_str(),
-                    self.survivor_key.as_str()
-                ),
-            ),
-        ] {
+        for key in ["friends", "regulars"] {
+            let both = format!(
+                "{}, {}",
+                marked(&self.folded_key),
+                marked(&self.survivor_key)
+            );
             let cut =
                 sqlx::query("UPDATE field_write SET value = ? WHERE entity = ? AND `key` = ?")
                     .bind(&both)
@@ -1457,15 +1442,9 @@ async fn move_rows_as_the_older_merge_did(
             .await
             .expect("the pointer moves");
     }
-    let declared = DoltMemory::types_in(&mut tx).await.expect("types read");
-    DoltMemory::repoint_field_links(
-        &mut tx,
-        &declared,
-        folded_key.as_str(),
-        survivor_key.as_str(),
-    )
-    .await
-    .expect("the links move");
+    DoltMemory::repoint_field_links(&mut tx, folded_key.as_str(), survivor_key.as_str())
+        .await
+        .expect("the links move");
     tx.commit().await.expect("the move commits");
 }
 

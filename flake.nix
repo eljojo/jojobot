@@ -271,12 +271,8 @@
               "--skip=deploy_9_1::the_current_binary_boots_with_the_link_rule_on_over_the_last_deployed_store"
               "--skip=deploy_9_2_1::read_mail_the_last_deployed_build_left_open_is_closed_by_the_batch_close"
               "--skip=runs_in_moment_order::the_runs_of_the_last_deployed_store_read_in_moment_order_on_the_head"
-              "--skip=deploy_9_1::a_rollback_to_log_only_boots_clean_over_the_recorded_store_and_over_one_the_rule_marked"
               "--skip=deploy_9_2_1::repair_pass::an_old_merge_under_a_later_one_gets_its_event_once_across_boots"
-              "--skip=deploy_9_2_1::repair_pass::bare_line_names_are_pointed_at_their_bots_once_across_boots"
               "--skip=deploy_9_2_1::repair_pass::an_old_merge_chain_with_its_event_in_place_gets_none_written"
-              "--skip=deploy_9_2_1::deploy_9_2_4_default::a_boot_with_the_link_rule_variable_unset_runs_the_rule_on"
-              "--skip=deploy_9_2_1::deploy_9_2_4_rollback::a_rollback_to_log_only_reads_as_9_2_3_did_and_the_way_back_to_on_keeps_every_link"
               "--skip=deploy_9_1::the_helper_that_shapes_a_recording_takes_one_marker_off_and_moves_no_row"
             ];
           }

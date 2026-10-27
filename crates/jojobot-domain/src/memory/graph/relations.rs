@@ -47,38 +47,15 @@ impl Ctx<'_> {
         // stands, so those two are still read record by record, the archived
         // one marked.
         let folded = |f: &Fact| f.status != FactStatus::Archived && f.reaching.contains(key);
-        let marked = super::super::link_rule() == super::super::LinkRule::On;
         let held_now = |thing: &EntityId| -> Vec<EntityId> {
-            if marked {
-                return self
-                    .field_links
-                    .get(thing)
-                    .and_then(|links| links.get(key))
-                    .cloned()
-                    .unwrap_or_default();
-            }
-            self.fields
+            self.field_links
                 .get(thing)
-                .and_then(|fields| fields.get(key))
-                .map(|cell| {
-                    field
-                        .items(cell)
-                        .into_iter()
-                        .map(|id| EntityId(id.to_string()))
-                        .collect()
-                })
+                .and_then(|links| links.get(key))
+                .cloned()
                 .unwrap_or_default()
         };
-        let own = |fact: &Fact, cell: &str| -> Vec<EntityId> {
-            if marked {
-                fact.field_links.get(key).cloned().unwrap_or_default()
-            } else {
-                field
-                    .items(cell)
-                    .into_iter()
-                    .map(|id| EntityId(id.to_string()))
-                    .collect()
-            }
+        let own = |fact: &Fact| -> Vec<EntityId> {
+            fact.field_links.get(key).cloned().unwrap_or_default()
         };
         let via = |retracted: bool| Via {
             link: link(),
@@ -90,9 +67,9 @@ impl Ctx<'_> {
                 let mut reached: Vec<(Via, EntityId)> = Vec::new();
                 let mut things_read: Vec<&EntityId> = Vec::new();
                 for f in from {
-                    let Some(cell) = f.fields.get(key) else {
+                    if !f.fields.contains_key(key) {
                         continue;
-                    };
+                    }
                     if folded(f) {
                         if !things_read.contains(&&f.subject) {
                             things_read.push(&f.subject);
@@ -105,11 +82,7 @@ impl Ctx<'_> {
                         continue;
                     }
                     let retracted = f.status == FactStatus::Archived;
-                    reached.extend(
-                        own(f, cell)
-                            .into_iter()
-                            .map(|handle| (via(retracted), handle)),
-                    );
+                    reached.extend(own(f).into_iter().map(|handle| (via(retracted), handle)));
                 }
                 reached
             }
@@ -117,9 +90,9 @@ impl Ctx<'_> {
                 let mut reached: Vec<(Via, EntityId)> = Vec::new();
                 let mut things_read: Vec<&EntityId> = Vec::new();
                 for f in &self.all {
-                    let Some(cell) = f.fields.get(key) else {
+                    if !f.fields.contains_key(key) {
                         continue;
-                    };
+                    }
                     if folded(f) {
                         if !things_read.contains(&&f.subject) {
                             things_read.push(&f.subject);
@@ -129,7 +102,7 @@ impl Ctx<'_> {
                         }
                         continue;
                     }
-                    if own(f, cell).contains(id) {
+                    if own(f).contains(id) {
                         reached.push((via(f.status == FactStatus::Archived), f.subject.clone()));
                     }
                 }

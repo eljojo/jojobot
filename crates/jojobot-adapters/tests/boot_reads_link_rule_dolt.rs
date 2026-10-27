@@ -12,11 +12,10 @@ use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::testing::{Scratch, free_port, migrated_database};
 use jojobot_domain::memory::boot_reader::BootReader;
 use jojobot_domain::memory::testing::contract as memory;
-use jojobot_domain::memory::{EntityId, LinkRule, Memory, NewEntity, NewFact, set_link_rule};
+use jojobot_domain::memory::{EntityId, Memory, NewEntity, NewFact};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn the_boot_reader_and_the_read_of_one_thing_agree_on_a_mixed_list() {
-    set_link_rule(LinkRule::On);
     let scratch = Scratch::new("boot-reads-link-rule");
     let mut store = Dolt::start(&scratch.0, free_port())
         .await

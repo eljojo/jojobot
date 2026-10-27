@@ -81,26 +81,19 @@ impl World {
     /// **Every field value served as the thing each link in it became**, through
     /// the one rule for a value ([`forward_field_value`]) over the one thing walk,
     /// so a value naming a thing folded in a chain names the end of it.
-    fn forward_values(
-        &mut self,
-        merges: &[StoredMerge],
-        declared: &[crate::memory::types::DeclaredType],
-    ) {
+    fn forward_values(&mut self, merges: &[StoredMerge]) {
         let survivor_of = survivor_in(merges);
         let expected = "the fake merges nothing into itself, so its merges never loop";
         for fact in self.facts.iter_mut() {
-            for (key, value) in fact.fields.iter_mut() {
-                if let Some(now) =
-                    forward_field_value(key, value, declared, &survivor_of).expect(expected)
-                {
+            for value in fact.fields.values_mut() {
+                if let Some(now) = forward_field_value(value, &survivor_of).expect(expected) {
                     *value = now;
                 }
             }
         }
         for write in self.writes.iter_mut() {
             if let Some(value) = &write.value
-                && let Some(now) =
-                    forward_field_value(&write.key, value, declared, &survivor_of).expect(expected)
+                && let Some(now) = forward_field_value(value, &survivor_of).expect(expected)
             {
                 write.value = Some(now);
             }
@@ -1105,13 +1098,12 @@ impl InMemoryMemory {
                 .expect("fake mutex poisoned")
                 .clone(),
         };
-        let declared = self.types.lock().expect("fake mutex poisoned").clone();
         let merges = self.merges.lock().expect("fake mutex poisoned");
         world.relocate(&merges);
         for merge in merges.iter() {
             world.repoint(merge);
         }
-        world.forward_values(&merges, &declared);
+        world.forward_values(&merges);
         drop(merges);
         let world = std::sync::Arc::new(world);
         *self.world_cache.lock().expect("fake mutex poisoned") = Some((key, world.clone()));
@@ -1131,14 +1123,13 @@ impl InMemoryMemory {
                 .expect("fake mutex poisoned")
                 .clone(),
         };
-        let declared = self.types.lock().expect("fake mutex poisoned").clone();
         let mut merges = self.merges.lock().expect("fake mutex poisoned").clone();
         merges.push(extra);
         world.relocate(&merges);
         for merge in merges.iter() {
             world.repoint(merge);
         }
-        world.forward_values(&merges, &declared);
+        world.forward_values(&merges);
         world
     }
 
@@ -1385,36 +1376,7 @@ impl InMemoryMemory {
     /// one; the fallback only covers a caller-supplied value that never
     /// looked like a handle in the first place.
     fn lower_reference_fields(&self, fields: &mut std::collections::BTreeMap<String, String>) {
-        if super::super::link_rule() == super::super::LinkRule::On {
-            return self.lower_marked_fields(fields);
-        }
-        let declared = self.declarations();
-        for (key, items) in super::super::reference_field_values(fields, &declared) {
-            let lowered: Vec<String> = items
-                .iter()
-                .map(|item| {
-                    self.storage_key(&EntityId(item.clone()))
-                        .map(|id| id.to_string())
-                        .unwrap_or_else(|| item.clone())
-                })
-                .collect();
-            fields.insert(key, lowered.join(", "));
-        }
-        // **A handle under a key nobody declared is lowered too**, behind the
-        // mark that tells a stored id from a word. Each item was already
-        // checked to exist.
-        for (key, items) in super::super::handle_field_values(fields, &declared) {
-            let lowered: Vec<String> = items
-                .iter()
-                .map(|item| {
-                    let stored = self
-                        .storage_key(&EntityId(item.clone()))
-                        .map_or_else(|| item.clone(), |id| id.to_string());
-                    super::super::marked_stored_handle(&stored)
-                })
-                .collect();
-            fields.insert(key, lowered.join(", "));
-        }
+        self.lower_marked_fields(fields)
     }
 
     /// The thing `address` points into as it stands today, with the key its claims
@@ -1459,71 +1421,7 @@ impl InMemoryMemory {
         resolution: &Resolution<'_>,
         fields: &mut std::collections::BTreeMap<String, String>,
     ) {
-        if super::super::link_rule() == super::super::LinkRule::On {
-            return self.compose_marked_in(resolution, fields);
-        }
-        let stored = fields.clone();
-        let referenced = super::super::reference_field_values(fields, &resolution.declared);
-        for (key, items) in &referenced {
-            let composed: Vec<String> = items
-                .iter()
-                .map(|item| {
-                    // A key declared a reference AFTER a handle was stored under
-                    // it as an undeclared one holds that value behind the mark.
-                    let stored = super::super::stored_handle_id(item).unwrap_or(item);
-                    resolution
-                        .current_handle(&EntityId(stored.to_string()))
-                        .to_string()
-                })
-                .collect();
-            fields.insert(key.clone(), composed.join(", "));
-        }
-        // **Every other value, served as the handle it answers to now.** A
-        // value stored behind the mark is the thing's id. One stored as plain
-        // handle text, from before ids were kept, is resolved through the
-        // thing's rename history, so it keeps pointing at the thing it named.
-        for (key, value) in fields.clone() {
-            if referenced.iter().any(|(held, _)| held == &key) {
-                continue;
-            }
-            let items: Vec<&str> = value.split(',').collect();
-            if items
-                .iter()
-                .all(|item| super::super::stored_handle_id(item).is_some())
-            {
-                let composed: Vec<String> = items
-                    .iter()
-                    .filter_map(|item| super::super::stored_handle_id(item))
-                    .map(|id| {
-                        resolution
-                            .current_handle(&EntityId(id.to_string()))
-                            .to_string()
-                    })
-                    .collect();
-                fields.insert(key, composed.join(", "));
-            } else {
-                let handles = super::super::handles_in_value(&value);
-                if handles.is_empty() {
-                    continue;
-                }
-                let composed: Vec<String> = handles
-                    .iter()
-                    .map(|id| {
-                        super::super::resolve_handle(id, resolution.known(), resolution.former())
-                            .map_or_else(|| id.to_string(), |entity| entity.id.to_string())
-                    })
-                    .collect();
-                fields.insert(key, composed.join(", "));
-            }
-        }
-        // A list that mixes words with marked items, which no loop above served: served
-        // as the rule that is on serves it. A value a loop composed is not composed twice.
-        let mut left: std::collections::BTreeMap<_, _> = stored
-            .into_iter()
-            .filter(|(key, value)| fields.get(key) == Some(value))
-            .collect();
-        self.compose_marked_in(resolution, &mut left);
-        fields.extend(left);
+        self.compose_marked_in(resolution, fields)
     }
 
     /// **The writes [`Self::append_writes`] is about to persist, with every
@@ -1558,7 +1456,6 @@ impl InMemoryMemory {
             store: self,
             declared: self.declarations(),
             known: std::sync::OnceLock::new(),
-            former: std::sync::OnceLock::new(),
         }
     }
 
@@ -1697,11 +1594,10 @@ impl InMemoryMemory {
         // another. The review stamp rides such a write and reads as reviewed only
         // if it is not earlier than the keys beside it.
         let moment = self.clock().now();
-        let declared = self.declarations();
         for (key, value) in wrote {
-            let links = value.as_deref().map_or_else(Vec::new, |value| {
-                super::super::field_link_targets(&key, value, &declared)
-            });
+            let links = value
+                .as_deref()
+                .map_or_else(Vec::new, super::super::field_link_targets);
             let ordinal = self.with_writes(|served| {
                 served
                     .iter()
@@ -3440,7 +3336,6 @@ impl Memory for InMemoryMemory {
     /// what it saw.
     async fn referring_to(&self, target: &EntityId) -> Result<Vec<Fact>, MemoryError> {
         super::super::validate_subject(target)?;
-        let declared = self.declared_types().await?;
         let entities = self.list_entities(None).await?;
         let stored: Vec<Fact> = self.facts_view();
         // **Shared by every claim this call serves**, so what it costs does not
@@ -3491,7 +3386,7 @@ impl Memory for InMemoryMemory {
                     Self::projected_from(&grouped, fact),
                     &entity.id,
                 );
-                if super::super::fact_names_target(&served, &declared, target) {
+                if super::super::fact_names_target(&served, target) {
                     pointing.push(served);
                 }
             }

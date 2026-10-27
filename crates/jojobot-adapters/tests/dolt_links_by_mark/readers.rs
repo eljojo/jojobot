@@ -158,8 +158,6 @@ pub(super) async fn assert_links(
 #[tokio::test]
 async fn link_rule_leftovers_search_and_walk_read_marked_own_and_held_fields() {
     use jojobot_domain::memory::testing::InMemoryMemory;
-    use jojobot_domain::memory::{LinkRule, set_link_rule};
-    set_link_rule(LinkRule::On);
     let memory = Arc::new(InMemoryMemory::booted());
     let [holder, plain, marked] = [
         "thing:contract-links-holder",
