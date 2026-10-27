@@ -122,6 +122,7 @@ jojobot-domain = { path = "crates/jojobot-domain" }
 jojobot-adapters = { path = "crates/jojobot-adapters" }
 jojobot-mcp = { path = "crates/jojobot-mcp" }
 jojobot-ports = { path = "crates/jojobot-ports" }
+jojobot-roster = { path = "crates/jojobot-roster" }
 
 [profile.release]
 lto = "thin"

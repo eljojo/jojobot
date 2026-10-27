@@ -38,6 +38,7 @@ tokio = { workspace = true }
 testing = []
 
 [dev-dependencies]
+jojobot-roster.workspace = true
 tokio = { workspace = true }
 # serde_json: the capture gate parses recorded agent streams as JSON rather
 # than grepping them, so a key inside a quoted payload is not read as a field.

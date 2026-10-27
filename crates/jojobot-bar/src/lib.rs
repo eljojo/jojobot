@@ -270,7 +270,7 @@ fn number_before(words: &[&str], label: &str) -> Option<usize> {
 }
 
 /// The source file whose cast the bar reports on.
-pub const ROSTER_FILE: &str = "crates/jojobot-domain/tests/fixture_roster.rs";
+pub const ROSTER_FILE: &str = jojobot_roster::ROSTER_FILE;
 
 /// **The handles on the `ROSTER` list of a roster source, in order.** It reads
 /// the string literals between `const ROSTER` and the line that closes the list,
@@ -284,7 +284,7 @@ pub fn roster_entries(source: &str) -> Vec<String> {
     for line in source.lines() {
         let line = line.trim();
         if !inside {
-            inside = line.starts_with("const ROSTER");
+            inside = line.starts_with("const ROSTER") || line.starts_with("pub const ROSTER");
             continue;
         }
         if line.starts_with("];") {
@@ -1090,6 +1090,15 @@ const ORDINARY: &[&str] = &[
     fn only_the_roster_list_is_read() {
         assert_eq!(
             roster_entries(SOURCE),
+            names(&["bot:assistant", "person:gayle", "person:stan"])
+        );
+    }
+
+    #[test]
+    fn the_public_leaf_roster_list_is_read() {
+        let source = SOURCE.replace("const ROSTER", "pub const ROSTER");
+        assert_eq!(
+            roster_entries(&source),
             names(&["bot:assistant", "person:gayle", "person:stan"])
         );
     }

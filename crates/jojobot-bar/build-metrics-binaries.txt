@@ -6,6 +6,7 @@ lib-jojobot-domain
 lib-jojobot-exercise
 lib-jojobot-mcp
 lib-jojobot-ports
+lib-jojobot-roster
 test-adoption_frozen
 test-adoption_room
 test-agency_room
