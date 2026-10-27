@@ -42,7 +42,10 @@ pub fn git_paths(args: &[&str]) -> std::io::Result<Vec<String>> {
 /// not track yet, with the merge base they were taken from. `None` when there is
 /// no merge base to take.
 pub fn changed_paths() -> Option<(String, Vec<String>)> {
-    checked_changed_paths().ok().flatten()
+    checked_changed_paths().unwrap_or_else(|error| {
+        eprintln!("bar: changed-path listing failed: {error}; keeping the full plan");
+        None
+    })
 }
 
 /// The roster gate must distinguish a missing base from a failed path listing.
@@ -100,7 +103,11 @@ pub fn pushed_paths() -> Option<Vec<String>> {
             .trim()
             .is_empty()
         {
-            return git_paths(&["diff", "--name-only", "-z", before, "HEAD"]).ok();
+            return git_paths(&["diff", "--name-only", "-z", before, "HEAD"])
+                .map_err(|error| {
+                    eprintln!("bar: push path listing failed: {error}; keeping the full plan")
+                })
+                .ok();
         }
     }
     changed_paths().map(|(_, paths)| paths)

@@ -11,6 +11,8 @@ use std::process::Command;
 
 use jojobot_bar::{JobRecord, Run, RunHeader, TestRecord, Verdict};
 
+mod support;
+
 const METADATA: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/tests/fixtures/metadata-no-deps.json"
@@ -580,6 +582,73 @@ fn with_no_main_every_package_runs() {
         ran.stdout
     );
     let _ = fs::remove_dir_all(&repo);
+}
+
+fn git_path_failure(verb: &str) -> std::process::Output {
+    let repo = repository();
+    fs::write(repo.join("crates/jojobot-bar/src/lib.rs"), "// changed\n").unwrap();
+    let old_path = std::env::var("PATH").unwrap();
+    let real_git = std::env::split_paths(&old_path)
+        .map(|dir| dir.join("git"))
+        .find(|path| path.is_file())
+        .unwrap();
+    let before = Command::new(&real_git)
+        .args(["rev-parse", "HEAD"])
+        .current_dir(&repo)
+        .output()
+        .unwrap();
+    let bin = repo.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    support::write_executable(
+        &bin.join("git"),
+        r#"#!/bin/sh
+if [ "$1" = diff ] && [ "$2" = --name-only ]; then
+  n=$(cat path-list-count 2>/dev/null || echo 0)
+  n=$((n + 1))
+  echo "$n" > path-list-count
+  if [ "$n" -ge "$BAR_CASE_FAIL_AT" ]; then
+    echo 'scratch path listing refused' >&2
+    exit 9
+  fi
+fi
+exec "$BAR_CASE_GIT" "$@"
+"#,
+    );
+    let out = support::output_fenced(
+        Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
+            .arg(verb)
+            .current_dir(&repo)
+            .env("CARGO", write_cargo(&repo))
+            .env("BAR_HISTORY_DIR", repo.join("history-none"))
+            .env("SIZE_BASE", String::from_utf8_lossy(&before.stdout).trim())
+            .env("BAR_DEV_BASE", "main")
+            .env(
+                "BAR_PUSH_BASE",
+                String::from_utf8_lossy(&before.stdout).trim(),
+            )
+            .env("BAR_CASE_GIT", &real_git)
+            .env("BAR_CASE_FAIL_AT", if verb == "dev" { "2" } else { "1" })
+            .env("PATH", format!("{}:{old_path}", bin.display())),
+    )
+    .unwrap();
+    fs::remove_dir_all(repo).unwrap();
+    out
+}
+
+#[test]
+fn git_path_dev_failure_is_not_reported_as_a_missing_merge_base() {
+    let out = git_path_failure("dev");
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("scratch path listing refused"), "{text}");
+    assert!(!text.contains("there is no merge base"), "{text}");
+    assert!(text.contains("every package is selected"), "{text}");
+}
+
+#[test]
+fn git_path_push_failure_names_the_reason_for_the_full_plan() {
+    let out = git_path_failure("report");
+    let text = String::from_utf8_lossy(&out.stderr);
+    assert!(text.contains("scratch path listing refused"), "{text}");
 }
 
 /// **A file the history calls slow is skipped and named; a file it calls fast

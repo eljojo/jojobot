@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 
 use jojobot_bar::bundle::{self, Exe, Manifest};
-use jojobot_bar::changes::{changed_paths, git_stdout, pushed_paths};
+use jojobot_bar::changes::{checked_changed_paths, git_stdout, pushed_paths};
 use jojobot_bar::dev;
 use jojobot_bar::{
     CALL_USAGE, HISTORY_DIR_VARIABLE, KnownReds, ROSTER_FILE, Run, RunHeader, Summary,
@@ -1064,7 +1064,11 @@ fn run_dev(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
     // answer rather than a refusal: the loop is run from habit, on main as often
     // as on a branch. A diff that changed paths in no package is still refused
     // below, because that one is a question for the person.
-    let changed = changed_paths();
+    let mut no_paths = "there is no merge base with main".to_string();
+    let changed = checked_changed_paths().unwrap_or_else(|error| {
+        no_paths = format!("changed-path listing failed: {error}");
+        None
+    });
     if let Some((base, paths)) = &changed
         && paths.is_empty()
     {
@@ -1115,7 +1119,7 @@ fn run_dev(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
                 whole_workspace: true,
                 ..dev::Touched::default()
             },
-            Some("there is no merge base with main, so every package is selected"),
+            Some(format!("{no_paths}, so every package is selected")),
         ),
     };
     let selected = dev::selected_packages(&touched, &workspace);
