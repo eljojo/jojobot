@@ -4643,10 +4643,9 @@ stays as it was. It is the list's own read, so no `facts` are needed for it.
 
 **A named subject comes back** even when the filters below keep none of
 its records: naming a handle asks for that object, and a filter asks
-which objects. **The two questions that keep only some objects,
-`overdue` and `unreviewed`, apply to the named subject too**. A handle
-that names nothing comes back blocked with the nearest handles, never as
-an empty answer.
+which objects. **`overdue` and `unreviewed` also filter a named subject**.
+A handle naming nothing is blocked with nearest handles, never an empty answer.
+A missing `work:q-N` offers work holding `card` number N first.
 ```
 
 #### `recall` — argument `/inputSchema.ticks`

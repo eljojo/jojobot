@@ -55,6 +55,8 @@ mod box_as;
 /// A cold session numbers a collection, asks a view and repeats a write from served text alone.
 #[path = "user_stories/capabilities_from_served_text.rs"]
 mod capabilities_from_served_text;
+#[path = "user_stories/card_number.rs"]
+mod card_number;
 #[path = "user_stories/carried_role.rs"]
 mod carried_role;
 #[path = "user_stories/catching_up.rs"]

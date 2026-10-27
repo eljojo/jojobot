@@ -293,6 +293,12 @@ const ORDINARY: &[&str] = &[
     // The work-queue cards that own the missing capabilities the user stories
     // mark. Each is a build-card handle and names nobody.
     "work:q-1320",
+    // The card-number lookup prefix and its served placeholder name nobody.
+    "work:q-",
+    "work:q-2742",
+    "work:q-2742x",
+    "work:q-2743",
+    "thing:q-2742",
     "work:q-boot-composes-now",
     "work:q-decisions-carry-tradeoffs",
     "work:q-derivation-and-trust",
@@ -301,6 +307,7 @@ const ORDINARY: &[&str] = &[
     "work:q-quantities-in-words",
     "work:q-reach-other-layers",
     "work:q-relation-vocabulary",
+    "work:q-reference-link-rule",
     "work:q-shortlist-and-choice",
     "work:q-time-and-nearness",
     "work:q-work-state-reads",

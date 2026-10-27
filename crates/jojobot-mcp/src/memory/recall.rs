@@ -206,10 +206,9 @@ pub struct RecallArgs {
     ///
     /// **A named subject comes back** even when the filters below keep none of
     /// its records: naming a handle asks for that object, and a filter asks
-    /// which objects. **The two questions that keep only some objects,
-    /// `overdue` and `unreviewed`, apply to the named subject too**. A handle
-    /// that names nothing comes back blocked with the nearest handles, never as
-    /// an empty answer.
+    /// which objects. **`overdue` and `unreviewed` also filter a named subject**.
+    /// A handle naming nothing is blocked with nearest handles, never an empty answer.
+    /// A missing `work:q-N` offers work holding `card` number N first.
     #[serde(default)]
     pub(crate) subject: Option<String>,
     /// Every entity of one kind. `session` reads your own past runs.
@@ -3779,7 +3778,7 @@ impl Jojobot {
         } = match view_run::select(self.memory.as_ref(), &projected_docs, &query, walk_window).await
         {
             Ok(answer) => answer,
-            Err(e) => return memory_declined("recall", through_view(e)),
+            Err(e) => return self.recall_declined(through_view(e)).await,
         };
         // The runs the walk was not shown, counted with the ones it withheld, on a
         // browse of runs and never when a subject is named.

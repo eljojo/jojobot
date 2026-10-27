@@ -29,6 +29,8 @@ use crate::override_token::Collision;
 pub enum MatchReason {
     /// The very same handle already exists. Never overridable, by any token.
     ExactHandle,
+    /// A work item holds the card number named by a missing `work:q-N`.
+    CardNumber,
     /// The write names **itself** as its own parent. Never overridable: unlike
     /// a name collision there is no "I checked, they're different" to give,
     /// because there is only one handle involved.
@@ -88,6 +90,7 @@ impl MatchReason {
             | MatchReason::Nickname
             | MatchReason::SharedWord => true,
             MatchReason::ExactHandle
+            | MatchReason::CardNumber
             | MatchReason::SelfParent
             | MatchReason::SameName
             | MatchReason::NearSlug

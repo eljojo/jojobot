@@ -887,6 +887,7 @@ fn override_reason_names_every_reason_the_guard_asks_one_for() {
     use jojobot_domain::memory::guard::MatchReason as R;
     let every = [
         R::ExactHandle,
+        R::CardNumber,
         R::SelfParent,
         R::SameName,
         R::SameNameOtherKind,
@@ -905,6 +906,7 @@ fn override_reason_names_every_reason_the_guard_asks_one_for() {
         R::Nickname => Some("nickname"),
         R::SharedWord => Some("rare words"),
         R::ExactHandle
+        | R::CardNumber
         | R::SelfParent
         | R::SameName
         | R::NearSlug

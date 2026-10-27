@@ -8,6 +8,7 @@
 //! they should never have to parse a failure.
 
 use super::*;
+use jojobot_domain::memory::filter;
 
 mod numbers;
 use numbers::{number_freed_advice, number_retired_advice};
@@ -99,6 +100,53 @@ impl TokenSlot {
 }
 
 impl Jojobot {
+    /// A numbered-card guess stays a miss; its held number supplies candidates.
+    pub(crate) async fn recall_declined(
+        &self,
+        mut error: MemoryError,
+    ) -> Result<CallToolResult, McpError> {
+        if let MemoryError::UnknownEntity { attempted, nearest } = &mut error
+            && let Some(number) = attempted.strip_prefix("work:q-").filter(|number| {
+                !number.is_empty() && number.bytes().all(|byte| byte.is_ascii_digit())
+            })
+        {
+            let held = match self
+                .memory
+                .keys_holding(
+                    "card",
+                    &filter::Test::Equals(number.to_string()),
+                    Some(EntityKind::WORK),
+                )
+                .await
+            {
+                Ok(held) => held,
+                Err(error) => return memory_declined("recall", error),
+            };
+            if !held.is_empty() {
+                let known = match self.memory.list_entities(Some(EntityKind::WORK)).await {
+                    Ok(known) => known,
+                    Err(error) => return memory_declined("recall", error),
+                };
+                let mut cards: Vec<_> = known
+                    .into_iter()
+                    .filter(|entity| held.contains(&entity.id))
+                    .map(|entity| EntityMatch {
+                        handle: entity.id,
+                        kind: entity.kind,
+                        name: entity.name,
+                        source: entity.source,
+                        reason: guard::MatchReason::CardNumber,
+                        told_apart_by: None,
+                    })
+                    .collect();
+                nearest.retain(|candidate| !held.contains(&candidate.handle));
+                cards.append(nearest);
+                *nearest = cards;
+            }
+        }
+        memory_declined("recall", error)
+    }
+
     /// **Each candidate with what tells it apart from a thing that resembles it**,
     /// read from the thing's own fields. A candidate nobody said how to tell
     /// apart, or whose fields cannot be read, comes back as it was: the refusal is
@@ -267,7 +315,7 @@ pub(crate) fn blocked_result(
     // uses — the sentence that says what to do names the thing to do it with
     // (rule 68). An exact collision mints none: there is nothing to lift.
     let token = guard::override_token(attempted, candidates);
-    let how_to_proceed = match gate {
+    let mut how_to_proceed = match gate {
         Blocked::Creating(_) if exact => format!(
             "Nothing was written. The handle '{attempted}' is already taken, and that cannot be \
              forced — a handle has exactly one owner. Either this IS the entity above (use its \
@@ -415,6 +463,14 @@ pub(crate) fn blocked_result(
              Display names are not unique and never have to be; the handle is what has to be.",
         ),
     };
+    if let Some(number) = attempted.as_str().strip_prefix("work:q-") {
+        for card in candidates
+            .iter()
+            .filter(|c| c.reason == guard::MatchReason::CardNumber)
+        {
+            how_to_proceed.push_str(&format!(" {} is card numbered {number}.", card.handle));
+        }
+    }
     blocked_body(attempted, candidates, how_to_proceed)
 }
 
