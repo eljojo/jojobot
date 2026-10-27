@@ -1361,10 +1361,8 @@ call, the removals are applied first.
 The shape of the edge this fact draws: `location` (object is a place) ·
 `membership` (an org) · `attendance` (an event) · `about` (any kind) ·
 `connection` (any kind — a link is there and how it relates was not
-recorded). Requires `object`; neither works alone. A read serves the
-shape by its schema.org word: `connection` reads back as `relatedTo`,
-`membership` as `memberOf`, `attendance` as `attendee`, and `location`
-and `about` as written.
+recorded). Requires `object`; neither works alone. Every read and write
+receipt serves the same shape word that a write takes.
 
 **Draw `connection` with the subject as YOUR OWN bot handle and the
 claim becomes a thought of yours, not an ordinary claim about an
@@ -3815,8 +3813,8 @@ both.
 
 ```text
 Narrow to one shape (`location` · `membership` · `attendance` · `about`
-· `connection`), or the word a read served for it (`memberOf`,
-`attendee`, `relatedTo`): either is understood. Omit for **any** edge — "whatever it is connected to"
+· `connection`). These are the same words a write takes and a read serves.
+Omit for **any** edge — "whatever it is connected to"
 — which is also what reaches a mention, a ref or a field link; naming a shape here
 reaches edges of that shape alone.
 ```
@@ -5298,8 +5296,7 @@ The entity the edge must point at, as `kind:slug`.
 
 ```text
 Narrow to one shape (`location` · `membership` · `attendance` · `about` ·
-`connection`), or the word a read served for it (`memberOf`, `attendee`,
-`relatedTo`): either is understood.
+`connection`). These are the same words a write takes and a read serves.
 Omit for **any** edge pointing at `object` — "what's connected to X".
 ```
 
@@ -7047,10 +7044,8 @@ anything, so a reference to a thing that is gone can come off. With
 ```text
 The shape of an edge to attach: `location` · `membership` · `attendance` ·
 `about` · `connection` (a link is there and how it relates was not
-recorded). Requires `object`; neither works alone. A read serves the
-shape by its schema.org word: `connection` reads back as `relatedTo`,
-`membership` as `memberOf`, `attendance` as `attendee`, and `location`
-and `about` as written.
+recorded). Requires `object`; neither works alone. Every read and write
+receipt serves the same shape word that a write takes.
 ```
 
 #### `update_fact` — argument `/inputSchema.sid`

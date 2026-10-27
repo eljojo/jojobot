@@ -4,8 +4,7 @@ use super::*;
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct EdgeFilterArgs {
     /// Narrow to one shape (`location` · `membership` · `attendance` · `about` ·
-    /// `connection`), or the word a read served for it (`memberOf`, `attendee`,
-    /// `relatedTo`): either is understood.
+    /// `connection`). These are the same words a write takes and a read serves.
     /// Omit for **any** edge pointing at `object` — "what's connected to X".
     #[serde(default)]
     pub(crate) shape: Option<String>,

@@ -633,13 +633,18 @@ pub(crate) fn answers_json(found: &jojobot_domain::memory::types::Match) -> serd
     })
 }
 
-/// An edge on the wire. `type` carries schema.org's word for the shape —
-/// `memberOf`, `attendee` — where the input token is `membership`, `attendance`.
-pub(crate) fn edge_json(edge: &Edge) -> serde_json::Value {
+/// The writable shape, also used by walks that name the reached object separately.
+pub(crate) fn edge_shape_json(shape: EdgeShape) -> serde_json::Value {
     serde_json::json!({
-        "type": edge.shape.as_name(),
-        "object": edge.object.as_str(),
+        "type": shape.as_token(),
     })
+}
+
+/// An edge on the wire, in the vocabulary a caller can send back.
+pub(crate) fn edge_json(edge: &Edge) -> serde_json::Value {
+    let mut body = edge_shape_json(edge.shape);
+    body["object"] = edge.object.as_str().into();
+    body
 }
 
 /// An entity on the wire. `type` is the schema.org-flavored **name** for its

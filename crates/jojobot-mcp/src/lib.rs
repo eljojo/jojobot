@@ -22,8 +22,8 @@
 //! [`sid`], the handle registry.
 //!
 //! **Responses speak schema.org's words, with none of its machinery** — a kind
-//! renders as `Person`/`CreativeWork`/`Organization`, an edge shape as
-//! `memberOf`/`attendee`. Names only: no `@context`, no CURIEs, no JSON-LD. The
+//! renders as `Person`/`CreativeWork`/`Organization`. Edge shapes use the same
+//! tokens as writes. Names only: no `@context`, no CURIEs, no JSON-LD. The
 //! **input** grammar is untouched — ids and kind tokens stay lowercase
 //! `kind:slug`, and a capitalized kind on input is still rejected.
 

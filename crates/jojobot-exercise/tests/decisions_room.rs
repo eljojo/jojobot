@@ -324,7 +324,7 @@ async fn every_bears_on_citation_the_worked_solution_files_is_under_the_body_cap
             .as_array()
             .unwrap_or_else(|| panic!("topic:{thread} answered with no facts array: {read}"));
         for fact in facts {
-            if fact["edge"]["type"] == "relatedTo" {
+            if fact["edge"]["type"] == "connection" {
                 let content = fact["content"].as_str().expect("a citation's own content");
                 assert!(
                     content.chars().count() <= THOUGHT_BODY_CAP,

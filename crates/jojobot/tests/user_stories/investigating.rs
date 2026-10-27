@@ -388,7 +388,7 @@ async fn an_investigation_keeps_what_it_ruled_out() {
     // on" and "is near" are one edge here. The wire name says so.
     s.recall("machine:upsilon")
         .await
-        .says("\"type\":\"relatedTo\"")
+        .says("\"type\":\"connection\"")
         .says("\"object\":\"machine:sigma\"");
     s.through("connection", "machine:sigma", "machine")
         .await

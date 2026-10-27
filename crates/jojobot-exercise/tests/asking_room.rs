@@ -1568,7 +1568,7 @@ async fn solvable_nine_people_met_eight_chairs() {
         .unwrap_or_default()
         .iter()
         .flat_map(|event| event["connected"].as_array().cloned().unwrap_or_default())
-        .filter(|guest| guest["via"]["type"] == "attendee" && guest["via"]["retracted"].is_null())
+        .filter(|guest| guest["via"]["type"] == "attendance" && guest["via"]["retracted"].is_null())
         .count() as u32;
     assert_eq!(chairs, 8, "four folding and four dining");
     assert_eq!(guests, 8, "eight guests came: {walked}");

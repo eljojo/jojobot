@@ -1533,7 +1533,7 @@ async fn julys_claim_is_withdrawn_rather_than_rewritten(seen: &Observed<'_>) -> 
 /// The sitting that is asked who was there, and the link a record draws when it
 /// says somebody was.
 const AUGUST: &str = "Phase 8";
-const WAS_THERE: &str = "\"type\":\"attendee\"";
+const WAS_THERE: &str = "\"type\":\"attendance\"";
 
 /// 🚨 **August answered out of the record and added nobody to it — asked in
 /// August's own window.**
@@ -1983,8 +1983,8 @@ async fn junes_inspection_drew_a_standing_attendee_for_each(
         ));
     };
     let gained = |who: &str| {
-        !has_standing_edge_to_a(&before.world, who, "attendee", "event:")
-            && has_standing_edge_to_a(&after.world, who, "attendee", "event:")
+        !has_standing_edge_to_a(&before.world, who, "attendance", "event:")
+            && has_standing_edge_to_a(&after.world, who, "attendance", "event:")
     };
     let (milhouse, nelson) = (gained("person:milhouse"), gained("person:nelson"));
     match (milhouse, nelson) {
@@ -2027,10 +2027,10 @@ async fn februarys_council_drew_a_standing_member_for_each(
     };
     let council = "org:springfield-town-council";
     let nelson_gained =
-        !has_standing_edge(&before.world, Some("person:nelson"), "memberOf", council)
-            && has_standing_edge(&after.world, Some("person:nelson"), "memberOf", council);
+        !has_standing_edge(&before.world, Some("person:nelson"), "membership", council)
+            && has_standing_edge(&after.world, Some("person:nelson"), "membership", council);
     let milhouse_stands =
-        has_standing_edge(&after.world, Some("person:milhouse"), "memberOf", council);
+        has_standing_edge(&after.world, Some("person:milhouse"), "membership", council);
     match (milhouse_stands, nelson_gained) {
         (true, true) => Ok(()),
         _ => Err(format!(
@@ -2147,7 +2147,7 @@ async fn late_octobers_note_retracts_nelsons_attendance(seen: &Observed<'_>) -> 
             "nothing is on file for person:nelson at all: {read}"
         ));
     };
-    let Some(fact) = fact_drawing(facts, "attendee", None) else {
+    let Some(fact) = fact_drawing(facts, "attendance", None) else {
         return Err(format!(
             "nothing on Nelson's page carries an attendee edge at all, so there is no attendance \
              record here to have taken back: {read}"
@@ -2189,8 +2189,8 @@ async fn late_octobers_council_drew_a_standing_member_for_bart(
         ));
     };
     let council = "org:springfield-town-council";
-    let gained = !has_standing_edge(&before.world, Some("person:bart"), "memberOf", council)
-        && has_standing_edge(&after.world, Some("person:bart"), "memberOf", council);
+    let gained = !has_standing_edge(&before.world, Some("person:bart"), "membership", council)
+        && has_standing_edge(&after.world, Some("person:bart"), "membership", council);
     match gained {
         true => Ok(()),
         false => Err(format!(
@@ -3819,7 +3819,7 @@ async fn the_party_was_attended_by_those_who_came_and_nobody_else(
     let mut guests: Vec<String> = Vec::new();
     for event in walked["objects"].as_array().cloned().unwrap_or_default() {
         for guest in event["connected"].as_array().cloned().unwrap_or_default() {
-            if guest["via"]["type"] == "attendee" && guest["via"]["retracted"].is_null() {
+            if guest["via"]["type"] == "attendance" && guest["via"]["retracted"].is_null() {
                 let id = guest["id"].as_str().unwrap_or_default().to_lowercase();
                 guests.push(id.rsplit(':').next().unwrap_or_default().to_string());
             }
@@ -4216,7 +4216,7 @@ mod tests {
                  "edge": {"type": "location", "object": "place:shelbyville"}},
                 {"hit": "fact", "parent": {"id": "event:inspection"},
                  "subject": {"id": "person:nelson"},
-                 "edge": {"type": "attendee", "object": "event:inspection"}},
+                 "edge": {"type": "attendance", "object": "event:inspection"}},
                 {"hit": "entity", "parent": {"id": "person:milhouse"},
                  "edge": {"type": "location", "object": "place:daredevil-gorge"}}
             ]})
@@ -4248,19 +4248,19 @@ mod tests {
         assert!(super::has_standing_edge_to_a(
             &world,
             "person:nelson",
-            "attendee",
+            "attendance",
             "event:"
         ));
         assert!(!super::has_standing_edge_to_a(
             &world,
             "event:inspection",
-            "attendee",
+            "attendance",
             "event:"
         ));
         assert!(!super::has_standing_edge_to_a(
             &world,
             "person:nelson",
-            "attendee",
+            "attendance",
             "place:"
         ));
         assert_eq!(

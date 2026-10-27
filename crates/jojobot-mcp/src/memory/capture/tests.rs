@@ -1733,11 +1733,104 @@ async fn a_blocked_capture_says_to_add_the_entity_first() {
     assert_eq!(landed["subject"], "work:first-mix");
 }
 
-/// `capture` draws a typed edge, and the edge comes back on every read of the
-/// fact — rendered with schema.org's word for the shape (`memberOf`), while
-/// the input token stays the lowercase `membership`.
+/// Every edge spelling a caller receives can be sent back without translation.
 #[tokio::test]
-async fn capture_draws_an_edge_and_renders_its_schema_org_name() {
+async fn every_edge_shape_returned_by_a_read_can_be_copied_to_capture() {
+    let mut failures = Vec::new();
+    for (shape, object) in [
+        ("connection", "person:beta"),
+        ("membership", "org:springfield-town-council"),
+        ("attendance", "event:duff-fest"),
+        ("location", "place:daredevil-gorge"),
+        ("about", "person:beta"),
+    ] {
+        let jojobot = handler_indexed();
+        let captured = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                shape: Some(shape.into()),
+                object: Some(object.into()),
+                ..capture_args("alpha", "edgeword")
+            },
+        )
+        .await;
+        let read = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    history_record: Some(address_of(&captured)),
+                    follow: Some(crate::memory::recall::FollowArgs {
+                        shape: Some(shape.into()),
+                        direction: None,
+                        depth: None,
+                        relation: None,
+                        fits_type: None,
+                        keeping: None,
+                    }),
+                    ..recall_args("alpha")
+                }))
+                .await
+                .expect("the edge reads"),
+        );
+        let found = json_of(
+            &jojobot
+                .search(Parameters(SearchArgs {
+                    query: Some("edgeword".into()),
+                    include_links: Some(true),
+                    ..search_args()
+                }))
+                .await
+                .expect("the edge is searchable"),
+        );
+        let hit = found["results"]
+            .as_array()
+            .expect("search results")
+            .iter()
+            .find(|hit| hit["address"] == captured["address"])
+            .unwrap_or_else(|| panic!("the captured record is a search hit: {found}"));
+        let walked = &read["objects"][0]["connected"][0];
+        let walked_edge = serde_json::json!({
+            "type": walked["via"]["type"],
+            "object": walked["id"],
+        });
+        let history_shape = &read["objects"][0]["record_history"]["writes"][0]["edge"]["type"];
+        if history_shape != shape {
+            failures.push(format!("{shape}/history served {history_shape}"));
+        }
+        for (source, edge) in [
+            ("receipt", &captured["edge"]),
+            ("recall", &read["objects"][0]["facts"][0]["edge"]),
+            ("search", &hit["edge"]),
+            ("walk", &walked_edge),
+        ] {
+            let shown = edge["type"].as_str().expect("an edge type");
+            let target = edge["object"].as_str().expect("an edge object");
+            let copied = jojobot
+                .capture(Parameters(CaptureArgs {
+                    shape: Some(shown.into()),
+                    object: Some(target.into()),
+                    ..capture_args("alpha", &format!("copied from {source}"))
+                }))
+                .await;
+            match copied {
+                Ok(result) => {
+                    let body = json_of(&result);
+                    assert_ne!(body["status"], "blocked", "{shape}/{source}: {body}");
+                    assert_eq!(body["edge"], *edge, "{shape}/{source}");
+                }
+                Err(error) => failures.push(format!("{shape}/{source}: {error}")),
+            }
+            if shown != shape {
+                failures.push(format!("{shape}/{source} served {shown}"));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// `capture` draws a typed edge, and the edge comes back on every read of the
+/// fact — rendered with the writable shape token.
+#[tokio::test]
+async fn capture_draws_an_edge_and_renders_its_writable_shape() {
     let jojobot = handler();
     let captured = capture_ok(
         &jojobot,
@@ -1748,7 +1841,7 @@ async fn capture_draws_an_edge_and_renders_its_schema_org_name() {
         },
     )
     .await;
-    assert_eq!(captured["edge"]["type"], "memberOf");
+    assert_eq!(captured["edge"]["type"], "membership");
     assert_eq!(captured["edge"]["object"], "org:springfield-town-council");
 
     let recalled = json_of(
@@ -1759,7 +1852,7 @@ async fn capture_draws_an_edge_and_renders_its_schema_org_name() {
     );
     assert_eq!(
         recalled["objects"][0]["facts"][0]["edge"]["type"],
-        "memberOf"
+        "membership"
     );
 }
 

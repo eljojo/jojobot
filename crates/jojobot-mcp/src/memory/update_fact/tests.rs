@@ -1679,7 +1679,7 @@ async fn update_fact_attaches_an_edge() {
             .await
             .expect("update ok"),
     );
-    assert_eq!(updated["edge"]["type"], "attendee");
+    assert_eq!(updated["edge"]["type"], "attendance");
     assert_eq!(updated["edge"]["object"], "event:krusty-fest");
 }
 

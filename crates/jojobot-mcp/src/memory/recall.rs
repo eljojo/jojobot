@@ -103,8 +103,8 @@ pub struct OrderArgs {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct FollowArgs {
     /// Narrow to one shape (`location` · `membership` · `attendance` · `about`
-    /// · `connection`), or the word a read served for it (`memberOf`,
-    /// `attendee`, `relatedTo`): either is understood. Omit for **any** edge — "whatever it is connected to"
+    /// · `connection`). These are the same words a write takes and a read serves.
+    /// Omit for **any** edge — "whatever it is connected to"
     /// — which is also what reaches a mention, a ref or a field link; naming a shape here
     /// reaches edges of that shape alone.
     #[serde(default)]
@@ -1332,10 +1332,7 @@ fn record_history_json(history: &graph::ClaimHistory, details_asked: bool) -> se
                 if let Some(edge) = &write.edge {
                     fields.insert(
                         "edge".into(),
-                        serde_json::json!({
-                            "type": edge.shape.as_name(),
-                            "object": edge.object.to_string(),
-                        }),
+                        wire::edge_json(edge),
                     );
                 }
                 if let Some(source) = &write.derived_from {
@@ -2568,10 +2565,10 @@ fn object_json(
     // a reader to work out which by looking at the value.
     if let Some(via) = object.via.as_ref() {
         let link = match &via.link {
-            graph::Link::Edge(shape) => serde_json::json!({ "type": shape.as_name() }),
+            graph::Link::Edge(shape) => wire::edge_shape_json(*shape),
             graph::Link::Relation(name) => serde_json::json!({ "relation": name }),
             // **Never rendered as an edge.** `type` is the edge's own key —
-            // a schema.org predicate — so a mention or a ref gets a key of
+            // a writable shape — so a mention or a ref gets a key of
             // its own rather than borrowing one a reader would read as a
             // deliberate link somebody drew on purpose.
             graph::Link::Mention => serde_json::json!({ "mention": true }),

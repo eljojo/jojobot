@@ -164,10 +164,8 @@ pub struct CaptureArgs {
     /// The shape of the edge this fact draws: `location` (object is a place) ·
     /// `membership` (an org) · `attendance` (an event) · `about` (any kind) ·
     /// `connection` (any kind — a link is there and how it relates was not
-    /// recorded). Requires `object`; neither works alone. A read serves the
-    /// shape by its schema.org word: `connection` reads back as `relatedTo`,
-    /// `membership` as `memberOf`, `attendance` as `attendee`, and `location`
-    /// and `about` as written.
+    /// recorded). Requires `object`; neither works alone. Every read and write
+    /// receipt serves the same shape word that a write takes.
     ///
     /// **Draw `connection` with the subject as YOUR OWN bot handle and the
     /// claim becomes a thought of yours, not an ordinary claim about an

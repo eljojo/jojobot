@@ -6,8 +6,8 @@
 //! exception is spelled out on [`parse_edge`], where half an edge parses fine
 //! and is still wrong.
 //!
-//! **Input stays lowercase.** The response vocabulary speaks schema.org's words
-//! (`Person`, `memberOf`); nothing here accepts them back.
+//! **Input stays lowercase.** Kinds render as schema.org names such as `Person`;
+//! edge shapes render as their writable tokens.
 
 use super::*;
 use jojobot_domain::memory::Boot;
@@ -86,8 +86,7 @@ pub(crate) fn bot_id(name: &str) -> Result<EntityId, McpError> {
 }
 
 /// Parse an edge-shape token; the closed set is named in the error. Strict about
-/// case and spelling: the **response** names (`memberOf`, `attendee`) are not
-/// input, and the input grammar stays lowercase.
+/// case and spelling: the input grammar stays lowercase.
 pub(crate) fn parse_shape(raw: &str) -> Result<EdgeShape, McpError> {
     EdgeShape::from_token(raw).ok_or_else(|| {
         let shapes: Vec<&str> = EdgeShape::ALL.iter().map(|s| s.as_token()).collect();
@@ -99,19 +98,13 @@ pub(crate) fn parse_shape(raw: &str) -> Result<EdgeShape, McpError> {
 }
 
 /// **Parse the word a FILTER names a shape by**: either the token a caller
-/// writes (`connection`) or the name a read serves (`relatedTo`), so a caller
-/// who copies a name out of an answer is understood. A word in neither
-/// vocabulary is refused naming both.
+/// writes or a schema.org name an older read served. Unknown words are refused
+/// with the writable vocabulary.
 pub(crate) fn parse_shape_filter(raw: &str) -> Result<EdgeShape, McpError> {
     EdgeShape::from_word(raw).ok_or_else(|| {
         let written: Vec<&str> = EdgeShape::ALL.iter().map(|s| s.as_token()).collect();
-        let read: Vec<&str> = EdgeShape::ALL.iter().map(|s| s.as_name()).collect();
         McpError::invalid_params(
-            format!(
-                "shape must be one of {} (as written) or {} (as read back), got '{raw}'",
-                written.join(", "),
-                read.join(", ")
-            ),
+            format!("shape must be one of {}, got '{raw}'", written.join(", ")),
             None,
         )
     })

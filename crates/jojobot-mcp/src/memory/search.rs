@@ -2851,7 +2851,7 @@ mod tests {
             "an entity hit says where it sits in the graph, never where it sits in a store"
         );
         assert_eq!(
-            results[0]["edges"][0]["type"], "memberOf",
+            results[0]["edges"][0]["type"], "membership",
             "where it sits in the graph"
         );
         assert_eq!(results[0]["edges"][0]["object"], "org:contract-guild");
@@ -2870,7 +2870,7 @@ mod tests {
         assert_eq!(results[1]["provenance"], "testimony");
         assert_eq!(results[1]["status"], "active");
         assert_eq!(results[1]["recorded_at"], "2026-07-01");
-        assert_eq!(results[1]["edge"]["type"], "memberOf");
+        assert_eq!(results[1]["edge"]["type"], "membership");
         assert_eq!(results[1]["edge"]["object"], "org:contract-guild");
         // …and the surroundings, resolved: who this is about, and whose page it
         // sits on. A handle alone costs the reader a call to find out.

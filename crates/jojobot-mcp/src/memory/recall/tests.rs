@@ -2604,16 +2604,14 @@ async fn recall_returns_the_edge_a_fact_draws() {
         .iter()
         .find(|f| f["content"] == "joined in the spring")
         .unwrap_or_else(|| panic!("the captured fact must come back: {body}"));
-    assert_eq!(edged["edge"]["type"], "memberOf", "got {edged}");
+    assert_eq!(edged["edge"]["type"], "membership", "got {edged}");
     assert_eq!(edged["edge"]["object"], "org:contract-guild");
 }
 
 /// **A walk along a shape answers to the word a caller wrote AND the word a
-/// read served.** A `connection` edge reads back as `relatedTo`; a caller who
-/// copies that word into `follow.shape` reaches the same edge as one who sends
-/// `connection`. Both literals are pinned: nothing outside this process
-/// declares either spelling. The negative half is a word in neither
-/// vocabulary, refused with both named.
+/// older read served.** A `connection` edge now reads back as `connection`;
+/// the former `relatedTo` spelling still filters the same edge. Both literals
+/// are pinned. Unknown words are refused with the writable vocabulary.
 #[tokio::test]
 async fn a_walk_takes_either_word_for_a_shape_and_refuses_a_third() {
     let jojobot = handler();
@@ -2640,8 +2638,8 @@ async fn a_walk_takes_either_word_for_a_shape_and_refuses_a_third() {
             .expect("recall ok"),
     );
     assert_eq!(
-        read["objects"][0]["facts"][0]["edge"]["type"], "relatedTo",
-        "reads keep serving the schema.org word: {read}"
+        read["objects"][0]["facts"][0]["edge"]["type"], "connection",
+        "reads serve the writable shape: {read}"
     );
 
     let walk = |shape: &'static str| RecallArgs {
@@ -2671,7 +2669,7 @@ async fn a_walk_takes_either_word_for_a_shape_and_refuses_a_third() {
         .await
         .expect_err("a word in neither vocabulary is refused");
     let message = refused.message.to_string();
-    for named in ["connection", "relatedTo", "membership", "memberOf"] {
+    for named in ["connection", "membership", "attendance", "about"] {
         assert!(
             message.contains(named),
             "the refusal names {named}: {message}"
@@ -5144,7 +5142,7 @@ async fn an_unscoped_follow_in_reaches_the_edge_the_mention_and_the_ref_labelled
     };
     assert_eq!(
         via_of("person:homer")["type"],
-        EdgeShape::Connection.as_name(),
+        "connection",
         "the edge writer is labelled as its edge shape: {walked}"
     );
     assert_eq!(
