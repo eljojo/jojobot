@@ -592,15 +592,19 @@ fn sibling_name_reason(
 /// a different number sets them apart.** A letter, a stem or a suffix that
 /// differs does not, and neither does the same number twice, which is one entry
 /// seen twice. A full date is digit runs, so a dated series is numbered too.
-/// A series can add trailing numeric parts: `deploy-9` and `deploy-9-3-6`.
+/// A series can add numeric parts before an unchanged suffix or at its end.
 /// The screen asks it only of two things under the same parent. **A refusal asks
 /// it of two that are not**, to tell a caller that a series is made under one
 /// parent (rule 498).
 pub fn numbered_apart(a: &str, b: &str) -> bool {
     let ((skeleton_a, runs_a), (skeleton_b, runs_b)) = (digit_runs(a), digit_runs(b));
     let added_parts = |short: &str, long: &str| {
-        long.strip_prefix(short)
-            .is_some_and(|tail| !tail.is_empty() && tail.trim_end_matches("-#").is_empty())
+        short.match_indices('#').any(|(at, _)| {
+            let (prefix, suffix) = short.split_at(at + 1);
+            long.strip_prefix(prefix)
+                .and_then(|rest| rest.strip_suffix(suffix))
+                .is_some_and(|extra| !extra.is_empty() && extra.trim_end_matches("-#").is_empty())
+        })
     };
     !runs_a.is_empty()
         && !runs_b.is_empty()
@@ -2003,6 +2007,29 @@ mod tests {
         let asked = EntityId("work:beta-queue".into());
         let found = screen_creating(&asked, &["Card 2701"], Some(&parent), &[existing]);
         assert!(found.is_empty(), "{found:?}");
+    }
+
+    #[test]
+    fn numbered_parts_before_a_suffix_pass_both_name_screens() {
+        let parent = EntityId("topic:contract-checklist-series".into());
+        let under = |id: &str, name: &str| Entity {
+            parent: Some(parent.clone()),
+            ..entity(id, name, "fixture")
+        };
+        let first = under("list:contract-deploy-9-checklist", "Deploy 9 checklist");
+        let next = under("list:contract-deploy-9-3-checklist", "Next checklist");
+        let name = ["Deploy 9.3 checklist"];
+        let added = screen_creating(&next.id, &name, Some(&parent), std::slice::from_ref(&first));
+        let relabelled = screen_labels(
+            Some(EntityKind::LIST),
+            &name,
+            Some(&next.id),
+            &[first, next.clone()],
+        );
+        assert!(
+            added.is_empty() && relabelled.is_empty(),
+            "add: {added:?}; relabel: {relabelled:?}"
+        );
     }
 
     /// **A known short form still counts between numbered siblings.** The name

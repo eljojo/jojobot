@@ -165,6 +165,61 @@ pub async fn numbered_siblings_are_not_refused_for_their_names<M: Memory>(store:
     );
     numbered_siblings_with_added_parts(store).await;
     numbered_siblings_when_relabelled(store).await;
+    numbered_siblings_with_a_suffix(store).await;
+}
+
+async fn numbered_siblings_with_a_suffix<M: Memory>(store: &M) {
+    let parent = EntityId("topic:contract-checklist-series".into());
+    add(
+        store,
+        NewEntity::new(parent.clone(), "Checklist versions", "contract-fixture"),
+    )
+    .await;
+    let first = EntityId("list:contract-deploy-9-checklist".into());
+    let next = EntityId("list:contract-deploy-9-3-checklist".into());
+    let checklist = |id: &EntityId, name: &str| NewEntity {
+        parent: Some(parent.clone()),
+        ..NewEntity::new(id.clone(), name, "contract-fixture")
+    };
+    add(store, checklist(&first, "Deploy 9 checklist")).await;
+    add(store, checklist(&next, "Deploy 9.3 checklist")).await;
+    let renamed = store
+        .update_entity(
+            &next,
+            EntityPatch {
+                name: Some("Deploy 9.3 checklist: mail".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("relabel answers");
+    assert!(matches!(renamed, Guarded::Written(_)), "{renamed:?}");
+    for (id, name) in [
+        (&first, "The same numbered checklist"),
+        (
+            &EntityId("list:contract-deploy-9-4-checklist".into()),
+            "Deploy 9 checklisx",
+        ),
+    ] {
+        let refused = store
+            .add_entity(checklist(id, name))
+            .await
+            .expect("add answers");
+        assert!(matches!(refused, Guarded::Blocked { .. }), "{refused:?}");
+    }
+    for name in ["Deploy 9 checklist", "Deploy 9 checklisx"] {
+        let copied = store
+            .update_entity(
+                &next,
+                EntityPatch {
+                    name: Some(name.into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("relabel answers");
+        assert!(matches!(copied, Guarded::Blocked { .. }), "{copied:?}");
+    }
 }
 
 async fn numbered_siblings_with_added_parts<M: Memory>(store: &M) {
