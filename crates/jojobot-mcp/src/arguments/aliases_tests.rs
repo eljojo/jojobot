@@ -244,7 +244,7 @@ async fn document_alias(name: &str) {
         assert_eq!(answer["markdown"], markdown, "{answer}");
         if spelling == name {
             assert!(
-                answer["teaching"].to_string().contains("document"),
+                answer["teaching"].to_string().contains("`document`"),
                 "{answer}"
             );
         }
