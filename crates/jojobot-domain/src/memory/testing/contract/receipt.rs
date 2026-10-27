@@ -486,6 +486,43 @@ pub async fn a_settled_inference_reopens_when_another_session_rewrites_its_words
     assert_eq!(named.standing, Standing::Open, "{named:?}");
     assert_eq!(named.receipt, None, "{named:?}");
 
+    // **The same words sent again, padded, are not a rewrite**: another session
+    // leaves a settled inference settled, on its receipt.
+    let counted = Receipt::Check("counted five locks".to_string());
+    store
+        .update_fact(
+            &guess.address(),
+            FactPatch {
+                session: Some("session-a".to_string()),
+                ..settle(Some(counted.clone()))
+            },
+            &other_caller(),
+        )
+        .await
+        .expect("a check settles it again")
+        .written()
+        .expect("nothing blocks it");
+    let padded_resend = store
+        .update_fact(
+            &guess.address(),
+            FactPatch {
+                content: Some("  the bike has five locks ".to_string()),
+                session: Some("session-b".to_string()),
+                ..FactPatch::default()
+            },
+            &other_caller(),
+        )
+        .await
+        .expect("the same words are sent again with padding")
+        .written()
+        .expect("nothing blocks it");
+    assert_eq!(
+        padded_resend.standing,
+        Standing::Settled,
+        "{padded_resend:?}"
+    );
+    assert_eq!(padded_resend.receipt, Some(counted), "{padded_resend:?}");
+
     // **A rewrite that promotes the claim to testimony is not an inference's
     // rewrite**: the operator's word leaves it settled on its receipt.
     let said = capture(
@@ -586,7 +623,24 @@ pub async fn a_settled_inference_reopens_when_another_session_rewrites_its_words
         .expect("the same words are sent again")
         .written()
         .expect("nothing blocks it");
-    assert_eq!(resent.receipt, Some(checked), "{resent:?}");
+    assert_eq!(resent.receipt, Some(checked.clone()), "{resent:?}");
+    // The same words with padding are the same words: both readers trim them.
+    let padded = store
+        .update_fact(
+            &seen.address(),
+            FactPatch {
+                content: Some("  the bike has two racks ".to_string()),
+                provenance: Some(Provenance::Observation),
+                session: Some("session-b".to_string()),
+                ..FactPatch::default()
+            },
+            &other_caller(),
+        )
+        .await
+        .expect("the same words are sent again with padding")
+        .written()
+        .expect("nothing blocks it");
+    assert_eq!(padded.receipt, Some(checked), "{padded:?}");
 }
 
 /// Every spec above, in one call — see [`base::run_all`].
