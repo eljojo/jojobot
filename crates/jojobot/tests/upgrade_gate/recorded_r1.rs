@@ -38,12 +38,12 @@ pub(super) const LOWERING_PASS: &str = "field value lowering";
 
 #[test]
 fn only_the_recorded_r1_values_are_expected_warnings() {
-    let warning = "WARN jojobot::wiring::field_links: FIELD VALUE LEFT AS TEXT value=thing:upgrade-fixture-thing key 'merged_from' item 'thing:recorded-twin':";
+    let warning = "WARN jojobot::wiring::field_links: FIELD VALUE LEFT AS TEXT value=person:upgrade-fixture-person key 'looks_at' item 'view:colleagues':";
     assert!(degradations(&[warning.into()], false, &[]).is_empty());
     for (from, to) in [
-        ("thing:upgrade-fixture-thing", "thing:recorded-heir"),
-        ("merged_from", "another_key"),
-        ("thing:recorded-twin", "thing:recorded-spare"),
+        ("person:upgrade-fixture-person", "thing:recorded-heir"),
+        ("looks_at", "another_key"),
+        ("view:colleagues", "thing:recorded-spare"),
         ("FIELD VALUE LEFT AS TEXT", "ANOTHER WARNING"),
         ("WARN", "ERROR"),
     ] {
@@ -54,9 +54,9 @@ fn only_the_recorded_r1_values_are_expected_warnings() {
         );
     }
     let expected = [r1_identity(
-        "thing:upgrade-fixture-thing",
-        "merged_from",
-        "thing:recorded-twin",
+        "person:upgrade-fixture-person",
+        "looks_at",
+        "view:colleagues",
     )];
     assert!(recorded_r1_counts_match(&[warning.into()], &expected));
     assert!(!recorded_r1_counts_match(&[], &expected));
@@ -68,37 +68,15 @@ fn only_the_recorded_r1_values_are_expected_warnings() {
     assert!(recorded_r1_counts_match(&[], &[]));
 }
 
-// Audited raw held values in deploy5 (first three) and deploy6 through 9.2.1
-// (the last three). The CI fixture decides which remain; other identities fail
-// closed.
-const RECORDED_R1: [(&str, &str, &str); 6] = [
-    (
-        "thing:upgrade-fixture-thing",
-        "merged_from",
-        "thing:recorded-twin",
-    ),
-    ("thing:jukebox", "merged_from", "thing:recorded-spare"),
-    (
-        "person:upgrade-fixture-person",
-        "looks_at",
-        "view:colleagues",
-    ),
-    (
-        "thing:upgrade-fixture-fold-b",
-        "merged_from",
-        "thing:upgrade-fixture-fold-a",
-    ),
-    (
-        "thing:upgrade-fixture-fold-c",
-        "merged_from",
-        "thing:upgrade-fixture-fold-b",
-    ),
-    (
-        "document:upgrade-fixture-manual",
-        "merged_from",
-        "document:upgrade-fixture-appendix",
-    ),
-];
+// The one audited raw held value that can warn on the first boot over the last
+// deployed store. Every audited merged_from value is engine history and never
+// warns, so a warning about one is a degradation like any other. The CI fixture
+// decides whether this one remains; other identities fail closed.
+const RECORDED_R1: [(&str, &str, &str); 1] = [(
+    "person:upgrade-fixture-person",
+    "looks_at",
+    "view:colleagues",
+)];
 
 fn r1_identity(holder: &str, key: &str, item: &str) -> String {
     format!("value={holder} key '{key}' item '{item}':")
@@ -155,10 +133,7 @@ pub(super) async fn recorded_r1_before_boot(
         .await
         .expect("the raw held values read before marking");
         for (holder, key, value) in held {
-            // The audited merged_from values are engine history, never R1 warnings.
-            if key != "merged_from"
-                && RECORDED_R1.contains(&(holder.as_str(), key.as_str(), value.as_str()))
-            {
+            if RECORDED_R1.contains(&(holder.as_str(), key.as_str(), value.as_str())) {
                 expected.push(r1_identity(&holder, &key, &value));
             }
         }
