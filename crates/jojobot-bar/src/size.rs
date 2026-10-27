@@ -38,6 +38,10 @@ pub const CEILING: usize = 5000;
 /// A file over this many lines, and not red, is yellow.
 pub const YELLOW: usize = 2000;
 
+/// A file over this many lines, and not red, is orange: it turns red when the
+/// ceiling drops to this number.
+pub const ORANGE: usize = 3000;
+
 /// The base of the change, as a revision. It wins over [`BASE_REF_VARIABLE`]:
 /// a workflow sets it to an exact commit, while the other names a branch that a
 /// checkout may not hold.
@@ -385,6 +389,7 @@ pub struct Verdict {
     pub warnings: Vec<String>,
     pub raises: Vec<String>,
     pub red: usize,
+    pub orange: usize,
     pub yellow: usize,
 }
 
@@ -459,7 +464,16 @@ pub fn judge(limits: &Limits, files: &[Measured], base: &Base) -> Verdict {
                 Some(_) => {}
             }
         } else {
-            verdict.yellow += 1;
+            if file.lines > ORANGE {
+                verdict.orange += 1;
+                verdict.warnings.push(format!(
+                    "{}: over {ORANGE} lines (orange), {}. It turns red when the ceiling \
+                     drops to {ORANGE}.",
+                    file.path, file.lines
+                ));
+            } else {
+                verdict.yellow += 1;
+            }
             match before {
                 None => verdict.warnings.push(format!(
                     "{}: new file over {YELLOW} lines, {}",
@@ -836,8 +850,8 @@ pub fn phase(summary: &mut Summary) {
         return;
     };
     let counts = format!(
-        "{} red and {} yellow files; base: compared with {rev}",
-        verdict.red, verdict.yellow
+        "{} red, {} orange and {} yellow files; base: compared with {rev}",
+        verdict.red, verdict.orange, verdict.yellow
     );
     if verdict.offences.is_empty() {
         summary.phase_ok("size", &counts);
@@ -896,14 +910,18 @@ pub fn run(args: &[String]) -> std::io::Result<std::process::ExitCode> {
                 *areas.entry(area_of(&file.path)).or_default() += file.lines;
             }
             let red = files.iter().filter(|f| f.lines > limits.cap).count();
+            let orange = files
+                .iter()
+                .filter(|f| f.lines > ORANGE && f.lines <= limits.cap)
+                .count();
             let yellow = files
                 .iter()
-                .filter(|f| f.lines > YELLOW && f.lines <= limits.cap);
+                .filter(|f| f.lines > YELLOW && f.lines <= ORANGE.min(limits.cap))
+                .count();
             println!(
-                "total {} lines in {} files; {red} red, {} yellow",
+                "total {} lines in {} files; {red} red, {orange} orange, {yellow} yellow",
                 files.iter().map(|f| f.lines).sum::<usize>(),
                 files.len(),
-                yellow.count()
             );
             for (area, lines) in &areas {
                 println!("{lines:>8}  {area}");

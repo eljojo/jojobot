@@ -221,7 +221,10 @@ fn a_tree_that_changed_nothing_is_green_with_a_size_line_in_the_verdict_block() 
     let log = ran.stdout.find("log:").expect(&ran.stdout);
     assert!(verdict < size && size < log, "{}", ran.stdout);
     let line = size_line(&ran.stdout);
-    assert!(line.contains("1 red and 1 yellow files"), "{line}");
+    assert!(
+        line.contains("1 red, 0 orange and 1 yellow files"),
+        "{line}"
+    );
     assert!(line.contains("compared with"), "{line}");
     let _ = fs::remove_dir_all(&dir);
 }
@@ -301,7 +304,7 @@ fn a_yellow_file_that_grew_warns_and_stays_green() {
         "{}",
         ran.stdout
     );
-    assert!(size_line(&ran.stdout).contains("0 red and 1 yellow"));
+    assert!(size_line(&ran.stdout).contains("0 red, 0 orange and 1 yellow"));
     let _ = fs::remove_dir_all(&dir);
 }
 
@@ -646,5 +649,41 @@ fn a_garbled_step_is_red_through_the_bar() {
     let ran = bar(&dir, "check", Some(&base));
     assert_ne!(ran.code, Some(0), "{}", ran.stdout);
     assert!(ran.stdout.contains("step must be"), "{}", ran.stdout);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// **A file over 3,000 lines is orange and says when it turns red; one at 2,999
+/// is yellow only.** The weekly number counts the orange file apart.
+#[test]
+fn a_file_over_3000_lines_is_orange_and_one_under_it_is_not() {
+    let dir = repo("orange");
+    let base = commit_files(
+        &dir,
+        &[
+            ("size-ratchet.toml", ratchet("")),
+            ("homer.rs", lines_of(3001)),
+            ("marge.rs", lines_of(2999)),
+        ],
+    );
+    let ran = bar(&dir, "check", Some(&base));
+    assert_eq!(ran.code, Some(0), "{}", ran.stdout);
+    assert!(
+        ran.stdout
+            .contains("homer.rs: over 3000 lines (orange), 3001"),
+        "{}",
+        ran.stdout
+    );
+    assert!(
+        !ran.stdout.contains("marge.rs: over 3000"),
+        "{}",
+        ran.stdout
+    );
+    assert!(size_line(&ran.stdout).contains("0 red, 1 orange and 1 yellow"));
+    let weekly = bar_with(&dir, &["size", "--weekly"], None);
+    assert!(
+        weekly.stdout.contains("0 red, 1 orange, 1 yellow"),
+        "{}",
+        weekly.stdout
+    );
     let _ = fs::remove_dir_all(&dir);
 }
