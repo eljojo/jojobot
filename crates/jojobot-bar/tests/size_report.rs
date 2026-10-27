@@ -581,6 +581,80 @@ fn narrow_refuses_growth_in_another_crate_before_cargo_runs() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+#[test]
+fn snapshot_judges_rewritten_texts_and_keeps_a_generator_failure_red() {
+    let dir = repo("snapshot");
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let path = "crates/jojobot-mcp/served-texts/tools.md";
+    let base = commit_files(
+        &dir,
+        &[
+            ("size-ratchet.toml", ratchet("")),
+            (path, lines_of(5001)),
+            (
+                "Makefile",
+                fs::read_to_string(root.join("Makefile")).unwrap(),
+            ),
+            (
+                "scripts/build-metrics",
+                fs::read_to_string(root.join("scripts/build-metrics")).unwrap(),
+            ),
+        ],
+    );
+    let cargo = dir.join("cargo");
+    support::write_executable(
+        &cargo,
+        r#"#!/bin/sh
+case "$1" in
+  run)
+    while [ "$1" != -- ]; do shift; done
+    shift
+    exec "$BAR_CASE_BINARY" "$@" ;;
+  test)
+    case " $* " in
+      *" --list "*)
+        case " $* " in
+          *" --ignored "*) ;;
+          *) echo 'every_text_a_model_reads_matches_the_snapshot: test' ;;
+        esac
+        exit 0 ;;
+    esac
+    if [ "$SNAPSHOT_CASE" = grow ]; then
+      printf 'x\n' >> crates/jojobot-mcp/served-texts/tools.md
+    fi
+    if [ "$SNAPSHOT_CASE" = fail ]; then
+      echo 'test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s'
+      exit 101
+    fi
+    echo 'test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s' ;;
+esac
+"#,
+    );
+    for (mode, green) in [("same", true), ("grow", false), ("fail", false)] {
+        fs::write(dir.join(path), lines_of(5001)).unwrap();
+        let output = support::output_fenced(
+            Command::new("make")
+                .arg("snapshot")
+                .current_dir(&dir)
+                .env("CARGO", &cargo)
+                .env("BAR_CASE_BINARY", env!("CARGO_BIN_EXE_jojobot-bar"))
+                .env("SIZE_BASE", &base)
+                .env("SNAPSHOT_CASE", mode)
+                .env_remove("JOJOBOT_DEV_METRICS_URL"),
+        )
+        .expect("run the real snapshot recipe");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(output.status.success(), green, "{mode}: {stdout}");
+        if mode == "grow" {
+            assert!(
+                stdout.contains(&format!("{path}: red file grew from 5001 to 5002")),
+                "{stdout}"
+            );
+        }
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// **The owned markers are judged through the bar.** The marker texts are built
 /// here so this file never matches its own scan.
 #[test]

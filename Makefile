@@ -98,9 +98,13 @@ size: ## The size ratchet: no new file over the cap, no listed file grows
 # one file to a surface, and `make check` fails when the files and the texts
 # differ. A commit that changes one of those texts runs this and commits the
 # rewritten files with it, so the diff of what models read is in the commit and
-# is accepted by name. It rewrites the files and judges nothing.
+# is accepted by name. Size is judged again after the generation attempt, even
+# if its narrow run failed; a clean size verdict never erases that failure.
 snapshot: ## Rewrite the checked-in files of every text a model reads
-	SNAPSHOT_UPDATE=1 $(MAKE) narrow CRATE=jojobot-mcp FILTER=every_text_a_model_reads_matches_the_snapshot
+	@status=0; \
+	SNAPSHOT_UPDATE=1 $(MAKE) narrow CRATE=jojobot-mcp FILTER=every_text_a_model_reads_matches_the_snapshot || status=$$?; \
+	SIZE_BASE=$(or $(SIZE_BASE),$(BASE),main) $(MAKE) size || status=$$?; \
+	exit $$status
 
 # **The dev bar.** The everyday loop, a level below the report: the format check,
 # a build, then the unit tests and the fast test files of the packages the
