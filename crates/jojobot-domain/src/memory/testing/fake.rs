@@ -545,7 +545,10 @@ impl InMemoryMemory {
                 if ledger.spend(claim, landed()) {
                     Ok(())
                 } else {
-                    Err(MemoryError::Conflict)
+                    Err(match ledger.take_refusal() {
+                        Some(words) => MemoryError::Refused(words),
+                        None => MemoryError::Conflict,
+                    })
                 }
             }
             None => {

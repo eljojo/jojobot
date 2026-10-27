@@ -16,6 +16,12 @@ pub struct InMemoryRequests {
     parts: Mutex<Vec<(String, String, PartRow)>>,
     /// Parts whose next commit fails, as a store that dies between two parts.
     refused: Mutex<std::collections::HashSet<String>>,
+    /// Parts whose every commit is refused by a rule, with the words of the
+    /// refusal: a store that answers and says no, as against one that is down.
+    refusing: Mutex<HashMap<String, String>>,
+    /// The words of the refusal the last failed commit met, for the store that
+    /// asked to turn the failure into its own error.
+    last_refusal: Mutex<Option<String>>,
 }
 
 impl InMemoryRequests {
@@ -41,6 +47,17 @@ impl InMemoryRequests {
                 .expect("the ledger is poisoned")
                 .remove(&part)
             {
+                reservation.failed();
+                return false;
+            }
+            if let Some(words) = self
+                .refusing
+                .lock()
+                .expect("the ledger is poisoned")
+                .get(&part)
+                .cloned()
+            {
+                *self.last_refusal.lock().expect("the ledger is poisoned") = Some(words);
                 reservation.failed();
                 return false;
             }
@@ -98,6 +115,26 @@ impl InMemoryRequests {
             .lock()
             .expect("the ledger is poisoned")
             .insert(part.to_string());
+    }
+
+    /// **Every commit of the part called `part` is refused by a rule**, with
+    /// `words`, and stores nothing. The same call sent again meets the refusal
+    /// again, as it would a constraint the call itself breaks.
+    pub fn refuse_every_commit_of(&self, part: &str, words: &str) {
+        self.refusing
+            .lock()
+            .expect("the ledger is poisoned")
+            .insert(part.to_string(), words.to_string());
+    }
+
+    /// **The words of the refusal the last failed commit met**, taken: a store
+    /// whose `spend` came back false asks, and answers its own refusal when there
+    /// are words, and its conflict when there are none.
+    pub fn take_refusal(&self) -> Option<String> {
+        self.last_refusal
+            .lock()
+            .expect("the ledger is poisoned")
+            .take()
     }
 
     /// How many ids the ledger holds.

@@ -288,13 +288,16 @@ impl Jojobot {
         let cleared = self
             .clear_stored_due_moment(subject, &caller.bot, caller.sid.as_str())
             .await;
-        if !cleared && jojobot_domain::request::carries_an_id() {
+        if let Err(cause) = &cleared
+            && jojobot_domain::request::carries_an_id()
+        {
             return Some(crate::caller::handle_declined(
                 verb,
-                crate::answer::WayForward::retry(
+                cause.unfinished(
                     "The claim was written, and the stored due moment was not taken off the \
-                     thing it finished. Send the same call again with the same request_id and \
-                     it takes it off and writes the claim nothing twice.",
+                     thing it finished.",
+                    "Send the same call again with the same request_id and it takes it off \
+                     and writes the claim nothing twice.",
                 ),
             ));
         }
@@ -336,17 +339,19 @@ impl Jojobot {
         subject: &EntityId,
         bot: &EntityId,
         session: &str,
-    ) -> bool {
+    ) -> Result<(), crate::stopped::Stopped> {
         let carrier = match self.memory.recall(subject).await {
             Ok(facts) => facts.into_iter().find(|fact| {
                 fact.status == FactStatus::Active && fact.fields.contains_key(attention::DUE_ON)
             }),
             Err(e) => {
                 tracing::warn!(error = %e, %subject, "the stored due moment could not be found");
-                return false;
+                return Err(crate::stopped::Stopped::of_memory(&e));
             }
         };
-        let Some(carrier) = carrier else { return true };
+        let Some(carrier) = carrier else {
+            return Ok(());
+        };
         let patch = FactPatch {
             clear_fields: vec![attention::DUE_ON.to_string()],
             session: Some(session.to_string()),
@@ -368,9 +373,9 @@ impl Jojobot {
                     address = %carrier.address(),
                     "the stored due moment could not be taken off a finished thing",
                 );
-                false
+                Err(crate::stopped::Stopped::of_memory(&e))
             }
-            Part::Ran(Ok(_)) | Part::Recorded(_) => true,
+            Part::Ran(Ok(_)) | Part::Recorded(_) => Ok(()),
         }
     }
 

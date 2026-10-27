@@ -219,20 +219,27 @@ impl Jojobot {
         // **Without an id the restore stands and the answer says the claim was
         // not written. With one, the call is not finished**: the same call sent
         // again writes the claim and nothing else.
-        let failed = match &recorded {
+        let stopped = match &recorded {
             Part::Ran(Err(MemoryError::FoldBehind { .. })) | Part::Ran(Ok(Guarded::Written(_))) => {
-                false
+                None
             }
-            Part::Ran(_) => true,
-            Part::Recorded(_) => false,
+            // A claim the guard blocked wrote nothing, and the same call meets the
+            // same block.
+            Part::Ran(Ok(_)) => Some(crate::stopped::Stopped::Refused(
+                "the claim that records the restore was blocked".into(),
+            )),
+            Part::Ran(Err(e)) => Some(crate::stopped::Stopped::of_memory(e)),
+            Part::Recorded(_) => None,
         };
-        if failed && jojobot_domain::request::carries_an_id() {
+        if let Some(cause) = &stopped
+            && jojobot_domain::request::carries_an_id()
+        {
             return Ok(crate::caller::handle_declined(
                 "archive_entity",
-                crate::answer::WayForward::retry(
-                    "The restore was written, and the claim that records it was not. Send the \
-                     same call again with the same request_id and it writes the claim and \
-                     nothing else.",
+                cause.unfinished(
+                    "The restore was written, and the claim that records it was not.",
+                    "Send the same call again with the same request_id and it writes the \
+                     claim and nothing else.",
                 ),
             ));
         }

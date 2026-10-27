@@ -415,3 +415,41 @@ async fn a_resend_makes_the_mark_of_an_archive_that_also_moved_a_section() {
             .contains(&"document:alpha".to_string())
     );
 }
+
+/// **A mark a rule refused is told to change, and a resend under the same id meets
+/// the same refusal.** The store answered and said no, so the answer is not a
+/// promise that sending the call again makes the mark; the paired outage case is
+/// `a_resend_under_the_same_id_makes_the_mark_once`.
+#[tokio::test]
+async fn a_mark_refused_by_a_rule_is_told_to_change_and_the_resend_meets_it_again() {
+    let ledger = InMemoryRequests::new();
+    let memory = Arc::new(InMemoryMemory::seeded().with_requests(ledger.clone()));
+    let address = a_thread_with_a_claim(&memory, &ledger).await;
+    let jojobot = healthy(memory.clone(), &ledger);
+    ledger.refuse_every_commit_of("review_mark", "the rule says no");
+
+    for send in 0..2 {
+        let told = json_of(
+            &defrag_archives(&jojobot, &address, Some("archive-9"))
+                .await
+                .expect("the call answers"),
+        );
+        assert_eq!(told["fix_by"], "change", "send {send}: {told}");
+        assert!(told.to_string().contains("the rule says no"), "{told}");
+    }
+    // The positive the negative rests on: the archive landed.
+    let reading = healthy(memory, &ledger);
+    let held = json_of(
+        &reading
+            .recall(Parameters(RecallArgs {
+                facts: Some(true),
+                ..recall_args("thread:alpha")
+            }))
+            .await
+            .expect("recall ok"),
+    );
+    assert!(
+        held.to_string().contains("\"status\":\"archived\""),
+        "the archive landed: {held}"
+    );
+}

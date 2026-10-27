@@ -43,6 +43,9 @@ pub mod observe;
 pub mod orientation;
 pub mod release_notes;
 mod request;
+mod stopped;
+#[cfg(test)]
+mod stopped_tests;
 pub mod views;
 
 /// **Everything this build supplies, in one place.**

@@ -857,6 +857,13 @@ impl Story {
         self.requests().fail_the_next_commit_of(part);
     }
 
+    /// **Every commit of the part called `part` is refused by a rule**, with
+    /// `words`, and stores nothing: a store that answers and says no, as against
+    /// one that is down. The same call sent again is refused the same way.
+    pub fn refuses_every_commit_of(&self, part: &str, words: &str) {
+        self.requests().refuse_every_commit_of(part, words);
+    }
+
     /// **The sessions store under this story's server**, for the one thing a
     /// story cannot do through the surface: begin a run that has been quiet for
     /// longer than the lease, without waiting for it.

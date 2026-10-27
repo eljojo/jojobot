@@ -10,6 +10,7 @@ use rmcp::handler::server::wrapper::Parameters;
 
 use super::update_entity::UpdateEntityArgs;
 use super::*;
+use crate::stopped::Stopped;
 
 /// What the claim part of an archive by defrag keeps in its note, so a resend
 /// knows the mark is still owed.
@@ -47,8 +48,9 @@ pub(crate) fn within_the_mark() -> bool {
 pub(crate) enum Marked {
     /// The thing is marked reviewed, by this call or by an earlier one under the id.
     Made,
-    /// The mark was not made, and this is why.
-    NotMade(String),
+    /// The mark was not made: the words that say why, and the cause that decides
+    /// who fixes it.
+    NotMade(String, crate::stopped::Stopped),
 }
 
 impl Jojobot {
@@ -81,7 +83,9 @@ impl Jojobot {
         .await
         {
             Part::Recorded(_) => Marked::Made,
-            Part::Ran(Err(error)) => Marked::NotMade(error.message.to_string()),
+            Part::Ran(Err(error)) => {
+                Marked::NotMade(error.message.to_string(), Stopped::of_error(&error))
+            }
             Part::Ran(Ok(answered)) => {
                 let body: serde_json::Value = answered
                     .content
@@ -95,6 +99,7 @@ impl Jojobot {
                             .as_str()
                             .unwrap_or("the mark was refused")
                             .to_string(),
+                        Stopped::of_answer(&answered),
                     )
                 } else {
                     Marked::Made
@@ -106,14 +111,15 @@ impl Jojobot {
     /// **The answer for a call under a `request_id` whose archive landed and whose
     /// mark did not**: the call is not finished, and the same call sent again
     /// makes the mark once.
-    pub(crate) fn mark_still_owed(&self, why: &str) -> CallToolResult {
+    pub(crate) fn mark_still_owed(&self, why: &str, cause: &Stopped) -> CallToolResult {
         crate::caller::handle_declined(
             "update_fact",
-            crate::answer::WayForward::retry(format!(
-                "The claim was archived, and the review mark it earns was not made ({why}). \
-                 Send the same call again with the same request_id and it makes the mark \
-                 once."
-            )),
+            cause.unfinished(
+                &format!(
+                    "The claim was archived, and the review mark it earns was not made ({why})."
+                ),
+                "Send the same call again with the same request_id and it makes the mark once.",
+            ),
         )
     }
 }
@@ -122,7 +128,7 @@ impl Jojobot {
 pub(crate) fn note_the_mark(body: &mut serde_json::Value, marked: &Marked) {
     match marked {
         Marked::Made => body["reviewed"] = true.into(),
-        Marked::NotMade(why) => {
+        Marked::NotMade(why, _) => {
             body["review_mark_not_made"] = format!(
                 "The claim was archived, and the review mark an archive by defrag earns was \
                  not made, so the thing is still in the review queue ({why}). Mark it with \

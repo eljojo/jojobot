@@ -99,7 +99,10 @@ impl InMemorySessions {
                 if ledger.spend(claim, landed()) {
                     Ok(())
                 } else {
-                    Err(SessionError::Conflict)
+                    Err(match ledger.take_refusal() {
+                        Some(words) => SessionError::Refused(words),
+                        None => SessionError::Conflict,
+                    })
                 }
             }
             None => {

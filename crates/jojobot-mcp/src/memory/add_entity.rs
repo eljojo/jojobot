@@ -750,8 +750,10 @@ impl Jojobot {
                 if opened.failed && jojobot_domain::request::carries_an_id() {
                     return match opened.error {
                         Some(error)
-                            if crate::mailboxes::declined::mailbox_fix_by(&error)
-                                != Some(crate::answer::FixBy::Retry) =>
+                            if !matches!(
+                                crate::stopped::Stopped::of_mailbox(&error),
+                                crate::stopped::Stopped::Store
+                            ) =>
                         {
                             crate::mailboxes::declined::mailbox_declined(error)
                         }

@@ -545,15 +545,21 @@ impl Jojobot {
             // **With an id the put is not finished, and the same call finishes
             // it**: the answer says so, and `after` is not needed.
             if jojobot_domain::request::carries_an_id() && !landed.is_empty() {
+                let cause = match &refused {
+                    Ok(answered) => crate::stopped::Stopped::of_answer(answered),
+                    Err(error) => crate::stopped::Stopped::of_error(error),
+                };
                 return Ok(crate::caller::handle_declined(
                     "put_document",
-                    crate::answer::WayForward::retry(format!(
-                        "{} of {} sections landed and stay. Send the same call again with the \
-                         same request_id and it writes the rest, in the places the first call \
-                         chose.",
-                        landed.len(),
-                        chunks.len()
-                    )),
+                    cause.unfinished(
+                        &format!(
+                            "{} of {} sections landed and stay.",
+                            landed.len(),
+                            chunks.len()
+                        ),
+                        "Send the same call again with the same request_id and it writes the \
+                         rest, in the places the first call chose.",
+                    ),
                 ));
             }
             return stopped_midway(refused, &landed, chunks.len(), landed_bytes);

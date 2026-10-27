@@ -329,9 +329,9 @@ impl Jojobot {
         {
             Part::Ran(Ok(mailbox::Guarded::Written(delivery))) => (delivery, false),
             Part::Ran(Ok(_)) => return Collected::default(),
-            Part::Ran(Err(_)) => {
+            Part::Ran(Err(e)) => {
                 return Collected {
-                    failed: true,
+                    failed: Some(crate::stopped::Stopped::of_mailbox(&e)),
                     ..Collected::default()
                 };
             }
@@ -349,11 +349,14 @@ impl Jojobot {
                             })
                         })
                         .unwrap_or_default();
-                let Ok(mut messages) = self.mailboxes.messages_by_id(&ids).await else {
-                    return Collected {
-                        failed: true,
-                        ..Collected::default()
-                    };
+                let mut messages = match self.mailboxes.messages_by_id(&ids).await {
+                    Ok(messages) => messages,
+                    Err(e) => {
+                        return Collected {
+                            failed: Some(crate::stopped::Stopped::of_mailbox(&e)),
+                            ..Collected::default()
+                        };
+                    }
                 };
                 messages.sort_by_key(|message| message.sent_at);
                 (
@@ -399,7 +402,7 @@ impl Jojobot {
         }
         Collected {
             delivery: Some((rendered, delivery)),
-            failed: false,
+            failed: None,
         }
     }
 }
@@ -409,7 +412,8 @@ impl Jojobot {
 #[derive(Default)]
 struct Collected {
     delivery: Option<(serde_json::Value, Delivery)>,
-    failed: bool,
+    /// Why the collection failed, kept so the call is told what to do next.
+    failed: Option<crate::stopped::Stopped>,
 }
 
 #[tool_router(router = post_message_router, vis = "pub(crate)")]
@@ -726,13 +730,15 @@ impl Jojobot {
             .await;
         // **With an id the call is not finished until the mail is taken**: the
         // same call sent again hands over the same mail and posts nothing twice.
-        if collected_mail.failed && jojobot_domain::request::carries_an_id() {
+        if let Some(cause) = &collected_mail.failed
+            && jojobot_domain::request::carries_an_id()
+        {
             return Ok(crate::caller::handle_declined(
                 "post_message",
-                crate::answer::WayForward::retry(
-                    "The message was posted, and your own mail was not collected. Send the same \
-                     call again with the same request_id and it hands you the mail and posts \
-                     nothing twice.",
+                cause.unfinished(
+                    "The message was posted, and your own mail was not collected.",
+                    "Send the same call again with the same request_id and it hands you the \
+                     mail and posts nothing twice.",
                 ),
             ));
         }

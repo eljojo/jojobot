@@ -10,6 +10,7 @@
 
 use super::capture::{BATCH_CAP, CaptureArgs, EntryItem, Mode, TickArg};
 use super::*;
+use crate::stopped::Stopped;
 use jojobot_domain::memory::entries;
 
 /// What one pass of the single path answered.
@@ -226,32 +227,6 @@ impl Finish {
     }
 }
 
-/// **Why a batch stopped at the item it did**, which decides who fixes it.
-enum Stopped<'a> {
-    /// The item was refused. Sending the call again meets the same refusal, so
-    /// the call, or something it names, has to change.
-    Refused(&'a str),
-    /// The store failed under the item. The same item can succeed when sent
-    /// again.
-    Store,
-    /// The item ended in an error that is no store failure, so a person reads
-    /// the server log.
-    Unexplained,
-}
-
-impl<'a> Stopped<'a> {
-    /// **The cause of an error the write of an item ended in**, from the word the
-    /// error itself wears: `retry` is a store failure, `change` is a refusal with
-    /// the error's own words, and any other error is not told as either.
-    fn of_error(error: &'a McpError) -> Stopped<'a> {
-        match crate::answer::fix_by_of(error) {
-            Some(crate::answer::FixBy::Retry) => Stopped::Store,
-            Some(crate::answer::FixBy::Change) => Stopped::Refused(error.message.as_ref()),
-            Some(crate::answer::FixBy::Person) | None => Stopped::Unexplained,
-        }
-    }
-}
-
 /// **The answer for a batch that stopped after `written` landed**, with or
 /// without a `request_id`: the items that landed with their words and addresses,
 /// and how to finish. It is a refusal of the item that failed, built as every
@@ -261,7 +236,7 @@ fn half_landed(
     failed: usize,
     count: usize,
     label: &str,
-    cause: Stopped<'_>,
+    cause: Stopped,
     written: &[(usize, String)],
     labels: &[String],
     finish: Finish,
@@ -276,8 +251,8 @@ fn half_landed(
         .iter()
         .map(|(at, address)| format!("item {} ({}, {address})", at + 1, labels[*at]))
         .collect();
-    let why = match cause {
-        Stopped::Refused(why) => why,
+    let why = match &cause {
+        Stopped::Refused(why) => why.as_str(),
         Stopped::Store => "the store could not write it",
         Stopped::Unexplained => "it ended in an error that is not a refusal",
     };
@@ -287,7 +262,7 @@ fn half_landed(
         named.join(", "),
     );
     let from_here = format!("Send only the items from item {} on", failed + 1);
-    let way: crate::answer::WayForward = match (cause, finish) {
+    let way: crate::answer::WayForward = match (&cause, finish) {
         // **A refusal is the call's to change** (rule 130). The same call again
         // meets it at the same item, so it never reads as a retry.
         (Stopped::Refused(_), Finish::SendTheRest) => format!(
@@ -476,9 +451,10 @@ impl Jojobot {
         caller: &crate::caller::Caller,
     ) {
         if ends_later.load(std::sync::atomic::Ordering::SeqCst)
-            && !self
+            && self
                 .clear_stored_due_moment(subject, &caller.bot, caller.sid.as_str())
                 .await
+                .is_err()
         {
             tracing::warn!(thing = %subject, "a batch stopped partway and its due moment could not be taken off");
         }
@@ -742,7 +718,7 @@ impl Jojobot {
                             at,
                             count,
                             &label,
-                            Stopped::Refused(&why),
+                            Stopped::Refused(why.to_string()),
                             &written,
                             &labels,
                             Finish::now(),
@@ -816,7 +792,7 @@ mod tests {
             .to_string()
     }
 
-    fn stopped_at_three(cause: Stopped<'_>, finish: Finish) -> CallToolResult {
+    fn stopped_at_three(cause: Stopped, finish: Finish) -> CallToolResult {
         let labels = vec!["post".to_string(), "buy".to_string(), "fix".to_string()];
         let written = vec![
             (0, "list:homer-chores#f2".to_string()),
@@ -832,7 +808,8 @@ mod tests {
     #[test]
     fn a_batch_that_stopped_wears_the_word_its_cause_earns_with_an_id_and_without() {
         for finish in [Finish::SendTheRest, Finish::ResendTheId] {
-            let refused = stopped_at_three(Stopped::Refused("the edge names nothing"), finish);
+            let refused =
+                stopped_at_three(Stopped::Refused("the edge names nothing".into()), finish);
             assert_eq!(word(&refused), "change");
             let store = stopped_at_three(Stopped::Store, finish);
             assert_eq!(word(&store), "retry");

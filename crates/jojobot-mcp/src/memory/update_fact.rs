@@ -1081,10 +1081,10 @@ impl Jojobot {
                     let marked = self
                         .mark_what_defrag_archived(&fact.subject, args.sid.clone())
                         .await;
-                    if let super::archive_mark::Marked::NotMade(why) = &marked
+                    if let super::archive_mark::Marked::NotMade(why, cause) = &marked
                         && jojobot_domain::request::carries_an_id()
                     {
-                        return Ok(self.mark_still_owed(why));
+                        return Ok(self.mark_still_owed(why, cause));
                     }
                     if move_plan.is_some() || !clears_due_on {
                         jojobot_domain::request::finished();
@@ -1098,12 +1098,13 @@ impl Jojobot {
                         // The clear of an edit that also moves a section is not a
                         // part of the move's plan, so it stays best effort.
                         Some(_) => {
-                            self.clear_stored_due_moment(
-                                &fact.subject,
-                                &caller.bot,
-                                caller.sid.as_str(),
-                            )
-                            .await;
+                            let _ = self
+                                .clear_stored_due_moment(
+                                    &fact.subject,
+                                    &caller.bot,
+                                    caller.sid.as_str(),
+                                )
+                                .await;
                         }
                         None => {
                             if let Some(unfinished) = self
@@ -1646,10 +1647,15 @@ impl Jojobot {
                     if jojobot_domain::request::carries_an_id() {
                         return Err(Ok(crate::caller::handle_declined(
                             "update_fact",
-                            crate::answer::WayForward::retry(format!(
-                                "{to_finish}, with the same request_id: the move is finished \
-                                 in the places the first call chose."
-                            )),
+                            crate::stopped::Stopped::of_memory(&e).unfinished(
+                                &format!(
+                                    "{} of {} parts of the section moved and stay.",
+                                    moved.len(),
+                                    rest.len() + 1
+                                ),
+                                "Send the same call again with the same request_id: the move is \
+                                 finished in the places the first call chose.",
+                            ),
                         )));
                     }
                     return Err(super::documents::stopped_with(
@@ -1711,8 +1717,8 @@ impl Jojobot {
             let marked = self
                 .mark_what_defrag_archived(&fact.subject, args.sid.clone())
                 .await;
-            if let super::archive_mark::Marked::NotMade(why) = &marked {
-                return Ok(self.mark_still_owed(why));
+            if let super::archive_mark::Marked::NotMade(why, cause) = &marked {
+                return Ok(self.mark_still_owed(why, cause));
             }
             Some(marked)
         } else {
@@ -1787,8 +1793,10 @@ impl Jojobot {
             let marked = self
                 .mark_what_defrag_archived(&fact.subject, args.sid.clone())
                 .await;
-            if let super::archive_mark::Marked::NotMade(why) = &marked {
-                return Ok(self.mark_still_owed(why));
+            if let super::archive_mark::Marked::NotMade(why, cause) = &marked
+                && jojobot_domain::request::carries_an_id()
+            {
+                return Ok(self.mark_still_owed(why, cause));
             }
             Some(marked)
         } else {

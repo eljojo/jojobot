@@ -398,6 +398,10 @@ mod request_id_repeat_waits;
 mod request_ids;
 #[path = "user_stories/request_ids_in_parts.rs"]
 mod request_ids_in_parts;
+/// A write that stopped after its first part is told from why the next part
+/// stopped whether a resend finishes it.
+#[path = "user_stories/resend_advice.rs"]
+mod resend_advice;
 /// A rhythm recurs on the calendar, written as an RFC 5545 rule.
 #[path = "user_stories/rhythm_calendar.rs"]
 mod rhythm_calendar;

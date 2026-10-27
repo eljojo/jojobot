@@ -307,10 +307,10 @@ impl Jojobot {
                         if jojobot_domain::request::carries_an_id() {
                             return Ok(crate::caller::handle_declined(
                                 "journal",
-                                crate::answer::WayForward::retry(
-                                    "The entry is recorded, and the focus did not move. Send the same \
-                                 call again with the same request_id: the entry is not written \
-                                 twice and the focus moves.",
+                                crate::stopped::Stopped::of_session(&e).unfinished(
+                                    "The entry is recorded, and the focus did not move.",
+                                    "Send the same call again with the same request_id: the \
+                                     entry is not written twice and the focus moves.",
                                 ),
                             ));
                         }
@@ -348,10 +348,11 @@ impl Jojobot {
                 if jojobot_domain::request::carries_an_id() {
                     return Ok(crate::caller::handle_declined(
                         "journal",
-                        crate::answer::WayForward::retry(
+                        crate::stopped::Stopped::of_memory(&e).unfinished(
                             "The entry is recorded, and the thing you are working on was not \
-                             set. Send the same call again with the same request_id: the entry \
-                             is not written twice and the work is set.",
+                             set.",
+                            "Send the same call again with the same request_id: the entry is \
+                             not written twice and the work is set.",
                         ),
                     ));
                 }

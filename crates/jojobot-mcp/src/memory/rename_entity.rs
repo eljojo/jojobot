@@ -22,13 +22,14 @@ impl Jojobot {
         &self,
         from: &EntityId,
         to: &EntityId,
-    ) -> (Vec<(&'static str, serde_json::Value)>, bool) {
+    ) -> (
+        Vec<(&'static str, serde_json::Value)>,
+        Option<crate::stopped::Stopped>,
+    ) {
         use jojobot_domain::request::{Part, part};
         match part("box", None, self.mailboxes.repoint_owner(from, to)).await {
-            Part::Ran(Ok(Some(mailbox))) => {
-                (vec![("mailbox", mailbox.name.as_str().into())], false)
-            }
-            Part::Ran(Ok(None)) => (Vec::new(), false),
+            Part::Ran(Ok(Some(mailbox))) => (vec![("mailbox", mailbox.name.as_str().into())], None),
+            Part::Ran(Ok(None)) => (Vec::new(), None),
             // An earlier call moved the box, and said where in `landed`.
             Part::Recorded(recorded) => {
                 let named = serde_json::from_str::<serde_json::Value>(&recorded.landed)
@@ -38,7 +39,7 @@ impl Jojobot {
                     named
                         .map(|name| vec![("mailbox", name.into())])
                         .unwrap_or_default(),
-                    false,
+                    None,
                 )
             }
             // **Named rather than silent, for the reason `open_box_with`'s
@@ -57,7 +58,7 @@ impl Jojobot {
                     )
                     .into(),
                 )],
-                true,
+                Some(crate::stopped::Stopped::of_mailbox(&err)),
             ),
         }
     }
@@ -488,30 +489,39 @@ impl Jojobot {
             // `FoldBehind` is a write that landed with only the fold's
             // re-read failed (rule 130), so the reason is kept.
             use jojobot_domain::request::{Part, part};
-            let kept = match part("reason", None, written).await {
-                Part::Ran(written) => matches!(
-                    written,
-                    Ok(Guarded::Written(_))
-                        | Err(MemoryError::FoldBehind {
-                            landed: Landed::Fact(_),
-                            ..
-                        })
-                ),
-                Part::Recorded(_) => true,
-            };
+            let kept: Result<(), crate::stopped::Stopped> =
+                match part("reason", None, written).await {
+                    Part::Ran(Ok(Guarded::Written(_)))
+                    | Part::Ran(Err(MemoryError::FoldBehind {
+                        landed: Landed::Fact(_),
+                        ..
+                    }))
+                    | Part::Recorded(_) => Ok(()),
+                    // A claim the guard blocked wrote nothing, and the same call meets
+                    // the same block.
+                    Part::Ran(Ok(_)) => Err(crate::stopped::Stopped::Refused(
+                        "the claim that keeps the reason was blocked".into(),
+                    )),
+                    Part::Ran(Err(e)) => Err(crate::stopped::Stopped::of_memory(&e)),
+                };
             // **With an id the call is not finished until the reason is kept**:
-            // the same call sent again writes it and nothing else.
-            if !kept && jojobot_domain::request::carries_an_id() {
+            // the same call sent again writes it and nothing else, unless the step
+            // was refused, which the same call meets again.
+            if let Err(cause) = &kept
+                && jojobot_domain::request::carries_an_id()
+            {
                 return Ok(crate::caller::handle_declined(
                     "rename_entity",
-                    crate::answer::WayForward::retry(
-                        "The rename was written, and the reason it was let through was not. \
-                         Send the same call again with the same request_id and it writes the \
+                    cause.unfinished(
+                        "The rename was written, and the reason it was let through was not.",
+                        "Send the same call again with the same request_id and it writes the \
                          reason and the rest, and renames nothing twice.",
                     ),
                 ));
             }
-            if !kept && let Some(obj) = body.as_object_mut() {
+            if kept.is_err()
+                && let Some(obj) = body.as_object_mut()
+            {
                 obj.insert(
                     "reason_not_kept".into(),
                     "the rename landed and the reason could not be kept: set the \
@@ -520,14 +530,16 @@ impl Jojobot {
                 );
             }
         }
-        let (box_answer, box_failed) = self.repoint_mailbox(from, &entity.id).await;
-        if box_failed && jojobot_domain::request::carries_an_id() {
+        let (box_answer, box_stopped) = self.repoint_mailbox(from, &entity.id).await;
+        if let Some(cause) = &box_stopped
+            && jojobot_domain::request::carries_an_id()
+        {
             return Ok(crate::caller::handle_declined(
                 "rename_entity",
-                crate::answer::WayForward::retry(
-                    "The rename was written, and the box that follows it was not moved. Send \
-                     the same call again with the same request_id and it moves the box and \
-                     renames nothing twice.",
+                cause.unfinished(
+                    "The rename was written, and the box that follows it was not moved.",
+                    "Send the same call again with the same request_id and it moves the box \
+                     and renames nothing twice.",
                 ),
             ));
         }

@@ -141,10 +141,11 @@ impl Jojobot {
             if jojobot_domain::request::carries_an_id() {
                 return Ok(handle_declined(
                     "set_charter",
-                    WayForward::retry(
+                    crate::stopped::Stopped::of_session(&e).unfinished(
                         "The charter was written, and the note that tells the bot's running \
-                         sessions it changed was not. Send the same call again with the same \
-                         request_id and it writes the note and nothing else.",
+                         sessions it changed was not.",
+                        "Send the same call again with the same request_id and it writes the \
+                         note and nothing else.",
                     ),
                 ));
             }

@@ -103,7 +103,10 @@ impl InMemoryMailboxes {
                 if ledger.spend(claim, landed()) {
                     Ok(())
                 } else {
-                    Err(MailboxError::Conflict)
+                    Err(match ledger.take_refusal() {
+                        Some(words) => MailboxError::Refused(words),
+                        None => MailboxError::Conflict,
+                    })
                 }
             }
             None => {
