@@ -183,7 +183,39 @@ impl Blindable {
     }
 }
 
-#[jojobot_domain::forward(jojobot_domain::forward_memory, via = inner)]
+// **Only the methods this double forwarded before are forwarded.** The bulk reads
+// the port defaults (`key_trails_many`, `claim_histories_many`) are built from the
+// single reads this double changes, so forwarding them straight to the inner store
+// would skip its blindness and its missing moments.
+#[jojobot_domain::forward(
+    jojobot_domain::forward_memory,
+    via = inner,
+    required_only,
+    also(
+        add_entity,
+        add_entity_with_first_claim,
+        archive_entity,
+        capture,
+        declare_kind,
+        declare_type,
+        declared_kinds,
+        declared_types,
+        former_handles,
+        history,
+        keys_holding,
+        list_entities,
+        merge,
+        recall,
+        reclaim_kind,
+        rename_entity,
+        restore_entity,
+        retract,
+        set_prose,
+        update_entity,
+        update_entity_with_claim,
+        update_fact
+    )
+)]
 impl jojobot_domain::memory::Memory for Blindable {
     async fn scan(
         &self,
