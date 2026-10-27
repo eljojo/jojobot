@@ -4,6 +4,7 @@ lib-jojobot-adapters
 lib-jojobot-bar
 lib-jojobot-domain
 lib-jojobot-exercise
+lib-jojobot-forward
 lib-jojobot-mcp
 lib-jojobot-ports
 lib-jojobot-roster
@@ -65,6 +66,7 @@ test-dolt_storage_check_rows
 test-dolt_store
 test-dolt_ungrouped_max
 test-dolt_without_a_home
+test-doubles_follow_the_port
 test-entity_write_snapshot
 test-entrance
 test-exit_status
