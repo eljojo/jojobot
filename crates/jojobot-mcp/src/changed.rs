@@ -541,10 +541,16 @@ pub(crate) fn note_changed(body: &mut serde_json::Value, changed: Changed) {
         return;
     }
     if crate::write_receipts::single_write() {
+        // A claim's echo must not overwrite its thing's computed value when
+        // both changes name the same key.
         let values: serde_json::Map<String, serde_json::Value> = changed
             .changes
             .iter()
-            .filter_map(|change| Some((change.key.clone()?, change.value_after.clone()?)))
+            .filter_map(|change| {
+                let (key, value) = (change.key.as_ref()?, change.value_after.as_ref()?);
+                crate::write_receipts::derived_value(key, value)
+                    .then(|| (key.clone(), value.clone()))
+            })
             .collect();
         if !values.is_empty() {
             fields

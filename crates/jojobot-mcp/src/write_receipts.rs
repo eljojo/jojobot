@@ -5,11 +5,20 @@ use serde_json::{Map, Value, json};
 
 tokio::task_local! {
     pub(crate) static TOKEN_SAVING: Option<crate::settings::TokenSaving>;
-    pub(crate) static SINGLE_WRITE: bool;
+    pub(crate) static SINGLE_WRITE: Option<Call>;
 }
 
 pub(crate) fn single_write() -> bool {
-    SINGLE_WRITE.try_with(|single| *single).unwrap_or(false)
+    SINGLE_WRITE.try_with(Option::is_some).unwrap_or(false)
+}
+
+pub(crate) fn derived_value(key: &str, value: &Value) -> bool {
+    SINGLE_WRITE
+        .try_with(|call| {
+            call.as_ref()
+                .is_some_and(|call| call.sent(key) != Some(value))
+        })
+        .unwrap_or(false)
 }
 
 pub(crate) fn saving() -> bool {
@@ -70,6 +79,7 @@ pub(crate) fn compact(answered: &mut CallToolResponse) -> bool {
     true
 }
 
+#[derive(Clone)]
 pub(crate) struct Call {
     verb: String,
     args: Map<String, Value>,
@@ -318,6 +328,169 @@ mod tests {
     use crate::harness::TEST_SID;
     use crate::memory::testing::{Down, capture_args, capture_ok, ensure, healthy_and_down};
     use rmcp::model::{ClientCapabilities, ClientInfo, Implementation, ProtocolVersion};
+
+    async fn served(handler: &crate::Jojobot, verb: &str, mut args: Value) -> Value {
+        args["sid"] = TEST_SID.into();
+        let request = serde_json::from_value(json!({
+            "jsonrpc":"2.0", "id":1, "method":"tools/call",
+            "params":{"name":verb, "arguments":args}
+        }))
+        .expect("a tool request");
+        let (transport, mut replies) =
+            rmcp::transport::OneshotTransport::<rmcp::RoleServer>::new(request);
+        let mut info = ClientInfo::new(
+            ClientCapabilities::default(),
+            Implementation::new("receipt-case", "0.0.1"),
+        );
+        info.protocol_version = ProtocolVersion::V_2024_11_05;
+        let server = rmcp::service::serve_directly(handler.clone(), transport, Some(info));
+        let reply = replies.recv().await.expect("a tool response");
+        server.waiting().await.expect("the request ends");
+        let reply = serde_json::to_value(reply).expect("a JSON response");
+        let body: Value = serde_json::from_str(
+            reply["result"]["content"][0]["text"]
+                .as_str()
+                .unwrap_or_else(|| panic!("an answer: {reply}")),
+        )
+        .expect("an answer body");
+        assert_ne!(body["status"], "blocked", "{body}");
+        body
+    }
+
+    async fn counter_derivation(lean: bool) {
+        let handler = crate::harness::handler();
+        ensure(&handler, "person:homer").await;
+        served(
+            &handler,
+            "declare_type",
+            json!({
+                "name":"donut-counter", "fields":[{"key":"donuts", "holds":"number", "folds":"sum"}]
+            }),
+        )
+        .await;
+        served(
+            &handler,
+            "capture",
+            json!({
+                "subject":"person:homer", "content":"ate seven donuts", "sets":{"donuts":"7"}
+            }),
+        )
+        .await;
+        let second = served(
+            &handler,
+            "capture",
+            json!({
+                "subject":"person:homer", "content":"ate two donuts", "sets":{"donuts":"2"}
+            }),
+        )
+        .await;
+        if lean {
+            capture_ok(
+                &handler,
+                crate::memory::capture::CaptureArgs {
+                    sets: Some([("setting_token_saving".into(), "on".into())].into()),
+                    ..capture_args("bot:otto", "Use lean receipts")
+                },
+            )
+            .await;
+        }
+        let receipt = served(
+            &handler,
+            "update_fact",
+            json!({
+                "address":second["address"], "sets":{"donuts":"3"}
+            }),
+        )
+        .await;
+        let recalled = served(&handler, "recall", json!({"subject":"person:homer"})).await;
+        assert_eq!(
+            recalled["objects"][0]["fields"]["donuts"], "12",
+            "{recalled}"
+        );
+        assert_eq!(receipt["derived"]["donuts"], "12", "{receipt}");
+        if lean {
+            assert!(
+                receipt
+                    .as_object()
+                    .expect("a receipt")
+                    .keys()
+                    .all(|key| matches!(key.as_str(), "id" | "derived")),
+                "{receipt}"
+            );
+        } else {
+            assert_eq!(receipt["success"], true, "{receipt}");
+        }
+    }
+
+    #[tokio::test]
+    async fn normal_receipts_keep_a_counter_total_when_a_claim_echoes_the_input() {
+        counter_derivation(false).await;
+    }
+
+    #[tokio::test]
+    async fn lean_receipts_keep_a_counter_total_when_a_claim_echoes_the_input() {
+        counter_derivation(true).await;
+    }
+
+    #[tokio::test]
+    async fn lean_receipts_replay_a_faulted_setting_with_a_readable_control() {
+        use crate::memory::testing::{DownMemory, InMemoryMemory};
+        use jojobot_domain::request::testing::InMemoryRequests;
+        use std::sync::Arc;
+
+        let ledger = InMemoryRequests::new();
+        let memory = Arc::new(InMemoryMemory::seeded().with_requests(ledger.clone()));
+        let healthy = crate::harness::handler_over(memory.clone()).with_requests(ledger);
+        ensure(&healthy, "person:alpha").await;
+        capture_ok(
+            &healthy,
+            crate::memory::capture::CaptureArgs {
+                sets: Some([("setting_token_saving".into(), "on".into())].into()),
+                ..capture_args("bot:otto", "Use lean receipts")
+            },
+        )
+        .await;
+        let mut blind = healthy.clone();
+        blind.memory = Arc::new(DownMemory(Down::ImageFields, memory));
+        for (readable, handler) in [(true, &healthy), (false, &blind)] {
+            let args = json!({
+                "request_id":format!("setting-replay-{readable}"),
+                "subject":"person:alpha", "content":format!("Reads the map, readable={readable}")
+            });
+            let first = served(handler, "capture", args.clone()).await;
+            let replayed = served(handler, "capture", args).await;
+            assert_eq!(replayed["id"], "person:alpha", "{replayed}");
+            if readable {
+                assert_eq!(first, replayed, "a lean replay preserves its receipt");
+                assert!(
+                    replayed
+                        .as_object()
+                        .expect("a receipt")
+                        .keys()
+                        .all(|key| matches!(key.as_str(), "id" | "derived")),
+                    "{replayed}"
+                );
+            } else {
+                for receipt in [&first, &replayed] {
+                    assert_eq!(receipt["success"], true, "{receipt}");
+                    assert_eq!(receipt["token_saving"]["mode"], "normal", "{receipt}");
+                    assert_eq!(receipt["token_saving"]["setting_read"], false, "{receipt}");
+                }
+                assert_eq!(replayed["repeat"], true, "{replayed}");
+            }
+        }
+        let read = served(
+            &healthy,
+            "recall",
+            json!({"subject":"person:alpha", "facts":true}),
+        )
+        .await;
+        assert_eq!(
+            read["objects"][0]["facts"].as_array().map(Vec::len),
+            Some(2),
+            "each request id writes once: {read}"
+        );
+    }
 
     #[tokio::test]
     async fn lean_receipts_explain_an_unreadable_setting_over_the_served_tools() {

@@ -839,7 +839,7 @@ impl Jojobot {
         // A protocol error from the verb leaves through the `?` below and never
         // reaches `end_request`; see its note for why that is accepted.
         let ran = write_receipts::SINGLE_WRITE
-            .scope(receipt_call.is_some(), async {
+            .scope(receipt_call.clone(), async {
                 match &scope {
                     Some((scope, _flight)) => {
                         jojobot_domain::request::within(scope.clone(), self.tool_router.call(call))
