@@ -13,6 +13,7 @@ fn run_narrow(tag: &str, filter: &str) -> (Option<i32>, String, String, String) 
     )));
 
     fs::create_dir_all(&dir).expect("create scratch dir");
+    support::git_init(&dir);
     let cargo = dir.join("cargo");
     support::write_executable(
         &cargo,

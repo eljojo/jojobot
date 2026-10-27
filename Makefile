@@ -123,12 +123,14 @@ snapshot: ## Rewrite the checked-in files of every text a model reads
 # Set JOJOBOT_DEV_METRICS_URL to opt dev and narrow into build SLO samples.
 # It is off by default; a metrics push never changes the command's exit code.
 dev: ## The dev bar: format, build, and the tests and lint of what the branch touched
-	CARGO=$(CARGO) $(if $(BASE),BAR_DEV_BASE=$(BASE),) python3 scripts/build-metrics run dev -- $(CARGO) run -q --locked -p jojobot-bar -- dev
+	CARGO=$(CARGO) SIZE_BASE=$(or $(SIZE_BASE),$(BASE),main) $(if $(BASE),BAR_DEV_BASE=$(BASE),) python3 scripts/build-metrics run dev -- $(CARGO) run -q --locked -p jojobot-bar -- dev
 
 # **The inner loop, scoped to one crate.** Run it between edits.
 #
-# It checks the format, then runs that crate's tests, then lints that crate.
-# Those are the three ways a change inside one crate breaks on its own.
+# It checks size against the branch base before any cargo phase, then the
+# format, that crate's tests and its lint. BASE names a base other than main;
+# an explicit SIZE_BASE takes precedence, as it does for the boundary bar.
+# The size check also sees growth outside the selected crate.
 #
 # **It refuses when no crate is named.** A scoped target that widened to the
 # workspace by itself would make the narrow command and the full bar the same
@@ -181,7 +183,7 @@ CRATE ?=
 FILTER ?=
 narrow: ## The inner loop: one crate's tests and lint, plus the format check
 	@test -n "$(CRATE)" || { echo "make narrow needs a crate: make narrow CRATE=<name>"; exit 2; }
-	CARGO=$(CARGO) python3 scripts/build-metrics run narrow -- $(CARGO) run -q --locked -p jojobot-bar -- narrow --crate $(CRATE) $(if $(FILTER),--filter "$(FILTER)",)
+	CARGO=$(CARGO) SIZE_BASE=$(or $(SIZE_BASE),$(BASE),main) python3 scripts/build-metrics run narrow -- $(CARGO) run -q --locked -p jojobot-bar -- narrow --crate $(CRATE) $(if $(FILTER),--filter "$(FILTER)",)
 
 # 🚨 **Every target reports, and the count is what a reader takes from it.**
 #

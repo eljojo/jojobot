@@ -15,8 +15,14 @@ mod support;
 fn write_fake_cargo_always_green(dir: &Path) -> PathBuf {
     let path = dir.join("cargo");
     let script = r#"#!/bin/sh
+echo "$*" >> "$(dirname "$0")/argv.log"
 case " $* " in
-  *" --list "*) echo 'some::test::name: test'; exit 0 ;;
+  *" --list "*)
+    case " $* " in
+      *" --ignored "*) ;;
+      *) echo 'some::test::name: test' ;;
+    esac
+    exit 0 ;;
 esac
 case "$1" in
   test) echo 'test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s'; exit 0 ;;
@@ -539,23 +545,39 @@ fn net_positive_code_needs_a_reason_file_with_a_reason_in_it() {
     let _ = fs::remove_dir_all(&dir);
 }
 
-/// **`bar narrow` runs no size phase**: it is the inner loop between edits.
+/// Growth anywhere in the branch is refused before the selected crate builds.
 #[test]
-fn narrow_prints_no_size_line() {
+fn narrow_refuses_growth_in_another_crate_before_cargo_runs() {
     let dir = repo("narrow");
-    fs::write(dir.join("homer.rs"), lines_of(5001)).unwrap();
-    git(&dir, &["add", "homer.rs"]);
-    let fake_cargo = write_fake_cargo_always_green(&dir);
-    let output = support::output_fenced(
-        Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
-            .args(["narrow", "--crate", "jojobot-bar"])
-            .current_dir(&dir)
-            .env("TMPDIR", &dir)
-            .env("CARGO", &fake_cargo),
-    )
-    .expect("run bar narrow");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(!stdout.contains("size:"), "{stdout}");
+    let path = "crates/jojobot-domain/src/homer.rs";
+    let base = commit_files(
+        &dir,
+        &[("size-ratchet.toml", ratchet("")), (path, lines_of(5001))],
+    );
+    let args = ["narrow", "--crate", "jojobot-bar"];
+    let unchanged = bar_with(&dir, &args, Some(&base));
+    assert_eq!(unchanged.code, Some(0), "{}", unchanged.stdout);
+    assert!(
+        fs::read_to_string(dir.join("argv.log"))
+            .unwrap()
+            .contains("build --workspace"),
+        "a size-clean branch still builds"
+    );
+    fs::remove_file(dir.join("argv.log")).unwrap();
+    fs::write(dir.join(path), lines_of(5002)).unwrap();
+    let grew = bar_with(&dir, &args, Some(&base));
+    assert_eq!(grew.code, Some(1), "{}", grew.stdout);
+    assert!(grew.stdout.contains("size: FAILED"), "{}", grew.stdout);
+    assert!(
+        grew.stdout
+            .contains(&format!("{path}: red file grew from 5001 to 5002")),
+        "{}",
+        grew.stdout
+    );
+    assert!(
+        !dir.join("argv.log").exists(),
+        "the cheap refusal precedes every cargo phase"
+    );
     let _ = fs::remove_dir_all(&dir);
 }
 

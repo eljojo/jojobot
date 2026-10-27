@@ -43,6 +43,7 @@ fn scratch_dir(tag: &str) -> std::path::PathBuf {
     )));
 
     fs::create_dir_all(&dir).expect("create scratch dir");
+    support::git_init(&dir);
     dir
 }
 
