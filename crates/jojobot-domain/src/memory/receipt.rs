@@ -48,12 +48,14 @@ pub fn keep_on_rewrite(fact: &Fact, patch: &mut FactPatch, own: bool) {
 
 /// **The receipt a claim holds once a patch is applied.** A receipt the patch
 /// brings replaces the old one. A receipt certifies the words that were checked,
-/// so an observation whose words change without one holds none: its standing
-/// stays what it was, because an observation reads as a finding without a check.
-pub fn carry(fact: &mut Fact, patch: &FactPatch, brought: Option<Receipt>) {
+/// so an observation whose words change without one holds none, even when its
+/// own session rewrote them: its standing stays what it was, because an
+/// observation reads as a finding without a check. Sending the words back
+/// unchanged changes nothing.
+pub fn carry(fact: &mut Fact, reworded: bool, brought: Option<Receipt>) {
     if brought.is_some() {
         fact.receipt = brought;
-    } else if patch.content.is_some() && fact.provenance == Provenance::Observation {
+    } else if reworded && fact.provenance == Provenance::Observation {
         fact.receipt = None;
     }
 }

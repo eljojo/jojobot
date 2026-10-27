@@ -557,6 +557,36 @@ pub async fn a_settled_inference_reopens_when_another_session_rewrites_its_words
     assert_eq!(read.provenance, Provenance::Observation, "{read:?}");
     assert_eq!(read.standing, Standing::Settled, "{read:?}");
     assert_eq!(read.receipt, None, "{read:?}");
+
+    // **Sending an observation's own words back is not a rewrite**: it keeps the
+    // receipt it carries.
+    let checked = Receipt::Check("saw two racks".to_string());
+    store
+        .update_fact(
+            &seen.address(),
+            settle(Some(checked.clone())),
+            &other_caller(),
+        )
+        .await
+        .expect("a check on the observation")
+        .written()
+        .expect("nothing blocks it");
+    let resent = store
+        .update_fact(
+            &seen.address(),
+            FactPatch {
+                content: Some("the bike has two racks".to_string()),
+                provenance: Some(Provenance::Observation),
+                session: Some("session-b".to_string()),
+                ..FactPatch::default()
+            },
+            &other_caller(),
+        )
+        .await
+        .expect("the same words are sent again")
+        .written()
+        .expect("nothing blocks it");
+    assert_eq!(resent.receipt, Some(checked), "{resent:?}");
 }
 
 /// Every spec above, in one call — see [`base::run_all`].

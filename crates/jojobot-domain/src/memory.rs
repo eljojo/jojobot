@@ -2227,6 +2227,8 @@ pub fn apply_fact_patch(fact: &mut Fact, patch: &FactPatch) -> Result<(), Memory
         validate_stands_for(stands_for)?;
     }
 
+    let reworded =
+        (patch.content.as_deref().map(normalize_content)).is_some_and(|c| c != fact.content);
     if let Some(content) = &patch.content {
         fact.content = normalize_content(content);
     }
@@ -2268,7 +2270,7 @@ pub fn apply_fact_patch(fact: &mut Fact, patch: &FactPatch) -> Result<(), Memory
         }
         fact.standing = standing;
     }
-    receipt::carry(fact, patch, receipt);
+    receipt::carry(fact, reworded, receipt);
     // **Cleared before set**, the order every pair here uses: a caller naming
     // both meant the edge it named.
     if patch.clear_edge {
