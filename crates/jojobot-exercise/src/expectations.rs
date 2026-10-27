@@ -74,48 +74,40 @@ pub const QUERYING_ROOM: &str = "rooms/querying.md";
 /// fact said in its key's own word.
 pub const ADOPTION_WORDING_ROOM: &str = "rooms/adoption-wording.md";
 
-/// TEMPORARY(9.3.1) the unconverted-room fallback. **The Rust half of a room that still has one** — what must be true of it
-/// afterwards, and what it is furnished with before anybody arrives.
-type InRust = (
-    fn() -> Vec<Box<dyn Expectation>>,
-    fn() -> anyhow::Result<Seed>,
-);
-
-/// One room: the document it is driven by, its Rust half when it has one, and
-/// whether a run that names none gets this one.
-type Room = (&'static str, Option<InRust>, bool);
+/// One room: the document it is driven by, and whether a run that names none
+/// gets this one.
+type Room = (&'static str, bool);
 
 /// **Every room this build ships.** A room is added here in one line, and a
 /// document that is not on this list is a document no run will drive.
 ///
-/// **`None` is a converted room**: its world and its locks are in its own
-/// document, which is where both are read from for every room — the Rust below
-/// is only what a room that has not been converted still falls back to.
+/// A room's world and its locks are in its own document, which is where both are
+/// read from.
 ///
 /// **Exactly one entry carries `true`** — decision log 299 — and this table is
 /// the only place that name lives; nothing outside it repeats it.
 const ROOMS: [Room; 13] = [
-    (BIKE_ROOM, None, false),
-    (LOOP_ROOM, None, false),
-    (YEAR_ROOM, None, false),
-    (HANDOVER_ROOM, None, false),
-    (VAULT_ROOM, None, true),
-    (DECISIONS_ROOM, None, false),
-    (ADOPTION_ROOM, None, false),
-    (ADOPTION_WORDING_ROOM, None, false),
-    (REPAIR_ROOM, None, false),
-    (TRICK_ROOM, None, false),
-    (AGENCY_ROOM, None, false),
-    (ASKING_ROOM, None, false),
-    (QUERYING_ROOM, None, false),
+    (BIKE_ROOM, false),
+    (LOOP_ROOM, false),
+    (YEAR_ROOM, false),
+    (HANDOVER_ROOM, false),
+    (VAULT_ROOM, true),
+    (DECISIONS_ROOM, false),
+    (ADOPTION_ROOM, false),
+    (ADOPTION_WORDING_ROOM, false),
+    (REPAIR_ROOM, false),
+    (TRICK_ROOM, false),
+    (AGENCY_ROOM, false),
+    (ASKING_ROOM, false),
+    (QUERYING_ROOM, false),
 ];
 
 /// **The room a run uses when none is named** — decision log 299.
 pub fn default_room() -> &'static str {
     ROOMS
         .iter()
-        .find(|(_, _, is_default)| *is_default)
-        .map(|(document, _, _)| *document)
+        .find(|(_, is_default)| *is_default)
+        .map(|(document, _)| *document)
         .expect("exactly one room in ROOMS must be marked default")
 }
 
@@ -139,22 +131,14 @@ pub fn shipped_playbook(name: &str) -> anyhow::Result<crate::playbook::Playbook>
 
 /// The documents this build ships, by name — what a caller may point a run at.
 pub fn shipped_rooms() -> impl Iterator<Item = &'static str> {
-    ROOMS.iter().map(|(document, _, _)| *document)
+    ROOMS.iter().map(|(document, _)| *document)
 }
 
 /// The expectations for a playbook, or nothing when none are written.
 ///
-/// **A room's own document is asked first.** The locks written beside the
-/// phases they belong to are the room's checks; the Rust list below is what a
-/// room used to be, and a room that has been converted is not in it.
+/// The locks written beside the phases they belong to are the room's checks.
 pub fn for_playbook(source: &str) -> Option<Vec<Box<dyn Expectation>>> {
-    if let Some(written) = locks_in(source) {
-        return Some(written);
-    }
-    ROOMS
-        .iter()
-        .find(|(document, _, _)| source.ends_with(document))
-        .and_then(|(_, rust, _)| rust.map(|(checks, _)| checks()))
+    locks_in(source)
 }
 
 /// The locks a room's document carries, or nothing when it carries none.
@@ -208,23 +192,11 @@ fn named_check(name: &str) -> Option<Box<dyn crate::run::Checks>> {
 /// message that was never posted fails on the harness rather than on the
 /// product, and the two halves in two files drift apart.
 pub fn seed_for(source: &str) -> anyhow::Result<Seed> {
-    // **The document furnishes its own room when it says how.** The Rust
-    // builders below are what a room used to be; a converted room's world is
-    // beside its story.
+    // **The document furnishes its own room**: its world is beside its story.
     let document = std::fs::read_to_string(source)
         .or_else(|_| std::fs::read_to_string(room_document(source)))
         .unwrap_or_default();
-    let written = crate::world::read(&document)?;
-    if !written.is_empty() {
-        return Ok(written);
-    }
-    match ROOMS
-        .iter()
-        .find(|(document, _, _)| source.ends_with(document))
-    {
-        Some((_, Some((_, furniture)), _)) => furniture(),
-        Some((_, None, _)) | None => Ok(Seed::new()),
-    }
+    crate::world::read(&document)
 }
 
 #[cfg(test)]
