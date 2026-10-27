@@ -32,14 +32,17 @@ pub fn rides_only_settled(
 /// inference's: an agent's new words are an inference whoever writes them. A
 /// receipt certifies the words that were checked, so another session's rewrite
 /// of a settled inference opens it again, and takes the receipt off, unless the
-/// rewrite brings its own receipt or names a standing.
+/// rewrite brings its own receipt. A rewrite that promotes the claim to
+/// testimony is left as sent.
 pub fn keep_on_rewrite(fact: &Fact, patch: &mut FactPatch, own: bool) {
     let inference = fact.provenance == Provenance::Inference;
     if patch.provenance.is_none() && (own || inference) {
         patch.provenance = Some(fact.provenance);
     }
-    if inference && !own && fact.standing == Standing::Settled && patch.receipt.is_none() {
-        patch.standing.get_or_insert(Standing::Open);
+    let stays_inference = patch.provenance == Some(Provenance::Inference);
+    let settled = fact.standing == Standing::Settled;
+    if inference && stays_inference && !own && settled && patch.receipt.is_none() {
+        patch.standing = Some(Standing::Open);
     }
 }
 

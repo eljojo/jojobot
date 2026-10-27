@@ -432,6 +432,14 @@ pub async fn a_settled_inference_reopens_when_another_session_rewrites_its_words
     let read = read_back(store, &subject, &guess.id).await;
     assert_eq!(read.content, "the bike has three locks");
     assert_eq!(read.standing, Standing::Open);
+    let writes = store.claim_history(&guess.address()).await.expect("reads");
+    assert_eq!(writes.len(), 3, "{writes:?}");
+    assert_eq!(
+        writes[1].receipt,
+        Some(Receipt::Check("counted two locks".to_string())),
+        "the settling write keeps its receipt in the history"
+    );
+    assert_eq!(writes[2].receipt, None, "the reopening write has none");
 
     store
         .update_fact(
@@ -459,6 +467,59 @@ pub async fn a_settled_inference_reopens_when_another_session_rewrites_its_words
         .expect("nothing blocks it");
     assert_eq!(kept.standing, Standing::Settled, "{kept:?}");
     assert_eq!(kept.receipt, Some(brought));
+
+    // **Naming settled does not carry the old receipt over the new words.**
+    let named = store
+        .update_fact(
+            &guess.address(),
+            FactPatch {
+                content: Some("the bike has five locks".to_string()),
+                standing: Some(Standing::Settled),
+                ..rewrite(None)
+            },
+            &other_caller(),
+        )
+        .await
+        .expect("a rewrite that names settled and no receipt")
+        .written()
+        .expect("nothing blocks it");
+    assert_eq!(named.standing, Standing::Open, "{named:?}");
+    assert_eq!(named.receipt, None, "{named:?}");
+
+    // **A rewrite that promotes the claim to testimony is not an inference's
+    // rewrite**: the operator's word leaves it settled on its receipt.
+    let said = capture(
+        store,
+        NewFact {
+            session: Some("session-a".to_string()),
+            ..NewFact::about(subject.clone(), "the bike has a bell", date(2026, 10, 1))
+        },
+    )
+    .await;
+    store
+        .update_fact(&said.address(), settled("heard the bell"), &other_caller())
+        .await
+        .expect("a check settles it")
+        .written()
+        .expect("nothing blocks it");
+    let promoted = store
+        .update_fact(
+            &said.address(),
+            FactPatch {
+                content: Some("the bike has a loud bell".to_string()),
+                provenance: Some(Provenance::Testimony),
+                confirmed_by_user: true,
+                session: Some("session-b".to_string()),
+                ..FactPatch::default()
+            },
+            &other_caller(),
+        )
+        .await
+        .expect("the operator confirmed the new words")
+        .written()
+        .expect("nothing blocks it");
+    assert_eq!(promoted.provenance, Provenance::Testimony, "{promoted:?}");
+    assert_eq!(promoted.standing, Standing::Settled, "{promoted:?}");
 }
 
 /// Every spec above, in one call — see [`base::run_all`].
