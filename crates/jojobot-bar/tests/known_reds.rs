@@ -48,7 +48,7 @@ case "$1" in
 esac
 "#
     );
-    support::write_executable(&path, &script);
+    support::write_loop_cargo(&path, &script);
     path
 }
 

@@ -10,6 +10,7 @@
 //! anywhere in it is a summary of a workspace that did not compile, not one
 //! that compiled and passed everything.
 
+pub mod binary_allowlist;
 pub mod bundle;
 mod calls;
 pub mod changes;
@@ -38,6 +39,14 @@ pub use reading::{History, JobRun, RecordedCall, read_history};
 pub use recording::{
     HISTORY_DIR_VARIABLE, Run, RunHeader, history_root, iso_utc, job_name, run_id,
 };
+
+/// **The cargo binary the outer `make` recipe was told to use.** The
+/// Makefile's own `CARGO ?= cargo` is an override hook, and this reads the
+/// same variable so a phase this build spawns honours it too rather than
+/// hardcoding a second, silently different default.
+pub fn cargo_bin() -> String {
+    std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string())
+}
 
 /// **What a `cargo test` run said about itself**, summed across every suite
 /// it printed a `test result:` line for.

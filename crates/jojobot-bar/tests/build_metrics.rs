@@ -263,7 +263,7 @@ fn build_metrics_bar_records_wall_time_for_phases_and_each_test_binary() {
         dir.join("metadata.json"),
         serde_json::json!({"workspace_root": dir, "packages": [{
             "name": "jojobot-domain", "manifest_path": dir.join("Cargo.toml"),
-            "targets": [{"kind": ["lib"]}, {"kind": ["test"], "name": "alpha"}]
+            "targets": [{"kind": ["lib"], "test": true}, {"kind": ["test"], "name": "alpha", "test": true}]
         }]})
         .to_string(),
     )
@@ -305,6 +305,9 @@ esac
 exit 0
 "#,
     );
+    let labels = dir.join("crates/jojobot-bar/build-metrics-binaries.txt");
+    std::fs::create_dir_all(labels.parent().unwrap()).unwrap();
+    std::fs::write(labels, "lib-jojobot-domain\ntest-alpha\n").unwrap();
     let exes: Vec<_> = [
         ("jojobot_domain-1", "unittests src/lib.rs"),
         ("alpha-2", "tests/alpha.rs"),
@@ -714,34 +717,7 @@ fn build_metrics_binary_allowlist_matches_the_workspace_test_binary_list() {
         String::from_utf8_lossy(&out.stderr)
     );
     let metadata: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    let mut binaries = std::collections::BTreeSet::new();
-    for package in metadata["packages"].as_array().unwrap() {
-        for target in package["targets"].as_array().unwrap() {
-            if target["test"] != true {
-                continue;
-            }
-            for kind in target["kind"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .filter_map(|v| v.as_str())
-            {
-                match kind {
-                    "lib" | "proc-macro" => {
-                        binaries.insert(format!("lib-{}", package["name"].as_str().unwrap()));
-                    }
-                    "bin" => {
-                        binaries.insert("bins".into());
-                    }
-                    "test" => {
-                        binaries.insert(format!("test-{}", target["name"].as_str().unwrap()));
-                    }
-                    _ => {}
-                }
-            }
-        }
-    }
-    let generated = binaries.into_iter().collect::<Vec<_>>().join("\n") + "\n";
+    let generated = jojobot_bar::binary_allowlist::from_metadata(&metadata).unwrap();
     assert_eq!(
         include_str!("../build-metrics-binaries.txt"),
         generated,

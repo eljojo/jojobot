@@ -21,8 +21,40 @@ pub fn run(args: &[String]) -> std::io::Result<ExitCode> {
 }
 
 pub fn phase(summary: &mut Summary) {
+    size_and_roster(summary);
+    if summary.green {
+        let _ = format_and_allowlist(summary);
+    }
+}
+
+pub fn size_and_roster(summary: &mut Summary) {
     size::phase(summary);
     roster(summary);
+}
+
+pub fn format_and_allowlist(summary: &mut Summary) -> Option<serde_json::Value> {
+    let started = std::time::Instant::now();
+    let args = ["fmt", "--all", "--check"];
+    let output = Command::new(crate::cargo_bin())
+        .args(args)
+        .env_remove("BAR_BUNDLE")
+        .output();
+    let took = started.elapsed();
+    let ok = output.as_ref().is_ok_and(|out| out.status.success());
+    crate::metrics::phase(&args, ok, took);
+    if !ok {
+        summary.phase_failed_in("fmt-check", "not formatted", took);
+        match output {
+            Ok(out) => {
+                summary.note(&String::from_utf8_lossy(&out.stdout));
+                summary.note(&String::from_utf8_lossy(&out.stderr));
+            }
+            Err(error) => summary.note(&error.to_string()),
+        }
+        return None;
+    }
+    summary.phase_ok_in("fmt-check", "formatted", took);
+    crate::binary_allowlist::phase(summary)
 }
 
 fn source_path(path: &Path) -> bool {

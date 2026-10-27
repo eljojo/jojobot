@@ -104,6 +104,12 @@ fn repository() -> PathBuf {
     // log reads as an untracked path in no package on a machine whose git config
     // ignores nothing, such as the build sandbox, and a clean tree is refused.
     fs::write(dir.join(".gitignore"), "/target\n").expect("write");
+    // The recorded metadata's labels, independent of today's workspace catalog.
+    fs::write(
+        dir.join("crates/jojobot-bar/build-metrics-binaries.txt"),
+        include_str!("fixtures/metadata-no-deps-binaries.txt"),
+    )
+    .unwrap();
     git(&dir, &["init", "-q", "-b", "main"]);
     git(&dir, &["add", "-A"]);
     git(&dir, &["commit", "-q", "-m", "start"]);
@@ -441,7 +447,7 @@ fn a_phase_that_ends_the_run_early_leaves_the_lint_not_run() {
     type Break = (&'static [&'static str], &'static str, bool);
     let breaks: [Break; 3] = [
         (&["fmt-fails"], "fmt-check: FAILED", false),
-        (&["metadata-fails"], "scope: FAILED", false),
+        (&["metadata-fails"], "metrics-allowlist: FAILED", false),
         (&["build-fails"], "build: FAILED", true),
     ];
     for (markers, said, built) in breaks {

@@ -44,6 +44,33 @@ pub fn write_executable(path: &Path, script: &str) {
     std::fs::set_permissions(path, perms).expect("chmod the executable");
 }
 
+/// A narrow-loop Cargo world declares one testable binary and its allowed label.
+pub fn write_loop_cargo(path: &Path, script: &str) {
+    let root = path.parent().unwrap();
+    let metadata = serde_json::json!({
+        "workspace_root": root,
+        "packages": [{"name": "jojobot-bar", "manifest_path": root.join("Cargo.toml"),
+            "dependencies": [], "targets": [{"name": "jojobot-bar", "kind": ["bin"], "test": true}]}]
+    });
+    std::fs::write(root.join("loop-metadata.json"), metadata.to_string()).unwrap();
+    let file = root.join("crates/jojobot-bar/build-metrics-binaries.txt");
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(file, "bins\n").unwrap();
+    let body = script.strip_prefix("#!/bin/sh\n").unwrap();
+    write_executable(
+        path,
+        &format!(
+            r#"#!/bin/sh
+if [ "$1" = metadata ]; then
+  echo "$*" >> "$(dirname "$0")/argv.log"
+  cat "$(dirname "$0")/loop-metadata.json"
+  exit $?
+fi
+{body}"#
+        ),
+    );
+}
+
 /// **Start a child, from the fork to the exec.** Every child a case starts goes
 /// through here, so this is the one place that decides how they start.
 pub fn fenced_spawn(cmd: &mut Command) -> std::io::Result<Child> {

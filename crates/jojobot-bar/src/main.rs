@@ -27,10 +27,10 @@ use jojobot_bar::changes::{changed_paths, git_stdout, pushed_paths};
 use jojobot_bar::dev;
 use jojobot_bar::{
     CALL_USAGE, HISTORY_DIR_VARIABLE, KnownReds, ROSTER_FILE, Run, RunHeader, Summary,
-    TEST_JOBS_VARIABLE, contained_from_exit, history_root, is_a_revision, is_slow, iso_utc,
-    job_args, jobs_limit, load_known_reds, new_roster_entries, parse_call, parse_job, read_history,
-    render_roster_report, report_line, report_plan, roster_entries, run_id, start_lines,
-    summarize_test_output, test_healthy, test_jobs, write_call,
+    TEST_JOBS_VARIABLE, cargo_bin, contained_from_exit, history_root, is_a_revision, is_slow,
+    iso_utc, job_args, jobs_limit, load_known_reds, new_roster_entries, parse_call, parse_job,
+    read_history, render_roster_report, report_line, report_plan, roster_entries, run_id,
+    start_lines, summarize_test_output, test_healthy, test_jobs, write_call,
 };
 
 mod local_upgrade;
@@ -39,14 +39,6 @@ mod plan;
 /// **The tests that are red and already have a card**, read from the directory
 /// the bar runs in, which is the repository root.
 const KNOWN_REDS_FILE: &str = "known-reds.toml";
-
-/// **The cargo binary the outer `make` recipe was told to use.** The
-/// Makefile's own `CARGO ?= cargo` is an override hook, and this reads the
-/// same variable so a phase this build spawns honours it too rather than
-/// hardcoding a second, silently different default.
-fn cargo_bin() -> String {
-    std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string())
-}
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -1059,7 +1051,7 @@ fn run_dev(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
     let log_path = PathBuf::from("target/bar/dev.log");
     fresh_log(&log_path)?;
     let mut summary = Summary::new();
-    jojobot_bar::static_checks::phase(&mut summary);
+    jojobot_bar::static_checks::size_and_roster(&mut summary);
     if !summary.green {
         for phase in ["fmt-check", "build", "test", "lint"] {
             summary.phase_skipped(phase);
@@ -1091,43 +1083,14 @@ fn run_dev(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
         });
     }
 
-    let started = std::time::Instant::now();
-    let (ok, _) = run_phase(
-        &log_path,
-        "cargo fmt --all --check",
-        &cargo,
-        &["fmt", "--all", "--check"],
-    )?;
-    let took = started.elapsed();
-    if !ok {
-        summary.phase_failed_in("fmt-check", "not formatted — see log", took);
-        summary.phase_skipped("build");
-        summary.phase_skipped("test");
-        summary.phase_skipped("lint");
+    let Some(metadata) = jojobot_bar::static_checks::format_and_allowlist(&mut summary) else {
+        for phase in ["build", "test", "lint"] {
+            summary.phase_skipped(phase);
+        }
         finish(&mut summary, &log_path);
         return Ok(ExitCode::FAILURE);
-    }
-    summary.phase_ok_in("fmt-check", "formatted", took);
-
-    // **Only stdout is read as metadata**: a warning on stderr is not JSON. The
-    // capture is large, so the log gets the command and any stderr, not the
-    // capture.
-    let metadata = in_the_run_root(&mut Command::new(&cargo))
-        .args(["metadata", "--no-deps", "--format-version", "1", "--locked"])
-        .output()?;
-    {
-        let mut f = OpenOptions::new().append(true).open(&log_path)?;
-        writeln!(
-            f,
-            "\n$ cargo metadata --no-deps --format-version 1 --locked"
-        )?;
-        f.write_all(&metadata.stderr)?;
-    }
-    let workspace = if metadata.status.success() {
-        dev::parse_metadata(&String::from_utf8_lossy(&metadata.stdout))
-    } else {
-        Err("cargo metadata failed — see log".to_string())
     };
+    let workspace = dev::parse_metadata(&metadata.to_string());
     let workspace = match workspace {
         Ok(workspace) => workspace,
         Err(reason) => {
@@ -1804,28 +1767,12 @@ fn run_narrow(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
     let mut summary = Summary::new();
     jojobot_bar::static_checks::phase(&mut summary);
     if !summary.green {
-        for phase in ["fmt-check", "build", "test", "lint"] {
+        for phase in ["build", "test", "lint"] {
             summary.phase_skipped(phase);
         }
         finish(&mut summary, &log_path);
         return Ok(ExitCode::FAILURE);
     }
-
-    let (ok, _) = run_phase(
-        &log_path,
-        "cargo fmt --all --check",
-        &cargo,
-        &["fmt", "--all", "--check"],
-    )?;
-    if !ok {
-        summary.phase_failed("fmt-check", "not formatted — see log");
-        summary.phase_skipped("build");
-        summary.phase_skipped("test");
-        summary.phase_skipped("lint");
-        finish(&mut summary, &log_path);
-        return Ok(ExitCode::FAILURE);
-    }
-    summary.phase_ok("fmt-check", "formatted");
 
     let (ok, text) = run_phase(
         &log_path,

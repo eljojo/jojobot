@@ -15,7 +15,7 @@ fn run_narrow(tag: &str, filter: &str) -> (Option<i32>, String, String, String) 
     fs::create_dir_all(&dir).expect("create scratch dir");
     support::loop_repository(&dir);
     let cargo = dir.join("cargo");
-    support::write_executable(
+    support::write_loop_cargo(
         &cargo,
         r#"#!/bin/sh
 echo "$*" >> "$(dirname "$0")/argv.log"

@@ -30,7 +30,7 @@ case "$1" in
   *) exit 0 ;;
 esac
 "#;
-    support::write_executable(&path, script);
+    support::write_loop_cargo(&path, script);
     path
 }
 

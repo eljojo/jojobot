@@ -93,7 +93,7 @@ size: ## The size ratchet: no new file over the cap, no listed file grows
 	CARGO=$(CARGO) $(CARGO) run -q --locked -p jojobot-bar -- size $(SIZE_ARGS)
 
 # The local pre-push gate shares its file and commit scans with dev and narrow.
-static: ## Cheap pre-push checks: size, fictional roster and commit messages
+static: ## Build-free checks: format, size, roster, commit messages, metrics allowlist
 	CARGO=$(CARGO) SIZE_BASE=$(or $(SIZE_BASE),$(BASE),main) $(BAR) static
 
 # **The files of every text a model reads.** A tool's description, an argument's

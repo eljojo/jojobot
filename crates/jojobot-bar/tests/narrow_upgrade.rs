@@ -13,7 +13,7 @@ fn narrow(krate: &str, names: &[&str], fixture: bool) -> (Option<i32>, String, S
     fs::create_dir_all(&dir).unwrap();
     support::loop_repository(&dir);
     let cargo = dir.join("cargo");
-    support::write_executable(
+    support::write_loop_cargo(
         &cargo,
         r#"#!/bin/sh
 echo "$*" >> "$(dirname "$0")/argv.log"

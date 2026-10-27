@@ -29,7 +29,7 @@ case "$1" in
   *) exit 0 ;;
 esac
 "#;
-    support::write_executable(&path, script);
+    support::write_loop_cargo(&path, script);
     path
 }
 
@@ -861,10 +861,14 @@ fn makefile_repo(tag: &str) -> (PathBuf, PathBuf, String, &'static str) {
                 "scripts/build-metrics",
                 fs::read_to_string(root.join("scripts/build-metrics")).unwrap(),
             ),
+            (
+                "crates/jojobot-exercise/Cargo.toml",
+                fs::read_to_string(root.join("crates/jojobot-exercise/Cargo.toml")).unwrap(),
+            ),
         ],
     );
     let cargo = dir.join("cargo");
-    support::write_executable(
+    support::write_loop_cargo(
         &cargo,
         r#"#!/bin/sh
 echo "$*" >> "$(dirname "$0")/argv.log"
@@ -873,6 +877,7 @@ case "$1" in
     while [ "$1" != -- ]; do shift; done
     shift
     exec "$BAR_CASE_BINARY" "$@" ;;
+  fmt) [ -f fmt-fails ] && exit 1; exit 0 ;;
   test)
     case " $* " in
       *" --list "*)
@@ -906,10 +911,12 @@ fn make_target(
     support::output_fenced(
         Command::new("make")
             .arg(target)
+            .env_remove("MAKEFLAGS")
             .current_dir(dir)
             .env("CARGO", cargo)
             .env("BAR_CASE_BINARY", env!("CARGO_BIN_EXE_jojobot-bar"))
             .env("SIZE_BASE", base)
+            .env("CRATE", "jojobot-bar")
             .env("SNAPSHOT_CASE", mode)
             .env_remove("JOJOBOT_DEV_METRICS_URL"),
     )
@@ -943,7 +950,9 @@ fn make_static_checks_size_sources_and_branch_commit_messages() {
     let calls = fs::read_to_string(dir.join("argv.log")).unwrap();
     assert!(!calls.is_empty());
     assert!(
-        calls.lines().all(|call| call.starts_with("run ")),
+        calls.lines().all(|call| ["run ", "fmt ", "metadata "]
+            .iter()
+            .any(|verb| call.starts_with(verb))),
         "{calls}"
     );
 
@@ -969,6 +978,57 @@ fn make_static_checks_size_sources_and_branch_commit_messages() {
     assert!(stdout.contains("commit-roster: FAILED"), "{stdout}");
     assert!(stdout.contains(&unlisted), "{stdout}");
     let _ = fs::remove_dir_all(&dir);
+}
+
+fn cheap_gate_refuses(target: &str, file: &str, phase: &str) {
+    let (dir, cargo, base, _) = makefile_repo("cheap-gate");
+    let run = || make_target(&dir, &cargo, &base, target, "same");
+    let clean = run();
+    assert!(clean.status.success(), "{clean:?}");
+    fs::remove_file(dir.join("argv.log")).unwrap();
+    let path = dir.join(file);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, "stale\n").unwrap();
+    let refused = run();
+    let stdout = String::from_utf8_lossy(&refused.stdout);
+    assert!(!refused.status.success(), "{stdout}");
+    assert!(stdout.contains(&format!("{phase}: FAILED")), "{stdout}");
+    let calls = fs::read_to_string(dir.join("argv.log")).unwrap();
+    assert!(
+        calls.lines().all(|call| !["build ", "test ", "clippy "]
+            .iter()
+            .any(|verb| call.starts_with(verb))),
+        "{calls}"
+    );
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn make_static_refuses_bad_format_before_any_build() {
+    cheap_gate_refuses("static", "fmt-fails", "fmt-check");
+}
+
+#[test]
+fn make_static_refuses_a_stale_binary_allowlist() {
+    cheap_gate_refuses(
+        "static",
+        "crates/jojobot-bar/build-metrics-binaries.txt",
+        "metrics-allowlist",
+    );
+}
+
+#[test]
+fn narrow_refuses_a_stale_binary_allowlist_before_any_build() {
+    cheap_gate_refuses(
+        "narrow",
+        "crates/jojobot-bar/build-metrics-binaries.txt",
+        "metrics-allowlist",
+    );
+}
+
+#[test]
+fn make_static_refuses_unreadable_cargo_metadata() {
+    cheap_gate_refuses("static", "loop-metadata.json", "metrics-allowlist");
 }
 /// **The owned markers are judged through the bar.** The marker texts are built
 /// here so this file never matches its own scan.
