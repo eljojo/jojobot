@@ -24,6 +24,9 @@
 
 use super::*;
 
+#[cfg(feature = "room-harness")]
+mod room_harness;
+
 use crate::seen::{Held, Version};
 use jiff::Timestamp;
 use jojobot_domain::mailbox::{Message, MessageEvent, MessageEventKind, MessageId};

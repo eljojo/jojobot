@@ -186,3 +186,127 @@ async fn room_harness_reads_preserve_the_occupants_boot_both_ways() {
     }
     assert_eq!(after, expected);
 }
+
+#[tokio::test]
+async fn room_harness_seed_keeps_the_scenario_author_and_opens_no_harness_run() {
+    let handler = room().await;
+    let grader = Harness::new(handler.clone());
+    grader.seed("bot:assistant", vec![
+        SeedWrite::AsTheOccupant("add_entity".into(), json!({
+            "kind":"person", "handle":"milhouse", "name":"Milhouse", "source":"the room"
+        })),
+        SeedWrite::AsTheOccupant("capture".into(), json!({
+            "subject":"person:milhouse", "content":"Milhouse prefers blue", "provenance":"testimony", "sets":{"colour":"blue"}
+        })),
+        SeedWrite::AsTheOccupant("post_message".into(), json!({
+            "to":"assistant", "subject":"the room's goal", "body":"Find the colour Milhouse prefers"
+        })),
+    ]).await.expect("furnished");
+    let facts = handler
+        .memory
+        .recall(&EntityId("person:milhouse".into()))
+        .await
+        .expect("facts");
+    assert_eq!(facts.len(), 1);
+    assert_eq!(
+        handler
+            .memory
+            .fields(&EntityId("person:milhouse".into()))
+            .await
+            .expect("fields")["colour"],
+        "blue"
+    );
+    let history = handler
+        .memory
+        .claim_history(&facts[0].address())
+        .await
+        .expect("history");
+    assert_eq!(
+        history
+            .last()
+            .expect("the seed write")
+            .bot
+            .as_ref()
+            .map(EntityId::as_str),
+        Some("bot:assistant")
+    );
+    assert!(history.iter().all(|write| write.session.is_none()));
+    let mail = handler.mailboxes.scan_messages().await.expect("mail");
+    assert_eq!(mail.len(), 1);
+    assert_eq!(mail[0].sender, "bot:assistant");
+    let events = handler
+        .mailboxes
+        .message_history(&mail[0].id)
+        .await
+        .expect("mail history");
+    assert!(events.iter().all(|event| event.by_session.is_none()));
+    assert!(
+        handler
+            .registry
+            .held_runs_of(&EntityId("bot:assistant".into()))
+            .is_empty()
+    );
+    assert!(
+        handler
+            .sessions
+            .all_summaries()
+            .await
+            .expect("runs")
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn room_harness_notices_resume_from_a_cursor_without_a_participant() {
+    let handler = room().await;
+    let grader = Harness::new(handler.clone());
+    grader
+        .seed(
+            "bot:assistant",
+            vec![SeedWrite::AsTheOccupant(
+                "add_entity".into(),
+                json!({
+                    "kind":"person", "handle":"milhouse", "name":"Milhouse", "source":"the room"
+                }),
+            )],
+        )
+        .await
+        .expect("furnished");
+    let first = grader.changes(Value::Null).await.expect("initial position");
+    assert_eq!(first["notices"], json!([]));
+    grader.seed("bot:assistant", vec![SeedWrite::AsTheOccupant("capture".into(), json!({
+        "subject":"person:milhouse", "content":"Milhouse prefers blue", "sets":{"colour":"blue"}
+    }))]).await.expect("a scenario write");
+    let changed = grader
+        .changes(first["position"].clone())
+        .await
+        .expect("notices");
+    assert!(
+        changed["notices"]
+            .as_array()
+            .expect("notices")
+            .iter()
+            .any(|notice| notice["handle"] == "person:milhouse"
+                && notice["claims_new"] == json!(["person:milhouse#f1"])),
+        "{changed}"
+    );
+    let unchanged = grader
+        .changes(changed["position"].clone())
+        .await
+        .expect("next position");
+    assert_eq!(unchanged["notices"], json!([]));
+    assert!(
+        handler
+            .registry
+            .held_runs_of(&EntityId("bot:assistant".into()))
+            .is_empty()
+    );
+    assert!(
+        handler
+            .sessions
+            .all_summaries()
+            .await
+            .expect("runs")
+            .is_empty()
+    );
+}

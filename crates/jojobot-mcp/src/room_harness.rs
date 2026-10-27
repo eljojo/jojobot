@@ -4,6 +4,9 @@ use crate::*;
 use rmcp::handler::server::wrapper::Parameters;
 use serde_json::Value;
 
+mod seed;
+pub use seed::SeedWrite;
+
 /// A grader holds the same ports as the occupant, but never enters dispatch.
 /// It creates no caller and never finishes an answer into a session's ledgers.
 pub struct Harness {
@@ -11,6 +14,10 @@ pub struct Harness {
 }
 
 impl Harness {
+    pub async fn changes(&self, position: Value) -> Result<Value, String> {
+        self.handler.harness_changes(position).await
+    }
+
     pub fn new(mut handler: Jojobot) -> Self {
         handler.grading = true;
         Self { handler }

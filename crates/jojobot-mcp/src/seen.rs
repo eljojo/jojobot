@@ -45,6 +45,7 @@ pub(crate) struct Shown {
 /// **What a session holds, by what names it.** An entity by its handle, a claim
 /// by its address, a message by its id.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "room-harness", derive(serde::Serialize, serde::Deserialize))]
 pub(crate) enum Held {
     Entity(String),
     Claim(String),
@@ -54,6 +55,7 @@ pub(crate) enum Held {
 /// **How a held thing stood when it was served**, to be compared with how it
 /// stands now. Each is the one value that moves when the thing is written.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "room-harness", derive(serde::Serialize, serde::Deserialize))]
 pub(crate) enum Version {
     /// The moment the store took in the newest write about the thing: its
     /// fields, its records of any status and its own row. `None` for a thing
