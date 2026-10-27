@@ -281,9 +281,21 @@ async fn b5_story_location_uses_the_members_kind() {
         "shape": "location", "object": object, "sets": {"keeps": "decision:springfield-12"}})
     };
     let direct = s.call("capture", visit("place:springfield")).await.json();
-    assert_eq!(direct["edge"]["object"], "place:springfield");
+    assert_eq!(
+        s.recall("thing:omega")
+            .await
+            .claim(direct["address"].as_str().expect("claim address"))
+            .json()["edge"]["object"],
+        "place:springfield"
+    );
     let numbered = s.call("capture", visit("topic:alpha/2")).await.json();
-    assert_eq!(numbered["edge"]["object"], "place:springfield");
+    assert_eq!(
+        s.recall("thing:omega")
+            .await
+            .claim(numbered["address"].as_str().expect("claim address"))
+            .json()["edge"]["object"],
+        "place:springfield"
+    );
     let address = numbered["address"].as_str().expect("a claim");
     let edited = s
         .call(
@@ -292,7 +304,13 @@ async fn b5_story_location_uses_the_members_kind() {
         )
         .await
         .json();
-    assert_eq!(edited["edge"]["object"], "place:springfield");
+    assert_eq!(
+        s.recall("thing:omega")
+            .await
+            .claim(edited["address"].as_str().expect("claim address"))
+            .json()["edge"]["object"],
+        "place:springfield"
+    );
     s.refused("capture", visit("place:shelbyville/2")).await;
     s.refused(
         "update_fact",

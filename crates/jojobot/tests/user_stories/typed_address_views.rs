@@ -236,9 +236,12 @@ async fn an_edit_sent_a_members_number_reports_an_edit_and_not_a_creation() {
         .json();
     assert_eq!(
         by_number["changed"],
-        json!([{"on": "decision:springfield-12", "what": "name",
-                "from": "Leads", "to": "Leads in the square"}]),
+        json!([{"on": "decision:springfield-12", "what": ["name"]}]),
         "{by_number}"
+    );
+    assert_eq!(
+        s.recall(&format!("{RULES}/12")).await.json()["objects"][0]["name"],
+        "Leads in the square"
     );
     let by_handle = s
         .call(
@@ -249,9 +252,12 @@ async fn an_edit_sent_a_members_number_reports_an_edit_and_not_a_creation() {
         .json();
     assert_eq!(
         by_handle["changed"],
-        json!([{"on": "decision:springfield-12", "what": "name",
-                "from": "Leads in the square", "to": "Leads on the square"}]),
+        json!([{"on": "decision:springfield-12", "what": ["name"]}]),
         "{by_handle}"
+    );
+    assert_eq!(
+        s.recall("decision:springfield-12").await.json()["objects"][0]["name"],
+        "Leads on the square"
     );
     let archived = s
         .call(

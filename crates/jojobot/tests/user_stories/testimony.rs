@@ -137,7 +137,7 @@ async fn a_run_rewrites_its_own_words_and_keeps_their_provenance() {
         )
         .await
         .json();
-    assert!(kept.get("provenance").is_none(), "{kept}");
+    assert_eq!(kept["provenance"], "testimony", "{kept}");
     assert_eq!(
         s.recall("thing:handcart")
             .await
@@ -152,7 +152,7 @@ async fn a_run_rewrites_its_own_words_and_keeps_their_provenance() {
         )
         .await
         .json();
-    assert!(guess_kept.get("provenance").is_none(), "{guess_kept}");
+    assert_eq!(guess_kept["provenance"], "inference", "{guess_kept}");
     assert_eq!(
         s.recall("thing:handcart").await.claim(&guessed).json()["provenance"],
         "inference"
@@ -247,7 +247,7 @@ async fn a_later_run_still_rewrites_an_earlier_runs_inference_in_place() {
         )
         .await
         .json();
-    assert!(landed.get("provenance").is_none(), "{landed}");
+    assert_eq!(landed["provenance"], "inference", "{landed}");
     assert_eq!(
         later.recall("thing:handcart").await.claim(&guess).json()["provenance"],
         "inference"

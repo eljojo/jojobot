@@ -471,7 +471,7 @@ async fn a_cut_rewrite_after_a_rename(reuse: bool, edit_fact: bool) {
     let finished = gamma.call(verb, ending).await.json();
     if edit_fact {
         assert_eq!(finished["address"], current_address, "{finished}");
-        assert_eq!(finished["subject"], "work:omega", "{finished}");
+        assert_eq!(finished["id"], "work:omega", "{finished}");
     } else {
         assert_eq!(finished["id"], "work:omega", "{finished}");
     }

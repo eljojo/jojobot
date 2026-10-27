@@ -2,12 +2,15 @@
 use super::dsl::Story;
 use serde_json::{Value, json};
 
-async fn fixed_set() -> Vec<(&'static str, Value)> {
+async fn fixed_set(lean: bool) -> Vec<(&'static str, Value)> {
     let story = Story::begin_pretending_it_is("bot:otto", "2026-10-23").await;
     let s = story.session_on("2026-10-23", None).await;
     s.add("bot:gamma", "Gamma").await;
     s.add("project:atlas", "Atlas").await;
     s.add("person:milhouse", "Milhouse").await;
+    if lean {
+        s.call("capture", json!({"subject":"bot:otto", "content":"Use lean receipts", "sets":{"setting_token_saving":"on"}})).await;
+    }
     let mut receipts: Vec<(&str, Value)> = Vec::new();
     let made = s
         .call(
@@ -38,7 +41,16 @@ async fn fixed_set() -> Vec<(&'static str, Value)> {
         )
         .await
         .json();
-    let address = plain["address"]
+    let read = s
+        .call("recall", json!({"subject":"person:alpha", "facts":true}))
+        .await
+        .json();
+    let address = read["objects"][0]["facts"]
+        .as_array()
+        .expect("claims")
+        .iter()
+        .find(|claim| claim["content"] == "plays chess")
+        .expect("written claim")["address"]
         .as_str()
         .expect("claim address")
         .to_string();
@@ -70,7 +82,7 @@ async fn fixed_set() -> Vec<(&'static str, Value)> {
         ),
         (
             "update_entity name aliases",
-            json!({"handle":"person:alpha", "name":"Alpha Gamma", "aliases":["Gamma"]}),
+            json!({"handle":"person:alpha", "name":"Delta", "aliases":["Zeta"]}),
         ),
         (
             "update_entity sets",
@@ -95,89 +107,114 @@ async fn fixed_set() -> Vec<(&'static str, Value)> {
 
 #[tokio::test]
 async fn lean_receipts_say_success_and_name_the_next_edit() {
-    let receipts = fixed_set().await;
-    for (label, body) in &receipts {
-        assert_eq!(body["success"], true, "{label}: {body}");
-        assert!(body["id"].is_string(), "{label}: {body}");
-        if label.starts_with("capture")
-            || label.starts_with("update_fact")
-            || *label == "add_entity f1"
-            || *label == "update_entity sets"
-        {
-            assert!(
-                body["address"]
-                    .as_str()
-                    .is_some_and(|address| address.contains("#f")),
-                "{label}: {body}"
-            );
+    for lean in [false, true] {
+        let receipts = fixed_set(lean).await;
+        for (label, body) in &receipts {
+            assert!(body["id"].is_string(), "{label}: {body}");
+            if lean {
+                assert!(
+                    body.get("success").is_none() && body.get("address").is_none(),
+                    "{label}: {body}"
+                );
+            } else {
+                assert_eq!(body["success"], true, "{label}: {body}");
+                if label.starts_with("capture")
+                    || label.starts_with("update_fact")
+                    || *label == "add_entity f1"
+                    || *label == "update_entity sets"
+                {
+                    assert!(
+                        body["address"]
+                            .as_str()
+                            .is_some_and(|address| address.contains("#f")),
+                        "{label}: {body}"
+                    );
+                }
+            }
         }
     }
 }
 
 #[tokio::test]
 async fn lean_receipts_keep_derivations_and_changed_keys_without_echoes() {
-    let receipts = fixed_set().await;
-    for (label, body) in &receipts {
-        let text = body.to_string();
-        for old in [
-            "content_head",
-            "content_bytes",
-            "content_elided",
-            "details_head",
-            "details_bytes",
-            "details_elided",
-            "fields_count",
-            "fields_elided",
-            "sets_count",
-            "sets_elided",
-            "inserted_at",
-        ] {
-            assert!(
-                !text.contains(&format!("\"{old}\"")),
-                "{label}: echoed {old}: {body}"
-            );
-        }
-        for old in [
-            "name",
-            "source",
-            "type",
-            "boot",
-            "alternateName",
-            "parent",
-            "edge",
-            "refs",
-            "subject",
-        ] {
-            assert!(body.get(old).is_none(), "{label}: {old}: {body}");
-        }
-        if let Some(changes) = body["changed"].as_array() {
-            let mut handles = std::collections::BTreeSet::new();
-            for change in changes {
+    for lean in [false, true] {
+        let receipts = fixed_set(lean).await;
+        for (label, body) in &receipts {
+            for old in [
+                "content_head",
+                "content_bytes",
+                "content_elided",
+                "details_head",
+                "details_bytes",
+                "details_elided",
+                "fields_count",
+                "fields_elided",
+                "sets_count",
+                "sets_elided",
+                "inserted_at",
+            ] {
                 assert!(
-                    handles.insert(change["on"].as_str().expect("one handle per group")),
-                    "{label}: repeated handle: {body}"
+                    !body.to_string().contains(&format!("\"{old}\"")),
+                    "{label}: echoed {old}: {body}"
                 );
+            }
+            for old in [
+                "name",
+                "source",
+                "type",
+                "boot",
+                "alternateName",
+                "parent",
+                "edge",
+                "refs",
+                "subject",
+            ] {
+                assert!(body.get(old).is_none(), "{label}: {old}: {body}");
+            }
+        }
+        if lean {
+            for (label, body) in &receipts {
                 assert!(
-                    change.get("to").is_none() && change.get("from").is_none(),
-                    "{label}: echoed change: {body}"
+                    body.as_object()
+                        .expect("receipt")
+                        .keys()
+                        .all(|key| matches!(key.as_str(), "id" | "derived")),
+                    "{label}: {body}"
                 );
             }
         }
+        for (label, body) in &receipts {
+            if let Some(changes) = body["changed"].as_array() {
+                let mut handles = std::collections::BTreeSet::new();
+                for change in changes {
+                    assert!(
+                        handles.insert(change["on"].as_str().expect("one handle per group")),
+                        "{label}: {body}"
+                    );
+                    assert!(
+                        change.get("to").is_none() && change.get("from").is_none(),
+                        "{label}: {body}"
+                    );
+                }
+            }
+        }
+        let f1 = &receipts[0].1;
+        assert_eq!(f1["derived"]["due_on"], "2026-10-26", "{f1}");
+        assert_eq!(receipts[2].1["derived"]["provenance"], "inference");
+        assert!(
+            receipts[5].1["derived"].get("provenance").is_none(),
+            "an explicit provenance is not derived: {}",
+            receipts[5].1
+        );
+        assert_eq!(f1.to_string().matches("2026-10-26").count(), 1, "{f1}");
+        if !lean {
+            assert_eq!(
+                f1["changed"][0]["keys"],
+                json!(["due_on", "owner", "runs_out", "status"]),
+                "{f1}"
+            );
+        }
     }
-    let f1 = &receipts[0].1;
-    assert_eq!(f1["derived"]["due_on"], "2026-10-26", "{f1}");
-    assert_eq!(f1.to_string().matches("2026-10-26").count(), 1, "{f1}");
-    assert_eq!(
-        f1["changed"][0]["keys"],
-        json!(["due_on", "owner", "runs_out", "status"]),
-        "{f1}"
-    );
-    assert_eq!(receipts[2].1["derived"]["provenance"], "inference");
-    assert!(
-        receipts[5].1["derived"].get("provenance").is_none(),
-        "an explicit provenance is not returned: {}",
-        receipts[5].1
-    );
 }
 
 #[tokio::test]

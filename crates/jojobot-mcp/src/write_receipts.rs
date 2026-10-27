@@ -248,7 +248,17 @@ impl Call {
         if derived.contains_key("due_on") {
             body["falls_due"] = true.into();
         }
+        // A rewrite that omits these learns whether the claim kept its label
+        // or reopened after its words changed.
+        let decided: Vec<_> = ["provenance", "standing"]
+            .into_iter()
+            .filter(|key| self.verb == "update_fact" && !self.args.contains_key(*key))
+            .filter_map(|key| body.get(key).cloned().map(|value| (key, value)))
+            .collect();
         trim_record(body);
+        for (key, value) in decided {
+            body[key] = value;
+        }
         for key in ["first_claim", "claim"] {
             if let Some(claim) = body.get_mut(key) {
                 trim_record(claim);
