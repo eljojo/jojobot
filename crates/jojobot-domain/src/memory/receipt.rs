@@ -31,18 +31,30 @@ pub fn rides_only_settled(
 /// writing session keeps its claim's provenance, and any session keeps an
 /// inference's: an agent's new words are an inference whoever writes them. A
 /// receipt certifies the words that were checked, so another session's rewrite
-/// of a settled inference opens it again, and takes the receipt off, unless the
-/// rewrite brings its own receipt, whatever provenance it names but testimony,
-/// which the operator confirmed and which is left as sent.
+/// of a settled inference opens it again, unless the rewrite brings its own
+/// receipt. A rewrite that names another provenance is left as sent: testimony
+/// is the operator's, and an observation is backed by the system it names.
 pub fn keep_on_rewrite(fact: &Fact, patch: &mut FactPatch, own: bool) {
     let inference = fact.provenance == Provenance::Inference;
     if patch.provenance.is_none() && (own || inference) {
         patch.provenance = Some(fact.provenance);
     }
-    let not_testimony = patch.provenance != Some(Provenance::Testimony);
+    let stays_inference = patch.provenance == Some(Provenance::Inference);
     let settled = fact.standing == Standing::Settled;
-    if inference && not_testimony && !own && settled && patch.receipt.is_none() {
+    if inference && stays_inference && !own && settled && patch.receipt.is_none() {
         patch.standing = Some(Standing::Open);
+    }
+}
+
+/// **The receipt a claim holds once a patch is applied.** A receipt the patch
+/// brings replaces the old one. A receipt certifies the words that were checked,
+/// so an observation whose words change without one holds none: its standing
+/// stays what it was, because an observation reads as a finding without a check.
+pub fn carry(fact: &mut Fact, patch: &FactPatch, brought: Option<Receipt>) {
+    if brought.is_some() {
+        fact.receipt = brought;
+    } else if patch.content.is_some() && fact.provenance == Provenance::Observation {
+        fact.receipt = None;
     }
 }
 

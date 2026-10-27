@@ -521,8 +521,9 @@ pub async fn a_settled_inference_reopens_when_another_session_rewrites_its_words
     assert_eq!(promoted.provenance, Provenance::Testimony, "{promoted:?}");
     assert_eq!(promoted.standing, Standing::Settled, "{promoted:?}");
 
-    // **A rewrite that reads the words in a system is no carry-over either**: the
-    // inference's receipt does not certify them.
+    // **A rewrite that reads the words in a system becomes an observation**: it
+    // stays settled, and the inference's receipt, which certified the old words,
+    // comes off.
     let seen = capture(
         store,
         NewFact {
@@ -554,7 +555,7 @@ pub async fn a_settled_inference_reopens_when_another_session_rewrites_its_words
         .written()
         .expect("nothing blocks it");
     assert_eq!(read.provenance, Provenance::Observation, "{read:?}");
-    assert_eq!(read.standing, Standing::Open, "{read:?}");
+    assert_eq!(read.standing, Standing::Settled, "{read:?}");
     assert_eq!(read.receipt, None, "{read:?}");
 }
 

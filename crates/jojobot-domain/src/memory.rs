@@ -2268,9 +2268,7 @@ pub fn apply_fact_patch(fact: &mut Fact, patch: &FactPatch) -> Result<(), Memory
         }
         fact.standing = standing;
     }
-    if let Some(receipt) = receipt {
-        fact.receipt = Some(receipt);
-    }
+    receipt::carry(fact, patch, receipt);
     // **Cleared before set**, the order every pair here uses: a caller naming
     // both meant the edge it named.
     if patch.clear_edge {
