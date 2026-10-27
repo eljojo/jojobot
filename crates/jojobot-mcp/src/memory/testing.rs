@@ -962,26 +962,6 @@ impl Memory for FailsOnCapture {
         }
         self.inner.capture(fact).await
     }
-    /// **An edit of a thing with a claim is an edit**: it counts toward
-    /// `edits_fail_from` and fails with the store error the other edits fail with,
-    /// not with the refusal the trait's default gives a store that cannot do it.
-    async fn update_entity_with_claim(
-        &self,
-        handle: &EntityId,
-        patch: EntityPatch,
-        claim: NewFact,
-    ) -> Result<Guarded<(Entity, Fact)>, MemoryError> {
-        let nth = self
-            .edits_seen
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
-            + 1;
-        if nth >= self.edits_fail_from {
-            return Err(MemoryError::Store("the store stopped taking edits".into()));
-        }
-        self.inner
-            .update_entity_with_claim(handle, patch, claim)
-            .await
-    }
     async fn update_fact(
         &self,
         address: &FactAddress,
