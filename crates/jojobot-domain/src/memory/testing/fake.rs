@@ -1743,6 +1743,7 @@ impl InMemoryMemory {
                 .map(|writer| self.chain_above_among(facts, writer)),
         );
         super::super::Lineage {
+            creating: false,
             above,
             named,
             above_named,

@@ -131,10 +131,10 @@ pub struct AddEntityArgs {
     pub(crate) parent: Option<String>,
     /// **What this call sets on the new thing**, written as its first claim in
     /// the same act, so a piece of work is made and says where it stands in one
-    /// call. The claim says the thing's name and carries these keys, exactly as
-    /// the keys of a `capture` would, and it faces every guard a capture does: a
-    /// key the kind declares is held to what it declares, and a key that holds a
-    /// handle must name a thing that exists.
+    /// call. Capture validation applies, except a NEW bot may name its caller
+    /// or a bot below that caller as its manager; adopting an existing unmanaged
+    /// bot is the assistant's alone. Declared keys are held to their declarations;
+    /// a key that holds a handle must name a thing that exists.
     ///
     /// A key that only labels a claim (`read_from`, `purpose`, `subject`) is never
     /// a property of the thing and is refused by name: create the thing, then
@@ -1646,13 +1646,24 @@ mod tests {
     /// 🚨 **A guarded key in a creation's `sets` is judged as a capture judges
     /// it.** `reports_to` is written only by whom its declaration licenses, and
     /// a creation that carried it in `sets` once skipped the check, so any
-    /// caller could place a new bot under any manager. A non-head caller is
-    /// refused and nothing is created; the assistant creates the same bot and
-    /// the chart reads back.
+    /// caller could place a new bot under any manager. Only the named manager
+    /// or a bot above it may place the new bot; an unrelated caller creates
+    /// nothing. This differs from adopting an existing unmanaged bot.
     #[tokio::test]
-    async fn a_creation_naming_a_manager_is_licensed_as_a_capture_is() {
+    async fn a_non_head_creates_a_new_bot_under_itself_or_below() {
         let jojobot = handler();
         ensure(&jojobot, "bot:omega").await;
+        ensure(&jojobot, "bot:assistant").await;
+        let assistant = as_bot(&jojobot, "assistant");
+        capture_as(
+            &jojobot,
+            &assistant,
+            CaptureArgs {
+                sets: Some([("reports_to".into(), "bot:assistant".into())].into()),
+                ..capture_args("bot:omega", "Omega reports to the assistant")
+            },
+        )
+        .await;
         let placing = |sid: String| AddEntityArgs {
             sid: Some(sid),
             sets: Some(
@@ -1693,17 +1704,32 @@ mod tests {
             "a refused creation leaves nothing behind: {after}"
         );
 
-        // The assistant creates the same bot, and it lands.
-        let assistant = as_bot(&jojobot, "assistant");
+        // The non-head creates the same bot under itself.
+        let omega = as_bot(&jojobot, "omega");
         let landed = json_of(
             &jojobot
-                .add_entity(Parameters(placing(assistant)))
+                .add_entity(Parameters(placing(omega.clone())))
                 .await
                 .expect("add ok"),
         );
         assert_ne!(landed["status"], "blocked", "{landed}");
         let held = fields_of(&jojobot, "bot:sigma").await;
         assert_eq!(held["reports_to"], "bot:omega", "{held}");
+        let below = json_of(
+            &jojobot
+                .add_entity(Parameters(AddEntityArgs {
+                    sid: Some(omega),
+                    sets: Some([("reports_to".into(), "bot:sigma".into())].into()),
+                    ..add_args("bot", "gamma", "Gamma")
+                }))
+                .await
+                .expect("create under a report"),
+        );
+        assert_ne!(below["status"], "blocked", "{below}");
+        assert_eq!(
+            fields_of(&jojobot, "bot:gamma").await["reports_to"],
+            "bot:sigma"
+        );
     }
     /// 🚨 **A creation at a handle a renamed thing used to wear is judged as the
     /// NEW thing it makes.** A rename frees the old handle, and a new bot may

@@ -2575,16 +2575,16 @@ pub const MAX_CHAIN: usize = 32;
 /// for a write that touches a key whose relation needs it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Lineage {
+    /// The subject is being created; existing subjects are adopted, not created.
+    pub creating: bool,
     /// The bots above the thing on its chain, nearest first.
     pub above: Vec<EntityId>,
     /// The manager the write names, if it names one.
     pub named: Option<EntityId>,
     /// The bots above `named` on its chain, nearest first.
     pub above_named: Vec<EntityId>,
-    /// **Whether any thing reports to the subject.** A thing with no manager
-    /// and reports of its own is the head of a chart. Read only for a write
-    /// that names a manager for a thing with none, because that is the one write
-    /// that asks.
+    /// Whether another thing reports to the subject, making it a chart head
+    /// when it has no manager. Asked only when giving an unmanaged thing a manager.
     pub has_reports: bool,
     /// **The guarded keys the subject holds now.** Read for a write that touches
     /// a key whose relation asks whether it is already held.
@@ -2856,9 +2856,11 @@ fn licensed(
                 (false, _) => l.above.contains(caller),
                 // A head places itself. Only the operator's assistant adopts
                 // an unmanaged leaf: adoption also grants its mailbox.
-                (true, Some(_)) => {
+                (true, Some(named)) => {
                     if l.has_reports {
                         caller == subject
+                    } else if l.creating {
+                        caller == named || l.above_named.contains(caller)
                     } else {
                         is_the_assistant(caller)
                     }
@@ -2897,6 +2899,12 @@ fn who_may_write(may: MayWrite, key: &str, subject: &EntityId, lineage: Managers
         (MayWrite::Superior, Some(l)) if l.has_reports && l.named.is_some() => {
             vec![subject.to_string()]
         }
+        (MayWrite::Superior, Some(l)) if l.creating => l
+            .named
+            .iter()
+            .chain(&l.above_named)
+            .map(ToString::to_string)
+            .collect(),
         (MayWrite::Superior, Some(l)) if l.named.is_some() => vec![ASSISTANT.to_string()],
         _ => Vec::new(),
     }

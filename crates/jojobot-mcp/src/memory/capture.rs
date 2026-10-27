@@ -1946,6 +1946,7 @@ impl Jojobot {
         }
         let above_writers = jojobot_domain::memory::thread_writers::above_the_writers(chains);
         Ok(jojobot_domain::memory::Lineage {
+            creating: false,
             above,
             named,
             above_named,
@@ -2005,6 +2006,7 @@ impl Jojobot {
             false
         };
         Ok(jojobot_domain::memory::Lineage {
+            creating: true,
             above: Vec::new(),
             named,
             above_named,

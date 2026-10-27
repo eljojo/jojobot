@@ -3413,10 +3413,9 @@ impl DoltMemory {
         ))
     }
 
-    /// **The chart around a write, read inside the write's own transaction**:
-    /// the bots above `subject`, the manager the write names and the bots above
-    /// that one. Read in the transaction so no chart change can land between the
-    /// question and the write it gates.
+    /// **An existing subject's chart, read in the write's own transaction.**
+    /// No chart change can land between the permission read and the write;
+    /// creation is checked before this path.
     async fn lineage_in(
         &self,
         tx: &mut Transaction<'_, MySql>,
@@ -3464,6 +3463,7 @@ impl DoltMemory {
         }
         let above_writers = jojobot_domain::memory::thread_writers::above_the_writers(chains);
         Ok(jojobot_domain::memory::Lineage {
+            creating: false,
             above,
             named,
             above_named,

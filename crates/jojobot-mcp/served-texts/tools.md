@@ -301,10 +301,10 @@ wrote nothing spends no id.
 ```text
 **What this call sets on the new thing**, written as its first claim in
 the same act, so a piece of work is made and says where it stands in one
-call. The claim says the thing's name and carries these keys, exactly as
-the keys of a `capture` would, and it faces every guard a capture does: a
-key the kind declares is held to what it declares, and a key that holds a
-handle must name a thing that exists.
+call. Capture validation applies, except a NEW bot may name its caller
+or a bot below that caller as its manager; adopting an existing unmanaged
+bot is the assistant's alone. Declared keys are held to their declarations;
+a key that holds a handle must name a thing that exists.
 
 A key that only labels a claim (`read_from`, `purpose`, `subject`) is never
 a property of the thing and is refused by name: create the thing, then
@@ -5529,7 +5529,7 @@ A bot that does not exist comes back status: blocked with the nearest handles â€
 Rules are not written here either: a rule is a claim about the bot: capture it.
 Neither is a short self-description for the colleagues view: capture sets.one_liner on this bot instead â€” that is the key view:colleagues reads, and a bot nobody has written one for shows up there with nothing to say.
 Who the bot reports to goes the same way: capture sets.reports_to on this bot, holding its manager's handle, and the colleagues view shows whom each bot reports to.
-The bot itself does not write it, except a bot that heads a chart, which has reports and no manager above it, and places itself: otherwise a bot above it on the chart does; only the operator's assistant adopts a bot with no manager.
+The bot itself does not write it, except a bot that heads a chart, which has reports and no manager above it, and places itself: otherwise a bot above it on the chart does; only the operator's assistant adopts an existing bot with no manager.
 The refusal names who may.
 Who reports to a bot is the other direction, a second call: recall that bot with follow, relation reports_to, direction in.
 ```

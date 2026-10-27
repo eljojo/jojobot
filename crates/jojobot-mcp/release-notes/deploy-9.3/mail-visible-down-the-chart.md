@@ -16,4 +16,4 @@ Homer manages Bart, who manages Lisa. Homer can find and read a message in Lisa'
 
 Read your own box to take delivery, then act and mark it processed. Read a report or your outbox by id to inspect it without taking delivery. For other mail above or beside you, use `post_message` to ask its owner. Processed mail follows the same rule. Mail you sent to the operator keeps its existing receipt-only exception.
 
-Only the operator's assistant adopts a bot with no manager. A bot already on the chart is moved by a bot above it. Naming yourself as an unmanaged bot's manager cannot grant you its mailbox.
+You may create a new bot under yourself or a bot below you; its new box is empty. Only the operator's assistant adopts an existing bot with no manager. A bot already on the chart is moved by a bot above it. Naming yourself as an unmanaged bot's manager cannot grant you its mailbox.
