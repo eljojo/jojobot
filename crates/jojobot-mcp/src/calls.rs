@@ -60,17 +60,21 @@ fn outcome_of(result: &Result<CallToolResponse, McpError>) -> CallOutcome {
             fix_by: error.data.as_ref().and_then(word),
             code: error.data.as_ref().and_then(code),
         },
-        Ok(CallToolResponse::Complete(_)) => match body_of(result) {
-            Some(body)
-                if body.get("status").and_then(serde_json::Value::as_str) == Some("blocked") =>
+        Ok(CallToolResponse::Complete(answer)) => {
+            let body = body_of(result);
+            if answer.is_error == Some(true)
+                || body.as_ref().is_some_and(|body| {
+                    body.get("status").and_then(serde_json::Value::as_str) == Some("blocked")
+                })
             {
                 CallOutcome::Refused {
-                    fix_by: word(&body),
-                    code: code(&body),
+                    fix_by: body.as_ref().and_then(word),
+                    code: body.as_ref().and_then(code),
                 }
+            } else {
+                CallOutcome::Landed
             }
-            _ => CallOutcome::Landed,
-        },
+        }
         // The protocol asking the client for something is no verb's answer.
         Ok(_) => CallOutcome::Landed,
     }

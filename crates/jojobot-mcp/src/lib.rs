@@ -621,7 +621,7 @@ impl ServerHandler for Jojobot {
         let (result, counted) = write_receipts::TOKEN_SAVING
             .scope(setting, self.serve_call(request, context))
             .await;
-        let result = result.map_err(crate::answer::stamp_missing_code);
+        let result = crate::answer::normalize_refusal(result);
         if counted {
             self.count_call(verb, caller, named_bot, &result, started.elapsed())
                 .await;

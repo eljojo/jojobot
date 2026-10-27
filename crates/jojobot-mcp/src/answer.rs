@@ -275,6 +275,43 @@ pub(crate) fn fix_by_of(error: &McpError) -> Option<FixBy> {
         .and_then(FixBy::of_token)
 }
 
+/// SDK parameter failures are error results, not protocol errors. Keep their
+/// content intact and give accounting the same bounded reason the client reads.
+pub(crate) fn normalize_refusal(
+    result: Result<CallToolResponse, McpError>,
+) -> Result<CallToolResponse, McpError> {
+    let mut response = result.map_err(stamp_missing_code)?;
+    if let CallToolResponse::Complete(answer) = &mut response
+        && answer.is_error == Some(true)
+    {
+        let mut body = answer
+            .structured_content
+            .take()
+            .or_else(|| {
+                answer.content.iter().find_map(|block| {
+                    serde_json::from_str::<serde_json::Value>(&block.as_text()?.text).ok()
+                })
+            })
+            .and_then(|body| body.as_object().cloned())
+            .unwrap_or_default();
+        let code = body
+            .get("refusal_code")
+            .and_then(serde_json::Value::as_str)
+            .map(|code| {
+                if listed_refusal_code(code) {
+                    code
+                } else {
+                    "unlisted"
+                }
+            })
+            .unwrap_or("InvalidArguments")
+            .to_string();
+        body.insert("refusal_code".into(), code.into());
+        answer.structured_content = Some(body.into());
+    }
+    Ok(response)
+}
+
 /// Router errors have no domain lane to name their reason.
 pub(crate) fn stamp_missing_code(error: McpError) -> McpError {
     if error

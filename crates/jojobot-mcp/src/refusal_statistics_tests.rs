@@ -4,7 +4,7 @@ use jojobot_domain::usage::{call_fields, run_verbs, weeks};
 use rmcp::{RoleServer, model::*, service::serve_directly, transport::OneshotTransport};
 use serde_json::{Value, json};
 
-async fn call(server: &Jojobot, verb: &str, mut args: Value) -> Value {
+async fn served(server: &Jojobot, verb: &str, mut args: Value) -> Value {
     args["sid"] = TEST_SID.into();
     let request = serde_json::from_value(json!({
         "jsonrpc":"2.0", "id":1, "method":"tools/call",
@@ -17,15 +17,8 @@ async fn call(server: &Jojobot, verb: &str, mut args: Value) -> Value {
         loop {
             let reply = replies.recv().await.expect("the router answers");
             let value = serde_json::to_value(reply).unwrap();
-            if let Some(result) = value.get("result") {
-                if let Some(body) = result.get("structuredContent") {
-                    break body.clone();
-                }
-                break serde_json::from_str(result["content"][0]["text"].as_str().unwrap())
-                    .unwrap();
-            }
-            if let Some(error) = value.get("error") {
-                break error["data"].clone();
+            if value.get("result").is_some() || value.get("error").is_some() {
+                break value;
             }
         }
     })
@@ -33,6 +26,17 @@ async fn call(server: &Jojobot, verb: &str, mut args: Value) -> Value {
     .expect("one in-memory call finishes");
     running.cancel().await.unwrap();
     response
+}
+
+async fn call(server: &Jojobot, verb: &str, args: Value) -> Value {
+    let response = served(server, verb, args).await;
+    if let Some(result) = response.get("result") {
+        if let Some(body) = result.get("structuredContent") {
+            return body.clone();
+        }
+        return serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+    }
+    response["error"]["data"].clone()
 }
 
 async fn counted(server: &Jojobot, verb: &str, code: &str) {
@@ -214,4 +218,57 @@ async fn refusal_statistics_protocol_errors_also_have_a_bounded_code() {
     let body = call(&server, "not_a_verb", json!({})).await;
     assert_eq!(body["refusal_code"], "ProtocolError", "{body}");
     counted(&server, "unserved", "ProtocolError").await;
+}
+
+#[tokio::test]
+async fn refusal_statistics_sdk_type_errors_are_served_counted_and_observed() {
+    use crate::observe::{CallEnd, CallObserver};
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Default)]
+    struct Observed(Mutex<Vec<(String, CallEnd, String)>>);
+    impl CallObserver for Observed {
+        fn call_answered(&self, verb: &str, end: CallEnd, code: &str, _: std::time::Duration) {
+            self.0.lock().unwrap().push((verb.into(), end, code.into()));
+        }
+    }
+    let observed = Arc::new(Observed::default());
+    let server = handler().with_call_observer(observed.clone());
+    crate::memory::testing::ensure(&server, "person:alpha").await;
+    call(
+        &server,
+        "capture",
+        json!({"subject":"person:alpha", "content":"Reads the map"}),
+    )
+    .await;
+    let args = json!({"subject":"person:alpha", "content":17, "sid":TEST_SID});
+    let message = serde_json::from_value::<crate::memory::capture::CaptureArgs>(args.clone())
+        .unwrap_err()
+        .to_string();
+    let response = served(&server, "capture", args).await;
+    let result = &response["result"];
+    let events = observed.0.lock().unwrap().clone();
+    assert_eq!(result["isError"], true, "{result}");
+    assert!(
+        result["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains(&message)
+    );
+    assert_eq!(
+        result["structuredContent"]["refusal_code"], "InvalidArguments",
+        "{result}; observer={events:?}"
+    );
+    counted(&server, "capture", "InvalidArguments").await;
+    assert_eq!(
+        events,
+        [
+            ("capture".into(), CallEnd::Answered, String::new()),
+            (
+                "capture".into(),
+                CallEnd::Refused,
+                "InvalidArguments".into()
+            ),
+        ]
+    );
 }
