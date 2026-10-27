@@ -1581,6 +1581,7 @@ dependencies = [
  "jojobot-adapters",
  "jojobot-domain",
  "jojobot-ports",
+ "jojobot-roster",
  "libc",
  "serde",
  "serde_json",

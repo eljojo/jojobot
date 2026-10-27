@@ -302,23 +302,10 @@ mod tests {
     #[test]
     fn strict_type_count_checks_every_key_present_candidate() {
         let _booted = InMemoryMemory::booted();
-        let roster = include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../jojobot-domain/tests/fixture_roster.rs"
-        ));
-        let ordinary = roster
-            .split_once("const ORDINARY: &[&str] = &[")
-            .unwrap()
-            .1
-            .split_once("];")
-            .unwrap()
-            .0;
-        let handles: std::collections::BTreeSet<_> = ordinary
-            .lines()
-            .filter_map(|line| {
-                let handle = line.trim().strip_prefix('"')?.split_once('"')?.0;
-                handle.starts_with("person:").then_some(handle)
-            })
+        let handles: std::collections::BTreeSet<_> = jojobot_roster::ORDINARY
+            .iter()
+            .copied()
+            .filter(|handle| handle.starts_with("person:"))
             .collect();
         assert!(handles.len() > 100, "a large kind from the roster");
         let candidates = handles.len();
