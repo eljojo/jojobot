@@ -6,9 +6,7 @@
 use super::*;
 use crate::harness::{as_bot, json_of};
 use crate::mailboxes::testing::{counts, mailbox_handler, owning, send};
-use crate::memory::testing::SpySearch;
-use jojobot_adapters::counted::Counted;
-use jojobot_domain::memory::testing::InMemoryMemory;
+use crate::memory::testing::{Down, healthy_and_down};
 use jojobot_domain::memory::{EntityId, EntityKind, MemoryError};
 
 /// Fold `duplicate` into `survivor`, as the survivor's own bot.
@@ -109,18 +107,9 @@ async fn mail_to_a_bot_folded_twice_reaches_the_last_survivor() {
     assert_eq!(receipt["folded"]["folded_into"], "bot:delta", "{receipt}");
 }
 
-/// A handler over a store a case can make unreachable for the bots listing.
-fn over_a_store_that_can_go_down() -> (Jojobot, Arc<Counted>) {
-    let counted = Arc::new(Counted::new(Arc::new(InMemoryMemory::booted())));
-    let jojobot = Jojobot::new(
-        counted.clone(),
-        Arc::new(SpySearch::default()),
-        Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner()),
-        Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),
-        Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
-        crate::harness::seeded_registry(),
-    );
-    (jojobot, counted)
+/// Paired handlers over a store whose bots listing the second cannot read.
+fn over_a_store_that_can_go_down() -> (Jojobot, Jojobot) {
+    healthy_and_down(Down::ListingKind("bot"))
 }
 
 /// **A bots listing that fails refuses the post with retry, and writes nothing**
@@ -128,14 +117,13 @@ fn over_a_store_that_can_go_down() -> (Jojobot, Arc<Counted>) {
 /// to the folded bot's own box. Paired with the same post once the listing reads.
 #[tokio::test]
 async fn a_post_over_an_unreadable_bots_listing_is_refused_with_retry_and_writes_nothing() {
-    let (jojobot, counted) = over_a_store_that_can_go_down();
+    let (jojobot, blind) = over_a_store_that_can_go_down();
     for bot in ["lisa", "delta", "bart"] {
         owning(&jojobot, bot).await;
     }
     fold(&jojobot, "bot:lisa", "bot:delta").await;
 
-    counted.set_unreachable(true);
-    let refused = jojobot
+    let refused = blind
         .post_message(Parameters(PostMessageArgs {
             request_id: None,
             to: "bot:lisa".into(),
@@ -155,7 +143,6 @@ async fn a_post_over_an_unreadable_bots_listing_is_refused_with_retry_and_writes
         Some("retry"),
         "{refused:?}"
     );
-    counted.set_unreachable(false);
     assert_eq!(waiting(&counts(&jojobot, "delta").await), 0);
     assert_eq!(waiting(&counts(&jojobot, "lisa").await), 0);
 
