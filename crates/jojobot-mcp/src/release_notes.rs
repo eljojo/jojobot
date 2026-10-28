@@ -59,6 +59,10 @@ pub(crate) struct Note {
 /// fails for it.
 pub(crate) const SHIPPED: &[(&str, &str)] = &[
     (
+        "memory-write-receipts",
+        include_str!("../release-notes/deploy-9.3.1/memory-write-receipts.md"),
+    ),
+    (
         "search-matching-passages",
         include_str!("../release-notes/deploy-9.3/search-matching-passages.md"),
     ),
