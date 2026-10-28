@@ -75,7 +75,7 @@ async fn a_bot_over_the_ceiling_is_renamed_by_a_handle_that_does_not_grow_its_bo
     let budget = jojobot_domain::text::BOOT_ANSWER.budget;
     let over = || async {
         jojobot
-            .boot_floors_of_bots()
+            .boot_floors_of_bots(&crate::memory::reads_left::ReadsLeft::default())
             .await
             .into_iter()
             .any(|(bot, floor)| bot.as_str() == "bot:gamma" && floor > budget)
