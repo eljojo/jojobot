@@ -87,7 +87,10 @@ async fn the_wrap_description_names_the_keys_of_the_roles_block_it_serves() {
         );
     }
     assert!(
-        described.contains("`held_until`") && described.contains("reason"),
+        described.contains("`held_until`")
+            && described
+                .split(|c: char| !c.is_alphanumeric() && c != '_')
+                .any(|word| word == "reason"),
         "the wrap description names what a held role carries"
     );
 }
