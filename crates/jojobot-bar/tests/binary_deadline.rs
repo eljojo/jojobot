@@ -40,11 +40,13 @@ case "$1" in
         sleep "$COMPILE_FOR"
         n=1
         while [ "$n" -le "$EXECUTABLES" ]; do
-          echo "     Running tests/beta_$n.rs (target/debug/deps/beta_$n-3)"
+          # Each executable is a different real file, named by its line.
+          if [ $((n % 2)) = 1 ]; then tool="$(command -v sleep)"; else tool="$(command -v python3)"; fi
+          echo "     Running tests/beta_$n.rs ($tool)"
           echo "test the_slow_case_$n ... started and printed before the hang"
           wait_for="$HANG_FOR"
           [ "$n" = 2 ] && wait_for="$SECOND_FOR"
-          sleep "$wait_for" &
+          if [ $((n % 2)) = 1 ]; then "$tool" "$wait_for" & else "$tool" -c 'import sys, time; time.sleep(float(sys.argv[1]))' "$wait_for" & fi
           echo $! > "$(dirname "$0")/sleep.pid"
           wait
           echo 'test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s'

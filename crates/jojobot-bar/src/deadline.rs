@@ -66,23 +66,85 @@ impl Watch {
         })
     }
 
-    /// The newest line since the last call that says an executable started.
-    fn newest_start(&mut self) -> std::io::Result<Option<String>> {
+    /// The lines since the last call that claim an executable started, oldest first.
+    fn starts(&mut self) -> std::io::Result<Vec<String>> {
         self.file.seek(SeekFrom::Start(self.position))?;
         let mut bytes = Vec::new();
         self.file.read_to_end(&mut bytes)?;
         self.position += bytes.len() as u64;
         self.partial.push_str(&String::from_utf8_lossy(&bytes));
         let Some(end) = self.partial.rfind('\n') else {
-            return Ok(None);
+            return Ok(Vec::new());
         };
         let whole: String = self.partial.drain(..=end).collect();
         Ok(whole
             .lines()
             .map(str::trim)
-            .rfind(|line| line.starts_with("Running ") || line.starts_with("Doc-tests "))
-            .map(str::to_string))
+            .filter(|line| line.starts_with("Running ") || line.starts_with("Doc-tests "))
+            .map(str::to_string)
+            .collect())
     }
+}
+
+/// **The path a `Running` line names**, the last parenthesis of the line. A
+/// `Doc-tests` line names none.
+fn claimed_path(line: &str) -> Option<&str> {
+    line.trim_end()
+        .strip_suffix(')')?
+        .rsplit_once('(')
+        .map(|(_, path)| path)
+}
+
+/// **What a process of the command's group runs now**: the file and its short name.
+/// Empty where `/proc` does not exist.
+fn group_members(group: u32) -> Vec<(Option<std::path::PathBuf>, String)> {
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter_map(|entry| {
+            let pid: u32 = entry.file_name().to_str()?.parse().ok()?;
+            let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+            // `pid (name) state parent group`: the name may hold spaces and
+            // parentheses, so the fields are counted from its last parenthesis.
+            let (head, rest) = stat.rsplit_once(')')?;
+            let member: u32 = rest.split_whitespace().nth(2)?.parse().ok()?;
+            (member == group).then(|| {
+                let exe = std::fs::read_link(format!("/proc/{pid}/exe")).ok();
+                (
+                    exe,
+                    head.split_once('(')
+                        .map_or("", |(_, name)| name)
+                        .to_string(),
+                )
+            })
+        })
+        .collect()
+}
+
+/// **Whether a `Running` or `Doc-tests` line is an executable that started.** The
+/// line is output, and a hung binary can print any line it likes, so the claim is
+/// checked against the group: a `Running` line counts when a process of the group
+/// runs the file it names, and not twice for one file; a `Doc-tests` line counts
+/// when `rustdoc` runs in the group. `Some(path)` is a start, with the path
+/// the line named. Without `/proc` a line is believed, as it was before.
+fn started(line: &str, group: u32, last: Option<&str>) -> Option<Option<String>> {
+    let path = claimed_path(line).map(str::to_string);
+    if !std::path::Path::new("/proc/self").exists() {
+        return Some(path);
+    }
+    let members = group_members(group);
+    let real = match &path {
+        Some(named) => {
+            last != Some(named.as_str())
+                && std::fs::canonicalize(named)
+                    .ok()
+                    .is_some_and(|file| members.iter().any(|(exe, _)| exe.as_ref() == Some(&file)))
+        }
+        None => line.starts_with("Doc-tests ") && members.iter().any(|(_, name)| name == "rustdoc"),
+    };
+    real.then_some(path)
 }
 
 /// **Run one command to its end, to its deadline, or to a stop.** The command
@@ -122,15 +184,30 @@ pub fn run_job_for(
     let mut child = command.process_group(0).spawn()?;
     let mut since = (clock == Clock::FromSpawn).then(Instant::now);
     let mut running = String::new();
+    // A line that claims a start waits a few seconds for the process it names.
+    let mut claims: Vec<(String, Instant)> = Vec::new();
+    let mut last_path: Option<String> = None;
     loop {
         if let Some(status) = child.try_wait()? {
             return Ok(Some(status.success()));
         }
-        if let Some(watch) = watch.as_mut()
-            && let Some(line) = watch.newest_start()?
-        {
-            since = Some(Instant::now());
-            running = line;
+        if let Some(watch) = watch.as_mut() {
+            let now = Instant::now();
+            claims.extend(watch.starts()?.into_iter().map(|line| (line, now)));
+            // A hung binary can print lines faster than they are judged.
+            let surplus = claims.len().saturating_sub(64);
+            claims.drain(..surplus);
+        }
+        for (line, seen) in std::mem::take(&mut claims) {
+            match started(&line, child.id(), last_path.as_deref()) {
+                Some(path) => {
+                    since = Some(Instant::now());
+                    running = line;
+                    last_path = path;
+                }
+                None if seen.elapsed() < Duration::from_secs(5) => claims.push((line, seen)),
+                None => {}
+            }
         }
         let stopped = stop.is_some_and(|stop| stop.load(Ordering::SeqCst));
         let late = since.is_some_and(|since| since.elapsed() >= limit);
@@ -190,6 +267,52 @@ mod tests {
     fn output(tag: &str) -> (std::path::PathBuf, File) {
         let path = std::env::temp_dir().join(crate::scratch::name(&format!("deadline-{tag}")));
         (path.clone(), File::create(path).unwrap())
+    }
+
+    /// **A hung binary that prints `Running` lines does not move its own deadline.**
+    /// The first line names the file the command runs and starts the clock; every
+    /// later line, whether it repeats that file or names one no process runs, starts
+    /// nothing, so the command is killed at the deadline of its first start.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_hung_command_that_prints_running_lines_is_still_killed() {
+        let (path, out) = output("fake-running");
+        let shell = std::fs::canonicalize("/bin/sh").unwrap();
+        let script = format!(
+            "n=0; while [ $n -lt 150 ]; do n=$((n + 1)); \
+               echo '     Running unittests a ({})'; \
+               echo '     Running unittests b (/no/such/binary)'; \
+               sleep 0.1; done",
+            shell.display()
+        );
+        let mut command = Command::new("/bin/sh");
+        command
+            .args(["-c", &script])
+            .stdout(out.try_clone().unwrap())
+            .stderr(out.try_clone().unwrap());
+        let began = Instant::now();
+        let ran = run_job_for(
+            Duration::from_secs(2),
+            &mut command,
+            None,
+            &path,
+            &out,
+            "hung",
+            Clock::PerExecutable,
+        )
+        .unwrap();
+        assert_eq!(ran, Some(false));
+        assert!(
+            began.elapsed() < Duration::from_secs(15),
+            "{:?}",
+            began.elapsed()
+        );
+        assert!(
+            std::fs::read_to_string(&path)
+                .unwrap()
+                .contains("TIMED OUT")
+        );
+        let _ = std::fs::remove_file(path);
     }
 
     /// **A stop wins over a deadline.** A command that both a stop and its deadline
