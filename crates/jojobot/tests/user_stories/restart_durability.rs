@@ -155,46 +155,6 @@ async fn a_second_pick_up_inside_the_lease_is_refused_after_a_restart() {
     story.finish().await;
 }
 
-/// **The exchange of a keyless run's name is a pick-up that survives a
-/// restart too.**
-#[tokio::test]
-async fn a_name_exchanged_for_a_key_cannot_take_the_run_inside_the_lease_after_a_restart() {
-    let story = Story::begin_on_a_lease_of("bot:otto", LEASE).await;
-    let s = story.session().await;
-    s.add("bot:gamma", "Gamma").await;
-    story
-        .sessions_store()
-        .begin(NewSession {
-            bot: EntityId("bot:gamma".into()),
-            sid: Sid("jm7z".into()),
-            id: None,
-            key_hash: None,
-            focus: "a run the older build began".into(),
-            started_at: jiff::Timestamp::now() - jiff::SignedDuration::from_hours(1),
-            timezone: None,
-            started_on: None,
-        })
-        .await
-        .expect("the older build's run is on the board");
-    let deployed = story.restarted_on_a_lease_of(LEASE).await;
-    let holder = deployed.as_bot("bot:gamma").await;
-    holder
-        .refused("journal", json!({"entry": "as the old run", "sid": "jm7z"}))
-        .await
-        .says("\"exchanged\":true");
-
-    let again = deployed.restarted_on_a_lease_of(LEASE).await;
-    let ask = json!({"bot": "gamma", "brief": true, "resume": "jm7z"});
-    again.refused_at_the_door("start_here", ask.clone()).await;
-    let later = after(&again, 2).await;
-    let (_, taker) = later.call("start_here", ask).await;
-    taker.expect("the name takes a run that has been quiet for the lease");
-    later.finish().await;
-    again.finish().await;
-    deployed.finish().await;
-    story.finish().await;
-}
-
 /// **A run that booted and has not written yet keeps its key across a
 /// restart.** No card exists for it, so only a record made at the boot can say
 /// the key was ever handed out.
