@@ -12,6 +12,7 @@ pub mod challenge;
 pub mod clock;
 pub mod handle;
 pub mod life;
+pub mod log;
 pub mod mailbox;
 pub mod memory;
 pub mod override_token;
