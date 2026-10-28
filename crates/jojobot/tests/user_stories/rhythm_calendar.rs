@@ -923,12 +923,11 @@ async fn a_rule_that_never_recurs_from_the_loops_own_day_is_refused_when_written
 
 /// "The first time I looked at the leap check was in an odd year."
 ///
-/// **The check-in that opens a loop gives it the day its rule runs from**, so
-/// the rule is asked about that day too. A rule written while the loop has no
-/// day yet lands; its first check-in on a day the rule never recurs from is
-/// refused, and the loop stays readable. On a day it recurs from, it lands.
+/// **The caller's check-in lands even when its computed schedule cannot.**
+/// The receipt names that partial write; the loop keeps its old schedule, and
+/// a check-in on a day the rule recurs from can still open it.
 #[tokio::test]
-async fn the_check_in_that_opens_a_loop_is_refused_on_a_day_its_rule_never_recurs_from() {
+async fn the_check_in_claim_lands_when_its_opening_schedule_cannot_recur() {
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
     s.add("person:homer", "Homer").await;
@@ -941,28 +940,44 @@ async fn the_check_in_that_opens_a_loop_is_refused_on_a_day_its_rule_never_recur
     s.recall("rhythm:leap-check").await.says("rrule");
 
     // The first check-in, on an odd-year day the rule never recurs from.
-    let refused = s
-        .refused(
+    let opening = s
+        .call(
             "capture",
             json!({"subject": "rhythm:leap-check", "content": "looked at it",
                    "provenance": "testimony", "recorded_at": "2027-03-01",
                    "check_in": "ran"}),
         )
         .await;
-    let way = refused.text_at("/how_to_proceed");
+    let receipt = opening.json();
+    assert_eq!(receipt["success"], true, "{receipt}");
+    assert_eq!(receipt["fix_by"], "change", "{receipt}");
+    assert!(receipt["schedule_not_written"].is_string(), "{receipt}");
+    let way = opening.text_at("/schedule_not_written");
     assert!(
         way.contains("2027-03-01"),
-        "the refusal names the day the rule would run from: {way}"
+        "the failed schedule names the day the rule would run from: {way}"
     );
-    // The loop reads as it did: no basis was written, and it still answers.
-    s.recall("rhythm:leap-check")
-        .await
-        .never_says("2027-03-01")
-        .says("rrule");
+    let read = s.recall("rhythm:leap-check").await.json();
+    let object = &read["objects"][0];
+    assert!(object["fields"]["counts_from"].is_null(), "{read}");
+    assert!(object["fields"]["anchored_on"].is_null(), "{read}");
+    assert!(
+        object["facts"]
+            .as_array()
+            .expect("claims")
+            .iter()
+            .any(
+                |fact| fact["address"] == receipt["address"] && fact["recorded_at"] == "2027-03-01"
+            ),
+        "the caller's claim remains readable: {read}"
+    );
 
     // The same check-in on an even-year day lands.
     checked_in(&s, "rhythm:leap-check", "2028-03-01", "ran").await;
-    s.recall("rhythm:leap-check").await.says("2028-03-01");
+    let read = s.recall("rhythm:leap-check").await.json();
+    let fields = &read["objects"][0]["fields"];
+    assert_eq!(fields["counts_from"], "2028-03-01", "{read}");
+    assert_eq!(fields["anchored_on"], "2028-03-01", "{read}");
 
     s.wrap("checked in on the wrong year and the right one")
         .await;
