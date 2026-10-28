@@ -1845,7 +1845,7 @@ fn run_narrow(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
         runnable
             .iter()
             .copied()
-            .filter(|name| local_upgrade::CASES.contains(name))
+            .filter(|name| local_upgrade::requires_fixture(name))
             .collect()
     } else {
         Vec::new()

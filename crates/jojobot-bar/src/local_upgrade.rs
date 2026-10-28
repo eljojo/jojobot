@@ -14,19 +14,6 @@ pub const CASES: &[&str] = &[
     "a_stored_mark_inside_code_reads_as_the_handle_on_the_current_binary",
     "a_thread_a_deployed_build_left_over_the_default_ceiling_reads_and_edits_as_before",
     "a_view_stored_with_a_filter_record_answers_as_before_on_the_current_binary",
-    "deaths::every_migration_added_since_the_last_release_has_a_death_case",
-    "deaths::tool_call_refusal_code::the_marker_stands_and_the_change_has_not_landed",
-    "deaths::tool_call_refusal_code::the_change_landed_and_the_ledger_row_is_missing",
-    "deaths::run_call_refusal_code::the_marker_stands_and_the_change_has_not_landed",
-    "deaths::run_call_refusal_code::the_change_landed_and_the_ledger_row_is_missing",
-    "deaths::tool_call_code_key_drop::the_marker_stands_and_the_change_has_not_landed",
-    "deaths::tool_call_code_key_drop::the_change_landed_and_the_ledger_row_is_missing",
-    "deaths::tool_call_code_key_add::the_marker_stands_and_the_change_has_not_landed",
-    "deaths::tool_call_code_key_add::the_change_landed_and_the_ledger_row_is_missing",
-    "deaths::run_call_code_key_drop::the_marker_stands_and_the_change_has_not_landed",
-    "deaths::run_call_code_key_drop::the_change_landed_and_the_ledger_row_is_missing",
-    "deaths::run_call_code_key_add::the_marker_stands_and_the_change_has_not_landed",
-    "deaths::run_call_code_key_add::the_change_landed_and_the_ledger_row_is_missing",
     "every_recorded_held_value_joins_to_an_entity",
     "everything_naming_a_handle_the_build_stopped_supplying_follows_the_row_the_boot_gave_it",
     "field_link_holds_the_links_the_writes_imply_and_nothing_else",
@@ -42,3 +29,7 @@ pub const CASES: &[&str] = &[
     "the_scan_for_oversized_records_finds_one_stored_over_the_ceiling",
     "what_the_operator_wrote_on_a_handle_the_build_stopped_supplying_reads_back_as_a_thing",
 ];
+
+pub fn requires_fixture(name: &str) -> bool {
+    name.starts_with("deaths::") || CASES.contains(&name)
+}

@@ -138,46 +138,38 @@ fn a_skip_that_would_also_drop_another_case_is_refused() {
 
 #[test]
 fn migration_deaths_obey_the_ci_fixture_boundary() {
-    for migration in [
-        "tool_call_refusal_code",
-        "run_call_refusal_code",
-        "tool_call_code_key_drop",
-        "tool_call_code_key_add",
-        "run_call_code_key_drop",
-        "run_call_code_key_add",
+    let migration = "future_migration";
+    for case in [
+        "the_marker_stands_and_the_change_has_not_landed",
+        "the_change_landed_and_the_ledger_row_is_missing",
     ] {
-        for case in [
-            "the_marker_stands_and_the_change_has_not_landed",
-            "the_change_landed_and_the_ledger_row_is_missing",
-        ] {
-            let name = format!("deaths::{migration}::{case}");
-            let (code, stdout, argv) = narrow("jojobot", &[&name], false);
-            assert_eq!(code, Some(2), "{name}: {stdout}");
-            assert!(stdout.contains("UPGRADE_FIXTURE_DIR"), "{stdout}");
-            assert!(
-                !argv
-                    .lines()
-                    .any(|line| line.starts_with("test ") && !line.contains("--list")),
-                "{argv}"
-            );
+        let name = format!("deaths::{migration}::{case}");
+        let (code, stdout, argv) = narrow("jojobot", &[&name], false);
+        assert_eq!(code, Some(2), "{name}: {stdout}");
+        assert!(stdout.contains("UPGRADE_FIXTURE_DIR"), "{stdout}");
+        assert!(
+            !argv
+                .lines()
+                .any(|line| line.starts_with("test ") && !line.contains("--list")),
+            "{argv}"
+        );
 
-            let (code, stdout, argv) = narrow("jojobot", &[&name, LOCAL], false);
+        let (code, stdout, argv) = narrow("jojobot", &[&name, LOCAL], false);
+        assert_eq!(code, Some(0), "{stdout}");
+        assert!(stdout.contains("1 runnable cases"), "{stdout}");
+        assert!(stdout.contains(&format!("selected: {LOCAL}")), "{stdout}");
+        assert!(
+            stdout.contains(&format!("skipped by design: {name}")),
+            "{stdout}"
+        );
+        assert!(argv.contains(&format!("--skip {name}")), "{argv}");
+
+        for (krate, fixture) in [("jojobot", true), ("jojobot-bar", false)] {
+            let (code, stdout, argv) = narrow(krate, &[&name, LOCAL], fixture);
             assert_eq!(code, Some(0), "{stdout}");
-            assert!(stdout.contains("1 runnable cases"), "{stdout}");
-            assert!(stdout.contains(&format!("selected: {LOCAL}")), "{stdout}");
-            assert!(
-                stdout.contains(&format!("skipped by design: {name}")),
-                "{stdout}"
-            );
-            assert!(argv.contains(&format!("--skip {name}")), "{argv}");
-
-            for (krate, fixture) in [("jojobot", true), ("jojobot-bar", false)] {
-                let (code, stdout, argv) = narrow(krate, &[&name, LOCAL], fixture);
-                assert_eq!(code, Some(0), "{stdout}");
-                assert!(stdout.contains("2 runnable cases"), "{stdout}");
-                assert!(stdout.contains(&format!("selected: {name}")), "{stdout}");
-                assert!(!argv.contains("--skip"), "{argv}");
-            }
+            assert!(stdout.contains("2 runnable cases"), "{stdout}");
+            assert!(stdout.contains(&format!("selected: {name}")), "{stdout}");
+            assert!(!argv.contains("--skip"), "{argv}");
         }
     }
 }
