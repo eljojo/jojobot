@@ -332,11 +332,21 @@ impl Jojobot {
                 elide_rule_details(rule);
             }
         }
-        // **The snapshot is read under the handle the store knows**, which a rename
-        // has not moved yet: the roster, the mail counts and the box hang on it. The
-        // two places it spells the handle are measured as they stand, a few
-        // characters short of a longer one.
-        let snapshot = self.snapshot_block(Some(bot), roster).await;
+        // The stored handle finds its box and counts; the proposed floor uses
+        // the handle and box name the rename leaves behind.
+        let mut snapshot = self.snapshot_block(Some(bot), roster).await;
+        if entity.id != standing.id
+            && let Some(bots) = snapshot["entities"]["bots"].as_array_mut()
+        {
+            for entry in bots {
+                if entry["handle"].as_str() == Some(standing.id.as_str()) {
+                    entry["handle"] = entity.id.as_str().into();
+                    if let Some(name) = entry["mail"].get_mut("name") {
+                        *name = entity.id.slug().into();
+                    }
+                }
+            }
+        }
         let skills_listed = crate::orientation::skills::index(self.skills, Some(bot));
         let total = floor_len(
             false,
@@ -695,6 +705,105 @@ mod tests {
     use crate::harness::*;
     use crate::mailboxes::testing::mailbox_handler;
     use crate::memory::testing::*;
+
+    #[tokio::test]
+    async fn a_rename_at_its_measured_ceiling_keeps_the_real_boot_within_it() {
+        let jojobot = mailbox_handler();
+        let mut length = super::super::floor_merge_tests::a_bot_at_the_brink(&jojobot, "mu").await;
+        let from = EntityId("bot:mu".into());
+        let to = EntityId("bot:epsilon".into());
+        let mut renamed = jojobot
+            .memory
+            .scan_entity(&from)
+            .await
+            .unwrap()
+            .unwrap()
+            .entity
+            .unwrap();
+        renamed.id = to.clone();
+        let reads = ReadsLeft::default();
+        let seats = jojobot.seats_read(&from, &reads).await.unwrap();
+        let budget = jojobot_domain::text::BOOT_ANSWER.budget;
+        let mut predicted = None;
+        for _ in 0..4 {
+            let held = jojobot.memory.recall(&from).await.unwrap();
+            let mut rehomed = held.clone();
+            for claim in &mut rehomed {
+                claim.home = to.clone();
+                claim.subject = to.clone();
+            }
+            let floor = jojobot
+                .boot_floor_if(
+                    &from,
+                    &rules_in_force(&rehomed),
+                    seats,
+                    None,
+                    None,
+                    Some(&renamed),
+                )
+                .await
+                .unwrap();
+            if floor.total <= budget {
+                predicted = Some(floor.total);
+                break;
+            }
+            let excess = floor.total - budget;
+            assert!(length > excess);
+            length -= excess;
+            let claim = held
+                .iter()
+                .find(|f| f.fields.get("starred").is_some_and(|v| v == "true"))
+                .unwrap();
+            jojobot
+                .memory
+                .update_fact(
+                    &claim.address(),
+                    FactPatch {
+                        content: Some("x".repeat(length)),
+                        provenance: Some(Provenance::Inference),
+                        ..Default::default()
+                    },
+                    &EntityId("bot:otto".into()),
+                )
+                .await
+                .unwrap()
+                .written()
+                .unwrap();
+        }
+        let predicted = predicted.expect("shrinking the rule leaves the proposed rename room");
+        assert!(budget - predicted < 2 * (to.as_str().len() - from.as_str().len()));
+        let answer = json_of(
+            &jojobot
+                .rename_entity(Parameters(crate::memory::rename_entity::RenameEntityArgs {
+                    request_id: None,
+                    handle: from.to_string(),
+                    to: to.to_string(),
+                    parent: None,
+                    recorded_at: None,
+                    override_token: None,
+                    override_reason: None,
+                    sid: Some(writing_as(&jojobot)),
+                }))
+                .await
+                .unwrap(),
+        );
+        assert_ne!(answer["status"], "blocked", "{answer}");
+        let actual = jojobot
+            .boot_floors_of_bots(&reads)
+            .await
+            .into_iter()
+            .find(|(bot, _)| bot == &to)
+            .unwrap()
+            .1;
+        assert!(
+            actual <= budget,
+            "accepted rename left floor {actual} over {budget}"
+        );
+        assert_eq!(
+            predicted, actual,
+            "the estimate must count the boot it leaves"
+        );
+    }
 
     /// **A bot's floor counts the skills listed for it.** Two bots whose boots
     /// differ only by a skill scoped to one of them have floors that differ by at
