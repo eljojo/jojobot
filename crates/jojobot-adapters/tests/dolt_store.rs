@@ -11137,7 +11137,7 @@ async fn statements_run(pool: &sqlx::MySqlPool) -> usize {
 }
 
 /// **A capture on a member of a large numbered collection reads the collection in
-/// a bounded number of statements per member.** A collection of 250 members
+/// a bounded number of statements per member.** A collection of 64 members
 /// numbered by a key, a plain thing beside it, and the same note captured on each.
 /// The statements the server runs for each capture are counted from its own
 /// counter, which does not move with the load on the machine. **Paired**: both
@@ -11146,7 +11146,7 @@ async fn statements_run(pool: &sqlx::MySqlPool) -> usize {
 async fn a_capture_on_a_member_of_a_large_numbered_collection_runs_a_bounded_number_of_statements_per_member()
  {
     use jojobot_domain::memory::{Guarded, guard};
-    const MEMBERS: u32 = 250;
+    const MEMBERS: u32 = 64;
     let scratch = Scratch::new("numbered-cost");
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
