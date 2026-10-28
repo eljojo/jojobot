@@ -32,6 +32,8 @@ use jiff::Timestamp;
 
 use crate::session::Sid;
 
+pub mod events;
+
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 
