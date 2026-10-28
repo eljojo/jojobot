@@ -4,10 +4,11 @@
 //! a box nobody reads.
 
 use super::*;
-use crate::harness::{as_bot, json_of};
+use crate::harness::{as_bot, handler_over, json_of};
 use crate::mailboxes::testing::{counts, mailbox_handler, owning, send};
 use crate::memory::testing::{Down, healthy_and_down};
-use jojobot_domain::memory::{EntityId, EntityKind, MemoryError};
+use jojobot_domain::memory::testing::InMemoryMemory;
+use jojobot_domain::memory::{Boot, Entity, EntityId, EntityKind, Memory, MemoryError};
 
 /// Fold `duplicate` into `survivor`, as the survivor's own bot.
 async fn fold(jojobot: &Jojobot, duplicate: &str, survivor: &str) {
@@ -207,4 +208,59 @@ async fn a_fold_into_a_handle_that_is_no_bot_is_damage_not_an_addressee() {
         matches!(refused, Err(MemoryError::StoredDamage { .. })),
         "{refused:?}"
     );
+}
+
+/// **A forwarding row from before merge events follows a renamed survivor.**
+/// A modern merge cannot create this fixture: it always writes an event.
+#[tokio::test]
+async fn a_fold_from_before_events_reaches_the_survivor_after_its_rename() {
+    let memory = Arc::new(InMemoryMemory::booted());
+    let jojobot = handler_over(memory.clone());
+    for bot in ["marge", "bart"] {
+        owning(&jojobot, bot).await;
+    }
+    memory.past_the_guard(Entity {
+        id: EntityId("bot:lisa".into()),
+        merged_into: Some(EntityId("bot:marge".into())),
+        kind: EntityKind::BOT,
+        name: "Lisa".into(),
+        aliases: Vec::new(),
+        folded_names: Vec::new(),
+        source: "legacy fixture".into(),
+        crm: None,
+        parent: None,
+        boot: Boot::OnDemand,
+        badge: None,
+        archived: None,
+    });
+    assert!(memory.merge_events(None).await.unwrap().is_empty());
+    let renamed = json_of(
+        &jojobot
+            .rename_entity(Parameters(
+                serde_json::from_value::<crate::memory::RenameEntityArgs>(serde_json::json!({
+                    "handle": "bot:marge", "to": "bot:delta", "sid": as_bot(&jojobot, "marge"),
+                }))
+                .unwrap(),
+            ))
+            .await
+            .expect("the survivor is renamed"),
+    );
+    assert_ne!(renamed["status"], "blocked", "{renamed}");
+    assert!(memory.merge_events(None).await.unwrap().is_empty());
+    let bots = memory.list_entities(Some(EntityKind::BOT)).await.unwrap();
+    assert_eq!(
+        bots.iter()
+            .find(|bot| bot.id.as_str() == "bot:lisa")
+            .unwrap()
+            .merged_into,
+        Some(EntityId("bot:delta".into())),
+        "the forwarding row serves the survivor's current handle",
+    );
+    let receipt = send(&jojobot, "bot:lisa", "bart", "after the rename").await;
+    assert_eq!(receipt["mailbox"], "delta", "{receipt}");
+    assert_eq!(receipt["folded"]["folded_into"], "bot:delta", "{receipt}");
+    assert_eq!(waiting(&counts(&jojobot, "delta").await), 1);
+    let direct = send(&jojobot, "bot:delta", "bart", "directly").await;
+    assert!(direct.get("folded").is_none(), "{direct}");
+    assert_eq!(waiting(&counts(&jojobot, "delta").await), 2);
 }
