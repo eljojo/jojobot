@@ -95,6 +95,129 @@ async fn run(pool: &sqlx::MySqlPool, sql: &str) {
         .unwrap_or_else(|e| panic!("{sql}: {e}"));
 }
 
+async fn merge_event_loop(pool: &sqlx::MySqlPool) -> String {
+    let home: String = sqlx::query_scalar("SELECT badge FROM entity WHERE id = 'person:krusty'")
+        .fetch_one(pool)
+        .await
+        .expect("the source's storage key");
+    for table in ["fact", "fact_write"] {
+        run(
+            pool,
+            &format!("UPDATE {table} SET derived_from_id = 'f98' WHERE derived_from IS NOT NULL"),
+        )
+        .await;
+    }
+    run(
+        pool,
+        &format!(
+            "INSERT INTO merge_event
+             (merge_no, ordinal, folded, survivor, merged_at, folded_id, survivor_id)
+             VALUES (98, 1, '{home}', '{home}', '2026-09-03', 'f98', 'f99'),
+                    (99, 1, '{home}', '{home}', '2026-09-03', 'f99', 'f98')"
+        ),
+    )
+    .await;
+    home
+}
+
+async fn table_hashes(pool: &sqlx::MySqlPool) -> Vec<(String, String)> {
+    let tables: Vec<String> = sqlx::query_scalar("SHOW TABLES")
+        .fetch_all(pool)
+        .await
+        .expect("the store's tables");
+    let mut hashes = Vec::new();
+    for table in tables {
+        let hash: String = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT DOLT_HASHOF_TABLE('{table}')"
+        )))
+        .fetch_one(pool)
+        .await
+        .expect("the table's hash");
+        hashes.push((table, hash));
+    }
+    hashes
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_merge_event_loop_and_an_unrelated_dangling_reference_are_both_reported() {
+    let (_scratch, _server, pool) = a_store_with_a_derived_claim("storage-check-loop").await;
+    assert_eq!(
+        dangling(&pool).await,
+        None,
+        "the source exists before damage"
+    );
+    let home = merge_event_loop(&pool).await;
+    run(
+        &pool,
+        "INSERT INTO message_event (message_id, ordinal, kind, at, prior_state)
+         VALUES ('no-such-message', 1, 'read', '2026-10-22T00:00:00Z', 'new')",
+    )
+    .await;
+    let before = table_hashes(&pool).await;
+    let report = DoltStorageCheck::open(pool.clone(), Clock::default())
+        .check_storage()
+        .await;
+    assert_eq!(
+        table_hashes(&pool).await,
+        before,
+        "the check writes nothing"
+    );
+    let findings = report.expect("structural damage must not abort the report");
+    assert_eq!(
+        findings.iter().map(|f| f.class).collect::<Vec<_>>(),
+        StorageClass::ALL,
+        "every class was checked"
+    );
+    let damaged: Vec<_> = findings.iter().filter(|f| f.count > 0).collect();
+    assert_eq!(damaged.len(), 2, "two distinct damage classes: {damaged:?}");
+    let dangling = damaged
+        .iter()
+        .find(|f| f.class == StorageClass::DanglingReference)
+        .expect("the unrelated dangling reference");
+    assert_eq!(dangling.count, 1);
+    assert_eq!(
+        dangling.ids,
+        vec!["message_event.message_id: no-such-message"]
+    );
+    let looped = damaged
+        .iter()
+        .find(|f| f.class != StorageClass::DanglingReference)
+        .expect("the loop has its own class");
+    assert_eq!(looped.class.token(), "A5 merge-event loop");
+    assert!(!looped.class.reported_at_info(), "a loop is damage");
+    assert_eq!(looped.count, 2, "both derived rows meet the loop");
+    assert_eq!(
+        looped.ids,
+        vec![
+            format!("fact.derived_from_id: {home}#f98"),
+            format!("fact_write.derived_from_id: {home}#f98"),
+        ]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_query_outage_while_resolving_a_source_still_aborts_the_storage_check() {
+    let (_scratch, _server, pool) = a_store_with_a_derived_claim("storage-check-outage").await;
+    assert_eq!(dangling(&pool).await, None, "the healthy store can be read");
+    merge_event_loop(&pool).await;
+    // Earlier checks can read these rows; only the source resolver selects ordinal.
+    run(
+        &pool,
+        "ALTER TABLE fact_write RENAME COLUMN ordinal TO unavailable_ordinal",
+    )
+    .await;
+    let before = table_hashes(&pool).await;
+    let report = DoltStorageCheck::open(pool.clone(), Clock::default())
+        .check_storage()
+        .await;
+    assert_eq!(
+        table_hashes(&pool).await,
+        before,
+        "an outage writes nothing"
+    );
+    report.expect_err("a failed query must abort, not become loop damage");
+}
+
 /// **A claim derived from a claim that is gone is named**, whether the claim's
 /// home is gone or the home stands and the claim is not on it. Paired with the
 /// whole store, which names nothing.

@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use jiff::{SignedDuration, Timestamp};
 use jojobot_domain::clock::Clock;
-use jojobot_domain::memory::{EntityId, FactAddress, FactId};
+use jojobot_domain::memory::{EntityId, FactAddress, FactId, MemoryError};
 use jojobot_domain::request::KEPT_FOR;
 use jojobot_domain::storage_check::{
     Finding, IDS_SHOWN, StorageCheck, StorageCheckError, StorageClass,
@@ -49,6 +49,7 @@ impl StorageCheck for DoltStorageCheck {
         let mut tx = self.pool.begin().await.map_err(store)?;
         let now = self.clock.now();
         let mut found = Vec::new();
+        let mut merge_event_loops = Counted::default();
         for class in StorageClass::ALL {
             let (count, ids) = match class {
                 StorageClass::MergedWithoutEvent => merged_without_event(&mut tx).await?,
@@ -57,7 +58,10 @@ impl StorageCheck for DoltStorageCheck {
                 StorageClass::ClaimUnderFoldedKeyUnmapped => {
                     claims_the_merge_does_not_list(&mut tx).await?
                 }
-                StorageClass::DanglingReference => dangling_references(&mut tx).await?,
+                StorageClass::DanglingReference => {
+                    dangling_references(&mut tx, &mut merge_event_loops).await?
+                }
+                StorageClass::MergeEventLoop => std::mem::take(&mut merge_event_loops),
                 StorageClass::HandleHomedWrite => writes_homed_under_a_handle(&mut tx).await?,
                 StorageClass::LandedMergeMissing => landed_merges_missing(&mut tx).await?,
                 StorageClass::HalfDoneWrite => half_done_writes(&mut tx, now).await?,
@@ -258,6 +262,7 @@ async fn named_rows_of(
 /// every row that holds it counted.
 async fn dangling_references(
     tx: &mut Transaction<'_, MySql>,
+    merge_event_loops: &mut Counted,
 ) -> Result<Counted, StorageCheckError> {
     let mut found: Vec<String> = Vec::new();
     let mut rows: u64 = 0;
@@ -300,11 +305,20 @@ async fn dangling_references(
             .map_err(store)?;
         for (home, local, count) in candidates {
             let source = FactAddress::new(EntityId(home.clone()), FactId(local.clone()));
-            let written = DoltMemory::written_at_or_before(tx, &source)
-                .await
-                .map_err(|e| StorageCheckError(format!("the store could not be read: {e}")))?;
-            if written.is_none() {
-                add((count as u64, vec![format!("{label}: {home}#{local}")]));
+            match DoltMemory::written_at_or_before(tx, &source).await {
+                Ok(Some(_)) => {}
+                Ok(None) => {
+                    add((count as u64, vec![format!("{label}: {home}#{local}")]));
+                }
+                Err(MemoryError::StoredDamage { .. }) => {
+                    merge_event_loops.0 += count as u64;
+                    merge_event_loops.1.push(format!("{label}: {home}#{local}"));
+                }
+                Err(e) => {
+                    return Err(StorageCheckError(format!(
+                        "the store could not be read: {e}"
+                    )));
+                }
             }
         }
     }

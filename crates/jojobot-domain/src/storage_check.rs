@@ -27,6 +27,9 @@ pub enum StorageClass {
     /// A row that names a thing, a mailbox or a message that does not exist. The
     /// schema has no foreign keys, so nothing else says so.
     DanglingReference,
+    /// A source address whose claim-history merge events lead back to an
+    /// address the walk already passed.
+    MergeEventLoop,
     /// A claim or field write homed under a handle that no row wears and no build
     /// supplies. The handle may be one a build once supplied, which the boot
     /// gives a row, or a row removed by hand, so it is reported and not called
@@ -51,6 +54,8 @@ impl StorageClass {
         StorageClass::MergedIntoNothing,
         StorageClass::ClaimUnderFoldedKeyUnmapped,
         StorageClass::DanglingReference,
+        // The source scan must finish before its loop findings are reported.
+        StorageClass::MergeEventLoop,
         StorageClass::HandleHomedWrite,
         StorageClass::LandedMergeMissing,
         StorageClass::HalfDoneWrite,
@@ -74,6 +79,7 @@ impl StorageClass {
                 "A4 claim under a folded key no merge event lists"
             }
             StorageClass::DanglingReference => "B dangling reference",
+            StorageClass::MergeEventLoop => "A5 merge-event loop",
             StorageClass::HandleHomedWrite => "B write homed under a handle with no row",
             StorageClass::LandedMergeMissing => "D2 landed merge not in the store",
             StorageClass::HalfDoneWrite => "D1 half-done write",
@@ -115,6 +121,12 @@ impl StorageClass {
                  bare line name the startup repair left is corrected with update_fact on the \
                  claim its log line names, which makes reads serve the right handle; the old \
                  stored write stays, and this check keeps naming it"
+            }
+            StorageClass::MergeEventLoop => {
+                "a claim's source address leads through merge events that form a loop, so its \
+                 history cannot be read; each id names the source column and address; a person \
+                 corrects the merge-event mapping or restores a copy of the store taken before \
+                 that merge, and then restarts"
             }
             StorageClass::HandleHomedWrite => {
                 "a claim or field write is homed under a handle that no row wears; the boot \
