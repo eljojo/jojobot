@@ -693,8 +693,32 @@ fn in_ci() -> bool {
     std::env::var("GITHUB_ACTIONS").is_ok_and(|value| value == "true")
 }
 
+/// **The remote line the checked-out branch was cut from**: of the remote-tracking
+/// `main` and carry lines (`em-*`), the one HEAD is fewest commits past its
+/// merge-base with. A checkout's own `main` can lag far behind a carry, so it is
+/// never the answer here.
+fn remote_line() -> Option<String> {
+    let text = |args: &[&str]| {
+        git_output(args).map(|out| String::from_utf8_lossy(&out).trim().to_string())
+    };
+    let refs = text(&["for-each-ref", "--format=%(refname:short)", "refs/remotes"])?;
+    refs.lines()
+        .filter(|name| {
+            let branch = name.split_once('/').map_or(*name, |(_, branch)| branch);
+            branch == "main" || branch.starts_with("em-")
+        })
+        .filter_map(|name| {
+            let joint = text(&["merge-base", "HEAD", name]).filter(|joint| !joint.is_empty())?;
+            let ahead = text(&["rev-list", "--count", &format!("{joint}..HEAD")])?;
+            Some((ahead.parse::<usize>().ok()?, name))
+        })
+        .min()
+        .map(|(_, name)| name.to_string())
+}
+
 /// CI's new-branch event has no before commit; measure from main in that case.
-/// A valid explicit base still wins, and local callers still name their base.
+/// A valid explicit base still wins. Off CI, no base and a bare `main` both mean
+/// the remote line the branch was cut from, when the checkout has one.
 pub fn read_base() -> Base {
     let mut wanted = [BASE_VARIABLE, BASE_REF_VARIABLE]
         .iter()
@@ -712,6 +736,9 @@ pub fn read_base() -> Base {
             ])
             .map(|_| name.to_string())
         });
+    }
+    if !in_ci() && wanted.as_deref().is_none_or(|name| name == "main") {
+        wanted = remote_line().or(wanted);
     }
     let Some(wanted) = wanted else {
         return Base::Unknown(format!(

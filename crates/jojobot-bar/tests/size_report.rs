@@ -1219,3 +1219,48 @@ fn a_file_over_3000_lines_is_orange_and_one_under_it_is_not() {
     );
     let _ = fs::remove_dir_all(&dir);
 }
+
+/// **A branch cut from a remote line is measured from that line, whatever the
+/// checkout's own `main` says.** The checkout's `main` is behind the carry, so
+/// the carry's growth of a red file would read as the branch's own.
+///
+/// Rows: what the branch was cut from, what the caller names, and the revision
+/// the size line must say it compared with (`a` is the lagging local `main`, `b`
+/// the carry or remote main the branch was cut from).
+#[test]
+fn a_branch_is_measured_from_the_remote_line_it_was_cut_from() {
+    let rows: [(&str, Option<&str>, &str); 6] = [
+        ("forgejo/em-9-carry", Some("main"), "b"),
+        ("forgejo/em-9-carry", None, "b"),
+        ("forgejo/main", Some("main"), "b"),
+        ("forgejo/main", None, "b"),
+        ("forgejo/em-9-carry", Some("a"), "a"),
+        ("", Some("main"), "a"),
+    ];
+    for (line, named, compared_with) in rows {
+        let dir = repo("cut-from");
+        let a = commit_files(
+            &dir,
+            &[
+                ("size-ratchet.toml", ratchet("")),
+                ("homer.rs", lines_of(5001)),
+            ],
+        );
+        git(&dir, &["branch", "-m", "main"]);
+        let b = commit_files(&dir, &[("homer.rs", lines_of(5002))]);
+        if !line.is_empty() {
+            git(&dir, &["update-ref", &format!("refs/remotes/{line}"), &b]);
+        }
+        git(&dir, &["checkout", "-q", "-b", "scratch"]);
+        git(&dir, &["branch", "-f", "main", &a]);
+        commit_files(&dir, &[("marge.rs", lines_of(10))]);
+        let named = named.map(|name| if name == "a" { a.as_str() } else { name });
+        let ran = bar(&dir, "size", named);
+        let expected = if compared_with == "b" { &b } else { &a };
+        let said = format!("{line} {named:?}: {}", ran.stdout);
+        assert!(size_line(&ran.stdout).contains(&expected[..10]), "{said}");
+        let moved = size_line(&ran.stdout).starts_with("size: ok");
+        assert_eq!(moved, compared_with == "b", "{said}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+}
