@@ -129,11 +129,10 @@ async fn a_check_in_whose_words_name_another_thing_is_silent() {
         },
     )
     .await;
-    assert!(
-        receipt["reached_the_thing"]
-            .as_array()
-            .is_some_and(|keys| keys.iter().any(|k| k == "outcome")),
-        "the check-in reached the thing with its outcome, so the case is not vacuous: {receipt}"
+    assert_eq!(
+        fields_of(&jojobot, "rhythm:descale").await["outcome"],
+        "ran",
+        "the derived schedule reached the thing, so the case is not vacuous: {receipt}"
     );
     assert!(receipt.get(SENTENCE_KEY).is_none(), "{receipt}");
 }
