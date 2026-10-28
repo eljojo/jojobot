@@ -153,6 +153,10 @@
             cargoExtraArgs = "--workspace --locked";
             doCheck = false;
             JOJOBOT_BUILD = build;
+            nativeBuildInputs = nativeBuildInputs ++ [ pkgs.gnugrep ];
+            postInstall = ''
+              ${pkgs.runtimeShell} ${./scripts/check-production-harness} "$out/bin/jojobot"
+            '';
           }
         );
 
@@ -180,6 +184,7 @@
               dolt
               pkgs.tzdata
               pkgs.python3
+              pkgs.gnugrep
               # The `bar` runner's size-report tests build a scratch repository
               # of their own, and the sandbox has no `git`.
               pkgs.git

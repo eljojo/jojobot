@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+if LC_ALL=C grep -aFq '/_room_harness' -- "$1"; then
+    printf '%s\n' 'The production binary contains the room harness route.' >&2
+    exit 1
+else
+    grep_result=$?
+    test "$grep_result" -eq 1 || exit "$grep_result"
+fi

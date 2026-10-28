@@ -35,6 +35,30 @@ fn workflow(file: &str) -> String {
     })
 }
 
+#[test]
+fn the_production_guard_checks_the_built_binary() {
+    let inspect = |binary: &std::path::Path| {
+        std::process::Command::new("sh")
+            .arg(root().join("scripts/check-production-harness"))
+            .arg(binary)
+            .output()
+            .expect("the artifact guard runs without starting the server")
+    };
+    let result = inspect(std::path::Path::new(env!("CARGO_BIN_EXE_jojobot")));
+    let expected = if cfg!(feature = "room-harness") { 1 } else { 0 };
+    assert_eq!(
+        result.status.code(),
+        Some(expected),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert_eq!(
+        inspect(&root().join("Cargo.toml/no-binary")).status.code(),
+        Some(2),
+        "a failed instrument is distinct from a harness-bearing binary"
+    );
+}
+
 /// **GitHub runs no workflow.** The bar runs on Forgejo; a workflow left under
 /// `.github` would be a second bar on a host that does not build this
 /// repository. The directory may be absent, and when it is there it holds no
