@@ -27,6 +27,7 @@ pub mod scratch;
 pub mod size;
 pub mod static_checks;
 pub mod sweep;
+pub mod verdict;
 pub use calls::{CALL_USAGE, Call, parse_call, write_call};
 pub use expectation::{BACKGROUND_TIMEOUT_MS, start_lines};
 pub use history::{JobRecord, TestRecord, Verdict, parse_job};

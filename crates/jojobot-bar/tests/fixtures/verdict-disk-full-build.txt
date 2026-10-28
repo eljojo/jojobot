@@ -1,0 +1,6 @@
+   Compiling jojobot-adapters v0.1.0 (/var/lib/gitea-runner/runner1/.cache/act/cc476b9ae969162b/hostexecutor/crates/jojobot-adapters)
+error: failed to write `/var/lib/gitea-runner/runner1/cargo-target/debug/deps/jojobot_adapters-3f9c0a1d27be4c55.d`
+
+Caused by:
+  No space left on device (os error 28)
+error: could not compile `jojobot-adapters` (lib) due to 1 previous error

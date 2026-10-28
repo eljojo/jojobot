@@ -59,6 +59,54 @@ if [ "$1" = test ]; then cat "$BAR_CASE_FAILURES"; exit 101; fi
     let _ = fs::remove_dir_all(dir);
 }
 
+/// **A red run leaves its machine verdict where the workflow uploads it.** The
+/// file is read back after the real binary ran: it names the job, says red and
+/// lists every failing test, not the ten the summary shows.
+#[test]
+fn a_red_check_leaves_a_verdict_file_listing_every_failing_test() {
+    let dir = scratch_dir("verdict-file");
+    let cargo = dir.join("cargo");
+    support::write_executable(
+        &cargo,
+        r#"#!/bin/sh
+case " $* " in *" --no-run "*) exit 0 ;; esac
+if [ "$1" = test ]; then cat "$BAR_CASE_FAILURES"; exit 101; fi
+"#,
+    );
+    let output = support::output_fenced(
+        Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
+            .arg("check")
+            .current_dir(&dir)
+            .env("CARGO", cargo)
+            .env("TMPDIR", &dir)
+            .env("BAR_HISTORY_DIR", dir.join("history"))
+            .env(
+                "BAR_CASE_FAILURES",
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures/timed-failures.txt"),
+            ),
+    )
+    .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let file = fs::read_to_string(dir.join("target/bar/verdict-check.json"))
+        .unwrap_or_else(|e| panic!("no verdict file: {e}\n{stdout}"));
+    let value: serde_json::Value = serde_json::from_str(&file).expect("the file is JSON");
+    assert_eq!(value["overall"], "red", "{file}");
+    assert_eq!(value["job"], "check", "{file}");
+    let failing: usize = value["red_suites"]
+        .as_array()
+        .expect("red_suites is a list")
+        .iter()
+        .map(|suite| suite["failing"].as_array().map_or(0, Vec::len))
+        .sum();
+    assert_eq!(failing, 13, "{file}");
+    assert!(
+        stdout.contains("verdict file: target/bar/verdict-check.json — red"),
+        "{stdout}"
+    );
+    let _ = fs::remove_dir_all(dir);
+}
+
 /// **A fake `cargo` that mimics a crashed sibling suite.** `fmt`, `build`
 /// and `clippy` succeed silently; a real `-- --list` still lists one test,
 /// so `narrow`'s zero-selection guard does not fire before the phase this

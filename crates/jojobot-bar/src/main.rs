@@ -26,6 +26,7 @@ use jojobot_bar::bundle::{self, Exe, Manifest};
 use jojobot_bar::changes::{checked_changed_paths, git_stdout, pushed_paths};
 use jojobot_bar::deadline::Clock;
 use jojobot_bar::dev;
+use jojobot_bar::verdict;
 use jojobot_bar::{
     CALL_USAGE, HISTORY_DIR_VARIABLE, KnownReds, ROSTER_FILE, Run, RunHeader, Summary,
     TEST_JOBS_VARIABLE, cargo_bin, contained_from_exit, history_root, is_a_revision, is_slow,
@@ -650,6 +651,7 @@ fn run_rooms(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
                 summary.phase_failed("build", "DID NOT COMPILE — see log");
             }
             summary.phase_skipped("test");
+            verdict::note(&mut summary, &lane, &text, false, 0);
             finish(&mut summary, &log_path);
             return Ok(ExitCode::FAILURE);
         }
@@ -678,6 +680,7 @@ fn run_rooms(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
         &format!("{limit} test binaries at a time ({TEST_JOBS_VARIABLE})"),
     );
     summary.test_phase(ok, &verdict, known);
+    verdict::note(&mut summary, &lane, &text, ok, 0);
     finish(&mut summary, &log_path);
     Ok(if test_healthy(ok, &verdict) {
         ExitCode::SUCCESS
@@ -1505,6 +1508,7 @@ fn run_check_phases(known: &KnownReds, level: Level) -> std::io::Result<ExitCode
             summary.test_phase(false, &verdict, known);
             summary.phase_skipped("build");
             summary.phase_skipped("lint");
+            verdict::note(&mut summary, level.name(), &text, false, 0);
             finish_history(history.as_ref());
             finish(&mut summary, &log_path);
             return Ok(ExitCode::FAILURE);
@@ -1663,6 +1667,7 @@ fn run_check_phases(known: &KnownReds, level: Level) -> std::io::Result<ExitCode
         None => {}
     }
     summary.test_phase(ok, &verdict, known);
+    verdict::note(&mut summary, level.name(), &text, ok, left_out);
     // **The lint runs whatever the tests said.** A red test step used to end
     // the run here, and a lint failure then stayed hidden behind every test that
     // was red; the two are separate questions and the verdict carries both. The

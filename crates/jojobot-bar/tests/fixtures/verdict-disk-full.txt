@@ -1,0 +1,115 @@
+   Compiling jojobot-domain v0.1.0 (/var/lib/gitea-runner/runner1/.cache/act/cc476b9ae969162b/hostexecutor/crates/jojobot-domain)
+    Finished `test` profile [optimized + debuginfo] target(s) in 1.33s
+     Running tests/fixture_roster.rs (/var/lib/gitea-runner/runner1/cargo-target/debug/deps/fixture_roster-a598209ae7d2b428)
+
+running 25 tests
+test ordinary_carries_no_name_the_workspace_has_stopped_using ... FAILED <0.278s>
+
+failures:
+
+---- ordinary_carries_no_name_the_workspace_has_stopped_using stdout ----
+
+thread 'ordinary_carries_no_name_the_workspace_has_stopped_using' (3744958) panicked at crates/jojobot-domain/tests/fixture_roster.rs:748:5:
+ordinary exceptions nothing in the workspace uses — delete them; only reviewed cast names may be kept ready for future fixtures:
+role:upgrade-fixture-half
+role:upgrade-fixture-stray
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    ordinary_carries_no_name_the_workspace_has_stopped_using
+
+test result: FAILED. 24 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.96s
+
+error: test failed, to rerun pass `-p jojobot-domain --test fixture_roster`
+error: 1 target failed:
+    `-p jojobot-domain --test fixture_roster`
+    Finished `test` profile [optimized + debuginfo] target(s) in 0.15s
+     Running tests/report_touched_first.rs (/var/lib/gitea-runner/cloudy1/cargo-target/debug/deps/report_touched_first-16a05d1cf51839a2)
+
+running 4 tests
+test the_fallback_range_is_the_merge_base_with_origin_main_when_there_is_no_local_main ... FAILED <0.605s>
+test the_report_runs_the_jobs_of_the_packages_the_push_touched_first ... FAILED <0.592s>
+
+failures:
+
+---- the_fallback_range_is_the_merge_base_with_origin_main_when_there_is_no_local_main stdout ----
+
+thread 'the_fallback_range_is_the_merge_base_with_origin_main_when_there_is_no_local_main' (1713237) panicked at crates/jojobot-bar/tests/report_touched_first.rs:325:5:
+assertion `left == right` failed: bar: report has no history yet, so no expected time
+bar: run it in the background with a timeout of 7200000 ms; the exit code is the log's last line
+level: report, 5 of 5 jobs, left to the boundary: none; ignored 0 reds on heads main does not contain, 0 reds from dirty trees
+verdict: GREEN
+size: unknown — neither SIZE_BASE nor GITHUB_BASE_REF is set; growth was not judged, so the size is not ok
+fmt-check: ok — formatted (wall 0.0s)
+fast: ok — the library cases of pb ran first and passed (wall 0.1s)
+build: ok — compiled (wall 0.0s)
+test-compile: ok — test binaries built (wall 0.0s)
+level: ok — report, 5 of 5 jobs, left to the boundary: none; ignored 0 reds on heads main does not contain, 0 reds from dirty trees
+order: ok — jobs of the packages the push touched first: pb
+jobs: ok — 1 test binaries at a time (BAR_JOBS), wall 0s
+doc-tests: ok — ran (wall 0.1s)
+test: ok — 5 suites, 5 passed
+lint: ok — clean (wall 0.0s)
+log: target/bar/report.log (34 lines)
+roster names new since origin/main: unknown — no base ref (origin/main not found)
+
+  left: ["-p pb --lib", "--features=jojobot/room-harness --test beta", "-p pa --lib", "--features=jojobot/room-harness --test alpha", "--features=jojobot/room-harness --doc"]
+ right: ["-p pb --lib", "--test beta", "-p pa --lib", "--test alpha", "--doc"]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- the_report_runs_the_jobs_of_the_packages_the_push_touched_first stdout ----
+
+thread 'the_report_runs_the_jobs_of_the_packages_the_push_touched_first' (1713381) panicked at crates/jojobot-bar/tests/report_touched_first.rs:135:5:
+assertion `left == right` failed: bar: report has no history yet, so no expected time
+bar: run it in the background with a timeout of 7200000 ms; the exit code is the log's last line
+level: report, 5 of 5 jobs, left to the boundary: none; ignored 0 reds on heads main does not contain, 0 reds from dirty trees
+verdict: GREEN
+size: unknown — neither SIZE_BASE nor GITHUB_BASE_REF is set; growth was not judged, so the size is not ok
+fmt-check: ok — formatted (wall 0.0s)
+fast: ok — the library cases of pb ran first and passed (wall 0.1s)
+build: ok — compiled (wall 0.0s)
+test-compile: ok — test binaries built (wall 0.0s)
+level: ok — report, 5 of 5 jobs, left to the boundary: none; ignored 0 reds on heads main does not contain, 0 reds from dirty trees
+order: ok — jobs of the packages the push touched first: pb
+jobs: ok — 1 test binaries at a time (BAR_JOBS), wall 0s
+doc-tests: ok — ran (wall 0.1s)
+test: ok — 5 suites, 5 passed
+lint: ok — clean (wall 0.0s)
+log: target/bar/report.log (34 lines)
+roster names new since origin/main: unknown — no base ref (origin/main not found)
+
+  left: ["-p pb --lib", "--features=jojobot/room-harness --test beta", "-p pa --lib", "--features=jojobot/room-harness --test alpha", "--features=jojobot/room-harness --doc"]
+ right: ["-p pb --lib", "--test beta", "-p pa --lib", "--test alpha", "--doc"]
+
+
+failures:
+    the_fallback_range_is_the_merge_base_with_origin_main_when_there_is_no_local_main
+    the_report_runs_the_jobs_of_the_packages_the_push_touched_first
+
+test result: FAILED. 2 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.35s
+
+error: test failed, to rerun pass `-p jojobot-bar --test report_touched_first`
+error: 1 target failed:
+    `-p jojobot-bar --test report_touched_first`
+     Running tests/user_stories.rs (/var/lib/gitea-runner/runner1/cargo-target/debug/deps/user_stories-3f9c0a1d27be4c55)
+
+running 3 tests
+
+failures:
+
+---- a_story_that_writes_a_document stdout ----
+
+thread 'a_story_that_writes_a_document' (1713402) panicked at crates/jojobot/tests/user_stories.rs:412:14:
+called `Result::unwrap()` on an `Err` value: Os { code: 28, kind: StorageFull, message: "No space left on device" }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    a_story_that_writes_a_document
+
+test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.12s
+
+error: test failed, to rerun pass `-p jojobot --test user_stories`
+error: 1 target failed:
+    `-p jojobot --test user_stories`

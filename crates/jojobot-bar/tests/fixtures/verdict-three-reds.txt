@@ -1,0 +1,576 @@
+    Blocking waiting for file lock on artifact directory
+   Compiling serde v1.0.229
+   Compiling futures-sink v0.3.34
+   Compiling syn v2.0.119
+   Compiling digest v0.10.7
+   Compiling icu_normalizer v2.3.0
+   Compiling indexmap v2.14.2
+   Compiling futures-util v0.3.34
+   Compiling idna_adapter v1.2.2
+   Compiling sha2 v0.10.9
+   Compiling idna v1.1.0
+   Compiling tracing-attributes v0.1.31
+   Compiling serde_json v1.0.154
+   Compiling either v1.19.0
+   Compiling tokio v1.53.3
+   Compiling url v2.5.8
+   Compiling getrandom v0.4.3
+   Compiling tantivy-common v0.11.0
+   Compiling chrono v0.4.45
+   Compiling tokio-stream v0.1.19
+   Compiling itertools v0.14.0
+   Compiling tantivy-stacker v0.7.0
+   Compiling typetag v0.2.23
+   Compiling tantivy-query-grammar v0.26.0
+   Compiling tracing v0.1.44
+   Compiling tantivy-sstable v0.7.0
+   Compiling tantivy-columnar v0.7.0
+   Compiling rayon v1.12.0
+   Compiling uuid v1.28.0
+   Compiling sqlx-core v0.9.0
+   Compiling sketches-ddsketch v0.4.1
+   Compiling chrono-tz v0.10.4
+   Compiling tantivy-tokenizer-api v0.7.0
+   Compiling rust-stemmers v1.2.0
+   Compiling sqlx-mysql v0.9.0
+   Compiling tracing-subscriber v0.3.23
+   Compiling sqlx-macros-core v0.9.0
+   Compiling sqlx-macros v0.9.0
+   Compiling tantivy v0.26.2
+   Compiling sqlx v0.9.0
+   Compiling rrule v0.14.0
+   Compiling jojobot-domain v0.1.0 (/var/lib/gitea-runner/maggie1/.cache/act/bfe550fc36e4a761/hostexecutor/crates/jojobot-domain)
+   Compiling jojobot-adapters v0.1.0 (/var/lib/gitea-runner/maggie1/.cache/act/bfe550fc36e4a761/hostexecutor/crates/jojobot-adapters)
+    Finished `test` profile [optimized + debuginfo] target(s) in 4m 44s
+     Running unittests src/lib.rs (/var/lib/gitea-runner/maggie1/cargo-target/debug/deps/jojobot_adapters-4060c326a7a6bd03)
+
+running 457 tests
+test dolt::memory::tests::a_claim_under_the_folded_thing_that_no_event_lists_is_named_and_readable ... FAILED <1.053s>
+test dolt::memory::tests::a_claims_history_serves_its_kept_marks_through_a_chain_of_merges ... FAILED <1.459s>
+test dolt::memory::tests::a_claims_history_serves_its_kept_marks_through_a_merge ... FAILED <1.148s>
+test dolt::memory::tests::a_list_naming_both_sides_of_a_merge_reads_the_survivor_once ... FAILED <0.610s>
+test dolt::memory::tests::a_loop_beneath_a_survivor_is_damage_naming_the_things_in_it ... FAILED <0.589s>
+test dolt::memory::tests::a_merge_leaves_the_stored_rows_of_the_folded_thing_as_they_were ... FAILED <0.541s>
+test dolt::memory::tests::a_pointer_into_a_loop_of_merged_things_is_an_error_and_not_an_answer ... FAILED <0.466s>
+test dolt::memory::tests::a_stale_revision_is_counted_on_a_claim_left_in_place_as_on_one_moved ... FAILED <0.519s>
+test dolt::memory::tests::an_edit_or_retraction_of_a_merged_claim_appends_to_its_own_history ... FAILED <0.545s>
+test dolt::memory::tests::claim_histories_left_in_place_by_a_merge_read_like_ones_moved_by_it ... FAILED <0.468s>
+test dolt::memory::tests::claims_left_in_place_by_a_merge_read_like_claims_moved_by_it ... FAILED <0.468s>
+test dolt::memory::tests::events_that_lead_back_to_where_they_began_are_an_error_and_not_an_answer ... FAILED <0.451s>
+test dolt::memory::tests::fields_left_in_place_by_a_merge_read_like_fields_moved_by_it ... FAILED <0.457s>
+test dolt::memory::tests::names_an_older_merge_moved_read_cleanly_and_are_not_named_twice ... FAILED <0.461s>
+test dolt::memory::tests::names_and_children_left_by_a_merge_read_like_ones_it_moved ... FAILED <0.462s>
+test dolt::memory::tests::pointers_left_naming_a_merged_thing_read_like_pointers_the_merge_rewrote ... FAILED <0.448s>
+test dolt::memory::tests::the_chart_reads_the_same_whether_a_merge_moved_the_writes_or_left_them ... FAILED <0.457s>
+test dolt::memory::tests::the_fold_built_over_rows_left_in_place_answers_as_over_rows_moved ... FAILED <0.461s>
+test dolt::memory::tests::things_folded_into_each_other_are_damage_and_not_an_empty_thing ... FAILED <0.472s>
+test dolt::memory::tests::touch_moments_and_kept_off_keys_left_in_place_by_a_merge_read_like_moved_ones ... FAILED <0.459s>
+test dolt::memory::tests::two_events_for_one_claim_serve_it_where_the_walk_says_it_went ... FAILED <0.455s>
+test dolt::memory::tests::what_points_at_a_merged_thing_is_found_at_the_survivor_either_way ... FAILED <0.462s>
+test dolt::memory::tests::current_handle_agrees_with_entity_wearing_for_every_badge_the_real_store_holds has been running for over 60 seconds
+
+failures:
+
+---- dolt::memory::tests::a_claim_under_the_folded_thing_that_no_event_lists_is_named_and_readable stdout ----
+
+thread 'dolt::memory::tests::a_claim_under_the_folded_thing_that_no_event_lists_is_named_and_readable' (2593032) panicked at crates/jojobot-adapters/src/dolt/memory/tests.rs:1004:14:
+the fold lands: MergeCarriesGuardedKeys { duplicate: "person:apu", survivor: "person:homer", keys: "reports_to", may: Superior, allowed: ["bot:assistant"], clear_opens: true }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+the store's own stderr, last lines:
+time="2026-10-27T19:20:46-04:00" level=info msg="Creating root@localhost superuser"
+time="2026-10-27T19:20:46-04:00" level=info msg="Server ready. Accepting connections."
+time="2026-10-27T19:20:46-04:00" level=warning msg="secure_file_priv is set to \"\", which is insecure."
+time="2026-10-27T19:20:46-04:00" level=warning msg="Any user with GRANT FILE privileges will be able to read any file which the sql-server process can read."
+time="2026-10-27T19:20:46-04:00" level=warning msg="Please consider restarting the server with secure_file_priv set to a safe (or non-existent) directory."
+time="2026-10-27T19:20:46-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=1
+time="2026-10-27T19:20:46-04:00" level=info msg=ConnectionClosed connectionID=1
+time="2026-10-27T19:20:46-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=2
+time="2026-10-27T19:20:46-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=3
+time="2026-10-27T19:20:46-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=4
+time="2026-10-27T19:20:46-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=5
+
+---- dolt::memory::tests::a_claims_history_serves_its_kept_marks_through_a_chain_of_merges stdout ----
+
+thread 'dolt::memory::tests::a_claims_history_serves_its_kept_marks_through_a_chain_of_merges' (2593249) panicked at crates/jojobot-adapters/src/dolt/memory/tests.rs:1004:14:
+the fold lands: MergeCarriesGuardedKeys { duplicate: "person:apu", survivor: "person:homer", keys: "reports_to", may: Superior, allowed: ["bot:assistant"], clear_opens: true }
+the store's own stderr, last lines:
+time="2026-10-27T19:20:47-04:00" level=info msg="Creating root@localhost superuser"
+time="2026-10-27T19:20:47-04:00" level=info msg="Server ready. Accepting connections."
+time="2026-10-27T19:20:47-04:00" level=warning msg="secure_file_priv is set to \"\", which is insecure."
+time="2026-10-27T19:20:47-04:00" level=warning msg="Any user with GRANT FILE privileges will be able to read any file which the sql-server process can read."
+time="2026-10-27T19:20:47-04:00" level=warning msg="Please consider restarting the server with secure_file_priv set to a safe (or non-existent) directory."
+time="2026-10-27T19:20:47-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=1
+time="2026-10-27T19:20:47-04:00" level=info msg=ConnectionClosed connectionID=1
+time="2026-10-27T19:20:47-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=2
+time="2026-10-27T19:20:47-04:00" level=info msg=ConnectionClosed connectionID=2
+time="2026-10-27T19:20:47-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=3
+time="2026-10-27T19:20:47-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=4
+time="2026-10-27T19:20:48-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=5
+time="2026-10-27T19:20:48-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=6
+time="2026-10-27T19:20:48-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=7
+
+---- dolt::memory::tests::a_claims_history_serves_its_kept_marks_through_a_merge stdout ----
+
+thread 'dolt::memory::tests::a_claims_history_serves_its_kept_marks_through_a_merge' (2593335) panicked at crates/jojobot-adapters/src/dolt/memory/tests.rs:1004:14:
+the fold lands: MergeCarriesGuardedKeys { duplicate: "person:apu", survivor: "person:homer", keys: "reports_to", may: Superior, allowed: ["bot:assistant"], clear_opens: true }
+the store's own stderr, last lines:
+time="2026-10-27T19:20:48-04:00" level=info msg="Creating root@localhost superuser"
+time="2026-10-27T19:20:48-04:00" level=info msg="Server ready. Accepting connections."
+time="2026-10-27T19:20:48-04:00" level=warning msg="secure_file_priv is set to \"\", which is insecure."
+time="2026-10-27T19:20:48-04:00" level=warning msg="Any user with GRANT FILE privileges will be able to read any file which the sql-server process can read."
+time="2026-10-27T19:20:48-04:00" level=warning msg="Please consider restarting the server with secure_file_priv set to a safe (or non-existent) directory."
+time="2026-10-27T19:20:48-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=1
+time="2026-10-27T19:20:48-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=2
+time="2026-10-27T19:20:48-04:00" level=info msg=ConnectionClosed connectionID=1
+time="2026-10-27T19:20:48-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=3
+time="2026-10-27T19:20:48-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=4
+time="2026-10-27T19:20:48-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=5
+time="2026-10-27T19:20:49-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=6
+
+---- dolt::memory::tests::a_list_naming_both_sides_of_a_merge_reads_the_survivor_once stdout ----
+
+thread 'dolt::memory::tests::a_list_naming_both_sides_of_a_merge_reads_the_survivor_once' (2593548) panicked at crates/jojobot-adapters/src/dolt/memory/tests.rs:1004:14:
+the fold lands: MergeCarriesGuardedKeys { duplicate: "person:apu", survivor: "person:homer", keys: "reports_to", may: Superior, allowed: ["bot:assistant"], clear_opens: true }
+the store's own stderr, last lines:
+time="2026-10-27T19:20:49-04:00" level=info msg="Creating root@localhost superuser"
+time="2026-10-27T19:20:49-04:00" level=info msg="Server ready. Accepting connections."
+time="2026-10-27T19:20:49-04:00" level=warning msg="secure_file_priv is set to \"\", which is insecure."
+time="2026-10-27T19:20:49-04:00" level=warning msg="Any user with GRANT FILE privileges will be able to read any file which the sql-server process can read."
+time="2026-10-27T19:20:49-04:00" level=warning msg="Please consider restarting the server with secure_file_priv set to a safe (or non-existent) directory."
+time="2026-10-27T19:20:49-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=1
+time="2026-10-27T19:20:49-04:00" level=info msg=ConnectionClosed connectionID=1
+time="2026-10-27T19:20:49-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=2
+time="2026-10-27T19:20:49-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=3
+time="2026-10-27T19:20:49-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=4
+time="2026-10-27T19:20:49-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=5
+
+---- dolt::memory::tests::a_loop_beneath_a_survivor_is_damage_naming_the_things_in_it stdout ----
+
+thread 'dolt::memory::tests::a_loop_beneath_a_survivor_is_damage_naming_the_things_in_it' (2593752) panicked at crates/jojobot-adapters/src/dolt/memory/tests.rs:1004:14:
+the fold lands: MergeCarriesGuardedKeys { duplicate: "person:apu", survivor: "person:homer", keys: "reports_to", may: Superior, allowed: ["bot:assistant"], clear_opens: true }
+the store's own stderr, last lines:
+time="2026-10-27T19:20:50-04:00" level=info msg="Creating root@localhost superuser"
+time="2026-10-27T19:20:50-04:00" level=info msg="Server ready. Accepting connections."
+time="2026-10-27T19:20:50-04:00" level=warning msg="secure_file_priv is set to \"\", which is insecure."
+time="2026-10-27T19:20:50-04:00" level=warning msg="Any user with GRANT FILE privileges will be able to read any file which the sql-server process can read."
+time="2026-10-27T19:20:50-04:00" level=warning msg="Please consider restarting the server with secure_file_priv set to a safe (or non-existent) directory."
+time="2026-10-27T19:20:50-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=1
+time="2026-10-27T19:20:50-04:00" level=info msg=ConnectionClosed connectionID=1
+time="2026-10-27T19:20:50-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=2
+time="2026-10-27T19:20:50-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=3
+time="2026-10-27T19:20:50-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=4
+time="2026-10-27T19:20:50-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=5
+
+---- dolt::memory::tests::a_merge_leaves_the_stored_rows_of_the_folded_thing_as_they_were stdout ----
+
+thread 'dolt::memory::tests::a_merge_leaves_the_stored_rows_of_the_folded_thing_as_they_were' (2593846) panicked at crates/jojobot-adapters/src/dolt/memory/tests.rs:1004:14:
+the fold lands: MergeCarriesGuardedKeys { duplicate: "person:apu", survivor: "person:homer", keys: "reports_to", may: Superior, allowed: ["bot:assistant"], clear_opens: true }
+the store's own stderr, last lines:
+time="2026-10-27T19:20:50-04:00" level=info msg="Creating root@localhost superuser"
+time="2026-10-27T19:20:50-04:00" level=info msg="Server ready. Accepting connections."
+time="2026-10-27T19:20:50-04:00" level=warning msg="secure_file_priv is set to \"\", which is insecure."
+time="2026-10-27T19:20:50-04:00" level=warning msg="Any user with GRANT FILE privileges will be able to read any file which the sql-server process can read."
+time="2026-10-27T19:20:50-04:00" level=warning msg="Please consider restarting the server with secure_file_priv set to a safe (or non-existent) directory."
+time="2026-10-27T19:20:50-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=1
+time="2026-10-27T19:20:50-04:00" level=info msg=ConnectionClosed connectionID=1
+time="2026-10-27T19:20:50-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=2
+time="2026-10-27T19:20:50-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=3
+time="2026-10-27T19:20:50-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=4
+time="2026-10-27T19:20:50-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=5
+
+---- dolt::memory::tests::a_pointer_into_a_loop_of_merged_things_is_an_error_and_not_an_answer stdout ----
+
+thread 'dolt::memory::tests::a_pointer_into_a_loop_of_merged_things_is_an_error_and_not_an_answer' (2593929) panicked at crates/jojobot-adapters/src/dolt/memory/tests.rs:1004:14:
+the fold lands: MergeCarriesGuardedKeys { duplicate: "person:apu", survivor: "person:homer", keys: "reports_to", may: Superior, allowed: ["bot:assistant"], clear_opens: true }
+the store's own stderr, last lines:
+time="2026-10-27T19:20:50-04:00" level=info msg="Creating root@localhost superuser"
+time="2026-10-27T19:20:50-04:00" level=info msg="Server ready. Accepting connections."
+time="2026-10-27T19:20:50-04:00" level=warning msg="secure_file_priv is set to \"\", which is insecure."
+time="2026-10-27T19:20:50-04:00" level=warning msg="Any user with GRANT FILE privileges will be able to read any file which the sql-server process can read."
+time="2026-10-27T19:20:50-04:00" level=warning msg="Please consider restarting the server with secure_file_priv set to a safe (or non-existent) directory."
+time="2026-10-27T19:20:50-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=1
+time="2026-10-27T19:20:50-04:00" level=info msg=ConnectionClosed connectionID=1
+time="2026-10-27T19:20:50-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=2
+time="2026-10-27T19:20:50-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=3
+time="2026-10-27T19:20:50-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=4
+time="2026-10-27T19:20:50-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=5
+
+---- dolt::memory::tests::a_stale_revision_is_counted_on_a_claim_left_in_place_as_on_one_moved stdout ----
+
+thread 'dolt::memory::tests::a_stale_revision_is_counted_on_a_claim_left_in_place_as_on_one_moved' (2593980) panicked at crates/jojobot-adapters/src/dolt/memory/tests.rs:1004:14:
+the fold lands: MergeCarriesGuardedKeys { duplicate: "person:apu", survivor: "person:homer", keys: "reports_to", may: Superior, allowed: ["bot:assistant"], clear_opens: true }
+the store's own stderr, last lines:
+time="2026-10-27T19:20:51-04:00" level=info msg="Creating root@localhost superuser"
+time="2026-10-27T19:20:51-04:00" level=info msg="Server ready. Accepting connections."
+time="2026-10-27T19:20:51-04:00" level=warning msg="secure_file_priv is set to \"\", which is insecure."
+time="2026-10-27T19:20:51-04:00" level=warning msg="Any user with GRANT FILE privileges will be able to read any file which the sql-server process can read."
+time="2026-10-27T19:20:51-04:00" level=warning msg="Please consider restarting the server with secure_file_priv set to a safe (or non-existent) directory."
+time="2026-10-27T19:20:51-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=1
+time="2026-10-27T19:20:51-04:00" level=info msg=ConnectionClosed connectionID=1
+time="2026-10-27T19:20:51-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=2
+time="2026-10-27T19:20:51-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=3
+time="2026-10-27T19:20:51-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=4
+time="2026-10-27T19:20:51-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=5
+
+---- dolt::memory::tests::an_edit_or_retraction_of_a_merged_claim_appends_to_its_own_history stdout ----
+
+thread 'dolt::memory::tests::an_edit_or_retraction_of_a_merged_claim_appends_to_its_own_history' (2594029) panicked at crates/jojobot-adapters/src/dolt/memory/tests.rs:1004:14:
+the fold lands: MergeCarriesGuardedKeys { duplicate: "person:apu", survivor: "person:homer", keys: "reports_to", may: Superior, allowed: ["bot:assistant"], clear_opens: true }
+the store's own stderr, last lines:
+time="2026-10-27T19:20:51-04:00" level=info msg="Creating root@localhost superuser"
+time="2026-10-27T19:20:51-04:00" level=info msg="Server ready. Accepting connections."
+time="2026-10-27T19:20:51-04:00" level=warning msg="secure_file_priv is set to \"\", which is insecure."
+time="2026-10-27T19:20:51-04:00" level=warning msg="Any user with GRANT FILE privileges will be able to read any file which the sql-server process can read."
+time="2026-10-27T19:20:51-04:00" level=warning msg="Please consider restarting the server with secure_file_priv set to a safe (or non-existent) directory."
+time="2026-10-27T19:20:51-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=1
+time="2026-10-27T19:20:51-04:00" level=info msg=ConnectionClosed connectionID=1
+time="2026-10-27T19:20:51-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=2
+time="2026-10-27T19:20:51-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=3
+time="2026-10-27T19:20:51-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=4
+time="2026-10-27T19:20:51-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=5
+
+---- dolt::memory::tests::claim_histories_left_in_place_by_a_merge_read_like_ones_moved_by_it stdout ----
+
+thread 'dolt::memory::tests::claim_histories_left_in_place_by_a_merge_read_like_ones_moved_by_it' (2594074) panicked at crates/jojobot-adapters/src/dolt/memory/tests.rs:1004:14:
+the fold lands: MergeCarriesGuardedKeys { duplicate: "person:apu", survivor: "person:homer", keys: "reports_to", may: Superior, allowed: ["bot:assistant"], clear_opens: true }
+the store's own stderr, last lines:
+time="2026-10-27T19:20:51-04:00" level=info msg="Creating root@localhost superuser"
+time="2026-10-27T19:20:51-04:00" level=info msg="Server ready. Accepting connections."
+time="2026-10-27T19:20:51-04:00" level=warning msg="secure_file_priv is set to \"\", which is insecure."
+time="2026-10-27T19:20:51-04:00" level=warning msg="Any user with GRANT FILE privileges will be able to read any file which the sql-server process can read."
+time="2026-10-27T19:20:51-04:00" level=warning msg="Please consider restarting the server with secure_file_priv set to a safe (or non-existent) directory."
+time="2026-10-27T19:20:51-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=1
+time="2026-10-27T19:20:51-04:00" level=info msg=ConnectionClosed connectionID=1
+time="2026-10-27T19:20:51-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=2
+time="2026-10-27T19:20:51-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=3
+time="2026-10-27T19:20:51-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=4
+time="2026-10-27T19:20:51-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=5
+
+---- dolt::memory::tests::claims_left_in_place_by_a_merge_read_like_claims_moved_by_it stdout ----
+
+thread 'dolt::memory::tests::claims_left_in_place_by_a_merge_read_like_claims_moved_by_it' (2594124) panicked at crates/jojobot-adapters/src/dolt/memory/tests.rs:1004:14:
+the fold lands: MergeCarriesGuardedKeys { duplicate: "person:apu", survivor: "person:homer", keys: "reports_to", may: Superior, allowed: ["bot:assistant"], clear_opens: true }
+the store's own stderr, last lines:
+time="2026-10-27T19:20:51-04:00" level=info msg="Creating root@localhost superuser"
+time="2026-10-27T19:20:51-04:00" level=info msg="Server ready. Accepting connections."
+time="2026-10-27T19:20:51-04:00" level=warning msg="secure_file_priv is set to \"\", which is insecure."
+time="2026-10-27T19:20:51-04:00" level=warning msg="Any user with GRANT FILE privileges will be able to read any file which the sql-server process can read."
+time="2026-10-27T19:20:51-04:00" level=warning msg="Please consider restarting the server with secure_file_priv set to a safe (or non-existent) directory."
+time="2026-10-27T19:20:51-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=1
+time="2026-10-27T19:20:51-04:00" level=info msg=ConnectionClosed connectionID=1
+time="2026-10-27T19:20:51-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=2
+time="2026-10-27T19:20:51-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=3
+time="2026-10-27T19:20:51-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=4
+time="2026-10-27T19:20:51-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=5
+
+---- dolt::memory::tests::events_that_lead_back_to_where_they_began_are_an_error_and_not_an_answer stdout ----
+
+thread 'dolt::memory::tests::events_that_lead_back_to_where_they_began_are_an_error_and_not_an_answer' (2594288) panicked at crates/jojobot-adapters/src/dolt/memory/tests.rs:1004:14:
+the fold lands: MergeCarriesGuardedKeys { duplicate: "person:apu", survivor: "person:homer", keys: "reports_to", may: Superior, allowed: ["bot:assistant"], clear_opens: true }
+the store's own stderr, last lines:
+time="2026-10-27T19:20:54-04:00" level=info msg="Creating root@localhost superuser"
+time="2026-10-27T19:20:54-04:00" level=info msg="Server ready. Accepting connections."
+time="2026-10-27T19:20:54-04:00" level=warning msg="secure_file_priv is set to \"\", which is insecure."
+time="2026-10-27T19:20:54-04:00" level=warning msg="Any user with GRANT FILE privileges will be able to read any file which the sql-server process can read."
+time="2026-10-27T19:20:54-04:00" level=warning msg="Please consider restarting the server with secure_file_priv set to a safe (or non-existent) directory."
+time="2026-10-27T19:20:54-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=1
+time="2026-10-27T19:20:54-04:00" level=info msg=ConnectionClosed connectionID=1
+time="2026-10-27T19:20:54-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=2
+time="2026-10-27T19:20:54-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=3
+time="2026-10-27T19:20:54-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=4
+time="2026-10-27T19:20:54-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=5
+
+---- dolt::memory::tests::fields_left_in_place_by_a_merge_read_like_fields_moved_by_it stdout ----
+
+thread 'dolt::memory::tests::fields_left_in_place_by_a_merge_read_like_fields_moved_by_it' (2594335) panicked at crates/jojobot-adapters/src/dolt/memory/tests.rs:1004:14:
+the fold lands: MergeCarriesGuardedKeys { duplicate: "person:apu", survivor: "person:homer", keys: "reports_to", may: Superior, allowed: ["bot:assistant"], clear_opens: true }
+the store's own stderr, last lines:
+time="2026-10-27T19:20:54-04:00" level=info msg="Creating root@localhost superuser"
+time="2026-10-27T19:20:54-04:00" level=info msg="Server ready. Accepting connections."
+time="2026-10-27T19:20:54-04:00" level=warning msg="secure_file_priv is set to \"\", which is insecure."
+time="2026-10-27T19:20:54-04:00" level=warning msg="Any user with GRANT FILE privileges will be able to read any file which the sql-server process can read."
+time="2026-10-27T19:20:54-04:00" level=warning msg="Please consider restarting the server with secure_file_priv set to a safe (or non-existent) directory."
+time="2026-10-27T19:20:54-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=1
+time="2026-10-27T19:20:54-04:00" level=info msg=ConnectionClosed connectionID=1
+time="2026-10-27T19:20:54-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=2
+time="2026-10-27T19:20:54-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=3
+time="2026-10-27T19:20:54-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=4
+time="2026-10-27T19:20:54-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=5
+
+---- dolt::memory::tests::names_an_older_merge_moved_read_cleanly_and_are_not_named_twice stdout ----
+
+thread 'dolt::memory::tests::names_an_older_merge_moved_read_cleanly_and_are_not_named_twice' (2594438) panicked at crates/jojobot-adapters/src/dolt/memory/tests.rs:1004:14:
+the fold lands: MergeCarriesGuardedKeys { duplicate: "person:apu", survivor: "person:homer", keys: "reports_to", may: Superior, allowed: ["bot:assistant"], clear_opens: true }
+the store's own stderr, last lines:
+time="2026-10-27T19:20:55-04:00" level=info msg="Creating root@localhost superuser"
+time="2026-10-27T19:20:55-04:00" level=info msg="Server ready. Accepting connections."
+time="2026-10-27T19:20:55-04:00" level=warning msg="secure_file_priv is set to \"\", which is insecure."
+time="2026-10-27T19:20:55-04:00" level=warning msg="Any user with GRANT FILE privileges will be able to read any file which the sql-server process can read."
+time="2026-10-27T19:20:55-04:00" level=warning msg="Please consider restarting the server with secure_file_priv set to a safe (or non-existent) directory."
+time="2026-10-27T19:20:55-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=1
+time="2026-10-27T19:20:55-04:00" level=info msg=ConnectionClosed connectionID=1
+time="2026-10-27T19:20:55-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=2
+time="2026-10-27T19:20:55-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=3
+time="2026-10-27T19:20:55-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=4
+time="2026-10-27T19:20:55-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=5
+
+---- dolt::memory::tests::names_and_children_left_by_a_merge_read_like_ones_it_moved stdout ----
+
+thread 'dolt::memory::tests::names_and_children_left_by_a_merge_read_like_ones_it_moved' (2594488) panicked at crates/jojobot-adapters/src/dolt/memory/tests.rs:1004:14:
+the fold lands: MergeCarriesGuardedKeys { duplicate: "person:apu", survivor: "person:homer", keys: "reports_to", may: Superior, allowed: ["bot:assistant"], clear_opens: true }
+the store's own stderr, last lines:
+time="2026-10-27T19:20:56-04:00" level=info msg="Creating root@localhost superuser"
+time="2026-10-27T19:20:56-04:00" level=info msg="Server ready. Accepting connections."
+time="2026-10-27T19:20:56-04:00" level=warning msg="secure_file_priv is set to \"\", which is insecure."
+time="2026-10-27T19:20:56-04:00" level=warning msg="Any user with GRANT FILE privileges will be able to read any file which the sql-server process can read."
+time="2026-10-27T19:20:56-04:00" level=warning msg="Please consider restarting the server with secure_file_priv set to a safe (or non-existent) directory."
+time="2026-10-27T19:20:56-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=1
+time="2026-10-27T19:20:56-04:00" level=info msg=ConnectionClosed connectionID=1
+time="2026-10-27T19:20:56-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=2
+time="2026-10-27T19:20:56-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=3
+time="2026-10-27T19:20:56-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=4
+time="2026-10-27T19:20:56-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=5
+
+---- dolt::memory::tests::pointers_left_naming_a_merged_thing_read_like_pointers_the_merge_rewrote stdout ----
+
+thread 'dolt::memory::tests::pointers_left_naming_a_merged_thing_read_like_pointers_the_merge_rewrote' (2594539) panicked at crates/jojobot-adapters/src/dolt/memory/tests.rs:1004:14:
+the fold lands: MergeCarriesGuardedKeys { duplicate: "person:apu", survivor: "person:homer", keys: "reports_to", may: Superior, allowed: ["bot:assistant"], clear_opens: true }
+the store's own stderr, last lines:
+time="2026-10-27T19:20:56-04:00" level=info msg="Creating root@localhost superuser"
+time="2026-10-27T19:20:56-04:00" level=info msg="Server ready. Accepting connections."
+time="2026-10-27T19:20:56-04:00" level=warning msg="secure_file_priv is set to \"\", which is insecure."
+time="2026-10-27T19:20:56-04:00" level=warning msg="Any user with GRANT FILE privileges will be able to read any file which the sql-server process can read."
+time="2026-10-27T19:20:56-04:00" level=warning msg="Please consider restarting the server with secure_file_priv set to a safe (or non-existent) directory."
+time="2026-10-27T19:20:56-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=1
+time="2026-10-27T19:20:56-04:00" level=info msg=ConnectionClosed connectionID=1
+time="2026-10-27T19:20:56-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=2
+time="2026-10-27T19:20:56-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=3
+time="2026-10-27T19:20:56-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=4
+time="2026-10-27T19:20:56-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=5
+
+---- dolt::memory::tests::the_chart_reads_the_same_whether_a_merge_moved_the_writes_or_left_them stdout ----
+
+thread 'dolt::memory::tests::the_chart_reads_the_same_whether_a_merge_moved_the_writes_or_left_them' (2594586) panicked at crates/jojobot-adapters/src/dolt/memory/tests.rs:1004:14:
+the fold lands: MergeCarriesGuardedKeys { duplicate: "person:apu", survivor: "person:homer", keys: "reports_to", may: Superior, allowed: ["bot:assistant"], clear_opens: true }
+the store's own stderr, last lines:
+time="2026-10-27T19:20:57-04:00" level=info msg="Creating root@localhost superuser"
+time="2026-10-27T19:20:57-04:00" level=info msg="Server ready. Accepting connections."
+time="2026-10-27T19:20:57-04:00" level=warning msg="secure_file_priv is set to \"\", which is insecure."
+time="2026-10-27T19:20:57-04:00" level=warning msg="Any user with GRANT FILE privileges will be able to read any file which the sql-server process can read."
+time="2026-10-27T19:20:57-04:00" level=warning msg="Please consider restarting the server with secure_file_priv set to a safe (or non-existent) directory."
+time="2026-10-27T19:20:57-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=1
+time="2026-10-27T19:20:57-04:00" level=info msg=ConnectionClosed connectionID=1
+time="2026-10-27T19:20:57-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=2
+time="2026-10-27T19:20:57-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=3
+time="2026-10-27T19:20:57-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=4
+time="2026-10-27T19:20:57-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=5
+
+---- dolt::memory::tests::the_fold_built_over_rows_left_in_place_answers_as_over_rows_moved stdout ----
+
+thread 'dolt::memory::tests::the_fold_built_over_rows_left_in_place_answers_as_over_rows_moved' (2594635) panicked at crates/jojobot-adapters/src/dolt/memory/tests.rs:1004:14:
+the fold lands: MergeCarriesGuardedKeys { duplicate: "person:apu", survivor: "person:homer", keys: "reports_to", may: Superior, allowed: ["bot:assistant"], clear_opens: true }
+the store's own stderr, last lines:
+time="2026-10-27T19:20:57-04:00" level=info msg="Creating root@localhost superuser"
+time="2026-10-27T19:20:57-04:00" level=info msg="Server ready. Accepting connections."
+time="2026-10-27T19:20:57-04:00" level=warning msg="secure_file_priv is set to \"\", which is insecure."
+time="2026-10-27T19:20:57-04:00" level=warning msg="Any user with GRANT FILE privileges will be able to read any file which the sql-server process can read."
+time="2026-10-27T19:20:57-04:00" level=warning msg="Please consider restarting the server with secure_file_priv set to a safe (or non-existent) directory."
+time="2026-10-27T19:20:57-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=1
+time="2026-10-27T19:20:57-04:00" level=info msg=ConnectionClosed connectionID=1
+time="2026-10-27T19:20:57-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=2
+time="2026-10-27T19:20:57-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=3
+time="2026-10-27T19:20:57-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=4
+time="2026-10-27T19:20:57-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=5
+
+---- dolt::memory::tests::things_folded_into_each_other_are_damage_and_not_an_empty_thing stdout ----
+
+thread 'dolt::memory::tests::things_folded_into_each_other_are_damage_and_not_an_empty_thing' (2594745) panicked at crates/jojobot-adapters/src/dolt/memory/tests.rs:1004:14:
+the fold lands: MergeCarriesGuardedKeys { duplicate: "person:apu", survivor: "person:homer", keys: "reports_to", may: Superior, allowed: ["bot:assistant"], clear_opens: true }
+the store's own stderr, last lines:
+time="2026-10-27T19:20:58-04:00" level=info msg="Creating root@localhost superuser"
+time="2026-10-27T19:20:58-04:00" level=info msg="Server ready. Accepting connections."
+time="2026-10-27T19:20:58-04:00" level=warning msg="secure_file_priv is set to \"\", which is insecure."
+time="2026-10-27T19:20:58-04:00" level=warning msg="Any user with GRANT FILE privileges will be able to read any file which the sql-server process can read."
+time="2026-10-27T19:20:58-04:00" level=warning msg="Please consider restarting the server with secure_file_priv set to a safe (or non-existent) directory."
+time="2026-10-27T19:20:58-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=1
+time="2026-10-27T19:20:58-04:00" level=info msg=ConnectionClosed connectionID=1
+time="2026-10-27T19:20:58-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=2
+time="2026-10-27T19:20:58-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=3
+time="2026-10-27T19:20:58-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=4
+time="2026-10-27T19:20:58-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=5
+
+---- dolt::memory::tests::touch_moments_and_kept_off_keys_left_in_place_by_a_merge_read_like_moved_ones stdout ----
+
+thread 'dolt::memory::tests::touch_moments_and_kept_off_keys_left_in_place_by_a_merge_read_like_moved_ones' (2594794) panicked at crates/jojobot-adapters/src/dolt/memory/tests.rs:1004:14:
+the fold lands: MergeCarriesGuardedKeys { duplicate: "person:apu", survivor: "person:homer", keys: "reports_to", may: Superior, allowed: ["bot:assistant"], clear_opens: true }
+the store's own stderr, last lines:
+time="2026-10-27T19:20:58-04:00" level=info msg="Creating root@localhost superuser"
+time="2026-10-27T19:20:58-04:00" level=info msg="Server ready. Accepting connections."
+time="2026-10-27T19:20:58-04:00" level=warning msg="secure_file_priv is set to \"\", which is insecure."
+time="2026-10-27T19:20:58-04:00" level=warning msg="Any user with GRANT FILE privileges will be able to read any file which the sql-server process can read."
+time="2026-10-27T19:20:58-04:00" level=warning msg="Please consider restarting the server with secure_file_priv set to a safe (or non-existent) directory."
+time="2026-10-27T19:20:58-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=1
+time="2026-10-27T19:20:58-04:00" level=info msg=ConnectionClosed connectionID=1
+time="2026-10-27T19:20:58-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=2
+time="2026-10-27T19:20:58-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=3
+time="2026-10-27T19:20:58-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=4
+time="2026-10-27T19:20:58-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=5
+
+---- dolt::memory::tests::two_events_for_one_claim_serve_it_where_the_walk_says_it_went stdout ----
+
+thread 'dolt::memory::tests::two_events_for_one_claim_serve_it_where_the_walk_says_it_went' (2594843) panicked at crates/jojobot-adapters/src/dolt/memory/tests.rs:1004:14:
+the fold lands: MergeCarriesGuardedKeys { duplicate: "person:apu", survivor: "person:homer", keys: "reports_to", may: Superior, allowed: ["bot:assistant"], clear_opens: true }
+the store's own stderr, last lines:
+time="2026-10-27T19:20:59-04:00" level=info msg="Creating root@localhost superuser"
+time="2026-10-27T19:20:59-04:00" level=info msg="Server ready. Accepting connections."
+time="2026-10-27T19:20:59-04:00" level=warning msg="secure_file_priv is set to \"\", which is insecure."
+time="2026-10-27T19:20:59-04:00" level=warning msg="Any user with GRANT FILE privileges will be able to read any file which the sql-server process can read."
+time="2026-10-27T19:20:59-04:00" level=warning msg="Please consider restarting the server with secure_file_priv set to a safe (or non-existent) directory."
+time="2026-10-27T19:20:59-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=1
+time="2026-10-27T19:20:59-04:00" level=info msg=ConnectionClosed connectionID=1
+time="2026-10-27T19:20:59-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=2
+time="2026-10-27T19:20:59-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=3
+time="2026-10-27T19:20:59-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=4
+time="2026-10-27T19:20:59-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=5
+
+---- dolt::memory::tests::what_points_at_a_merged_thing_is_found_at_the_survivor_either_way stdout ----
+
+thread 'dolt::memory::tests::what_points_at_a_merged_thing_is_found_at_the_survivor_either_way' (2594890) panicked at crates/jojobot-adapters/src/dolt/memory/tests.rs:1004:14:
+the fold lands: MergeCarriesGuardedKeys { duplicate: "person:apu", survivor: "person:homer", keys: "reports_to", may: Superior, allowed: ["bot:assistant"], clear_opens: true }
+the store's own stderr, last lines:
+time="2026-10-27T19:20:59-04:00" level=info msg="Creating root@localhost superuser"
+time="2026-10-27T19:20:59-04:00" level=info msg="Server ready. Accepting connections."
+time="2026-10-27T19:20:59-04:00" level=warning msg="secure_file_priv is set to \"\", which is insecure."
+time="2026-10-27T19:20:59-04:00" level=warning msg="Any user with GRANT FILE privileges will be able to read any file which the sql-server process can read."
+time="2026-10-27T19:20:59-04:00" level=warning msg="Please consider restarting the server with secure_file_priv set to a safe (or non-existent) directory."
+time="2026-10-27T19:20:59-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=1
+time="2026-10-27T19:20:59-04:00" level=info msg=ConnectionClosed connectionID=1
+time="2026-10-27T19:20:59-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=2
+time="2026-10-27T19:20:59-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=3
+time="2026-10-27T19:20:59-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=4
+time="2026-10-27T19:20:59-04:00" level=info msg=NewConnection DisableClientMultiStatements=false connectionID=5
+
+
+failures:
+    dolt::memory::tests::a_claim_under_the_folded_thing_that_no_event_lists_is_named_and_readable
+    dolt::memory::tests::a_claims_history_serves_its_kept_marks_through_a_chain_of_merges
+    dolt::memory::tests::a_claims_history_serves_its_kept_marks_through_a_merge
+    dolt::memory::tests::a_list_naming_both_sides_of_a_merge_reads_the_survivor_once
+    dolt::memory::tests::a_loop_beneath_a_survivor_is_damage_naming_the_things_in_it
+    dolt::memory::tests::a_merge_leaves_the_stored_rows_of_the_folded_thing_as_they_were
+    dolt::memory::tests::a_pointer_into_a_loop_of_merged_things_is_an_error_and_not_an_answer
+    dolt::memory::tests::a_stale_revision_is_counted_on_a_claim_left_in_place_as_on_one_moved
+    dolt::memory::tests::an_edit_or_retraction_of_a_merged_claim_appends_to_its_own_history
+    dolt::memory::tests::claim_histories_left_in_place_by_a_merge_read_like_ones_moved_by_it
+    dolt::memory::tests::claims_left_in_place_by_a_merge_read_like_claims_moved_by_it
+    dolt::memory::tests::events_that_lead_back_to_where_they_began_are_an_error_and_not_an_answer
+    dolt::memory::tests::fields_left_in_place_by_a_merge_read_like_fields_moved_by_it
+    dolt::memory::tests::names_an_older_merge_moved_read_cleanly_and_are_not_named_twice
+    dolt::memory::tests::names_and_children_left_by_a_merge_read_like_ones_it_moved
+    dolt::memory::tests::pointers_left_naming_a_merged_thing_read_like_pointers_the_merge_rewrote
+    dolt::memory::tests::the_chart_reads_the_same_whether_a_merge_moved_the_writes_or_left_them
+    dolt::memory::tests::the_fold_built_over_rows_left_in_place_answers_as_over_rows_moved
+    dolt::memory::tests::things_folded_into_each_other_are_damage_and_not_an_empty_thing
+    dolt::memory::tests::touch_moments_and_kept_off_keys_left_in_place_by_a_merge_read_like_moved_ones
+    dolt::memory::tests::two_events_for_one_claim_serve_it_where_the_walk_says_it_went
+    dolt::memory::tests::what_points_at_a_merged_thing_is_found_at_the_survivor_either_way
+
+test result: FAILED. 435 passed; 22 failed; 0 ignored; 0 measured; 0 filtered out; finished in 261.45s
+
+error: test failed, to rerun pass `-p jojobot-adapters --lib`
+error: 1 target failed:
+    `-p jojobot-adapters --lib`
+   Compiling jojobot-domain v0.1.0 (/var/lib/gitea-runner/runner1/.cache/act/cc476b9ae969162b/hostexecutor/crates/jojobot-domain)
+    Finished `test` profile [optimized + debuginfo] target(s) in 1.33s
+     Running tests/fixture_roster.rs (/var/lib/gitea-runner/runner1/cargo-target/debug/deps/fixture_roster-a598209ae7d2b428)
+
+running 25 tests
+test ordinary_carries_no_name_the_workspace_has_stopped_using ... FAILED <0.278s>
+
+failures:
+
+---- ordinary_carries_no_name_the_workspace_has_stopped_using stdout ----
+
+thread 'ordinary_carries_no_name_the_workspace_has_stopped_using' (3744958) panicked at crates/jojobot-domain/tests/fixture_roster.rs:748:5:
+ordinary exceptions nothing in the workspace uses — delete them; only reviewed cast names may be kept ready for future fixtures:
+role:upgrade-fixture-half
+role:upgrade-fixture-stray
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    ordinary_carries_no_name_the_workspace_has_stopped_using
+
+test result: FAILED. 24 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.96s
+
+error: test failed, to rerun pass `-p jojobot-domain --test fixture_roster`
+error: 1 target failed:
+    `-p jojobot-domain --test fixture_roster`
+    Finished `test` profile [optimized + debuginfo] target(s) in 0.15s
+     Running tests/report_touched_first.rs (/var/lib/gitea-runner/cloudy1/cargo-target/debug/deps/report_touched_first-16a05d1cf51839a2)
+
+running 4 tests
+test the_fallback_range_is_the_merge_base_with_origin_main_when_there_is_no_local_main ... FAILED <0.605s>
+test the_report_runs_the_jobs_of_the_packages_the_push_touched_first ... FAILED <0.592s>
+
+failures:
+
+---- the_fallback_range_is_the_merge_base_with_origin_main_when_there_is_no_local_main stdout ----
+
+thread 'the_fallback_range_is_the_merge_base_with_origin_main_when_there_is_no_local_main' (1713237) panicked at crates/jojobot-bar/tests/report_touched_first.rs:325:5:
+assertion `left == right` failed: bar: report has no history yet, so no expected time
+bar: run it in the background with a timeout of 7200000 ms; the exit code is the log's last line
+level: report, 5 of 5 jobs, left to the boundary: none; ignored 0 reds on heads main does not contain, 0 reds from dirty trees
+verdict: GREEN
+size: unknown — neither SIZE_BASE nor GITHUB_BASE_REF is set; growth was not judged, so the size is not ok
+fmt-check: ok — formatted (wall 0.0s)
+fast: ok — the library cases of pb ran first and passed (wall 0.1s)
+build: ok — compiled (wall 0.0s)
+test-compile: ok — test binaries built (wall 0.0s)
+level: ok — report, 5 of 5 jobs, left to the boundary: none; ignored 0 reds on heads main does not contain, 0 reds from dirty trees
+order: ok — jobs of the packages the push touched first: pb
+jobs: ok — 1 test binaries at a time (BAR_JOBS), wall 0s
+doc-tests: ok — ran (wall 0.1s)
+test: ok — 5 suites, 5 passed
+lint: ok — clean (wall 0.0s)
+log: target/bar/report.log (34 lines)
+roster names new since origin/main: unknown — no base ref (origin/main not found)
+
+  left: ["-p pb --lib", "--features=jojobot/room-harness --test beta", "-p pa --lib", "--features=jojobot/room-harness --test alpha", "--features=jojobot/room-harness --doc"]
+ right: ["-p pb --lib", "--test beta", "-p pa --lib", "--test alpha", "--doc"]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- the_report_runs_the_jobs_of_the_packages_the_push_touched_first stdout ----
+
+thread 'the_report_runs_the_jobs_of_the_packages_the_push_touched_first' (1713381) panicked at crates/jojobot-bar/tests/report_touched_first.rs:135:5:
+assertion `left == right` failed: bar: report has no history yet, so no expected time
+bar: run it in the background with a timeout of 7200000 ms; the exit code is the log's last line
+level: report, 5 of 5 jobs, left to the boundary: none; ignored 0 reds on heads main does not contain, 0 reds from dirty trees
+verdict: GREEN
+size: unknown — neither SIZE_BASE nor GITHUB_BASE_REF is set; growth was not judged, so the size is not ok
+fmt-check: ok — formatted (wall 0.0s)
+fast: ok — the library cases of pb ran first and passed (wall 0.1s)
+build: ok — compiled (wall 0.0s)
+test-compile: ok — test binaries built (wall 0.0s)
+level: ok — report, 5 of 5 jobs, left to the boundary: none; ignored 0 reds on heads main does not contain, 0 reds from dirty trees
+order: ok — jobs of the packages the push touched first: pb
+jobs: ok — 1 test binaries at a time (BAR_JOBS), wall 0s
+doc-tests: ok — ran (wall 0.1s)
+test: ok — 5 suites, 5 passed
+lint: ok — clean (wall 0.0s)
+log: target/bar/report.log (34 lines)
+roster names new since origin/main: unknown — no base ref (origin/main not found)
+
+  left: ["-p pb --lib", "--features=jojobot/room-harness --test beta", "-p pa --lib", "--features=jojobot/room-harness --test alpha", "--features=jojobot/room-harness --doc"]
+ right: ["-p pb --lib", "--test beta", "-p pa --lib", "--test alpha", "--doc"]
+
+
+failures:
+    the_fallback_range_is_the_merge_base_with_origin_main_when_there_is_no_local_main
+    the_report_runs_the_jobs_of_the_packages_the_push_touched_first
+
+test result: FAILED. 2 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.35s
+
+error: test failed, to rerun pass `-p jojobot-bar --test report_touched_first`
+error: 1 target failed:
+    `-p jojobot-bar --test report_touched_first`
