@@ -600,10 +600,10 @@ pub struct RecallArgs {
     /// address and subject, provenance, standing, the day it was recorded and how
     /// many times it has been written, and none of the writes behind it:
     /// `history_record` is the door for those. An address that names nothing is
-    /// named as missing and the others are still served. The call is its own
-    /// question, so name no subject, kind or other selection beside it. A long
-    /// list stops at the answer ceiling, and `not_shown` names the `offset` that
-    /// reads on.
+    /// named as missing and the others are still served. A subject may repeat
+    /// what every address names; facts and details are accepted, and record_keys
+    /// narrows each record. Other selections refuse. A long list stops at the
+    /// answer ceiling; `not_shown` names the `offset` that reads on.
     #[serde(default)]
     pub(crate) records: Option<Vec<String>>,
     /// **How many of those writes come back**, newest kept. Twenty when
@@ -4769,14 +4769,12 @@ impl Jojobot {
         args: &RecallArgs,
         addresses: &[String],
     ) -> Result<CallToolResult, McpError> {
-        let details_asked = args.details.unwrap_or(false);
-        if let Some(beside) = selection_beside_records(args) {
+        let details_asked = args.details.unwrap_or(false) || args.record_keys.is_some();
+        if let Some(beside) = selection_beside_records(args, addresses) {
             return memory_declined(
                 "recall",
                 MemoryError::InvalidQuery(format!(
-                    "records is its own question and takes no {beside} beside it: send the \
-                     addresses alone (with sid, offset and details if you have them), or drop \
-                     records to ask the other question"
+                    "records disagrees with {beside}: remove {beside} or records"
                 )),
             );
         }
@@ -4825,6 +4823,13 @@ impl Jojobot {
                 Err(refused) => return memory_declined("recall", refused),
             }
         }
+        if let Some(keys) = &args.record_keys {
+            for record in &mut answered {
+                let mut left_out = std::collections::BTreeSet::new();
+                wire::narrow_record(record, keys, &mut left_out);
+                record[wire::OBJECT_RECORD_KEYS_LEFT_OUT] = serde_json::json!(left_out);
+            }
+        }
         let mut body = serde_json::json!({ "count": answered.len(), "records": answered });
         fit_records(&mut body, args.offset.map_or(0, |offset| offset as usize));
         // **Said once, off the records the answer kept.**
@@ -4833,13 +4838,12 @@ impl Jojobot {
     }
 }
 
-/// **The first argument sent beside `records` that is not `sid` or `offset`**,
-/// by name. A selection or a shaping argument next to it would be dropped
-/// without a word, so the call is refused naming it.
-fn selection_beside_records(args: &RecallArgs) -> Option<&'static str> {
+/// **A conflicting selection beside `records`**, including a subject that
+/// disagrees with any valid address. Compatible record shaping stays allowed.
+fn selection_beside_records(args: &RecallArgs, addresses: &[String]) -> Option<&'static str> {
     // **Every field is named here, so a field added to `RecallArgs` does not
     // compile until it is placed**: sent beside `records` and refused, or one of
-    // the three that belong with it. A list written apart from the struct would
+    // those that belong with it. A list written apart from the struct would
     // let the new argument be dropped without a word.
     let RecallArgs {
         subject,
@@ -4850,7 +4854,7 @@ fn selection_beside_records(args: &RecallArgs) -> Option<&'static str> {
         expression,
         scope,
         order,
-        facts,
+        facts: _,
         details: _,
         stood_for,
         review_marks,
@@ -4858,7 +4862,7 @@ fn selection_beside_records(args: &RecallArgs) -> Option<&'static str> {
         prose,
         charter,
         keys,
-        record_keys,
+        record_keys: _,
         held,
         history,
         history_record,
@@ -4880,8 +4884,14 @@ fn selection_beside_records(args: &RecallArgs) -> Option<&'static str> {
         inputs,
         sid: _,
     } = args;
+    let disagrees = subject.as_ref().is_some_and(|subject| {
+        addresses
+            .iter()
+            .filter_map(|asked| FactAddress::parse(asked).ok())
+            .any(|address| address.home != EntityId::person(subject))
+    });
     [
-        ("subject", subject.is_some()),
+        ("subject", disagrees),
         ("kind", kind.is_some()),
         ("parent", parent.is_some()),
         ("answers_type", answers_type.is_some()),
@@ -4891,14 +4901,12 @@ fn selection_beside_records(args: &RecallArgs) -> Option<&'static str> {
         ("order", order.is_some()),
         ("view", view.is_some()),
         ("inputs", inputs.is_some()),
-        ("facts", facts.is_some()),
         ("stood_for", stood_for.is_some()),
         ("review_marks", review_marks.is_some()),
         ("status", status.is_some()),
         ("prose", prose.is_some()),
         ("charter", charter.is_some()),
         ("keys", keys.is_some()),
-        ("record_keys", record_keys.is_some()),
         ("limit", limit.is_some()),
         ("follow", follow.is_some()),
         ("overdue", overdue.is_some()),
@@ -4969,26 +4977,16 @@ fn fit_records(body: &mut serde_json::Value, offset: usize) {
     let Some(records) = body
         .get_mut("records")
         .and_then(|records| records.as_array_mut())
-        .map(std::mem::take)
     else {
         return;
     };
-    let size = |json: &serde_json::Value| crate::answer::served_len(json) + 1;
     let total = records.len();
-    let window: Vec<serde_json::Value> = records.into_iter().skip(offset).collect();
-    // **Room for the line that says details were left out**, which is added
-    // after this fit and so counts against the ceiling here, whenever a record
-    // that could be served marks that it left some.
-    let details_room = if window
-        .iter()
-        .any(|record| record.get(wire::OBJECT_LEFT_OUT).is_some())
-    {
-        // The line that names addresses carries the longer way to ask.
-        crate::answer::served_len(&wire::details_note(usize::MAX, &[String::new()])) + 32
-    } else {
-        0
-    };
-    let rest = crate::answer::served_len(body) + crate::answer::STATUS_BAR_ROOM + details_room;
+    records.drain(..offset.min(total));
+    // Reserve the shared details and record-key notes before fitting the page.
+    wire::say_details_left_out(body, wire::Marks::Keep);
+    let window = std::mem::take(body["records"].as_array_mut().unwrap());
+    let size = |json: &serde_json::Value| crate::answer::served_len(json) + 1;
+    let rest = crate::answer::served_len(body) + crate::answer::STATUS_BAR_ROOM;
     if offset == 0 && rest + window.iter().map(size).sum::<usize>() <= ANSWER_CEILING {
         body["records"] = window.into();
         return;

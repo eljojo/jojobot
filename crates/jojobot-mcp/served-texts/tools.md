@@ -3220,10 +3220,10 @@ any subjects, in one call. Each comes back with its current wording, its
 address and subject, provenance, standing, the day it was recorded and how
 many times it has been written, and none of the writes behind it:
 `history_record` is the door for those. An address that names nothing is
-named as missing and the others are still served. The call is its own
-question, so name no subject, kind or other selection beside it. A long
-list stops at the answer ceiling, and `not_shown` names the `offset` that
-reads on.
+named as missing and the others are still served. A subject may repeat
+what every address names; facts and details are accepted, and record_keys
+narrows each record. Other selections refuse. A long list stops at the
+answer ceiling; `not_shown` names the `offset` that reads on.
 ```
 
 #### `recall` — argument `/inputSchema.review_marks`

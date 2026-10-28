@@ -10160,7 +10160,7 @@ async fn recall_reads_records_whole_with_room_for_the_details_line() {
     assert!(whole > 0, "no width served every record in one answer");
 }
 
-/// **`records` is its own question**, so a subject, a kind or any other
+/// **`records` is its own question**, so a conflicting subject or another
 /// selection beside it is refused rather than ignored, and so is an empty list.
 #[tokio::test]
 async fn recall_refuses_records_beside_another_selection_or_with_none() {
@@ -10170,7 +10170,7 @@ async fn recall_refuses_records_beside_another_selection_or_with_none() {
     let beside = recall_json(
         &jojobot,
         RecallArgs {
-            subject: Some("person:alpha".into()),
+            subject: Some("person:beta".into()),
             ..of_records(&["person:alpha#f1"])
         },
     )
@@ -10179,18 +10179,18 @@ async fn recall_refuses_records_beside_another_selection_or_with_none() {
         beside["status"] == "blocked"
             && beside["wrote"] == false
             && beside.to_string().contains("subject"),
-        "a subject beside records was not refused, naming it: {beside}"
+        "a conflicting subject was not refused, naming it: {beside}"
     );
     let shaped = recall_json(
         &jojobot,
         RecallArgs {
-            facts: Some(true),
+            kind: Some("person".into()),
             ..of_records(&["person:alpha#f1"])
         },
     )
     .await;
     assert!(
-        shaped["status"] == "blocked" && shaped.to_string().contains("facts"),
+        shaped["status"] == "blocked" && shaped.to_string().contains("kind"),
         "an argument that shapes another question was dropped without a word: {shaped}"
     );
     let empty = recall_json(&jojobot, of_records(&[])).await;

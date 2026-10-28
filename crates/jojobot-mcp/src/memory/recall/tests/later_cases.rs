@@ -4,6 +4,131 @@
 
 use super::*;
 
+#[tokio::test]
+async fn records_agree_with_the_subject_all_the_addresses_name() {
+    let jojobot = handler();
+    for content in ["Alpha keeps bees", "Alpha rides a bicycle"] {
+        capture_ok(&jojobot, capture_args("alpha", content)).await;
+    }
+    for subject in ["person:alpha", "alpha"] {
+        let answer = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    subject: Some(subject.into()),
+                    ..of_records(&["person:alpha#f1", "person:alpha#f2"])
+                }))
+                .await
+                .expect("records read"),
+        );
+        assert_eq!(answer["count"], 2, "{subject}: {answer}");
+        assert_eq!(answer["records"][0]["content"], "Alpha keeps bees");
+        assert_eq!(answer["records"][1]["content"], "Alpha rides a bicycle");
+    }
+}
+
+#[tokio::test]
+async fn records_agree_with_facts_and_details() {
+    let jojobot = handler();
+    capture_ok(
+        &jojobot,
+        CaptureArgs {
+            details: Some("Alpha tends the hive on Tuesdays".into()),
+            ..capture_args("alpha", "Alpha keeps bees")
+        },
+    )
+    .await;
+    let answer = json_of(
+        &jojobot
+            .recall(Parameters(RecallArgs {
+                facts: Some(true),
+                details: Some(true),
+                ..of_records(&["person:alpha#f1"])
+            }))
+            .await
+            .expect("records read"),
+    );
+    assert_eq!(
+        answer["records"][0]["content"], "Alpha keeps bees",
+        "{answer}"
+    );
+    assert_eq!(
+        answer["records"][0]["details"],
+        "Alpha tends the hive on Tuesdays"
+    );
+}
+
+#[tokio::test]
+async fn records_agree_with_record_keys_and_keep_only_the_keys_asked_for() {
+    let jojobot = handler();
+    capture_ok(
+        &jojobot,
+        CaptureArgs {
+            details: Some("Alpha tends the hive on Tuesdays".into()),
+            ..capture_args("alpha", "Alpha keeps bees")
+        },
+    )
+    .await;
+    let answer = json_of(
+        &jojobot
+            .recall(Parameters(RecallArgs {
+                record_keys: Some(vec!["details".into()]),
+                ..of_records(&["person:alpha#f1"])
+            }))
+            .await
+            .expect("records read"),
+    );
+    let record = &answer["records"][0];
+    assert_eq!(record["address"], "person:alpha#f1", "{answer}");
+    assert_eq!(record["details"], "Alpha tends the hive on Tuesdays");
+    assert_eq!(record.as_object().expect("one record").len(), 2);
+    let omitted = answer["records_narrowed"]["left_out_keys"]
+        .as_array()
+        .unwrap_or_else(|| panic!("narrowed keys are named: {answer}"));
+    assert!(omitted.iter().any(|key| key == "content"), "{answer}");
+    assert!(omitted.iter().any(|key| key == "provenance"), "{answer}");
+}
+
+#[tokio::test]
+async fn records_agree_only_when_every_address_belongs_to_the_subject() {
+    let jojobot = handler();
+    capture_ok(&jojobot, capture_args("alpha", "Alpha keeps bees")).await;
+    capture_ok(&jojobot, capture_args("beta", "Beta rides a bicycle")).await;
+    let answer = json_of(
+        &jojobot
+            .recall(Parameters(RecallArgs {
+                subject: Some("person:alpha".into()),
+                ..of_records(&["person:alpha#f1", "person:beta#f1"])
+            }))
+            .await
+            .expect("refusal answers"),
+    );
+    assert_eq!(answer["status"], "blocked", "{answer}");
+    assert_eq!(answer["wrote"], false);
+    assert!(answer.to_string().contains("subject"));
+    assert!(answer.get("records").is_none());
+}
+
+#[tokio::test]
+async fn records_agree_does_not_hide_another_selection_behind_compatible_arguments() {
+    let jojobot = handler();
+    capture_ok(&jojobot, capture_args("alpha", "Alpha keeps bees")).await;
+    let answer = json_of(
+        &jojobot
+            .recall(Parameters(RecallArgs {
+                subject: Some("person:alpha".into()),
+                facts: Some(true),
+                record_keys: Some(vec!["content".into()]),
+                kind: Some("person".into()),
+                ..of_records(&["person:alpha#f1"])
+            }))
+            .await
+            .expect("refusal answers"),
+    );
+    assert_eq!(answer["status"], "blocked", "{answer}");
+    assert_eq!(answer["wrote"], false);
+    assert!(answer.get("records").is_none());
+}
+
 async fn a_location_to_read_in_history(jojobot: &Jojobot) -> String {
     let written = capture_ok(
         jojobot,
