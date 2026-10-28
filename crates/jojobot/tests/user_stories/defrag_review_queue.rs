@@ -50,6 +50,32 @@ fn first_page(fronted: &serde_json::Value) -> Vec<String> {
         .collect()
 }
 
+/// The stamp value every copied-stamp write below sends.
+const COPIED_STAMP: &str = "2026-01-01T00:00:00Z";
+
+/// **A copied stamp was dropped for real, not only named on the receipt.** The thing
+/// holds no stamp of the copied value, and it waits in defrag's queue: a stored
+/// stamp is written with its write, which reads as reviewed and takes the thing out.
+async fn the_copied_stamp_was_not_kept(dev: &Session, defrag: &Session, handle: &str) {
+    let read = dev
+        .call(
+            "recall",
+            json!({"subject": handle, "keys": ["defragged_at"]}),
+        )
+        .await
+        .json();
+    assert_ne!(
+        read["objects"][0]["fields"]["defragged_at"],
+        json!(COPIED_STAMP),
+        "the copied stamp is stored on {handle}: {read}"
+    );
+    let waiting = queue(defrag).await;
+    assert!(
+        waiting.contains(&handle.to_string()),
+        "{handle} left defrag's queue on a copied stamp: {waiting:?}"
+    );
+}
+
 #[tokio::test]
 async fn a_thing_another_bot_writes_to_waits_for_defrag_until_defrag_writes_or_marks_it() {
     let story = Story::begin("bot:otto").await;
@@ -138,40 +164,55 @@ async fn a_thing_another_bot_writes_to_waits_for_defrag_until_defrag_writes_or_m
         .call(
             "capture",
             json!({"subject": "person:homer", "content": "x", "provenance": "testimony",
-                   "sets": {"defragged_at": "2026-01-01T00:00:00Z"}}),
+                   "sets": {"defragged_at": COPIED_STAMP}}),
         )
         .await;
     assert_eq!(written.json()["dropped_keys"], json!(["defragged_at"]));
+    the_copied_stamp_was_not_kept(&dev, &defrag, "person:homer").await;
     let by_defrag = defrag
         .call(
             "capture",
             json!({"subject": "person:homer", "content": "x", "provenance": "inference",
-                   "sets": {"defragged_at": "2026-01-01T00:00:00Z"}}),
+                   "sets": {"defragged_at": COPIED_STAMP}}),
         )
         .await;
     assert_eq!(by_defrag.json()["dropped_keys"], json!(["defragged_at"]));
+    let minted = dev
+        .call(
+            "recall",
+            json!({"subject": "person:homer", "keys": ["defragged_at"]}),
+        )
+        .await
+        .json();
+    assert_ne!(
+        minted["objects"][0]["fields"]["defragged_at"],
+        json!(COPIED_STAMP),
+        "defrag's own write mints its stamp and keeps no copied one: {minted}"
+    );
     let created = dev
         .call(
             "add_entity",
             json!({"kind": "person", "handle": "milhouse", "name": "Milhouse", "source": "user-named",
-                   "sets": {"defragged_at": "2026-01-01T00:00:00Z"}}),
+                   "sets": {"defragged_at": COPIED_STAMP}}),
         )
         .await;
     assert_eq!(created.json()["dropped_keys"], json!(["defragged_at"]));
+    the_copied_stamp_was_not_kept(&dev, &defrag, "person:milhouse").await;
     let edited = dev
         .refused(
             "update_fact",
-            json!({"address": "person:homer#f1", "sets": {"defragged_at": "2026-01-01T00:00:00Z"}}),
+            json!({"address": "person:homer#f1", "sets": {"defragged_at": COPIED_STAMP}}),
         )
         .await;
     edited.says("keep").says("\"wrote\":false");
     let set = dev
         .call(
             "update_entity",
-            json!({"handle": "person:homer", "sets": {"defragged_at": "2026-01-01T00:00:00Z"}}),
+            json!({"handle": "person:homer", "sets": {"defragged_at": COPIED_STAMP}}),
         )
         .await;
     assert_eq!(set.json()["dropped_keys"], json!(["defragged_at"]));
+    the_copied_stamp_was_not_kept(&dev, &defrag, "person:homer").await;
     let marked = dev
         .refused(
             "update_entity",
