@@ -231,10 +231,10 @@ fn the_log_carries_every_jobs_output_in_listing_order() {
     let ran = run_check(&[]);
     let positions: Vec<usize> = [
         "-p jojobot-domain --lib",
-        "--workspace --test alpha",
-        "--workspace --test beta",
-        "--workspace --test gamma",
-        "--workspace --doc",
+        "--workspace --features=jojobot/room-harness --test alpha",
+        "--workspace --features=jojobot/room-harness --test beta",
+        "--workspace --features=jojobot/room-harness --test gamma",
+        "--workspace --features=jojobot/room-harness --doc",
     ]
     .iter()
     .map(|job| {
