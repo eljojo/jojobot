@@ -517,6 +517,14 @@ fn ci_missing_before_uses_the_main_merge_base_for_size() {
     ci_branch_base_case(None);
 }
 
+/// A dispatch checkout holds the branch under test and `origin/main`, and no
+/// local `main`. The narrow loop names the bare `main` when no workflow sets a
+/// base, so that name has to find the remote-tracking line.
+#[test]
+fn ci_a_bare_main_base_finds_origin_main_when_no_local_main_exists() {
+    ci_branch_base_case(Some("main"));
+}
+
 #[test]
 fn ci_without_a_main_base_refuses_instead_of_claiming_unknown() {
     let dir = repo("ci-no-main");

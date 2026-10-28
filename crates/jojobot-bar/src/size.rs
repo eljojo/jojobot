@@ -634,6 +634,16 @@ fn remote_line() -> Option<String> {
         .map(|(_, name)| name.to_string())
 }
 
+fn is_a_commit(name: &str) -> bool {
+    git_output(&[
+        "rev-parse",
+        "--verify",
+        "--quiet",
+        &format!("{name}^{{commit}}"),
+    ])
+    .is_some()
+}
+
 /// CI's new-branch event has no before commit; measure from main in that case.
 /// A valid explicit base still wins. Off CI, no base and a bare `main` both mean
 /// the remote line the branch was cut from, when the checkout has one; a sha is
@@ -658,6 +668,17 @@ pub fn read_base() -> Base {
     }
     if !in_ci() && wanted.as_deref().is_none_or(|name| name == "main") {
         wanted = remote_line().or(wanted);
+    }
+    // **A CI checkout holds the branch under test and the remote-tracking lines, and
+    // no local `main`.** The narrow loop names the bare `main` when no workflow sets a
+    // base, so a name that is no commit here is read as the remote line of that name.
+    if in_ci()
+        && let Some(name) = wanted.as_deref().filter(|name| !is_a_commit(name))
+    {
+        let remote = format!("origin/{name}");
+        if is_a_commit(&remote) {
+            wanted = Some(remote);
+        }
     }
     let Some(wanted) = wanted else {
         return Base::Unknown(format!(
