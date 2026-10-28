@@ -114,9 +114,6 @@ pub(super) fn run(args: &[String]) -> std::io::Result<ExitCode> {
 /// a git failure, or a dirty checkout keeps the full path.
 pub(super) fn fast_base() -> Option<String> {
     let base = std::env::var("BAR_CI_BASE").ok()?;
-    if std::env::var("SIZE_BASE").ok().as_deref() != Some(base.as_str()) {
-        return None;
-    }
     if base.len() != 40 || !base.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }

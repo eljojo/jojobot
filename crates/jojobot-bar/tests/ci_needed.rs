@@ -94,16 +94,7 @@ fn ci_needed_two_pushes_do_not_hide_a_canceled_code_predecessor() {
         canceled
     );
 
-    let plan = support::output_fenced(
-        Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
-            .args(["plan", "rooms"])
-            .current_dir(&dir)
-            .env("BAR_CI_BASE", &canceled)
-            .env("SIZE_BASE", &canceled)
-            .env("CARGO", dir.join("cargo"))
-            .env("GITHUB_OUTPUT", dir.join("target/plan-output")),
-    )
-    .unwrap();
+    let plan = branch_plan(&dir, &canceled);
     assert!(plan.status.success(), "{plan:?}");
     assert_eq!(
         fs::read_to_string(dir.join("target/plan-output"))
@@ -262,4 +253,37 @@ fn ci_needed_workflows_use_the_conservative_plan_for_expensive_steps() {
             }
         }
     }
+}
+
+fn branch_plan(dir: &Path, base: &str) -> Output {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_jojobot-bar"));
+    cmd.args(["plan", "rooms"])
+        .current_dir(dir)
+        .env("CARGO", dir.join("cargo"))
+        .env("GITHUB_OUTPUT", dir.join("target/plan-output"));
+    for (key, value) in include_str!("../../../.forgejo/workflows/branch.yml")
+        .lines()
+        .filter_map(|line| line.trim().split_once(": "))
+    {
+        if ["BAR_CI_BASE", "SIZE_BASE"].contains(&key) {
+            cmd.env(key, value.replace("${{ forgejo.event.before }}", base));
+        }
+    }
+    fs::create_dir_all(dir.join("target")).unwrap();
+    support::output_fenced(&mut cmd).unwrap()
+}
+
+#[test]
+fn ci_needed_branch_workflow_plans_proved_docs_fast() {
+    let (dir, base) = repo();
+    change(&dir, &["README.md"]);
+    let plan = branch_plan(&dir, &base);
+    assert!(plan.status.success(), "{plan:?}");
+    assert_eq!(
+        fs::read_to_string(dir.join("target/plan-output"))
+            .unwrap()
+            .trim(),
+        "fast=true"
+    );
+    fs::remove_dir_all(dir).unwrap();
 }
