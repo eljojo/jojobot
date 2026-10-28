@@ -1119,6 +1119,77 @@ mod down_memory_tests {
         );
         assert!(blind_to_thing.fields(&thing).await.is_err());
     }
+
+    #[tokio::test]
+    async fn down_fields_versioned_keeps_the_selected_fault_and_the_other_values() {
+        use jojobot_domain::memory::testing::contract::state;
+
+        let memory = Arc::new(InMemoryMemory::booted());
+        let work = EntityId("work:pour-the-slab".into());
+        let thing = EntityId("thing:gravel-bike".into());
+        for handle in [&work, &thing] {
+            memory
+                .add_entity(NewEntity::new(handle.clone(), handle.as_str(), "fixture"))
+                .await
+                .unwrap()
+                .written()
+                .unwrap();
+            memory
+                .capture(state(NewFact {
+                    fields: [("one_liner".into(), "a retained value".into())].into(),
+                    ..NewFact::about(handle.clone(), "fields", jiff::civil::date(2026, 10, 20))
+                }))
+                .await
+                .unwrap()
+                .written()
+                .unwrap();
+        }
+        for (down, blocked, readable) in [
+            (Down::WorkFields, &work, &thing),
+            (Down::ThingFields, &thing, &work),
+            (Down::FieldsOf("work:pour-the-slab"), &work, &thing),
+        ] {
+            let blind = DownMemory(down, memory.clone());
+            let expected = memory.fields_versioned(readable).await.unwrap();
+            assert_eq!(
+                expected.0.get("one_liner").map(String::as_str),
+                Some("a retained value")
+            );
+            assert_eq!(blind.fields_versioned(readable).await.unwrap(), expected);
+            assert!(
+                matches!(
+                    blind.fields_versioned(blocked).await,
+                    Err(MemoryError::Store(_))
+                ),
+                "the versioned read bypassed its selected field fault"
+            );
+        }
+        assert_eq!(
+            DownMemory(Down::Nothing, memory.clone())
+                .fields_versioned(&work)
+                .await
+                .unwrap(),
+            memory.fields_versioned(&work).await.unwrap()
+        );
+    }
+
+    #[tokio::test]
+    #[should_panic(expected = "the instance's record was read")]
+    async fn down_fields_versioned_keeps_the_instance_read_tripwire() {
+        let memory = Arc::new(InMemoryMemory::booted());
+        let instance = EntityId("topic:instance".into());
+        memory
+            .add_entity(NewEntity::new(instance.clone(), "The instance", "fixture"))
+            .await
+            .unwrap()
+            .written()
+            .unwrap();
+        assert!(memory.fields_versioned(&instance).await.is_ok());
+        DownMemory(Down::InstanceRecord, memory)
+            .fields_versioned(&instance)
+            .await
+            .unwrap();
+    }
 }
 
 /// A same-bot edit adding another key between recall and history must

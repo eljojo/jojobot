@@ -12,6 +12,26 @@ use super::*;
 /// A Memory with [`Down`]'s one read failing and everything else working.
 pub(crate) struct DownMemory(pub(crate) Down, pub(crate) Arc<InMemoryMemory>);
 
+impl DownMemory {
+    fn check_fields(&self, entity: &EntityId) -> Result<(), MemoryError> {
+        if matches!(self.0, Down::InstanceRecord) && entity.as_str() == "topic:instance" {
+            panic!("the instance's record was read by a call that needed no zone");
+        }
+        if matches!(self.0, Down::ThingFields) && entity.as_str().starts_with("thing:") {
+            return Err(MemoryError::Store("a thing's fields cannot be read".into()));
+        }
+        if matches!(self.0, Down::WorkFields) && entity.as_str().starts_with("work:") {
+            return Err(MemoryError::Store("a work's fields cannot be read".into()));
+        }
+        if matches!(self.0, Down::FieldsOf(handle) if handle == entity.as_str()) {
+            return Err(MemoryError::Store(format!(
+                "the fields of {entity} cannot be read"
+            )));
+        }
+        Ok(())
+    }
+}
+
 #[jojobot_domain::forward(jojobot_domain::forward_memory, via = 1)]
 impl Memory for DownMemory {
     fn image_field(&self, entity: &EntityId, key: &str) -> Option<Option<String>> {
@@ -273,21 +293,15 @@ impl Memory for DownMemory {
         &self,
         entity: &EntityId,
     ) -> Result<std::collections::BTreeMap<String, String>, MemoryError> {
-        if matches!(self.0, Down::InstanceRecord) && entity.as_str() == "topic:instance" {
-            panic!("the instance's record was read by a call that needed no zone");
-        }
-        if matches!(self.0, Down::ThingFields) && entity.as_str().starts_with("thing:") {
-            return Err(MemoryError::Store("a thing's fields cannot be read".into()));
-        }
-        if matches!(self.0, Down::WorkFields) && entity.as_str().starts_with("work:") {
-            return Err(MemoryError::Store("a work's fields cannot be read".into()));
-        }
-        if matches!(self.0, Down::FieldsOf(handle) if handle == entity.as_str()) {
-            return Err(MemoryError::Store(format!(
-                "the fields of {entity} cannot be read"
-            )));
-        }
+        self.check_fields(entity)?;
         self.1.fields(entity).await
+    }
+    async fn fields_versioned(
+        &self,
+        entity: &EntityId,
+    ) -> Result<(std::collections::BTreeMap<String, String>, u64), MemoryError> {
+        self.check_fields(entity)?;
+        self.1.fields_versioned(entity).await
     }
     async fn update_fact(
         &self,
