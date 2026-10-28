@@ -7,6 +7,7 @@
 //! boot is the only moment where repairing it needs no judgement.
 
 use super::*;
+use jojobot_domain::memory::seats::unfiled_rules;
 
 /// The boot door's own refusal: the roster, and an offer.
 ///
@@ -152,18 +153,11 @@ pub(crate) fn carried_rules(in_force: &[Fact], seats: usize) -> Vec<&Fact> {
         .collect()
 }
 
-/// **The rules in force that name no purpose**, counted whole, or `None` when
-/// every rule names one. A rule with no purpose branch is off the rules tree: the
-/// charter's branches cannot load it. Seated rules count too.
+/// **The warning for rules in force that name no purpose**, or `None` when every
+/// rule names one. The condition and the count are the domain's
+/// ([`unfiled_rules`]); this words them for a booting bot.
 pub(crate) fn off_the_tree(in_force: &[Fact]) -> Option<serde_json::Value> {
-    let count = in_force
-        .iter()
-        .filter(|rule| {
-            rule.fields
-                .get("purpose")
-                .is_none_or(|p| p.trim().is_empty())
-        })
-        .count();
+    let count = unfiled_rules(in_force);
     (count > 0).then(|| {
         serde_json::json!({
             "count": count,

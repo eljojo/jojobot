@@ -32,6 +32,22 @@ pub fn is_starred(rule: &Fact) -> bool {
     rule.fields.get("starred").is_some_and(|v| v == "true")
 }
 
+/// Whether a rule names no purpose, so no branch of the charter loads it. A
+/// purpose of only spaces names nothing.
+pub fn is_unfiled(rule: &Fact) -> bool {
+    rule.fields
+        .get("purpose")
+        .is_none_or(|purpose| purpose.trim().is_empty())
+}
+
+/// **How many of a bot's rules in force are off its rules tree**: they name no
+/// purpose. `in_force` is [`super::rules_in_force`]'s own answer, so a
+/// bookkeeping record is not in it. Seated rules count. The boot's warning,
+/// defrag's tree watch and bot health all read this one condition.
+pub fn unfiled_rules(in_force: &[Fact]) -> usize {
+    in_force.iter().filter(|rule| is_unfiled(rule)).count()
+}
+
 /// **A record's age, oldest first.** A record kept before jojobot stamped one
 /// is older than every stamped one. The number in the local id breaks a tie,
 /// and the id as text only orders two ids that hold no number.
@@ -143,4 +159,54 @@ pub fn carried_seats_status(in_force: &[Fact], seats: usize) -> Option<CarriedSe
             seats, STAR_ROUTE,
         ),
     })
+}
+
+#[cfg(test)]
+mod unfiled_tests {
+    use super::*;
+    use crate::memory::testing::{InMemoryMemory, contract::rules_index_records};
+
+    fn filed(rule: &Fact, purpose: Option<&str>) -> Fact {
+        let mut rule = rule.clone();
+        rule.fields.remove("purpose");
+        if let Some(purpose) = purpose {
+            rule.fields.insert("purpose".into(), purpose.into());
+        }
+        rule
+    }
+
+    /// The fixture bot holds two rules, one starred, and three bookkeeping records.
+    async fn the_rules_in_force() -> (Vec<Fact>, Vec<Fact>) {
+        let records = rules_index_records(&InMemoryMemory::booted()).await;
+        let rules = crate::memory::rules_in_force(&records);
+        assert_eq!((records.len(), rules.len()), (5, 2));
+        (records, rules)
+    }
+
+    #[tokio::test]
+    async fn the_count_is_the_rules_in_force_that_name_no_purpose() {
+        let (_, rules) = the_rules_in_force().await;
+        let seated = rules.iter().find(|rule| is_starred(rule)).unwrap();
+        let unseated = rules.iter().find(|rule| !is_starred(rule)).unwrap();
+        assert_eq!(unfiled_rules(&[]), 0);
+        let on_the_tree = [filed(seated, Some("boot")), filed(unseated, Some("mail"))];
+        assert_eq!(unfiled_rules(&on_the_tree), 0);
+        let one_seated = [filed(seated, None), filed(unseated, Some("mail"))];
+        assert_eq!(unfiled_rules(&one_seated), 1);
+        let three = [
+            filed(seated, None),
+            filed(unseated, None),
+            filed(unseated, Some("  ")),
+            filed(unseated, Some("mail")),
+        ];
+        assert_eq!(unfiled_rules(&three), 3);
+    }
+
+    /// The fixture's bookkeeping records name no purpose either, and are not counted.
+    #[tokio::test]
+    async fn a_bookkeeping_record_is_not_counted() {
+        let (records, rules) = the_rules_in_force().await;
+        assert!(records.iter().all(is_unfiled));
+        assert_eq!(unfiled_rules(&rules), 2);
+    }
 }
