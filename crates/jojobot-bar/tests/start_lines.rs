@@ -140,7 +140,7 @@ fn the_startup_static_gate_stops_expensive_jobs_before_they_start() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     for (workflow, dependents) in [
         ("branch", &["report", "rooms"][..]),
-        ("pull-request", &["build"][..]),
+        ("pull-request", &["build", "nix-build", "flake-check"][..]),
     ] {
         let text =
             fs::read_to_string(root.join(format!(".forgejo/workflows/{workflow}.yml"))).unwrap();
@@ -309,7 +309,8 @@ fn ci_required_statuses_fail_when_static_did_not_succeed() {
             let out = support::output_fenced(
                 Command::new("bash")
                     .args(["-euc", &rendered])
-                    .current_dir(&dir),
+                    .current_dir(&dir)
+                    .env("BAR_WORKFLOW_JOBS", "static, build, check, rooms, year"),
             )
             .unwrap();
             assert_eq!(out.status.success(), success, "{name}: {out:?}");

@@ -23,7 +23,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::{Value, json};
 
 /// A code proof licenses only the docs/ratchet fast path. Release readiness
-/// remains the separate six-job dispatch's verdict.
+/// remains the release dispatch's verdict, including the static gate.
 fn code_forge() -> Forge {
     let mut candidate = run(997, "#68", GREEN_SHA, "success");
     candidate["workflow_id"] = json!("pull-request.yml");
@@ -31,7 +31,7 @@ fn code_forge() -> Forge {
     Forge {
         runs: vec![(candidate, String::new())],
         job_name: Some("observer"),
-        more_jobs: ["build", "check", "rooms", "year"]
+        more_jobs: ["static", "build", "check", "rooms", "year"]
             .into_iter()
             .map(|name| (997, name, "success", String::new()))
             .collect(),
@@ -89,6 +89,7 @@ fn code_proof_refuses_unproved_metadata_missing_or_bad_jobs_and_outages_without_
         assert_eq!(standing.asked_for(&format!("head_sha={GREEN_SHA}")), 1);
     }
     for name in [
+        "static",
         "build",
         "check",
         "rooms",

@@ -339,6 +339,7 @@ jobs:
           JOJOBOT_METRICS_OUTCOME: ${{ job.status }}
 
   nix-build:
+    needs: static
     if: ${{ forgejo.event_name == 'workflow_dispatch' && forgejo.event.inputs.release == 'true' }}
     runs-on: nix
     timeout-minutes: 130
@@ -368,6 +369,7 @@ jobs:
           JOJOBOT_METRICS_OUTCOME: ${{ job.status }}
 
   flake-check:
+    needs: static
     if: ${{ forgejo.event_name == 'workflow_dispatch' && forgejo.event.inputs.release == 'true' }}
     runs-on: nix
     timeout-minutes: 130

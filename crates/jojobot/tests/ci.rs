@@ -229,10 +229,8 @@ fn an_unset_playbook_reaches_the_binary_with_no_flag_and_a_set_one_still_passes_
 
 /// `make -n <args>`, dry run: what the targets would run, never run.
 ///
-/// **A dry run reads the recipe lines, so a line that calls `$(MAKE)` still
-/// runs — and passes `-n` down to the sub-make.** The pre-push steps are
-/// targets of their own for that reason; a step written beside a `$(MAKE)`
-/// call on one line would execute under `-n`.
+/// **A recursive make receives `-n` too.** Keep shell commands on their own
+/// recipe lines: a line that contains `$(MAKE)` executes even during a dry run.
 fn dry_run(args: &[&str]) -> String {
     let done = std::process::Command::new("make")
         .current_dir(root())
@@ -306,7 +304,7 @@ fn make_rooms_names_the_manifests_room_targets_and_no_others() {
     );
 }
 
-/// **The year room is reachable only through a feature the pre-push target
+/// **The year room is reachable only through a feature the year target
 /// turns on, and `rooms` does not imply it.** A manifest edit that made
 /// `rooms` pull in `year`, or dropped the year room's gate, would put the
 /// slowest suite back in `make rooms` or in `make check`.
@@ -591,7 +589,7 @@ fn a_newer_push_cancels_the_same_branchs_older_run_and_no_protected_ref_is_pushe
 }
 
 /// **A job that stops printing fails; it does not sit.** Each job of the branch
-/// workflow and the release QA job carries a bound well past its usual run, so a
+/// workflow and the release QA jobs carry a bound well past their usual run, so a
 /// hung job is a red run inside the runner's own cap and not a slot held for
 /// hours. **The positive is in the same case**: each job is found, so a file that
 /// lost a job does not pass with nothing to bound.
@@ -844,7 +842,7 @@ fn every_job_that_makes_or_runs_the_bundle_runs_on_an_x86_64_host() {
 }
 
 /// Release QA adds the deploy artifact and sandbox checks without waiting for
-/// the Cargo bundle. Ordinary PRs and full test dispatches keep their four jobs.
+/// the Cargo bundle. Every expensive job still waits for the static gate.
 #[test]
 fn release_gate_dispatch_adds_two_independent_checks_only_when_requested() {
     let yaml = forgejo_workflow("pull-request");
@@ -867,6 +865,7 @@ fn release_gate_dispatch_adds_two_independent_checks_only_when_requested() {
     assert_eq!(
         names,
         [
+            "  static:",
             "  build:",
             "  check:",
             "  rooms:",
@@ -879,12 +878,12 @@ fn release_gate_dispatch_adds_two_independent_checks_only_when_requested() {
         .lines()
         .find(|l| l.starts_with("  BAR_WORKFLOW_JOBS:"))
         .unwrap();
-    assert!(banner.contains("forgejo.event_name == 'workflow_dispatch' && forgejo.event.inputs.release == 'true' && 'build, check, rooms, year, nix-build, flake-check' || 'build, check, rooms, year'"), "{banner}");
+    assert!(banner.contains("forgejo.event_name == 'workflow_dispatch' && forgejo.event.inputs.release == 'true' && 'static, build, check, rooms, year, nix-build, flake-check' || 'static, build, check, rooms, year'"), "{banner}");
     for name in ["nix-build", "flake-check"] {
         let job = lines_under(&jobs, &format!("{name}:"), 2).join("\n");
         assert!(job.lines().any(|l| l == "    if: ${{ forgejo.event_name == 'workflow_dispatch' && forgejo.event.inputs.release == 'true' }}"), "{job}");
         assert!(
-            !job.contains("needs:")
+            job.lines().any(|l| l == "    needs: static")
                 && !job.lines().any(|l| l.starts_with("    continue-on-error:")),
             "{job}"
         );
@@ -892,10 +891,11 @@ fn release_gate_dispatch_adds_two_independent_checks_only_when_requested() {
             job.contains("    runs-on: nix\n") && job.contains("    timeout-minutes: 130\n"),
             "{job}"
         );
-        assert!(
-            job.contains(&format!("nix develop -c make {name}")),
-            "{job}"
-        );
+        let run = job
+            .find(&format!("nix develop -c make {name}"))
+            .expect("the release check runs");
+        let upload = job.find("/upload-artifact@").expect("its logs are kept");
+        assert!(run < upload, "{name} uploads before its check: {job}");
         assert!(
             job.contains(&format!("|| {{ cat target/bar/{name}.log; exit 1; }}")),
             "{job}"
@@ -917,12 +917,16 @@ fn release_gate_dispatch_adds_two_independent_checks_only_when_requested() {
             assert!(job.contains(wanted), "{name} lacks {wanted}: {job}");
         }
     }
-    for name in ["build", "check", "rooms", "year"] {
+    for name in ["static", "build"] {
         let job = lines_under(&jobs, &format!("{name}:"), 2);
         assert!(
             !job.iter().any(|l| l.starts_with("    if:")),
             "{name}: {job:?}"
         );
+    }
+    for name in ["check", "rooms", "year"] {
+        let job = lines_under(&jobs, &format!("{name}:"), 2);
+        assert!(job.contains(&"    if: ${{ always() }}"), "{name}: {job:?}");
     }
 }
 

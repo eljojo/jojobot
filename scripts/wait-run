@@ -5,7 +5,7 @@
 
 With --code-proof, the target must be a full SHA. The tool reads once, without
 polling or logs, and exits 0 only for a successful pull-request/full-dispatch
-run with build, check, rooms and year green. Only the two release-only jobs
+run with static, build, check, rooms and year green. Only the two release-only jobs
 may be skipped. This licenses the docs-only base; it is not release readiness.
 
 A line that pushed a branch starts this as one background command and is woken
@@ -101,7 +101,7 @@ def runs_of(**params):
 
 def code_proof(sha):
     """Read once: only a completed code predecessor licenses the docs fast path."""
-    required = {"build", "check", "rooms", "year"}
+    required = {"static", "build", "check", "rooms", "year"}
     optional = {"nix-build", "flake-check"}
     if API and re.fullmatch(r"[0-9a-f]{40}", sha):
         try:
