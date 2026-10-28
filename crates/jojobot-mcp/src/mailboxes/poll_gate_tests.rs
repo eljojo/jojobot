@@ -364,6 +364,11 @@ async fn a_delayed_or_skipped_renewal_is_logged_at_debug_and_not_answered() {
     );
     assert_eq!(log.matches("role_renewal=\"skipped\"").count(), 1, "{log}");
     for answer in answers {
+        let body: serde_json::Value = serde_json::from_str(&answer).unwrap();
+        assert_eq!(
+            body["counts"]["total"], 0,
+            "the empty mailbox was counted: {body}"
+        );
         assert!(
             !answer.contains("renew"),
             "the answer mentions it: {answer}"
