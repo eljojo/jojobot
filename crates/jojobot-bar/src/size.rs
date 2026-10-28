@@ -718,7 +718,8 @@ fn remote_line() -> Option<String> {
 
 /// CI's new-branch event has no before commit; measure from main in that case.
 /// A valid explicit base still wins. Off CI, no base and a bare `main` both mean
-/// the remote line the branch was cut from, when the checkout has one.
+/// the remote line the branch was cut from, when the checkout has one; a sha is
+/// the spelling for the checkout's own `main`.
 pub fn read_base() -> Base {
     let mut wanted = [BASE_VARIABLE, BASE_REF_VARIABLE]
         .iter()

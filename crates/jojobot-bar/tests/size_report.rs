@@ -102,6 +102,7 @@ fn bar_with(dir: &Path, args: &[&str], base: Option<&str>) -> Ran {
         .env("CARGO", &fake_cargo)
         .env("BAR_HISTORY_DIR", dir.join("history"))
         .env_remove("SIZE_BASE")
+        .env_remove("GITHUB_ACTIONS")
         .env_remove("GITHUB_BASE_REF");
     if let Some(base) = base {
         command.env("SIZE_BASE", base);
@@ -1222,22 +1223,51 @@ fn a_file_over_3000_lines_is_orange_and_one_under_it_is_not() {
 
 /// **A branch cut from a remote line is measured from that line, whatever the
 /// checkout's own `main` says.** The checkout's `main` is behind the carry, so
-/// the carry's growth of a red file would read as the branch's own.
+/// the carry's growth of a red file would read as the branch's own. In CI the
+/// base stays `origin/main`, so a carry line on the remote changes nothing there.
 ///
-/// Rows: what the branch was cut from, what the caller names, and the revision
-/// the size line must say it compared with (`a` is the lagging local `main`, `b`
-/// the carry or remote main the branch was cut from).
+/// Rows: the remote lines (`a` is the lagging local `main`, `b` the commit the
+/// branch was cut from), whether the run is CI, what the caller names, and the
+/// revision the size line must say it compared with.
 #[test]
 fn a_branch_is_measured_from_the_remote_line_it_was_cut_from() {
-    let rows: [(&str, Option<&str>, &str); 6] = [
-        ("forgejo/em-9-carry", Some("main"), "b"),
-        ("forgejo/em-9-carry", None, "b"),
-        ("forgejo/main", Some("main"), "b"),
-        ("forgejo/main", None, "b"),
-        ("forgejo/em-9-carry", Some("a"), "a"),
-        ("", Some("main"), "a"),
+    type Lines = &'static [(&'static str, &'static str)];
+    let rows: [(Lines, bool, Option<&str>, &str); 10] = [
+        (&[("forgejo/em-9-carry", "b")], false, Some("main"), "b"),
+        (&[("forgejo/em-9-carry", "b")], false, None, "b"),
+        (&[("forgejo/main", "b")], false, Some("main"), "b"),
+        (&[("forgejo/main", "b")], false, None, "b"),
+        (&[("forgejo/em-9-carry", "b")], false, Some("a"), "a"),
+        (&[], false, Some("main"), "a"),
+        // Two carry lines: the nearer one wins, whichever name sorts first.
+        (
+            &[("forgejo/em-8-carry", "a"), ("forgejo/em-9-carry", "b")],
+            false,
+            None,
+            "b",
+        ),
+        (
+            &[("forgejo/em-1-carry", "b"), ("forgejo/em-9-carry", "a")],
+            false,
+            None,
+            "b",
+        ),
+        // CI keeps origin/main (here `a`), carry line or not, and a bare `main`
+        // named in CI is the checkout's own.
+        (
+            &[("forgejo/em-9-carry", "b"), ("origin/main", "a")],
+            true,
+            None,
+            "a",
+        ),
+        (
+            &[("forgejo/em-9-carry", "b"), ("origin/main", "a")],
+            true,
+            Some("main"),
+            "a",
+        ),
     ];
-    for (line, named, compared_with) in rows {
+    for (lines, ci, named, compared_with) in rows {
         let dir = repo("cut-from");
         let a = commit_files(
             &dir,
@@ -1248,16 +1278,21 @@ fn a_branch_is_measured_from_the_remote_line_it_was_cut_from() {
         );
         git(&dir, &["branch", "-m", "main"]);
         let b = commit_files(&dir, &[("homer.rs", lines_of(5002))]);
-        if !line.is_empty() {
-            git(&dir, &["update-ref", &format!("refs/remotes/{line}"), &b]);
+        for (line, at) in lines {
+            let at = if *at == "a" { &a } else { &b };
+            git(&dir, &["update-ref", &format!("refs/remotes/{line}"), at]);
         }
         git(&dir, &["checkout", "-q", "-b", "scratch"]);
         git(&dir, &["branch", "-f", "main", &a]);
         commit_files(&dir, &[("marge.rs", lines_of(10))]);
         let named = named.map(|name| if name == "a" { a.as_str() } else { name });
-        let ran = bar(&dir, "size", named);
+        let ran = if ci {
+            ci_size(&dir, named)
+        } else {
+            bar(&dir, "size", named)
+        };
         let expected = if compared_with == "b" { &b } else { &a };
-        let said = format!("{line} {named:?}: {}", ran.stdout);
+        let said = format!("{lines:?} ci={ci} {named:?}: {}", ran.stdout);
         assert!(size_line(&ran.stdout).contains(&expected[..10]), "{said}");
         let moved = size_line(&ran.stdout).starts_with("size: ok");
         assert_eq!(moved, compared_with == "b", "{said}");
