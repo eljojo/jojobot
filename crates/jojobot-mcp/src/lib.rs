@@ -768,7 +768,7 @@ impl ServerHandler for Jojobot {
 impl Jojobot {
     /// **Everything a call does between its arrival and its answer**, and
     /// whether the answer is one to count: a spent request id answers from the
-    /// ledger, and the exchange of an old run name for a key is no verb running.
+    /// ledger.
     /// See [`ServerHandler::call_tool`], which counts what this says to.
     async fn serve_call(
         &self,
@@ -793,15 +793,6 @@ impl Jojobot {
         let structured = context
             .protocol_version()
             .is_some_and(|revision| revision >= ProtocolVersion::V_2026_07_28);
-        // **The one call that exchanges an old name for a key**, ahead of every
-        // verb: it is the same for all of them, and the answer is the key.
-        if let Some(raw) = sid.as_deref()
-            && let Some(exchanged) = self.exchange_legacy_name(raw).await
-        {
-            let mut answered: CallToolResponse = exchanged.into();
-            self.finish(&mut answered, None, structured).await;
-            return (Ok(answered), false);
-        }
         // **A live secret written into text is refused before any verb reads
         // it**, so no verb has to remember to, including the next one somebody
         // writes. The arguments are read once, here.

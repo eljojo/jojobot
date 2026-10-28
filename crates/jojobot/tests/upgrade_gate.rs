@@ -471,15 +471,11 @@ async fn boots_on_a_restored_store(fixture_dir: &str, restored: Restored) {
     // second changed nothing the first left.
     assert_every_thing_holds_what_it_held(&surface, &git_ref, &held_before).await;
     assert_no_stored_record_is_over_the_ceiling(&surface, &git_ref, &handles).await;
-    // **The recorded holder began before keys existed**, so the name it was
-    // known by is exchanged once for a key, and every call below carries the key.
-    // A recording from a build that keys its runs holds a key already, so the
-    // holder is not exchanged and has no role claim in the old shape to carry.
+    // **The recorded holder holds a key already**: a build that keys its runs
+    // recorded it, and a name is no longer exchanged for a key, so a recording from
+    // an older build is not supported. Every call below carries the key.
     let keyed = holder_key.is_some();
-    let role_key = match holder_key {
-        Some(key) => key,
-        None => exchange_the_recorded_run(&surface, &git_ref, &role_holder).await,
-    };
+    let role_key = holder_key.expect("the recording is of a build that keys its runs");
     assert_every_recorded_record_reads_back(&surface, &git_ref, &role_holder).await;
     assert_what_a_real_store_holds_reads_back(&surface, &git_ref, &role_key).await;
     if !keyed {
@@ -508,42 +504,6 @@ async fn boots_on_a_restored_store(fixture_dir: &str, restored: Restored) {
         .await;
     }
     drop(scratch);
-}
-
-/// **A run an older build began holds no key, and its first call with its old
-/// name is exchanged once for one.** The exchange answer is a refusal that
-/// carries the key and runs nothing; the same name sent again is turned away
-/// and hands out nothing; and the key opens the run. Returns the key.
-async fn exchange_the_recorded_run(surface: &Surface, git_ref: &str, role_holder: &str) -> String {
-    let fail = |what: &str, body: &str| -> ! { panic!("recorded at {git_ref}: {what}: {body}") };
-    let first = surface
-        .call(
-            "journal",
-            json!({"entry": "the first call with the old name", "sid": role_holder}),
-        )
-        .await;
-    let parsed: serde_json::Value =
-        serde_json::from_str(&first).unwrap_or_else(|_| fail("the exchange answer", &first));
-    let key = match (parsed["exchanged"] == true, parsed["sid"].as_str()) {
-        (true, Some(key)) if key != role_holder => key.to_string(),
-        _ => fail("the old name was not exchanged for a key", &first),
-    };
-    let again = surface
-        .call(
-            "journal",
-            json!({"entry": "the old name again", "sid": role_holder}),
-        )
-        .await;
-    if again.contains("\"exchanged\":true") || !again.contains("\"status\":\"blocked\"") {
-        fail("a second bare name was not turned away", &again);
-    }
-    let opened = surface
-        .call("list_runs", json!({"sid": key, "limit": 5}))
-        .await;
-    if opened.contains("\"status\":\"blocked\"") || !opened.contains(role_holder) {
-        fail("the key did not open the recorded run", &opened);
-    }
-    key
 }
 
 /// **The store of a restored fixture, brought up with no binary over it**, so

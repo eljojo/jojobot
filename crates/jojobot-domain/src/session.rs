@@ -223,8 +223,8 @@ pub struct KeyTrail {
     /// The newest key that stopped opening this run, if one did.
     #[serde(default)]
     pub retired: Option<RetiredKey>,
-    /// When another sitting last took this run over, by a resume or by the
-    /// exchange of a keyless run's name, on the server's clock. A pick-up writes
+    /// When another sitting last took this run over, by a resume, on the
+    /// server's clock. A pick-up writes
     /// no chronology entry, so without this mark the run reads as quiet.
     #[serde(default)]
     pub taken_at: Option<Timestamp>,

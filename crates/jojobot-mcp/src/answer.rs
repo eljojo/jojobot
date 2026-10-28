@@ -20,7 +20,6 @@ pub(crate) const CONTEXT_REFUSAL_CODES: &[&str] = &[
     "CheckIn",
     "Declared",
     "DeclinedOrLifted",
-    "ExchangeLegacyName",
     "HandleDeclined",
     "HandleTaken",
     "InvalidArguments",

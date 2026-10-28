@@ -69,25 +69,18 @@ pub fn draw() -> String {
 pub enum KeyState {
     /// The SHA-256 of the key the run holds.
     Held(String),
-    /// The run's key was taken away (it wrapped) and nothing replaced it.
+    /// The run holds no key: it was taken away (the run wrapped) or the run began
+    /// before keys existed. Nothing opens it but a pick-up by its name.
     Void,
-    /// A run that began before keys existed: it holds none, and its old
-    /// four-character name is exchanged for a key once.
-    Legacy,
 }
 
 impl KeyState {
     /// The state a stored `key_hash` says: a hash, the word that voids one, or
-    /// nothing at all.
-    ///
-    /// **Nothing at all is not "may be exchanged".** A run that ended before keys
-    /// existed keeps a NULL hash and reads here as keyless. What refuses its old
-    /// name is its state on the board, read by the exchange at the moment it is
-    /// asked (see `Jojobot::exchange_legacy_name`), not this value.
+    /// nothing at all. A run that began before keys existed keeps a NULL hash and
+    /// reads as holding no key.
     pub fn from_stored(stored: Option<&str>) -> Self {
         match stored {
-            None => KeyState::Legacy,
-            Some(KEY_VOID) => KeyState::Void,
+            None | Some(KEY_VOID) => KeyState::Void,
             Some(hash) => KeyState::Held(hash.to_string()),
         }
     }
@@ -97,7 +90,6 @@ impl KeyState {
         match self {
             KeyState::Held(hash) => Some(hash.clone()),
             KeyState::Void => Some(KEY_VOID.to_string()),
-            KeyState::Legacy => None,
         }
     }
 }
@@ -128,12 +120,8 @@ pub struct Handle {
     /// the zone for the same reason: a run outlives a restart, and the sweep
     /// reads this frame rather than the server's clock.
     pub(crate) day: Option<jiff::civil::Date>,
-    /// **When this run's old name was exchanged for a key**, if it was, on the
-    /// server's clock. In memory only: it exists so the sitting that still
-    /// sends the old name is told why it is refused.
-    pub(crate) exchanged_at: Option<jiff::Timestamp>,
     /// **When another sitting last took this run over**, on the server's clock:
-    /// by a resume, or by the exchange of a keyless run's name. A pick-up writes
+    /// by a resume. A pick-up writes
     /// a key and no chronology entry, so without this the run would still read
     /// as quiet to the next asker, and two asks made together would both be
     /// handed a key. Kept on the card with the key, so a restart keeps it.
@@ -694,7 +682,6 @@ impl SessionRegistry {
                     key: KeyState::Held(hash.clone()),
                     zone: None,
                     day: None,
-                    exchanged_at: None,
                     taken_at: None,
                     last_retired: None,
                 },
@@ -768,39 +755,6 @@ impl SessionRegistry {
             .values()
             .find(|h| h.card.as_ref() == Some(card))
             .map(|h| h.name.clone())
-    }
-
-    /// **Exchange a run's old name for a key, once.** Only a run that holds
-    /// none (`Legacy`) is exchanged, under the registry's own lock, so two
-    /// callers sending the same old name cannot both be handed a key. Returns
-    /// the run, or `None` when the run is not held or already holds one.
-    pub fn take_legacy(&self, name: &str, hash: String, at: jiff::Timestamp) -> Option<Handle> {
-        let mut held = self.held.write().expect("the registry is poisoned");
-        let handle = held.by_name.get_mut(name)?;
-        if handle.key != KeyState::Legacy {
-            return None;
-        }
-        handle.key = KeyState::Held(hash.clone());
-        handle.exchanged_at = Some(at);
-        // **The exchange counts as a pick-up**: it writes a key and no entry, so
-        // without this mark the run still reads as quiet and a third party that
-        // sends the old name is handed the run its holder was just given.
-        handle.taken_at = Some(at);
-        let taken = handle.clone();
-        held.by_hash.insert(hash, name.to_string());
-        Some(taken)
-    }
-
-    /// **Undo an exchange the store refused**, so the run can be exchanged
-    /// again. Only the moment `take_legacy` took is undone.
-    pub fn put_back_legacy(&self, name: &str, hash: &str) {
-        let mut held = self.held.write().expect("the registry is poisoned");
-        if let Some(handle) = held.by_name.get_mut(name) {
-            handle.key = KeyState::Legacy;
-            handle.exchanged_at = None;
-            handle.taken_at = None;
-        }
-        held.by_hash.remove(hash);
     }
 
     /// **Set what key a run holds**, replacing whatever it held. The caller has
@@ -890,7 +844,6 @@ impl SessionRegistry {
                     // resume that moved the day writes the former and leaves
                     // the latter as the creation day it always was.
                     day: session.stated_day.or(session.started_on),
-                    exchanged_at: None,
                     taken_at: session.key_trail.taken_at,
                     last_retired: session.key_trail.retired.clone(),
                 },
@@ -945,7 +898,6 @@ impl SessionRegistry {
                     key: KeyState::Held(run.key_hash.clone()),
                     zone: run.zone.clone(),
                     day: run.day,
-                    exchanged_at: None,
                     taken_at: None,
                     last_retired: None,
                 },
@@ -1169,41 +1121,6 @@ mod tests {
     /// **A key opens its run and a name does not.** The two values are told
     /// apart by what the registry will do with them: the key is hashed and finds
     /// the run, and the name finds nothing when it is offered as a key.
-    /// **A run that holds no key is taken once.** The first taker gets the
-    /// run and the moment; the second gets nothing, whatever it sends, because
-    /// the run holds a key now. The check and the change are one step under the
-    /// registry's own lock, which is what keeps two callers sending one old name
-    /// from both leaving with a key.
-    #[test]
-    fn a_keyless_run_is_taken_once_and_not_again() {
-        let registry = SessionRegistry::new();
-        let bot = EntityId("bot:gamma".into());
-        registry
-            .mint_with(&bot, || "jm7z".to_string(), mint_key)
-            .expect("minted");
-        registry.set_key(&Sid("jm7z".into()), KeyState::Legacy, None);
-        let at = jiff::Timestamp::now();
-        let first = registry.take_legacy("jm7z", hash_key("sk-first"), at);
-        assert!(first.is_some(), "the first taker gets the run");
-        assert!(
-            registry
-                .take_legacy("jm7z", hash_key("sk-second"), at)
-                .is_none(),
-            "the second gets nothing"
-        );
-        assert_eq!(
-            registry
-                .lookup_name("jm7z")
-                .and_then(|held| held.exchanged_at),
-            Some(at),
-            "the run says when it was exchanged"
-        );
-        assert!(
-            registry.lookup_key("sk-first").is_some() && registry.lookup_key("sk-second").is_none(),
-            "only the first key opens it"
-        );
-    }
-
     #[test]
     fn a_key_opens_its_run_and_its_name_opens_nothing() {
         let registry = SessionRegistry::new();
@@ -1282,7 +1199,7 @@ mod tests {
         );
         assert_eq!(
             registry.lookup_name("cdef").expect("held").key,
-            KeyState::Legacy
+            KeyState::Void
         );
     }
 

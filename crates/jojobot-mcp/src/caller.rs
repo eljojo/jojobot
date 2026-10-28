@@ -167,111 +167,6 @@ fn retired_key_declined(retired: &sid::Retired) -> CallToolResult {
 }
 
 impl Jojobot {
-    /// TEMPORARY(9.3.1) the keyless name exchange. **Exchange the old name of a run that began before keys existed for a
-    /// key, once.** A run live at the deploy holds no key, so its four-character
-    /// name was its only credential. Its first call with that name exchanges it:
-    /// the key comes back in the answer, the call does not run, and every later
-    /// bare name is refused. `None` when the value is not the old name of a run
-    /// that holds no key, which is every call but that one.
-    ///
-    /// Serialized under the bot's lock, with the store written before the key is
-    /// handed out, so two callers sending one name cannot both leave with a key.
-    pub(crate) async fn exchange_legacy_name(&self, raw: &str) -> Option<CallToolResult> {
-        let raw = raw.trim();
-        if !jojobot_domain::handle::is_drawn(raw, jojobot_domain::session::SID_LEN) {
-            return None;
-        }
-        let held = self.registry.lookup_name(raw)?;
-        if held.key != sid::KeyState::Legacy {
-            return None;
-        }
-        let gate = self.registry.gate(held.bot.as_str());
-        let _serialized = gate.lock().await;
-        // **A run that has ended is not exchanged.** The registry learned the run
-        // as keyless at the boot, and the sweep can end it after that, so the
-        // state is read from the board now. An exchange hands a key to whoever
-        // sends the name, and a run nobody holds has no one to hand it to.
-        //
-        // **A keyless name always has a card.** The only way the registry holds
-        // a keyless name is `rebuild_from`, which puts back a run off its card.
-        // A name minted at a boot holds a key from the moment it is minted, with
-        // no card until its first write, so a keyless name without a card cannot
-        // be reached outside a test that builds one. The `None` arm is for that.
-        //
-        // **An ended run keeps a NULL `key_hash` in the store** and is refused
-        // here by its state, not by the hash. No pass rewrites those rows: the
-        // hash is read only by `KeyState::from_stored` and by this exchange.
-        if let Some(card) = &held.card {
-            match self.sessions.read_session(card).await {
-                Ok(run) if run.state != jojobot_domain::session::SessionState::Active => {
-                    return Some(crate::session::keyless::ended_keyless_run_declined(
-                        &held, run.state,
-                    ));
-                }
-                Ok(_) => {}
-                // **A run whose record does not read is a person's**, and no key is
-                // handed out for it; only a read that failed is retried.
-                Err(jojobot_domain::session::SessionError::Unreadable { what }) => {
-                    return Some(crate::session::keyless::damaged_keyless_run_declined(
-                        card, &what,
-                    ));
-                }
-                Err(e) => {
-                    tracing::warn!(error = %e, session = %card, "a keyless run's state could not be read");
-                    return Some(handle_declined(
-                        "",
-                        "Nothing ran, and no key was handed out: the session store could not say \
-                         whether this run is still running. Nothing was changed. Send the same \
-                         call again, and if it persists a person has to look at the store."
-                            .to_string(),
-                    ));
-                }
-            }
-        }
-        let key = jojobot_domain::session::mint_key();
-        let hash = jojobot_domain::session::hash_key(&key);
-        let now = self.clock().now();
-        // Under the lock the run is taken again: the caller that lost the race
-        // finds it already exchanged and is refused as any bare name is.
-        let taken = self.registry.take_legacy(raw, hash.clone(), now)?;
-        if let Some(card) = &taken.card
-            && let Err(e) = self
-                .sessions
-                .set_key_hash(card, &hash, &taken.trail())
-                .await
-        {
-            tracing::warn!(error = %e, session = %card, "a run's exchanged key could not be written");
-            self.registry.put_back_legacy(raw, &hash);
-            return Some(handle_declined(
-                "",
-                "Nothing ran, and no key was handed out: the session store refused the \
-                 exchange. Nothing was changed. Send the same call again, and if it persists a \
-                 person has to look at the store."
-                    .to_string(),
-            ));
-        }
-        let how: WayForward = format!(
-            "{NOTHING_RAN}. This call used a run's name as a credential. jojobot has \
-             exchanged it once, and the key is `sid` in this answer: send \
-             that on every call, starting with this one again. Run {} keeps its name, which \
-             opens nothing from now on.",
-            taken.name
-        )
-        .into();
-        let mut body = serde_json::json!({
-            "status": "blocked", "refusal_code": "ExchangeLegacyName",
-            "attempted": "",
-            "wrote": false,
-            "exchanged": true,
-            "run": taken.name.as_str(),
-            "sid": key,
-        });
-        how.write_into(&mut body);
-        Some(CallToolResult::success(vec![ContentBlock::text(
-            body.to_string(),
-        )]))
-    }
-
     /// **Refuse a call that writes a live secret into text.** Every string in
     /// the arguments, keys and values alike, nested at any depth, is read for a
     /// token that has the shape of a run key or of a wrap code. Only such a
@@ -399,27 +294,6 @@ impl Jojobot {
         // is allocated for it: a refusal names no session, and a value that
         // opens nothing leaves no entry behind.
         if !jojobot_domain::session::is_key(raw) {
-            // A name whose run was exchanged for a key says when, so the sitting
-            // that still sends the old name learns it is not the holder.
-            if let Some(at) = self
-                .registry
-                .lookup_name(raw)
-                .and_then(|held| held.exchanged_at)
-            {
-                // **The exchange counts as a write**, so the name takes the run one
-                // lease after it, unless the run writes again first.
-                let free_at = at + self.quiet_after;
-                return Err(handle_declined(
-                    "",
-                    format!(
-                        "{NOTHING_RAN}. That run's old name was exchanged for a key at {at}, \
-                         so the name opens nothing now. A run quiet for {} can be picked up by \
-                         its name: if this one writes nothing more, from {free_at}. \
-                         {ROUTE_TO_A_SID}",
-                        crate::windows::lease(),
-                    ),
-                ));
-            }
             let how = if sid::is_readable(raw) {
                 "That is a session's name, and a name is not a key: it names a run and cannot \
                  act as one. The key is the longer value start_here handed back in `sid`."

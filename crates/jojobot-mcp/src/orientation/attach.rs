@@ -802,16 +802,7 @@ impl Jojobot {
             self.clock().now(),
             self.quiet_after,
         ) {
-            // **A run that began before keys existed holds no key**, so "only its
-            // key continues it" sends its holder nowhere. The way forward for
-            // the holder is the exchange of the old name for a key.
-            let way = match held.key {
-                sid::KeyState::Legacy => "it began before keys existed and holds none, so its \
-                     holder continues it by sending its name as `sid` on any call, which \
-                     exchanges the name for a key once"
-                    .to_string(),
-                _ => "only its key continues it".to_string(),
-            };
+            let way = "only its key continues it";
             return Err(handle_declined(
                 "",
                 format!(
@@ -1953,7 +1944,7 @@ mod tests {
                 .lookup_name(legacy.id.as_str())
                 .expect("held under its id")
                 .key,
-            sid::KeyState::Legacy,
+            sid::KeyState::Void,
             "…holding no key"
         );
 
@@ -4332,14 +4323,11 @@ mod tests {
         // The positive the refusal rests on: the first key still opens the run.
         assert_eq!(run_name(&jojobot, &key), "bcd345");
     }
-    /// **A holder of a run that began before keys existed is told the exchange
-    /// is the way forward.** It holds no key, so "only its key continues it" is
-    /// no answer to the one who asks. The refusal for a run still inside its
-    /// lease names the exchange for a keyless run, and not for a run that holds
-    /// a key, whose refusal stays as it was.
+    /// **A run that began before keys existed is refused a resume inside its lease
+    /// as a keyed run is.** It holds no key, and the refusal points neither it nor
+    /// a keyed run at a swap of its name for a key: there is none.
     #[tokio::test]
-    async fn a_resume_refused_for_a_keyless_run_names_the_exchange_and_one_for_a_keyed_run_does_not()
-     {
+    async fn a_resume_refused_for_a_keyless_run_is_refused_as_a_keyed_run_is() {
         let store = Arc::new(InMemorySessions::new());
         let (jojobot, _memory) = with_sessions_port_and_memory(store.clone());
         let jojobot = jojobot.quiet_after(jiff::SignedDuration::from_mins(45));
@@ -4364,10 +4352,8 @@ mod tests {
         let keyless = boot_answering(&jojobot, "gamma", "bcd345").await;
         assert_eq!(keyless["status"], "blocked", "{keyless}");
         let how = keyless["how_to_proceed"].as_str().unwrap_or_default();
-        assert!(how.contains("exchange"), "{keyless}");
+        assert!(!how.contains("exchange"), "{keyless}");
 
-        // The pair: a run that holds a key is refused in the same way and is
-        // not pointed at an exchange it cannot make.
         make_bot(&jojobot, "delta").await;
         let key = booted(&jojobot, "delta").await;
         journal_entry(&jojobot, &key, "started").await;
