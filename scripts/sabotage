@@ -720,14 +720,19 @@ def probe(path, before, old, command):
     with open(path, "w", encoding="utf-8") as writing:
         writing.write(before.replace(old, text, 1))
     ran = subprocess.run(command, capture_output=True, text=True)
-    if ran_nothing(ran.stdout + ran.stderr):
+    said = ran.stdout + ran.stderr
+    # The bar prints the path for this run; other logs may belong to older runs.
+    for log in re.findall(r"^log: (.+) \(\d+ lines\)$", said, re.MULTILINE):
+        with open(log, encoding="utf-8") as reading:
+            said += "\n" + reading.read()
+    if ran_nothing(said):
         print(
             "SABOTAGE PROBE EMPTY: the probe run executed no test, so which kind of green "
             "this is was not measured",
             flush=True,
         )
         return
-    verdict = classify(ran.stdout + ran.stderr, ran.returncode)
+    verdict = classify(said, ran.returncode)
     if verdict == NOT_MEASURED:
         print(ran.stdout + ran.stderr, flush=True)
     print(f"SABOTAGE PROBE: {SAYS[verdict]}", flush=True)
