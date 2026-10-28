@@ -857,11 +857,17 @@ mod tests {
         for (workflow, uploads) in [
             (
                 include_str!("../../../.forgejo/workflows/branch.yml"),
-                ["bar-logs-report", "bar-logs-rooms"].as_slice(),
+                ["bar-logs-static", "bar-logs-report", "bar-logs-rooms"].as_slice(),
             ),
             (
                 include_str!("../../../.forgejo/workflows/pull-request.yml"),
-                ["bar-logs-check", "bar-logs-rooms", "bar-logs-year"].as_slice(),
+                [
+                    "bar-logs-static",
+                    "bar-logs-check",
+                    "bar-logs-rooms",
+                    "bar-logs-year",
+                ]
+                .as_slice(),
             ),
         ] {
             for upload in uploads {
