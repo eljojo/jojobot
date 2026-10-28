@@ -82,17 +82,7 @@ jobs:
         run: |
           mkdir -p target/bar
           status=0
-          nix develop -c bash -euc '
-            export SNAPSHOT_UPDATE=0
-            case=snapshot::every_text_a_model_reads_matches_the_snapshot
-            cargo test --locked -p jojobot-mcp --lib "$case" -- --exact --list >target/bar/snapshot-list.log
-            if ! grep -Fx "$case: test" target/bar/snapshot-list.log; then
-              cat target/bar/snapshot-list.log
-              echo "snapshot case was not listed: $case"
-              exit 1
-            fi
-            cargo test --locked -p jojobot-mcp --lib "$case" -- --exact
-          ' >target/bar/snapshot.log 2>&1 || status=$?
+          nix develop -c env SNAPSHOT_UPDATE=0 make narrow CRATE=jojobot-mcp FILTER=snapshot::every_text_a_model_reads_matches_the_snapshot >target/bar/snapshot.log 2>&1 || status=$?
           cat target/bar/snapshot.log
           exit "$status"
       - if: ${{ !cancelled() }}
@@ -100,7 +90,9 @@ jobs:
         uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5
         with:
           name: bar-logs-static
-          path: target/bar/*.log
+          path: |
+            target/bar/*.log
+            target/bar/verdict-*.json
           retention-days: 7
           if-no-files-found: ignore
       # Samples cannot change the gate's verdict.

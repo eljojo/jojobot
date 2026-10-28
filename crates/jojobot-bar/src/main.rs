@@ -1938,6 +1938,9 @@ fn run_narrow(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
     )?;
     let verdict = summarize_test_output(&text);
     summary.test_phase(ok, &verdict, known);
+    // **A narrow run leaves the same machine verdict a test job does**, so a CI
+    // step that runs one case through the bar is read from a file and not by eye.
+    summary.verdict_of("narrow", &text, ok, 0);
     // **The lint runs whatever the tests said.** A red test step used to end
     // the run here, and a lint failure then stayed hidden behind every test that
     // was red; the two are separate questions and the verdict carries both. The

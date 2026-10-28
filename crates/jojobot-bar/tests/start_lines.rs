@@ -201,8 +201,12 @@ fn the_startup_static_gate_stops_expensive_jobs_before_they_start() {
     }
 }
 
+/// **The snapshot step runs its one case through the bar**, so the run leaves the
+/// bar's machine verdict and a case that no filter selects is refused by the bar's
+/// own guard. The step keeps the bar's exit code, never updates the snapshot
+/// whatever the caller's environment says, and both workflows run the same step.
 #[test]
-fn the_startup_snapshot_step_refuses_zero_cases_and_keeps_a_red_oracle_red() {
+fn the_startup_snapshot_step_runs_its_case_through_the_bar_and_keeps_its_exit_code() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let mut same_step = None;
     for workflow in ["branch", "pull-request"] {
@@ -217,29 +221,20 @@ fn the_startup_snapshot_step_refuses_zero_cases_and_keeps_a_red_oracle_red() {
             );
         }
         same_step = Some(step.clone());
+        assert!(!step.contains("cargo test"), "{workflow}: {step}");
         let dir = scratch();
         support::write_executable(&dir.join("nix"), "#!/bin/sh\nshift 2\nexec \"$@\"\n");
         support::write_executable(
-            &dir.join("cargo"),
-            r#"#!/bin/sh
-echo "$SNAPSHOT_UPDATE $*" >> argv.log
-case " $* " in
-  *" --list "*)
-    if [ "$SNAPSHOT_MODE" != empty ]; then
-      echo 'snapshot::every_text_a_model_reads_matches_the_snapshot: test'
-    fi
-    exit 0 ;;
-esac
-test "$SNAPSHOT_MODE" != red
-"#,
+            &dir.join("make"),
+            "#!/bin/sh\necho \"$SNAPSHOT_UPDATE $*\" >> argv.log\necho 'the bar ran'\nexit \"$BAR_EXIT\"\n",
         );
-        for (mode, success) in [("same", true), ("empty", false), ("red", false)] {
+        for (exit, success) in [("0", true), ("2", false), ("1", false)] {
             fs::write(dir.join("argv.log"), "").unwrap();
             let out = support::output_fenced(
                 Command::new("bash")
                     .args(["-euc", &step])
                     .current_dir(&dir)
-                    .env("SNAPSHOT_MODE", mode)
+                    .env("BAR_EXIT", exit)
                     .env("SNAPSHOT_UPDATE", "1")
                     .env(
                         "PATH",
@@ -247,20 +242,22 @@ test "$SNAPSHOT_MODE" != red
                     ),
             )
             .unwrap();
-            assert_eq!(out.status.success(), success, "{workflow}/{mode}: {out:?}");
-            let calls = fs::read_to_string(dir.join("argv.log")).unwrap();
-            assert!(calls.lines().all(|line| line.starts_with("0 test --locked -p jojobot-mcp --lib snapshot::every_text_a_model_reads_matches_the_snapshot -- --exact")), "{calls}");
+            assert_eq!(out.status.success(), success, "{workflow}/{exit}: {out:?}");
             assert_eq!(
-                calls.lines().count(),
-                if mode == "empty" { 1 } else { 2 },
-                "{calls}"
+                out.status.code(),
+                exit.parse::<i32>().ok(),
+                "{workflow}: the step keeps the bar's exit code: {out:?}"
             );
-            if mode == "empty" {
-                assert!(
-                    String::from_utf8_lossy(&out.stdout).contains("snapshot case was not listed"),
-                    "{out:?}"
-                );
-            }
+            assert!(
+                String::from_utf8_lossy(&out.stdout).contains("the bar ran"),
+                "the log is printed: {out:?}"
+            );
+            let calls = fs::read_to_string(dir.join("argv.log")).unwrap();
+            assert_eq!(
+                calls.trim(),
+                "0 narrow CRATE=jojobot-mcp FILTER=snapshot::every_text_a_model_reads_matches_the_snapshot",
+                "{workflow}: {calls}"
+            );
         }
         fs::remove_dir_all(dir).unwrap();
     }

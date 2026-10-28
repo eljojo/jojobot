@@ -7,11 +7,15 @@ use std::process::Command;
 
 mod support;
 
-fn run_narrow(tag: &str, filter: &str) -> (Option<i32>, String, String, String) {
+fn run_narrow(tag: &str, filter: &str) -> (Option<i32>, String, String, String, String) {
     run_narrow_of(tag, "jojobot-bar", filter)
 }
 
-fn run_narrow_of(tag: &str, krate: &str, filter: &str) -> (Option<i32>, String, String, String) {
+fn run_narrow_of(
+    tag: &str,
+    krate: &str,
+    filter: &str,
+) -> (Option<i32>, String, String, String, String) {
     let dir = std::env::temp_dir().join(jojobot_bar::scratch::name(&format!(
         "jojobot-bar-test-{tag}"
     )));
@@ -72,15 +76,17 @@ esac
     let stdout = fs::read_to_string(dir.join("stdout")).unwrap();
     let before = fs::read_to_string(dir.join("before-tests")).unwrap_or_default();
     let argv = fs::read_to_string(dir.join("argv.log")).unwrap_or_default();
+    let verdict =
+        fs::read_to_string(dir.join("target/bar/verdict-narrow.json")).unwrap_or_default();
     let _ = fs::remove_dir_all(&dir);
-    (status.code(), stdout, argv, before)
+    (status.code(), stdout, argv, before, verdict)
 }
 
 /// **A FILTER of several words reaches cargo as several filters**, each a
 /// substring of a test path, so the cases a hand-off names run in one call.
 #[test]
 fn a_filter_of_several_words_reaches_cargo_as_several_filters() {
-    let (code, stdout, argv, _) = run_narrow("several", "alpha::first beta::second");
+    let (code, stdout, argv, _, _) = run_narrow("several", "alpha::first beta::second");
     assert_eq!(code, Some(0), "{stdout}");
     let run = argv
         .lines()
@@ -95,15 +101,27 @@ fn a_filter_of_several_words_reaches_cargo_as_several_filters() {
 /// **A narrow run ends with its whole wall time**, on the last line.
 #[test]
 fn a_narrow_run_ends_with_its_wall_time() {
-    let (code, stdout, _, _) = run_narrow("wall", "alpha");
+    let (code, stdout, _, _, _) = run_narrow("wall", "alpha");
     assert_eq!(code, Some(0), "{stdout}");
     let last = stdout.lines().last().expect("output");
     assert!(last.starts_with("wall time: "), "{last}");
 }
 
+/// **A narrow run leaves a machine verdict file**, like the report and rooms
+/// jobs, so the static job's snapshot step can be read from it.
+#[test]
+fn a_narrow_run_leaves_a_machine_verdict_file() {
+    let (code, stdout, _, _, verdict) = run_narrow("verdict", "alpha");
+    assert_eq!(code, Some(0), "{stdout}");
+    let value: serde_json::Value = serde_json::from_str(&verdict)
+        .unwrap_or_else(|error| panic!("no verdict file ({error}): {verdict:?}"));
+    assert_eq!(value["overall"], "green", "{verdict}");
+    assert_eq!(value["job"], "narrow", "{verdict}");
+}
+
 #[test]
 fn targeted_dispatch_names_the_boundary_selection_before_running_it() {
-    let (code, stdout, argv, before) = run_narrow("targeted", "alpha");
+    let (code, stdout, argv, before, _) = run_narrow("targeted", "alpha");
     assert_eq!(code, Some(0), "{stdout}");
     assert!(
         before.contains("level: boundary, narrow jojobot-bar"),
@@ -143,7 +161,7 @@ fn targeted_dispatch_names_the_boundary_selection_before_running_it() {
 /// **Paired**: two words that both match, and two that overlap, run.
 #[test]
 fn a_misspelled_filter_beside_a_good_one_is_refused_by_name() {
-    let (code, stdout, argv, _) = run_narrow("misspelled", "alpha::first beta::sceond");
+    let (code, stdout, argv, _, _) = run_narrow("misspelled", "alpha::first beta::sceond");
     assert_eq!(code, Some(2), "{stdout}");
     assert!(stdout.contains("beta::sceond"), "{stdout}");
     assert!(
@@ -153,9 +171,9 @@ fn a_misspelled_filter_beside_a_good_one_is_refused_by_name() {
         "a refused selection ran tests: {argv}"
     );
 
-    let (code, stdout, _, _) = run_narrow("both-good", "alpha::first beta::second");
+    let (code, stdout, _, _, _) = run_narrow("both-good", "alpha::first beta::second");
     assert_eq!(code, Some(0), "{stdout}");
-    let (code, stdout, _, _) = run_narrow("overlap", "alpha alpha::first");
+    let (code, stdout, _, _, _) = run_narrow("overlap", "alpha alpha::first");
     assert_eq!(code, Some(0), "{stdout}");
 }
 
@@ -167,7 +185,7 @@ fn a_misspelled_filter_beside_a_good_one_is_refused_by_name() {
 #[test]
 fn a_narrow_run_builds_the_room_harness_binary_only_for_the_exercise_crate() {
     const HARNESS_BUILD: &str = "build --workspace --locked --features=jojobot/room-harness";
-    let (code, stdout, argv, _) = run_narrow_of("harness-exercise", "jojobot-exercise", "alpha");
+    let (code, stdout, argv, _, _) = run_narrow_of("harness-exercise", "jojobot-exercise", "alpha");
     assert_eq!(code, Some(0), "{stdout}");
     assert_eq!(
         argv.lines().filter(|call| *call == HARNESS_BUILD).count(),
@@ -175,7 +193,7 @@ fn a_narrow_run_builds_the_room_harness_binary_only_for_the_exercise_crate() {
         "the exercise crate's narrow run builds the harness binary once: {argv}"
     );
 
-    let (code, stdout, argv, _) = run_narrow_of("harness-other", "jojobot-bar", "alpha");
+    let (code, stdout, argv, _, _) = run_narrow_of("harness-other", "jojobot-bar", "alpha");
     assert_eq!(code, Some(0), "{stdout}");
     assert!(
         !argv.lines().any(|call| call == HARNESS_BUILD),
