@@ -655,10 +655,7 @@ async fn the_kitchen_sink_boots_once_and_reads_every_tolerated_shape() {
     let waiting = read(&surface, "recall", json!({"subject": WAITING})).await;
     let moved = read(&surface, "recall", json!({"subject": CARRIED})).await;
     let bot = read(&surface, "recall", json!({"subject": "bot:assistant"})).await;
-    let sid = match holder_key {
-        Some(key) => key,
-        None => exchange_the_recorded_run(&surface, &git_ref, &holder).await,
-    };
+    let sid = holder_key.expect("the recording is of a build that keys its runs");
     // Collect independent observations before asserting, so a fault names its family
     // and also proves which other families still answered on the same boot.
     let mut results = Vec::new();
