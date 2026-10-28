@@ -510,6 +510,8 @@ async fn a_write_is_not_refused_on_a_floor_measured_at_an_assumed_seat_count() {
 /// not there, so it carries no role and the fields of nothing are no failure: the
 /// door answers with the roster, and the log says no read failed. Paired with a
 /// bot that exists, whose boot reads its role without a failure line either.
+/// A failed field read then crosses the same subscriber, so an empty log cannot
+/// satisfy the two healthy controls merely because logging was disconnected.
 #[tokio::test]
 async fn a_boot_naming_a_bot_nobody_created_logs_no_failed_read() {
     use crate::orientation::OrientArgs;
@@ -544,7 +546,7 @@ async fn a_boot_naming_a_bot_nobody_created_logs_no_failed_read() {
         code: None,
         offer_code: None,
     };
-    let (healthy, _blind) = healthy_and_down(Down::FieldsOf("bot:gamma"));
+    let (healthy, blind) = healthy_and_down(Down::FieldsOf("bot:gamma"));
     make_bot(&healthy, "gamma").await;
     let lines = Lines::default();
     let writer = lines.clone();
@@ -553,7 +555,7 @@ async fn a_boot_naming_a_bot_nobody_created_logs_no_failed_read() {
         .with_writer(move || writer.clone())
         .with_ansi(false)
         .finish();
-    let (unknown, known) = {
+    let (unknown, known, healthy_log) = {
         let _for_this_thread = tracing::subscriber::set_default(subscriber);
         let unknown = json_of(
             &healthy
@@ -569,12 +571,27 @@ async fn a_boot_naming_a_bot_nobody_created_logs_no_failed_read() {
                 .await
                 .expect("the boot answers"),
         );
-        (unknown, known)
+        let healthy_log = lines.0.lock().expect("the log lock").clone();
+        blind
+            .start_here(rmcp::handler::server::wrapper::Parameters(boot("gamma")))
+            .await
+            .expect("a failed annotation still answers");
+        (unknown, known, healthy_log)
     };
     assert!(unknown.get("identity").is_none(), "{unknown}");
     assert!(known["session"]["sid"].is_string(), "{known}");
-    let log = String::from_utf8(lines.0.lock().expect("the log lock").clone()).expect("text");
-    assert_eq!(log.matches("a read failed").count(), 0, "{log}");
+    let healthy_log = String::from_utf8(healthy_log).expect("text");
+    assert_eq!(
+        healthy_log.matches("a read failed").count(),
+        0,
+        "{healthy_log}"
+    );
+    let failed_log =
+        String::from_utf8(lines.0.lock().expect("the log lock").clone()).expect("text");
+    assert!(
+        failed_log.contains("a read failed") && failed_log.contains("bot:gamma"),
+        "{failed_log}"
+    );
 }
 
 /// **Two collectors that name one pair put it on a receipt once.** `left_for` holds
