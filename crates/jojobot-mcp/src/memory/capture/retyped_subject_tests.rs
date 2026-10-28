@@ -116,3 +116,59 @@ async fn empty_words_through_a_lists_former_handle_are_told_the_list_routes() {
         "{refused}"
     );
 }
+
+fn a_tick_batch(subject: &str, address: &str, acts: &[&str]) -> CaptureArgs {
+    CaptureArgs {
+        content: String::new(),
+        ticks: Some(
+            acts.iter()
+                .map(|act| TickArg {
+                    entry: address.into(),
+                    act: (*act).into(),
+                })
+                .collect(),
+        ),
+        ..capture_args(subject, "")
+    }
+}
+
+/// **A batch through a former handle is judged in order, as through the current
+/// one.** Two `done` ticks on one entry cannot stand, so the batch is refused whole
+/// and nothing lands; `done` then `undone` can, and lands.
+#[tokio::test]
+async fn a_batch_through_a_lists_former_handle_is_judged_in_order() {
+    for subject in ["list:homer-chores", "thing:delta"] {
+        let jojobot = handler();
+        a_list_that_used_to_be_a_thing(&jojobot).await;
+        let entry = capture_ok(&jojobot, capture_args("list:homer-chores", "pay the bill")).await;
+        let address = address_of(&entry);
+
+        let twice = json_of(
+            &jojobot
+                .capture(Parameters(a_tick_batch(
+                    subject,
+                    &address,
+                    &["done", "done"],
+                )))
+                .await
+                .expect("a refusal is an answer"),
+        );
+        assert_eq!(twice["status"], "blocked", "{subject}: {twice}");
+        assert_eq!(twice["wrote"], false, "{subject}: {twice}");
+
+        let there_and_back = json_of(
+            &jojobot
+                .capture(Parameters(a_tick_batch(
+                    subject,
+                    &address,
+                    &["done", "undone"],
+                )))
+                .await
+                .expect("capture ok"),
+        );
+        assert_ne!(
+            there_and_back["status"], "blocked",
+            "{subject}: {there_and_back}"
+        );
+    }
+}

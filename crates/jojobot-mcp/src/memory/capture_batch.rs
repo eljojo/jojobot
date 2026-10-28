@@ -591,11 +591,21 @@ impl Jojobot {
         } else {
             None
         };
+        // **An entry's address names the list by the handle it wears now**, so a tick
+        // sent through a former handle is matched against that one, as a single tick is.
+        let list_now = if ticking {
+            match self.current_handle(&subject).await {
+                Ok(now) => now,
+                Err(e) => return memory_declined("capture", e),
+            }
+        } else {
+            subject.clone()
+        };
         for (at, (one, label)) in items.iter().enumerate() {
             if jojobot_domain::request::recorded(&part_of(at)).is_some() {
                 continue;
             }
-            let named = one.tick.as_ref().and_then(|tick| entry_of(&subject, tick));
+            let named = one.tick.as_ref().and_then(|tick| entry_of(&list_now, tick));
             let tick_state = standing
                 .as_ref()
                 .zip(named.as_ref())
