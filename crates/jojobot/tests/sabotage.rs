@@ -653,7 +653,7 @@ fn a_run_that_stopped_before_any_test_ran_is_refused_not_called_red() {
     let (path, said, code) = sabotage_emitting("timed-out", "", "", 124);
     assert_eq!(code, Some(2), "a stopped run ends as a refusal: {said}");
     assert!(
-        said.contains("SABOTAGE REFUSED") && said.contains("timed out") && said.contains("124"),
+        said.contains("SABOTAGE REFUSED") && said.contains("timed out (exit 124) before any test"),
         "the refusal names the timeout and its exit code: {said}",
     );
     assert!(
@@ -666,10 +666,13 @@ fn a_run_that_stopped_before_any_test_ran_is_refused_not_called_red() {
         "the file did not come back after a refused stopped run",
     );
 
-    let (_, said, code) = sabotage_emitting("stopped", "", "Compiling x v0.1.0\n", 2);
+    let (_, said, code) = sabotage_emitting("stopped-build", "", "Compiling x v0.1.0\n", 2);
     assert_eq!(code, Some(2), "{said}");
     assert!(
-        said.contains("SABOTAGE REFUSED") && !said.contains("VERDICT"),
+        said.contains("SABOTAGE REFUSED")
+            && said.contains("stopped (exit 2) before any test")
+            && !said.contains("timed out")
+            && !said.contains("VERDICT"),
         "a build stopped before any test is refused: {said}",
     );
 
