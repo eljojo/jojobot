@@ -213,6 +213,10 @@ pub fn run_job_for(
     let mut running = String::new();
     // A line that claims a start waits a few seconds for the process it names.
     let mut claims: Vec<(String, Instant)> = Vec::new();
+    // **The first claim no child has matched, while no start is armed.** Kept apart
+    // from the queue, which drops its oldest lines under a flood, so a flood of
+    // unmatched lines cannot starve the fallback below of its first header.
+    let mut open: Option<(String, Instant)> = None;
     let mut credited = std::collections::HashSet::new();
     loop {
         if let Some(status) = child.try_wait()? {
@@ -220,7 +224,14 @@ pub fn run_job_for(
         }
         if let Some(watch) = watch.as_mut() {
             let now = Instant::now();
-            claims.extend(watch.starts()?.into_iter().map(|line| (line, now)));
+            let lines = watch.starts()?;
+            if since.is_none()
+                && open.is_none()
+                && let Some(first) = lines.first()
+            {
+                open = Some((first.clone(), now));
+            }
+            claims.extend(lines.into_iter().map(|line| (line, now)));
             // A hung binary can print lines faster than they are judged.
             let surplus = claims.len().saturating_sub(64);
             claims.drain(..surplus);
@@ -230,23 +241,30 @@ pub fn run_job_for(
                 Some(_) => {
                     since = Some(Instant::now());
                     running = line;
+                    open = None;
                 }
                 None if seen.elapsed() < Duration::from_secs(5) => claims.push((line, seen)),
-                // **Named by cargo and run by no child of the command.** The test sits
-                // behind a runner or wrapper, or it ended before it was seen. A run with
-                // no start yet is not left to the job's bound: its deadline runs from
-                // that line, and the log says so. A later line never moves a start.
-                None if since.is_none() => {
-                    since = Some(seen);
-                    writeln!(
-                        &*note,
-                        "\n{UNTRACKABLE} {label}: {line} is run by no child of the command, \
-                         so its deadline runs from that line"
-                    )?;
-                    running = line;
-                }
                 None => {}
             }
+        }
+        // **Named by cargo and run by no child of the command.** The test sits behind a
+        // runner or wrapper, or it ended before it was seen. A run with no start yet is
+        // not left to the job's bound: once the first such line has gone unmatched for
+        // the window, its deadline runs from that line, and the log says so. A later
+        // line never moves a start. **The limit, stated:** a short test that ended
+        // before it was seen also arms the clock this way, so later work in the same
+        // command counts against that deadline until a start that is seen replaces it.
+        if since.is_none()
+            && let Some((line, seen)) =
+                open.take_if(|(_, seen)| seen.elapsed() >= Duration::from_secs(5))
+        {
+            since = Some(seen);
+            writeln!(
+                &*note,
+                "\n{UNTRACKABLE} {label}: {line} is run by no child of the command, so \
+                 its deadline runs from that line"
+            )?;
+            running = line;
         }
         let stopped = stop.is_some_and(|stop| stop.load(Ordering::SeqCst));
         let late = since.is_some_and(|since| since.elapsed() >= limit);
@@ -389,7 +407,11 @@ mod tests {
         // The program is run by the name it was found under, and named by its file.
         let named = std::fs::canonicalize(&found).unwrap();
         let wrapper = std::env::temp_dir().join(crate::scratch::name("wrapper"));
-        std::fs::write(&wrapper, format!("{found} 25 & wait\n")).unwrap();
+        // The wrapper also floods the log with 100 lines a second that nothing runs.
+        let flood = "i=0; while [ $i -lt 25 ]; do j=0; while [ $j -lt 100 ]; do j=$((j + 1)); \
+                     echo \"     Running unittests n$j (/no/such/$j)\"; done; sleep 1; \
+                     i=$((i + 1)); done";
+        std::fs::write(&wrapper, format!("{found} 25 & {flood}; wait\n")).unwrap();
         let script = format!(
             "/bin/sh {} & echo '     Running unittests a ({})'; wait",
             wrapper.display(),
