@@ -73,8 +73,7 @@ fn a_run_that_passes_and_a_run_that_fails_both_leave_the_file_as_it_was() {
         "the file did not come back after a run that passed",
     );
 
-    let path = a_file("red", held);
-    let (said, code) = sabotage(&path, "41", "42", &["false"]);
+    let (path, said, code) = sabotage_emitting("red", ONE_CASE_FAILED, "", 1);
     assert_eq!(
         code,
         Some(1),
@@ -636,6 +635,66 @@ fn a_break_that_does_not_compile_has_a_verdict_of_its_own() {
     assert!(
         said.contains("VERDICT GREEN") && !said.contains("DID NOT COMPILE"),
         "a run that compiled with a warning is GREEN: {said}",
+    );
+    assert_eq!(code, Some(0), "{said}");
+}
+
+/// 🚨 **A run that stopped before any test ran is not a red case.**
+///
+/// A timeout (exit 124) or a build killed mid-compile exits non-zero with no
+/// result line, and the tool called it RED: the same word as a case that caught
+/// the break. It refuses instead, naming the exit code. **Paired with a failing
+/// case, which has a count and is still RED, and a zero exit with no count,
+/// which keeps its old silence** and so still gets its verdict.
+#[test]
+fn a_run_that_stopped_before_any_test_ran_is_refused_not_called_red() {
+    let held = "the answer is 41\nand a second line\n";
+
+    let (path, said, code) = sabotage_emitting("timed-out", "", "", 124);
+    assert_eq!(code, Some(2), "a stopped run ends as a refusal: {said}");
+    assert!(
+        said.contains("SABOTAGE REFUSED") && said.contains("timed out") && said.contains("124"),
+        "the refusal names the timeout and its exit code: {said}",
+    );
+    assert!(
+        !said.contains("VERDICT"),
+        "a run that measured nothing is given no colour: {said}",
+    );
+    assert_eq!(
+        fs::read_to_string(&path).expect("the file is there"),
+        held,
+        "the file did not come back after a refused stopped run",
+    );
+
+    let (_, said, code) = sabotage_emitting("stopped", "", "Compiling x v0.1.0\n", 2);
+    assert_eq!(code, Some(2), "{said}");
+    assert!(
+        said.contains("SABOTAGE REFUSED") && !said.contains("VERDICT"),
+        "a build stopped before any test is refused: {said}",
+    );
+
+    let (_, said, code) = sabotage_emitting("failed-case-count", ONE_CASE_FAILED, "", 101);
+    assert!(
+        said.contains("VERDICT RED") && !said.contains("REFUSED"),
+        "a case that failed has a count and is RED: {said}",
+    );
+    assert_eq!(code, Some(101), "{said}");
+
+    // `make narrow` prints the bar's summary and keeps the result lines in the log
+    // it names, so the count is read from there.
+    let log = a_file("barred-log", ONE_CASE_FAILED);
+    let summary = format!("test: FAILED\nlog: {} (7 lines)\n", log.display());
+    let (_, said, code) = sabotage_emitting("barred", &summary, "", 101);
+    assert!(
+        said.contains("VERDICT RED") && !said.contains("REFUSED"),
+        "a failed case counted in the bar's log is RED: {said}",
+    );
+    assert_eq!(code, Some(101), "{said}");
+
+    let (_, said, code) = sabotage_emitting("quiet-zero", "hello\n", "", 0);
+    assert!(
+        said.contains("VERDICT GREEN") && !said.contains("REFUSED"),
+        "a zero exit with no count keeps its old silence: {said}",
     );
     assert_eq!(code, Some(0), "{said}");
 }

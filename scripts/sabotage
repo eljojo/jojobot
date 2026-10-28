@@ -328,6 +328,35 @@ def ran_nothing(said):
     return bool(counts) and sum(counts) == 0
 
 
+TIMED_OUT_EXIT = 124
+
+
+def bar_logs(said):
+    """**The text of the logs the bar named in its output.**
+
+    `make narrow` prints the bar's summary and keeps the runner's result lines in
+    its log, so the counts are only there. The bar prints the path for this run;
+    other logs may belong to older runs.
+    """
+    text = ""
+    for log in re.findall(r"^log: (.+) \(\d+ lines\)$", said, re.MULTILINE):
+        with open(log, encoding="utf-8") as reading:
+            text += "\n" + reading.read()
+    return text
+
+
+def stopped_before_any_test(code, said):
+    """**Whether a failing exit came from a run that printed no test count at all.**
+
+    A timeout or a build killed mid-compile exits nonzero with no result line
+    and no compiler error, so nothing was measured and RED would read as a case
+    that caught the break. **Only the nonzero arm**: a zero exit with no count
+    stays silent, as in `ran_nothing`. A pure function, self-checked like the
+    classifier beside it.
+    """
+    return code != 0 and not TESTS_RUN.search(said)
+
+
 def disagrees(code, said):
     """**How many targets the output says failed, when the code says none.**
 
@@ -376,7 +405,7 @@ def main(argv):
     if argv == ["--self-check"]:
         print(
             f"SABOTAGE SELF-CHECK: {len(CHECKS)} classifier, {len(DISAGREEMENTS)} "
-            f"disagreement and {len(COMPILES)} compile cases hold"
+            f"disagreement, {len(COMPILES)} compile and {len(NO_TEST_STOPS)} no-test cases hold"
         )
         return 0
     if "--" not in argv:
@@ -451,6 +480,13 @@ def main(argv):
             return refuse(
                 f"no test ran under `{' '.join(command)}`, so there is no verdict. A test "
                 "filter that matches nothing does this: check the name it was given."
+            )
+        # **Before any colour**: an exit with no test count behind it measured nothing.
+        if stopped_before_any_test(code, said + bar_logs(said)):
+            how = "timed out" if code == TIMED_OUT_EXIT else "stopped"
+            return refuse(
+                f"`{' '.join(command)}` {how} (exit {code}) before any test ran, so no case "
+                "ran and there is no verdict, neither RED nor GREEN."
             )
         verdict = "RED" if code != 0 else "GREEN"
         print(
@@ -673,6 +709,27 @@ COMPILES = (
 )
 
 
+# **When an exit has no test behind it.** The first two are the runs that were
+# called RED: a timeout, and a build stopped before it printed anything.
+NO_TEST_STOPS = (
+    ("a timeout with no count stopped before any test", 124, "", True),
+    ("a nonzero exit with no count and no compiler error stopped before any test", 2, "Compiling x\n", True),
+    (
+        "a case that failed has a count and a verdict",
+        1,
+        "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out\n",
+        False,
+    ),
+    (
+        "a timeout after a target that did run keeps its count",
+        124,
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n",
+        False,
+    ),
+    ("a zero exit with no count gets no opinion", 0, "hello\n", False),
+)
+
+
 def self_check():
     """**The classifier answers for itself before it answers about anything.**
 
@@ -695,6 +752,10 @@ def self_check():
             return (
                 f"the disagreement check is wrong — {why}: said {got}, and it has to say {wanted}"
             )
+    for why, code, said, wanted in NO_TEST_STOPS:
+        got = stopped_before_any_test(code, said)
+        if got != wanted:
+            return f"the no-test check is wrong — {why}: said {got}, and it has to say {wanted}"
     for why, code, said, errored, wanted in COMPILES:
         got = did_not_compile(code, said, errored)
         if got != wanted:
@@ -721,10 +782,7 @@ def probe(path, before, old, command):
         writing.write(before.replace(old, text, 1))
     ran = subprocess.run(command, capture_output=True, text=True)
     said = ran.stdout + ran.stderr
-    # The bar prints the path for this run; other logs may belong to older runs.
-    for log in re.findall(r"^log: (.+) \(\d+ lines\)$", said, re.MULTILINE):
-        with open(log, encoding="utf-8") as reading:
-            said += "\n" + reading.read()
+    said += bar_logs(said)
     if ran_nothing(said):
         print(
             "SABOTAGE PROBE EMPTY: the probe run executed no test, so which kind of green "
