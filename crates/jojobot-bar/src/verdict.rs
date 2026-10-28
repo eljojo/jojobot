@@ -396,6 +396,7 @@ mod tests {
     const DISK_FULL: &str = include_str!("../tests/fixtures/verdict-disk-full.txt");
     const DISK_FULL_BUILD: &str = include_str!("../tests/fixtures/verdict-disk-full-build.txt");
     const KILLED: &str = include_str!("../tests/fixtures/verdict-killed-binary.txt");
+    const TERMINATED: &str = include_str!("../tests/fixtures/verdict-terminated-binary.txt");
     const OUT_OF_MEMORY: &str = include_str!("../tests/fixtures/verdict-out-of-memory.txt");
     const NETWORK: &str = include_str!("../tests/fixtures/verdict-network-fetch.txt");
 
@@ -504,6 +505,16 @@ mod tests {
         assert_eq!(verdict.overall, Overall::Infra);
         assert_eq!(verdict.infra, Some(Infra::DiskFull));
         assert!(verdict.red.is_empty() && !verdict.compiled);
+    }
+
+    /// **A binary the runner terminated is killed, as one that was killed.**
+    #[test]
+    fn a_terminated_binary_is_a_red_suite_of_the_class_killed() {
+        let verdict = read(TERMINATED, false, 0);
+        assert_eq!(verdict.overall, Overall::Infra);
+        assert_eq!(verdict.infra, Some(Infra::Killed));
+        assert_eq!(names(&verdict), ["user_stories"]);
+        assert!(verdict.red[0].crashed);
     }
 
     #[test]
