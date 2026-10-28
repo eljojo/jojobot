@@ -25,6 +25,7 @@ const SHIPPED_NOTES: &[&str] = &[
     "defrag-ships-a-charter",
     "list-read-pages-and-counts-ticks",
     "many-entries-or-ticks-in-one-call",
+    "memory-write-receipts",
     "recall-narrows-records-and-pages",
     "release-notes",
     "rhythm-on-the-calendar",
@@ -955,10 +956,11 @@ async fn a_bot_that_uses_none_of_the_features_reads_the_problem_each_note_solves
         "each one says something: {reach:?}"
     );
 
-    // A note that cuts an existing call leads. Two carry `narrows: true`, so the case
+    // A note that cuts an existing call leads. Three carry `narrows: true`, so the case
     // names them and asks that the first note named is one of them.
-    const CUT_A_CALL: [&str; 2] = [
+    const CUT_A_CALL: [&str; 3] = [
         "list-read-pages-and-counts-ticks",
+        "memory-write-receipts",
         "search-matching-passages",
     ];
     let first = ids_named(body).into_iter().next().expect("a first note");
