@@ -7,7 +7,7 @@
 //! now patches its lists from the subject's own documents.
 //!
 //! Two cases. The first counts the statements of a capture through the fold, on a
-//! store of 800 other things that name one owner, for a thing of no claims and
+//! store of 64 other things that name one owner, for a thing of no claims and
 //! for a thing of 48. It prints the table in the boundary log. The second holds
 //! the patched lists to a full ask of the store after each kind of claim write.
 
@@ -33,9 +33,11 @@ use jojobot_domain::memory::{
 };
 
 const CLAIMS: usize = 48;
-/// Other things the store holds, each with a few claims: a production store holds
-/// about a thousand, and a cost that follows the store needs them to show.
-const BACKGROUND: usize = 800;
+/// Other things the store holds, each with a few claims. A cost that follows the
+/// store shows as a count that grows with them: the old fold sent about thirteen
+/// statements for each, so 64 of them put it past the bound below by a wide margin,
+/// and seeding them one write at a time stays under a minute.
+const BACKGROUND: usize = 64;
 /// How many more statements a capture on the thing of 48 claims may send than a
 /// capture on the thing of none. The thing's own document is read once, which
 /// takes a few more statements for more claims.
