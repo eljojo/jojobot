@@ -277,7 +277,7 @@ pub fn assemble_ports(
         mail_image.clone(),
     ));
     let bare_sessions: Arc<dyn Sessions> = Arc::new(
-        jojobot_adapters::changes::SessionChanges::new(sessions_image.clone()),
+        jojobot_adapters::changes::SessionChanges::new(sessions_image.clone(), indexed.writer()),
     );
     let mail_mentioned: Arc<dyn Mailboxes> =
         Arc::new(mailbox_mention::Mentioning::new(bare_mail, indexed.clone()));
@@ -1306,6 +1306,111 @@ mod tests {
     use jiff::civil::date;
     use jojobot_domain::memory::testing::InMemoryMemory;
     use jojobot_domain::memory::{EntityId, NewEntity, NewFact};
+
+    /// Queue admission survives the caller; the search signal must survive too.
+    #[tokio::test]
+    async fn a_cancelled_session_append_stays_findable_through_the_assembled_stack() {
+        use jojobot_adapters::counted_rails::CountedSessions;
+        use jojobot_domain::mailbox::testing::InMemoryMailboxes;
+        use jojobot_domain::memory::search::{Hit, SearchQuery};
+        use jojobot_domain::session::testing::InMemorySessions;
+        use jojobot_domain::session::{NewEntry, NewSession, Sid};
+        use std::future::Future;
+
+        let (_, indexed) = assemble_memory(Arc::new(InMemoryMemory::booted())).unwrap();
+        let writer = indexed.writer();
+        let bare = Arc::new(InMemorySessions::new());
+        let counted = Arc::new(CountedSessions::new(bare.clone()));
+        let wired = assemble_ports(
+            indexed,
+            Arc::new(InMemoryMailboxes::knowing_any_owner()),
+            counted.clone(),
+            bare.write_stamp(),
+            Clock::Real,
+        );
+        wired.sessions_image.rebuild().await.unwrap();
+        let run = wired
+            .sessions
+            .begin(NewSession {
+                bot: EntityId("bot:alpha".into()),
+                sid: Sid("ab12".into()),
+                focus: "cobalt".into(),
+                started_at: jiff::Timestamp::UNIX_EPOCH,
+                timezone: None,
+                started_on: None,
+                id: None,
+                key_hash: None,
+            })
+            .await
+            .unwrap();
+        wired
+            .sessions
+            .append(&run.id, NewEntry::manual("cobalt", run.started_at, None))
+            .await
+            .unwrap();
+        wired.sessions_indexed.rebuild().await.unwrap();
+        let query = |word| SearchQuery {
+            asked_by: Some(run.bot.clone()),
+            ..SearchQuery::text(word)
+        };
+        assert_eq!(
+            wired.search.search(&query("cobalt")).await.unwrap().len(),
+            1
+        );
+        assert!(
+            wired
+                .search
+                .search(&query("periwinkle"))
+                .await
+                .unwrap()
+                .is_empty()
+        );
+
+        counted.calls.hang_after_next("set_timezone");
+        let first = {
+            let sessions = wired.sessions.clone();
+            let id = run.id.clone();
+            tokio::spawn(async move { sessions.set_timezone(&id, Some("UTC")).await })
+        };
+        counted.calls.hung().await;
+        let before = writer.submitted_jobs();
+        let mut append = Box::pin(wired.sessions.append(
+            &run.id,
+            NewEntry::manual("periwinkle", run.started_at, None),
+        ));
+        std::future::poll_fn(|cx| {
+            assert!(append.as_mut().poll(cx).is_pending());
+            assert_eq!(writer.submitted_jobs(), before + 1, "append is accepted");
+            std::task::Poll::Ready(())
+        })
+        .await;
+        drop(append);
+        counted.calls.release_hung();
+        first.await.unwrap().unwrap();
+        writer.drain().await;
+
+        let held = wired.sessions.read_session(&run.id).await.unwrap();
+        assert_eq!(held.entries.last().unwrap().text, "periwinkle");
+        let hits = wired.search.search(&query("periwinkle")).await.unwrap();
+        assert!(matches!(hits.as_slice(), [Hit::Session { session, .. }] if session == &run.id));
+        assert!(
+            wired
+                .search
+                .search(&query("cobalt"))
+                .await
+                .unwrap()
+                .iter()
+                .any(|hit| matches!(hit, Hit::Session { session, .. } if session == &run.id))
+        );
+        // A completed edit remains an ordinary, independently published write.
+        wired
+            .sessions
+            .amend_last(&run.id, "cerulean")
+            .await
+            .unwrap();
+        let hits = wired.search.search(&query("cerulean")).await.unwrap();
+        assert!(matches!(hits.as_slice(), [Hit::Session { session, .. }] if session == &run.id));
+    }
 
     /// **The zone that is a different day from UTC right now**, chosen at run time:
     /// one zone fourteen hours ahead and one eleven behind cannot both share

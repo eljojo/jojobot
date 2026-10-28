@@ -15,6 +15,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::writer::owned;
 use async_trait::async_trait;
 use jiff::Timestamp;
 use jiff::civil::Date;
@@ -187,16 +188,21 @@ impl Mailboxes for MailChanges {
 /// so changing one leaves the index current. This counts exactly those five
 /// calls: counting more would send the index back to read every run after each
 /// answer, which is what the signal exists to avoid.
+/// The shared writer owns both the indexed write and this signal, even when
+/// its caller stops waiting for the answer.
+#[derive(Clone)]
 pub struct SessionChanges {
+    writer: crate::writer::Writer,
     inner: Arc<dyn Sessions>,
-    changes: AtomicU64,
+    changes: Arc<AtomicU64>,
 }
 
 impl SessionChanges {
-    pub fn new(inner: Arc<dyn Sessions>) -> Self {
+    pub fn new(inner: Arc<dyn Sessions>, writer: crate::writer::Writer) -> Self {
         SessionChanges {
+            writer,
             inner,
-            changes: AtomicU64::new(0),
+            changes: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -267,18 +273,26 @@ impl Sessions for SessionChanges {
     }
 
     async fn begin(&self, new: NewSession) -> Result<Session, SessionError> {
+        owned!(self, this, [], this.begin(new).await);
         let begun = self.inner.begin(new).await;
         self.changed();
         begun
     }
 
     async fn append(&self, id: &SessionId, entry: NewEntry) -> Result<JournalEntry, SessionError> {
+        owned!(self, this, [id = id.clone()], this.append(&id, entry).await);
         let appended = self.inner.append(id, entry).await;
         self.changed();
         appended
     }
 
     async fn amend_last(&self, id: &SessionId, text: &str) -> Result<JournalEntry, SessionError> {
+        owned!(
+            self,
+            this,
+            [id = id.clone(), text = text.to_string()],
+            this.amend_last(&id, &text).await
+        );
         let amended = self.inner.amend_last(id, text).await;
         self.changed();
         amended
@@ -291,12 +305,28 @@ impl Sessions for SessionChanges {
         text: &str,
         at: Timestamp,
     ) -> Result<JournalEntry, SessionError> {
+        owned!(
+            self,
+            this,
+            [
+                id = id.clone(),
+                entry = entry.clone(),
+                text = text.to_string()
+            ],
+            this.amend_beat(&id, &entry, &text, at).await
+        );
         let amended = self.inner.amend_beat(id, entry, text, at).await;
         self.changed();
         amended
     }
 
     async fn set_focus(&self, id: &SessionId, focus: &str) -> Result<Session, SessionError> {
+        owned!(
+            self,
+            this,
+            [id = id.clone(), focus = focus.to_string()],
+            this.set_focus(&id, &focus).await
+        );
         let set = self.inner.set_focus(id, focus).await;
         self.changed();
         set

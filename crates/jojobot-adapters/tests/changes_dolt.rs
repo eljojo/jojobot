@@ -36,8 +36,9 @@ async fn the_sessions_signal_moves_on_the_calls_the_stores_own_count_moves_on() 
         .await
         .expect("the kinds are seeded");
 
-    let store = Arc::new(DoltSessions::open(pool));
-    let counted = SessionChanges::new(store.clone());
+    let writer = jojobot_adapters::writer::Writer::default();
+    let store = Arc::new(DoltSessions::open(pool).with_writer(writer.clone()));
+    let counted = SessionChanges::new(store.clone(), writer);
     let at = sessions::epoch();
 
     // Each step: the call, made through the signal's port, and whether the
