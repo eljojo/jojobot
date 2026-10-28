@@ -1,0 +1,112 @@
+#!/usr/bin/env python3
+"""**Refuse a target dir that is not this line's own, and clean up after a build that was killed.**
+
+    scripts/build-guard <command...>
+
+make dev and make narrow run their command through this, ahead of the first
+cargo run: cargo compiles the bar before the bar runs, so a check inside the bar
+is too late.
+
+OWNERSHIP. JOJOBOT_EXPECTED_TARGET_DIR is the line's own target dir, set by
+whatever launches the line. The guard compares it with the target_directory that
+`cargo metadata` reports. A shared root, another line's dir or no expected value
+at all refuses with exit 2 and one line saying what was expected and what was
+found. It never guesses a dir.
+
+RECOVERY. Before it starts the command the guard writes a marker in the target
+dir with a snapshot of the units in debug/incremental. A command that ends by
+itself, red or green, removes the marker and nothing else. A SIGKILL runs no
+handler, so the marker survives it. The next run reaps the recorded process
+group, removes only the units whose files changed or appeared since the
+snapshot, removes the marker, and then runs. It never touches deps, fingerprints,
+other units or another dir. If a unit leads out of the cache, or the run that
+wrote the marker is still alive, it refuses and leaves everything as it is.
+"""
+import hashlib
+import json
+import os
+import shutil
+import signal
+import subprocess
+import sys
+from pathlib import Path
+
+EXPECTED = "JOJOBOT_EXPECTED_TARGET_DIR"
+
+
+class Refused(Exception):
+    pass
+
+
+def start_time(pid):
+    """The start time of a process in clock ticks, to tell a process from a reused id."""
+    try:
+        return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[19]
+    except (OSError, IndexError):
+        return None
+
+
+def snapshot(incremental):
+    """Each unit of the incremental cache with a digest of its files' names, sizes and times."""
+    units = {}
+    for unit in sorted(incremental.iterdir()) if incremental.is_dir() else []:
+        if unit.is_symlink() or not unit.resolve().is_relative_to(incremental.resolve()):
+            raise Refused(f"{unit} leads out of the incremental cache; nothing was removed")
+        files = []
+        for d, _, names in os.walk(unit):
+            for f in sorted(names):
+                info = Path(d, f).lstat()
+                files.append((d, f, info.st_size, info.st_mtime_ns))
+        units[unit.name] = hashlib.sha1(repr(files).encode()).hexdigest()
+    return units
+
+
+def recover(marker, incremental):
+    """Undo what a killed run left: reap its group, remove the units it touched."""
+    state = json.loads(marker.read_text())
+    if start_time(state["pid"]) is not None and state["pid"] != os.getpid():
+        raise Refused(f"the run that left {marker} (pid {state['pid']}) is still running")
+    now = snapshot(incremental)
+    if state.get("start") is not None and start_time(state["pgid"]) == state["start"]:
+        os.killpg(state["pgid"], signal.SIGKILL)
+    for name, signature in now.items():
+        if state["units"].get(name) != signature:
+            shutil.rmtree(incremental / name)
+    marker.unlink()
+
+
+def target_dir():
+    answer = subprocess.run([os.environ.get("CARGO", "cargo"), "metadata", "--no-deps",
+                             "--format-version", "1"], capture_output=True, text=True)
+    try:
+        return Path(json.loads(answer.stdout)["target_directory"])
+    except (ValueError, KeyError):
+        raise Refused("cargo metadata did not report a target_directory")
+
+
+def main(command):
+    expected = os.environ.get(EXPECTED)
+    try:
+        if not expected:
+            raise Refused(f"{EXPECTED} is not set; the launch must name this line's own target dir")
+        found = target_dir()
+        if Path(expected).resolve() != found.resolve():
+            raise Refused(f"expected target dir {expected}, found {found}")
+        incremental, marker = found / "debug" / "incremental", found / ".build-guard.json"
+        if marker.exists():
+            recover(marker, incremental)
+        units = snapshot(incremental)
+    except Refused as why:
+        print(f"build guard: {why}", file=sys.stderr)
+        return 2
+    found.mkdir(parents=True, exist_ok=True)
+    child = subprocess.Popen(command, start_new_session=True)
+    marker.write_text(json.dumps({"pid": os.getpid(), "pgid": child.pid,
+                                  "start": start_time(child.pid), "units": units}))
+    code = child.wait()
+    marker.unlink(missing_ok=True)
+    return code if code >= 0 else 128 - code
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]) if sys.argv[1:] else 2)

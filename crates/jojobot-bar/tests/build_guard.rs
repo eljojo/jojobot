@@ -1,0 +1,182 @@
+//! **The build guard refuses a target dir that is not the line's own, and
+//! cleans up after a build that was killed partway.** A stub stands in for
+//! cargo: it only reports a target directory, so no real cache is corrupted.
+
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
+
+mod support;
+
+const EXPECTED: &str = "JOJOBOT_EXPECTED_TARGET_DIR";
+
+fn scratch(tag: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(jojobot_bar::scratch::name(&format!(
+        "jojobot-bar-guard-{tag}"
+    )));
+    fs::create_dir_all(&dir).expect("scratch dir");
+    dir
+}
+
+/// A unit directory of the incremental cache with one file in it.
+fn unit(target: &Path, name: &str) -> PathBuf {
+    let dir = target.join("debug/incremental").join(name).join("session");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("data"), name).unwrap();
+    dir.parent().unwrap().to_path_buf()
+}
+
+/// Run the guard over `command`. The stub cargo reports `reported` as the
+/// target directory; `expected` is what the launch environment named.
+fn guard(root: &Path, reported: &Path, expected: Option<&Path>, command: &str) -> Output {
+    let cargo = root.join("cargo");
+    support::write_executable(
+        &cargo,
+        &format!(
+            "#!/bin/sh\necho '{{\"target_directory\":\"{}\"}}'\n",
+            reported.display()
+        ),
+    );
+    let mut run = Command::new("python3");
+    run.arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/build-guard"))
+        .args(["sh", "-c", command])
+        .env("CARGO", &cargo)
+        .env_remove(EXPECTED);
+    if let Some(expected) = expected {
+        run.env(EXPECTED, expected);
+    }
+    support::output_fenced(&mut run).expect("the guard runs")
+}
+
+fn said(out: &Output) -> String {
+    String::from_utf8_lossy(&out.stderr).into_owned()
+}
+
+/// **A target dir that is shared, missing or another line's refuses before the
+/// command starts**, and the line's own dir runs it.
+#[test]
+fn a_target_dir_that_is_not_the_lines_own_refuses_before_the_command_starts() {
+    let root = scratch("own");
+    let (own, other) = (root.join("own"), root.join("other"));
+    let started = root.join("started");
+    let command = format!("touch {}", started.display());
+    for (reported, expected, reason) in [
+        (&own, None, "is not set"),
+        (&own, Some(&other), "expected"),
+        (&other, Some(&own), "expected"),
+    ] {
+        let out = guard(&root, reported, expected.map(|p| p.as_path()), &command);
+        assert_eq!(out.status.code(), Some(2), "{}", said(&out));
+        assert!(said(&out).contains(reason), "{}", said(&out));
+        assert!(!started.exists(), "the command started: {}", said(&out));
+    }
+    let out = guard(&root, &own, Some(&own), &command);
+    assert_eq!(out.status.code(), Some(0), "{}", said(&out));
+    assert!(started.exists());
+    let _ = fs::remove_dir_all(root);
+}
+
+/// **A build killed partway leaves a marker, and the next run removes exactly
+/// the units the dead run changed or created**: an untouched unit and another
+/// line's cache stay.
+#[test]
+fn a_killed_build_is_cleaned_of_the_units_it_touched_and_nothing_else() {
+    let root = scratch("killed");
+    let own = root.join("own");
+    let other_line = unit(&root.join("other"), "theirs");
+    let untouched = unit(&own, "untouched");
+    let touched = unit(&own, "touched");
+    // The command changes a file of one existing unit, creates a unit, and
+    // kills the guard (its parent) the way a timeout's SIGKILL would.
+    let command = format!(
+        "echo more > {t}/session/data; touch -d @1 {t}/session/data; mkdir -p {n}/session; \
+         echo x > {n}/session/data; kill -9 $PPID; sleep 1",
+        t = touched.display(),
+        n = own.join("debug/incremental/created").display()
+    );
+    let out = guard(&root, &own, Some(&own), &command);
+    assert_ne!(out.status.code(), Some(0), "the guard was killed");
+    assert!(own.join(".build-guard.json").exists(), "no marker left");
+
+    let out = guard(&root, &own, Some(&own), "true");
+    assert_eq!(out.status.code(), Some(0), "{}", said(&out));
+    assert!(!touched.exists(), "the changed unit stayed");
+    assert!(!own.join("debug/incremental/created").exists());
+    assert!(untouched.exists(), "an untouched unit was removed");
+    assert!(other_line.exists(), "another line's cache was touched");
+    assert!(!own.join(".build-guard.json").exists(), "the marker stayed");
+    let _ = fs::remove_dir_all(root);
+}
+
+/// **A build that ends by itself removes nothing**, whatever it changed.
+#[test]
+fn a_build_that_ends_by_itself_removes_nothing() {
+    let root = scratch("clean");
+    let own = root.join("own");
+    let touched = unit(&own, "touched");
+    let command = format!("echo more > {}/session/data", touched.display());
+    for _ in 0..2 {
+        let out = guard(&root, &own, Some(&own), &command);
+        assert_eq!(out.status.code(), Some(0), "{}", said(&out));
+        assert!(touched.exists(), "a clean run removed a unit");
+        assert!(!own.join(".build-guard.json").exists());
+    }
+    let _ = fs::remove_dir_all(root);
+}
+
+/// **Cleanup is refused, and nothing is removed or started**, when a unit is a
+/// symlink out of the cache or the run that left the marker is still alive.
+#[test]
+fn cleanup_is_refused_for_a_symlink_out_of_the_cache_and_for_a_live_owner() {
+    let root = scratch("refused");
+    let own = root.join("own");
+    let marker = own.join(".build-guard.json");
+    unit(&own, "touched");
+    let started = root.join("started");
+    let command = format!("kill -9 $PPID; sleep 1; touch {}", started.display());
+    guard(&root, &own, Some(&own), &command);
+    assert!(marker.exists(), "no marker left");
+
+    let kept = root.join("outside");
+    fs::create_dir_all(&kept).unwrap();
+    fs::write(kept.join("file"), "keep").unwrap();
+    std::os::unix::fs::symlink(&kept, own.join("debug/incremental/escape")).unwrap();
+    let out = guard(&root, &own, Some(&own), "true");
+    assert_eq!(out.status.code(), Some(2), "{}", said(&out));
+    assert!(said(&out).contains("escape"), "{}", said(&out));
+    assert!(kept.join("file").exists());
+    assert!(marker.exists(), "a refused cleanup dropped the marker");
+    fs::remove_file(own.join("debug/incremental/escape")).unwrap();
+
+    let mut state: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&marker).unwrap()).unwrap();
+    state["pid"] = std::process::id().into();
+    fs::write(&marker, state.to_string()).unwrap();
+    let after = root.join("after");
+    let out = guard(
+        &root,
+        &own,
+        Some(&own),
+        &format!("touch {}", after.display()),
+    );
+    assert_eq!(out.status.code(), Some(2), "{}", said(&out));
+    assert!(said(&out).contains("still running"), "{}", said(&out));
+    assert!(!after.exists(), "the command started beside a live owner");
+    let _ = fs::remove_dir_all(root);
+}
+
+/// **Both local loops run through the guard**, ahead of the first cargo run.
+#[test]
+fn make_dev_and_make_narrow_run_through_the_guard() {
+    let makefile =
+        fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Makefile")).unwrap();
+    assert!(makefile.contains("BUILD_GUARD ?= python3 scripts/build-guard"));
+    for target in ["dev", "narrow"] {
+        assert!(
+            makefile.contains(&format!(
+                "$(BUILD_GUARD) python3 scripts/build-metrics run {target} --"
+            )),
+            "make {target} does not run through the build guard"
+        );
+    }
+}

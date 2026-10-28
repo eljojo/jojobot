@@ -1004,6 +1004,7 @@ fn make_target(
             .env("SIZE_BASE", base)
             .env("CRATE", "jojobot-bar")
             .env("SNAPSHOT_CASE", mode)
+            .env("BUILD_GUARD", "")
             .env_remove("JOJOBOT_DEV_METRICS_URL"),
     )
     .expect("run the real Makefile recipe")

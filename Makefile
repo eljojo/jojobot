@@ -133,7 +133,7 @@ snapshot: ## Rewrite the checked-in files of every text a model reads
 # Set JOJOBOT_DEV_METRICS_URL to opt dev and narrow into build SLO samples.
 # It is off by default; a metrics push never changes the command's exit code.
 dev: ## The dev bar: format, build, and the tests and lint of what the branch touched
-	CARGO=$(CARGO) SIZE_BASE=$(or $(SIZE_BASE),$(BASE),main) $(if $(BASE),BAR_DEV_BASE=$(BASE),) python3 scripts/build-metrics run dev -- $(CARGO) run -q --locked -p jojobot-bar -- dev
+	CARGO=$(CARGO) SIZE_BASE=$(or $(SIZE_BASE),$(BASE),main) $(if $(BASE),BAR_DEV_BASE=$(BASE),) $(BUILD_GUARD) python3 scripts/build-metrics run dev -- $(CARGO) run -q --locked -p jojobot-bar -- dev
 
 # **The inner loop, scoped to one crate.** Run it between edits.
 #
@@ -192,11 +192,14 @@ dev: ## The dev bar: format, build, and the tests and lint of what the branch to
 # **FILTER may hold several words**, each a substring of a test path, so the
 # cases a hand-off names run in one call: `FILTER="a_case another_case"`. **The
 # last line is the run's whole wall time**, as `make dev`'s is.
+# The guard refuses a target dir that is not this line's own and cleans up after
+# a killed build (scripts/build-guard). The tests of the recipes run without it.
+BUILD_GUARD ?= python3 scripts/build-guard
 CRATE ?=
 FILTER ?=
 narrow: ## The inner loop: one crate's tests and lint, plus the format check
 	@test -n "$(CRATE)" || { echo "make narrow needs a crate: make narrow CRATE=<name>"; exit 2; }
-	CARGO=$(CARGO) SIZE_BASE=$(or $(SIZE_BASE),$(BASE),main) python3 scripts/build-metrics run narrow -- $(CARGO) run -q --locked -p jojobot-bar -- narrow --crate $(CRATE) $(if $(FILTER),--filter "$(FILTER)",)
+	CARGO=$(CARGO) SIZE_BASE=$(or $(SIZE_BASE),$(BASE),main) $(BUILD_GUARD) python3 scripts/build-metrics run narrow -- $(CARGO) run -q --locked -p jojobot-bar -- narrow --crate $(CRATE) $(if $(FILTER),--filter "$(FILTER)",)
 
 # 🚨 **Every target reports, and the count is what a reader takes from it.**
 #
