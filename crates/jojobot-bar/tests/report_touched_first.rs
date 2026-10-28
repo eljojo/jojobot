@@ -113,7 +113,7 @@ fn jobs_run(dir: &Path, level: &str, push_base: Option<&str>) -> (Vec<String>, S
         .filter(|call| call.starts_with("test ") && !call.contains("--no-run"))
         .map(|call| {
             call.trim_start_matches("test ")
-                .replace("--workspace ", "")
+                .replace("--workspace --features=jojobot/room-harness ", "")
                 .replace(" --no-fail-fast --locked", "")
                 .replace(" -- -Zunstable-options --report-time", "")
         })
