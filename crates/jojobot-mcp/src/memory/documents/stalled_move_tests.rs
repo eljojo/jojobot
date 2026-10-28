@@ -142,6 +142,21 @@ async fn a_move_behind_a_section_whose_move_stopped_after_its_heading_does_not_p
         at("# Big\n") < at("# Small\n"),
         "the moved section reads behind the target's heading"
     );
+    let (before_small, small_body) = text.split_once("# Small\n").unwrap();
+    assert!(
+        before_small.ends_with("\n\n") && !before_small.ends_with("\n\n\n"),
+        "the move leaves one blank line before the moved heading"
+    );
+    assert_eq!(small_body, "\nsmall\n\n", "the moved body and tail survive");
+    assert!(
+        text.contains("end\n\n# Big\n\n"),
+        "the interrupted target still has a blank seam after its predecessor"
+    );
+    assert_eq!(
+        text.matches(paragraph.trim_end()).count(),
+        60,
+        "the interrupted target keeps every paragraph, including its chunks"
+    );
 }
 
 /// One call through the served router, which is where a `request_id` is begun,
