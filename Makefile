@@ -193,7 +193,9 @@ dev: ## The dev bar: format, build, and the tests and lint of what the branch to
 # cases a hand-off names run in one call: `FILTER="a_case another_case"`. **The
 # last line is the run's whole wall time**, as `make dev`'s is.
 # The guard refuses a target dir that is not this line's own and cleans up after
-# a killed build (scripts/build-guard). The tests of the recipes run without it.
+# a killed build (scripts/build-guard). **Override it only for the two recipe
+# tests of the size report**, which run this Makefile in a scratch tree that has
+# no guard; a line never sets it.
 BUILD_GUARD ?= python3 scripts/build-guard
 CRATE ?=
 FILTER ?=
