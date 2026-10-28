@@ -240,6 +240,8 @@ struct Forge {
     ignore_head_sha: bool,
     /// The name of the job each run has; `report` when none.
     job_name: Option<&'static str>,
+    /// The primary job's log has been removed by the forge.
+    gone_log: bool,
     /// Jobs beyond the first of a run: the run's id, the job's name and
     /// status, and its log.
     more_jobs: Vec<(u64, &'static str, &'static str, String)>,
@@ -377,6 +379,9 @@ fn answer(forge: &Forge, path: &str, lists: usize) -> (u16, String) {
         .and_then(|r| r.strip_suffix("/logs"))
     {
         let job: u64 = job.parse().unwrap_or(0);
+        if forge.gone_log && job < 9000 {
+            return (404, "404 page not found".into());
+        }
         // The forge keeps no log for a job that never ran: a skipped job's log is a 404.
         if job >= 9000 {
             return match forge.more_jobs.get((job - 9000) as usize) {
@@ -1208,6 +1213,22 @@ fn a_cancelled_run_whose_log_says_context_canceled_still_exits_two() {
     ));
     let (code, out, err) = wait(&forge, &["dev9-2647-work"]);
     assert_eq!(code, 2, "{out}\n{err}");
+}
+
+#[test]
+fn a_gone_job_log_keeps_the_run_exit_and_reads_the_other_job() {
+    for (status, expected) in [("cancelled", 2), ("success", 0)] {
+        let forge = stand(Forge {
+            gone_log: true,
+            ..two_jobs("wait-run-green-job.txt", "wait-run-green-job.txt", status)
+        });
+        let (code, out, err) = wait(&forge, &["dev9-2647-work"]);
+        assert_eq!(code, expected, "{out}\n{err}");
+        assert!(out.contains("no log of the report job"), "{out}");
+        assert_eq!(out.matches("verdict: GREEN").count(), 1, "{out}");
+        assert!(forge.asked_for("/actions/jobs/9000/logs") > 0, "{out}");
+        assert!(!err.contains("Traceback"), "{err}");
+    }
 }
 
 /// **A forge that does not answer is waited out.** The first asks fail with a 500,
