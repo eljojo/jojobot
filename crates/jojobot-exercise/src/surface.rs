@@ -131,15 +131,11 @@ impl Surface {
 
     /// An observation enters no MCP dispatch and carries no identity.
     pub async fn read(&self, verb: &str, arguments: Value) -> String {
-        match self
-            .harness_request(json!({"operation":"read", "verb":verb, "arguments":arguments}))
-            .await
-        {
-            Ok(value) => value.to_string(),
-            Err(error) => {
-                json!({"status":"blocked", "harness_error":error.to_string()}).to_string()
-            }
-        }
+        require_observation(
+            self.harness_request(json!({"operation":"read", "verb":verb, "arguments":arguments}))
+                .await,
+        )
+        .to_string()
     }
 
     /// The harness holds the cursor; reading notices changes no server state.
@@ -167,12 +163,16 @@ impl Surface {
         let response = sending
             .send()
             .await
-            .context("reaching the room's compiled harness route")?;
-        let status = response.status();
-        let answer: Value = response.json().await.context("the harness answers JSON")?;
-        anyhow::ensure!(status.is_success(), "room harness {status}: {answer}");
-        Ok(answer)
+            .context("reaching the room's compiled harness route")?
+            .error_for_status()
+            .context("the room's compiled harness route refused the observation")?;
+        response.json().await.context("the harness answers JSON")
     }
+}
+
+pub(crate) fn require_observation(result: Result<Value>) -> Value {
+    // A failed read is no evidence that a negative lock's object is absent.
+    result.unwrap_or_else(|error| panic!("room harness observation failed: {error:#}"))
 }
 
 /// **What a room is furnished with before a run starts.**
@@ -548,4 +548,23 @@ fn house_bot_slug(handle: &str) -> Result<String> {
          what a run must meet, and a charter or a sitting written onto it would be coaching",
     );
     Ok(slug.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_failed_harness_observation_cannot_grade_an_empty_room() {
+        for answer in [json!({"objects":[]}), json!({"status":"blocked"})] {
+            assert_eq!(require_observation(Ok(answer.clone())), answer);
+        }
+        let failed = std::panic::catch_unwind(|| {
+            require_observation(Err(anyhow::anyhow!(reqwest::StatusCode::NOT_FOUND)))
+        });
+        assert!(
+            failed.is_err(),
+            "a 404 must abort, never look like room state"
+        );
+    }
 }

@@ -1548,10 +1548,7 @@ pub async fn boundary_asking(
         .ok()
         .and_then(|b| b["session"]["choices"].as_array().map(Vec::len))
         .unwrap_or(0);
-    let changes = match room.changes().await {
-        Ok(notices) => notices,
-        Err(error) => serde_json::json!({"harness_error":error.to_string()}),
-    };
+    let changes = crate::surface::require_observation(room.changes().await);
     Boundary {
         changes,
         runs_offered,
