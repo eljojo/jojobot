@@ -649,4 +649,12 @@ async fn a_starred_capture_names_the_boot_floor_when_the_fields_cannot_be_read()
         reads_left_names(&blind_capture).contains(&reads_left::BOOT_FLOOR.to_string()),
         "{blind_capture}"
     );
+    let address = FactAddress::parse(&address_of(&blind_capture)).unwrap();
+    let held = healthy.memory.recall(&address.home).await.unwrap();
+    assert!(
+        held.iter().any(|fact| fact.id == address.local
+            && fact.content == "blind rule"
+            && fact.status == FactStatus::Active),
+        "the blind write landed at its returned address: {held:?}"
+    );
 }
