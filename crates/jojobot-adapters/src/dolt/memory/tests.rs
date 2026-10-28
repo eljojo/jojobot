@@ -6,6 +6,8 @@ use crate::testing::migrated_database;
 use jiff::civil::date;
 use jojobot_domain::memory::{FactPatch, NewEntity, NewFact};
 
+mod current_handle;
+
 /// 🚨 **The substrate and the claim's own row answer the same thing**, on a
 /// claim written once and on a claim corrected twice.
 ///
@@ -395,132 +397,6 @@ async fn a_badge_draw_that_never_frees_gives_up_rather_than_duplicating() {
         calls.load(std::sync::atomic::Ordering::SeqCst) >= 64,
         "giving up must mean every attempt was spent, not a premature bailout"
     );
-
-    store.stop().await;
-}
-
-/// **`current_handle` must answer exactly what `entity_wearing` over the
-/// full `known` list would answer, for every badge a real corpus holds.**
-///
-/// The contract's own run leaves behind entities, renames and former
-/// handles — everything `current_handle` exists to resolve. Comparing its
-/// answer against the list-search it replaces, badge by badge, whole
-/// value against whole value, is what catches a fast path that gets the
-/// common row right and a collision or a never-badged handle wrong.
-#[tokio::test]
-async fn current_handle_agrees_with_entity_wearing_for_every_badge_the_real_store_holds() {
-    let scratch = Scratch::new("current-handle");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "currenthandle")
-        .await
-        .expect("a database of its own");
-    migrate::run(&pool).await.expect("the schema");
-    jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
-        .await
-        .expect("the kinds are seeded");
-
-    let memory = DoltMemory::open(pool.clone());
-    jojobot_domain::memory::testing::contract::run_all(&memory).await;
-
-    let mut tx = pool.begin().await.expect("a transaction");
-    let known = memory.known(&mut tx).await.expect("the known rows read");
-    assert!(
-        known.len() > 50,
-        "the contract should have left far more than {} entities behind",
-        known.len()
-    );
-
-    let mut checked = 0;
-    for entity in &known {
-        let mut candidates = vec![entity.id.clone()];
-        if let Some(badge) = &entity.badge {
-            candidates.push(EntityId(badge.clone()));
-        }
-        for candidate in candidates {
-            let expected = jojobot_domain::memory::entity_wearing(candidate.as_str(), &known)
-                .map(|e| e.id.clone())
-                .unwrap_or_else(|| candidate.clone());
-            let actual = memory
-                .current_handle(&mut tx, &candidate)
-                .await
-                .expect("current_handle answers");
-            assert_eq!(
-                actual, expected,
-                "current_handle disagreed with entity_wearing over {candidate}",
-            );
-            checked += 1;
-        }
-    }
-    assert!(
-        checked > 50,
-        "too few candidates were actually checked ({checked})",
-    );
-
-    let missing = EntityId("person:contract-nobody".into());
-    assert_eq!(
-        memory
-            .current_handle(&mut tx, &missing)
-            .await
-            .expect("current_handle answers"),
-        missing,
-        "a value nobody wears comes back unchanged",
-    );
-    tx.commit().await.expect("the read commits");
-
-    // **A deliberate rename**, not one incidentally left behind by the
-    // contract: the badge does not move when the handle does, so this is
-    // the one case that actually exercises "resolves to the handle it
-    // wears NOW" rather than "resolves to whichever handle it always
-    // wore."
-    let was = EntityId::person("person:contract-current-handle-was");
-    let now = EntityId::person("person:contract-current-handle-now");
-    memory
-        .add_entity(NewEntity::new(
-            was.clone(),
-            "Current Handle Rename Subject",
-            "contract-fixture",
-        ))
-        .await
-        .expect("add_entity ok")
-        .written()
-        .expect("the guard waves it through");
-    memory
-        .rename_entity(
-            &was,
-            &now,
-            None,
-            date(2026, 8, 10),
-            jojobot_domain::memory::Override::none(),
-            None,
-        )
-        .await
-        .expect("rename_entity ok")
-        .written()
-        .expect("the guard waves it through");
-
-    let mut tx = pool.begin().await.expect("a transaction");
-    let known = memory.known(&mut tx).await.expect("the known rows read");
-    let badge = known
-        .iter()
-        .find(|e| e.id == now)
-        .and_then(|e| e.badge.clone())
-        .expect("the renamed entity kept its badge");
-    assert_eq!(
-        jojobot_domain::memory::entity_wearing(&badge, &known).map(|e| e.id.clone()),
-        Some(now.clone()),
-        "the fixture itself should resolve the badge to the new handle",
-    );
-    assert_eq!(
-        memory
-            .current_handle(&mut tx, &EntityId(badge))
-            .await
-            .expect("current_handle answers"),
-        now,
-        "current_handle did not follow a rename to the handle its badge wears now",
-    );
-    tx.commit().await.expect("the read commits");
 
     store.stop().await;
 }
