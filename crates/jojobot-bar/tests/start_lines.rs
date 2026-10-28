@@ -622,3 +622,17 @@ fn a_run_with_no_end_is_not_counted() {
     assert!(lines[0].contains("no history yet"), "{lines:?}");
     let _ = fs::remove_dir_all(&dir);
 }
+
+/// **The weekly workflow hands the forge's task list to the weekly number**: it
+/// fetches the list into a file and passes that same file to the bar, which reads
+/// files and reaches no forge.
+#[test]
+fn the_weekly_workflow_hands_the_forges_task_list_to_the_weekly_number() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let text = fs::read_to_string(root.join(".forgejo/workflows/weekly.yml")).unwrap();
+    let step = workflow_step(&workflow_job(&text, "weekly"), "Weekly number");
+    let file = "target/bar/tasks.json";
+    assert!(step.contains("/actions/tasks"), "{step}");
+    assert!(step.contains(&format!("-o {file}")), "{step}");
+    assert!(step.contains(&format!("--weekly --tasks {file}")), "{step}");
+}

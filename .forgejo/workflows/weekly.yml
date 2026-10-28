@@ -1,0 +1,23 @@
+# The weekly number, with the CI runner occupancy read from the forge's task list.
+# The bar reads the list from a file and reaches no forge; this step fetches the
+# public list and passes the file.
+name: weekly
+
+on:
+  schedule:
+    - cron: '0 12 * * 1'
+  workflow_dispatch:
+
+jobs:
+  weekly:
+    runs-on: nix
+    timeout-minutes: 30
+    steps:
+      - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - name: Weekly number
+        run: |
+          mkdir -p target/bar
+          curl -fsS "${{ forgejo.server_url }}/api/v1/repos/${{ forgejo.repository }}/actions/tasks" -o target/bar/tasks.json
+          nix develop -c make size SIZE_ARGS="--weekly --tasks target/bar/tasks.json"
