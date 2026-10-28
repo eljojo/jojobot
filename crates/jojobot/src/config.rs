@@ -1,5 +1,5 @@
-//! Runtime configuration. Everything instance-specific enters here from the
-//! environment — the binary compiles no issuer, audience, or hostname.
+//! Deployment configuration from the environment. Feature flags are resolved
+//! separately from the instance record by the boot-time feature registry.
 
 use std::net::SocketAddr;
 
@@ -97,8 +97,9 @@ impl Config {
     ///   Unset is the real clock, which is what every deployment gets.
     /// - `JOJOBOT_SHADOW` — a comma-separated list of projection families the fold
     ///   computes both ways on every read and compares, counting and logging each
-    ///   difference and serving the image. Read by `wiring`, not part of `Config`.
-    ///   Unset shadows none; a name no family answers to refuses to start.
+    ///   difference and serving the image. A deprecated, one-release fallback for
+    ///   `feature_shadow` on `topic:instance`, read by the feature registry rather
+    ///   than `Config`. The default is off; an unknown family refuses to start.
     /// - `JOJOBOT_NTFY_URL` and `JOJOBOT_NTFY_TOPIC` — set both to push the
     ///   operator's mail to their phone through that ntfy server and topic.
     ///   Neither set pushes nothing; one without the other refuses to start.

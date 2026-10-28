@@ -957,7 +957,9 @@ impl Story {
         // declaration changed the store under a filled image and cost a
         // second fill on every started or restarted Story.
         let _ = jojobot_mcp::seed::ensure_kinds(&store).await;
-        let (folded, indexed) = jojobot::wiring::assemble_memory(store).expect("index opens");
+        let (folded, indexed) = jojobot::wiring::assemble_memory(store)
+            .await
+            .expect("index opens");
         jojobot::wiring::fill_memory(&folded, &indexed).await;
         let indexed_for_seed = indexed.clone();
         let index = indexed.index();

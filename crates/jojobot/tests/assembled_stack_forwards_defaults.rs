@@ -79,8 +79,9 @@ async fn the_stack_the_binary_builds_answers_what_the_layer_beneath_implements()
     let resolved = jojobot::wiring::open_provisioned(bare, supplied)
         .await
         .expect("the build's provisions do not collide with an empty store");
-    let (folded, indexed) =
-        jojobot::wiring::assemble_memory(resolved.clone()).expect("the index opens");
+    let (folded, indexed) = jojobot::wiring::assemble_memory(resolved.clone())
+        .await
+        .expect("the index opens");
     let owners = Arc::new(MemoryOwners::new(indexed.clone()));
     let mail = Arc::new(DoltMailboxes::open(server.pool().clone(), owners));
     let stamp = jojobot_domain::session::history::WriteStamp::new();

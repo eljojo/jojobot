@@ -42,8 +42,9 @@ async fn the_stack_the_binary_builds_names_the_claim_a_survivor_cannot_serve_and
     let resolved = jojobot::wiring::open_provisioned(bare, supplied)
         .await
         .expect("the build's provisions do not collide with an empty store");
-    let (folded, indexed) =
-        jojobot::wiring::assemble_memory(resolved.clone()).expect("the index opens");
+    let (folded, indexed) = jojobot::wiring::assemble_memory(resolved.clone())
+        .await
+        .expect("the index opens");
 
     let homer = created(indexed.as_ref(), "person:homer", "Homer").await;
     let apu = created(indexed.as_ref(), "person:apu", "Apu").await;

@@ -187,24 +187,21 @@ pub async fn open_provisioned_on<M: Memory + Clone + 'static>(
 /// 292's mechanism is this one wrapper, not a copy in each), so wherever a
 /// caller holds the outermost `Memory` — the index — a `fields` read
 /// reaches the fold before it reaches the store.
-pub fn assemble_memory(
+pub async fn assemble_memory(
     resolved: Arc<dyn Memory>,
 ) -> anyhow::Result<(Arc<Folded>, Arc<IndexedMemory>)> {
-    assemble_memory_with(resolved, None)
+    assemble_memory_with(resolved, None).await
 }
 
 /// **[`assemble_memory`], with the reader the fold's fill takes its reads from.**
 /// Without one, the fill reads each thing on its own.
-pub fn assemble_memory_with(
+pub async fn assemble_memory_with(
     resolved: Arc<dyn Memory>,
     boot_reader: Option<Arc<dyn BootReader>>,
 ) -> anyhow::Result<(Arc<Folded>, Arc<IndexedMemory>)> {
-    // `JOJOBOT_SHADOW` names the projection families the fold computes both ways on
-    // every read and compares, serving the image's answer; unset shadows none.
-    let shadow = std::env::var("JOJOBOT_SHADOW").unwrap_or_default();
-    let mut folded = Folded::new(resolved)
-        .shadowing(&shadow)
-        .map_err(|e| anyhow::anyhow!("JOJOBOT_SHADOW: {e}"))?;
+    // The boot registry chooses which families compare image and store reads;
+    // the image's answer is served throughout the shadow.
+    let mut folded = crate::features::at_boot(resolved).await?;
     if let Some(reader) = boot_reader {
         folded = folded.with_boot_reader(reader);
     }
@@ -843,7 +840,8 @@ pub async fn boot_store_observed(
     // scan is not fatal: the store is the truth, and refusing to start
     // because a projection couldn't be built is worse than a thin `search`.
     // It says so loudly instead.
-    let (folded, indexed) = assemble_memory_with(observation.memory(resolved), Some(boot_reader))?;
+    let (folded, indexed) =
+        assemble_memory_with(observation.memory(resolved), Some(boot_reader)).await?;
     fill_memory(&folded, &indexed).await;
 
     // **The ports mail and sessions are served from.** Rows in the SQL store,
@@ -1480,7 +1478,7 @@ mod tests {
             InMemoryMemory::booted(),
         )));
         let resolved: Arc<dyn Memory> = counted.clone();
-        let (_folded, indexed) = assemble_memory(resolved).expect("index opens");
+        let (_folded, indexed) = assemble_memory(resolved).await.expect("index opens");
         let milhouse = EntityId::person("person:milhouse");
         counted
             .add_entity(NewEntity::new(milhouse.clone(), "Milhouse", "user-named"))
@@ -1514,7 +1512,7 @@ mod tests {
     async fn a_write_through_the_assembled_stack_reaches_the_fold_underneath() {
         let bare = Arc::new(InMemoryMemory::booted());
         let resolved: Arc<dyn Memory> = bare.clone();
-        let (folded, indexed) = assemble_memory(resolved).expect("index opens");
+        let (folded, indexed) = assemble_memory(resolved).await.expect("index opens");
         // The boot fills the image; a fold nobody filled sends every read to
         // the store, and the staleness below would prove nothing.
         folded.rebuild().await.expect("the image fills");
@@ -1600,7 +1598,7 @@ mod tests {
 
         jojobot_domain::memory::kinds::load_shipped();
         let bare: Arc<dyn Memory> = Arc::new(InMemoryMemory::booted());
-        let (folded, indexed) = assemble_memory(bare).expect("index opens");
+        let (folded, indexed) = assemble_memory(bare).await.expect("index opens");
         folded.rebuild().await.expect("the memory image fills");
         let mail = Arc::new(InMemoryMailboxes::knowing_any_owner());
         let runs = Arc::new(InMemorySessions::new());
