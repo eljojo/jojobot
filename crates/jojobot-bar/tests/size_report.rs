@@ -1319,3 +1319,47 @@ fn a_branch_is_measured_from_the_remote_line_it_was_cut_from() {
         let _ = fs::remove_dir_all(&dir);
     }
 }
+
+/// **The weekly number prints the fixed boot load beside last week's.** What
+/// every session loads before it starts is the served tool descriptions plus
+/// CLAUDE.md. The line gives both sizes in bytes, an estimated token count at four
+/// bytes a token rounded up, and the same total at the last commit a week old.
+#[test]
+fn the_weekly_number_prints_the_fixed_boot_load_beside_last_weeks() {
+    const TOOLS: &str = "crates/jojobot-mcp/served-texts/tools.md";
+    let dir = repo("boot-load");
+    for (path, text) in [
+        ("size-ratchet.toml", ratchet("")),
+        (TOOLS, "t".repeat(400)),
+        ("CLAUDE.md", "c".repeat(100)),
+    ] {
+        fs::create_dir_all(dir.join(path).parent().unwrap()).unwrap();
+        fs::write(dir.join(path), text).unwrap();
+        git(&dir, &["add", path]);
+    }
+    let long_ago = Command::new("git")
+        .args(["commit", "-q", "-m", "scratch"])
+        .current_dir(&dir)
+        .env("GIT_AUTHOR_DATE", "2026-01-01T00:00:00Z")
+        .env("GIT_COMMITTER_DATE", "2026-01-01T00:00:00Z")
+        .status()
+        .expect("run git");
+    assert!(long_ago.success());
+    commit_files(
+        &dir,
+        &[(TOOLS, "t".repeat(800)), ("CLAUDE.md", "c".repeat(201))],
+    );
+
+    let weekly = bar_with(&dir, &["size", "--weekly"], None);
+    assert_eq!(weekly.code, Some(0), "{}", weekly.stdout);
+    let line = weekly
+        .stdout
+        .lines()
+        .find(|line| line.starts_with("boot load:"))
+        .unwrap_or_else(|| panic!("no boot load line: {}", weekly.stdout));
+    assert!(line.contains("1001 bytes, 251 tokens"), "{line}");
+    assert!(line.contains("tools snapshot 800"), "{line}");
+    assert!(line.contains("CLAUDE.md 201"), "{line}");
+    assert!(line.contains("last week 500 bytes, 125 tokens"), "{line}");
+    let _ = fs::remove_dir_all(&dir);
+}

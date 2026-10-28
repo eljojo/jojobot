@@ -879,6 +879,53 @@ pub fn phase(summary: &mut Summary) {
     }
 }
 
+/// What every session loads before it starts: the served tool descriptions and
+/// CLAUDE.md.
+const BOOT_LOAD_FILES: [&str; 2] = ["crates/jojobot-mcp/served-texts/tools.md", "CLAUDE.md"];
+
+/// The token estimate: one token for every four bytes, rounded up.
+const BYTES_PER_TOKEN: usize = 4;
+
+/// The size in bytes of each boot-load file, in the working tree or at `rev`; none
+/// when a file cannot be read there.
+fn boot_load_sizes(rev: Option<&str>) -> Option<[usize; 2]> {
+    let mut sizes = [0; 2];
+    for (size, path) in sizes.iter_mut().zip(BOOT_LOAD_FILES) {
+        *size = match rev {
+            None => usize::try_from(std::fs::metadata(path).ok()?.len()).ok()?,
+            Some(rev) => git_output(&["cat-file", "-s", &format!("{rev}:{path}")])
+                .and_then(|out| String::from_utf8_lossy(&out).trim().parse().ok())?,
+        };
+    }
+    Some(sizes)
+}
+
+/// The bytes and the estimated tokens of a boot load, for a line.
+fn bytes_and_tokens(sizes: [usize; 2]) -> String {
+    let bytes: usize = sizes.iter().sum();
+    format!("{bytes} bytes, {} tokens", bytes.div_ceil(BYTES_PER_TOKEN))
+}
+
+/// **The fixed boot load, now and at the last commit a week old.** A file the
+/// tree cannot read is a failure; last week's load is `none` when no commit that
+/// old holds both files.
+fn boot_load_line() -> Result<String, String> {
+    let now = boot_load_sizes(None).ok_or("the boot load cannot be read: a file is missing")?;
+    let week_old = git_output(&["rev-list", "-1", "--before=1 week ago", "HEAD"])
+        .map(|out| String::from_utf8_lossy(&out).trim().to_string())
+        .filter(|rev| !rev.is_empty());
+    let before = week_old
+        .and_then(|rev| boot_load_sizes(Some(&rev)))
+        .map_or_else(|| "none".to_string(), bytes_and_tokens);
+    Ok(format!(
+        "boot load: {} (a token is {BYTES_PER_TOKEN} bytes, rounded up): tools snapshot {}, \
+         CLAUDE.md {}; last week {before}",
+        bytes_and_tokens(now),
+        now[0],
+        now[1],
+    ))
+}
+
 /// **`bar size`**: the check alone. `--net` prints the table of the change since
 /// the base; with `--reason-file FILE` it also refuses a positive total of
 /// source plus tests unless the file names a reason.
@@ -932,6 +979,10 @@ pub fn run(args: &[String]) -> std::io::Result<std::process::ExitCode> {
             );
             for (area, lines) in &areas {
                 println!("{lines:>8}  {area}");
+            }
+            match boot_load_line() {
+                Ok(line) => println!("{line}"),
+                Err(e) => return fail(e),
             }
             Ok(ExitCode::SUCCESS)
         }
