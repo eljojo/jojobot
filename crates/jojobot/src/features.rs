@@ -3,7 +3,7 @@
 //! answer. The teaching pilot retires it. Values are read before the fold exists.
 
 use jojobot_adapters::fold::Folded;
-use jojobot_domain::memory::{EntityId, Memory, MemoryError};
+use jojobot_domain::memory::{EntityId, EntityKind, INSTANCE_RECORD, Memory};
 use std::sync::Arc;
 
 const KEY: &str = "feature_shadow";
@@ -16,14 +16,19 @@ pub(crate) async fn at_boot(memory: Arc<dyn Memory>) -> anyhow::Result<Folded> {
 }
 
 async fn load(memory: Arc<dyn Memory>, legacy: Option<&str>) -> anyhow::Result<Folded> {
-    let instance = EntityId("topic:instance".into());
-    let fields = match memory.fields(&instance).await {
-        Ok(fields) => fields,
-        // A fresh store gets its instance record in a later startup pass.
-        Err(MemoryError::UnknownEntity { attempted, .. }) if attempted == instance.as_str() => {
-            Default::default()
+    let instance = EntityId(INSTANCE_RECORD.into());
+    // A fresh store is seeded later; listing avoids handle-history resolution on a miss.
+    let fields = match memory.list_entities(Some(EntityKind::TOPIC)).await {
+        Ok(topics) if !topics.iter().any(|topic| topic.id == instance) => Default::default(),
+        result => match result {
+            Ok(_) => memory.fields(&instance).await,
+            Err(error) => Err(error),
         }
-        Err(error) => return Err(error.into()),
+        .unwrap_or_else(|error| {
+            tracing::warn!(key = KEY, source = INSTANCE_RECORD, %error,
+                "feature settings unreadable; starting with shadow off");
+            [(KEY.to_string(), "off".to_string())].into()
+        }),
     };
     for key in fields.keys().filter(|key| key.starts_with("feature_")) {
         if key != KEY {

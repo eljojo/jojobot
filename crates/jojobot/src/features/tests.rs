@@ -92,7 +92,9 @@ async fn feature_registry_selects_instance_before_legacy_before_default_and_logs
         );
         assert_eq!(
             log.lines()
-                .filter(|line| line.contains("feature flag at boot"))
+                .filter(|line| line
+                    .split_whitespace()
+                    .any(|word| word == "flag=\"shadow\""))
                 .count(),
             1,
             "{log}"
@@ -109,15 +111,6 @@ async fn feature_registry_selects_instance_before_legacy_before_default_and_logs
             );
         }
     }
-    let counted = Arc::new(jojobot_adapters::counted::Counted::new(Arc::new(
-        InMemoryMemory::booted(),
-    )));
-    assert!(load(counted.clone(), None).await.is_ok());
-    counted.fail_fields_of(Some("topic:instance"));
-    assert!(
-        load(counted, None).await.is_err(),
-        "an unreadable record is not an absent setting"
-    );
 }
 
 #[tokio::test]
@@ -130,7 +123,9 @@ async fn feature_registry_ignores_unknown_keys_and_disables_unknown_families() {
     let (folded, log) = logged(memory, None).await;
     assert_eq!(folded.unwrap().shadow_counts().len(), 1);
     assert!(
-        log.contains("unknown feature key") && log.contains("feature_future"),
+        log.lines().any(|line| line.contains("WARN")
+            && line.contains("key=\"feature_future\"")
+            && !line.contains("feature_shadow")),
         "{log}"
     );
     for instance in [true, false] {
@@ -159,5 +154,68 @@ async fn feature_registry_ignores_unknown_keys_and_disables_unknown_families() {
             assert!(warning.contains(token), "{token}: {log}");
         }
         assert!(log.lines().any(|line| line.contains("state=off")), "{log}");
+    }
+}
+
+#[tokio::test]
+async fn feature_registry_skips_missing_fields_and_logs_read_failures_with_shadow_off() {
+    for exists in [false, true] {
+        let memory = if exists {
+            held(&[("feature_shadow", "referring_to")]).await
+        } else {
+            Arc::new(InMemoryMemory::booted())
+        };
+        let counted = Arc::new(jojobot_adapters::counted::Counted::new(memory));
+        counted.fail_fields_of(Some("topic:instance"));
+        let (folded, log) = logged(counted.clone(), Some("referring_to")).await;
+        assert_eq!(
+            folded.unwrap().shadow_counts().len(),
+            usize::from(!exists),
+            "{log}"
+        );
+        assert_eq!(
+            counted.seen().get("fields").copied().unwrap_or(0),
+            usize::from(exists)
+        );
+        if exists {
+            assert!(
+                log.lines().any(|line| line.contains("WARN")
+                    && line.contains("key=\"feature_shadow\"")
+                    && line.contains("source=\"topic:instance\"")),
+                "{log}"
+            );
+        }
+        counted.set_unreachable(true);
+        let (folded, log) = logged(counted, Some("referring_to")).await;
+        assert!(folded.unwrap().shadow_counts().is_empty(), "{log}");
+        assert!(
+            log.lines()
+                .any(|line| line.contains("WARN") && line.contains("source=\"topic:instance\"")),
+            "{log}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn feature_registry_reaches_assembly_and_reads_the_legacy_environment() {
+    if std::env::var("FEATURE_REGISTRY_CHILD").is_err() {
+        assert!(std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "features::tests::feature_registry_reaches_assembly_and_reads_the_legacy_environment", "--nocapture"])
+            .env("FEATURE_REGISTRY_CHILD", "1").env(LEGACY_ENV, "referring_to")
+            .status().unwrap().success());
+        return;
+    }
+    for (setting, expected) in [(None, 1), (Some("off"), 0), (Some("referring_to"), 1)] {
+        let memory = if let Some(value) = setting {
+            held(&[("feature_shadow", value)]).await
+        } else {
+            Arc::new(InMemoryMemory::booted())
+        };
+        let (folded, _) = crate::wiring::assemble_memory_with(memory, None)
+            .await
+            .unwrap();
+        let counts = folded.shadow_counts();
+        assert_eq!(counts.len(), expected);
+        assert!(counts.iter().all(|c| c.family.name() == "referring_to"));
     }
 }
