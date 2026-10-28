@@ -49,6 +49,49 @@ async fn writer_recovery_independent_databases_do_not_share_a_native_fence() {
     server.stop().await;
 }
 
+/// **The advisory lock name is a digest, so its length does not follow the
+/// database's.** The server refuses a lock name over 64 characters, and a
+/// database name may be long. Paired with the empty database, which has a key of
+/// its own.
+#[test]
+fn the_fence_lock_name_is_64_characters_whatever_the_database_name() {
+    use sqlx::mysql::MySqlConnectOptions;
+
+    let long = "d".repeat(300);
+    for options in [
+        MySqlConnectOptions::new(),
+        MySqlConnectOptions::new().database("fence_alpha"),
+        MySqlConnectOptions::new().database(&long),
+    ] {
+        let name = super::fence::lock_name(&options);
+        assert_eq!(name.len(), 64, "{name}");
+        assert!(name.bytes().all(|b| b.is_ascii_hexdigit()), "{name}");
+    }
+}
+
+/// **A connection with no database name has the documented key.** The name of
+/// the lock is shared by every process that fences the same server, so the
+/// spelling is pinned: the digest of the lock's name, a colon and nothing.
+#[test]
+fn the_fence_lock_name_of_no_database_is_the_digest_of_the_lock_and_a_colon() {
+    use sqlx::mysql::MySqlConnectOptions;
+
+    let none = super::fence::lock_name(&MySqlConnectOptions::new());
+    assert_eq!(
+        none,
+        "398048b75d2ba1c969dbe7254b7b5dc191ca70903079d795b33841b1f37af175"
+    );
+    assert_eq!(
+        none,
+        super::fence::lock_name(&MySqlConnectOptions::new().database("")),
+        "an empty name is no name"
+    );
+    assert_ne!(
+        none,
+        super::fence::lock_name(&MySqlConnectOptions::new().database("fence_alpha")),
+    );
+}
+
 struct GatedTeaching {
     inner: DoltTeachings,
     pool: sql::Pool,

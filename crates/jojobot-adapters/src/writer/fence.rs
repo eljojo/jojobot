@@ -7,7 +7,7 @@ use std::time::Duration;
 use sqlx::mysql::{MySqlConnectOptions, MySqlDatabaseError, MySqlPoolOptions};
 use sqlx::{AssertSqlSafe, Connection, MySqlConnection, MySqlPool};
 
-pub(crate) const LOCK: &str = "jojobot-owned-writer";
+const LOCK: &str = "jojobot-owned-writer";
 const WAIT_SECONDS: u32 = 1;
 const CONNECT_WITHIN: Duration = Duration::from_secs(5);
 
