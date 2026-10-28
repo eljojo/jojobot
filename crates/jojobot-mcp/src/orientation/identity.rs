@@ -152,6 +152,30 @@ pub(crate) fn carried_rules(in_force: &[Fact], seats: usize) -> Vec<&Fact> {
         .collect()
 }
 
+/// **The rules in force that name no purpose**, counted whole, or `None` when
+/// every rule names one. A rule with no purpose branch is off the rules tree: the
+/// charter's branches cannot load it. Seated rules count too.
+pub(crate) fn off_the_tree(in_force: &[Fact]) -> Option<serde_json::Value> {
+    let count = in_force
+        .iter()
+        .filter(|rule| {
+            rule.fields
+                .get("purpose")
+                .is_none_or(|p| p.trim().is_empty())
+        })
+        .count();
+    (count > 0).then(|| {
+        serde_json::json!({
+            "count": count,
+            "warning": "Rules in force that name no purpose branch: this bot is not fully on \
+                        its rules tree, and its charter's branches cannot load them.",
+            "how_to_fix": "Give each of these rules a `purpose` naming the branch its charter \
+                           loads it by. A bot whose charter names no branches needs a root \
+                           charter first: ask whoever writes its charter.",
+        })
+    })
+}
+
 /// An overlong label cannot safely name an area by its first eighty characters.
 pub(crate) const UNSEATED_NEEDS_LABEL: &str =
     "Set a short subject label; recall this address for the whole rule.";
@@ -573,6 +597,9 @@ impl Jojobot {
             body.as_object_mut(),
         ) {
             obj.insert("unseated_rules".into(), map);
+        }
+        if let (Some(warning), Some(obj)) = (off_the_tree(in_force), body.as_object_mut()) {
+            obj.insert("rules_off_the_tree".into(), warning);
         }
         // **Defrag's boot fronts its queue**: how many things wait for it and the
         // first of them, so its session starts on what changed since it last looked.

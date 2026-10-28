@@ -1,6 +1,6 @@
 //! A rule index names whole labels and leaves engine records out.
 
-use super::identity::unseated_rules;
+use super::identity::{off_the_tree, unseated_rules};
 use crate::harness::{boot, handler_over};
 use jojobot_domain::memory::testing::{InMemoryMemory, contract::rules_index_records};
 use jojobot_domain::memory::{EntityId, Fact};
@@ -46,6 +46,60 @@ async fn rules_index_boot_counts_and_lists_only_rules() {
         .unwrap();
     assert_eq!(listed[0]["address"], unseated.address().to_string());
     assert_eq!(listed[0]["line"], "An unseated rule");
+}
+
+fn with_purpose(rule: &Fact, purpose: Option<&str>) -> Fact {
+    let mut rule = rule.clone();
+    rule.fields.remove("purpose");
+    if let Some(purpose) = purpose {
+        rule.fields.insert("purpose".into(), purpose.into());
+    }
+    rule
+}
+
+/// **A bot with rules that name no purpose is told so, and counted whole.**
+/// Seated rules count with the unseated; a purpose of spaces names nothing.
+#[tokio::test]
+async fn off_the_tree_counts_every_rule_in_force_that_names_no_purpose() {
+    let rule = unseated_rule().await;
+    let filed = with_purpose(&rule, Some("boot"));
+    let unfiled = with_purpose(&rule, None);
+    let blank = with_purpose(&rule, Some("  "));
+    assert!(off_the_tree(&[]).is_none());
+    assert!(off_the_tree(&[filed.clone(), filed.clone()]).is_none());
+    assert_eq!(
+        off_the_tree(std::slice::from_ref(&unfiled)).unwrap()["count"],
+        1
+    );
+    assert_eq!(
+        off_the_tree(&[unfiled.clone(), filed.clone(), blank, unfiled]).unwrap()["count"],
+        3
+    );
+}
+
+/// **The boot carries it, and counts rules only**: the fixture holds two rules
+/// and three bookkeeping records, none of which names a purpose.
+#[tokio::test]
+async fn off_the_tree_rides_the_boot_of_a_bot_with_unfiled_rules() {
+    let memory = Arc::new(InMemoryMemory::booted());
+    let records = rules_index_records(memory.as_ref()).await;
+    let answer = boot(&handler_over(memory), records[0].subject.slug()).await;
+    let identity = &answer["identity"];
+    assert_eq!(identity["rules_off_the_tree"]["count"], 2, "{identity}");
+    assert!(
+        identity["rules_off_the_tree"]["how_to_fix"].is_string(),
+        "{identity}"
+    );
+}
+
+#[tokio::test]
+async fn off_the_tree_is_absent_from_the_boot_of_a_bot_with_no_rules() {
+    let answer = boot(&crate::harness::handler(), "gamma").await;
+    assert!(
+        answer["identity"].get("rules_off_the_tree").is_none(),
+        "{}",
+        answer["identity"]
+    );
 }
 
 #[tokio::test]
