@@ -95,16 +95,19 @@ fn claimed_path(line: &str) -> Option<&str> {
         .map(|(_, path)| path)
 }
 
-/// **One process of the command's group**, told apart from any other by its number
-/// and the moment it began: a number is used again, a number with its start is not.
+/// **One process the command started itself**, told apart from any other by its
+/// number and the moment it began: a number is used again, a number with its start
+/// is not.
 struct Member {
     identity: (u32, u64),
     exe: Option<std::path::PathBuf>,
     name: String,
 }
 
-/// **The processes of the command's group now.** Empty where `/proc` does not exist.
-fn group_members(group: u32) -> Vec<Member> {
+/// **The direct children of the command now.** Cargo starts each test binary and
+/// each `rustdoc` itself, so they are its children; whatever a test binary starts is
+/// the test's own and is never read as a start. Empty where `/proc` does not exist.
+fn children_of(command: u32) -> Vec<Member> {
     let Ok(entries) = std::fs::read_dir("/proc") else {
         return Vec::new();
     };
@@ -115,12 +118,12 @@ fn group_members(group: u32) -> Vec<Member> {
             let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
             // `pid (name) state parent group ... start`: the name may hold spaces
             // and parentheses, so the fields are counted from its last parenthesis.
-            // `rest` begins at field 3, so field 5 is index 2 and field 22 is 19.
+            // `rest` begins at field 3, so the parent is index 1 and field 22 is 19.
             let (head, rest) = stat.rsplit_once(')')?;
             let mut fields = rest.split_whitespace();
-            let member: u32 = fields.nth(2)?.parse().ok()?;
-            let began: u64 = fields.nth(16)?.parse().ok()?;
-            (member == group).then(|| Member {
+            let parent: u32 = fields.nth(1)?.parse().ok()?;
+            let began: u64 = fields.nth(17)?.parse().ok()?;
+            (parent == command).then(|| Member {
                 identity: (pid, began),
                 exe: std::fs::read_link(format!("/proc/{pid}/exe")).ok(),
                 name: head
@@ -134,15 +137,17 @@ fn group_members(group: u32) -> Vec<Member> {
 
 /// **Whether a `Running` or `Doc-tests` line is an execution that started.** The
 /// line is output, and a hung binary can print any line it likes, so the claim is
-/// checked against the group, and each process of the group can be credited with
-/// one start: a `Running` line counts when a process not yet credited runs the file
-/// it names, whatever way the path is spelled, and a `Doc-tests` line when one runs
-/// as `rustdoc`. The process is credited by its number and its start, so printing
-/// the line again, or in another spelling, starts nothing. `Some` is a start, with
-/// the path the line named. Without `/proc` a line is believed, as it was before.
+/// checked against what the command started itself: only a direct child of the
+/// command can be a test binary or `rustdoc`, and each child is credited with one
+/// start. A `Running` line counts when a child not yet credited runs the file it
+/// names, whatever way the path is spelled, and a `Doc-tests` line when one runs as
+/// `rustdoc`. A child is credited by its number and its start, so printing the line
+/// again, or in another spelling, starts nothing, and a process a test starts is
+/// not a child of the command at all. `Some` is a start, with the path the line
+/// named. Without `/proc` a line is believed, as it was before.
 fn started(
     line: &str,
-    group: u32,
+    command: u32,
     credited: &mut std::collections::HashSet<(u32, u64)>,
 ) -> Option<Option<String>> {
     let path = claimed_path(line).map(str::to_string);
@@ -154,7 +159,7 @@ fn started(
         None if line.starts_with("Doc-tests ") => None,
         None => return None,
     };
-    let member = group_members(group).into_iter().find(|member| {
+    let member = children_of(command).into_iter().find(|member| {
         !credited.contains(&member.identity)
             && match &file {
                 Some(file) => member.exe.as_ref() == Some(file),
@@ -286,24 +291,40 @@ mod tests {
         (path.clone(), File::create(path).unwrap())
     }
 
-    /// **A hung binary that prints `Running` lines does not move its own deadline.**
-    /// The first line names the file the command runs and starts the clock; every
-    /// later line, whether it repeats that file or names one no process runs, starts
-    /// nothing, so the command is killed at the deadline of its first start.
+    /// **A hung test that starts a fresh helper and prints a start line for it does
+    /// not move its own deadline.** The command starts one test binary and names it;
+    /// the test starts a new `sleep` each time round and prints a `Running` line for
+    /// it, also in another spelling, and for a file nobody runs. Only the command's
+    /// own child can start the clock, so the run is killed at the deadline of the
+    /// first start.
     #[cfg(target_os = "linux")]
     #[test]
-    fn a_hung_command_that_prints_running_lines_is_still_killed() {
+    fn a_hung_test_that_starts_fresh_helpers_and_names_them_is_still_killed() {
         let (path, out) = output("fake-running");
         let shell = std::fs::canonicalize("/bin/sh").unwrap();
-        let script = format!(
-            "n=0; while [ $n -lt 150 ]; do n=$((n + 1)); \
-               echo '     Running unittests a ({})'; \
+        let sleep = std::fs::canonicalize(
+            Command::new("sh")
+                .args(["-c", "command -v sleep"])
+                .output()
+                .map(|found| String::from_utf8_lossy(&found.stdout).trim().to_string())
+                .unwrap(),
+        )
+        .unwrap();
+        let test = format!(
+            "n=0; while [ $n -lt 150 ]; do n=$((n + 1)); sleep 0.5 & \
                echo '     Running unittests b ({})'; \
-               echo '     Running unittests c (/no/such/binary)'; \
-               sleep 0.1; done",
-            shell.display(),
-            // The same live file in another spelling is the same process.
-            shell.display().to_string().replacen('/', "//", 1)
+               echo '     Running unittests c ({})'; \
+               echo '     Running unittests d (/no/such/binary)'; \
+               sleep 0.1; done; wait",
+            sleep.display(),
+            sleep.display().to_string().replacen('/', "//", 1)
+        );
+        let file = std::env::temp_dir().join(crate::scratch::name("fake-test-binary"));
+        std::fs::write(&file, test).unwrap();
+        let script = format!(
+            "/bin/sh {} & echo '     Running unittests a ({})'; wait",
+            file.display(),
+            shell.display()
         );
         let mut command = Command::new("/bin/sh");
         command
@@ -323,7 +344,7 @@ mod tests {
         .unwrap();
         assert_eq!(ran, Some(false));
         assert!(
-            began.elapsed() < Duration::from_secs(15),
+            began.elapsed() < Duration::from_secs(10),
             "{:?}",
             began.elapsed()
         );
