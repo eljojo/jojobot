@@ -4,7 +4,7 @@
 //! constant.
 
 use crate::harness::*;
-use crate::memory::testing::{Down, healthy_and_down};
+use crate::memory::testing::{Down, capture_args, capture_ok, healthy_and_down};
 use crate::orientation::OrientArgs;
 use crate::session::WrapSessionArgs;
 use rmcp::handler::server::wrapper::Parameters;
@@ -128,14 +128,49 @@ fn the_add_entity_kind_list_says_which_kinds_the_engine_issues() {
 
 /// **A line that left details or prose out names the narrower call.** The
 /// argument names it gives are `recall`'s own, read off the published schema.
-#[test]
-fn what_a_left_out_line_says_to_ask_names_arguments_recall_has() {
-    let recall = argument_names(schemars::schema_for!(crate::memory::RecallArgs));
-    let details = crate::memory::wire::details_note(
-        2,
-        &["person:homer#f1".into(), "person:milhouse#f2".into()],
+#[tokio::test]
+async fn what_a_left_out_line_says_to_ask_names_arguments_recall_has() {
+    let jojobot = handler();
+    let receipt = capture_ok(
+        &jojobot,
+        crate::memory::CaptureArgs {
+            details: Some("the held explanation".into()),
+            ..capture_args("person:homer", "a headline")
+        },
+    )
+    .await;
+    let address = crate::memory::testing::address_of(&receipt);
+    jojobot
+        .memory
+        .set_prose(
+            &jojobot_domain::memory::EntityId("person:homer".into()),
+            "the held page",
+            None,
+        )
+        .await
+        .unwrap();
+    let omitted = json_of(
+        &jojobot
+            .recall(Parameters(
+                serde_json::from_value::<crate::memory::RecallArgs>(serde_json::json!({
+                    "subject": "person:homer", "facts": true, "details": false,
+                    "prose": false, "sid": TEST_SID,
+                }))
+                .unwrap(),
+            ))
+            .await
+            .unwrap(),
     );
-    let how = details["how_to_ask"].as_str().expect("a way to ask");
+    assert_eq!(
+        omitted["details_left_out"]["addresses"],
+        serde_json::json!([address]),
+        "{omitted}"
+    );
+    assert_eq!(omitted["prose_left_out"]["count"], 1, "{omitted}");
+    let recall = argument_names(schemars::schema_for!(crate::memory::RecallArgs));
+    let how = omitted["details_left_out"]["how_to_ask"]
+        .as_str()
+        .expect("a way to ask");
     for argument in ["records", "details"] {
         assert!(
             recall.iter().any(|a| a == argument),
@@ -146,8 +181,18 @@ fn what_a_left_out_line_says_to_ask_names_arguments_recall_has() {
             "the details line names `{argument}`: {how}"
         );
     }
-    let prose = crate::memory::wire::prose_note(3);
-    let how = prose["how_to_ask"].as_str().expect("a way to ask");
+    let followed = json_of(&jojobot.recall(Parameters(
+        serde_json::from_value::<crate::memory::RecallArgs>(serde_json::json!({
+            "records": omitted["details_left_out"]["addresses"], "details": true, "sid": TEST_SID,
+        })).unwrap(),
+    )).await.unwrap());
+    assert_eq!(
+        followed["records"][0]["details"], "the held explanation",
+        "{followed}"
+    );
+    let how = omitted["prose_left_out"]["how_to_ask"]
+        .as_str()
+        .expect("a way to ask");
     for argument in ["subject", "prose"] {
         assert!(
             recall.iter().any(|a| a == argument),
@@ -158,6 +203,21 @@ fn what_a_left_out_line_says_to_ask_names_arguments_recall_has() {
             "the prose line names `{argument}`: {how}"
         );
     }
+    let followed = json_of(
+        &jojobot
+            .recall(Parameters(
+                serde_json::from_value::<crate::memory::RecallArgs>(serde_json::json!({
+                    "subject": "person:homer", "prose": true, "sid": TEST_SID,
+                }))
+                .unwrap(),
+            ))
+            .await
+            .unwrap(),
+    );
+    assert_eq!(
+        followed["objects"][0]["prose"], "the held page",
+        "{followed}"
+    );
 }
 
 /// **A refusal that names the assistant does not say whom it acts for.** What
