@@ -121,7 +121,7 @@ async fn feature_registry_selects_instance_before_legacy_before_default_and_logs
 }
 
 #[tokio::test]
-async fn feature_registry_ignores_unknown_keys_but_refuses_unknown_families() {
+async fn feature_registry_ignores_unknown_keys_and_disables_unknown_families() {
     let memory = held(&[
         ("feature_shadow", "referring_to"),
         ("feature_future", "missing_family"),
@@ -139,14 +139,25 @@ async fn feature_registry_ignores_unknown_keys_but_refuses_unknown_families() {
         } else {
             Arc::new(InMemoryMemory::booted())
         };
-        let (result, _) = logged(memory, (!instance).then_some("missing_family")).await;
-        let error = result
-            .err()
-            .expect("an unknown family refuses the boot")
-            .to_string();
+        let (result, log) = logged(memory, (!instance).then_some("missing_family")).await;
         assert!(
-            error.contains("no projection family") && error.contains("referring_to"),
-            "{error}"
+            result
+                .expect("an unknown family keeps booting")
+                .shadow_counts()
+                .is_empty()
         );
+        let warning = log
+            .lines()
+            .find(|line| line.contains("WARN"))
+            .expect("invalid flag warning");
+        let source = if instance {
+            "topic:instance"
+        } else {
+            "JOJOBOT_SHADOW"
+        };
+        for token in ["missing_family", "key=\"feature_shadow\"", source] {
+            assert!(warning.contains(token), "{token}: {log}");
+        }
+        assert!(log.lines().any(|line| line.contains("state=off")), "{log}");
     }
 }

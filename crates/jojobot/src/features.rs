@@ -36,9 +36,18 @@ async fn load(memory: Arc<dyn Memory>, legacy: Option<&str>) -> anyhow::Result<F
         .or_else(|| legacy.map(|value| (value, LEGACY_ENV)))
         .unwrap_or(("off", "default"));
     let spec = if value.trim() == "off" { "" } else { value };
-    let folded = Folded::new(memory)
-        .shadowing(spec)
-        .map_err(|e| anyhow::anyhow!("{KEY} ({source}): {e}"))?;
+    let folded = match Folded::new(memory.clone()).shadowing(spec) {
+        Ok(folded) => folded,
+        Err(error) => {
+            let source = if source == "instance" {
+                instance.as_str()
+            } else {
+                source
+            };
+            tracing::warn!(key = KEY, source, %error, "invalid shadow family; starting with shadow off");
+            Folded::new(memory)
+        }
+    };
     let state = folded
         .shadow_counts()
         .iter()
