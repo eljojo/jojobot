@@ -22,7 +22,7 @@
 
 ## The lifecycle, and its one asymmetry
 
-* **Wrapping happens from inside, by the bot itself, whoever asked for it** — the operator, or a watcher asking a live session to wrap. Starting a session never wraps another. Two sessions of one bot may run at once and share its box, so a new run sweeps the runs that have gone quiet, and closes a live one only when it claims a role that run holds: that run is displaced, told by whom, and the bot's other runs keep running. **Abandoning a run is the safe half: it walks back, and wrapping does not.**
+* **Wrapping happens from inside, by the bot itself, whoever asked for it** — the operator, or a manager asking a live session to wrap. Starting a session never wraps another. A new run sweeps the runs that have gone quiet, and displaces a live one when it claims a role that run holds or takes over the bot's box: that run is told by whom, and stops renewing the role and taking mail. **Abandoning a run is the safe half: it walks back, and wrapping does not.**
 * **A wrap is ONE closing entry: the story verbatim, and the unfinished focus beside it as that entry's own field.** Both are said in one place, so they never read as two events, and neither is rewritten into the other.
 * **Terminal is asymmetric: a wrapped session is never active again.** Only an abandoned one walks back to active.
 * **A wrap hands back a code that opens a window of two hours.** Resumed with it, the wrapped run works as a normal session — journal, mail, any write, its closing story rewritten in place — and need not wrap again. The window closes two hours after the wrap, at a second wrap, or when a newer run of the bot starts, and after that nothing writes. Two hours covers the correction made while the work is fresh; editing yesterday's story is what the window exists to refuse.
@@ -34,10 +34,11 @@
 * **Its current focus is truth, not chronology.** What it is working on is revised freely as the work moves, and becomes an event only once something has happened.
 * **Its journal is the events on its bot, each tagged with the session that did it.** There is no second journal mechanism.
 * **What it has already been shown** rides with the session rather than the connection, so a resumed session inherits what its predecessor saw and is served the difference rather than the whole thing again.
+* **Whether it is plain or enhanced.** A session started through the jojobot stack is stamped enhanced when the runtime attests which agent it is and its chores are done by software (*Lines — a bot asked to run, and the software that keeps it running*). The stamp says which features are present, and when it drops to plain, why. A plain session can do everything except be woken.
 
 ## One bot, one worker
 
-**Two workers are two bots, not two sessions of one bot.** Where two sessions of one bot do run, they share that bot's mailbox and sort it out between themselves — something a session lives with, not something the software resolves.
+**Two workers are two bots, not two sessions of one bot.** Where two sessions of one bot do run, **one of them reads the bot's box: the newest.** The older run is fenced from taking delivery and from closing mail, and told so, because two readers of one box each owe what the other took. Addressing one session of a bot directly, by its public run name, is a later step; until then each use case is its own bot.
 
 ## What it is not
 

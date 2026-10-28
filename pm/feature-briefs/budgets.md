@@ -14,7 +14,7 @@
 
 ## The session is the honest unit
 
-**A session that compacts says so, and its room starts again.** When a reader's memory is rebuilt by summarising, the run keeps its name and its chronology, but jojobot's belief about what it was taught and shown is cleared and its running total restarts, so the next answers teach again instead of eliding what the reader no longer holds. **A live session and one reader's room are the same thing until the room is rebuilt.**
+**A session that compacts says so, or its runtime says so for it when the session is managed, and its room starts again.** When a reader's memory is rebuilt by summarising, the run keeps its name and its chronology, but jojobot's belief about what it was taught and shown is cleared and its running total restarts, so the next answers teach again instead of eliding what the reader no longer holds. **A live session and one reader's room are the same thing until the room is rebuilt.**
 
 ## The unit, and why it is honest about being rough
 

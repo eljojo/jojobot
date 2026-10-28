@@ -36,6 +36,8 @@
 
 **Not a migration.** What lives in an outer service stays there. Where a record LIVES and what FRONTS it are different questions, and answering the first does not answer the second.
 
+**Not the agent runtime.** The runtime that runs bots' sessions is not a layer jojobot fronts: an outside program, the hypervisor service, drives it on jojobot's API and reports back what it saw (*Lines — a bot asked to run, and the software that keeps it running*). jojobot holds the request and the observations, and no credential that reaches a process.
+
 **Not a general proxy.** The point is the discipline, not the reach. An adapter that passes calls through without adding a guard, a receipt or a domain verb has added a hop and nothing else.
 
 **Not a second source of truth.** A copy may be kept and must be dated. What is refused is a copy that answers as though it were the service — undated, written back to, or trusted for a decision — because an invisible staleness in a system whose named failure is confidently wrong answers is the worst possible trade.

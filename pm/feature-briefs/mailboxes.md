@@ -54,9 +54,13 @@ It is aimed at two bots corresponding, each holding a reply it has not seen (*Th
 
 ⚠️ **A sender's view has to stay honest about this.** A message that left `new` because its recipient posted something unrelated is not a message somebody picked up, and the two are reported apart.
 
-## Two sessions, one box
+## Mail wakes a managed bot
 
-**Where a bot has two live sessions they share its box and sort it out between themselves.** Why two workers are two bots is *Sessions — one mortal run of a bot*.
+**A post to a bot whose session is managed wakes it.** The hypervisor service sees the post on the mailbox's change feed and its plugin wakes the agent at its next idle moment (*Lines — a bot asked to run, and the software that keeps it running*). **The feed and the wake carry no body and close nothing**: the bot still reads its own box and decides what each message asks of it. A plain session is not woken, and a sender can see which kind its recipient runs, so it knows whether a nudge by hand is still owed.
+
+## One reader per box
+
+**Where a bot has two live sessions, the newest takes delivery and closes mail; the older is fenced from both and told so.** Two readers of one box would each owe what the other took. Why two workers are two bots is *Sessions — one mortal run of a bot*.
 
 ## What it is not
 

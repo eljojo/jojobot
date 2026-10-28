@@ -44,21 +44,19 @@
 
 **A holder issues vouchers only to bots below it on the org chart, and only for rights it holds itself.** A bot never derives a right from its position, and no voucher lets a bot raise its own rights. A voucher to change a charter does not lift the rule that only a superior changes the chart.
 
-**Launching a process is not authorizing it.** The session that starts a bot's process and the chain that grants it the right to boot as that bot can differ. When the right comes from above the launcher, it travels down to the launcher as a scoped grant.
+**Launching a process is not authorizing it.** The hypervisor service starts and stops agents, and it holds no voucher, no bot's credential and no operator code: a launcher that held them would be the one place a single compromise reached every bot.
 
 **A voucher outlives the session that issued it.** A wrapped coordinator's lines keep working. Only a live superior's act voids a voucher.
 
-**A worked example.** The hypervisor restarts the coordinator when it dies. Starting a process is the hypervisor's job, but the right to boot as the coordinator sits above the coordinator on the chart, with the assistant. So the assistant issues a start-as-coordinator voucher scoped to that one act, the coordinator passes it down to the hypervisor, and the hypervisor presents it when it boots the replacement. The hypervisor never holds that right because of where it sits.
+**A worked example.** The coordinator dies, and its bot's request says to restart it. The service starts a new agent and tells it which bot to boot as. The right to boot as the coordinator sits with the manager who wrote the request, so that manager issues a voucher bound to the request's target, and the new run redeems it itself at boot. The service carried the process, never the right.
 
 ## Succession
 
 **A graceful wrap hands the session's voucher to jojobot, in escrow.** A successor started within 30 minutes takes it up. The two sessions never have to overlap, and jojobot holds the right safely in between.
 
-**A crash is not escrow, because nothing was surrendered.** A live superior voids the dead session's voucher and issues a fresh one from its own. A session counts as dead by the same two steps that replace a role's holder: its lease lapses with no write, then a probe goes unanswered.
+**A crash is not escrow, because nothing was surrendered.** A live superior voids the dead session's voucher and issues a fresh one from its own. A session counts as dead by the same two steps that replace a role's holder: its lease lapses with no work, then a probe goes unanswered.
 
-**When one of the two watchers dies, the survivor asks the coordinator above them both by mail, and the coordinator re-issues.**
-
-**Three clocks inside jojobot, three jobs.** The watchers' probe is theirs, not the store's. The 45-minute role lease measures whether a seat's holder is still writing. The 30-minute escrow window bounds the pickup of a surrendered voucher. The 10-minute challenge window is the one expiry in the design, and it applies to a code nobody has redeemed. **A held voucher has no expiry.** The operator asked for none. The design's reason is that an expiry would be a second clock deciding what the lease already decides, and two rules for one question drift apart.
+**Three clocks inside jojobot, three jobs.** The probe is the hypervisor service's, not the store's. The 45-minute role lease measures whether a seat's holder is still writing. The 30-minute escrow window bounds the pickup of a surrendered voucher. The 10-minute challenge window is the one expiry in the design, and it applies to a code nobody has redeemed. **A held voucher has no expiry.** The operator asked for none. The design's reason is that an expiry would be a second clock deciding what the lease already decides, and two rules for one question drift apart.
 
 ## The first boot after the upgrade
 
@@ -73,6 +71,7 @@
 * **Not a role lease.** The lease says a seat is occupied; a voucher says an act is permitted. Folding one into the other leaves three of the four acts with nowhere to live.
 * **Not a token with a timer.** A held voucher ends by being spent, voided or left in escrow past the pickup window, never by a clock. Only an unredeemed code expires.
 * **Not position.** Sitting above a bot on the chart grants nothing until a voucher is issued.
+* **Not the enhanced stamp.** The stamp says the runtime attests which agent is speaking; a voucher says an act is permitted. An attested session gains no right, and a voucher proves nothing about which agent holds it.
 * **Not a second channel for the code.** The operator's mailbox is the one route, with the web UI as the way in when the push is down.
 * **Not stronger than the session handle.** A voucher bound to a stolen handle is a stolen voucher.
 * **Not a gate on ordinary work.** Reads, writes and mail stay ungated.
