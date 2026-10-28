@@ -642,9 +642,16 @@ async fn clearing_a_checked_in_calendar_loop_names_the_anchor_that_keeps_it_over
                    "check_in": "ran"}),
         )
         .await;
-    let check_in = check_in.json()["address"]
+    let source = check_in.json()["address"].clone();
+    let read = s.recall("rhythm:leap-check").await.json();
+    let check_in = read["objects"][0]["facts"]
+        .as_array()
+        .expect("claims")
+        .iter()
+        .find(|fact| fact["derived_from"] == source)
+        .expect("the computed schedule cites this check-in")["address"]
         .as_str()
-        .expect("a check-in answers with the address")
+        .expect("the schedule has an address")
         .to_string();
     s.recall("rhythm:leap-check").await.says("anchored_on");
     assert!(
@@ -652,8 +659,8 @@ async fn clearing_a_checked_in_calendar_loop_names_the_anchor_that_keeps_it_over
         "checked in on the 1st, the loop is not owed on the 2nd before anything is cleared"
     );
 
-    // The check-in's own basis comes off first; it is not a key that starts the
-    // advisory, so the clearing of the setup record is the write that answers.
+    // The schedule's basis comes off its derived record first; it is not a key
+    // that starts the advisory, so clearing the setup record is what answers.
     s.call(
         "update_fact",
         json!({"address": check_in, "clear_fields": ["counts_from"]}),
