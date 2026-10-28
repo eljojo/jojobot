@@ -1363,3 +1363,54 @@ fn the_weekly_number_prints_the_fixed_boot_load_beside_last_weeks() {
     assert!(line.contains("last week 500 bytes, 125 tokens"), "{line}");
     let _ = fs::remove_dir_all(&dir);
 }
+
+/// **The weekly number carries the CI runner occupancy**, summed job time from the
+/// forge's task records: the start to the end of each job, a retried job and a
+/// cancelled job counted, and never the wall time of a run. The fixture is a real
+/// pull request run (five jobs, one cancelled), a real push run (one cancelled),
+/// the pull request's check job run again, and a third real run moved eight days
+/// back for last week; ids, titles and branch names are replaced.
+#[test]
+fn the_weekly_number_prints_runner_occupancy_from_the_forges_task_records() {
+    let dir = repo("occupancy");
+    for (path, text) in [
+        ("size-ratchet.toml", ratchet("")),
+        ("crates/jojobot-mcp/served-texts/tools.md", "t".repeat(40)),
+        ("CLAUDE.md", "c".repeat(40)),
+    ] {
+        commit_files(&dir, &[(path, text)]);
+    }
+    let tasks = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ci-tasks.json");
+    let tasks = tasks.to_str().unwrap();
+
+    let weekly = bar_with(&dir, &["size", "--weekly", "--tasks", tasks], None);
+    assert_eq!(weekly.code, Some(0), "{}", weekly.stdout);
+    let line = weekly
+        .stdout
+        .lines()
+        .find(|line| line.starts_with("ci runner occupancy:"))
+        .unwrap_or_else(|| panic!("no occupancy line: {}", weekly.stdout));
+    // The pull request run: 3558 s of jobs and its check job run again, 844 s;
+    // the push run: 1115 s. Its wall time would be 2611 s, not 3558.
+    assert!(
+        line.contains("this week 5517 s over 9 jobs in 2 runs"),
+        "{line}"
+    );
+    assert!(line.contains("pull requests 4402 s a run"), "{line}");
+    assert!(
+        line.contains("last week 2067 s over 3 jobs in 1 run"),
+        "{line}"
+    );
+
+    let unread = bar_with(&dir, &["size", "--weekly"], None);
+    assert_eq!(unread.code, Some(0), "{}", unread.stdout);
+    assert!(
+        unread
+            .stdout
+            .lines()
+            .any(|line| line.starts_with("ci runner occupancy: not read")),
+        "{}",
+        unread.stdout
+    );
+    let _ = fs::remove_dir_all(&dir);
+}

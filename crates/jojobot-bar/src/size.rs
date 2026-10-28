@@ -932,7 +932,7 @@ fn boot_load_line() -> Result<String, String> {
 pub fn run(args: &[String]) -> std::io::Result<std::process::ExitCode> {
     use std::process::ExitCode;
     let usage = || {
-        eprintln!("usage: bar size [--weekly | --net [--reason-file FILE]]");
+        eprintln!("usage: bar size [--weekly [--tasks FILE] | --net [--reason-file FILE]]");
         Ok(ExitCode::from(2))
     };
     let fail = |message: String| {
@@ -950,7 +950,12 @@ pub fn run(args: &[String]) -> std::io::Result<std::process::ExitCode> {
                 ExitCode::FAILURE
             })
         }
-        [weekly] if weekly == "--weekly" => {
+        [weekly, rest @ ..] if weekly == "--weekly" => {
+            let tasks = match rest {
+                [] => None,
+                [flag, file] if flag == "--tasks" => Some(file),
+                _ => return usage(),
+            };
             let limits = match load(Path::new(RATCHET_FILE)) {
                 Ok(limits) => limits,
                 Err(e) => return fail(e),
@@ -983,6 +988,18 @@ pub fn run(args: &[String]) -> std::io::Result<std::process::ExitCode> {
             match boot_load_line() {
                 Ok(line) => println!("{line}"),
                 Err(e) => return fail(e),
+            }
+            match tasks {
+                None => println!(
+                    "ci runner occupancy: not read (pass --tasks FILE, the forge's task list)"
+                ),
+                Some(file) => match std::fs::read_to_string(file)
+                    .map_err(|e| format!("{file}: {e}"))
+                    .and_then(|text| crate::occupancy::weekly_line(&text))
+                {
+                    Ok(line) => println!("{line}"),
+                    Err(e) => return fail(e),
+                },
             }
             Ok(ExitCode::SUCCESS)
         }

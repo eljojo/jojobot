@@ -21,6 +21,7 @@ mod history;
 mod known_reds;
 mod levels;
 pub mod metrics;
+pub mod occupancy;
 mod reading;
 mod recording;
 pub mod scratch;
