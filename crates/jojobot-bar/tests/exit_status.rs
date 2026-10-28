@@ -151,6 +151,23 @@ if [ "$1" = clippy ]; then echo 'error: a lint'; exit 1; fi"#,
     assert_eq!(value["failed_phases"][0], "lint", "{file}");
 }
 
+/// **Infra tests and a failed lint are a red job.** The file keeps the infra
+/// class and names the lint, so the code failure is not read as the machine's.
+#[test]
+fn a_lint_that_fails_beside_infra_tests_leaves_a_red_verdict_file() {
+    let (file, stdout) = check_verdict_file(
+        "verdict-mixed-phase",
+        r#"case " $* " in *" --no-run "*) exit 0 ;; esac
+if [ "$1" = test ]; then cat "$BAR_CASE_FAILURES"; exit 101; fi
+if [ "$1" = clippy ]; then echo 'error: a lint'; exit 1; fi"#,
+        "verdict-killed-binary.txt",
+    );
+    let value: serde_json::Value = serde_json::from_str(&file).expect("JSON");
+    assert_eq!(value["overall"], "red", "{file}\n{stdout}");
+    assert_eq!(value["infra"], "killed", "{file}");
+    assert_eq!(value["failed_phases"][1], "lint", "{file}");
+}
+
 /// **A build that ran out of disk leaves a verdict file of the class infra**,
 /// where it used to leave none.
 #[test]

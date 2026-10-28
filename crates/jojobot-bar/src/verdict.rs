@@ -484,10 +484,7 @@ pub fn write(
     failed_phases: Vec<String>,
 ) -> std::io::Result<String> {
     let mut verdict = read(text, exit_ok, not_run);
-    // Green tests in a job whose lint failed are a red job.
-    if verdict.overall == Overall::Green && !failed_phases.is_empty() {
-        verdict.overall = Overall::Red;
-    }
+    verdict.overall = overall_with(verdict.overall, &failed_phases);
     verdict.failed_phases = failed_phases;
     let head = Command::new("git")
         .args(["rev-parse", "HEAD"])
@@ -512,6 +509,24 @@ pub fn write(
             .map(|class| format!(", infra: {}", class.word()))
             .unwrap_or_default()
     ))
+}
+
+/// **The phases whose failure the text of the tests already tells.** A phase
+/// outside this list (the lint, the size gate) fails for a reason the text
+/// cannot place on the machine.
+const SPOKEN_FOR: [&str; 5] = ["build", "test-compile", "test", "doc-tests", "fast"];
+
+/// **The job's overall outcome once its other phases are known.** Green or infra
+/// tests in a job whose lint failed are a red job: the infra reason stays on the
+/// file, and a code failure is not hidden behind it.
+fn overall_with(overall: Overall, failed_phases: &[String]) -> Overall {
+    let outside = failed_phases
+        .iter()
+        .any(|phase| !SPOKEN_FOR.contains(&phase.as_str()));
+    match overall {
+        Overall::Green | Overall::Infra if outside => Overall::Red,
+        other => other,
+    }
 }
 
 /// **What a job's test phase read, kept until the job ends.** The file says the
@@ -712,6 +727,18 @@ mod tests {
         let verdict = read(KILLED, false, 0);
         assert_eq!((verdict.compiled, verdict.suites_total), (false, 0));
         assert!(verdict.red[0].crashed);
+    }
+
+    /// **A failed phase the text cannot place on the machine makes the job red,
+    /// whatever the tests were.**
+    #[test]
+    fn a_failed_lint_makes_green_and_infra_tests_a_red_job() {
+        let lint = vec!["lint".to_string()];
+        let test_only = vec!["test".to_string()];
+        assert_eq!(overall_with(Overall::Green, &lint), Overall::Red);
+        assert_eq!(overall_with(Overall::Infra, &lint), Overall::Red);
+        assert_eq!(overall_with(Overall::Infra, &test_only), Overall::Infra);
+        assert_eq!(overall_with(Overall::NoVerdict, &lint), Overall::NoVerdict);
     }
 
     /// **The counts are the summary's own**: both read one text one way.
