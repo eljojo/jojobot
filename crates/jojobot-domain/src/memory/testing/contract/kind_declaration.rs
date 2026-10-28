@@ -110,6 +110,29 @@ pub async fn a_kind_declaration_says_whether_it_changed_the_store<M: Memory>(sto
             .expect("the same again"),
         "the same owner again changed the store",
     );
+    // Only the kind's origin changes: an empty caller kind becomes shipped,
+    // while its absent keys and key owners stay absent. The repeat changes none.
+    assert!(
+        store
+            .declare_kind("omicron", Origin::Declared, Vec::new())
+            .await
+            .expect("an empty caller kind is declared"),
+        "a new empty kind changed nothing",
+    );
+    assert!(
+        store
+            .declare_kind("omicron", Origin::Shipped, Vec::new())
+            .await
+            .expect("the build takes the empty kind"),
+        "a kind that changed origin alone changed nothing",
+    );
+    assert!(
+        !store
+            .declare_kind("omicron", Origin::Shipped, Vec::new())
+            .await
+            .expect("the same origin again"),
+        "the same origin again changed the store",
+    );
     // A kind of the caller's own, and the same again.
     assert!(
         store
