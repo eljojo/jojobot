@@ -95,9 +95,16 @@ fn claimed_path(line: &str) -> Option<&str> {
         .map(|(_, path)| path)
 }
 
-/// **What a process of the command's group runs now**: the file and its short name.
-/// Empty where `/proc` does not exist.
-fn group_members(group: u32) -> Vec<(Option<std::path::PathBuf>, String)> {
+/// **One process of the command's group**, told apart from any other by its number
+/// and the moment it began: a number is used again, a number with its start is not.
+struct Member {
+    identity: (u32, u64),
+    exe: Option<std::path::PathBuf>,
+    name: String,
+}
+
+/// **The processes of the command's group now.** Empty where `/proc` does not exist.
+fn group_members(group: u32) -> Vec<Member> {
     let Ok(entries) = std::fs::read_dir("/proc") else {
         return Vec::new();
     };
@@ -106,45 +113,56 @@ fn group_members(group: u32) -> Vec<(Option<std::path::PathBuf>, String)> {
         .filter_map(|entry| {
             let pid: u32 = entry.file_name().to_str()?.parse().ok()?;
             let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-            // `pid (name) state parent group`: the name may hold spaces and
-            // parentheses, so the fields are counted from its last parenthesis.
+            // `pid (name) state parent group ... start`: the name may hold spaces
+            // and parentheses, so the fields are counted from its last parenthesis.
+            // `rest` begins at field 3, so field 5 is index 2 and field 22 is 19.
             let (head, rest) = stat.rsplit_once(')')?;
-            let member: u32 = rest.split_whitespace().nth(2)?.parse().ok()?;
-            (member == group).then(|| {
-                let exe = std::fs::read_link(format!("/proc/{pid}/exe")).ok();
-                (
-                    exe,
-                    head.split_once('(')
-                        .map_or("", |(_, name)| name)
-                        .to_string(),
-                )
+            let mut fields = rest.split_whitespace();
+            let member: u32 = fields.nth(2)?.parse().ok()?;
+            let began: u64 = fields.nth(16)?.parse().ok()?;
+            (member == group).then(|| Member {
+                identity: (pid, began),
+                exe: std::fs::read_link(format!("/proc/{pid}/exe")).ok(),
+                name: head
+                    .split_once('(')
+                    .map_or("", |(_, name)| name)
+                    .to_string(),
             })
         })
         .collect()
 }
 
-/// **Whether a `Running` or `Doc-tests` line is an executable that started.** The
+/// **Whether a `Running` or `Doc-tests` line is an execution that started.** The
 /// line is output, and a hung binary can print any line it likes, so the claim is
-/// checked against the group: a `Running` line counts when a process of the group
-/// runs the file it names, and not twice for one file; a `Doc-tests` line counts
-/// when `rustdoc` runs in the group. `Some(path)` is a start, with the path
-/// the line named. Without `/proc` a line is believed, as it was before.
-fn started(line: &str, group: u32, last: Option<&str>) -> Option<Option<String>> {
+/// checked against the group, and each process of the group can be credited with
+/// one start: a `Running` line counts when a process not yet credited runs the file
+/// it names, whatever way the path is spelled, and a `Doc-tests` line when one runs
+/// as `rustdoc`. The process is credited by its number and its start, so printing
+/// the line again, or in another spelling, starts nothing. `Some` is a start, with
+/// the path the line named. Without `/proc` a line is believed, as it was before.
+fn started(
+    line: &str,
+    group: u32,
+    credited: &mut std::collections::HashSet<(u32, u64)>,
+) -> Option<Option<String>> {
     let path = claimed_path(line).map(str::to_string);
     if !std::path::Path::new("/proc/self").exists() {
         return Some(path);
     }
-    let members = group_members(group);
-    let real = match &path {
-        Some(named) => {
-            last != Some(named.as_str())
-                && std::fs::canonicalize(named)
-                    .ok()
-                    .is_some_and(|file| members.iter().any(|(exe, _)| exe.as_ref() == Some(&file)))
-        }
-        None => line.starts_with("Doc-tests ") && members.iter().any(|(_, name)| name == "rustdoc"),
+    let file = match &path {
+        Some(named) => Some(std::fs::canonicalize(named).ok()?),
+        None if line.starts_with("Doc-tests ") => None,
+        None => return None,
     };
-    real.then_some(path)
+    let member = group_members(group).into_iter().find(|member| {
+        !credited.contains(&member.identity)
+            && match &file {
+                Some(file) => member.exe.as_ref() == Some(file),
+                None => member.name == "rustdoc",
+            }
+    })?;
+    credited.insert(member.identity);
+    Some(path)
 }
 
 /// **Run one command to its end, to its deadline, or to a stop.** The command
@@ -186,7 +204,7 @@ pub fn run_job_for(
     let mut running = String::new();
     // A line that claims a start waits a few seconds for the process it names.
     let mut claims: Vec<(String, Instant)> = Vec::new();
-    let mut last_path: Option<String> = None;
+    let mut credited = std::collections::HashSet::new();
     loop {
         if let Some(status) = child.try_wait()? {
             return Ok(Some(status.success()));
@@ -199,11 +217,10 @@ pub fn run_job_for(
             claims.drain(..surplus);
         }
         for (line, seen) in std::mem::take(&mut claims) {
-            match started(&line, child.id(), last_path.as_deref()) {
-                Some(path) => {
+            match started(&line, child.id(), &mut credited) {
+                Some(_) => {
                     since = Some(Instant::now());
                     running = line;
-                    last_path = path;
                 }
                 None if seen.elapsed() < Duration::from_secs(5) => claims.push((line, seen)),
                 None => {}
@@ -281,9 +298,12 @@ mod tests {
         let script = format!(
             "n=0; while [ $n -lt 150 ]; do n=$((n + 1)); \
                echo '     Running unittests a ({})'; \
-               echo '     Running unittests b (/no/such/binary)'; \
+               echo '     Running unittests b ({})'; \
+               echo '     Running unittests c (/no/such/binary)'; \
                sleep 0.1; done",
-            shell.display()
+            shell.display(),
+            // The same live file in another spelling is the same process.
+            shell.display().to_string().replacen('/', "//", 1)
         );
         let mut command = Command::new("/bin/sh");
         command
@@ -312,6 +332,63 @@ mod tests {
                 .unwrap()
                 .contains("TIMED OUT")
         );
+        let _ = std::fs::remove_file(path);
+    }
+
+    /// **Doc-tests lines do not move the deadline of a hung `rustdoc`.** One
+    /// `rustdoc` process is credited with one start however many `Doc-tests` lines
+    /// the command prints, so the run is killed at the deadline of the first.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_hung_rustdoc_that_prints_doc_tests_lines_is_still_killed() {
+        let (path, out) = output("fake-doc-tests");
+        let dir = std::env::temp_dir().join(crate::scratch::name("fake-rustdoc"));
+        std::fs::create_dir_all(&dir).unwrap();
+        // A process named `rustdoc`: a link to a real program, run by that name.
+        let python = std::fs::canonicalize(
+            Command::new("sh")
+                .args(["-c", "command -v python3"])
+                .output()
+                .map(|found| String::from_utf8_lossy(&found.stdout).trim().to_string())
+                .unwrap(),
+        )
+        .unwrap();
+        let link = dir.join("rustdoc");
+        std::os::unix::fs::symlink(&python, &link).unwrap();
+        let script = format!(
+            "{} -c 'import time; time.sleep(20)' & n=0; \
+             while [ $n -lt 150 ]; do n=$((n + 1)); echo '   Doc-tests the_crate'; \
+               sleep 0.1; done; wait",
+            link.display()
+        );
+        let mut command = Command::new("/bin/sh");
+        command
+            .args(["-c", &script])
+            .stdout(out.try_clone().unwrap())
+            .stderr(out.try_clone().unwrap());
+        let began = Instant::now();
+        let ran = run_job_for(
+            Duration::from_secs(2),
+            &mut command,
+            None,
+            &path,
+            &out,
+            "hung",
+            Clock::PerExecutable,
+        )
+        .unwrap();
+        assert_eq!(ran, Some(false));
+        assert!(
+            began.elapsed() < Duration::from_secs(10),
+            "{:?}",
+            began.elapsed()
+        );
+        assert!(
+            std::fs::read_to_string(&path)
+                .unwrap()
+                .contains("TIMED OUT")
+        );
+        let _ = std::fs::remove_dir_all(dir);
         let _ = std::fs::remove_file(path);
     }
 
