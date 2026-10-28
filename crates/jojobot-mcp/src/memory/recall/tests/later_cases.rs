@@ -89,6 +89,42 @@ async fn records_agree_with_record_keys_and_keep_only_the_keys_asked_for() {
 }
 
 #[tokio::test]
+async fn records_agree_keeps_missing_reasons_beside_narrowed_records() {
+    let jojobot = handler();
+    capture_ok(&jojobot, capture_args("alpha", "Alpha keeps bees")).await;
+    let asked = ["person:alpha#f1", "person:alpha#f999", "not-an-address"];
+    let answer = json_of(
+        &jojobot
+            .recall(Parameters(RecallArgs {
+                record_keys: Some(vec!["content".into()]),
+                ..of_records(&asked)
+            }))
+            .await
+            .expect("records read"),
+    );
+    assert_eq!(answer["count"], 3, "{answer}");
+    let records = answer["records"].as_array().expect("the three addresses");
+    assert_eq!(records.len(), asked.len(), "{answer}");
+    assert_eq!(records[0]["address"], asked[0], "{answer}");
+    assert_eq!(records[0]["content"], "Alpha keeps bees", "{answer}");
+    assert_eq!(records[0].as_object().unwrap().len(), 2, "{answer}");
+    for (record, address) in records[1..].iter().zip(&asked[1..]) {
+        assert_eq!(record["address"], *address, "{answer}");
+        assert!(
+            record["missing"]
+                .as_str()
+                .is_some_and(|why| !why.is_empty()),
+            "{answer}"
+        );
+        assert_eq!(record.as_object().unwrap().len(), 2, "{answer}");
+    }
+    let omitted = answer["records_narrowed"]["left_out_keys"]
+        .as_array()
+        .expect("real record narrowing is reported");
+    assert!(!omitted.iter().any(|key| key == "missing"), "{answer}");
+}
+
+#[tokio::test]
 async fn records_agree_only_when_every_address_belongs_to_the_subject() {
     let jojobot = handler();
     capture_ok(&jojobot, capture_args("alpha", "Alpha keeps bees")).await;

@@ -199,8 +199,8 @@ pub(crate) fn listed_json(
     rendered
 }
 
-/// **Keep a rendered record's address and the keys named, and only those**, and
-/// add every key it held and lost to `left_out`, which the answer names once.
+/// **Keep a rendered record's address, missing marker and the keys named**,
+/// and add every key it lost to `left_out`, which the answer names once.
 pub(crate) fn narrow_record(
     record: &mut serde_json::Value,
     keys: &[String],
@@ -208,7 +208,8 @@ pub(crate) fn narrow_record(
 ) {
     if let Some(map) = record.as_object_mut() {
         map.retain(|key, _| {
-            let kept = key == "address" || keys.iter().any(|named| named == key);
+            let kept =
+                key == "address" || key == "missing" || keys.iter().any(|named| named == key);
             if !kept {
                 left_out.insert(key.clone());
             }
