@@ -651,7 +651,7 @@ fn run_rooms(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
                 summary.phase_failed("build", "DID NOT COMPILE — see log");
             }
             summary.phase_skipped("test");
-            verdict::note(&mut summary, &lane, &text, false, 0);
+            summary.verdict_of(&lane, &text, false, 0);
             finish(&mut summary, &log_path);
             return Ok(ExitCode::FAILURE);
         }
@@ -680,7 +680,7 @@ fn run_rooms(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
         &format!("{limit} test binaries at a time ({TEST_JOBS_VARIABLE})"),
     );
     summary.test_phase(ok, &verdict, known);
-    verdict::note(&mut summary, &lane, &text, ok, 0);
+    summary.verdict_of(&lane, &text, ok, 0);
     finish(&mut summary, &log_path);
     Ok(if test_healthy(ok, &verdict) {
         ExitCode::SUCCESS
@@ -1301,6 +1301,7 @@ fn fresh_log(path: &Path) -> std::io::Result<()> {
 }
 
 fn finish(summary: &mut Summary, log_path: &Path) {
+    verdict::settle(summary);
     let line_count = fs::read_to_string(log_path)
         .map(|s| s.lines().count())
         .unwrap_or(0);
@@ -1508,7 +1509,7 @@ fn run_check_phases(known: &KnownReds, level: Level) -> std::io::Result<ExitCode
             summary.test_phase(false, &verdict, known);
             summary.phase_skipped("build");
             summary.phase_skipped("lint");
-            verdict::note(&mut summary, level.name(), &text, false, 0);
+            summary.verdict_of(level.name(), &text, false, 0);
             finish_history(history.as_ref());
             finish(&mut summary, &log_path);
             return Ok(ExitCode::FAILURE);
@@ -1539,6 +1540,7 @@ fn run_check_phases(known: &KnownReds, level: Level) -> std::io::Result<ExitCode
             summary.phase_skipped("lint");
             // The fast phase began the run's history; a run that ends here ends it.
             finish_history(fast_history.as_ref());
+            summary.verdict_of(level.name(), &text, false, 0);
             finish(&mut summary, &log_path);
             return Ok(ExitCode::FAILURE);
         }
@@ -1667,7 +1669,7 @@ fn run_check_phases(known: &KnownReds, level: Level) -> std::io::Result<ExitCode
         None => {}
     }
     summary.test_phase(ok, &verdict, known);
-    verdict::note(&mut summary, level.name(), &text, ok, left_out);
+    summary.verdict_of(level.name(), &text, ok, left_out);
     // **The lint runs whatever the tests said.** A red test step used to end
     // the run here, and a lint failure then stayed hidden behind every test that
     // was red; the two are separate questions and the verdict carries both. The

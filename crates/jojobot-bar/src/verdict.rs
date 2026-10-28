@@ -92,6 +92,8 @@ fn infra_of(line: &str) -> Option<Infra> {
 pub struct Failure {
     pub test: String,
     pub first_line: String,
+    /// The class, when the output of this one failure names a machine reason.
+    pub infra: Option<Infra>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -101,7 +103,10 @@ pub struct Suite {
     pub failed: usize,
     /// The binary ended without a `test result:` line, by a signal or an exit.
     pub crashed: bool,
+    /// The class a line outside any failure's output named: a killed binary.
     pub infra: Option<Infra>,
+    /// Whether the suite printed a `test result:` line.
+    pub reported: bool,
     pub failures: Vec<Failure>,
 }
 
@@ -113,12 +118,36 @@ impl Suite {
             failed: 0,
             crashed: false,
             infra: None,
+            reported: false,
             failures: Vec::new(),
         }
     }
 
     fn red(&self) -> bool {
         self.failed > 0 || self.crashed || !self.failures.is_empty()
+    }
+
+    /// **Whether something in this suite is red for a reason the output does
+    /// not place on the machine.** One failure without a class is enough, and so
+    /// is a failed test that has no name or a crash that no line explains.
+    fn code_red(&self) -> bool {
+        let unexplained =
+            (self.crashed || self.failed > self.failures.len()) && self.infra.is_none();
+        unexplained || self.failures.iter().any(|f| f.infra.is_none())
+    }
+
+    /// The class of a red suite whose every red thing is a machine reason.
+    pub fn infra_class(&self) -> Option<Infra> {
+        if self.code_red() {
+            return None;
+        }
+        self.seen_infra()
+    }
+
+    /// The first class any line of this suite named, mixed or not.
+    fn seen_infra(&self) -> Option<Infra> {
+        self.infra
+            .or_else(|| self.failures.iter().find_map(|f| f.infra))
     }
 }
 
@@ -137,6 +166,9 @@ pub struct Verdict {
     pub not_run: usize,
     /// The red suites only, in the order the run printed them.
     pub red: Vec<Suite>,
+    /// The phases of the job, other than the tests, that failed: the lint, the
+    /// size gate. Set by [`settle`]; a text cannot say it.
+    pub failed_phases: Vec<String>,
 }
 
 /// **The name of a suite from its `Running` line**: the binary's file name
@@ -165,7 +197,7 @@ fn suite_start(line: &str) -> Option<String> {
                 None => bin.to_string(),
             }
         }
-        None => rest.trim().to_string(),
+        None => binary_name(rest.trim()).to_string(),
     })
 }
 
@@ -218,6 +250,7 @@ pub fn read(text: &str, exit_ok: bool, not_run: usize) -> Verdict {
                 suites[current].failures.push(Failure {
                     test: name.to_string(),
                     first_line: String::new(),
+                    infra: None,
                 });
                 suites[current].failures.len() - 1
             }));
@@ -240,6 +273,7 @@ pub fn read(text: &str, exit_ok: bool, not_run: usize) -> Verdict {
             }
         }
         if let Some(rest) = line.strip_prefix("test result: ") {
+            suites[current].reported = true;
             if let Some((passed, failed)) = suite_counts(rest) {
                 suites[current].passed += passed;
                 suites[current].failed += failed;
@@ -254,6 +288,7 @@ pub fn read(text: &str, exit_ok: bool, not_run: usize) -> Verdict {
                 suites[current].failures.push(Failure {
                     test: record.test,
                     first_line: String::new(),
+                    infra: None,
                 });
             }
             // A passing test's name is not a reason.
@@ -274,17 +309,33 @@ pub fn read(text: &str, exit_ok: bool, not_run: usize) -> Verdict {
             }
             None => current,
         };
-        if suites[about].infra.is_none() {
-            suites[about].infra = infra_of(line);
+        match inside {
+            // The output of one failing test names a reason for that test only.
+            Some(at) if about == current => {
+                let failure = &mut suites[current].failures[at];
+                if failure.infra.is_none() {
+                    failure.infra = infra_of(line);
+                }
+            }
+            _ if suites[about].infra.is_none() => suites[about].infra = infra_of(line),
+            _ => {}
+        }
+    }
+    // A binary that started and never reported, in a run that failed, ended
+    // without a line of its own: a signal or an exit that cargo's wrapper did
+    // not describe. The bundled binaries are run directly and land here.
+    if !exit_ok {
+        for suite in suites.iter_mut().filter(|s| !s.reported) {
+            suite.crashed = true;
         }
     }
 
-    let suites_total = suites.len();
-    let passed = suites.iter().map(|s| s.passed).sum();
-    let compiled = suites.iter().any(|s| s.passed + s.failed > 0 || s.crashed);
+    // The totals are the summary's own: one reading of what a run counted.
+    let counted = crate::summarize_test_output(text);
+    let (suites_total, passed, compiled) = (counted.suites, counted.passed, counted.compiled);
     let red: Vec<Suite> = suites.into_iter().filter(Suite::red).collect();
-    let infra = red.iter().find_map(|s| s.infra).or(preamble);
-    let code_red = red.iter().any(|s| s.infra.is_none());
+    let infra = red.iter().find_map(Suite::seen_infra).or(preamble);
+    let code_red = red.iter().any(Suite::code_red);
     let overall = if text.trim().is_empty() && red.is_empty() {
         Overall::NoVerdict
     } else if code_red {
@@ -310,6 +361,7 @@ pub fn read(text: &str, exit_ok: bool, not_run: usize) -> Verdict {
         passed,
         not_run,
         red,
+        failed_phases: Vec::new(),
     }
 }
 
@@ -325,15 +377,17 @@ pub fn to_json(verdict: &Verdict, head_sha: &str, job: &str) -> Value {
         "suites_total": verdict.suites_total,
         "passed": verdict.passed,
         "not_run": verdict.not_run,
+        "failed_phases": verdict.failed_phases,
         "red_suites": verdict.red.iter().map(|suite| json!({
             "name": suite.name,
             "passed": suite.passed,
             "failed": suite.failed,
             "crashed": suite.crashed,
-            "infra": suite.infra.map(Infra::word),
+            "infra": suite.infra_class().map(Infra::word),
             "failing": suite.failures.iter().map(|f| json!({
                 "test": f.test,
                 "first_line": f.first_line,
+                "infra": f.infra.map(Infra::word),
             })).collect::<Vec<_>>(),
         })).collect::<Vec<_>>(),
     })
@@ -346,8 +400,19 @@ pub fn path_of(job: &str) -> String {
 
 /// **Write the job's verdict file and return the one line the log ends with.**
 /// The head is the full sha of the checkout, empty when git cannot say.
-pub fn write(job: &str, text: &str, exit_ok: bool, not_run: usize) -> std::io::Result<String> {
-    let verdict = read(text, exit_ok, not_run);
+pub fn write(
+    job: &str,
+    text: &str,
+    exit_ok: bool,
+    not_run: usize,
+    failed_phases: Vec<String>,
+) -> std::io::Result<String> {
+    let mut verdict = read(text, exit_ok, not_run);
+    // Green tests in a job whose lint failed are a red job.
+    if verdict.overall == Overall::Green && !failed_phases.is_empty() {
+        verdict.overall = Overall::Red;
+    }
+    verdict.failed_phases = failed_phases;
     let head = Command::new("git")
         .args(["rev-parse", "HEAD"])
         .output()
@@ -373,10 +438,44 @@ pub fn write(job: &str, text: &str, exit_ok: bool, not_run: usize) -> std::io::R
     ))
 }
 
-/// **Write the file and put its line on the verdict.** A file that cannot be
-/// written is said on the verdict and does not change the job's own result.
-pub fn note(summary: &mut crate::Summary, job: &str, text: &str, exit_ok: bool, not_run: usize) {
-    match write(job, text, exit_ok, not_run) {
+/// **What a job's test phase read, kept until the job ends.** The file says the
+/// job's outcome, and a lint or a size gate that fails after the tests is part of
+/// it, so the file is written when the verdict is printed, not when the tests end.
+pub struct Input {
+    job: String,
+    text: String,
+    exit_ok: bool,
+    not_run: usize,
+}
+
+impl crate::Summary {
+    /// **Keep the text a job's tests printed, to be settled at the job's end.**
+    /// A later call replaces an earlier one.
+    pub fn verdict_of(&mut self, job: &str, text: &str, exit_ok: bool, not_run: usize) {
+        self.pending_verdict = Some(Input {
+            job: job.to_string(),
+            text: text.to_string(),
+            exit_ok,
+            not_run,
+        });
+    }
+}
+
+/// **Write the file of a job that kept its text, and put its line on the
+/// verdict.** A file that cannot be written is said on the verdict and does not
+/// change the job's own result.
+pub fn settle(summary: &mut crate::Summary) {
+    let Some(input) = summary.pending_verdict.take() else {
+        return;
+    };
+    let phases = summary.failed_phases();
+    match write(
+        &input.job,
+        &input.text,
+        input.exit_ok,
+        input.not_run,
+        phases,
+    ) {
         Ok(line) => summary.note(&line),
         Err(e) => summary.note(&format!("verdict file: not written — {e}")),
     }
@@ -396,6 +495,8 @@ mod tests {
     const DISK_FULL: &str = include_str!("../tests/fixtures/verdict-disk-full.txt");
     const DISK_FULL_BUILD: &str = include_str!("../tests/fixtures/verdict-disk-full-build.txt");
     const KILLED: &str = include_str!("../tests/fixtures/verdict-killed-binary.txt");
+    const MIXED: &str = include_str!("../tests/fixtures/verdict-mixed-suite.txt");
+    const BUNDLE_KILLED: &str = include_str!("../tests/fixtures/verdict-bundle-killed.txt");
     const TERMINATED: &str = include_str!("../tests/fixtures/verdict-terminated-binary.txt");
     const OUT_OF_MEMORY: &str = include_str!("../tests/fixtures/verdict-out-of-memory.txt");
     const NETWORK: &str = include_str!("../tests/fixtures/verdict-network-fetch.txt");
@@ -466,7 +567,7 @@ mod tests {
         let by_name: Vec<(&str, Option<Infra>)> = verdict
             .red
             .iter()
-            .map(|s| (s.name.as_str(), s.infra))
+            .map(|s| (s.name.as_str(), s.infra_class()))
             .collect();
         assert_eq!(
             by_name,
@@ -486,6 +587,63 @@ mod tests {
         assert_eq!(names(&verdict), ["user_stories"], "{only_disk}");
         assert_eq!(verdict.overall, Overall::Infra);
         assert_eq!(verdict.infra, Some(Infra::DiskFull));
+    }
+
+    /// **One suite, one failure of the code and one of the machine**: the job is
+    /// red, the infra reason stays on the file, and the suite is not infra.
+    #[test]
+    fn an_infra_failure_does_not_hide_a_code_failure_in_the_same_suite() {
+        let verdict = read(MIXED, false, 0);
+        assert_eq!(verdict.overall, Overall::Red);
+        assert_eq!(verdict.infra, Some(Infra::DiskFull));
+        assert_eq!(names(&verdict), ["user_stories"]);
+        let suite = &verdict.red[0];
+        assert_eq!(suite.infra_class(), None);
+        let by_test: Vec<(&str, Option<Infra>)> = suite
+            .failures
+            .iter()
+            .map(|f| (f.test.as_str(), f.infra))
+            .collect();
+        assert_eq!(
+            by_test,
+            [
+                ("a_story_that_orders_a_list", None),
+                ("a_story_that_writes_a_document", Some(Infra::DiskFull)),
+            ]
+        );
+    }
+
+    /// **A bundled binary is run directly**, so nothing but the harness's own
+    /// `Running` line names it. One that stopped before its result is a red suite.
+    #[test]
+    fn a_binary_that_stopped_before_its_result_is_a_crashed_suite() {
+        let verdict = read(BUNDLE_KILLED, false, 0);
+        assert_eq!(verdict.overall, Overall::Red);
+        assert_eq!(verdict.infra, None);
+        assert_eq!(names(&verdict), ["user_stories"]);
+        assert!(verdict.red[0].crashed);
+        // With a zero exit status the same text names nothing red.
+        assert_ne!(read(BUNDLE_KILLED, true, 0).overall, Overall::Red);
+    }
+
+    /// **The counts are the summary's own**: both read one text one way.
+    #[test]
+    fn the_totals_agree_with_the_summary_on_every_capture() {
+        for text in [
+            THREE_REDS,
+            KILLED,
+            GREEN,
+            COMPILE_ERROR,
+            MIXED,
+            BUNDLE_KILLED,
+        ] {
+            let counted = crate::summarize_test_output(text);
+            let verdict = read(text, false, 0);
+            assert_eq!(
+                (verdict.compiled, verdict.suites_total, verdict.passed),
+                (counted.compiled, counted.suites, counted.passed)
+            );
+        }
     }
 
     /// **A binary a signal ended is red and has no `test result:` line.**
@@ -640,7 +798,10 @@ mod tests {
     /// **The file says the full sha, the job and what the run left out.**
     #[test]
     fn the_file_holds_the_head_the_job_and_the_jobs_not_run() {
-        let value = to_json(&read(THREE_REDS, false, 76), "0123456789abcdef", "report");
+        let mut verdict = read(THREE_REDS, false, 76);
+        verdict.failed_phases = vec!["lint".to_string()];
+        let value = to_json(&verdict, "0123456789abcdef", "report");
+        assert_eq!(value["failed_phases"][0], "lint");
         assert_eq!(value["head_sha"], "0123456789abcdef");
         assert_eq!(value["job"], "report");
         assert_eq!(value["overall"], "red");

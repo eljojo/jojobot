@@ -107,6 +107,68 @@ if [ "$1" = test ]; then cat "$BAR_CASE_FAILURES"; exit 101; fi
     let _ = fs::remove_dir_all(dir);
 }
 
+/// **Run `bar check` over a fake cargo and return the verdict file it left.**
+/// `script` is the body the fake runs for the commands the case cares about.
+fn check_verdict_file(tag: &str, script: &str, stdout_of_test: &str) -> (String, String) {
+    let dir = scratch_dir(tag);
+    let cargo = dir.join("cargo");
+    support::write_executable(&cargo, &format!("#!/bin/sh\n{script}\n"));
+    let output = support::output_fenced(
+        Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
+            .arg("check")
+            .current_dir(&dir)
+            .env("CARGO", cargo)
+            .env("TMPDIR", &dir)
+            .env("BAR_HISTORY_DIR", dir.join("history"))
+            .env(
+                "BAR_CASE_FAILURES",
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures")
+                    .join(stdout_of_test),
+            ),
+    )
+    .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let file = fs::read_to_string(dir.join("target/bar/verdict-check.json"))
+        .unwrap_or_else(|e| panic!("no verdict file: {e}\n{stdout}"));
+    let _ = fs::remove_dir_all(dir);
+    (file, stdout)
+}
+
+/// **Green tests and a failed lint are a red job**, and the file says which
+/// phase failed. The file is written when the job ends, not when its tests do.
+#[test]
+fn a_lint_that_fails_after_green_tests_leaves_a_red_verdict_file() {
+    let (file, stdout) = check_verdict_file(
+        "verdict-lint",
+        r#"case " $* " in *" --no-run "*) exit 0 ;; esac
+if [ "$1" = test ]; then cat "$BAR_CASE_FAILURES"; exit 0; fi
+if [ "$1" = clippy ]; then echo 'error: a lint'; exit 1; fi"#,
+        "green-full-check.txt",
+    );
+    let value: serde_json::Value = serde_json::from_str(&file).expect("JSON");
+    assert_eq!(value["overall"], "red", "{file}\n{stdout}");
+    assert_eq!(value["failed_phases"][0], "lint", "{file}");
+}
+
+/// **A build that ran out of disk leaves a verdict file of the class infra**,
+/// where it used to leave none.
+#[test]
+fn a_build_that_ran_out_of_disk_leaves_an_infra_verdict_file() {
+    let (file, stdout) = check_verdict_file(
+        "verdict-build",
+        r#"if [ "$1" = build ]; then
+  echo 'error: failed to write `/x/y.d`'
+  echo '  No space left on device (os error 28)'
+  exit 1
+fi"#,
+        "green-full-check.txt",
+    );
+    let value: serde_json::Value = serde_json::from_str(&file).expect("JSON");
+    assert_eq!(value["overall"], "infra", "{file}\n{stdout}");
+    assert_eq!(value["infra"], "disk-full", "{file}");
+}
+
 /// **A fake `cargo` that mimics a crashed sibling suite.** `fmt`, `build`
 /// and `clippy` succeed silently; a real `-- --list` still lists one test,
 /// so `narrow`'s zero-selection guard does not fire before the phase this

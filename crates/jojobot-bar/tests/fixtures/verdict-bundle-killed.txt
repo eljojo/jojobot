@@ -1,0 +1,5 @@
+
+     Running /var/lib/gitea-runner/runner1/cargo-target/debug/deps/user_stories-3f9c0a1d27be4c55
+
+running 3 tests
+test a_story_that_reads_a_document ... ok <0.4s>

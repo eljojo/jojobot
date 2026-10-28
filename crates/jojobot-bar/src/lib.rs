@@ -399,6 +399,7 @@ pub fn loop_wall_line(took: std::time::Duration) -> String {
 pub struct Summary {
     lines: Vec<String>,
     pub green: bool,
+    pending_verdict: Option<verdict::Input>,
 }
 
 impl Summary {
@@ -406,6 +407,7 @@ impl Summary {
         Summary {
             lines: Vec::new(),
             green: true,
+            pending_verdict: None,
         }
     }
 
@@ -534,6 +536,16 @@ impl Summary {
 
     pub fn log(&mut self, path: &str, line_count: usize) {
         self.lines.push(format!("log: {path} ({line_count} lines)"));
+    }
+
+    /// **The phases whose line says FAILED**, by name, in the order they ran.
+    pub fn failed_phases(&self) -> Vec<String> {
+        self.lines
+            .iter()
+            .filter_map(|line| line.split_once(": FAILED"))
+            .map(|(phase, _)| phase.to_string())
+            .filter(|phase| !phase.starts_with(' '))
+            .collect()
     }
 
     pub fn render(&self) -> String {
