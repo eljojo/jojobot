@@ -35,9 +35,10 @@ use jojobot_domain::memory::{
 const CLAIMS: usize = 48;
 /// Other things the store holds, each with a few claims. A cost that follows the
 /// store shows as a count that grows with them: the old fold sent about thirteen
-/// statements for each, so 64 of them put it past the bound below by a wide margin,
-/// and seeding them one write at a time stays under a minute.
-const BACKGROUND: usize = 64;
+/// statements for each, so 128 of them put it past the bound below by a wide margin,
+/// and a cost of one statement for each thing (127 + 128) is past it too. Seeding
+/// them one write at a time stays under a minute.
+const BACKGROUND: usize = 128;
 /// How many more statements a capture on the thing of 48 claims may send than a
 /// capture on the thing of none. The thing's own document is read once, which
 /// takes a few more statements for more claims.
