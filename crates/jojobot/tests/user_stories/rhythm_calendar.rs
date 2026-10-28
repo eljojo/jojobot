@@ -726,12 +726,20 @@ async fn clearing_a_snoozed_calendar_loop_names_the_anchor_and_the_snooze() {
                    "check_in": "ran"}),
         )
         .await;
-    let check_in = check_in.json()["address"]
+    let source = check_in.json()["address"].clone();
+    let read = s.recall("rhythm:leap-check").await.json();
+    let check_in = read["objects"][0]["facts"]
+        .as_array()
+        .expect("claims")
+        .iter()
+        .find(|fact| fact["derived_from"] == source)
+        .expect("the computed schedule cites this check-in")["address"]
         .as_str()
-        .expect("a check-in answers with the address")
+        .expect("the schedule has an address")
         .to_string();
 
     // The pair: before any snooze the clearing names the anchor and not the snooze.
+    // The basis lives on the derived record, so that is where it is cleared.
     let before = s
         .call(
             "update_fact",
@@ -739,6 +747,21 @@ async fn clearing_a_snoozed_calendar_loop_names_the_anchor_and_the_snooze() {
         )
         .await;
     before.never_says("snoozed_until");
+    let read = s.recall("rhythm:leap-check").await.json();
+    let derived = read["objects"][0]["facts"]
+        .as_array()
+        .expect("claims")
+        .iter()
+        .find(|fact| fact["address"] == check_in.as_str())
+        .expect("the derived record is still there");
+    assert!(
+        derived["sets"]["counts_from"].is_null(),
+        "the derived record no longer holds the basis: {derived}"
+    );
+    assert!(
+        derived["sets"]["anchored_on"].is_string(),
+        "the derived record keeps the anchor: {derived}"
+    );
     let unsnoozed = s
         .call(
             "update_fact",
