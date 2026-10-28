@@ -22,6 +22,10 @@ pub const DEADLINE_VARIABLE: &str = "BAR_BINARY_DEADLINE_SECS";
 /// The marker every timed-out binary leaves in its job's output.
 const MARKER: &str = "bar: TIMED OUT:";
 
+/// The marker of an execution the bar cannot follow, left in the output before the
+/// deadline runs from the line that named it.
+const UNTRACKABLE: &str = "bar: untrackable:";
+
 /// **The deadline a value sets**: a finite number of seconds above zero that a
 /// `Duration` can hold. Anything else, `inf`, `NaN`, a negative, zero, a number too
 /// large or text that is no number, leaves [`BINARY_DEADLINE`].
@@ -228,6 +232,19 @@ pub fn run_job_for(
                     running = line;
                 }
                 None if seen.elapsed() < Duration::from_secs(5) => claims.push((line, seen)),
+                // **Named by cargo and run by no child of the command.** The test sits
+                // behind a runner or wrapper, or it ended before it was seen. A run with
+                // no start yet is not left to the job's bound: its deadline runs from
+                // that line, and the log says so. A later line never moves a start.
+                None if since.is_none() => {
+                    since = Some(seen);
+                    writeln!(
+                        &*note,
+                        "\n{UNTRACKABLE} {label}: {line} is run by no child of the command, \
+                         so its deadline runs from that line"
+                    )?;
+                    running = line;
+                }
                 None => {}
             }
         }
@@ -352,6 +369,58 @@ mod tests {
             std::fs::read_to_string(&path)
                 .unwrap()
                 .contains("TIMED OUT")
+        );
+        let _ = std::fs::remove_file(path);
+    }
+
+    /// **A test behind a wrapper is not left to the job's bound.** The command starts
+    /// a wrapper that stays alive and starts the sleeping binary the line names
+    /// beneath it, so no child of the command runs that file. The run must still end
+    /// near its deadline, and the log must say the execution was untrackable.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_test_behind_a_wrapper_is_refused_promptly_and_named_in_the_log() {
+        let (path, out) = output("wrapped");
+        let found = Command::new("sh")
+            .args(["-c", "command -v sleep"])
+            .output()
+            .map(|found| String::from_utf8_lossy(&found.stdout).trim().to_string())
+            .unwrap();
+        // The program is run by the name it was found under, and named by its file.
+        let named = std::fs::canonicalize(&found).unwrap();
+        let wrapper = std::env::temp_dir().join(crate::scratch::name("wrapper"));
+        std::fs::write(&wrapper, format!("{found} 25 & wait\n")).unwrap();
+        let script = format!(
+            "/bin/sh {} & echo '     Running unittests a ({})'; wait",
+            wrapper.display(),
+            named.display()
+        );
+        let mut command = Command::new("/bin/sh");
+        command
+            .args(["-c", &script])
+            .stdout(out.try_clone().unwrap())
+            .stderr(out.try_clone().unwrap());
+        let began = Instant::now();
+        let ran = run_job_for(
+            Duration::from_secs(2),
+            &mut command,
+            None,
+            &path,
+            &out,
+            "wrapped",
+            Clock::PerExecutable,
+        )
+        .unwrap();
+        assert_eq!(ran, Some(false));
+        assert!(
+            began.elapsed() < Duration::from_secs(12),
+            "{:?}",
+            began.elapsed()
+        );
+        let log = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            log.contains(UNTRACKABLE) && log.contains("TIMED OUT"),
+            "{log}"
         );
         let _ = std::fs::remove_file(path);
     }
