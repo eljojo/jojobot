@@ -10,12 +10,8 @@ use jojobot_domain::memory::testing::InMemoryMemory;
 use rmcp::handler::server::wrapper::Parameters;
 use std::sync::Arc;
 
-/// **A store that answers everything but which keys a record holds off its thing**: every write lands and the fold behind it never confirms — the surface's
-/// own view of what `Folded` returns when its refresh fails after a
-/// successful inner write.** `jojobot-adapters`' own tests prove `Folded`
-/// converts that shape into [`MemoryError::FoldBehind`]; this fake produces
-/// the same error directly, so a verb's handling of it is tested without
-/// standing up a real fold and a store that fails on cue underneath it.
+/// A store whose read of the keys a record keeps off its thing fails, while
+/// every other port method forwards to the in-memory store.
 struct KeysKeptUnreadable(pub(crate) Arc<InMemoryMemory>);
 
 #[jojobot_domain::forward(jojobot_domain::forward_memory, via = 0)]
