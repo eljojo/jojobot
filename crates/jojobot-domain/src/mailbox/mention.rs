@@ -123,6 +123,7 @@ impl Mentioning {
 
     fn render(message: &mut Message, known: &[Entity]) {
         message.sender = Self::current_sender_for(&message.sender, known);
+        // LEGACY_READER(old-mail-address): work:q-gate-binary-coverage
         message.body = mention::rendered(&message.body, known);
         if let Some(subject) = &message.subject {
             message.subject = Some(mention::rendered(subject, known));

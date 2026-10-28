@@ -3575,7 +3575,7 @@ impl WriteClass {
         }
     }
 }
-
+// LEGACY_READER(legacy-write-classes): work:q-gate-binary-coverage
 /// **Whether a write of this class reaches its thing.** The one reading the fold,
 /// the history of a key and the backing of a value all go through, in every store
 /// and in the fake. A key written as an own field after own fields stopped
@@ -4792,7 +4792,7 @@ pub fn folded_ages(
         .filter_map(|(key, moment)| moment.map(|moment| (key, moment)))
         .collect()
 }
-
+// LEGACY_READER(rewritten-reference-list): work:q-gate-binary-coverage
 /// The one fold: each held key's value, and the moment of the write holding it.
 fn fold(
     writes: &[KeyWrite],

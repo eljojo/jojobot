@@ -1,4 +1,4 @@
-//! The 35 deployed-store cases observed refusing a dev host without CI’s fixture.
+//! The deployed-store cases that require CI's fixture.
 //! This applies only to narrow; the boundary and report bars keep every case.
 
 pub const CASES: &[&str] = &[
@@ -29,6 +29,9 @@ pub const CASES: &[&str] = &[
     "every_recorded_held_value_joins_to_an_entity",
     "everything_naming_a_handle_the_build_stopped_supplying_follows_the_row_the_boot_gave_it",
     "field_link_holds_the_links_the_writes_imply_and_nothing_else",
+    "kitchen_sink::the_kitchen_sink_boots_once_and_reads_every_tolerated_shape",
+    "kitchen_sink::link_marking_changes_no_row_on_the_second_boot",
+    "kitchen_sink::old_merge_repair_changes_no_row_on_the_second_boot",
     "rows_classed_own_still_reach_their_things_on_the_last_deployed_store",
     "runs_in_moment_order::the_runs_of_the_last_deployed_store_read_in_moment_order_on_the_head",
     "the_boots_over_a_store_the_deployed_build_filled_log_no_warning_and_no_error",

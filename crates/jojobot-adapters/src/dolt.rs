@@ -726,6 +726,7 @@ pub const UNREADABLE_DUE_PASS: &str = "unreadable due day";
 /// the next boot runs it again; it is idempotent, because a thing stamped for
 /// `today` is not stamped twice and a stamp for another day is replaced by the
 /// one the next write makes.
+// LEGACY_READER(unreadable-loop): work:q-gate-binary-coverage
 pub async fn backfill_unreadable_due_days(
     pool: &MySqlPool,
     memory: &dyn jojobot_domain::memory::Memory,
@@ -859,6 +860,7 @@ pub const OLD_ROLE_CLAIMS_PASS: &str = "old role claims";
 /// be finished leaves the pass owed and its keys in place, so the next boot runs
 /// it again; it is idempotent, because a role that moved has no keys left to
 /// move.
+// LEGACY_READER(half-moved-role-claims): work:q-gate-binary-coverage
 pub async fn move_old_role_claims_once(
     pool: &MySqlPool,
     memory: &dyn jojobot_domain::memory::Memory,

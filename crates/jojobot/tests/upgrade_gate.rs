@@ -14,6 +14,8 @@ mod deploy_8_1;
 mod deploy_9_1;
 #[path = "upgrade_gate/deploy_9_2_1.rs"]
 mod deploy_9_2_1;
+#[path = "upgrade_gate/kitchen_sink.rs"]
+mod kitchen_sink;
 #[path = "upgrade_gate/oracle.rs"]
 mod oracle;
 #[path = "upgrade_gate/runs_in_moment_order.rs"]

@@ -33,6 +33,7 @@ impl DoltMemory {
         vec![self.repair_old_merge_events(&done).await]
     }
 
+    // LEGACY_READER(old-merge-event): work:q-gate-binary-coverage
     async fn repair_old_merge_events(&self, done: &BTreeSet<String>) -> (&'static str, Migrated) {
         let outcome = match done.contains(OLD_MERGE_EVENTS_PASS) {
             true => Migrated::Settled,

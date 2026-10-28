@@ -729,7 +729,7 @@ impl DoltMemory {
             )))
         }
     }
-
+    // LEGACY_READER(forwarded-field-link): work:q-gate-binary-coverage
     /// **Links a fold left on the forwarding row, repointed at the thing the fold
     /// ended in.** A build that swept edges, refs and parents at a fold but not
     /// field values left every field that named the folded side naming a row that
@@ -3824,7 +3824,7 @@ impl DoltMemory {
         let state = jojobot_domain::session::role_state(Some(&child));
         Ok(Some((role, state)))
     }
-
+    // LEGACY_READER(appended-lease-tail): work:q-gate-binary-coverage
     /// **The one place a row of `field_write` is changed after it was made, and
     /// the only key it may change.** A role's lease moment is machine state: the
     /// holder is alive, and what changes is when. Appending a write per renewal
@@ -8139,7 +8139,7 @@ async fn write_entity(
     append_entity_write(tx, &entity.id, clock, session).await?;
     Ok(badge)
 }
-
+// LEGACY_READER(null-written-at): work:q-gate-binary-coverage
 /// **A stored stamp as a moment**, or nothing when there is none or it does not
 /// parse. A write nobody stamped and a stamp nobody can read are the same answer
 /// to the question "when was this taken in".

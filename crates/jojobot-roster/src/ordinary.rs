@@ -19,6 +19,7 @@ pub const ORDINARY: &[&str] = &[
     "work:alpha-queue",
     "work:beta-queue",
     "work:q-1001",
+    "work:q-gate-binary-coverage",
     // A numbered series of queue cards under one queue topic, with a typo in
     // the letters of one; they name nobody.
     "topic:contract-docket",
@@ -294,6 +295,7 @@ pub const ORDINARY: &[&str] = &[
     "bot:older",
     "bot:newer",
     "bot:upgrade-fixture-wrapper",
+    "bot:upgrade-fixture-ledger",
     "bot:contract-merge-cap",
     "bot:contract-merge-ceiling-carrier",
     "bot:contract-merge-ceiling-keeper",
@@ -1231,6 +1233,8 @@ pub const ORDINARY: &[&str] = &[
     "role:groceries",
     "role:laundry",
     "role:upgrade-fixture-holder",
+    "role:upgrade-fixture-waiting",
+    "role:upgrade-fixture-part-carried",
     "thing:contract-cleared-key",
     "thing:contract-clear-off-address",
     "thing:contract-edit-lands-stored",

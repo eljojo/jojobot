@@ -176,6 +176,7 @@ pub fn fold_of(key: &str, declared: &[DeclaredType]) -> Fold {
         && declared.iter().any(|d| {
             d.origin == Origin::Shipped && d.field(key).is_some_and(|f| f.folds == Fold::Describes)
         });
+    // LEGACY_READER(stored-describing-key): work:q-gate-binary-coverage
     if build_describes {
         Fold::Describes
     } else if declares(Fold::Sum) {

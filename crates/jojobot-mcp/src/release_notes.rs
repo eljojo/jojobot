@@ -298,6 +298,7 @@ pub(crate) fn shipped_ids() -> BTreeSet<String> {
 }
 
 /// **The notes a bot's ledger holds**, or `None` for a bot that holds none yet.
+// LEGACY_READER(release-note-ledger): work:q-gate-binary-coverage
 fn ledger_of(fields: &BTreeMap<String, String>) -> Option<BTreeSet<String>> {
     fields.get(RELEASE_NOTES_TOLD).map(|ids| {
         ids.split(',')

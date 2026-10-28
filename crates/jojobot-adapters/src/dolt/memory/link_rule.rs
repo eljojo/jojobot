@@ -148,6 +148,7 @@ impl DoltMemory {
     /// when the check finds a disagreement, and says so in the report. **When it
     /// does, the writes whose link rows no mark implies are marked first**: they
     /// were made while the rule was off, which linked them at the write.
+    // LEGACY_READER(unmarked-field-link): work:q-gate-binary-coverage
     pub async fn migrate_field_links_marked(&self) -> Result<FieldLinkReport, MemoryError> {
         use std::collections::BTreeSet;
 
