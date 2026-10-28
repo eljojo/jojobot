@@ -1,13 +1,17 @@
 //! **The size check: every tracked text file is measured, no new file is over the
-//! ceiling, no red file grows, a yellow file warns, and the net lines of the
-//! change are shown by area.** Rules 273, 597, 661, 704 and the series rules of
-//! 9.3.1-1.
+//! ceiling, a red or yellow file that grew is counted, and the net lines of the
+//! change are shown by area.** Rules 273, 597, 661, 704, 741 and the series rules
+//! of 9.3.1-1.
+//!
+//! **What the limits are for.** They keep AI context and token use down and make
+//! growth mindful (rule 740). They serve the app: a limit never forces a worse
+//! design, so a change that honestly needs lines keeps them and gives the reason
+//! (rule 741).
 //!
 //! - **Red** is a file over `cap` lines (5,000), of any kind. A new red file is
-//!   refused, and so is a red file that grew against the base. A red file may
-//!   grow past its base only under a `[[raise]]` entry in `size-ratchet.toml`
-//!   that names the operator's rule number; the entry pays once, and the check
-//!   prints the raise for the engineer in charge to read.
+//!   refused. A red file that grew against the base is not refused: the check
+//!   names it with its growth, and the report of the change gives the reason
+//!   (rule 741).
 //! - **Yellow** is a file over [`YELLOW`] lines and not over [`ORANGE`] (2,001 to
 //!   3,000, subject to the cap). It may grow. The check warns about each that is new
 //!   or grew. **Orange** is a file over [`ORANGE`] lines and not red: the check warns
@@ -31,8 +35,8 @@ use crate::Summary;
 
 mod markers;
 
-/// The checked-in file, at the repo root. It holds the byte limit of an added
-/// test file and the raises that were allowed.
+/// The checked-in file, at the repo root. It holds the cap, the byte limit of an
+/// added test file and the step.
 pub const RATCHET_FILE: &str = "size-ratchet.toml";
 
 /// A file over this many lines is red.
@@ -56,14 +60,6 @@ pub const BASE_REF_VARIABLE: &str = "GITHUB_BASE_REF";
 /// The byte limit of an added test file when the file names none (rule 661).
 const TEST_FILE_BYTES: usize = 100_000;
 
-/// One allowed growth of a red file.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Raise {
-    pub path: String,
-    /// The operator's rule number that allows it.
-    pub rule: u32,
-}
-
 /// What `size-ratchet.toml` holds.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Limits {
@@ -73,7 +69,6 @@ pub struct Limits {
     pub test_file_bytes: usize,
     /// The step of the series that a change is made in, such as `9.3.1`.
     pub step: Option<String>,
-    pub raises: Vec<Raise>,
 }
 
 impl Limits {
@@ -82,21 +77,19 @@ impl Limits {
             cap: CEILING,
             test_file_bytes: TEST_FILE_BYTES,
             step: None,
-            raises: Vec::new(),
         }
     }
 
-    /// **Read the file's text.** `cap = N`, `test_file_bytes = N` and `step = "X"`
-    /// before the first table, and a `[[raise]]` table for each allowed growth with
-    /// `path` and `rule`. Paths are sorted and unique. Every refusal names the line
-    /// it is about.
+    /// **Read the file's text.** `cap = N`, `test_file_bytes = N` and `step = "X"`.
+    /// Every refusal names the line it is about.
     pub fn parse(text: &str) -> Result<Limits, String> {
         Self::read(text, false)
     }
 
     /// The same read for the file as it stood at the base: the `[[file]]` entries of
-    /// the list this replaces are skipped, not refused, and its cap, which then
-    /// meant the yellow line, is read as the ceiling.
+    /// the list this replaces and the `[[raise]]` entries of rule 704 are skipped,
+    /// not refused, and the old cap, which then meant the yellow line, is read as
+    /// the ceiling.
     fn parse_base(text: &str) -> Result<Limits, String> {
         Self::read(text, true)
     }
@@ -105,7 +98,6 @@ impl Limits {
         let mut cap = None;
         let mut step = None;
         let mut test_file_bytes = None;
-        let mut raises: Vec<(usize, Option<String>, Option<u32>)> = Vec::new();
         let mut skipping = false;
         for (index, raw) in text.lines().enumerate() {
             let number = index + 1;
@@ -113,13 +105,8 @@ impl Limits {
             if line.is_empty() || line.starts_with('#') {
                 continue;
             }
-            if line == "[[file]]" && lenient {
+            if (line == "[[file]]" || line == "[[raise]]") && lenient {
                 skipping = true;
-                continue;
-            }
-            if line == "[[raise]]" {
-                skipping = false;
-                raises.push((number, None, None));
                 continue;
             }
             if line.starts_with('[') {
@@ -132,14 +119,14 @@ impl Limits {
             if skipping {
                 continue;
             }
-            match (raises.last_mut(), key) {
-                (None, "cap") => {
+            match key {
+                "cap" => {
                     if cap.is_some() {
                         return Err(format!("line {number}: cap is given twice"));
                     }
                     cap = Some(whole(key, value, number)?);
                 }
-                (None, "step") => {
+                "step" => {
                     if step.is_some() {
                         return Err(format!("line {number}: step is given twice"));
                     }
@@ -157,60 +144,17 @@ impl Limits {
                             .to_string(),
                     );
                 }
-                (None, "test_file_bytes") => {
+                "test_file_bytes" => {
                     if test_file_bytes.is_some() {
                         return Err(format!("line {number}: test_file_bytes is given twice"));
                     }
                     test_file_bytes = Some(whole(key, value, number)?);
                 }
-                (None, _) => {
-                    return Err(format!("line {number}: {key} before any [[raise]] header"));
-                }
-                (Some((_, path, _)), "path") => {
-                    if path.is_some() {
-                        return Err(format!("line {number}: path is given twice in one entry"));
-                    }
-                    let quoted = value
-                        .strip_prefix('"')
-                        .and_then(|rest| rest.strip_suffix('"'))
-                        .filter(|inner| !inner.contains(['"', '\\']) && !inner.is_empty());
-                    *path = Some(quoted.ok_or_else(|| {
-                        format!("line {number}: path must be a non-empty string in double quotes")
-                    })?
-                    .to_string());
-                }
-                (Some((_, _, rule)), "rule") => {
-                    if rule.is_some() {
-                        return Err(format!("line {number}: rule is given twice in one entry"));
-                    }
-                    *rule = Some(value.parse().map_err(|_| {
-                        format!("line {number}: rule must be a rule number, not {value}")
-                    })?);
-                }
-                (Some(_), other) => return Err(format!("line {number}: unknown key {other}")),
+                other => return Err(format!("line {number}: unknown key {other}")),
             }
         }
         if test_file_bytes.is_some_and(|limit| limit > TEST_FILE_BYTES) {
             return Err("test_file_bytes may not exceed 100000".into());
-        }
-        let mut entries: Vec<Raise> = Vec::new();
-        for (start, path, rule) in raises {
-            let raise = Raise {
-                path: path.ok_or(format!("line {start}: the entry has no path"))?,
-                rule: rule.ok_or(format!("line {start}: the entry has no rule"))?,
-            };
-            if let Some(last) = entries.last() {
-                if last.path == raise.path {
-                    return Err(format!("line {start}: {} is listed twice", raise.path));
-                }
-                if last.path > raise.path {
-                    return Err(format!(
-                        "line {start}: {} is out of order after {}",
-                        raise.path, last.path
-                    ));
-                }
-            }
-            entries.push(raise);
         }
         let cap = match cap {
             Some(cap) if lenient && cap < CEILING => CEILING,
@@ -224,12 +168,7 @@ impl Limits {
             cap,
             test_file_bytes: test_file_bytes.unwrap_or(TEST_FILE_BYTES),
             step,
-            raises: entries,
         })
-    }
-
-    fn raise(&self, path: &str) -> Option<&Raise> {
-        self.raises.iter().find(|raise| raise.path == path)
     }
 }
 
@@ -343,12 +282,6 @@ pub enum Offence {
         base: usize,
         now: usize,
     },
-    /// A red file is longer than at the base.
-    Grew {
-        path: String,
-        base: usize,
-        now: usize,
-    },
     /// A file that is new in this change is red.
     New {
         path: String,
@@ -371,10 +304,6 @@ impl Offence {
             Offence::CapRaised { base, now } => {
                 format!("{RATCHET_FILE}: the cap went from {base} to {now}. The cap only falls.")
             }
-            Offence::Grew { path, base, now } => format!(
-                "{path}: red file grew from {base} to {now} lines. Make room by deleting. When \
-                 no deletion is possible, stop and bring the change to the PM."
-            ),
             Offence::New { path, now } => format!(
                 "{path}: new file over the cap, {now} lines. Make it smaller; do not move code \
                  to another file to keep the count."
@@ -384,13 +313,11 @@ impl Offence {
     }
 }
 
-/// **The verdict of the change**: what is refused, what only warns, what a
-/// raise allowed, and the table.
+/// **The verdict of the change**: what is refused, what only warns, and the table.
 #[derive(Debug, Default)]
 pub struct Verdict {
     pub offences: Vec<Offence>,
     pub warnings: Vec<String>,
-    pub raises: Vec<String>,
     pub red: usize,
     pub orange: usize,
     pub yellow: usize,
@@ -405,8 +332,8 @@ fn lines_at_base(change: Option<&Change>, now: usize) -> Option<usize> {
     }
 }
 
-/// **Judge the tree against the base.** A red file new in the change, or longer
-/// than it was, is refused unless a raise that the base did not hold allows it.
+/// **Judge the tree against the base.** A red file new in the change is refused. A
+/// red file longer than it was is named with its growth and not refused (rule 741).
 pub fn judge(limits: &Limits, files: &[Measured], base: &Base) -> Verdict {
     let mut verdict = Verdict::default();
     let Base::Known {
@@ -448,22 +375,13 @@ pub fn judge(limits: &Limits, files: &[Measured], base: &Base) -> Verdict {
                     path: file.path.clone(),
                     now: file.lines,
                 }),
-                Some(before) if file.lines > before => {
-                    let paid = limits
-                        .raise(&file.path)
-                        .filter(|raise| was.raise(&file.path) != Some(raise));
-                    match paid {
-                        Some(raise) => verdict.raises.push(format!(
-                            "{}: red file grew from {before} to {} under rule {}",
-                            file.path, file.lines, raise.rule
-                        )),
-                        None => verdict.offences.push(Offence::Grew {
-                            path: file.path.clone(),
-                            base: before,
-                            now: file.lines,
-                        }),
-                    }
-                }
+                Some(before) if file.lines > before => verdict.warnings.push(format!(
+                    "{}: red file grew from {before} to {} lines, {} more. Name the reason in the \
+                     report.",
+                    file.path,
+                    file.lines,
+                    file.lines - before
+                )),
                 Some(_) => {}
             }
         } else {
@@ -932,7 +850,7 @@ pub fn phase(summary: &mut Summary) {
             summary.note(&format!("  {}", offence.line()));
         }
     }
-    for line in verdict.warnings.iter().chain(&verdict.raises) {
+    for line in &verdict.warnings {
         summary.note(&format!("  warning: {line}"));
     }
     for line in render_net(rev, &net_by_area(changes)) {
@@ -1065,13 +983,6 @@ mod tests {
         }
     }
 
-    fn raise(path: &str, rule: u32) -> Raise {
-        Raise {
-            path: path.to_string(),
-            rule,
-        }
-    }
-
     /// **The file the repo ships parses**, so a hand edit that breaks the shape
     /// fails here and not only in the first run that reads it.
     #[test]
@@ -1101,30 +1012,9 @@ mod tests {
                 "step = \"9.3.1\"\nstep = \"9.3.2\"\n",
                 "line 2: step is given twice",
             ),
-            (
-                "path = \"a.rs\"\n",
-                "line 1: path before any [[raise]] header",
-            ),
+            ("path = \"a.rs\"\n", "line 1: unknown key path"),
             ("[[file]]\n", "line 1: unknown table [[file]]"),
-            ("[[raise]]\npath = a.rs\n", "line 2: path must be"),
-            (
-                "[[raise]]\npath = \"a.rs\"\n",
-                "line 1: the entry has no rule",
-            ),
-            ("[[raise]]\nrule = 7\n", "line 1: the entry has no path"),
-            (
-                "[[raise]]\nrule = x\n",
-                "line 2: rule must be a rule number",
-            ),
-            ("[[raise]]\nowner = 7\n", "line 2: unknown key owner"),
-            (
-                "[[raise]]\npath = \"b.rs\"\nrule = 1\n[[raise]]\npath = \"a.rs\"\nrule = 1\n",
-                "line 4: a.rs is out of order after b.rs",
-            ),
-            (
-                "[[raise]]\npath = \"a.rs\"\nrule = 1\n[[raise]]\npath = \"a.rs\"\nrule = 2\n",
-                "line 4: a.rs is listed twice",
-            ),
+            ("[[raise]]\n", "line 1: unknown table [[raise]]"),
         ] {
             let error = Limits::parse(text).expect_err(text);
             assert!(
@@ -1134,9 +1024,8 @@ mod tests {
         }
     }
 
-    /// **The file as the earlier list shaped it still reads at the base**: the cap
-    /// and each [[file]] entry are skipped, and the test limit
-    /// and the raises are read.
+    /// **The file as the earlier lists shaped it still reads at the base**: the cap
+    /// and each [[file]] and [[raise]] entry are skipped, and the test limit is read.
     #[test]
     fn the_base_read_skips_the_cap_and_the_old_entries() {
         let old = "cap = 2000\ntest_file_bytes = 90000\n\n[[file]]\npath = \"a.rs\"\nlines = 2100\n\
@@ -1144,12 +1033,9 @@ mod tests {
         let limits = Limits::parse_base(old).expect("the old shape reads at the base");
         assert_eq!(limits.test_file_bytes, 90_000);
         assert_eq!(limits.cap, CEILING, "the old cap meant the yellow line");
-        assert!(limits.raises.is_empty());
-        let both = "test_file_bytes = 90000\n\n[[raise]]\npath = \"a.rs\"\nrule = 704\n";
-        assert_eq!(
-            Limits::parse_base(both).unwrap().raises,
-            vec![raise("a.rs", 704)]
-        );
+        let raised = "test_file_bytes = 90000\n\n[[raise]]\npath = \"a.rs\"\nrule = 704\n";
+        let limits = Limits::parse_base(raised).expect("a raise reads at the base");
+        assert_eq!(limits.test_file_bytes, 90_000);
     }
 
     #[test]
@@ -1233,6 +1119,23 @@ mod tests {
             judge(&Limits::empty(), &files, &known(&[], Limits::empty()))
                 .offences
                 .is_empty()
+        );
+    }
+
+    /// **A red file that grew is counted, not refused** (rule 741): the warning
+    /// names the file, the before, the after and the growth.
+    #[test]
+    fn a_red_file_that_grew_is_named_with_its_growth_and_not_refused() {
+        let files = [file("b.rs", 6010)];
+        let base = known(&[("b.rs", 10, 0, false)], Limits::empty());
+        let verdict = judge(&Limits::empty(), &files, &base);
+        assert!(verdict.offences.is_empty(), "{:?}", verdict.offences);
+        assert_eq!(verdict.red, 1);
+        assert_eq!(verdict.warnings.len(), 1, "{:?}", verdict.warnings);
+        assert!(
+            verdict.warnings[0].contains("b.rs: red file grew from 6000 to 6010 lines, 10 more"),
+            "{}",
+            verdict.warnings[0]
         );
     }
 

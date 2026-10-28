@@ -236,10 +236,10 @@ fn a_tree_that_changed_nothing_is_green_with_a_size_line_in_the_verdict_block() 
     let _ = fs::remove_dir_all(&dir);
 }
 
-/// **One added line to a red file turns the run red**, and the size line names the
-/// file, the before and the after. The phases after it still run.
+/// **One added line to a red file is named and not refused** (rule 741): the
+/// warning gives the file, the before, the after and the growth.
 #[test]
-fn one_line_added_to_a_red_file_is_red_and_names_the_file() {
+fn one_line_added_to_a_red_file_is_named_and_stays_green() {
     let dir = repo("grew");
     let base = commit_files(
         &dir,
@@ -251,24 +251,14 @@ fn one_line_added_to_a_red_file_is_red_and_names_the_file() {
     fs::write(dir.join("homer.rs"), lines_of(5002)).unwrap();
 
     let ran = bar(&dir, "check", Some(&base));
-    assert_eq!(ran.code, Some(1), "{}", ran.stdout);
-    assert!(ran.stdout.contains("verdict: RED"), "{}", ran.stdout);
+    assert_eq!(ran.code, Some(0), "{}", ran.stdout);
     assert!(
         ran.stdout
-            .contains("homer.rs: red file grew from 5001 to 5002"),
+            .contains("warning: homer.rs: red file grew from 5001 to 5002 lines, 1 more"),
         "{}",
         ran.stdout
     );
-    assert!(
-        ran.stdout.contains("fmt-check: ok"),
-        "later phases run: {}",
-        ran.stdout
-    );
-    assert!(
-        ran.stdout.contains("test: ok"),
-        "later phases run: {}",
-        ran.stdout
-    );
+    assert!(size_line(&ran.stdout).contains("1 red"), "{}", ran.stdout);
     let _ = fs::remove_dir_all(&dir);
 }
 
@@ -315,10 +305,11 @@ fn a_yellow_file_that_grew_warns_and_stays_green() {
     let _ = fs::remove_dir_all(&dir);
 }
 
-/// **A moved red file is the same file**: it may move at its size and may not
-/// grow while moving, and the move shows in both areas of the table.
+/// **A moved red file is the same file**: it may move at its size, a growth in
+/// the move is named against its old size, and the move shows in both areas of
+/// the table.
 #[test]
-fn a_moved_red_file_keeps_its_size_and_cannot_grow_in_the_move() {
+fn a_moved_red_file_is_the_same_file_and_a_growth_in_the_move_is_named() {
     let dir = repo("moved");
     let base = commit_files(
         &dir,
@@ -344,7 +335,7 @@ fn a_moved_red_file_keeps_its_size_and_cannot_grow_in_the_move() {
     fs::write(dir.join("crates/b/src/big.rs"), lines_of(5201)).unwrap();
     git(&dir, &["add", "crates/b/src/big.rs"]);
     let grown = bar(&dir, "check", Some(&base));
-    assert_eq!(grown.code, Some(1), "{}", grown.stdout);
+    assert_eq!(grown.code, Some(0), "{}", grown.stdout);
     assert!(
         grown
             .stdout
@@ -355,41 +346,25 @@ fn a_moved_red_file_keeps_its_size_and_cannot_grow_in_the_move() {
     let _ = fs::remove_dir_all(&dir);
 }
 
-/// **A raise that names the operator's rule lets a red file grow once**, and the
-/// check prints it. A base that already held the same rule for the file does not
-/// pay for a second raise.
+/// **The `[[raise]]` table of rule 704 is gone**: a file that holds one fails the
+/// phase and names the line, because the growth it paid for is no longer refused.
 #[test]
-fn a_raise_pays_once_and_is_printed() {
+fn a_raise_table_fails_the_phase_naming_the_line() {
     let dir = repo("raise");
-    let base = commit_files(
+    commit_files(
         &dir,
-        &[
-            ("size-ratchet.toml", ratchet("")),
-            ("homer.rs", lines_of(5001)),
-        ],
+        &[(
+            "size-ratchet.toml",
+            ratchet("\n[[raise]]\npath = \"homer.rs\"\n"),
+        )],
     );
-    fs::write(dir.join("homer.rs"), lines_of(5010)).unwrap();
-    let bare = bar(&dir, "check", Some(&base));
-    assert_eq!(bare.code, Some(1), "{}", bare.stdout);
-
-    let raise = "\n[[raise]]\npath = \"homer.rs\"\nrule = 704\n";
-    fs::write(dir.join("size-ratchet.toml"), ratchet(raise)).unwrap();
-    let named = bar(&dir, "check", Some(&base));
-    assert_eq!(named.code, Some(0), "{}", named.stdout);
+    let ran = bar(&dir, "check", None);
+    assert_eq!(ran.code, Some(1), "{}", ran.stdout);
     assert!(
-        named
-            .stdout
-            .contains("homer.rs: red file grew from 5001 to 5010 under rule 704"),
+        size_line(&ran.stdout).contains("unknown table [[raise]]"),
         "{}",
-        named.stdout
+        ran.stdout
     );
-
-    git(&dir, &["add", "homer.rs", "size-ratchet.toml"]);
-    git(&dir, &["commit", "-q", "-m", "raise"]);
-    let second_base = git(&dir, &["rev-parse", "HEAD"]);
-    fs::write(dir.join("homer.rs"), lines_of(5020)).unwrap();
-    let again = bar(&dir, "check", Some(&second_base));
-    assert_eq!(again.code, Some(1), "{}", again.stdout);
     let _ = fs::remove_dir_all(&dir);
 }
 
@@ -470,19 +445,20 @@ fn ci_branch_base_case(wanted: Option<&str>) {
     assert!(clean.stdout.contains(&base[..10]), "{}", clean.stdout);
     assert!(!clean.stdout.contains("unknown"), "{}", clean.stdout);
 
-    fs::write(dir.join("homer.rs"), lines_of(5002)).unwrap();
-    let growth = ci_size(&dir, wanted);
-    assert_eq!(growth.code, Some(1), "{}", growth.stdout);
+    fs::write(dir.join("marge.rs"), lines_of(5001)).unwrap();
+    git(&dir, &["add", "marge.rs"]);
+    let added = ci_size(&dir, wanted);
+    assert_eq!(added.code, Some(1), "{}", added.stdout);
     assert!(
-        growth
+        added
             .stdout
-            .contains("homer.rs: red file grew from 5001 to 5002"),
+            .contains("marge.rs: new file over the cap, 5001 lines"),
         "{}",
-        growth.stdout
+        added.stdout
     );
-    assert!(!growth.stdout.contains("unknown"), "{}", growth.stdout);
+    assert!(!added.stdout.contains("unknown"), "{}", added.stdout);
 
-    git(&dir, &["add", "homer.rs"]);
+    git(&dir, &["add", "marge.rs"]);
     git(&dir, &["commit", "-qm", "base with recorded size"]);
     let explicit = git(&dir, &["rev-parse", "HEAD"]);
     let named = ci_size(&dir, Some(&explicit));
@@ -603,7 +579,7 @@ fn a_malformed_list_fails_the_phase_naming_the_line() {
             ("homer.rs", "fn main() {}\n".to_string()),
             (
                 "size-ratchet.toml",
-                "cap = 5000\n\n[[raise]]\nrule = lots\n".to_string(),
+                "cap = 5000\n\nrule = lots\n".to_string(),
             ),
         ],
     );
@@ -611,7 +587,7 @@ fn a_malformed_list_fails_the_phase_naming_the_line() {
     assert_eq!(ran.code, Some(1), "{}", ran.stdout);
     let line = size_line(&ran.stdout);
     assert!(line.starts_with("size: FAILED"), "{line}");
-    assert!(line.contains("line 4"), "{line}");
+    assert!(line.contains("line 3"), "{line}");
     let _ = fs::remove_dir_all(&dir);
 }
 
@@ -700,14 +676,17 @@ fn net_positive_code_needs_a_reason_file_with_a_reason_in_it() {
     let _ = fs::remove_dir_all(&dir);
 }
 
-/// Growth anywhere in the branch is refused before the selected crate builds.
+/// A new red file anywhere in the branch is refused before the selected crate builds.
 #[test]
-fn narrow_refuses_growth_in_another_crate_before_cargo_runs() {
+fn narrow_refuses_a_new_red_file_in_another_crate_before_cargo_runs() {
     let dir = repo("narrow");
     let path = "crates/jojobot-domain/src/homer.rs";
     let base = commit_files(
         &dir,
-        &[("size-ratchet.toml", ratchet("")), (path, lines_of(5001))],
+        &[
+            ("size-ratchet.toml", ratchet("")),
+            ("marge.rs", lines_of(10)),
+        ],
     );
     let args = ["narrow", "--crate", "jojobot-bar"];
     let unchanged = bar_with(&dir, &args, Some(&base));
@@ -719,13 +698,15 @@ fn narrow_refuses_growth_in_another_crate_before_cargo_runs() {
         "a size-clean branch still builds"
     );
     fs::remove_file(dir.join("argv.log")).unwrap();
-    fs::write(dir.join(path), lines_of(5002)).unwrap();
+    fs::create_dir_all(dir.join(path).parent().unwrap()).unwrap();
+    fs::write(dir.join(path), lines_of(5001)).unwrap();
+    git(&dir, &["add", path]);
     let grew = bar_with(&dir, &args, Some(&base));
     assert_eq!(grew.code, Some(1), "{}", grew.stdout);
     assert!(grew.stdout.contains("size: FAILED"), "{}", grew.stdout);
     assert!(
         grew.stdout
-            .contains(&format!("{path}: red file grew from 5001 to 5002")),
+            .contains(&format!("{path}: new file over the cap, 5001 lines")),
         "{}",
         grew.stdout
     );
@@ -987,7 +968,7 @@ fn make_target(
 #[test]
 fn snapshot_judges_rewritten_texts_and_keeps_a_generator_failure_red() {
     let (dir, cargo, base, path) = makefile_repo("snapshot");
-    for (mode, green) in [("same", true), ("grow", false), ("fail", false)] {
+    for (mode, green) in [("same", true), ("grow", true), ("fail", false)] {
         fs::write(dir.join(path), lines_of(5001)).unwrap();
         let output = make_target(&dir, &cargo, &base, "snapshot", mode);
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -1004,7 +985,7 @@ fn snapshot_judges_rewritten_texts_and_keeps_a_generator_failure_red() {
 
 #[test]
 fn make_static_checks_size_sources_and_branch_commit_messages() {
-    let (dir, cargo, base, path) = makefile_repo("static");
+    let (dir, cargo, base, _) = makefile_repo("static");
     let run = || make_target(&dir, &cargo, &base, "static", "same");
     let clean = run();
     assert!(clean.status.success(), "{clean:?}");
@@ -1017,11 +998,12 @@ fn make_static_checks_size_sources_and_branch_commit_messages() {
         "{calls}"
     );
 
-    fs::write(dir.join(path), lines_of(5002)).unwrap();
-    let growth = run();
-    assert!(!growth.status.success(), "{growth:?}");
-    assert!(String::from_utf8_lossy(&growth.stdout).contains(path));
-    fs::write(dir.join(path), lines_of(5001)).unwrap();
+    fs::write(dir.join("marge.md"), lines_of(5001)).unwrap();
+    git(&dir, &["add", "marge.md"]);
+    let added = run();
+    assert!(!added.status.success(), "{added:?}");
+    assert!(String::from_utf8_lossy(&added.stdout).contains("marge.md"));
+    git(&dir, &["rm", "-qf", "marge.md"]);
 
     let source = dir.join("crates/jojobot-adapters/src/homer.rs");
     fs::create_dir_all(source.parent().unwrap()).unwrap();
@@ -1223,7 +1205,7 @@ fn a_file_over_3000_lines_is_orange_and_one_under_it_is_not() {
 
 /// **A branch cut from a remote line is measured from that line, whatever the
 /// checkout's own `main` says.** The checkout's `main` is behind the carry, so
-/// the carry's growth of a red file would read as the branch's own. In CI the
+/// the carry's new red file would read as the branch's own. In CI the
 /// base stays `origin/main`, so a carry line on the remote changes nothing there.
 ///
 /// Rows: the remote lines (`a` is the lagging local `main`, `b` the commit the
@@ -1269,15 +1251,9 @@ fn a_branch_is_measured_from_the_remote_line_it_was_cut_from() {
     ];
     for (lines, ci, named, compared_with) in rows {
         let dir = repo("cut-from");
-        let a = commit_files(
-            &dir,
-            &[
-                ("size-ratchet.toml", ratchet("")),
-                ("homer.rs", lines_of(5001)),
-            ],
-        );
+        let a = commit_files(&dir, &[("size-ratchet.toml", ratchet(""))]);
         git(&dir, &["branch", "-m", "main"]);
-        let b = commit_files(&dir, &[("homer.rs", lines_of(5002))]);
+        let b = commit_files(&dir, &[("homer.rs", lines_of(5001))]);
         for (line, at) in lines {
             let at = if *at == "a" { &a } else { &b };
             git(&dir, &["update-ref", &format!("refs/remotes/{line}"), at]);

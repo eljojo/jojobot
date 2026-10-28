@@ -83,13 +83,15 @@ report: ## The report bar: check less the slow jobs the history lets go
 
 # **The size check alone**, the first phase of `check`, `report` and `dev`.
 # Every tracked text file is measured. A new file over the cap (`size-ratchet.toml`)
-# is refused, a red file may not grow past its base, and a yellow file warns. The
+# is refused, a red file that grew is named with its growth and not refused (rule
+# 741), and a yellow file warns. The limits keep AI context and token use down and
+# make growth mindful; they serve the app and never force a worse design. The
 # owned markers are checked too: a temporary path names a step, and a GAP marker or
 # tripwire names its work item. Growth is read from git against `SIZE_BASE` (a
 # revision), else `GITHUB_BASE_REF`; with neither the line says unknown, never ok.
 # `SIZE_ARGS=--net` prints the net lines by area, and `--weekly` the weekly number.
 SIZE_ARGS ?=
-size: ## The size ratchet: no new file over the cap, no listed file grows
+size: ## The size ratchet: no new file over the cap; growth of a red file is named
 	CARGO=$(CARGO) $(CARGO) run -q --locked -p jojobot-bar -- size $(SIZE_ARGS)
 
 # The local pre-push gate shares its file and commit scans with dev and narrow.
