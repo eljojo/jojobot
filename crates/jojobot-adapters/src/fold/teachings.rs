@@ -27,6 +27,10 @@ use crate::writer::{Writer, owned};
 
 type Ledger = BTreeSet<(Sid, String)>;
 
+/// TEMPORARY(9.3.3) the teaching ledger's RAM copy and its refill from the
+/// store. The projection of `jojobot_domain::teaching::events::State` replaces
+/// it, and it goes at 9.3.3.
+///
 /// A [`Teachings`] wrapped in a RAM copy of the ledger.
 #[derive(Clone)]
 pub struct FoldedTeachings {

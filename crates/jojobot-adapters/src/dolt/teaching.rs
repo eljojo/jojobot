@@ -6,6 +6,9 @@ use jojobot_domain::session::Sid;
 use jojobot_domain::teaching::{TeachingError, Teachings};
 use sqlx::MySqlPool;
 
+/// TEMPORARY(9.3.3) the teaching ledger as rows. The log of teaching events
+/// (`jojobot_domain::teaching::events`) replaces it, and it goes at 9.3.3.
+///
 /// The per-session teaching ledger, kept in the SQL store jojobot runs.
 ///
 /// Cloning shares the one pool rather than opening a second: a pool is the

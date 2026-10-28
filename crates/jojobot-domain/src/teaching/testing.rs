@@ -8,6 +8,9 @@ use jiff::Timestamp;
 use super::{TeachingError, Teachings};
 use crate::session::Sid;
 
+/// TEMPORARY(9.3.3) the fake's own teaching rules. The interpreter of
+/// `teaching::events` replaces them, and they go at 9.3.3.
+///
 /// A fake store, backed by a set rather than a table. Existence in the set is
 /// exactly what a row's existence is in the real store — there is no second
 /// mechanism here to keep honest.
