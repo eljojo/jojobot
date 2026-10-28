@@ -9,6 +9,7 @@ use jojobot_domain::text::ANSWER_CEILING;
 use std::sync::Arc;
 
 mod blank;
+mod legacy;
 
 const NOTES: &str = "---\nname: alpha\n---\n\n# Alpha notes\n\nA first paragraph.\n\n## Beta part\n\nText with a fence:\n\n```\n# not a heading\n@person:ralph\n```\n\n## Gamma part\n\nThe end, with no final newline.";
 
