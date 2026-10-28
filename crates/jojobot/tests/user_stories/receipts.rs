@@ -91,13 +91,9 @@ async fn two_accounts_of_one_evening_and_the_receipt_that_says_both_stand() {
     assert_eq!(corrected.json()["success"], true);
     assert_eq!(corrected.json()["address"], address);
 
-    // ── ④ a value the store did not keep as it was sent ─────────────────────
-    //
-    // A check-in merges the schedule jojobot computed into the caller's own
-    // record, so the record it builds is a derivation whatever the caller
-    // declared. **The substitution is correct and the silence was not**: an
-    // agent that has met one unannounced substitution has to price every other
-    // write at its worst case.
+    // ── ④ the caller's word beside the computed schedule ───────────────────
+    // The check-in keeps its declared backing; only its separate schedule is
+    // a derivation, so no provenance substitution belongs on this receipt.
     s.add("thing:jukebox", "The Jukebox").await;
     s.add_under("thing:jukebox", "rhythm:descale", "Descale")
         .await;
@@ -131,7 +127,19 @@ async fn two_accounts_of_one_evening_and_the_receipt_that_says_both_stand() {
         )
         .await;
     let receipt = checked_in.json();
-    assert_eq!(receipt["derived"]["provenance"], "inference", "{receipt}");
+    assert!(receipt["derived"]["provenance"].is_null(), "{receipt}");
+    let read = s.recall("rhythm:descale").await.json();
+    let facts = read["objects"][0]["facts"].as_array().expect("claims");
+    let source = facts
+        .iter()
+        .find(|fact| fact["address"] == receipt["address"])
+        .expect("the caller's check-in is stored");
+    assert_eq!(source["provenance"], "testimony", "{read}");
+    let schedule = facts
+        .iter()
+        .find(|fact| fact["derived_from"] == source["address"])
+        .expect("the computed schedule cites the check-in");
+    assert_eq!(schedule["provenance"], "inference", "{read}");
     assert!(
         receipt.get("delta").is_none(),
         "the sent value is not echoed: {receipt}"
