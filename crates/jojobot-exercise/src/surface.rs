@@ -163,9 +163,9 @@ impl Surface {
         let response = sending
             .send()
             .await
-            .context("reaching the room's compiled harness route")?
-            .error_for_status()
-            .context("the room's compiled harness route refused the observation")?;
+            .context("reaching the room's compiled harness route")?;
+        let status = response.status();
+        anyhow::ensure!(status.is_success(), "room harness {status}");
         response.json().await.context("the harness answers JSON")
     }
 }
