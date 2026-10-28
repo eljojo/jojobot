@@ -124,6 +124,11 @@
 //!   and the address itself is not nameable in the document at all, because
 //!   January invents the loop's handle, so the address it addresses is a
 //!   word no lock may spell.
+//! * **`decembers_note_names_what_it_was_worked_out_from`** — ask the records
+//!   dated 2026-12-13 for their own `derived_from`. Every check-in's schedule
+//!   record on the same loop carries that key too, so a needle for it matches
+//!   records that are not December's, and the lock format cannot scope one
+//!   needle to one record.
 //! * **`one_place_after_the_correction`** — accept either of two end states for
 //!   one claim: a merge record on a place, or both claims active on one place
 //!   with the other place archived. The lock format does not branch, and
@@ -204,7 +209,7 @@ type Hatch = (&'static str, fn() -> Box<dyn Checks>);
 
 /// **Every named check this build ships.** A room adds one line here and one
 /// `check` line in its document, and both are visible in the count.
-pub const CHECKS: [Hatch; 55] = [
+pub const CHECKS: [Hatch; 56] = [
     ("question_one_rule_answer", || {
         rule_answer_check("work:pm-state", &[241, 275], &[129, 189, 284])
     }),
@@ -401,6 +406,9 @@ pub const CHECKS: [Hatch; 55] = [
             })
         },
     ),
+    ("decembers_note_names_what_it_was_worked_out_from", || {
+        checked(|seen| Box::pin(decembers_note_names_what_it_was_worked_out_from(seen)))
+    }),
     (
         "the_my_bikes_view_returns_exactly_the_bikes_still_owned",
         || {
@@ -3129,6 +3137,50 @@ async fn decembers_note_is_reachable_by_the_walk_back_from_the_cadence(
             "walking back from {cadence} does not reach a claim recorded on 2026-12-13, so \
              either December's note does not name its lineage or the walk that reads lineage \
              back does not find it: {built}"
+        )),
+    }
+}
+
+/// **December's overdue note names the claim it was worked out from.**
+///
+/// The loop's answer holds a `derived_from` on every check-in's computed
+/// schedule record as well as on December's note, so a needle for the key
+/// matches records that are not December's. This reads the records dated
+/// 2026-12-13 by structure and asks each of them for its own pointer.
+async fn decembers_note_names_what_it_was_worked_out_from(
+    seen: &Observed<'_>,
+) -> Result<(), String> {
+    let read = seen
+        .room
+        .call(
+            "recall",
+            with_details(json!({"kind": "rhythm", "fields": [{"key": "cadence_days", "value": "90"}], "facts": true})),
+        )
+        .await;
+    let parsed: Value = read_json(&read)?;
+    let dated: Vec<&Value> = parsed["objects"][0]["facts"]
+        .as_array()
+        .map(|facts| {
+            facts
+                .iter()
+                .filter(|fact| fact["recorded_at"] == "2026-12-13")
+                .collect()
+        })
+        .unwrap_or_default();
+    if dated.is_empty() {
+        return Err(format!(
+            "the loop carrying a ninety-day cadence holds no record dated 2026-12-13, so there \
+             is no overdue note to read a source from: {read}"
+        ));
+    }
+    match dated.iter().all(|fact| {
+        fact["derived_from"]
+            .as_str()
+            .is_some_and(|from| !from.is_empty())
+    }) {
+        true => Ok(()),
+        false => Err(format!(
+            "a record dated 2026-12-13 on the loop names no claim it was worked out from: {read}"
         )),
     }
 }

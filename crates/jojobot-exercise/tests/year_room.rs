@@ -4849,12 +4849,12 @@ async fn a_retracted_claim_reads_as_archived_and_carries_its_own_retraction_poin
 /// the key/value pair and once at the string under it, and reported fourteen
 /// where a hand-check found three.
 ///
-/// **The count is one: December's `"derived_from":"` needle.** A check-in stores
-/// its computed schedule as a derived record of its own, so the loop's answer
-/// holds several `derived_from` keys and the needle matches each. It is no
-/// finding: the lock's other needle, `"recorded_at":"2026-12-13"`, matches once
-/// and only December's sitting satisfies it. The day a record was written is
-/// not a field, so no filter can narrow the read to that record.
+/// **The count moved to zero once October stopped capturing a second, live
+/// `person:ralph` beside September's.** `carries person:ralph` used to match
+/// February's own record and September's both, because October's old play
+/// left September's account active beside Nelson's rather than correcting it.
+/// A correction in place folds September's address to Nelson's current
+/// account, so only February's own mention of Ralph remains.
 #[tokio::test]
 async fn no_lock_here_rests_on_a_needle_that_matches_somewhere_else() {
     let (_room, surface) = furnished().await;
@@ -4883,7 +4883,7 @@ async fn no_lock_here_rests_on_a_needle_that_matches_somewhere_else() {
         summary.nowhere,
     );
     assert_eq!(
-        summary.ambiguous, 1,
+        summary.ambiguous, 0,
         "the walk sees a different number of ambiguous needles than the hand-check did, so it is \
          reading the answer differently",
     );
