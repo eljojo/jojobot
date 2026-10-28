@@ -16,7 +16,7 @@ found. It never guesses a dir.
 RECOVERY. Before the command compiles anything the guard writes a marker in the
 target dir with a snapshot of the units in debug/incremental; the command waits
 for that. A command that ends by itself, red or green, removes the marker and
-nothing else. A SIGKILL runs no handler, so the marker survives it. The next run
+nothing else; one that a signal ends keeps it. A SIGKILL runs no handler, so the marker survives it. The next run
 kills the recorded process group, leader gone or not, and waits until it is
 empty. Only then does it measure the units, remove those whose files changed or
 appeared since the snapshot, remove the marker, and run. It never touches deps,
@@ -146,8 +146,11 @@ def main(command):
     os.write(release, b"go\n")
     os.close(release)
     code = child.wait()
+    if code < 0:
+        # A signal ended the command, so the build was cut short: keep the marker.
+        return 128 - code
     marker.unlink(missing_ok=True)
-    return code if code >= 0 else 128 - code
+    return code
 
 
 if __name__ == "__main__":

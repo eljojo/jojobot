@@ -263,6 +263,32 @@ fn a_command_does_not_start_when_the_marker_cannot_be_written() {
     let _ = fs::remove_dir_all(root);
 }
 
+/// **A command that a signal ends leaves the marker**, the guard still alive:
+/// the build was interrupted, so the next run cleans what it touched.
+#[test]
+fn a_command_ended_by_a_signal_leaves_the_marker_and_the_next_run_cleans_up() {
+    let root = scratch("signal");
+    let own = root.join("own");
+    let untouched = unit(&own, "untouched");
+    let touched = unit(&own, "touched");
+    let command = format!(
+        "echo more > {t}/session/data; touch -d @1 {t}/session/data; kill -9 $$",
+        t = touched.display()
+    );
+    let out = guard(&root, &own, Some(&own), &command);
+    assert_eq!(out.status.code(), Some(137), "{}", said(&out));
+    assert!(
+        own.join(".build-guard.json").exists(),
+        "the marker was dropped"
+    );
+
+    let out = guard(&root, &own, Some(&own), "true");
+    assert_eq!(out.status.code(), Some(0), "{}", said(&out));
+    assert!(!touched.exists(), "the interrupted unit stayed");
+    assert!(untouched.exists());
+    let _ = fs::remove_dir_all(root);
+}
+
 /// **Both local loops run through the guard**, ahead of the first cargo run.
 #[test]
 fn make_dev_and_make_narrow_run_through_the_guard() {
