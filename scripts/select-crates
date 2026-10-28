@@ -12,7 +12,7 @@ def full(reason, allow_docs=False):
                 allow_docs=allow_docs)
 
 
-def select(paths, metadata, patterns):
+def select(paths, metadata, patterns, always):
     for path in paths:
         if any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns):
             return full(f"full run because of path {path}")
@@ -48,7 +48,14 @@ def select(paths, metadata, patterns):
             break
         reasons.update(added)
     selected = [p for p in packages if p["name"] in reasons]
+    targets = {(p["name"], t["name"]) for p in packages for t in p["targets"]
+               if "test" in t["kind"]}
+    for owner, target in always:
+        if (owner, target) not in targets:
+            return full(f"unknown workspace scanner {owner}/{target}")
     return dict(full=False, packages=sorted(reasons),
+                always_tests=[(owner, target) for owner, target in always
+                              if owner not in reasons],
                 reason="; ".join(f"{name}: {reasons[name]}" for name in sorted(reasons)),
                 tests=sorted({t["name"] for p in selected for t in p["targets"]
                               if "test" in t["kind"]}),
@@ -69,10 +76,12 @@ def main():
         paths = [p for p in paths.decode().split("\0") if p]
         patterns = [p.strip() for p in Path("scripts/ci-full-paths.txt").read_text().splitlines()
                     if p.strip() and not p.startswith("#")]
+        always = [line.split() for line in Path("scripts/ci-always-tests.txt").read_text().splitlines()
+                  if line.strip() and not line.startswith("#")]
         metadata = subprocess.run([os.environ.get("CARGO", "cargo"), "metadata", "--no-deps",
                                    "--format-version", "1", "--locked"],
                                   check=True, capture_output=True, text=True)
-        return select(paths, json.loads(metadata.stdout), patterns)
+        return select(paths, json.loads(metadata.stdout), patterns, always)
     except (OSError, ValueError, KeyError, TypeError, subprocess.CalledProcessError) as error:
         return full(f"selection unavailable ({error}); run everything")
 

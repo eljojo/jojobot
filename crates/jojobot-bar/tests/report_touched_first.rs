@@ -212,6 +212,8 @@ fn selection_fixture() -> (PathBuf, String) {
     );
     support::write_executable(&cargo, &script);
     fs::create_dir_all(dir.join("scripts")).unwrap();
+    // This small workspace has no cross-crate source scanners.
+    fs::write(dir.join("scripts/ci-always-tests.txt"), "").unwrap();
     for name in ["select-crates", "ci-full-paths.txt"] {
         let source = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../scripts")
@@ -234,6 +236,122 @@ fn crate_selection(dir: &Path, base: &str) -> serde_json::Value {
     .unwrap();
     assert!(out.status.success(), "{out:?}");
     serde_json::from_slice(&out.stdout).unwrap()
+}
+
+#[test]
+fn ci_crate_mcp_change_keeps_workspace_scanners() {
+    let (dir, _) = selection_fixture();
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let out = support::output_fenced(
+        Command::new("cargo")
+            .args(["metadata", "--no-deps", "--format-version", "1", "--locked"])
+            .current_dir(&source),
+    )
+    .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let metadata = String::from_utf8(out.stdout).unwrap().replace(
+        source.canonicalize().unwrap().to_str().unwrap(),
+        dir.to_str().unwrap(),
+    );
+    let cargo = fs::read_to_string(dir.join("cargo")).unwrap();
+    let begin = cargo.find("cat <<'JSON'\n").unwrap() + "cat <<'JSON'\n".len();
+    let end = cargo[begin..].find("\nJSON").unwrap() + begin;
+    let mut cargo = format!("{}{}{}", &cargo[..begin], metadata.trim(), &cargo[end..]);
+    let begin = cargo.find("    echo '  Executable").unwrap();
+    let end = cargo[begin..].find("    exit 0 ;;").unwrap() + begin;
+    cargo.replace_range(begin..end, "    echo '  Executable unittests src/lib.rs (/x/deps/jojobot_mcp-1)'\n    echo '  Executable unittests src/lib.rs (/x/deps/jojobot_domain-2)'\n");
+    support::write_executable(&dir.join("cargo"), &cargo);
+    let always = source.join("scripts/ci-always-tests.txt");
+    if always.exists() {
+        fs::copy(always, dir.join("scripts/ci-always-tests.txt")).unwrap();
+    }
+    let base = git(&dir, &["rev-parse", "HEAD"]);
+    fs::create_dir_all(dir.join("crates/jojobot-mcp/src")).unwrap();
+    fs::write(dir.join("crates/jojobot-mcp/src/lib.rs"), "// MCP change\n").unwrap();
+    git(&dir, &["add", "crates/jojobot-mcp"]);
+    git(&dir, &["commit", "-q", "-m", "MCP only"]);
+    let selected = crate_selection(&dir, &base);
+    assert_eq!(selected["full"], false, "{selected}");
+    let out = support::output_fenced(
+        Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
+            .arg("report")
+            .current_dir(&dir)
+            .env("CARGO", dir.join("cargo"))
+            .env("BAR_HISTORY_DIR", dir.join("history"))
+            .env("BAR_JOBS", "1")
+            .env("BAR_SELECT_BY_CRATE", "1")
+            .env("BAR_SELECT_BASE", &base),
+    )
+    .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let jobs = calls(&dir);
+    for (owner, target) in [
+        ("jojobot-domain", "fixture_roster"),
+        ("jojobot-bar", "no_forgotten_guards"),
+        ("jojobot-domain", "served_text"),
+        ("jojobot-adapters", "real_store_scratch"),
+    ] {
+        assert!(
+            jobs.iter()
+                .any(|c| c.starts_with("test ")
+                    && c.contains(&format!("-p {owner} --test {target}"))),
+            "scanner missing: {owner}/{target}: {jobs:?}"
+        );
+    }
+    assert!(
+        !jobs
+            .iter()
+            .any(|c| c.starts_with("test ") && c.contains("-p jojobot-domain --lib")),
+        "unrelated library: {jobs:?}"
+    );
+    assert!(
+        !selected["packages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p == "jojobot-domain"),
+        "{selected}"
+    );
+}
+
+#[test]
+fn ci_crate_fetch_and_selection_share_the_current_carry() {
+    let workflow = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.forgejo/workflows/branch.yml"),
+    )
+    .unwrap();
+    assert!(
+        workflow
+            .lines()
+            .any(|line| line.trim() == "BAR_SELECT_BASE: origin/em-931-carry")
+    );
+    assert_eq!(workflow.matches("em-931-carry").count(), 1);
+    let fetch = workflow
+        .lines()
+        .find(|line| line.trim().starts_with("git fetch origin "))
+        .unwrap()
+        .trim();
+    let dir = scratch();
+    support::write_executable(&dir.join("git"), "#!/bin/sh\nprintf '%s\\n' \"$@\"\n");
+    let path = std::env::join_paths(
+        std::iter::once(dir.clone())
+            .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+    )
+    .unwrap();
+    for branch in ["alpha-carry", "beta-carry"] {
+        let out = support::output_fenced(
+            Command::new("sh")
+                .args(["-c", fetch])
+                .env("PATH", &path)
+                .env("BAR_SELECT_BASE", format!("origin/{branch}")),
+        )
+        .unwrap();
+        assert!(out.status.success(), "{out:?}");
+        assert_eq!(
+            String::from_utf8(out.stdout).unwrap(),
+            format!("fetch\norigin\n{branch}:refs/remotes/origin/{branch}\n")
+        );
+    }
 }
 
 #[test]

@@ -53,7 +53,7 @@ env:
   # Select only on working-branch pushes. Dispatch and every boundary lane
   # keep their full plan. A missing carry ref makes the selector run everything.
   BAR_SELECT_BY_CRATE: ${{ forgejo.event_name == 'push' && '1' || '0' }}
-  BAR_SELECT_BASE: origin/em-923-carry
+  BAR_SELECT_BASE: origin/em-931-carry
   SIZE_BASE: origin/main
   JOJOBOT_METRICS_WORKFLOW: branch
   JOJOBOT_METRICS_JOB: ${{ forgejo.job }}
@@ -136,7 +136,7 @@ jobs:
       - name: Job plan
         id: plan
         run: |
-          git fetch origin em-923-carry:refs/remotes/origin/em-923-carry || true
+          git fetch origin "${BAR_SELECT_BASE#origin/}:refs/remotes/${BAR_SELECT_BASE}" || true
           mkdir -p target/bar
           nix develop -c cargo run -q --locked -p jojobot-bar -- plan report 2>target/bar/plan.log || { cat target/bar/plan.log >&2; exit 1; }
         env:

@@ -7,6 +7,7 @@ use std::sync::OnceLock;
 pub(super) struct Selection {
     packages: BTreeSet<String>,
     tests: BTreeSet<String>,
+    always_tests: Vec<(String, String)>,
     bins: bool,
     pub allow_docs: bool,
     reason: String,
@@ -46,6 +47,10 @@ pub(super) fn current() -> Option<&'static Selection> {
                 vec!["--workspace".to_string()]
             };
             Some(Selection {
+                always_tests: value
+                    .as_ref()
+                    .and_then(|v| serde_json::from_value(v["always_tests"].clone()).ok())
+                    .unwrap_or_default(),
                 tests: names("tests"),
                 packages,
                 scope,
@@ -82,6 +87,15 @@ impl Selection {
                 [flag] if flag == "--bins" => self.bins,
                 _ => true,
             })
+            // Scanner ownership must not widen the shared bins/doc-tests scope.
+            .chain(self.always_tests.iter().map(|(owner, target)| {
+                vec![
+                    "-p".to_string(),
+                    owner.clone(),
+                    "--test".to_string(),
+                    target.clone(),
+                ]
+            }))
             .collect()
     }
 }

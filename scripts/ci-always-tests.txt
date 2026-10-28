@@ -1,0 +1,5 @@
+# Package and test target: these guards read sources outside their own crate.
+jojobot-domain fixture_roster
+jojobot-domain served_text
+jojobot-bar no_forgotten_guards
+jojobot-adapters real_store_scratch
