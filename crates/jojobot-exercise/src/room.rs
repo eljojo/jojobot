@@ -1042,7 +1042,7 @@ fn names_a_room(dir: &str) -> bool {
         part.as_os_str().to_str().is_some_and(|name| {
             name.starts_with(ROOM_PREFIX)
                 || (jojobot_ports::scratch::owner(name).is_some()
-                    && name.rsplit('-').next() == Some(ROOM_LABEL))
+                    && name.splitn(5, '-').nth(4) == Some(ROOM_LABEL))
         })
     })
 }
@@ -1992,6 +1992,7 @@ mod tests {
         }
         for name in [
             jojobot_ports::scratch::name("agent"),
+            jojobot_ports::scratch::name("replay-room"),
             "jojobot-scratch-0-0-room".into(),
         ] {
             let args = vec![
