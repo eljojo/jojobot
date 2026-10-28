@@ -165,6 +165,104 @@ fn cleanup_is_refused_for_a_symlink_out_of_the_cache_and_for_a_live_owner() {
     let _ = fs::remove_dir_all(root);
 }
 
+/// **A symlinked incremental root leads out of the owned target**, so cleanup is
+/// refused and another line's cache is left whole, even though every unit under
+/// the link resolves inside the link's own target.
+#[test]
+fn an_incremental_root_that_leads_out_of_the_target_is_never_cleaned() {
+    let root = scratch("root-link");
+    let own = root.join("own");
+    unit(&own, "touched");
+    let started = root.join("started");
+    guard(&root, &own, Some(&own), "kill -9 $PPID; sleep 1");
+    assert!(own.join(".build-guard.json").exists(), "no marker left");
+
+    let theirs = unit(&root.join("other"), "theirs");
+    fs::remove_dir_all(own.join("debug/incremental")).unwrap();
+    std::os::unix::fs::symlink(
+        root.join("other/debug/incremental"),
+        own.join("debug/incremental"),
+    )
+    .unwrap();
+    let out = guard(
+        &root,
+        &own,
+        Some(&own),
+        &format!("touch {}", started.display()),
+    );
+    assert_eq!(out.status.code(), Some(2), "{}", said(&out));
+    assert!(theirs.exists(), "another line's unit was removed");
+    assert!(!started.exists(), "the command started");
+    let _ = fs::remove_dir_all(root);
+}
+
+/// **The dead run's whole process group is reaped before anything is measured**,
+/// even when its leader has exited and a descendant still writes units.
+#[test]
+fn a_descendant_of_a_dead_run_is_reaped_before_the_units_are_measured() {
+    let root = scratch("reap");
+    let own = root.join("own");
+    let kept = unit(&own, "kept");
+    let pidfile = root.join("writer.pid");
+    let units = own.join("debug/incremental");
+    // The leader starts a writer in its group, kills the guard and exits.
+    let command = format!(
+        "(i=0; while :; do mkdir -p {u}/late-$i/s; i=$((i+1)); sleep 0.005; done) </dev/null >/dev/null 2>&1 & \
+         echo $! > {p}; sleep 0.3; kill -9 $PPID",
+        u = units.display(),
+        p = pidfile.display()
+    );
+    guard(&root, &own, Some(&own), &command);
+    let writer = fs::read_to_string(&pidfile).unwrap().trim().to_string();
+    let alive = |pid: &str| {
+        Command::new("kill")
+            .args(["-0", pid])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    };
+    assert!(alive(&writer), "the writer ended with its leader");
+
+    let out = guard(&root, &own, Some(&own), "true");
+    assert_eq!(out.status.code(), Some(0), "{}", said(&out));
+    assert!(!alive(&writer), "the writer outlived the recovery");
+    let late: Vec<String> = fs::read_dir(&units)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with("late-"))
+        .collect();
+    assert!(late.is_empty(), "units the writer made were left: {late:?}");
+    assert!(kept.exists());
+    let _ = fs::remove_dir_all(root);
+}
+
+/// **The command does not start until the marker is on disk.** A marker that
+/// cannot be written stops the run before anything compiles.
+#[test]
+fn a_command_does_not_start_when_the_marker_cannot_be_written() {
+    let root = scratch("handshake");
+    let own = root.join("own");
+    fs::create_dir_all(&own).unwrap();
+    // A dangling link: the marker is absent, and writing it fails.
+    std::os::unix::fs::symlink(
+        root.join("no/such/dir/marker"),
+        own.join(".build-guard.json"),
+    )
+    .unwrap();
+    let started = root.join("started");
+    let out = guard(
+        &root,
+        &own,
+        Some(&own),
+        &format!("touch {}", started.display()),
+    );
+    assert_ne!(out.status.code(), Some(0), "{}", said(&out));
+    // The child may be released a moment after the guard decides; give it time.
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    assert!(!started.exists(), "the command started without a marker");
+    let _ = fs::remove_dir_all(root);
+}
+
 /// **Both local loops run through the guard**, ahead of the first cargo run.
 #[test]
 fn make_dev_and_make_narrow_run_through_the_guard() {

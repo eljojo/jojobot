@@ -13,14 +13,16 @@ whatever launches the line. The guard compares it with the target_directory that
 at all refuses with exit 2 and one line saying what was expected and what was
 found. It never guesses a dir.
 
-RECOVERY. Before it starts the command the guard writes a marker in the target
-dir with a snapshot of the units in debug/incremental. A command that ends by
-itself, red or green, removes the marker and nothing else. A SIGKILL runs no
-handler, so the marker survives it. The next run reaps the recorded process
-group, removes only the units whose files changed or appeared since the
-snapshot, removes the marker, and then runs. It never touches deps, fingerprints,
-other units or another dir. If a unit leads out of the cache, or the run that
-wrote the marker is still alive, it refuses and leaves everything as it is.
+RECOVERY. Before the command compiles anything the guard writes a marker in the
+target dir with a snapshot of the units in debug/incremental; the command waits
+for that. A command that ends by itself, red or green, removes the marker and
+nothing else. A SIGKILL runs no handler, so the marker survives it. The next run
+kills the recorded process group, leader gone or not, and waits until it is
+empty. Only then does it measure the units, remove those whose files changed or
+appeared since the snapshot, remove the marker, and run. It never touches deps,
+fingerprints, other units or another dir. If debug/ or the incremental root or a
+unit leads out of the target dir, or the run that wrote the marker is still
+alive, it refuses and leaves everything as it is.
 """
 import hashlib
 import json
@@ -29,6 +31,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 EXPECTED = "JOJOBOT_EXPECTED_TARGET_DIR"
@@ -44,6 +47,31 @@ def start_time(pid):
         return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[19]
     except (OSError, IndexError):
         return None
+
+
+def confine(found, incremental):
+    """Refuse a debug dir or an incremental root that leads out of the owned target dir."""
+    for path in (found / "debug", incremental):
+        if path.is_symlink() or not path.resolve().is_relative_to(found.resolve()):
+            raise Refused(f"{path} leads out of the target dir {found}; nothing was removed")
+
+
+def reap(state):
+    """Kill what is left of the dead run's process group and wait until it is gone."""
+    pgid = state["pgid"]
+    leader = start_time(pgid)
+    if leader is not None and leader != state.get("start"):
+        return  # the id belongs to another process now
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+        for _ in range(100):
+            os.killpg(pgid, 0)
+            time.sleep(0.05)
+    except ProcessLookupError:
+        return
+    except PermissionError:
+        pass
+    raise Refused(f"the process group {pgid} of the dead run did not end")
 
 
 def snapshot(incremental):
@@ -66,9 +94,8 @@ def recover(marker, incremental):
     state = json.loads(marker.read_text())
     if start_time(state["pid"]) is not None and state["pid"] != os.getpid():
         raise Refused(f"the run that left {marker} (pid {state['pid']}) is still running")
+    reap(state)
     now = snapshot(incremental)
-    if state.get("start") is not None and start_time(state["pgid"]) == state["start"]:
-        os.killpg(state["pgid"], signal.SIGKILL)
     for name, signature in now.items():
         if state["units"].get(name) != signature:
             shutil.rmtree(incremental / name)
@@ -93,6 +120,7 @@ def main(command):
         if Path(expected).resolve() != found.resolve():
             raise Refused(f"expected target dir {expected}, found {found}")
         incremental, marker = found / "debug" / "incremental", found / ".build-guard.json"
+        confine(found, incremental)
         if marker.exists():
             recover(marker, incremental)
         units = snapshot(incremental)
@@ -100,9 +128,23 @@ def main(command):
         print(f"build guard: {why}", file=sys.stderr)
         return 2
     found.mkdir(parents=True, exist_ok=True)
-    child = subprocess.Popen(command, start_new_session=True)
-    marker.write_text(json.dumps({"pid": os.getpid(), "pgid": child.pid,
-                                  "start": start_time(child.pid), "units": units}))
+    # The command waits for a byte on a pipe, so it cannot compile before the marker
+    # is on disk. If this process dies first, the pipe closes and the command exits.
+    ready, release = os.pipe()
+    child = subprocess.Popen(["sh", "-c", 'read go <&$0 || exit 1; exec "$@"', str(ready), *command],
+                             pass_fds=(ready,), start_new_session=True)
+    os.close(ready)
+    try:
+        marker.write_text(json.dumps({"pid": os.getpid(), "pgid": child.pid,
+                                      "start": start_time(child.pid), "units": units}))
+    except OSError as why:
+        os.close(release)
+        child.wait()
+        print(f"build guard: the marker could not be written, so nothing was started: {why}",
+              file=sys.stderr)
+        return 2
+    os.write(release, b"go\n")
+    os.close(release)
     code = child.wait()
     marker.unlink(missing_ok=True)
     return code if code >= 0 else 128 - code
