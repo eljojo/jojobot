@@ -59,6 +59,10 @@ pub(crate) struct Note {
 /// fails for it.
 pub(crate) const SHIPPED: &[(&str, &str)] = &[
     (
+        "edge-types-use-writable-tokens",
+        include_str!("../release-notes/deploy-9.3.1/edge-types-use-writable-tokens.md"),
+    ),
+    (
         "memory-write-receipts",
         include_str!("../release-notes/deploy-9.3.1/memory-write-receipts.md"),
     ),
