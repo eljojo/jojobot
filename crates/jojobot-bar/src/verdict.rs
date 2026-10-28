@@ -96,7 +96,7 @@ pub struct Failure {
     pub infra: Option<Infra>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Suite {
     pub name: String,
     pub passed: usize,
@@ -114,12 +114,7 @@ impl Suite {
     fn new(name: &str) -> Self {
         Suite {
             name: name.to_string(),
-            passed: 0,
-            failed: 0,
-            crashed: false,
-            infra: None,
-            reported: false,
-            failures: Vec::new(),
+            ..Suite::default()
         }
     }
 
@@ -172,8 +167,8 @@ pub struct Verdict {
 }
 
 /// **The name of a suite from its `Running` line**: the binary's file name
-/// without cargo's hash (`jojobot_adapters-4060…` is `jojobot_adapters`), or the
-/// text as it is when no path follows.
+/// without the hash cargo adds (`jojobot_adapters-4060…` is `jojobot_adapters`),
+/// or the text as it is when no path follows.
 fn binary_name(path: &str) -> &str {
     let file = path.rsplit('/').next().unwrap_or(path);
     match file.rsplit_once('-') {
@@ -208,117 +203,200 @@ fn crashed_binary(line: &str) -> Option<&str> {
     Some(binary_name(path))
 }
 
-/// **Turn a test run's text and its exit status into the verdict.** `not_run`
-/// is how many jobs the bar left out because an earlier one was red.
-pub fn read(text: &str, exit_ok: bool, not_run: usize) -> Verdict {
-    let mut suites: Vec<Suite> = Vec::new();
-    // What the lines before the first suite said: a build that ran out of disk.
-    let mut preamble: Option<Infra> = None;
-    // The failure whose output the lines are inside, and whether the line that
-    // names its panic was seen: the message is on the next line.
-    let mut inside: Option<usize> = None;
-    let mut awaiting_message: Option<String> = None;
+/// **One suite as the text printed it**, before anything is decided about it.
+#[derive(Default)]
+struct Record<'a> {
+    name: String,
+    /// How many `test result:` lines it printed. None means it never reported.
+    results: usize,
+    passed: usize,
+    failed: usize,
+    /// The `test <name> ... FAILED` lines, in print order.
+    failing: Vec<String>,
+    /// The output under each `---- <name> stdout ----` header, line by line.
+    bodies: Vec<(&'a str, Vec<&'a str>)>,
+    /// Every other line, except the lines about single tests.
+    loose: Vec<&'a str>,
+}
 
+/// **A test run's text read once**: the lines before the first suite and the
+/// suites. The summary and the verdict are both projections of this.
+#[derive(Default)]
+pub(crate) struct Parsed<'a> {
+    preamble: Vec<&'a str>,
+    records: Vec<Record<'a>>,
+}
+
+/// **Read a `cargo test` run's combined output into its suites.** It never
+/// looks at an exit status. A suite's lines with no `Running` line before them
+/// are still a suite, so a red is not dropped for want of a header.
+pub(crate) fn parse(text: &str) -> Parsed<'_> {
+    let mut out = Parsed::default();
+    // The failure whose output the lines are inside: a record and a body.
+    let mut inside: Option<(usize, usize)> = None;
     for line in text.lines() {
         if let Some(name) = suite_start(line) {
-            suites.push(Suite::new(&name));
-            inside = None;
-            awaiting_message = None;
+            if let Some((r, b)) = inside {
+                out.records[r].bodies[b].1.push(line);
+            }
+            out.records.push(Record {
+                name,
+                ..Record::default()
+            });
             continue;
         }
-        if suites.is_empty() && infra_of(line).is_some() && preamble.is_none() {
-            preamble = infra_of(line);
+        let starts_a_suite = ["test ", "---- ", "failures:"]
+            .iter()
+            .any(|p| line.starts_with(p));
+        if out.records.is_empty() {
+            if !starts_a_suite {
+                out.preamble.push(line);
+                continue;
+            }
+            out.records.push(Record {
+                name: "(unnamed)".to_string(),
+                ..Record::default()
+            });
         }
-        // A suite's lines with no `Running` line before them are still a suite:
-        // a red must never be dropped for want of a header.
-        if suites.is_empty()
-            && ["test ", "---- ", "failures:"]
-                .iter()
-                .any(|p| line.starts_with(p))
-        {
-            suites.push(Suite::new("(unnamed)"));
-        }
-        let Some(current) = suites.len().checked_sub(1) else {
-            continue;
-        };
+        let current = out.records.len() - 1;
         if let Some(name) = line
             .strip_prefix("---- ")
             .and_then(|rest| rest.strip_suffix(" stdout ----"))
         {
-            let at = suites[current].failures.iter().position(|f| f.test == name);
-            inside = Some(at.unwrap_or_else(|| {
-                suites[current].failures.push(Failure {
-                    test: name.to_string(),
-                    first_line: String::new(),
-                    infra: None,
-                });
-                suites[current].failures.len() - 1
-            }));
-            awaiting_message = None;
+            out.records[current].bodies.push((name, Vec::new()));
+            inside = Some((current, out.records[current].bodies.len() - 1));
             continue;
         }
-        if line == "failures:" || line.starts_with("test result: ") {
+        let mut in_body = false;
+        if line == "failures:" || line.starts_with("test result: ") || line.starts_with("---- ") {
             inside = None;
-            awaiting_message = None;
+        } else if let Some((r, b)) = inside {
+            out.records[r].bodies[b].1.push(line);
+            in_body = true;
         }
-        if let Some(at) = inside {
-            let failure = &mut suites[current].failures[at];
-            if let Some(place) = line.split(" panicked at ").nth(1) {
-                awaiting_message = Some(place.trim().to_string());
-                failure.first_line = place.trim().to_string();
-            } else if let Some(place) = awaiting_message.take_if(|_| !line.trim().is_empty()) {
-                failure.first_line = format!("{place} {}", line.trim());
-            } else if failure.first_line.is_empty() && !line.trim().is_empty() {
-                failure.first_line = line.trim().to_string();
-            }
-        }
+        let record = &mut out.records[current];
         if let Some(rest) = line.strip_prefix("test result: ") {
-            suites[current].reported = true;
+            record.results += 1;
             if let Some((passed, failed)) = suite_counts(rest) {
-                suites[current].passed += passed;
-                suites[current].failed += failed;
+                record.passed += passed;
+                record.failed += failed;
             }
-        } else if let Some(record) = parse_test_line(line) {
-            if record.verdict == TestOutcome::Failed
-                && !suites[current]
-                    .failures
-                    .iter()
-                    .any(|f| f.test == record.test)
-            {
-                suites[current].failures.push(Failure {
-                    test: record.test,
-                    first_line: String::new(),
-                    infra: None,
-                });
+        } else if let Some(test) = parse_test_line(line) {
+            if test.verdict == TestOutcome::Failed {
+                record.failing.push(test.test);
             }
-            // A passing test's name is not a reason.
-            continue;
+        } else if !in_body {
+            record.loose.push(line);
         }
-        // The suite a line is about: a crash line names its own binary.
-        let about = match crashed_binary(line) {
-            Some(bin) => {
-                let at = suites
-                    .iter()
-                    .position(|s| s.name == bin || s.name == format!("{bin} (unit tests)"))
-                    .unwrap_or_else(|| {
-                        suites.push(Suite::new(bin));
-                        suites.len() - 1
-                    });
-                suites[at].crashed = true;
-                at
-            }
-            None => current,
-        };
-        match inside {
-            // The output of one failing test names a reason for that test only.
-            Some(at) if about == current => {
-                let failure = &mut suites[current].failures[at];
-                if failure.infra.is_none() {
-                    failure.infra = infra_of(line);
+    }
+    out
+}
+
+impl Parsed<'_> {
+    /// **The summary of the run**: the counts and the failures the text states.
+    pub(crate) fn test_verdict(&self) -> crate::TestVerdict {
+        let mut verdict = crate::TestVerdict::default();
+        for record in &self.records {
+            verdict.suites += record.results;
+            verdict.passed += record.passed;
+            verdict.failed += record.failed;
+            verdict.failed_names.extend(record.failing.iter().cloned());
+            for (name, lines) in &record.bodies {
+                let body = verdict.failures.entry((*name).to_string()).or_default();
+                for line in lines {
+                    body.push_str(line);
+                    body.push('\n');
                 }
             }
-            _ if suites[about].infra.is_none() => suites[about].infra = infra_of(line),
-            _ => {}
+        }
+        verdict.compiled = verdict.suites > 0;
+        verdict
+    }
+}
+
+/// **The first thing a failing test said**: the place of its panic and the line
+/// under it, or its first non-blank line when it did not panic.
+fn first_line(lines: &[&str]) -> String {
+    let mut first = String::new();
+    let mut awaiting: Option<String> = None;
+    for line in lines {
+        if let Some(place) = line.split(" panicked at ").nth(1) {
+            awaiting = Some(place.trim().to_string());
+            first = place.trim().to_string();
+        } else if let Some(place) = awaiting.take_if(|_| !line.trim().is_empty()) {
+            first = format!("{place} {}", line.trim());
+        } else if first.is_empty() && !line.trim().is_empty() {
+            first = line.trim().to_string();
+        }
+    }
+    first
+}
+
+impl Suite {
+    /// The suite as the verdict holds it. A name that appears in a `FAILED` line
+    /// and under a header is one failure.
+    fn of(record: &Record<'_>) -> Self {
+        let mut suite = Suite::new(&record.name);
+        suite.passed = record.passed;
+        suite.failed = record.failed;
+        suite.reported = record.results > 0;
+        let named = record
+            .failing
+            .iter()
+            .map(String::as_str)
+            .chain(record.bodies.iter().map(|(name, _)| *name));
+        for name in named {
+            if suite.failures.iter().any(|f| f.test == name) {
+                continue;
+            }
+            let lines: Vec<&str> = record
+                .bodies
+                .iter()
+                .filter(|(body, _)| *body == name)
+                .flat_map(|(_, lines)| lines.iter().copied())
+                .collect();
+            // A line about a single test is not a reason.
+            let infra = lines
+                .iter()
+                .filter(|line| parse_test_line(line).is_none())
+                .find_map(|line| infra_of(line));
+            suite.failures.push(Failure {
+                test: name.to_string(),
+                first_line: first_line(&lines),
+                infra,
+            });
+        }
+        suite
+    }
+}
+
+/// **Turn a test run's text and its exit status into the verdict.** `not_run`
+/// is how many jobs the bar left out because an earlier one was red.
+pub fn read(text: &str, exit_ok: bool, not_run: usize) -> Verdict {
+    let parsed = parse(text);
+    let counted = parsed.test_verdict();
+    let mut suites: Vec<Suite> = parsed.records.iter().map(Suite::of).collect();
+    // A line outside any failure's output may name a machine reason for its
+    // suite, or the binary a signal ended.
+    for (i, record) in parsed.records.iter().enumerate() {
+        for line in &record.loose {
+            let about = match crashed_binary(line) {
+                Some(bin) => {
+                    let at = suites
+                        .iter()
+                        .position(|s| s.name == bin || s.name == format!("{bin} (unit tests)"))
+                        .unwrap_or_else(|| {
+                            suites.push(Suite::new(bin));
+                            suites.len() - 1
+                        });
+                    suites[at].crashed = true;
+                    at
+                }
+                None => i,
+            };
+            if suites[about].infra.is_none() {
+                suites[about].infra = infra_of(line);
+            }
         }
     }
     // A binary that started and never reported, in a run that failed, ended
@@ -329,10 +407,8 @@ pub fn read(text: &str, exit_ok: bool, not_run: usize) -> Verdict {
             suite.crashed = true;
         }
     }
-
-    // The totals are the summary's own: one reading of what a run counted.
-    let counted = crate::summarize_test_output(text);
-    let (suites_total, passed, compiled) = (counted.suites, counted.passed, counted.compiled);
+    // What the lines before the first suite said: a build that ran out of disk.
+    let preamble = parsed.preamble.iter().find_map(|line| infra_of(line));
     let red: Vec<Suite> = suites.into_iter().filter(Suite::red).collect();
     let infra = red.iter().find_map(Suite::seen_infra).or(preamble);
     let code_red = red.iter().any(Suite::code_red);
@@ -344,7 +420,7 @@ pub fn read(text: &str, exit_ok: bool, not_run: usize) -> Verdict {
         Overall::Infra
     } else if !exit_ok {
         Overall::Red
-    } else if suites_total == 0 {
+    } else if counted.suites == 0 {
         Overall::NoVerdict
     } else {
         Overall::Green
@@ -356,9 +432,9 @@ pub fn read(text: &str, exit_ok: bool, not_run: usize) -> Verdict {
             _ => None,
         },
         exit_ok,
-        compiled,
-        suites_total,
-        passed,
+        compiled: counted.compiled,
+        suites_total: counted.suites,
+        passed: counted.passed,
         not_run,
         red,
         failed_phases: Vec::new(),
@@ -624,6 +700,18 @@ mod tests {
         assert!(verdict.red[0].crashed);
         // With a zero exit status the same text names nothing red.
         assert_ne!(read(BUNDLE_KILLED, true, 0).overall, Overall::Red);
+    }
+
+    /// **A binary that started and never reported has not compiled a suite.**
+    /// The summary and the verdict both say so; the verdict still names the
+    /// crashed suite.
+    #[test]
+    fn a_started_binary_with_no_result_line_is_not_a_reported_suite() {
+        let counted = crate::summarize_test_output(KILLED);
+        assert_eq!((counted.compiled, counted.suites), (false, 0));
+        let verdict = read(KILLED, false, 0);
+        assert_eq!((verdict.compiled, verdict.suites_total), (false, 0));
+        assert!(verdict.red[0].crashed);
     }
 
     /// **The counts are the summary's own**: both read one text one way.

@@ -108,42 +108,10 @@ pub fn test_healthy(exit_ok: bool, verdict: &TestVerdict) -> bool {
 /// same reason: an exit code a caller obtained by piping the run is not this
 /// function's to trust.
 pub fn summarize_test_output(output: &str) -> TestVerdict {
-    let mut verdict = TestVerdict {
+    TestVerdict {
         timed_out: deadline::named(output),
-        ..TestVerdict::default()
-    };
-    // The test whose failure section the lines are inside, if any.
-    let mut inside: Option<String> = None;
-    for line in output.lines() {
-        if let Some(name) = line
-            .strip_prefix("---- ")
-            .and_then(|rest| rest.strip_suffix(" stdout ----"))
-        {
-            inside = Some(name.to_string());
-            verdict.failures.entry(name.to_string()).or_default();
-            continue;
-        }
-        if line == "failures:" || line.starts_with("test result: ") || line.starts_with("---- ") {
-            inside = None;
-        } else if let Some(name) = &inside {
-            let body = verdict.failures.entry(name.clone()).or_default();
-            body.push_str(line);
-            body.push('\n');
-        }
-        if let Some(rest) = line.strip_prefix("test result: ") {
-            verdict.suites += 1;
-            if let Some((passed, failed)) = suite_counts(rest) {
-                verdict.passed += passed;
-                verdict.failed += failed;
-            }
-        } else if let Some(record) = history::parse_test_line(line)
-            && record.verdict == Verdict::Failed
-        {
-            verdict.failed_names.push(record.test);
-        }
+        ..verdict::parse(output).test_verdict()
     }
-    verdict.compiled = verdict.suites > 0;
-    verdict
 }
 
 /// **How many test binaries run at once when nothing says otherwise.** Eight
