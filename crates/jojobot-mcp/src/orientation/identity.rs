@@ -318,7 +318,7 @@ pub(crate) struct IdentityParts<'a> {
 /// **Whether reading a bot's box may repair it.** Only the boot repairs; a
 /// write that measures the boot reads the same block and changes nothing.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Repair {
+pub(crate) enum Repair {
     Yes,
     No,
 }
@@ -352,6 +352,7 @@ impl Jojobot {
         bot: &EntityId,
         answering: Answering,
         as_of: jiff::civil::Date,
+        repair: Repair,
     ) -> Result<Result<serde_json::Value, Vec<EntityMatch>>, McpError> {
         let Some(entity) = index.iter().find(|e| &e.id == bot) else {
             return Ok(Err(guard::screen(bot, &[], index)));
@@ -422,7 +423,10 @@ impl Jojobot {
                 jojobot_domain::memory::rule_seats_of(&Default::default())
             }
         };
-        let owned_mailbox = self.owned_mailbox(entity).await?;
+        let owned_mailbox = match repair {
+            Repair::Yes => self.owned_mailbox(entity).await?,
+            Repair::No => self.owned_mailbox_read(entity).await?,
+        };
         let mut body = self
             .identity_block(IdentityParts {
                 entity,

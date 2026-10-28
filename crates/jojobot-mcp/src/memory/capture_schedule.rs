@@ -51,7 +51,8 @@ impl Jojobot {
         &self,
         source: &Fact,
         schedule: &Schedule,
-        caller: &crate::caller::Caller,
+        author: &EntityId,
+        by_session: Option<&str>,
     ) -> Result<Option<jojobot_domain::memory::search::Behind>, MemoryError> {
         let mut fields = schedule.fields.clone();
         let derived = fields.keys().cloned().collect();
@@ -64,8 +65,8 @@ impl Jojobot {
             derived_from: Some(source.address()),
             fields,
             derived,
-            session: Some(caller.sid.as_str().to_string()),
-            written_by_bot: Some(caller.bot.clone()),
+            session: by_session.map(str::to_string),
+            written_by_bot: Some(author.clone()),
             must_day: schedule.must_day,
             ..NewFact::about(
                 source.subject.clone(),

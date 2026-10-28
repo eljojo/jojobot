@@ -525,10 +525,8 @@ impl Jojobot {
                     // the server's clock would tell a run working through March
                     // that its own rules expired months ago — in the very call
                     // that accepted the day (rule 222).
-                    match today {
-                        Some(stated) => stated,
-                        None => self.clock().today_in(&frame_zone()),
-                    },
+                    today.unwrap_or_else(|| self.clock().today_in(&frame_zone())),
+                    super::identity::Repair::Yes,
                 )
                 .await?
             {

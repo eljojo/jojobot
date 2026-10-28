@@ -294,8 +294,19 @@ impl Jojobot {
         subject: &EntityId,
         caller: &crate::caller::Caller,
     ) -> Option<CallToolResult> {
+        self.end_what_is_owed_by(verb, subject, &caller.bot, Some(caller.sid.as_str()))
+            .await
+    }
+
+    async fn end_what_is_owed_by(
+        &self,
+        verb: &str,
+        subject: &EntityId,
+        author: &EntityId,
+        by_session: Option<&str>,
+    ) -> Option<CallToolResult> {
         let cleared = self
-            .clear_stored_due_moment(subject, &caller.bot, Some(caller.sid.as_str()))
+            .clear_stored_due_moment(subject, author, by_session)
             .await;
         if let Err(cause) = &cleared
             && jojobot_domain::request::carries_an_id()
@@ -322,14 +333,18 @@ impl Jojobot {
         &self,
         mode: &super::capture::Mode,
         subject: &EntityId,
-        caller: &crate::caller::Caller,
+        author: &EntityId,
+        by_session: Option<&str>,
     ) -> Option<CallToolResult> {
         match &mode.ends_later {
             Some(later) => {
                 later.store(true, std::sync::atomic::Ordering::SeqCst);
                 None
             }
-            None => self.end_what_is_owed("capture", subject, caller).await,
+            None => {
+                self.end_what_is_owed_by("capture", subject, author, by_session)
+                    .await
+            }
         }
     }
 

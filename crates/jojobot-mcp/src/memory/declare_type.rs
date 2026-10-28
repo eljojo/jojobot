@@ -243,7 +243,7 @@ impl Jojobot {
     )]
     pub(crate) async fn declare_type(
         &self,
-        Parameters(args): Parameters<DeclareTypeArgs>,
+        Parameters(mut args): Parameters<DeclareTypeArgs>,
     ) -> Result<CallToolResult, McpError> {
         // Resolved before the write runs — see [`Jojobot::attributable`]. This
         // verb publishes a `sid` and says it is what tells jojobot who is
@@ -255,6 +255,34 @@ impl Jojobot {
         // Good by the check above, so a carried handle resolves; a call that
         // carried none is declared by no run.
         let caller = self.caller(args.sid.as_deref()).ok().flatten();
+        let sid = args.sid.take();
+        match self
+            .declare_type_write(
+                caller.as_ref().map(|caller| &caller.bot),
+                args,
+                caller.as_ref().map(|caller| caller.sid.as_str()),
+            )
+            .await?
+        {
+            Ok(body) => {
+                // **A declaration is a write, and a write renews the caller's claim.**
+                // It has no beat of its own to do it.
+                self.renew_role_claims_of(sid.as_deref()).await;
+                json_result(&body)
+            }
+            Err(refused) => Ok(refused),
+        }
+    }
+}
+
+impl Jojobot {
+    /// The current type port records a session stamp, but takes no author.
+    pub(crate) async fn declare_type_write(
+        &self,
+        _author: Option<&EntityId>,
+        args: DeclareTypeArgs,
+        by_session: Option<&str>,
+    ) -> Result<Result<serde_json::Value, CallToolResult>, McpError> {
         let mut fields = Vec::with_capacity(args.fields.len());
         // **What each closed set was sent as**, taken before the values are
         // trimmed, because trimming is what the receipt below reports.
@@ -304,7 +332,7 @@ impl Jojobot {
         // **Validated before the fold guard**, so a declaration the domain would
         // refuse is refused as invalid and is never handed an override token.
         if let Err(invalid) = jojobot_domain::memory::types::validate_type(&incoming) {
-            return memory_declined("declare_type", invalid);
+            return memory_declined("declare_type", invalid).map(Err);
         }
         let held = self.memory.declared_types().await.map_err(memory_error)?;
         let moved = self
@@ -318,12 +346,12 @@ impl Jojobot {
             match kept_override_reason(args.override_token(), args.override_reason()) {
                 Some(reason) if lifted => overridden = Some(reason.to_string()),
                 _ => {
-                    return Ok(refusal_for_fold_moves(
+                    return Ok(Err(refusal_for_fold_moves(
                         &incoming,
                         &moved,
                         &token,
                         &TokenSlot::from(&args),
-                    ));
+                    )));
                 }
             }
         }
@@ -334,14 +362,14 @@ impl Jojobot {
             .declared_types()
             .await
             .map(|types| types.into_iter().find(|t| t.name == args.name.trim()));
-        let declared = match jojobot_domain::request::armed(self.memory.declare_type(
-            DeclaredType::new(&args.name, fields),
-            caller.as_ref().map(|caller| caller.sid.as_str()),
-        ))
+        let declared = match jojobot_domain::request::armed(
+            self.memory
+                .declare_type(DeclaredType::new(&args.name, fields), by_session),
+        )
         .await
         {
             Ok(declared) => declared,
-            Err(e) => return memory_declined("declare_type", e),
+            Err(e) => return memory_declined("declare_type", e).map(Err),
         };
         // **The override is logged before anything else is read**, so a read that
         // fails after the write still leaves the one record of it that outlives the
@@ -425,10 +453,7 @@ impl Jojobot {
                 Err(_) => crate::changed::Changed::not_read(),
             },
         );
-        // **A declaration is a write, and a write renews the caller's claim.**
-        // It has no beat of its own to do it.
-        self.renew_role_claims_of(args.sid.as_deref()).await;
-        json_result(&body)
+        Ok(Ok(body))
     }
 }
 

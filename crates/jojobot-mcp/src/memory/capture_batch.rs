@@ -619,8 +619,8 @@ impl Jojobot {
                         part: None,
                         tick_state,
                         ends_later: None,
-                        caller: Some(caller.clone()),
                     },
+                    Some(caller.clone()),
                 )
                 .await?;
             if let Item::Refused(why) = read_item(&checked) {
@@ -700,8 +700,8 @@ impl Jojobot {
                             part: Some(part_of(at)),
                             tick_state: None,
                             ends_later: Some(ends_later.clone()),
-                            caller: Some(caller.clone()),
                         },
+                        Some(caller.clone()),
                     ),
                 )
                 .await;

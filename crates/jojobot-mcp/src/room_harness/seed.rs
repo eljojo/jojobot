@@ -1,8 +1,6 @@
-//! Scenario furniture uses the production write ports without a setup run.
+//! Scenario furniture uses the same decisions and writes as the MCP handlers.
 
 use super::*;
-use crate::memory::parse::{entity_id, parse_boot, parse_provenance};
-use jojobot_domain::attention;
 use jojobot_domain::session::{NewEntry, NewSession, SessionState};
 
 #[derive(serde::Deserialize)]
@@ -37,30 +35,17 @@ impl Harness {
         }
         let count = writes.len();
         for write in writes {
-            match write {
-                SeedWrite::AsTheOccupant(verb, arguments) => {
-                    self.write(&author, &verb, arguments).await?
-                }
+            let (verb, args, charter) = match write {
+                SeedWrite::AsTheOccupant(verb, args) => (verb, args, None),
                 SeedWrite::HouseBot {
                     handle,
                     name,
                     charter,
-                } => {
-                    self.write(
-                        &author,
-                        "add_entity",
-                        serde_json::json!({
-                            "kind":"bot", "handle":handle, "name":name, "source":"the room"
-                        }),
-                    )
-                    .await?;
-                    let bot = crate::memory::parse::bot_id(&handle).map_err(err)?;
-                    self.handler
-                        .memory
-                        .set_prose(&bot, &charter, None)
-                        .await
-                        .map_err(err)?;
-                }
+                } => (
+                    "add_entity".into(),
+                    serde_json::json!({"kind":"bot", "handle":handle, "name":name, "source":"the room"}),
+                    Some((handle, charter)),
+                ),
                 SeedWrite::HouseSitting {
                     bot,
                     day,
@@ -99,230 +84,94 @@ impl Harness {
                         .close(&run.id, SessionState::Wrapped)
                         .await
                         .map_err(err)?;
+                    continue;
                 }
-            }
-        }
-        Ok(serde_json::json!({"seeded":count}))
-    }
-
-    async fn write(&self, author: &EntityId, verb: &str, args: Value) -> Result<(), String> {
-        match verb {
-            "add_entity" => {
-                let id = entity_id(text(&args, "kind")?, text(&args, "handle")?).map_err(err)?;
-                let mut new =
-                    NewEntity::new(id.clone(), text(&args, "name")?, text(&args, "source")?);
-                new.parent = args["parent"].as_str().map(EntityId::person);
-                new.boot = parse_boot(args["boot"].as_str()).map_err(err)?;
-                new.override_token = args["override_token"].as_str().map(str::to_string);
-                new.override_reason = args["override_reason"].as_str().map(str::to_string);
-                let first = match args.get("sets") {
-                    Some(sets) => Some(
-                        self.prepare(self.fact(author, &id, &new.name, sets)?)
-                            .await
-                            .0,
-                    ),
-                    None => None,
-                };
-                let written = self.create(new.clone(), first.clone()).await?;
-                let entity = match written {
-                    Guarded::Blocked {
-                        attempted,
-                        candidates,
-                    } if args.get("declared_near").is_some() && attempted == new.id => {
-                        new.override_token = Some(guard::override_token(&attempted, &candidates));
-                        written_value(self.create(new, first).await?)?
-                    }
-                    other => written_value(other)?,
-                };
-                if entity.id.kind() == Some(EntityKind::BOT) {
-                    let name = MailboxName(
-                        entity
-                            .id
-                            .as_str()
-                            .strip_prefix("bot:")
-                            .ok_or("bot handle")?
-                            .to_string(),
-                    );
-                    mailbox_written(
+            };
+            let day = self.handler.clock.today_in(&jiff::tz::TimeZone::UTC);
+            match verb.as_str() {
+                "add_entity" => {
+                    let near = args["declared_near"].as_str().map(str::to_string);
+                    let added = accepted(
                         self.handler
-                            .mailboxes
-                            .create_mailbox(&name, &entity.id, None)
+                            .add_entity_write(&author, decode(args)?, day, None, near.as_deref())
+                            .await
+                            .map_err(err)?,
+                    )?;
+                    if !added.complete() {
+                        return Err(
+                            "the bot was created but its mailbox could not be opened".into()
+                        );
+                    }
+                }
+                "capture" => {
+                    accepted(
+                        self.handler
+                            .capture_write(
+                                &author,
+                                decode(args)?,
+                                day,
+                                None,
+                                &crate::memory::capture::Mode::default(),
+                                None,
+                            )
                             .await
                             .map_err(err)?,
                     )?;
                 }
+                "declare_type" => {
+                    accepted(
+                        self.handler
+                            .declare_type_write(Some(&author), decode(args)?, None)
+                            .await
+                            .map_err(err)?,
+                    )?;
+                }
+                "post_message" => {
+                    let args = decode(args)?;
+                    let recipient =
+                        accepted(self.handler.message_recipient(&args).await.map_err(err)?)?;
+                    let destination = accepted(
+                        self.handler
+                            .message_destination(&recipient)
+                            .await
+                            .map_err(err)?,
+                    )?;
+                    accepted(
+                        self.handler
+                            .post_message_write(
+                                &author,
+                                args,
+                                &recipient,
+                                destination,
+                                crate::mailboxes::post_message::write::MessageAudit::default(),
+                            )
+                            .await
+                            .map_err(err)?,
+                    )?;
+                }
+                _ => return Err(format!("{verb} is not room furniture")),
             }
-            "capture" => {
-                let subject = EntityId::person(text(&args, "subject")?);
-                let mut fact =
-                    self.fact(author, &subject, text(&args, "content")?, &args["sets"])?;
-                fact.provenance = parse_provenance(args["provenance"].as_str()).map_err(err)?;
-                let (fact, clears_due) = self.prepare(fact).await;
-                written_value(self.handler.memory.capture(fact).await.map_err(err)?)?;
-                if clears_due {
+            if let Some((handle, charter)) = charter {
+                let bot = crate::memory::parse::bot_id(&handle).map_err(err)?;
+                accepted(
                     self.handler
-                        .clear_stored_due_moment(&subject, author, None)
-                        .await
-                        .map_err(|error| {
-                            format!("the seeded due moment could not be cleared: {error:?}")
-                        })?;
-                }
-            }
-            "declare_type" => {
-                let mut fields = Vec::new();
-                for field in args["fields"]
-                    .as_array()
-                    .ok_or("type fields are an array")?
-                {
-                    let key = text(field, "key")?;
-                    let holds = text(field, "holds")?;
-                    fields.push(
-                        Field::of_token(key, holds)
-                            .ok_or_else(|| format!("unknown field type {holds}"))?,
-                    );
-                }
-                self.handler
-                    .memory
-                    .declare_type(DeclaredType::new(text(&args, "name")?, fields), None)
-                    .await
-                    .map_err(err)?;
-            }
-            "post_message" => {
-                let to = text(&args, "to")?;
-                let bot = crate::memory::parse::bot_id(to).map_err(err)?;
-                let board = self.handler.mailboxes.list_mailboxes().await.map_err(err)?;
-                let matches: Vec<_> = board
-                    .iter()
-                    .filter(|box_| box_.owner == bot || box_.name.as_str() == to)
-                    .collect();
-                if matches.len() != 1 {
-                    return Err(format!("{to} does not name exactly one mailbox"));
-                }
-                let message = NewMessage {
-                    mailbox: matches[0].name.clone(),
-                    body: text(&args, "body")?.into(),
-                    subject: args["subject"].as_str().map(str::to_string),
-                    sender: author.as_str().into(),
-                    sent_at: self.handler.clock.now(),
-                    in_reply_to: None,
-                    supersedes: None,
-                    sender_mail_waiting_at_send: None,
-                    posted_by_session: None,
-                };
-                mailbox_written(
-                    self.handler
-                        .mailboxes
-                        .post_message(message)
+                        .set_charter_write(&author, &bot, &charter, None)
                         .await
                         .map_err(err)?,
                 )?;
             }
-            _ => return Err(format!("{verb} is not room furniture")),
         }
-        Ok(())
+        Ok(serde_json::json!({"seeded":count}))
     }
-
-    fn fact(
-        &self,
-        author: &EntityId,
-        subject: &EntityId,
-        content: &str,
-        sets: &Value,
-    ) -> Result<NewFact, String> {
-        let mut fact = NewFact::about(
-            subject.clone(),
-            content,
-            self.handler.clock.today_in(&jiff::tz::TimeZone::UTC),
-        );
-        if !sets.is_null() {
-            fact.fields = decode(sets.clone())?;
-        }
-        fact.sets = fact.fields.keys().cloned().collect();
-        fact.written_by_bot = Some(author.clone());
-        Ok(fact)
-    }
-
-    /// Seeded settings carry the same arithmetic as a capture, with no caller.
-    async fn prepare(&self, mut fact: NewFact) -> (NewFact, bool) {
-        let unread = crate::memory::instance_unread::InstanceUnread::default();
-        let (moved, derived) = self
-            .handler
-            .moved_due_moment(&fact.subject, &fact.fields, &[], fact.recorded_at, &unread)
-            .await;
-        if let attention::DueMove::Set(day) = moved {
-            fact.fields
-                .insert(attention::DUE_ON.to_string(), day.to_string());
-            fact.derived.insert(attention::DUE_ON.to_string());
-            if derived {
-                fact.provenance = Provenance::Inference;
-            }
-        }
-        (fact, matches!(moved, attention::DueMove::Cleared))
-    }
-
-    async fn create(
-        &self,
-        new: NewEntity,
-        first: Option<NewFact>,
-    ) -> Result<Guarded<Entity>, String> {
-        match first {
-            Some(first) => Ok(
-                match self
-                    .handler
-                    .memory
-                    .add_entity_with_first_claim(new, first)
-                    .await
-                    .map_err(err)?
-                {
-                    Guarded::Written((entity, _)) => Guarded::Written(entity),
-                    Guarded::Blocked {
-                        attempted,
-                        candidates,
-                    } => Guarded::Blocked {
-                        attempted,
-                        candidates,
-                    },
-                },
-            ),
-            None => self.handler.memory.add_entity(new).await.map_err(err),
-        }
-    }
-}
-
-fn text<'a>(value: &'a Value, key: &str) -> Result<&'a str, String> {
-    value[key]
-        .as_str()
-        .ok_or_else(|| format!("{key} is a string"))
 }
 
 fn err(error: impl std::fmt::Display) -> String {
     error.to_string()
 }
 
-fn written_value<T>(value: Guarded<T>) -> Result<T, String> {
-    match value {
-        Guarded::Written(value) => Ok(value),
-        Guarded::Blocked {
-            attempted,
-            candidates,
-        } => Err(format!("room seed refused {attempted}: {candidates:?}")),
-    }
-}
-
-fn mailbox_written<T>(value: mailbox::Guarded<T>) -> Result<T, String> {
-    match value {
-        mailbox::Guarded::Written(value) => Ok(value),
-        mailbox::Guarded::Blocked {
-            attempted,
-            candidates,
-        } => Err(format!(
-            "room seed refused mailbox {attempted}: {candidates:?}"
-        )),
-        mailbox::Guarded::UnknownOwner {
-            attempted,
-            candidates,
-        } => Err(format!(
-            "room seed refused owner {attempted}: {candidates:?}"
-        )),
+fn accepted<T>(outcome: Result<T, rmcp::model::CallToolResult>) -> Result<T, String> {
+    match outcome {
+        Ok(written) => Ok(written),
+        Err(refused) => Err(body(refused)?.to_string()),
     }
 }

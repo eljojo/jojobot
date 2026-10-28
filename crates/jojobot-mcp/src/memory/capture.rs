@@ -486,7 +486,7 @@ impl super::declined::AcceptsOverride for CaptureArgs {
 /// **How one pass of the capture path is used.** The default is a single
 /// capture: it writes, and it takes the placement lock itself.
 #[derive(Debug, Default, Clone)]
-pub(super) struct Mode {
+pub(crate) struct Mode {
     /// Run every guard and stop before the write.
     pub(super) check_only: bool,
     /// The batch already holds the list's placement lock.
@@ -500,9 +500,6 @@ pub(super) struct Mode {
     /// **Set by an item of a batch that ends what is owed**, in place of that item
     /// ending it: the batch ends it once, after its last item.
     pub(super) ends_later: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
-    /// **The caller a batch has already identified**, so each item reuses that
-    /// read of the run. `None` identifies the caller, as every single capture does.
-    pub(super) caller: Option<crate::caller::Caller>,
 }
 
 /// A plain capture still carries any due moment it computes in that same
@@ -525,6 +522,25 @@ pub(super) const WHY_THIS_BASIS_IS_HAND_TYPED: &str = "counts_from on this recor
 pub(super) const WHY_THIS_BASIS_WAS_DERIVED: &str = "This check-in opened the loop: it held a cadence and no basis, so counts_from was derived \
     from this check-in's own date,";
 
+pub(crate) struct Captured {
+    captured: Fact,
+    fold_behind: Option<jojobot_domain::memory::search::Behind>,
+    before: Result<Option<jojobot_domain::memory::search::DocScan>, ()>,
+    unread: super::instance_unread::InstanceUnread,
+    reads: super::reads_left::ReadsLeft,
+    checked_in: bool,
+    due_on_set: bool,
+    due_on_computed: attention::DueMove,
+    opened_basis: Option<String>,
+    sets_named: Vec<String>,
+    dropped_keys: super::placement_gate::DroppedKeys,
+    own_sent: Vec<String>,
+    sent_field_keys: Vec<String>,
+    ticked: Option<(String, &'static str, Option<EntityId>)>,
+    echoed_defaults: Vec<String>,
+    check_in_dates_disagree: bool,
+    _placing: Option<tokio::sync::OwnedMutexGuard<()>>,
+}
 struct Declared {
     subject: String,
     provenance: Option<String>,
@@ -789,7 +805,7 @@ impl Jojobot {
         if args.entries.is_some() || args.ticks.is_some() {
             return self.capture_batch(args).await;
         }
-        self.capture_one(args, Mode::default()).await
+        self.capture_one(args, Mode::default(), None).await
     }
 
     /// **The one write path for a claim**, for the single form and for each item
@@ -800,20 +816,17 @@ impl Jojobot {
         &self,
         args: CaptureArgs,
         mode: Mode,
+        resolved: Option<crate::caller::Caller>,
     ) -> Result<CallToolResult, McpError> {
         // Refused here, before anything is written — see
         // [`Jojobot::attributable`].
-        let caller = match mode.caller.clone() {
+        let caller = match resolved {
             Some(caller) => caller,
             None => match self.identified_for_write(args.sid.as_deref()).await {
                 Ok(caller) => caller,
                 Err(refused) => return Ok(refused),
             },
         };
-        // **What this write could not work out for want of the instance record**,
-        // named on the receipt.
-        let unread = super::instance_unread::InstanceUnread::default();
-        let reads = super::reads_left::ReadsLeft::default();
         // **An earlier call under this id may have left its computed schedule
         // or the taking off of a due moment unfinished.** The checks and
         // arithmetic below judge the thing as
@@ -821,27 +834,255 @@ impl Jojobot {
         if let Some(recorded) = jojobot_domain::request::skip("claim") {
             return self.capture_finished(&args, &caller, recorded).await;
         }
+        let day = self.dated(None, args.sid.as_deref()).await?;
+        let declared = Declared::of(&args);
+        let mut writing_args = args.clone();
+        writing_args.sid = None;
+        let Captured {
+            captured,
+            fold_behind,
+            before,
+            unread,
+            reads,
+            checked_in,
+            due_on_set,
+            due_on_computed,
+            opened_basis,
+            sets_named,
+            dropped_keys,
+            own_sent,
+            sent_field_keys,
+            ticked,
+            echoed_defaults,
+            check_in_dates_disagree,
+            _placing,
+        } = match self
+            .capture_write(
+                &caller.bot,
+                writing_args,
+                day,
+                Some(caller.sid.as_str()),
+                &mode,
+                Some(&caller),
+            )
+            .await?
+        {
+            Ok(written) => written,
+            Err(answer) => return Ok(answer),
+        };
+        let fact = captured;
+        let recorded_at = fact.recorded_at;
+        self.beat("capture", fact.subject.as_str(), args.sid.as_deref())
+            .await;
+        // **As of the day the RUN is asking about, never the day the
+        // claim is about** (rule 222). `date` above is what the claim
+        // is true OF, which is a different question from whether its
+        // reading still stands today — and the read that follows this
+        // write answers as of today, so a receipt answering as of the
+        // claim's day contradicts it inside one session.
+        let mut body = fact_receipt_json(&fact, self.dated(None, args.sid.as_deref()).await?);
+        dropped_keys.note(&mut body);
+        let changed = match fold_behind {
+            Some(_) => crate::changed::Changed::not_read(),
+            None => self.changed_on(&before, &fact.subject).await,
+        };
+        crate::changed::note_changed(&mut body, changed);
+        if let Some((entry, act, link)) = &ticked {
+            // **A tick says the list item is done, never that the work is.**
+            // The receipt names whether the work it points at is still open.
+            let mut block = serde_json::json!({ "entry": entry, "act": act });
+            if let Some(link) = link {
+                // **The tick landed, so a read of the work that fails leaves
+                // `linked` off the receipt** and does not fail the write
+                // (rule 130). The receipt says the read failed, so an absent
+                // `linked` never reads as work with no state.
+                let pointed = std::collections::BTreeSet::from([link.clone()]);
+                match self.linked_state(&pointed).await {
+                    Ok(known) => {
+                        if let Some(work) = known.get(link) {
+                            block["linked"] = work.as_receipt();
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, work = %link, "a tick receipt could not read its linked work");
+                        block["linked_unread"] = "the tick landed; the work it links could not \
+                            be read. recall the list to read it."
+                            .into();
+                    }
+                }
+            }
+            body["ticked"] = block;
+        }
+        if let Some(behind) = fold_behind {
+            crate::answer::note_fold_behind(&mut body, behind);
+        }
+        crate::answer::note_echoes_defaults(&mut body, &echoed_defaults);
+        // **Only when the caller named a day AND their run has one of
+        // its own AND the two disagree.** `recorded_at` above is
+        // already the resolved day — equal to what the caller sent
+        // whenever they sent one — so the comparison is this simple.
+        if args.recorded_at.is_some()
+            && let Some(stated) = caller.day
+            && stated != recorded_at
+        {
+            crate::answer::note_recorded_at_mismatch(&mut body, stated, recorded_at);
+        }
+        let why_demoted = (due_on_set && !checked_in).then_some(WHY_A_MOVED_DUE_MOMENT_DERIVES);
+        crate::answer::note_delta(&mut body, declared.not_stored(&fact, why_demoted));
+        let mut line = self
+            .what_a_capture_left_standing(
+                &fact,
+                &caller.bot,
+                checked_in,
+                opened_basis.as_deref(),
+                &reads,
+                &mut body,
+            )
+            .await;
+        if let Some(due) = crate::answer::falls_due_sentence(&fact.subject, due_on_computed) {
+            line.push(' ');
+            line.push_str(&due);
+        }
+        crate::answer::note_postcondition(&mut body, line);
+        self.note_reach_and_hint(&mut body, &fact, &own_sent, &sets_named)
+            .await;
+        self.note_view_narrows_nothing(&mut body, &fact.subject)
+            .await;
+        self.note_status_word(&fact, &mut body, &unread).await;
+        unread.note(&mut body);
+        reads.note(&mut body);
+        self.note_depends_on_read(&fact, &caller, &mut body).await;
+        self.note_possible_subject(&fact, &caller, &mut body).await;
+        self.note_unlocks(&fact.subject, &caller, &mut body).await;
+        self.note_unstars_without_a_summary(&fact, false, caller.sid.as_str(), &mut body);
+        if self.first_contact(CLAIMS_DOMAIN, Some(&caller)).await {
+            crate::answer::note_teaching(&mut body, CLAIMS_TEACHING);
+        }
+        if self
+            .first_contact(CLAIM_SUBJECT_DOMAIN, Some(&caller))
+            .await
+        {
+            crate::answer::note_teaching(&mut body, CLAIM_SUBJECT_TEACHING);
+        }
+        // **Gated on the subject's kind, never on the capture.** A
+        // write about a person or a thing has nothing to do with a
+        // project's work, so it must not spend this domain's one line.
+        if crate::teaching::is_project_work(fact.subject.kind()) {
+            self.offer_skills_for(
+                crate::orientation::skills::Act::ProjectWrite,
+                Some(&caller),
+                &mut body,
+            )
+            .await;
+        }
+        // **Gated on the check-in, never on the subject's kind**: a
+        // rhythm written about without recording a turn of it is not
+        // the act the skill covers.
+        if checked_in {
+            self.offer_skills_for(
+                crate::orientation::skills::Act::CheckIn,
+                Some(&caller),
+                &mut body,
+            )
+            .await;
+        }
+        // **Gated on the edge, not the capture.** A claim naming no
+        // other entity has no side to get wrong, so a plain capture
+        // must not spend this domain's one teaching.
+        if fact.edge.is_some()
+            && self
+                .first_contact(CLAIM_DIRECTION_DOMAIN, Some(&caller))
+                .await
+        {
+            crate::answer::note_teaching(&mut body, CLAIM_DIRECTION_TEACHING);
+        }
+        // **Shares its domain with `add_entity`'s rhythm-history
+        // teaching, deliberately.** Both state that a check-in's own
+        // `recorded_at` is what the schedule counts from; sharing the
+        // row means whichever site reaches a session first is the one
+        // that tells it, never both — see `RHYTHM_HISTORY_DOMAIN`.
+        if check_in_dates_disagree
+            && self
+                .first_contact(RHYTHM_HISTORY_DOMAIN, Some(&caller))
+                .await
+        {
+            crate::answer::note_teaching(&mut body, CHECK_IN_DATE_TEACHING);
+        }
+        // **Checked before the gate, never after** — `first_contact`
+        // has a side effect, and spending this domain's one teaching
+        // on a call that did not shadow anything would silence the
+        // call that actually does. The schema lookup is skipped
+        // entirely when no fields were sent, which is most calls.
+        //
+        // **Against the UNION of both verbs' arguments, never
+        // capture's alone.** The motivating case is exactly a
+        // capture carrying `status`, an argument only update_fact
+        // has — checking capture's own schema alone would miss it.
+        //
+        // **Only keys the subject's kind leaves undeclared** — a key
+        // the kind declares is its own column, never a shadow.
+        let undeclared_keys =
+            crate::teaching::keys_the_kind_leaves_undeclared(fact.subject.kind(), &sent_field_keys);
+        if !undeclared_keys.is_empty()
+            && let Some(capture_properties) = crate::teaching::published_arguments("capture")
+            && let Some(update_fact_properties) =
+                crate::teaching::published_arguments("update_fact")
+            && let Some((shadowed, owning_verb)) = crate::teaching::shadowed_argument_verb(
+                undeclared_keys.iter().copied(),
+                "capture",
+                &capture_properties,
+                "update_fact",
+                &update_fact_properties,
+            )
+            && self
+                .first_contact(FIELD_SHADOWS_ARGUMENT_DOMAIN, Some(&caller))
+                .await
+        {
+            crate::answer::note_teaching(
+                &mut body,
+                &crate::teaching::field_shadows_argument_teaching(shadowed, &owning_verb),
+            );
+        }
+        json_result(&body)
+    }
+}
+
+impl Jojobot {
+    /// Decide and write a parsed claim. Authorship and audit stamps are data;
+    /// session accounting belongs to the handler that resolved them.
+    pub(crate) async fn capture_write(
+        &self,
+        author: &EntityId,
+        args: CaptureArgs,
+        day: jiff::civil::Date,
+        by_session: Option<&str>,
+        mode: &Mode,
+        working_on: Option<&crate::caller::Caller>,
+    ) -> Result<Result<Captured, CallToolResult>, McpError> {
+        // **What this write could not work out for want of the instance record**,
+        // named on the receipt.
+        let unread = super::instance_unread::InstanceUnread::default();
+        let reads = super::reads_left::ReadsLeft::default();
         // **What the call sent to lift a `must` refusal**, taken before the
         // arguments are moved into the claim.
         let slot = super::declined::TokenSlot::from(&args);
         let (override_token, override_reason) =
             (args.override_token.clone(), args.override_reason.clone());
-        let declared = Declared::of(&args);
         let checked_in = args.check_in.is_some();
         let subject = match self.row_handle(&EntityId::person(&args.subject)).await {
             Ok(subject) => subject,
-            Err(e) => return memory_declined("capture", e),
+            Err(e) => return memory_declined("capture", e).map(Err),
         };
         // **The kind the store holds**, never the one the caller's spelling carries: a
         // handle a retyped thing used to wear still names it.
         let subject_kind = match self.kind_now(&subject).await {
             Ok(kind) => kind,
-            Err(e) => return memory_declined("capture", e),
+            Err(e) => return memory_declined("capture", e).map(Err),
         };
         // **A voucher is issued, never written.** Judged on the subject's kind,
         // ahead of everything the call carries.
         if let Some(refused) = jojobot_domain::voucher::refuses_engine_only_write(&subject) {
-            return memory_declined("capture", refused);
+            return memory_declined("capture", refused).map(Err);
         }
         // **A claim on a list with no words is told the four ways to write to one**, where
         // the plain refusal for empty words would leave a caller guessing at them. A tick
@@ -857,15 +1098,14 @@ impl Jojobot {
                      entry, `entries` for several, `tick` to tick one or `ticks` to tick several"
                         .into(),
                 ),
-            );
+            )
+            .map(Err);
         }
         let provenance = parse_provenance(args.provenance.as_deref())?;
-        let recorded_at = self
-            .dated(args.recorded_at.as_deref(), args.sid.as_deref())
-            .await?;
+        let recorded_at = parse_date(args.recorded_at.as_deref())?.unwrap_or(day);
         let edge = match parse_edge(args.shape.as_deref(), args.object.as_deref())? {
             Ok(edge) => edge,
-            Err(refused) => return Ok(refused),
+            Err(refused) => return Ok(Err(refused)),
         };
 
         let derived_from = args
@@ -892,7 +1132,8 @@ impl Jojobot {
                      testimony at the moment of the act, and a drop cannot land without one"
                         .into(),
                 ),
-            );
+            )
+            .map(Err);
         }
 
         let mut fields = args.fields.unwrap_or_default();
@@ -910,7 +1151,7 @@ impl Jojobot {
             .await
         {
             Ok(dropped) => dropped,
-            Err(e) => return memory_declined("capture", e),
+            Err(e) => return memory_declined("capture", e).map(Err),
         };
         // **What remains of the caller's own fields**, apart from the setting
         // bag for the receipt's hint; copied server keys are not caller fields.
@@ -925,7 +1166,7 @@ impl Jojobot {
         {
             match self.hold_placing(&subject).await {
                 Ok(guard) => Some(guard),
-                Err(e) => return memory_declined("capture", e),
+                Err(e) => return memory_declined("capture", e).map(Err),
             }
         } else {
             None
@@ -934,7 +1175,7 @@ impl Jojobot {
             .resolve_list_deltas(&subject, args.sets_add, args.sets_remove, &mut sets_sent)
             .await
         {
-            return memory_declined("capture", refused);
+            return memory_declined("capture", refused).map(Err);
         }
         if let Some(key) = sets_sent.keys().find(|key| fields.contains_key(*key)) {
             return memory_declined(
@@ -943,7 +1184,8 @@ impl Jojobot {
                     "'{key}' is named in both `fields` and `sets`. A key is one of the claim's \
                      own fields or a setting on its thing, never both: send it in one"
                 )),
-            );
+            )
+            .map(Err);
         }
         let set_keys: std::collections::BTreeSet<String> = sets_sent.keys().cloned().collect();
         let sets_named: Vec<String> = set_keys.iter().cloned().collect();
@@ -956,10 +1198,10 @@ impl Jojobot {
         // Checked before anything else about this write, on the caller's own
         // identity against the subject it is about to write.
         if let Some(refused) = self
-            .refuses_an_unlicensed_key("capture", &subject, true, &caller.bot, &fields)
+            .refuses_an_unlicensed_key("capture", &subject, true, author, &fields)
             .await?
         {
-            return Ok(refused);
+            return Ok(Err(refused));
         }
         // **A role's own two fields are the boot door's, whoever is asking.**
         // This call reaches the Memory trait directly from the claim path
@@ -968,7 +1210,7 @@ impl Jojobot {
         // those two. See `refuses_role_fields`.
         if let Some(refused) = jojobot_domain::memory::refuses_role_fields(&subject, fields.keys())
         {
-            return memory_declined("capture", refused);
+            return memory_declined("capture", refused).map(Err);
         }
         // **The stored due moment is jojobot's, so a caller's own copy of it is
         // refused before anything is written** — see
@@ -978,11 +1220,11 @@ impl Jojobot {
             .refuses_a_hand_written_due_moment(&subject, &fields, &[])
             .await
         {
-            return Ok(refused);
+            return Ok(Err(refused));
         }
         // **The review stamp is jojobot's too**, set when the writer is defrag.
         if let Some(refused) = self.refuses_a_hand_written_review_stamp(&subject, &fields, &[]) {
-            return Ok(refused);
+            return Ok(Err(refused));
         }
         // **The keys jojobot computes below reach the thing**: they are its own
         // arithmetic on the thing, not words a caller wrote on a record.
@@ -998,7 +1240,7 @@ impl Jojobot {
                     derived.extend(computed.keys().cloned());
                     fields.extend(computed);
                 }
-                Err(refused) => return Ok(refused),
+                Err(refused) => return Ok(Err(refused)),
             }
         }
         // **Kept current here too, not only on a check-in.** A cadence edited
@@ -1016,13 +1258,7 @@ impl Jojobot {
             .map(|(key, value)| (key.clone(), value.clone()))
             .collect();
         let (due_on_computed, due_on_derived) = self
-            .moved_due_moment(
-                &subject,
-                &reaching,
-                &[],
-                self.dated(None, args.sid.as_deref()).await?,
-                &unread,
-            )
+            .moved_due_moment(&subject, &reaching, &[], day, &unread)
             .await;
         let due_on_set = matches!(due_on_computed, attention::DueMove::Set(_)) && due_on_derived;
         if let attention::DueMove::Set(due_on) = due_on_computed {
@@ -1031,7 +1267,7 @@ impl Jojobot {
         }
         // **A write by defrag stamps the thing in the same act.** One computed
         // key on the thing, riding this record, so no record is added for it.
-        if let Some((key, moment)) = self.review_stamp(&caller.bot) {
+        if let Some((key, moment)) = self.review_stamp(author) {
             fields.insert(key.clone(), moment);
             derived.insert(key);
         }
@@ -1059,14 +1295,14 @@ impl Jojobot {
         {
             let ages_after = match self.ages_after_runs_of(&subject).await {
                 Ok(runs) => runs,
-                Err(e) => return memory_declined("capture", e),
+                Err(e) => return memory_declined("capture", e).map(Err),
             };
             match self.sessions.summaries_of(&subject).await {
                 Ok(runs) => jojobot_domain::memory::aging_cutoff(
                     &jojobot_domain::session::history::started_ats(&runs),
                     ages_after,
                 ),
-                Err(e) => return session_declined(e, caller.sid.as_str()),
+                Err(e) => return session_declined(e, by_session.unwrap_or_default()).map(Err),
             }
         } else {
             None
@@ -1086,7 +1322,8 @@ impl Jojobot {
                         "`tick` ticks an entry of a list, and {subject} is not a thing of kind \
                          list. Capture the tick on the list the entry is on"
                     )),
-                );
+                )
+                .map(Err);
             }
             if args.after.is_some() {
                 return memory_declined(
@@ -1095,19 +1332,20 @@ impl Jojobot {
                         "`tick` ticks an entry and `after` places a new one: they are two calls"
                             .into(),
                     ),
-                );
+                )
+                .map(Err);
             }
             let subject_now = match self.current_handle(&subject).await {
                 Ok(now) => now,
-                Err(e) => return memory_declined("capture", e),
+                Err(e) => return memory_declined("capture", e).map(Err),
             };
             let held = match self.memory.recall(&subject).await {
                 Ok(held) => held,
-                Err(e) => return memory_declined("capture", e),
+                Err(e) => return memory_declined("capture", e).map(Err),
             };
             let setting = match self.memory.fields(&subject).await {
                 Ok(fields) => jojobot_domain::memory::entries::Setting::of(&fields),
-                Err(e) => return memory_declined("capture", e),
+                Err(e) => return memory_declined("capture", e).map(Err),
             };
             let seen = jojobot_domain::memory::entries::view(&held, setting);
             let entries = jojobot_domain::memory::entries::open_entries(&held);
@@ -1137,7 +1375,8 @@ impl Jojobot {
                             )
                         }
                     )),
-                );
+                )
+                .map(Err);
             };
             let Some(act) = jojobot_domain::memory::entries::Act::of(&tick.act) else {
                 return memory_declined(
@@ -1149,7 +1388,8 @@ impl Jojobot {
                             .map(jojobot_domain::memory::entries::Act::as_token)
                             .join(", ")
                     )),
-                );
+                )
+                .map(Err);
             };
             let state = mode.tick_state.unwrap_or_else(|| {
                 seen.states
@@ -1158,7 +1398,7 @@ impl Jojobot {
                     .unwrap_or("open")
             });
             if let Some(why) = jojobot_domain::memory::entries::refuse_tick(setting, state, act) {
-                return memory_declined("capture", MemoryError::InvalidFact(why));
+                return memory_declined("capture", MemoryError::InvalidFact(why)).map(Err);
             }
             ticked = Some((
                 named.to_string(),
@@ -1171,15 +1411,17 @@ impl Jojobot {
             use jojobot_domain::memory::entries::{TICK_ACT, TICK_ENTRY, TICK_SESSION};
             fields.insert(TICK_ENTRY.to_string(), named.local.0.clone());
             fields.insert(TICK_ACT.to_string(), act.as_token().to_string());
-            fields.insert(TICK_SESSION.to_string(), caller.sid.as_str().to_string());
+            if let Some(stamp) = by_session {
+                fields.insert(TICK_SESSION.to_string(), stamp.to_string());
+            }
         } else if subject_kind == Some(EntityKind::LIST) {
             let held = match self.memory.recall(&subject).await {
                 Ok(held) => held,
-                Err(e) => return memory_declined("capture", e),
+                Err(e) => return memory_declined("capture", e).map(Err),
             };
             let setting = match self.memory.fields(&subject).await {
                 Ok(fields) => jojobot_domain::memory::entries::Setting::of(&fields),
-                Err(e) => return memory_declined("capture", e),
+                Err(e) => return memory_declined("capture", e).map(Err),
             };
             // **An address from before a merge is followed to where its entry is
             // now**, as every address of a folded claim is.
@@ -1190,7 +1432,7 @@ impl Jojobot {
                             Ok(served) => {
                                 Ok(jojobot_domain::memory::entries::Placement::After(served))
                             }
-                            Err(e) => return memory_declined("capture", e),
+                            Err(e) => return memory_declined("capture", e).map(Err),
                         }
                     }
                     other => other,
@@ -1229,10 +1471,12 @@ impl Jojobot {
                                 format!("Its entries are {}", entries.join(", "))
                             }
                         )),
-                    );
+                    )
+                    .map(Err);
                 }
                 Err(e) => {
-                    return memory_declined("capture", super::list_move::refused(&subject, e));
+                    return memory_declined("capture", super::list_move::refused(&subject, e))
+                        .map(Err);
                 }
             }
         } else if let Some(after) = args.after.as_deref() {
@@ -1243,7 +1487,8 @@ impl Jojobot {
                      of kind list. Make the list first (add_entity with kind list, under the \
                      thing it is about), then capture each entry on it"
                 )),
-            );
+            )
+            .map(Err);
         }
 
         let opened_basis = fields
@@ -1283,15 +1528,15 @@ impl Jojobot {
             drop_because: args.drop_because,
             borrow: args.borrow.unwrap_or(false),
             aged_before,
-            session: Some(caller.sid.as_str().to_string()),
-            written_by_bot: Some(caller.bot.clone()),
+            session: by_session.map(str::to_string),
+            written_by_bot: Some(author.clone()),
             sets: set_keys,
             derived,
             also_written: Vec::new(),
             must_override: None,
             // **The run's day, not the day the claim is filed under**: a rule's
             // relative day counts from the caller's today.
-            must_day: Some(self.dated(None, args.sid.as_deref()).await?),
+            must_day: Some(day),
         };
         let schedule = checked_in
             .then(|| super::capture_schedule::Schedule::take_from(&mut new, clears_due_on));
@@ -1299,20 +1544,20 @@ impl Jojobot {
         // ceiling is refused here**, before anything lands — see
         // `refuses_a_boot_floor_over`.
         if let Some(refused) = self
-            .refuses_a_boot_floor_for_capture(&new, &caller.bot, &reads)
+            .refuses_a_boot_floor_for_capture(&new, author, &reads)
             .await
         {
-            return memory_declined("capture", refused);
+            return memory_declined("capture", refused).map(Err);
         }
         // **A star into full seats is refused here**, before anything lands —
         // see `refuses_a_star_for_capture`.
         if let Some(refused) = self.refuses_a_star_for_capture(&new).await {
-            return memory_declined("capture", refused);
+            return memory_declined("capture", refused).map(Err);
         }
         // **A claim no reader could be handed whole is refused here**, before
         // anything lands — see `refuses_a_claim_too_big_to_read`.
         if let Some(refused) = self.refuses_a_new_claim_too_big_to_read(&new, None).await {
-            return memory_declined("capture", refused);
+            return memory_declined("capture", refused).map(Err);
         }
         // **Disagreement, not presence alone.** A check-in with no
         // `happened_at` has asked no question, and one where both fields
@@ -1338,9 +1583,9 @@ impl Jojobot {
         // nothing has been written.
         if mode.check_only {
             if let Err(refused) = jojobot_domain::memory::validate_new_fact(&new) {
-                return memory_declined("capture", refused);
+                return memory_declined("capture", refused).map(Err);
             }
-            return json_result(&serde_json::json!({ "checked": true }));
+            return json_result(&serde_json::json!({ "checked": true })).map(Err);
         }
         let before = self.as_it_stands(&new.subject).await;
         let moves_to_now = self.moves_to_now(&new.fields, &new.sets).await;
@@ -1361,7 +1606,7 @@ impl Jojobot {
         };
         let writing = match writing {
             super::capture_batch::ClaimWrite::Ran(written) => *written,
-            super::capture_batch::ClaimWrite::Early(answer) => return answer,
+            super::capture_batch::ClaimWrite::Early(answer) => return answer.map(Err),
         };
         let (captured, fold_behind) = match writing {
             Ok(captured) => (captured, None),
@@ -1370,229 +1615,76 @@ impl Jojobot {
                 behind,
                 ..
             }) => (Guarded::Written(*fact), Some(behind)),
-            Err(e) => return super::must_override::declined_or_lifted("capture", e, &slot),
-        };
-        match captured {
-            Guarded::Written(fact) => {
-                let schedule_behind = if let Some(schedule) = &schedule {
-                    match self.write_check_in_schedule(&fact, schedule, &caller).await {
-                        Ok(behind) => behind,
-                        Err(error) => {
-                            return self.check_in_schedule_not_written(
-                                &fact,
-                                self.dated(None, args.sid.as_deref()).await?,
-                                error,
-                            );
-                        }
-                    }
-                } else {
-                    None
-                };
-                let fold_behind = fold_behind.or(schedule_behind);
-                // **Before the clear below, which can end the call for a resend to
-                // finish.** The finishing path rebuilds the receipt from the claim
-                // and does not point the bot at its work again.
-                self.fill_working_on(&caller, &fact.subject, &moves_to_now, &unread)
-                    .await;
-                if clears_due_on
-                    && let Some(unfinished) = self
-                        .ends_what_is_owed_or_defers(&mode, &fact.subject, &caller)
-                        .await
-                {
-                    return Ok(unfinished);
-                }
-                if checked_in {
-                    jojobot_domain::request::finished();
-                }
-                self.beat("capture", fact.subject.as_str(), args.sid.as_deref())
-                    .await;
-                // **As of the day the RUN is asking about, never the day the
-                // claim is about** (rule 222). `date` above is what the claim
-                // is true OF, which is a different question from whether its
-                // reading still stands today — and the read that follows this
-                // write answers as of today, so a receipt answering as of the
-                // claim's day contradicts it inside one session.
-                let mut body =
-                    fact_receipt_json(&fact, self.dated(None, args.sid.as_deref()).await?);
-                dropped_keys.note(&mut body);
-                let changed = match fold_behind {
-                    Some(_) => crate::changed::Changed::not_read(),
-                    None => self.changed_on(&before, &fact.subject).await,
-                };
-                crate::changed::note_changed(&mut body, changed);
-                if let Some((entry, act, link)) = &ticked {
-                    // **A tick says the list item is done, never that the work is.**
-                    // The receipt names whether the work it points at is still open.
-                    let mut block = serde_json::json!({ "entry": entry, "act": act });
-                    if let Some(link) = link {
-                        // **The tick landed, so a read of the work that fails leaves
-                        // `linked` off the receipt** and does not fail the write
-                        // (rule 130). The receipt says the read failed, so an absent
-                        // `linked` never reads as work with no state.
-                        let pointed = std::collections::BTreeSet::from([link.clone()]);
-                        match self.linked_state(&pointed).await {
-                            Ok(known) => {
-                                if let Some(work) = known.get(link) {
-                                    block["linked"] = work.as_receipt();
-                                }
-                            }
-                            Err(e) => {
-                                tracing::warn!(error = %e, work = %link, "a tick receipt could not read its linked work");
-                                block["linked_unread"] =
-                                    "the tick landed; the work it links could not \
-                                    be read. recall the list to read it."
-                                        .into();
-                            }
-                        }
-                    }
-                    body["ticked"] = block;
-                }
-                if let Some(behind) = fold_behind {
-                    crate::answer::note_fold_behind(&mut body, behind);
-                }
-                crate::answer::note_echoes_defaults(&mut body, &echoed_defaults);
-                // **Only when the caller named a day AND their run has one of
-                // its own AND the two disagree.** `recorded_at` above is
-                // already the resolved day — equal to what the caller sent
-                // whenever they sent one — so the comparison is this simple.
-                if args.recorded_at.is_some()
-                    && let Some(stated) = caller.day
-                    && stated != recorded_at
-                {
-                    crate::answer::note_recorded_at_mismatch(&mut body, stated, recorded_at);
-                }
-                let why_demoted =
-                    (due_on_set && !checked_in).then_some(WHY_A_MOVED_DUE_MOMENT_DERIVES);
-                crate::answer::note_delta(&mut body, declared.not_stored(&fact, why_demoted));
-                let mut line = self
-                    .what_a_capture_left_standing(
-                        &fact,
-                        &caller.bot,
-                        checked_in,
-                        opened_basis.as_deref(),
-                        &reads,
-                        &mut body,
-                    )
-                    .await;
-                if let Some(due) = crate::answer::falls_due_sentence(&fact.subject, due_on_computed)
-                {
-                    line.push(' ');
-                    line.push_str(&due);
-                }
-                crate::answer::note_postcondition(&mut body, line);
-                self.note_reach_and_hint(&mut body, &fact, &own_sent, &sets_named)
-                    .await;
-                self.note_view_narrows_nothing(&mut body, &fact.subject)
-                    .await;
-                self.note_status_word(&fact, &mut body, &unread).await;
-                unread.note(&mut body);
-                reads.note(&mut body);
-                self.note_depends_on_read(&fact, &caller, &mut body).await;
-                self.note_possible_subject(&fact, &caller, &mut body).await;
-                self.note_unlocks(&fact.subject, &caller, &mut body).await;
-                self.note_unstars_without_a_summary(&fact, false, caller.sid.as_str(), &mut body);
-                if self.first_contact(CLAIMS_DOMAIN, Some(&caller)).await {
-                    crate::answer::note_teaching(&mut body, CLAIMS_TEACHING);
-                }
-                if self
-                    .first_contact(CLAIM_SUBJECT_DOMAIN, Some(&caller))
-                    .await
-                {
-                    crate::answer::note_teaching(&mut body, CLAIM_SUBJECT_TEACHING);
-                }
-                // **Gated on the subject's kind, never on the capture.** A
-                // write about a person or a thing has nothing to do with a
-                // project's work, so it must not spend this domain's one line.
-                if crate::teaching::is_project_work(fact.subject.kind()) {
-                    self.offer_skills_for(
-                        crate::orientation::skills::Act::ProjectWrite,
-                        Some(&caller),
-                        &mut body,
-                    )
-                    .await;
-                }
-                // **Gated on the check-in, never on the subject's kind**: a
-                // rhythm written about without recording a turn of it is not
-                // the act the skill covers.
-                if checked_in {
-                    self.offer_skills_for(
-                        crate::orientation::skills::Act::CheckIn,
-                        Some(&caller),
-                        &mut body,
-                    )
-                    .await;
-                }
-                // **Gated on the edge, not the capture.** A claim naming no
-                // other entity has no side to get wrong, so a plain capture
-                // must not spend this domain's one teaching.
-                if fact.edge.is_some()
-                    && self
-                        .first_contact(CLAIM_DIRECTION_DOMAIN, Some(&caller))
-                        .await
-                {
-                    crate::answer::note_teaching(&mut body, CLAIM_DIRECTION_TEACHING);
-                }
-                // **Shares its domain with `add_entity`'s rhythm-history
-                // teaching, deliberately.** Both state that a check-in's own
-                // `recorded_at` is what the schedule counts from; sharing the
-                // row means whichever site reaches a session first is the one
-                // that tells it, never both — see `RHYTHM_HISTORY_DOMAIN`.
-                if check_in_dates_disagree
-                    && self
-                        .first_contact(RHYTHM_HISTORY_DOMAIN, Some(&caller))
-                        .await
-                {
-                    crate::answer::note_teaching(&mut body, CHECK_IN_DATE_TEACHING);
-                }
-                // **Checked before the gate, never after** — `first_contact`
-                // has a side effect, and spending this domain's one teaching
-                // on a call that did not shadow anything would silence the
-                // call that actually does. The schema lookup is skipped
-                // entirely when no fields were sent, which is most calls.
-                //
-                // **Against the UNION of both verbs' arguments, never
-                // capture's alone.** The motivating case is exactly a
-                // capture carrying `status`, an argument only update_fact
-                // has — checking capture's own schema alone would miss it.
-                //
-                // **Only keys the subject's kind leaves undeclared** — a key
-                // the kind declares is its own column, never a shadow.
-                let undeclared_keys = crate::teaching::keys_the_kind_leaves_undeclared(
-                    fact.subject.kind(),
-                    &sent_field_keys,
-                );
-                if !undeclared_keys.is_empty()
-                    && let Some(capture_properties) =
-                        crate::teaching::published_arguments("capture")
-                    && let Some(update_fact_properties) =
-                        crate::teaching::published_arguments("update_fact")
-                    && let Some((shadowed, owning_verb)) = crate::teaching::shadowed_argument_verb(
-                        undeclared_keys.iter().copied(),
-                        "capture",
-                        &capture_properties,
-                        "update_fact",
-                        &update_fact_properties,
-                    )
-                    && self
-                        .first_contact(FIELD_SHADOWS_ARGUMENT_DOMAIN, Some(&caller))
-                        .await
-                {
-                    crate::answer::note_teaching(
-                        &mut body,
-                        &crate::teaching::field_shadows_argument_teaching(shadowed, &owning_verb),
-                    );
-                }
-                json_result(&body)
+            Err(e) => {
+                return super::must_override::declined_or_lifted("capture", e, &slot).map(Err);
             }
+        };
+        let captured = match captured {
+            Guarded::Written(fact) => fact,
             Guarded::Blocked {
                 attempted,
                 candidates,
-            } => Ok(blocked_result(
-                &attempted,
-                &candidates,
-                Blocked::MustExist("capture"),
-            )),
+            } => {
+                return Ok(Err(blocked_result(
+                    &attempted,
+                    &candidates,
+                    Blocked::MustExist("capture"),
+                )));
+            }
+        };
+        let schedule_behind = if let Some(schedule) = &schedule {
+            match self
+                .write_check_in_schedule(&captured, schedule, author, by_session)
+                .await
+            {
+                Ok(behind) => behind,
+                Err(error) => {
+                    return self
+                        .check_in_schedule_not_written(&captured, day, error)
+                        .map(Err);
+                }
+            }
+        } else {
+            None
+        };
+        let fold_behind = fold_behind.or(schedule_behind);
+        // **Before the clear below, which can end the call for a resend to
+        // finish.** The finishing path rebuilds the receipt from the claim
+        // and does not point the bot at its work again. A seeded write names
+        // no caller, so it points nobody.
+        if let Some(caller) = working_on {
+            self.fill_working_on(caller, &captured.subject, &moves_to_now, &unread)
+                .await;
         }
+        if clears_due_on
+            && let Some(unfinished) = self
+                .ends_what_is_owed_or_defers(mode, &captured.subject, author, by_session)
+                .await
+        {
+            return Ok(Err(unfinished));
+        }
+        if checked_in {
+            jojobot_domain::request::finished();
+        }
+        Ok(Ok(Captured {
+            captured,
+            fold_behind,
+            before,
+            unread,
+            reads,
+            checked_in,
+            due_on_set,
+            due_on_computed,
+            opened_basis,
+            sets_named,
+            dropped_keys,
+            own_sent,
+            sent_field_keys,
+            ticked,
+            echoed_defaults,
+            check_in_dates_disagree,
+            _placing,
+        }))
     }
 }
 
@@ -1646,7 +1738,10 @@ impl Jojobot {
             _ => None,
         };
         let schedule_behind = if let Some(schedule) = &schedule {
-            match self.write_check_in_schedule(&fact, schedule, caller).await {
+            match self
+                .write_check_in_schedule(&fact, schedule, &caller.bot, Some(caller.sid.as_str()))
+                .await
+            {
                 Ok(behind) => behind,
                 Err(error) => {
                     return self.check_in_schedule_not_written(

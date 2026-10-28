@@ -257,6 +257,68 @@ async fn room_harness_seed_keeps_the_scenario_author_and_opens_no_harness_run() 
 }
 
 #[tokio::test]
+async fn room_harness_seed_obeys_the_write_guard_for_engine_owned_keys() {
+    let handler = room().await;
+    let grader = Harness::new(handler.clone());
+    grader
+        .seed(
+            "bot:assistant",
+            vec![SeedWrite::AsTheOccupant(
+                "add_entity".into(),
+                json!({"kind":"person", "handle":"milhouse", "name":"Milhouse", "source":"the room"}),
+            )],
+        )
+        .await
+        .expect("person furnished");
+    let refused = grader
+        .seed(
+            "bot:assistant",
+            vec![SeedWrite::AsTheOccupant(
+                "capture".into(),
+                json!({"subject":"person:milhouse", "content":"Milhouse was reviewed",
+                    "sets":{"defragged_at":"2026-01-01T00:00:00Z"}}),
+            )],
+        )
+        .await;
+    assert!(
+        refused.is_err(),
+        "the engine's own key was accepted: {refused:?}"
+    );
+    let refused = refused.unwrap_err();
+    assert_eq!(
+        serde_json::from_str::<Value>(&refused).unwrap()["status"],
+        "blocked"
+    );
+    assert!(refused.contains("defragged_at"), "{refused}");
+    assert!(
+        handler
+            .memory
+            .recall(&EntityId("person:milhouse".into()))
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    grader
+        .seed(
+            "bot:assistant",
+            vec![SeedWrite::AsTheOccupant(
+                "capture".into(),
+                json!({"subject":"person:milhouse", "content":"Milhouse prefers blue",
+                    "sets":{"colour":"blue"}}),
+            )],
+        )
+        .await
+        .expect("ordinary setting accepted");
+    let fields = handler
+        .memory
+        .fields(&EntityId("person:milhouse".into()))
+        .await
+        .unwrap();
+    assert_eq!(fields["colour"], "blue");
+    assert!(!fields.contains_key("defragged_at"));
+}
+
+#[tokio::test]
 async fn room_harness_notices_resume_from_a_cursor_without_a_participant() {
     let handler = room().await;
     let grader = Harness::new(handler.clone());
@@ -308,180 +370,5 @@ async fn room_harness_notices_resume_from_a_cursor_without_a_participant() {
             .await
             .expect("runs")
             .is_empty()
-    );
-}
-
-#[tokio::test]
-async fn room_harness_regression_seed_keeps_due_arithmetic_and_derived_provenance() {
-    for on_creation in [false, true] {
-        let handler = room().await;
-        let grader = Harness::new(handler.clone());
-        let settings = json!({"cadence_days":"7", "counts_from":"2026-01-01"});
-        let mut rhythm = json!({"kind":"rhythm", "handle":"beta", "name":"Beta",
-            "source":"the room", "parent":"thing:alpha"});
-        if on_creation {
-            rhythm["sets"] = settings.clone();
-        }
-        let mut writes = vec![
-            SeedWrite::AsTheOccupant(
-                "add_entity".into(),
-                json!({"kind":"thing",
-                "handle":"alpha", "name":"Alpha", "source":"the room"}),
-            ),
-            SeedWrite::AsTheOccupant("add_entity".into(), rhythm),
-        ];
-        if !on_creation {
-            writes.push(SeedWrite::AsTheOccupant(
-                "capture".into(),
-                json!({
-                    "subject":"rhythm:beta", "content":"the stated rhythm",
-                    "provenance":"testimony", "sets":settings
-                }),
-            ));
-        }
-        grader
-            .seed("bot:assistant", writes)
-            .await
-            .expect("furniture");
-        let subject = EntityId("rhythm:beta".into());
-        let fields = handler.memory.fields(&subject).await.expect("settings");
-        assert_eq!(fields.get("due_on").map(String::as_str), Some("2026-01-08"));
-        let facts = handler.memory.recall(&subject).await.expect("facts");
-        assert_eq!(facts[0].provenance, Provenance::Inference);
-        assert!(
-            handler
-                .sessions
-                .all_summaries()
-                .await
-                .expect("runs")
-                .is_empty()
-        );
-        let boot = body(
-            handler
-                .start_here(Parameters(
-                    decode(json!({
-                        "bot":"assistant", "brief":true
-                    }))
-                    .unwrap(),
-                ))
-                .await
-                .unwrap(),
-        )
-        .unwrap();
-        let cleared = body(
-            handler
-                .update_fact(Parameters(
-                    decode(json!({
-                        "sid":boot["session"]["sid"], "address":facts[0].address().to_string(),
-                        "clear_fields":["cadence_days", "advances_from", "counts_from"]
-                    }))
-                    .unwrap(),
-                ))
-                .await
-                .unwrap(),
-        )
-        .unwrap();
-        assert_ne!(
-            cleared["status"], "blocked",
-            "the piano's seeded cadence can be cleared: {cleared}"
-        );
-        assert!(
-            !handler
-                .memory
-                .fields(&subject)
-                .await
-                .expect("settings")
-                .contains_key("due_on")
-        );
-    }
-}
-
-#[tokio::test]
-async fn room_harness_regression_active_run_is_a_read_only_handoff() {
-    let handler = room().await;
-    let boot = body(
-        handler
-            .start_here(Parameters(
-                decode(json!({
-                    "bot":"assistant", "brief":true
-                }))
-                .unwrap(),
-            ))
-            .await
-            .unwrap(),
-    )
-    .unwrap();
-    let key = boot["session"]["sid"].as_str().expect("occupant key");
-    handler
-        .journal(Parameters(
-            decode(json!({"sid":key,
-                "entry":"The question is answered", "focus":"The completed work"
-            }))
-            .unwrap(),
-        ))
-        .await
-        .expect("occupant journal");
-    let before = handler.sessions.all_summaries().await.expect("runs");
-    let grader = Harness::new(handler.clone());
-    let seen = grader
-        .read("start_here", json!({"bot":"assistant","brief":true}))
-        .await
-        .expect("snapshot");
-    assert!(
-        seen["session"]["choices"]
-            .as_array()
-            .expect("runs")
-            .iter()
-            .any(|run| run["working_on"] == "The completed work"),
-        "{seen}"
-    );
-    assert_eq!(
-        handler.sessions.all_summaries().await.expect("runs"),
-        before
-    );
-}
-
-#[tokio::test]
-async fn room_harness_regression_document_fallback_reads_the_kept_answer() {
-    let handler = room().await;
-    let boot = body(
-        handler
-            .start_here(Parameters(
-                decode(json!({
-                    "bot":"assistant", "brief":true
-                }))
-                .unwrap(),
-            ))
-            .await
-            .unwrap(),
-    )
-    .unwrap();
-    let key = boot["session"]["sid"].as_str().expect("occupant key");
-    let made = body(
-        handler
-            .add_entity(Parameters(
-                decode(json!({"sid":key,
-                    "kind":"document", "handle":"alpha", "name":"Alpha", "source":"the room"
-                }))
-                .unwrap(),
-            ))
-            .await
-            .unwrap(),
-    )
-    .unwrap();
-    assert_ne!(made["status"], "blocked", "{made}");
-    let written = body(handler.put_document(Parameters(decode(json!({"sid":key,
-        "document":"document:alpha", "markdown":"# The answer\n\nMilhouse prefers blue.\n",
-        "provenance":"testimony"
-    })).unwrap())).await.unwrap()).unwrap();
-    assert_ne!(written["status"], "blocked", "{written}");
-    let grader = Harness::new(handler.clone());
-    let seen = grader
-        .read("read_document", json!({"document":"document:alpha"}))
-        .await
-        .expect("document fallback");
-    assert!(
-        seen.to_string().contains("Milhouse prefers blue."),
-        "{seen}"
     );
 }

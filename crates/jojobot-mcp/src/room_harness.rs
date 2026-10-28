@@ -65,49 +65,19 @@ impl Harness {
             .list_entities(Some(EntityKind::BOT))
             .await
             .map_err(|error| error.to_string())?;
-        let entity = entities
-            .iter()
-            .find(|entity| entity.id == bot)
-            .ok_or("the observed bot does not exist")?;
-        let doc = self
-            .handler
-            .memory
-            .scan_entity(&bot)
-            .await
-            .map_err(|error| error.to_string())?;
-        let facts = self
-            .handler
-            .memory
-            .recall(&bot)
-            .await
-            .map_err(|error| error.to_string())?;
-        let in_force = jojobot_domain::memory::rules_in_force(&facts);
-        let fields = self
-            .handler
-            .memory
-            .fields(&bot)
-            .await
-            .map_err(|error| error.to_string())?;
         let day = self.handler.clock.today_in(&jiff::tz::TimeZone::UTC);
-        let owned_mailbox = self
-            .handler
-            .owned_mailbox_read(entity)
-            .await
-            .map_err(|error| error.to_string())?;
         view["identity"] = self
             .handler
-            .identity_block(crate::orientation::identity::IdentityParts {
-                entity,
-                charter: doc
-                    .map(|doc| doc.prose)
-                    .filter(|text| !text.trim().is_empty()),
-                charter_elided: false,
-                in_force: &in_force,
-                seat_count: jojobot_domain::memory::rule_seats_of(&fields),
-                as_of: day,
-                owned_mailbox,
-            })
-            .await;
+            .identity(
+                &entities,
+                &bot,
+                crate::orientation::Answering::Nothing,
+                day,
+                crate::orientation::identity::Repair::No,
+            )
+            .await
+            .map_err(|error| error.to_string())?
+            .map_err(|_| "the observed bot does not exist")?;
         let choices: Vec<_> = self
             .handler
             .sessions
