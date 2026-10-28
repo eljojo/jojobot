@@ -1908,11 +1908,15 @@ mod tests {
                 details: Some(format!("rule 0 reasoning: {}", "x".repeat(2_000))),
                 // A boot only carries a marked rule (rule 306) — this test is
                 // about charter/details ranking against the ceiling, not
-                // about the cap.
+                // about the cap. It names a purpose, so the boot carries no
+                // off-the-tree warning to spend the ceiling on.
                 fields: Some(
-                    [("starred".to_string(), "true".to_string())]
-                        .into_iter()
-                        .collect(),
+                    [
+                        ("starred".to_string(), "true".to_string()),
+                        ("purpose".to_string(), "boot".to_string()),
+                    ]
+                    .into_iter()
+                    .collect(),
                 ),
                 ..capture_args("bot:gamma", "rule 0")
             },
