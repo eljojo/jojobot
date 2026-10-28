@@ -9,19 +9,7 @@
 //! the words are only read to decide whether to say it.
 
 use super::*;
-
-/// **The ledger domain of the line that names the span keys**, spent once a
-/// session by the first write whose words give a first day and a last day and
-/// that sent neither key.
-pub(crate) const SPAN_IN_WORDS_DOMAIN: &str = "span-in-words";
-
-/// **Ships in the binary, one line, like the other teachings.** It is
-/// conditional on purpose: the reader of the words cannot tell a stretch of days
-/// from two dates that are not one (a move from one day to another), so the line
-/// leaves that judgement to the caller.
-pub(crate) const SPAN_IN_WORDS_TEACHING: &str = "These words name two days. If they are a \
-    stretch of time, `update_fact` this claim with `happened_at` for its first day and \
-    `happened_through` for its last.";
+use crate::teaching::{SPAN_IN_WORDS_DOMAIN, SPAN_IN_WORDS_TEACHING};
 
 const MONTHS: [&str; 12] = [
     "january",

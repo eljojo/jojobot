@@ -72,7 +72,7 @@ mod review;
 pub(crate) mod room;
 pub mod search;
 pub mod set_charter;
-pub(crate) mod span_in_words;
+mod span_in_words;
 #[cfg(test)]
 mod span_in_words_tests;
 pub mod starred;
