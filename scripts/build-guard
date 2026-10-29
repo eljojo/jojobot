@@ -7,11 +7,12 @@ make dev and make narrow run their command through this, ahead of the first
 cargo run: cargo compiles the bar before the bar runs, so a check inside the bar
 is too late.
 
-OWNERSHIP. JOJOBOT_EXPECTED_TARGET_DIR is the line's own target dir, set by
-whatever launches the line. The guard compares it with the target_directory that
-`cargo metadata` reports. A shared root, another line's dir or no expected value
-at all refuses with exit 2 and one line saying what was expected and what was
-found. It never guesses a dir.
+OWNERSHIP. The checkout says which target dir is the line's own: the
+target_directory that `cargo metadata` reports must be named after the checkout
+this script lives in (a line's checkout and its dir share a name), or be the
+checkout's own `target`. A shared root or another line's dir refuses with exit 2
+and one line saying what was expected and what was found. Nothing is read from
+the environment, because a launch cannot be relied on to set it.
 
 RECOVERY. Before the command compiles anything the guard writes a marker in the
 target dir with a snapshot of the units in debug/incremental; the command waits
@@ -34,7 +35,7 @@ import sys
 import time
 from pathlib import Path
 
-EXPECTED = "JOJOBOT_EXPECTED_TARGET_DIR"
+CHECKOUT = Path(__file__).resolve().parent.parent
 
 
 class Refused(Exception):
@@ -112,13 +113,11 @@ def target_dir():
 
 
 def main(command):
-    expected = os.environ.get(EXPECTED)
     try:
-        if not expected:
-            raise Refused(f"{EXPECTED} is not set; the launch must name this line's own target dir")
         found = target_dir()
-        if Path(expected).resolve() != found.resolve():
-            raise Refused(f"expected target dir {expected}, found {found}")
+        if found.resolve() != CHECKOUT / "target" and found.resolve().name != CHECKOUT.name:
+            raise Refused(f"expected a target dir named {CHECKOUT.name} or {CHECKOUT / 'target'}, "
+                          f"found {found}")
         incremental, marker = found / "debug" / "incremental", found / ".build-guard.json"
         confine(found, incremental)
         if marker.exists():

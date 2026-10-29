@@ -8,8 +8,6 @@ use std::process::{Command, Output};
 
 mod support;
 
-const EXPECTED: &str = "JOJOBOT_EXPECTED_TARGET_DIR";
-
 fn scratch(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(jojobot_bar::scratch::name(&format!(
         "jojobot-bar-guard-{tag}"
@@ -26,9 +24,19 @@ fn unit(target: &Path, name: &str) -> PathBuf {
     dir.parent().unwrap().to_path_buf()
 }
 
-/// Run the guard over `command`. The stub cargo reports `reported` as the
-/// target directory; `expected` is what the launch environment named.
-fn guard(root: &Path, reported: &Path, expected: Option<&Path>, command: &str) -> Output {
+/// Run the guard over `command` from a copy of the script inside a checkout
+/// named `checkout`. The stub cargo reports `reported` as the target directory.
+fn guard(root: &Path, reported: &Path, checkout: &str, command: &str) -> Output {
+    let script = root
+        .join("checkouts")
+        .join(checkout)
+        .join("scripts/build-guard");
+    fs::create_dir_all(script.parent().unwrap()).unwrap();
+    fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/build-guard"),
+        &script,
+    )
+    .unwrap();
     let cargo = root.join("cargo");
     support::write_executable(
         &cargo,
@@ -38,13 +46,9 @@ fn guard(root: &Path, reported: &Path, expected: Option<&Path>, command: &str) -
         ),
     );
     let mut run = Command::new("python3");
-    run.arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/build-guard"))
+    run.arg(&script)
         .args(["sh", "-c", command])
-        .env("CARGO", &cargo)
-        .env_remove(EXPECTED);
-    if let Some(expected) = expected {
-        run.env(EXPECTED, expected);
-    }
+        .env("CARGO", &cargo);
     support::output_fenced(&mut run).expect("the guard runs")
 }
 
@@ -52,27 +56,28 @@ fn said(out: &Output) -> String {
     String::from_utf8_lossy(&out.stderr).into_owned()
 }
 
-/// **A target dir that is shared, missing or another line's refuses before the
-/// command starts**, and the line's own dir runs it.
+/// **A target dir that is shared or another line's refuses before the command
+/// starts**, and a dir named after the checkout, or the checkout's own `target`,
+/// runs it. The checkout is the only source: no environment variable is read.
 #[test]
 fn a_target_dir_that_is_not_the_lines_own_refuses_before_the_command_starts() {
     let root = scratch("own");
     let (own, other) = (root.join("own"), root.join("other"));
     let started = root.join("started");
     let command = format!("touch {}", started.display());
-    for (reported, expected, reason) in [
-        (&own, None, "is not set"),
-        (&own, Some(&other), "expected"),
-        (&other, Some(&own), "expected"),
-    ] {
-        let out = guard(&root, reported, expected.map(|p| p.as_path()), &command);
+    for (reported, checkout) in [(&root, "own"), (&other, "own"), (&own, "other")] {
+        let out = guard(&root, reported, checkout, &command);
         assert_eq!(out.status.code(), Some(2), "{}", said(&out));
-        assert!(said(&out).contains(reason), "{}", said(&out));
+        assert!(said(&out).contains("expected"), "{}", said(&out));
         assert!(!started.exists(), "the command started: {}", said(&out));
     }
-    let out = guard(&root, &own, Some(&own), &command);
-    assert_eq!(out.status.code(), Some(0), "{}", said(&out));
-    assert!(started.exists());
+    let local = root.join("checkouts/own/target");
+    for reported in [&own, &local] {
+        let _ = fs::remove_file(&started);
+        let out = guard(&root, reported, "own", &command);
+        assert_eq!(out.status.code(), Some(0), "{}", said(&out));
+        assert!(started.exists());
+    }
     let _ = fs::remove_dir_all(root);
 }
 
@@ -94,11 +99,11 @@ fn a_killed_build_is_cleaned_of_the_units_it_touched_and_nothing_else() {
         t = touched.display(),
         n = own.join("debug/incremental/created").display()
     );
-    let out = guard(&root, &own, Some(&own), &command);
+    let out = guard(&root, &own, "own", &command);
     assert_ne!(out.status.code(), Some(0), "the guard was killed");
     assert!(own.join(".build-guard.json").exists(), "no marker left");
 
-    let out = guard(&root, &own, Some(&own), "true");
+    let out = guard(&root, &own, "own", "true");
     assert_eq!(out.status.code(), Some(0), "{}", said(&out));
     assert!(!touched.exists(), "the changed unit stayed");
     assert!(!own.join("debug/incremental/created").exists());
@@ -116,7 +121,7 @@ fn a_build_that_ends_by_itself_removes_nothing() {
     let touched = unit(&own, "touched");
     let command = format!("echo more > {}/session/data", touched.display());
     for _ in 0..2 {
-        let out = guard(&root, &own, Some(&own), &command);
+        let out = guard(&root, &own, "own", &command);
         assert_eq!(out.status.code(), Some(0), "{}", said(&out));
         assert!(touched.exists(), "a clean run removed a unit");
         assert!(!own.join(".build-guard.json").exists());
@@ -134,14 +139,14 @@ fn cleanup_is_refused_for_a_symlink_out_of_the_cache_and_for_a_live_owner() {
     unit(&own, "touched");
     let started = root.join("started");
     let command = format!("kill -9 $PPID; sleep 1; touch {}", started.display());
-    guard(&root, &own, Some(&own), &command);
+    guard(&root, &own, "own", &command);
     assert!(marker.exists(), "no marker left");
 
     let kept = root.join("outside");
     fs::create_dir_all(&kept).unwrap();
     fs::write(kept.join("file"), "keep").unwrap();
     std::os::unix::fs::symlink(&kept, own.join("debug/incremental/escape")).unwrap();
-    let out = guard(&root, &own, Some(&own), "true");
+    let out = guard(&root, &own, "own", "true");
     assert_eq!(out.status.code(), Some(2), "{}", said(&out));
     assert!(said(&out).contains("escape"), "{}", said(&out));
     assert!(kept.join("file").exists());
@@ -153,12 +158,7 @@ fn cleanup_is_refused_for_a_symlink_out_of_the_cache_and_for_a_live_owner() {
     state["pid"] = std::process::id().into();
     fs::write(&marker, state.to_string()).unwrap();
     let after = root.join("after");
-    let out = guard(
-        &root,
-        &own,
-        Some(&own),
-        &format!("touch {}", after.display()),
-    );
+    let out = guard(&root, &own, "own", &format!("touch {}", after.display()));
     assert_eq!(out.status.code(), Some(2), "{}", said(&out));
     assert!(said(&out).contains("still running"), "{}", said(&out));
     assert!(!after.exists(), "the command started beside a live owner");
@@ -174,7 +174,7 @@ fn an_incremental_root_that_leads_out_of_the_target_is_never_cleaned() {
     let own = root.join("own");
     unit(&own, "touched");
     let started = root.join("started");
-    guard(&root, &own, Some(&own), "kill -9 $PPID; sleep 1");
+    guard(&root, &own, "own", "kill -9 $PPID; sleep 1");
     assert!(own.join(".build-guard.json").exists(), "no marker left");
 
     let theirs = unit(&root.join("other"), "theirs");
@@ -184,12 +184,7 @@ fn an_incremental_root_that_leads_out_of_the_target_is_never_cleaned() {
         own.join("debug/incremental"),
     )
     .unwrap();
-    let out = guard(
-        &root,
-        &own,
-        Some(&own),
-        &format!("touch {}", started.display()),
-    );
+    let out = guard(&root, &own, "own", &format!("touch {}", started.display()));
     assert_eq!(out.status.code(), Some(2), "{}", said(&out));
     assert!(theirs.exists(), "another line's unit was removed");
     assert!(!started.exists(), "the command started");
@@ -212,7 +207,7 @@ fn a_descendant_of_a_dead_run_is_reaped_before_the_units_are_measured() {
         u = units.display(),
         p = pidfile.display()
     );
-    guard(&root, &own, Some(&own), &command);
+    guard(&root, &own, "own", &command);
     let writer = fs::read_to_string(&pidfile).unwrap().trim().to_string();
     let alive = |pid: &str| {
         Command::new("kill")
@@ -223,7 +218,7 @@ fn a_descendant_of_a_dead_run_is_reaped_before_the_units_are_measured() {
     };
     assert!(alive(&writer), "the writer ended with its leader");
 
-    let out = guard(&root, &own, Some(&own), "true");
+    let out = guard(&root, &own, "own", "true");
     assert_eq!(out.status.code(), Some(0), "{}", said(&out));
     assert!(!alive(&writer), "the writer outlived the recovery");
     let late: Vec<String> = fs::read_dir(&units)
@@ -250,12 +245,7 @@ fn a_command_does_not_start_when_the_marker_cannot_be_written() {
     )
     .unwrap();
     let started = root.join("started");
-    let out = guard(
-        &root,
-        &own,
-        Some(&own),
-        &format!("touch {}", started.display()),
-    );
+    let out = guard(&root, &own, "own", &format!("touch {}", started.display()));
     assert_ne!(out.status.code(), Some(0), "{}", said(&out));
     // The child may be released a moment after the guard decides; give it time.
     std::thread::sleep(std::time::Duration::from_millis(500));
@@ -275,14 +265,14 @@ fn a_command_ended_by_a_signal_leaves_the_marker_and_the_next_run_cleans_up() {
         "echo more > {t}/session/data; touch -d @1 {t}/session/data; kill -9 $$",
         t = touched.display()
     );
-    let out = guard(&root, &own, Some(&own), &command);
+    let out = guard(&root, &own, "own", &command);
     assert_eq!(out.status.code(), Some(137), "{}", said(&out));
     assert!(
         own.join(".build-guard.json").exists(),
         "the marker was dropped"
     );
 
-    let out = guard(&root, &own, Some(&own), "true");
+    let out = guard(&root, &own, "own", "true");
     assert_eq!(out.status.code(), Some(0), "{}", said(&out));
     assert!(!touched.exists(), "the interrupted unit stayed");
     assert!(untouched.exists());
