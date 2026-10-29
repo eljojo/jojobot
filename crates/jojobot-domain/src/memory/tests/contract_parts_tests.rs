@@ -48,3 +48,25 @@ async fn the_fake_refuses_a_rewrite_of_a_claim_a_newer_claim_displaced() {
     contract::a_rewrite_of_a_claim_a_newer_claim_displaced_is_refused(&store).await;
     contract::a_rewrite_naming_the_keys_it_must_back_is_refused_without_a_revision(&store).await;
 }
+
+/// **A capture with two missing names is told the first in the decided order**,
+/// on the fake: the subject, then the edge's object, then the refs. The real store
+/// runs the same cases in the adapters' tests.
+#[tokio::test]
+async fn the_fake_judges_the_subject_the_edge_and_the_refs_in_the_decided_order() {
+    let store = InMemoryMemory::booted();
+    contract::a_missing_subject_is_refused_before_a_missing_edge_object(&store).await;
+    contract::a_missing_edge_object_is_refused_before_a_missing_ref(&store).await;
+}
+
+/// **The fake judges a reference field's value before the refs, and the decided
+/// order is the other way round.** This pins what the fake does today: the case
+/// the real store passes reddens here. The admission that moves in 9.3.3-c2 makes
+/// the fake follow the decided order; that change removes `should_panic` and runs
+/// the case on the fake like the others.
+#[tokio::test]
+#[should_panic(expected = "the refs are judged before a reference field's value")]
+async fn the_fake_still_judges_a_reference_field_before_the_refs() {
+    let store = InMemoryMemory::booted();
+    contract::a_missing_ref_is_refused_before_a_missing_reference_field(&store).await;
+}

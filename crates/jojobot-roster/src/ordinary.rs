@@ -23,6 +23,16 @@ pub const ORDINARY: &[&str] = &[
     // A numbered series of queue cards under one queue topic, with a typo in
     // the letters of one; they name nobody.
     "topic:contract-docket",
+    // The names a two-fault capture misses, and the subjects it is made on, in
+    // the refusal-order contract cases. Labels for a test; they name nobody.
+    "thing:contract-order-no-subject",
+    "thing:contract-order-edge-subject",
+    "thing:contract-order-field-subject",
+    "place:contract-order-no-place",
+    "place:contract-order-no-edge",
+    "person:contract-order-edge-ref",
+    "person:contract-order-first-ref",
+    "person:contract-order-the-field-value",
     "event:contract-queue-card-1001-on-homer",
     "event:contract-queue-card-1002-on-homer",
     "event:contract-queue-card-1003-on-homer",

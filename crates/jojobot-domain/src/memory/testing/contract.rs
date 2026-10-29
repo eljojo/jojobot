@@ -46,6 +46,7 @@ pub mod parts;
 pub mod receipt;
 pub mod record_capacity;
 pub mod reference_kinds;
+pub mod refusal_order;
 pub mod review_stamp;
 pub mod role_claims;
 #[cfg(test)]
@@ -96,6 +97,7 @@ pub use parts::*;
 pub use receipt::*;
 pub use record_capacity::*;
 pub use reference_kinds::*;
+pub use refusal_order::*;
 pub use review_stamp::*;
 pub use role_claims::*;
 pub use rules_index::*;
