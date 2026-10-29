@@ -194,6 +194,8 @@ use crate::run::{Checks, Observed, checked, checked_noting};
 mod inspection_lock;
 mod packing;
 #[cfg(test)]
+mod said_the_count;
+#[cfg(test)]
 mod skate_tool_holder;
 #[cfg(test)]
 mod standing_edge;
@@ -750,7 +752,18 @@ fn said_the_count(read: &str, count: usize) -> bool {
     let word = WORDS.get(count);
     authored(read).iter().any(|said| {
         let said = said.to_lowercase();
-        said.contains(&figure) || word.is_some_and(|word| said.contains(word))
+        stands_alone(&said, &figure) || word.is_some_and(|word| stands_alone(&said, word))
+    })
+}
+
+/// **Whether `token` appears in `text` as a whole word or number**, never inside
+/// a longer one: the figure 3 is not in 13, in 2026-08-13 or in a word, and
+/// *one* is not in *someone*.
+fn stands_alone(text: &str, token: &str) -> bool {
+    text.match_indices(token).any(|(at, _)| {
+        let before = text[..at].chars().next_back();
+        let after = text[at + token.len()..].chars().next();
+        !before.is_some_and(char::is_alphanumeric) && !after.is_some_and(char::is_alphanumeric)
     })
 }
 
