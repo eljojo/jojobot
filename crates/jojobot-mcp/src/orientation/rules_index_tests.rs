@@ -58,10 +58,17 @@ async fn off_the_tree_rides_the_boot_of_a_bot_with_unfiled_rules() {
     let answer = boot(&handler_over(memory), records[0].subject.slug()).await;
     let identity = &answer["identity"];
     assert_eq!(identity["rules_off_the_tree"]["count"], 2, "{identity}");
-    assert!(
-        identity["rules_off_the_tree"]["how_to_fix"].is_string(),
-        "{identity}"
-    );
+    for key in ["warning", "how_to_fix"] {
+        let text = identity["rules_off_the_tree"][key]
+            .as_str()
+            .unwrap_or_else(|| panic!("{key} is readable text: {identity}"));
+        assert!(!text.is_empty(), "{key}: {identity}");
+        assert_eq!(
+            text,
+            text.split_whitespace().collect::<Vec<_>>().join(" "),
+            "{key} is one readable line: {identity}"
+        );
+    }
 }
 
 #[tokio::test]

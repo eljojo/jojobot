@@ -1,6 +1,6 @@
 # Orientation
 
-The orientation essay as the boot serves it (the core, then each section of the rest) and every sentence in the answer to an anonymous boot and to a named boot of the shipped identity.
+The orientation essay as the boot serves it (the core, then each section of the rest) and every sentence in the answer to an anonymous boot and to a named boot of the shipped identity, plus the warning and repair text of a named boot with unfiled rules.
 
 Written by `every_text_a_model_reads_matches_the_snapshot` in `crates/jojobot-mcp/src/snapshot.rs` and compared with it at every `make check`. A commit that changes one of these texts updates this file in the same commit: `make snapshot` rewrites it. What the whole snapshot cannot reach is written at the top of that source file.
 
@@ -127,7 +127,7 @@ The snapshot names up to twenty identities when you boot with no bot, and only y
 
 ### Boot answers
 
-Every sentence in the answer to `start_here`, by the path it sits at. An id, a count and a handle are not texts and are left out. Booted on the shipped build with its own identity only, in UTC, on a fixed day.
+Every sentence in the answer to `start_here`, by the path it sits at. An id, a count and a handle are not texts and are left out. Booted on the shipped build with its own identity, plus the warning for unfiled rules, in UTC, on a fixed day.
 
 #### Anonymous boot — `.operator`
 
@@ -434,6 +434,19 @@ another bot's mail counts are never shown here — only its own boot or its own 
 
 ```text
 the `kind` argument of add_entity lists the kinds you can create
+```
+
+#### Named boot with unfiled rules — `.identity.rules_off_the_tree.warning`
+
+```text
+Rules in force that name no purpose branch: this bot is not fully on its rules tree, and its charter's branches cannot load them.
+```
+
+#### Named boot with unfiled rules — `.identity.rules_off_the_tree.how_to_fix`
+
+```text
+Give each of these rules a `purpose` naming the branch its charter loads it by.
+A bot whose charter names no branches needs a root charter first: ask whoever writes its charter.
 ```
 
 ### Unseated rule whose label exceeds one line

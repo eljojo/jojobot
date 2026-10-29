@@ -318,10 +318,32 @@ async fn orientation(doc: &mut Doc) {
     doc.prose(
         "Every sentence in the answer to `start_here`, by the path it sits at. An id, a count and \
          a handle are not texts and are left out. Booted on the shipped build with its own \
-         identity only, in UTC, on a fixed day.",
+         identity, plus the warning for unfiled rules, in UTC, on a fixed day.",
     );
     boot(doc, "Anonymous boot", None).await;
     boot(doc, "Named boot of the shipped identity", Some("assistant")).await;
+    let memory = Arc::new(jojobot_domain::memory::testing::InMemoryMemory::booted());
+    let records =
+        jojobot_domain::memory::testing::contract::rules_index_records(memory.as_ref()).await;
+    let answer = boot_in_zone(
+        &handler_over(memory),
+        records[0].subject.slug(),
+        "UTC",
+        Some("2026-01-01"),
+    )
+    .await;
+    for key in ["warning", "how_to_fix"] {
+        doc.text(
+            4,
+            &format!("Named boot with unfiled rules — `.identity.rules_off_the_tree.{key}`"),
+            "text",
+            &sentence_per_line(
+                answer["identity"]["rules_off_the_tree"][key]
+                    .as_str()
+                    .expect("an unfiled rule's boot carries warning and repair text"),
+            ),
+        );
+    }
     doc.text(
         3,
         "Unseated rule whose label exceeds one line",
@@ -638,7 +660,7 @@ async fn rendered() -> Vec<(&'static str, String)> {
         "Orientation",
         "The orientation essay as the boot serves it (the core, then each section of the rest) \
          and every sentence in the answer to an anonymous boot and to a named boot of the shipped \
-         identity.",
+         identity, plus the warning and repair text of a named boot with unfiled rules.",
     );
     orientation(&mut orientation_file).await;
 
