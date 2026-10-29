@@ -420,12 +420,9 @@ impl Jojobot {
     /// find out only at wrap, if ever.
     ///
     /// Called BEFORE the write, never after. `beat` runs once the store has
-    /// already answered, and `blocked` means `wrote: false` on this surface — one
-    /// handed back over a write that landed would be a worse lie than the silence
-    /// it replaced. **The one exception is a call with several steps under a
-    /// `request_id` that stopped after its first** ([`crate::stopped::Stopped::unfinished`]): its
-    /// `wrote: false` is the step that was refused, and its way forward names the
-    /// parts that landed.
+    /// already answered, and `blocked` means `wrote: false` everywhere on this
+    /// surface — one handed back over a write that landed would be a worse lie
+    /// than the silence it replaced.
     pub(crate) fn attributable(&self, sid: Option<&str>) -> Result<(), CallToolResult> {
         self.caller(sid).map(|_| ())
     }
