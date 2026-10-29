@@ -170,6 +170,7 @@ async fn a_swept_run_is_refused_naming_no_displacing_run() {
     make_bot(&jojobot, "gamma").await;
     // Another run of the bot holds a role, so there is a run a refusal could name.
     let holder = claiming(&jojobot, "gamma", "dev-dispatch").await;
+    assert_eq!(holder["session"]["claim"]["status"], "taken", "{holder}");
     let holder_run = run_of(&holder).expect("a run");
     journalled(&jojobot, &sid_of(&holder).expect("a handle")).await;
     // A run the sweep closed: no displacing run, so no run is named.
@@ -194,8 +195,12 @@ async fn a_swept_run_is_refused_naming_no_displacing_run() {
     assert_eq!(swept["status"], "blocked", "{swept}");
     let refusal = swept.to_string();
     assert!(
-        !refusal.contains(&holder_run) && !refusal.contains("displaced_by"),
-        "a swept run names no displacing run: {swept}"
+        !refusal.contains(&holder_run),
+        "a swept run names no holder {holder_run}: {swept}"
+    );
+    assert!(
+        !refusal.contains("displaced_by"),
+        "a swept run carries no displacement field: {swept}"
     );
 }
 
