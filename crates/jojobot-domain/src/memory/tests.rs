@@ -3138,6 +3138,35 @@ fn an_empty_or_blank_value_takes_the_key_off_the_thing() {
     assert_eq!(folded_fields(&again, &[])["probe"], "back");
 }
 
+/// **The keys a view reads as its declaration keep a blank**, so the view stays
+/// refused rather than running unscoped. A key that is no declaration still
+/// clears, and so does one of these on a write with no value.
+#[test]
+fn a_views_declaration_keys_keep_a_blank() {
+    for key in [
+        "selects",
+        "answers_type",
+        "follow_shape",
+        "follow_relation",
+        "follow_direction",
+        "follow_fits_type",
+    ] {
+        let blank = vec![wrote(key, 1, Some("x")), wrote(key, 2, Some(" "))];
+        assert_eq!(
+            folded_fields(&blank, &[]).get(key).map(String::as_str),
+            Some(" "),
+            "{key} written blank"
+        );
+        let cleared = vec![wrote(key, 1, Some("x")), wrote(key, 2, None)];
+        assert!(
+            !folded_fields(&cleared, &[]).contains_key(key),
+            "{key} cleared"
+        );
+    }
+    let other = vec![wrote("where", 1, Some("x")), wrote("where", 2, Some(" "))];
+    assert!(!folded_fields(&other, &[]).contains_key("where"));
+}
+
 /// **A number written blank is a bad number, not an absent one.** The fold reads
 /// a blank value as unset, so what the numbering sees of a write is the keys the
 /// write set blank; a member given one is refused as no number, and a member
@@ -3176,4 +3205,13 @@ fn a_blank_number_on_a_numbered_member_is_refused_not_unset() {
             "{rule}"
         );
     }
+}
+
+/// **A blank day on a promise is refused like a clear**, against the fake.
+#[tokio::test]
+async fn a_blank_day_on_a_promise_is_refused_against_the_fake() {
+    contract::blank_required::a_blank_day_on_a_promise_is_refused_like_a_clear(
+        &InMemoryMemory::booted(),
+    )
+    .await;
 }

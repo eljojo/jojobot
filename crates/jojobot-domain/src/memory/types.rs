@@ -161,6 +161,29 @@ pub fn holds_a_value(value: &str) -> bool {
     !value.trim().is_empty()
 }
 
+/// **The keys a view reads as its declaration, which keep a blank written to
+/// them.** The runner reads each raw, so a blank one is a declaration naming
+/// nothing and the view is refused. Taking the key off instead would run the view
+/// unscoped and list everything. This is the one list; the fold asks it.
+const VIEW_DECLARATION_KEYS: [&str; 6] = [
+    "selects",
+    "answers_type",
+    "follow_shape",
+    "follow_relation",
+    "follow_direction",
+    "follow_fits_type",
+];
+
+/// **The value a write gives its key, or none when it takes the key off.** A
+/// blank gives none, except on a view's declaration key, where it stays a stored
+/// blank.
+pub fn held_value(write: &super::KeyWrite) -> Option<&String> {
+    write
+        .value
+        .as_ref()
+        .filter(|v| holds_a_value(v) || VIEW_DECLARATION_KEYS.contains(&write.key.trim()))
+}
+
 /// **How a key folds, over everything that has been declared.**
 ///
 /// **A key's fold is the instance's, not the type's.** Every declaration is
