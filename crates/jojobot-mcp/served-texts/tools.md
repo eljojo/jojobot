@@ -5335,8 +5335,10 @@ like a thing that is not there.
 #### `search` — argument `/inputSchema.clock`
 
 ```text
-**The recency tie-break day: `recorded_on`** (the default) or `happened_at`.
-More matching query terms and closer words lead before recency is considered.
+**The day that ranks recency: `recorded_on`** (the default) or `happened_at`.
+More matching query terms and closer words lead first. Among those, name a
+clock and the claim of the later day leads, ahead of the match score. Name
+none and the stronger score leads, and the day only breaks ties.
 
 ⚠️ **A claim with no `happened_at` ranks by `recorded_on` instead**,
 and the answer's own `rank_fallbacks` says how many that happened to

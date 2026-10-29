@@ -52,3 +52,5 @@ pub(super) fn scan(doc_id: &str, entity: Option<Entity>, prose: &str, facts: Vec
         unmapped: Vec::new(),
     }
 }
+
+mod clock_rank;
