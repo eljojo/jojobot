@@ -106,7 +106,7 @@ async fn a_set_selected_before_another_bots_edit_appends_instead_of_rewriting_it
     );
     let ours = async {
         gate.reached().await;
-        let selected = story.memory_index.signals_the_next_fact_edit();
+        let selected = story.memory_fold.signals_the_next_fact_edit();
         let release = async {
             let selected = selected
                 .await
@@ -156,7 +156,7 @@ async fn a_set_selected_before_another_bots_newer_claim_on_the_key_appends() {
     let theirs = set_agent(&marge, "role:gamma", "a2");
     let ours = async {
         gate.reached().await;
-        let selected = story.memory_index.signals_the_next_fact_edit();
+        let selected = story.memory_fold.signals_the_next_fact_edit();
         let release = async {
             let selected = selected
                 .await

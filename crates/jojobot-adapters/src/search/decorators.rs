@@ -3,15 +3,13 @@ use super::*;
 use crate::writer::owned;
 
 type CachedMemoryScan = (WriteSummary, Vec<DocScan>);
-#[cfg(any(test, feature = "testing"))]
-type FactEditObserver = std::sync::Mutex<Option<tokio::sync::oneshot::Sender<FactAddress>>>;
 
-/// A [`Memory`] with a live search projection behind it.
+/// The memory half of the search projection.
 ///
-/// Every verb delegates to the store, and every **successful** write re-scans the
-/// document it touched and re-indexes it. That is what makes read-back cover
-/// search too: writing a fact that search can't find is the same class of failure
-/// as writing one `recall` can't return.
+/// It reads the changes the writer publishes after the State applies a write,
+/// re-reads each document the change names, and re-indexes it. That is what makes
+/// read-back cover search too: writing a fact that search can't find is the same
+/// class of failure as writing one `recall` can't return.
 #[derive(Clone)]
 pub struct IndexedMemory {
     writer: crate::writer::Writer,
@@ -22,8 +20,9 @@ pub struct IndexedMemory {
     /// [`Memory::write_summary`] on every call so an unchanged store can be
     /// answered from here instead of paying for [`Memory::scan`] again.
     last_scan: Arc<RwLock<Option<CachedMemoryScan>>>,
+    /// The fold a fixture put in front of its store.
     #[cfg(any(test, feature = "testing"))]
-    fact_edit: Arc<FactEditObserver>,
+    state: Option<Arc<crate::fold::Folded>>,
 }
 
 /// **A document the per-write path just re-read**: the entity it is, and the
@@ -31,35 +30,58 @@ pub struct IndexedMemory {
 type Reread = (EntityId, Option<DocScan>);
 
 impl IndexedMemory {
-    /// Wrap a store with an **empty** index. The index is filled by
+    /// An index over a store, for a fixture: the store gets a fold in front of it
+    /// that shares this index's writer, so a write through [`memory`] publishes
+    /// the change the index reads. The **index is empty**: it is filled by
     /// [`rebuild`](IndexedMemory::rebuild) — separately, so a store that isn't
     /// reachable yet can't stop the server from booting.
+    ///
+    /// [`memory`]: IndexedMemory::memory
+    #[cfg(any(test, feature = "testing"))]
     pub fn new(inner: Arc<dyn Memory>) -> Result<Self, MemoryError> {
-        Self::with_writer(inner, crate::writer::Writer::default())
+        let writer = crate::writer::Writer::default();
+        let state = Arc::new(crate::fold::Folded::new(inner).with_writer(writer.clone()));
+        let mut indexed = Self::built(state.clone(), writer)?;
+        indexed.state = Some(state);
+        Ok(indexed)
     }
 
-    /// Share the process writer through the store, fold and search publication.
+    /// The fold [`new`](IndexedMemory::new) put in front of the store: a concrete
+    /// memory a contract can run against.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn state(&self) -> Arc<crate::fold::Folded> {
+        self.state
+            .clone()
+            .expect("this index was built over a fold")
+    }
+
+    /// An index that reads `inner`, the memory every caller is served by, and
+    /// subscribes to the process writer's publication. The writer is shared with
+    /// the store and the fold, which publish into it.
     pub fn with_writer(
         inner: Arc<dyn Memory>,
         writer: crate::writer::Writer,
     ) -> Result<Self, MemoryError> {
-        Ok(IndexedMemory {
+        Self::built(inner, writer)
+    }
+
+    fn built(inner: Arc<dyn Memory>, writer: crate::writer::Writer) -> Result<Self, MemoryError> {
+        let indexed = IndexedMemory {
             index: Arc::new(FullTextIndex::with_owner(writer.clone())?),
-            writer,
+            writer: writer.clone(),
             inner,
             last_scan: Arc::new(RwLock::new(None)),
             #[cfg(any(test, feature = "testing"))]
-            fact_edit: Arc::new(std::sync::Mutex::new(None)),
-        })
+            state: None,
+        };
+        writer.subscribe(Arc::new(indexed.clone()));
+        Ok(indexed)
     }
 
-    /// Observe the next selected fact edit before it waits behind a writer.
-    /// Race fixtures can release that writer after selection, without a sleep.
-    #[cfg(any(test, feature = "testing"))]
-    pub fn signals_the_next_fact_edit(&self) -> tokio::sync::oneshot::Receiver<FactAddress> {
-        let (send, receive) = tokio::sync::oneshot::channel();
-        *self.fact_edit.lock().expect("the observer is not poisoned") = Some(send);
-        receive
+    /// The memory port the index reads documents from, which is the one every
+    /// caller is served through.
+    pub fn memory(&self) -> Arc<dyn Memory> {
+        self.inner.clone()
     }
 
     /// The owner shared by the store, fold, and search publication.
@@ -236,50 +258,51 @@ impl IndexedMemory {
             }
         }
     }
+}
 
-    /// **The summary the store answers with before a write**, when the index
-    /// could be current under it: some read has filled the index, no refresh is on
-    /// record as failed, and the store offers a signal. [`caught_up`] records the
-    /// index as current only if the scan it holds was taken under this very
-    /// summary — a change made past this store leaves the two apart, and a later
-    /// write must not take that change in under its own mark.
-    ///
-    /// [`caught_up`]: IndexedMemory::caught_up
-    async fn summary_before_a_write(&self) -> Option<WriteSummary> {
-        if self.index.memory_refresh_pending()
-            || self
-                .last_scan
-                .read()
-                .expect("scan cache poisoned")
-                .is_none()
-        {
-            return None;
-        }
-        self.inner.write_summary().await.ok()?
+/// A fixture drives writes through the port the binary serves, so the verbs
+/// read as they did when the index wrapped the store.
+#[cfg(any(test, feature = "testing"))]
+impl std::ops::Deref for IndexedMemory {
+    type Target = dyn Memory;
+
+    fn deref(&self) -> &Self::Target {
+        &*self.inner
     }
+}
 
+impl IndexedMemory {
     /// **Record that the index has caught up with a write**, so the next read
     /// does not scan the store for it.
     ///
-    /// `began` is the summary the store answered with before the write; with
-    /// none, with a scan the index holds that was taken under another summary, or
-    /// with any document the index could not re-read, this records nothing and
-    /// the next read scans, as it always did. Otherwise the cached
-    /// scan takes the re-read documents and the summary the store answers with
-    /// now. A scan that replaced the cache in the meantime is left alone.
-    async fn caught_up(&self, began: Option<WriteSummary>, reread: Vec<Option<Reread>>) {
-        let Some(began) = began else { return };
+    /// The State counted `first..=last` as its changes for this write, and the
+    /// scan the index holds was taken under the count just before them. With any
+    /// other state, or a document the index could not re-read, this records
+    /// nothing and the next read scans. Otherwise the cached scan takes the re-read
+    /// documents and the State's count now.
+    async fn caught_up(
+        &self,
+        before: impl Fn(&WriteSummary) -> bool,
+        after: impl Fn(&WriteSummary) -> bool,
+        reread: Vec<Option<Reread>>,
+    ) {
         let Some(reread) = reread.into_iter().collect::<Option<Vec<Reread>>>() else {
             return;
         };
+        if self.index.memory_refresh_pending() {
+            return;
+        }
         let Ok(Some(now)) = self.inner.write_summary().await else {
             return;
         };
+        if !after(&now) {
+            return;
+        }
         let mut cached = self.last_scan.write().expect("scan cache poisoned");
         let Some((summary, scan)) = cached.as_mut() else {
             return;
         };
-        if *summary != began {
+        if !before(summary) {
             return;
         }
         for (entity, doc) in reread {
@@ -297,788 +320,65 @@ impl IndexedMemory {
         }
         *summary = now;
     }
-
-    /// **The documents whose stored text names `folded`** by a field value, an
-    /// edge, a reference, a parent or a mention in prose or in a claim's content or details —
-    /// the places a fold or a rename rewrites. Read from the
-    /// scan the index is current under, so it costs no statement, and read
-    /// before the fold, because after it the text names the survivor.
-    fn holders_of(&self, folded: &EntityId) -> Vec<EntityId> {
-        let names = |value: &String| value.split(',').any(|item| item.trim() == folded.as_str());
-        let cached = self.last_scan.read().expect("scan cache poisoned");
-        let Some((_, scan)) = cached.as_ref() else {
-            return Vec::new();
-        };
-        scan.iter()
-            .filter_map(|doc| {
-                let entity = doc.entity.as_ref()?;
-                let holds = entity.parent.as_ref() == Some(folded)
-                    // **A mention in a page of prose** reads as the handle the
-                    // thing wears, so a page that names it holds it too. A page
-                    // naming a longer handle that merely begins with this one is
-                    // read again for nothing, which costs a statement and is
-                    // never wrong.
-                    || doc.prose.contains(folded.as_str())
-                    || doc.fields.values().any(names)
-                    || doc.facts.iter().any(|fact| {
-                        fact.edge
-                            .as_ref()
-                            .is_some_and(|edge| &edge.object == folded)
-                            || fact.refs.contains(folded)
-                            // **A pointer at a claim of the thing** spells the
-                            // handle in the claim's address, so a claim
-                            // worked out from one, or standing for one, reads
-                            // its source under the new handle only if it is
-                            // read again.
-                            || fact
-                                .derived_from
-                                .as_ref()
-                                .is_some_and(|source| &source.home == folded)
-                            || fact.stands_for.iter().any(|source| &source.home == folded)
-                            // **A mention in a claim's content or details** reads as the
-                            // handle the thing wears, as one in prose does.
-                            || fact.content.contains(folded.as_str())
-                            || fact
-                                .details
-                                .as_deref()
-                                .is_some_and(|details| details.contains(folded.as_str()))
-                            || fact.fields.values().any(names)
-                    });
-                holds.then(|| entity.id.clone())
-            })
-            .collect()
-    }
 }
 
-/// TEMPORARY(9.3.2) the memory write-reaction follow-up. Subscribers replace it in 9.3.2-2.
-impl IndexedMemory {
-    /// **Drop the scan cache after a declaration verb that may have landed.**
-    /// An indeterminate answer means the commit state was unknown and the fold
-    /// was reloaded, so the declaration can be in force while the answer is an
-    /// error; any other error means nothing landed and the cache stays.
-    fn drop_scan_after_declaration<T>(&self, answer: &Result<T, MemoryError>) {
-        if matches!(answer, Ok(_) | Err(MemoryError::Indeterminate)) {
-            *self.last_scan.write().expect("scan cache poisoned") = None;
-        }
-    }
-
-    /// **The one door every write that changes a document goes through.** A write
-    /// the store committed whose fold could not follow answers
-    /// [`MemoryError::FoldBehind`], and the write still landed: this reads the
-    /// documents it touched again, so the index holds them or marks itself behind
-    /// them, and hands the same error back. Nothing is recorded as current under
-    /// the store's signal, so the next read scans. `also` names documents the
-    /// write rewrote without returning them, which are read again the same way.
-    async fn through<T>(
-        &self,
-        also: &[EntityId],
-        write: impl std::future::Future<Output = Result<T, MemoryError>>,
-    ) -> Result<T, MemoryError> {
-        use jojobot_domain::memory::Landed;
-        let result = write.await;
-        // Recovery can publish a rename without reconstructing its receipt.
-        // Dependent mail and session caches must re-read under the new names.
-        if matches!(&result, Err(MemoryError::Indeterminate)) {
-            self.index.names_changed();
-        }
-        if let Err(MemoryError::FoldBehind { landed, .. }) = &result {
-            let touched = match landed {
-                Landed::Fact(fact) => vec![fact.home.clone()],
-                Landed::Creation(made) => vec![made.0.id.clone()],
-                Landed::Retraction(taken_back) => vec![taken_back.retracted.home.clone()],
-                Landed::Merge(done) => {
-                    // The folded bot's runs read as the survivor's now.
-                    self.index.names_changed();
-                    vec![done.folded.clone(), done.survivor.id.clone()]
-                }
-            };
-            for entity in touched.iter().chain(also) {
-                self.refresh(entity).await;
-            }
-        }
-        result
-    }
-}
-
-/// TEMPORARY(9.3.2) the memory write-reaction wrappers. Subscribers replace these in 9.3.2-2.
+/// **The memory half of the index reads what the memory State changed.** For each
+/// thing a change names, the index re-reads its document through the memory
+/// every caller is served by, so search holds what a reader sees. A failure to
+/// re-read is not the write failing: the index marks itself behind that
+/// document, which makes `search` say so on every answer afterwards.
 #[async_trait]
-impl Memory for IndexedMemory {
-    fn image_field(&self, entity: &EntityId, key: &str) -> Option<Option<String>> {
-        self.inner.image_field(entity, key)
-    }
-
-    async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
-        owned!(self, this, [], this.add_entity(new).await);
-        let began = self.summary_before_a_write().await;
-        let written = self.through(&[], self.inner.add_entity(new)).await?;
-        if let Guarded::Written(entity) = &written {
-            let reread = self.refresh(&entity.id).await;
-            self.caught_up(began, vec![reread]).await;
-        }
-        Ok(written)
-    }
-
-    /// **The thing and its first claim enter the index together**, as an entity
-    /// and a capture each would. Forwarded and not left to the port's default,
-    /// which refuses.
-    async fn add_entity_with_first_claim(
-        &self,
-        new: NewEntity,
-        first: NewFact,
-    ) -> Result<Guarded<(Entity, Fact)>, MemoryError> {
-        owned!(
-            self,
-            this,
-            [],
-            this.add_entity_with_first_claim(new, first).await
-        );
-        let began = self.summary_before_a_write().await;
-        let written = self
-            .through(&[], self.inner.add_entity_with_first_claim(new, first))
-            .await?;
-        if let Guarded::Written((entity, _)) = &written {
-            let reread = self.refresh(&entity.id).await;
-            self.caught_up(began, vec![reread]).await;
-        }
-        Ok(written)
-    }
-
-    /// **An app's event enters the index as a creation does.** A repeat or a
-    /// conflict wrote nothing and leaves the index as it was. Forwarded and not
-    /// left to the port's default, which refuses.
-    async fn record_app_event(
-        &self,
-        event: jojobot_domain::app::AppEvent,
-    ) -> Result<jojobot_domain::app::AppOutcome, MemoryError> {
-        owned!(self, this, [], this.record_app_event(event).await);
-        let began = self.summary_before_a_write().await;
-        let outcome = self
-            .through(&[], self.inner.record_app_event(event))
-            .await?;
-        if let jojobot_domain::app::AppOutcome::Landed(landed) = &outcome
-            && let Guarded::Written((entity, _)) = landed.as_ref()
-        {
-            let reread = self.refresh(&entity.id).await;
-            self.caught_up(began, vec![reread]).await;
-        }
-        Ok(outcome)
-    }
-
-    /// **The edited thing and its claim enter the index together.** Forwarded and
-    /// not left to the port's default, which refuses.
-    async fn update_entity_with_claim(
-        &self,
-        handle: &EntityId,
-        patch: EntityPatch,
-        claim: NewFact,
-    ) -> Result<Guarded<(Entity, Fact)>, MemoryError> {
-        owned!(
-            self,
-            this,
-            [handle = handle.clone()],
-            this.update_entity_with_claim(&handle, patch, claim).await
-        );
-        let began = self.summary_before_a_write().await;
-        let written = self
-            .through(
-                &[],
-                self.inner.update_entity_with_claim(handle, patch, claim),
-            )
-            .await?;
-        if let Guarded::Written((entity, _)) = &written {
-            let reread = self.refresh(&entity.id).await;
-            self.caught_up(began, vec![reread]).await;
-        }
-        Ok(written)
-    }
-
-    async fn list_entities(&self, kind: Option<EntityKind>) -> Result<Vec<Entity>, MemoryError> {
-        self.inner.list_entities(kind).await
-    }
-
-    async fn former_handles(&self) -> Result<Vec<FormerHandle>, MemoryError> {
-        self.inner.former_handles().await
-    }
-
-    async fn update_entity(
-        &self,
-        handle: &EntityId,
-        patch: EntityPatch,
-    ) -> Result<Guarded<Entity>, MemoryError> {
-        owned!(
-            self,
-            this,
-            [handle = handle.clone()],
-            this.update_entity(&handle, patch).await
-        );
-        let began = self.summary_before_a_write().await;
-        let written = self
-            .through(&[], self.inner.update_entity(handle, patch))
-            .await?;
-        if let Guarded::Written(entity) = &written {
-            let reread = self.refresh(&entity.id).await;
-            self.caught_up(began, vec![reread]).await;
-        }
-        Ok(written)
-    }
-
-    /// **Reindexed under its new handle**, the same "reindex the doc the
-    /// store just wrote" step every other write here takes. The doc itself
-    /// is found by badge underneath, so this is what makes the new spelling
-    /// findable rather than what makes the record exist.
-    ///
-    /// **So is every document that names the renamed thing.** A field value, an
-    /// edge, a reference or a parent that named the old handle names the new one
-    /// now, and the document holding it is re-read here, because the index is
-    /// marked current after this write and the next read does not scan the store
-    /// for them. The holders are read before the rename, from the scan the index
-    /// is current under, as a fold's are.
-    async fn rename_entity(
-        &self,
-        from: &EntityId,
-        to: &EntityId,
-        parent: Option<EntityId>,
-        date: Date,
-        resemblance: jojobot_domain::memory::Override<'_>,
-        session: Option<&str>,
-    ) -> Result<Guarded<Entity>, MemoryError> {
-        owned!(
-            self,
-            this,
-            [
-                from = from.clone(),
-                to = to.clone(),
-                owned_token = resemblance.token.map(str::to_string),
-                owned_reason = resemblance.reason.map(str::to_string),
-                session = session.map(str::to_string)
-            ],
-            this.rename_entity(
-                &from,
-                &to,
-                parent,
-                date,
-                jojobot_domain::memory::Override::new(
-                    owned_token.as_deref(),
-                    owned_reason.as_deref(),
-                ),
-                session.as_deref(),
-            )
-            .await
-        );
-        let began = self.summary_before_a_write().await;
-        let holders = if began.is_some() {
-            self.holders_of(from)
-        } else {
-            Vec::new()
-        };
-        let written = self
-            .through(
-                &holders,
-                self.inner
-                    .rename_entity(from, to, parent, date, resemblance, session),
-            )
-            .await?;
-        if let Guarded::Written(entity) = &written {
-            let mut reread = vec![self.refresh(&entity.id).await];
-            for holder in holders.iter().filter(|holder| **holder != entity.id) {
-                reread.push(self.refresh(holder).await);
+impl crate::writer::publish::Subscriber for IndexedMemory {
+    async fn changed(&self, changes: &[crate::writer::publish::Change]) {
+        use crate::writer::publish::Change;
+        let mut reread = Vec::new();
+        let (mut first, mut last, mut counted, mut uncounted) = (None, 0, 0, false);
+        let mut began = None;
+        for change in changes {
+            if let Change::Began(summary) = change {
+                began.get_or_insert(summary.clone());
             }
-            // A run's owner reads as the handle the entity wears now.
-            self.index.names_changed();
-            self.caught_up(began, reread).await;
+            let Change::Things {
+                touched,
+                names_changed,
+                generation,
+            } = change
+            else {
+                continue;
+            };
+            // A run's owner, and a mention in a message, read as the handle a
+            // thing wears now.
+            if *names_changed {
+                self.index.names_changed();
+            }
+            for entity in touched {
+                reread.push(self.refresh(entity).await);
+            }
+            match generation {
+                Some(generation) => {
+                    first.get_or_insert(*generation);
+                    last = *generation;
+                    counted += 1;
+                }
+                None => uncounted = true,
+            }
         }
-        Ok(written)
-    }
-
-    async fn archive_entity(
-        &self,
-        id: &EntityId,
-        reason: &str,
-        session: Option<&str>,
-    ) -> Result<Entity, MemoryError> {
-        owned!(
-            self,
-            this,
-            [
-                id = id.clone(),
-                reason = reason.to_string(),
-                session = session.map(str::to_string)
-            ],
-            this.archive_entity(&id, &reason, session.as_deref()).await
-        );
-        let began = self.summary_before_a_write().await;
-        let entity = self
-            .through(&[], self.inner.archive_entity(id, reason, session))
-            .await?;
-        let reread = self.refresh(&entity.id).await;
-        self.caught_up(began, vec![reread]).await;
-        Ok(entity)
-    }
-
-    async fn restore_entity(
-        &self,
-        id: &EntityId,
-        session: Option<&str>,
-    ) -> Result<(Entity, Archived), MemoryError> {
-        owned!(
-            self,
-            this,
-            [id = id.clone(), session = session.map(str::to_string)],
-            this.restore_entity(&id, session.as_deref()).await
-        );
-        let began = self.summary_before_a_write().await;
-        let restored = self
-            .through(&[], self.inner.restore_entity(id, session))
-            .await?;
-        let reread = self.refresh(&restored.0.id).await;
-        self.caught_up(began, vec![reread]).await;
-        Ok(restored)
-    }
-
-    async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
-        owned!(self, this, [], this.capture(fact).await);
-        let began = self.summary_before_a_write().await;
-        let written = self.through(&[], self.inner.capture(fact)).await?;
-        if let Guarded::Written(fact) = &written {
-            let reread = self.refresh(&fact.home).await;
-            self.caught_up(began, vec![reread]).await;
-        }
-        Ok(written)
-    }
-
-    async fn recall(&self, subject: &EntityId) -> Result<Vec<Fact>, MemoryError> {
-        self.inner.recall(subject).await
-    }
-
-    /// **Straight through, and it does not touch the index.** The writes behind
-    /// a key are the store's own record; the index projects current truth and
-    /// holds nothing a history is read from.
-    async fn history(&self, entity: &EntityId, key: &str) -> Result<Vec<FieldWrite>, MemoryError> {
-        self.inner.history(entity, key).await
-    }
-
-    /// **Straight through.** A claim's writes are the store's record and the
-    /// index holds no version of them.
-    async fn claim_history(&self, address: &FactAddress) -> Result<Vec<ClaimWrite>, MemoryError> {
-        self.inner.claim_history(address).await
-    }
-    async fn entity_history(
-        &self,
-        entity: &EntityId,
-    ) -> Result<Vec<jojobot_domain::memory::EntityVersion>, MemoryError> {
-        self.inner.entity_history(entity).await
-    }
-    async fn keys_kept_off_the_thing(
-        &self,
-        address: &FactAddress,
-    ) -> Result<std::collections::BTreeSet<String>, MemoryError> {
-        self.inner.keys_kept_off_the_thing(address).await
-    }
-
-    /// **Straight through, and it does not touch the index**: a trail is a read
-    /// of writes, not a document. A decorator that leaves this to the trait
-    /// default answers from its own `history`, which drops the writes that stay
-    /// on their record.
-    async fn key_trails(
-        &self,
-        entity: &EntityId,
-    ) -> Result<jojobot_domain::memory::KeyTrails, MemoryError> {
-        self.inner.key_trails(entity).await
-    }
-
-    /// **Straight through, and it does not touch the index**: a merge's event
-    /// is not a document. A decorator that leaves this to the trait default
-    /// answers no event in production.
-    async fn merge_events(
-        &self,
-        entity: Option<&EntityId>,
-    ) -> Result<Vec<jojobot_domain::memory::MergeEvent>, MemoryError> {
-        self.inner.merge_events(entity).await
-    }
-
-    /// **Straight through**, for the same reason.
-    async fn moved_address(
-        &self,
-        address: &FactAddress,
-    ) -> Result<Option<FactAddress>, MemoryError> {
-        self.inner.moved_address(address).await
-    }
-
-    /// **Straight through**, for the same reason.
-    async fn unmapped_claims(
-        &self,
-        entity: &EntityId,
-    ) -> Result<Vec<jojobot_domain::memory::unmapped::UnmappedClaim>, MemoryError> {
-        self.inner.unmapped_claims(entity).await
-    }
-
-    /// **Straight through, and it does not touch the index**, for the reason
-    /// [`claim_history`](Self::claim_history) does not. A decorator that
-    /// leaves this to the trait default serves the default in production.
-    async fn claim_histories(
-        &self,
-        entity: &EntityId,
-    ) -> Result<std::collections::HashMap<FactId, Vec<ClaimWrite>>, MemoryError> {
-        self.inner.claim_histories(entity).await
-    }
-
-    /// **Straight through, and it does not touch the index.** What a thing
-    /// holds is decided by the order its keys were written, which is the
-    /// store's record and not something a projection could re-derive.
-    async fn fields(&self, entity: &EntityId) -> Result<BTreeMap<String, String>, MemoryError> {
-        self.inner.fields(entity).await
-    }
-
-    /// **Straight through, and it does not touch the index.** A decorator that
-    /// leaves this to the trait default serves "no age" in production over a
-    /// store that keeps them.
-    async fn field_ages(
-        &self,
-        entity: &EntityId,
-    ) -> Result<jojobot_domain::memory::FieldAges, MemoryError> {
-        self.inner.field_ages(entity).await
-    }
-
-    /// **Straight through, and it does not touch the index.** Which claim
-    /// backs each folded value is read off the writes, which the store keeps
-    /// and the projection does not.
-    ///
-    /// **A decorator that leaves this to the trait default serves the default
-    /// in production**, whatever the store underneath it implements — so the
-    /// three reads below forward for the same reason `fields` does.
-    async fn backing(
-        &self,
-        entity: &EntityId,
-    ) -> Result<BTreeMap<String, jojobot_domain::memory::FieldBacking>, MemoryError> {
-        self.inner.backing(entity).await
-    }
-
-    /// **Straight through, and it does not touch the index.** Lineage is a
-    /// pointer between two records, which the store selects on.
-    async fn built_on(&self, source: &FactAddress) -> Result<Vec<Fact>, MemoryError> {
-        self.inner.built_on(source).await
-    }
-
-    /// **Straight through, and it does not touch the index.** Which records
-    /// name a handle in a field is a read of the store's own rows.
-    async fn referring_to(&self, target: &EntityId) -> Result<Vec<Fact>, MemoryError> {
-        self.inner.referring_to(target).await
-    }
-
-    /// **Straight through, and it does not touch the index.** Who holds a key is
-    /// a read of what the store keeps by key, and the index is not asked.
-    async fn keys_holding(
-        &self,
-        key: &str,
-        test: &jojobot_domain::memory::filter::Test,
-        kind: Option<EntityKind>,
-    ) -> Result<Vec<EntityId>, MemoryError> {
-        self.inner.keys_holding(key, test, kind).await
-    }
-
-    /// **Straight through, and it does not touch the index.** The head of an
-    /// ordering is a read of what the store keeps by key.
-    async fn ordered_first_k(
-        &self,
-        key: &str,
-        holds: jojobot_domain::memory::types::ValueType,
-        direction: jojobot_domain::memory::filter::Direction,
-        kind: Option<EntityKind>,
-        among: Option<&[EntityId]>,
-        k: usize,
-    ) -> Result<jojobot_domain::memory::holders::OrderedHead, MemoryError> {
-        self.inner
-            .ordered_first_k(key, holds, direction, kind, among, k)
-            .await
-    }
-
-    /// **Straight through**: the width of a read is the inner store's.
-    fn read_width(&self) -> usize {
-        self.inner.read_width()
-    }
-    /// **Straight through, and it does not touch the index.** Who wrote a thought
-    /// into a thread is a read of the store's own claims.
-    async fn thought_writers(&self, thread: &EntityId) -> Result<Vec<EntityId>, MemoryError> {
-        self.inner.thought_writers(thread).await
-    }
-
-    /// **Straight through, and it does not touch the index.** What this build
-    /// ships as a default is known to `Provisioned` alone; the default body
-    /// here would say no write ever echoes one.
-    async fn echoed_defaults(
-        &self,
-        entity: &EntityId,
-        fields: &BTreeMap<String, String>,
-    ) -> Vec<String> {
-        self.inner.echoed_defaults(entity, fields).await
-    }
-
-    async fn update_fact(
-        &self,
-        address: &FactAddress,
-        patch: FactPatch,
-        caller: &EntityId,
-    ) -> Result<Guarded<Fact>, MemoryError> {
-        #[cfg(any(test, feature = "testing"))]
-        if let Some(reached) = self
-            .fact_edit
-            .lock()
-            .expect("the observer is not poisoned")
-            .take()
+        if let (Some(first), false) = (first, uncounted)
+            && last + 1 - first == counted
         {
-            let _ = reached.send(address.clone());
-        }
-        owned!(
-            self,
-            this,
-            [address = address.clone(), caller = caller.clone()],
-            this.update_fact(&address, patch, &caller).await
-        );
-        let began = self.summary_before_a_write().await;
-        let written = self
-            .through(&[], self.inner.update_fact(address, patch, caller))
-            .await?;
-        if let Guarded::Written(fact) = &written {
-            let reread = self.refresh(&fact.home).await;
-            self.caught_up(began, vec![reread]).await;
-        }
-        Ok(written)
-    }
-
-    /// One reindex, not two: a retraction writes both rows into the same
-    /// document, so re-reading that document once is what makes the marked row
-    /// and the account of it visible together. Re-reading twice would only
-    /// re-read the same page.
-    async fn retract(
-        &self,
-        address: &FactAddress,
-        reason: Option<&str>,
-        date: Date,
-        caller: &EntityId,
-        session: Option<&str>,
-    ) -> Result<Retraction, MemoryError> {
-        owned!(
-            self,
-            this,
-            [
-                address = address.clone(),
-                reason = reason.map(str::to_string),
-                caller = caller.clone(),
-                session = session.map(str::to_string)
-            ],
-            this.retract(
-                &address,
-                reason.as_deref(),
-                date,
-                &caller,
-                session.as_deref(),
+            self.caught_up(
+                |cached| cached.entities.0 + 1 == first as i64,
+                |now| now.entities.0 == last as i64,
+                reread,
             )
-            .await
-        );
-        let began = self.summary_before_a_write().await;
-        let taken_back = self
-            .through(
-                &[],
-                self.inner.retract(address, reason, date, caller, session),
-            )
-            .await?;
-        let reread = self.refresh(&taken_back.retracted.home).await;
-        self.caught_up(began, vec![reread]).await;
-        Ok(taken_back)
-    }
-
-    /// **Both sides are reindexed, and the folded one matters most.** Its rows
-    /// moved to the survivor, so an index still holding them would go on
-    /// answering with a handle that is no longer a thing — the split this verb
-    /// exists to close, reopened in the half a reader actually searches.
-    ///
-    /// **So is every document the fold rewrote.** A field value, an edge, a
-    /// reference or a parent that named the folded thing names the survivor now,
-    /// and the document holding it is re-read here, because the index is marked
-    /// current after this write and the next read does not scan the store for
-    /// them. The holders are read from the scan the index is current under,
-    /// before the fold: after it the text names the survivor and no longer says
-    /// who held the folded one.
-    async fn merge(
-        &self,
-        folded: &EntityId,
-        survivor: &EntityId,
-        reason: Option<&str>,
-        date: Date,
-        caller: &EntityId,
-        session: Option<&str>,
-    ) -> Result<Merge, MemoryError> {
-        owned!(
-            self,
-            this,
-            [
-                folded = folded.clone(),
-                survivor = survivor.clone(),
-                reason = reason.map(str::to_string),
-                caller = caller.clone(),
-                session = session.map(str::to_string)
-            ],
-            this.merge(
-                &folded,
-                &survivor,
-                reason.as_deref(),
-                date,
-                &caller,
-                session.as_deref(),
-            )
-            .await
-        );
-        let began = self.summary_before_a_write().await;
-        let holders = if began.is_some() {
-            self.holders_of(folded)
-        } else {
-            Vec::new()
-        };
-        let done = self
-            .through(
-                &holders,
-                self.inner
-                    .merge(folded, survivor, reason, date, caller, session),
-            )
-            .await?;
-        // The folded bot's runs read as the survivor's now.
-        self.index.names_changed();
-        let mut reread = vec![self.refresh(folded).await, self.refresh(survivor).await];
-        for holder in holders
-            .iter()
-            .filter(|holder| *holder != folded && *holder != survivor)
+            .await;
+        } else if first.is_none()
+            && !reread.is_empty()
+            && let Some(began) = began
         {
-            reread.push(self.refresh(holder).await);
+            self.caught_up(|cached| *cached == began, |_| true, reread)
+                .await;
         }
-        self.caught_up(began, reread).await;
-        Ok(done)
-    }
-
-    /// Prose is indexed material, so a charter written here is findable on the
-    /// next call — the same "reindex the doc the store just wrote" step every
-    /// other write takes, and for the same reason: without it, the one part of
-    /// a bot that is pure prose would be the one part search could not see.
-    async fn set_prose(
-        &self,
-        entity: &EntityId,
-        prose: &str,
-        session: Option<&str>,
-    ) -> Result<String, MemoryError> {
-        owned!(
-            self,
-            this,
-            [
-                entity = entity.clone(),
-                prose = prose.to_string(),
-                session = session.map(str::to_string)
-            ],
-            this.set_prose(&entity, &prose, session.as_deref()).await
-        );
-        let began = self.summary_before_a_write().await;
-        let stored = self
-            .through(&[], self.inner.set_prose(entity, prose, session))
-            .await?;
-        let reread = self.refresh(entity).await;
-        self.caught_up(began, vec![reread]).await;
-        Ok(stored)
-    }
-
-    async fn scan(&self) -> Result<Vec<DocScan>, MemoryError> {
-        self.inner.scan().await
-    }
-
-    async fn scan_entity(&self, entity: &EntityId) -> Result<Option<DocScan>, MemoryError> {
-        self.inner.scan_entity(entity).await
-    }
-
-    async fn has_prose(&self, entity: &EntityId) -> Result<bool, MemoryError> {
-        self.inner.has_prose(entity).await
-    }
-
-    async fn composed_prose(&self, entity: &EntityId, own: &str) -> Result<String, MemoryError> {
-        self.inner.composed_prose(entity, own).await
-    }
-
-    // **No document is re-read on either of these** — a declaration is not
-    // a document: it says which keys a writer should fill and is carried by
-    // no entity, so there is no ONE doc for `refresh` to re-scan.
-    //
-    // **The scan CACHE is still dropped.** Every doc's fields are folded
-    // against the CURRENT declarations at scan time (`folded_fields`), so a
-    // declaration that changes how a key folds changes what every affected
-    // doc's fields answer — not one doc, and not zero. `write_summary`
-    // never counts a declaration write, so the ordinary skip-if-unchanged
-    // check in `rescan` cannot see this on its own; dropping the cache
-    // forces the NEXT read to take a real scan rather than serve one taken
-    // under the old declarations.
-    async fn declare_type(
-        &self,
-        declared: DeclaredType,
-        by_session: Option<&str>,
-    ) -> Result<DeclaredType, MemoryError> {
-        owned!(
-            self,
-            this,
-            [by_session = by_session.map(str::to_string)],
-            this.declare_type(declared, by_session.as_deref()).await
-        );
-        let written = self.inner.declare_type(declared, by_session).await;
-        self.drop_scan_after_declaration(&written);
-        written
-    }
-
-    async fn declared_types(&self) -> Result<Vec<DeclaredType>, MemoryError> {
-        self.inner.declared_types().await
-    }
-
-    async fn declared_types_shared(
-        &self,
-    ) -> Result<std::sync::Arc<Vec<DeclaredType>>, MemoryError> {
-        self.inner.declared_types_shared().await
-    }
-
-    async fn displaced_type(&self, name: &str) -> Result<Option<Displaced>, MemoryError> {
-        self.inner.displaced_type(name).await
-    }
-
-    /// The same reason [`declare_type`](Self::declare_type) drops the
-    /// cache: a kind's keys fold exactly like a declared type's.
-    async fn declare_kind(
-        &self,
-        token: &str,
-        origin: jojobot_domain::memory::types::Origin,
-        fields: Vec<jojobot_domain::memory::types::Field>,
-    ) -> Result<bool, MemoryError> {
-        owned!(
-            self,
-            this,
-            [token = token.to_string()],
-            this.declare_kind(&token, origin, fields).await
-        );
-        let changed = self.inner.declare_kind(token, origin, fields).await;
-        self.drop_scan_after_declaration(&changed);
-        changed
-    }
-
-    async fn declared_kinds(
-        &self,
-    ) -> Result<Vec<(String, jojobot_domain::memory::types::Origin)>, MemoryError> {
-        self.inner.declared_kinds().await
-    }
-
-    /// **Reclaiming changes folding too**: a key that summed while the kind
-    /// held it falls back to newest-write-wins once reclaimed, for every doc
-    /// answering to it.
-    async fn reclaim_kind(&self, token: &str) -> Result<(), MemoryError> {
-        owned!(
-            self,
-            this,
-            [token = token.to_string()],
-            this.reclaim_kind(&token).await
-        );
-        let reclaimed = self.inner.reclaim_kind(token).await;
-        self.drop_scan_after_declaration(&reclaimed);
-        reclaimed
     }
 }
 
@@ -1433,6 +733,7 @@ impl IndexedSessions {
     }
 }
 
+/// TEMPORARY(9.3.8) the session refresh. A read-path catch-up, not a write reaction: search as a subscriber and a query replaces it in 9.3.8.
 #[async_trait]
 impl Refresh for IndexedSessions {
     async fn refresh(&self) {
@@ -1445,7 +746,7 @@ impl Refresh for IndexedSessions {
     }
 }
 
-/// TEMPORARY(9.3.2) the mail refresh wrapper. A subscriber replaces it in 9.3.2-2.
+/// TEMPORARY(9.3.8) the mail refresh. A read-path catch-up, not a write reaction: search as a subscriber and a query replaces it in 9.3.8.
 #[async_trait]
 impl Refresh for IndexedMailboxes {
     /// **`scan_messages`, never a delivering read.** Reading IS delivery on the
@@ -1548,7 +849,7 @@ impl crate::writer::publish::Subscriber for IndexedMailboxes {
                         self.absorb(&ids, *position).await;
                     }
                 }
-                Change::Posted(_) => {}
+                Change::Posted(_) | Change::Began(_) | Change::Things { .. } => {}
             }
         }
     }

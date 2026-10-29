@@ -54,7 +54,7 @@ async fn serve_counting(apps: Vec<AppPrincipal>, auth_on: bool, counting: bool) 
     let store = Arc::new(InMemoryMemory::booted());
     let indexed = Arc::new(IndexedMemory::new(store.clone()).expect("the search index opens"));
     let search = Arc::new(Retrieval::new(indexed.index(), vec![indexed.clone()]));
-    let memory: Arc<dyn Memory> = indexed.clone();
+    let memory: Arc<dyn Memory> = indexed.memory();
     let mailboxes: Arc<dyn jojobot_domain::mailbox::Mailboxes> =
         Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner());
     let validator = auth_on.then(|| {

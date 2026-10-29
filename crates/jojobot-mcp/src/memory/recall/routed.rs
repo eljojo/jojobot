@@ -393,11 +393,13 @@ async fn folded_over(store: Arc<InMemoryMemory>) -> Jojobot {
     let below: Arc<dyn Memory> = store;
     let folded = Arc::new(Folded::new(below));
     folded.rebuild().await.expect("the fold loads");
+    let writer = folded.writer();
     let mentioning = Arc::new(Mentioning::new(folded));
-    let indexed = Arc::new(IndexedMemory::new(mentioning).expect("the index opens"));
+    let indexed =
+        Arc::new(IndexedMemory::with_writer(mentioning, writer).expect("the index opens"));
     let search = Arc::new(Retrieval::new(indexed.index(), vec![indexed.clone()]));
     Jojobot::new(
-        indexed,
+        indexed.memory(),
         search,
         Arc::new(InMemoryMailboxes::knowing_any_owner()),
         Arc::new(InMemorySessions::new()),
@@ -413,11 +415,13 @@ async fn counted_stack(n: usize) -> (Jojobot, Arc<Counted>) {
     let below: Arc<dyn Memory> = store;
     let folded = Arc::new(Folded::new(below));
     folded.rebuild().await.expect("the fold loads");
+    let writer = folded.writer();
     let above = Arc::new(Counted::new(folded));
-    let indexed = Arc::new(IndexedMemory::new(above.clone()).expect("the index opens"));
+    let indexed =
+        Arc::new(IndexedMemory::with_writer(above.clone(), writer).expect("the index opens"));
     let search = Arc::new(Retrieval::new(indexed.index(), vec![indexed.clone()]));
     let jojobot = Jojobot::new(
-        indexed,
+        indexed.memory(),
         search,
         Arc::new(InMemoryMailboxes::knowing_any_owner()),
         Arc::new(InMemorySessions::new()),
@@ -532,9 +536,10 @@ async fn the_layers_above_the_fold_forward_the_two_calls() {
     let below: Arc<dyn Memory> = store.clone();
     let folded = Arc::new(Folded::new(below));
     folded.rebuild().await.expect("the fold loads");
+    let writer = folded.writer();
     let above = Arc::new(Counted::new(folded));
     let mentioning = Arc::new(Mentioning::new(above.clone()));
-    let indexed = IndexedMemory::new(mentioning).expect("the index opens");
+    let indexed = IndexedMemory::with_writer(mentioning, writer).expect("the index opens");
 
     above.reset();
     let kitchen = indexed

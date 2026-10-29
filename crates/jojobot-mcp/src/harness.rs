@@ -236,7 +236,7 @@ pub(crate) fn handler_shipped_indexed() -> Jojobot {
     );
     let search = Arc::new(Retrieval::new(indexed.index(), vec![indexed.clone()]));
     Jojobot::new(
-        indexed,
+        indexed.memory(),
         search,
         Arc::new(InMemoryMailboxes::knowing_any_owner()),
         Arc::new(InMemorySessions::new()),
@@ -311,7 +311,7 @@ pub(crate) fn handler_indexed_carrying(
     let indexed = Arc::new(IndexedMemory::new(memory).expect("the index opens"));
     let search = Arc::new(Retrieval::new(indexed.index(), vec![indexed.clone()]));
     Jojobot::carrying(
-        indexed,
+        indexed.memory(),
         search,
         Arc::new(InMemoryMailboxes::knowing_any_owner()),
         Arc::new(InMemorySessions::new()),

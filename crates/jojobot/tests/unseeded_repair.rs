@@ -38,7 +38,7 @@ async fn the_never_loaded_refusal_does_not_send_the_caller_back_into_the_same_ca
         issuer: None,
         validator: None,
         metadata_url: format!("http://{addr}/.well-known/oauth-protected-resource"),
-        memory: indexed.clone(),
+        memory: indexed.memory(),
         search: Arc::new(Retrieval::new(indexed.index(), vec![indexed.clone()])),
         mailboxes: Arc::new(
             jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner(),

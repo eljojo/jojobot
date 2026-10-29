@@ -227,7 +227,7 @@ async fn a_capture_through_the_fold_costs_no_more_for_a_thing_of_48_claims() {
     let folded = Arc::new(Folded::new(provisioned));
     folded.rebuild().await.expect("the image fills");
     let indexed = Arc::new(
-        IndexedMemory::new(Arc::new(Mentioning::new(folded.clone())))
+        IndexedMemory::with_writer(Arc::new(Mentioning::new(folded.clone())), folded.writer())
             .expect("the search index opens"),
     );
     indexed.rebuild().await.expect("the boot scan reads");
@@ -236,7 +236,7 @@ async fn a_capture_through_the_fold_costs_no_more_for_a_thing_of_48_claims() {
     for (label, thing) in [("0 claims", &empty), ("48 claims", &wide)] {
         for (layer_name, layer) in [
             ("fold", folded.clone() as Arc<dyn Memory>),
-            ("fold+mention+index", indexed.clone() as Arc<dyn Memory>),
+            ("fold+mention+index", indexed.memory()),
         ] {
             let (statements, millis) = measured(
                 &counter,

@@ -46,8 +46,8 @@ async fn the_stack_the_binary_builds_names_the_claim_a_survivor_cannot_serve_and
         .await
         .expect("the index opens");
 
-    let homer = created(indexed.as_ref(), "person:homer", "Homer").await;
-    let apu = created(indexed.as_ref(), "person:apu", "Apu").await;
+    let homer = created(&**indexed, "person:homer", "Homer").await;
+    let apu = created(&**indexed, "person:apu", "Apu").await;
     for (who, what) in [(&homer, "keeps bees"), (&apu, "runs the store")] {
         indexed
             .capture(NewFact::about(who.clone(), what, date(2026, 9, 1)))

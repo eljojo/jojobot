@@ -86,7 +86,15 @@ pub struct Folded {
     /// The projection families whose reads are computed two ways and compared
     /// ([`shadow`]); none unless the configuration names one.
     shadow: Arc<shadow::Shadow>,
+    /// Told the address of the next selected fact edit, before it queues for the
+    /// writer.
+    #[cfg(any(test, feature = "testing"))]
+    fact_edit: Arc<FactEditObserver>,
 }
+
+#[cfg(any(test, feature = "testing"))]
+type FactEditObserver =
+    std::sync::Mutex<Option<tokio::sync::oneshot::Sender<jojobot_domain::memory::FactAddress>>>;
 
 impl Folded {
     /// Wrap a store with **no image**. Nothing is read yet — the image is
@@ -102,7 +110,20 @@ impl Folded {
             wanted: Arc::new(AtomicBool::new(false)),
             generation: Arc::new(AtomicU64::new(0)),
             shadow: Arc::new(shadow::Shadow::default()),
+            #[cfg(any(test, feature = "testing"))]
+            fact_edit: Arc::new(std::sync::Mutex::new(None)),
         }
+    }
+
+    /// Observe the next selected fact edit before it waits behind a writer.
+    /// Race fixtures can release that writer after selection, without a sleep.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn signals_the_next_fact_edit(
+        &self,
+    ) -> tokio::sync::oneshot::Receiver<jojobot_domain::memory::FactAddress> {
+        let (send, receive) = tokio::sync::oneshot::channel();
+        *self.fact_edit.lock().expect("the observer is not poisoned") = Some(send);
+        receive
     }
 
     /// Share the serving process's writer with every other rail.
@@ -168,6 +189,7 @@ impl Folded {
                     *slot = Some(image);
                     self.generation.fetch_add(1, Ordering::SeqCst);
                 }
+                self.publish_things(Vec::new(), true);
                 Ok(held)
             }
             Err(e) => {
@@ -176,6 +198,7 @@ impl Folded {
                     *slot = None;
                     self.generation.fetch_add(1, Ordering::SeqCst);
                 }
+                self.publish_things(Vec::new(), true);
                 Err(e)
             }
         }
@@ -207,7 +230,33 @@ impl Folded {
         self.refresh_listing(handle, Some(wrote)).await
     }
 
+    /// [`refresh_listing_inner`](Self::refresh_listing_inner), then the change
+    /// is published, whatever the image did: a subscriber reads the thing from
+    /// the State, which answers from the store when the image could not follow.
     async fn refresh_listing(
+        &self,
+        handle: &EntityId,
+        wrote: Option<image::Wrote>,
+    ) -> Result<(), MemoryError> {
+        let done = self.refresh_listing_inner(handle, wrote).await;
+        self.publish_things(vec![handle.clone()], false);
+        done
+    }
+
+    /// Tell the writer that these things changed. The generation is the State's
+    /// change count now, when an image holds it.
+    fn publish_things(&self, touched: Vec<EntityId>, names_changed: bool) {
+        let generation = self
+            .held(|_| self.generation.load(Ordering::SeqCst))
+            .filter(|_| !touched.is_empty());
+        self.writer.publish(crate::writer::publish::Change::Things {
+            touched,
+            names_changed,
+            generation,
+        });
+    }
+
+    async fn refresh_listing_inner(
         &self,
         handle: &EntityId,
         wrote: Option<image::Wrote>,
@@ -277,6 +326,14 @@ impl Folded {
         &self,
         write: impl std::future::Future<Output = Result<T, MemoryError>>,
     ) -> Result<T, MemoryError> {
+        // With no image to count the write in, a subscriber compares the store's
+        // own signal from before the write with the one it holds.
+        if self.held(|_| ()).is_none()
+            && let Ok(Some(began)) = self.inner.write_summary().await
+        {
+            self.writer
+                .publish(crate::writer::publish::Change::Began(began));
+        }
         crate::writer::recovery::guarded(&self.writer, "memory", write, || self.fill()).await
     }
 
@@ -739,6 +796,15 @@ impl Memory for Folded {
         patch: FactPatch,
         caller: &EntityId,
     ) -> Result<Guarded<Fact>, MemoryError> {
+        #[cfg(any(test, feature = "testing"))]
+        if let Some(reached) = self
+            .fact_edit
+            .lock()
+            .expect("the observer is not poisoned")
+            .take()
+        {
+            let _ = reached.send(address.clone());
+        }
         owned!(
             self,
             this,

@@ -12,7 +12,7 @@ async fn fake_searchable_contract_part(part: usize) {
     let store =
         Arc::new(IndexedMemory::new(Arc::new(InMemoryMemory::booted())).expect("index opens"));
     let ran = contract::run_part_searchable(
-        store.as_ref(),
+        &*store.state(),
         &Retrieval::new(store.index(), vec![store.clone()]),
         part,
         contract::PARTS,

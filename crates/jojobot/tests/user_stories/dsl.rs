@@ -55,7 +55,7 @@ pub struct Story {
     /// as a restart would.
     mail_image: Arc<jojobot_adapters::fold::mail::FoldedMailboxes>,
     runs_image: Arc<jojobot_adapters::fold::sessions::FoldedSessions>,
-    memory_fold: Arc<jojobot_adapters::fold::Folded>,
+    pub(super) memory_fold: Arc<jojobot_adapters::fold::Folded>,
     pub(super) memory_index: Arc<jojobot_adapters::search::IndexedMemory>,
     /// **The task that pushes the operator's mail**, when this server was set
     /// up to push. Kept so a story can stop it, as stopping the process would.
@@ -989,7 +989,7 @@ impl Story {
         // store that already holds runs from an earlier spawn, so the registry
         // must be filled as a real restart fills it. Run before anything serves,
         // as the binary does.
-        let seed_memory: Arc<dyn jojobot_domain::memory::Memory> = indexed_for_seed;
+        let seed_memory: Arc<dyn jojobot_domain::memory::Memory> = indexed_for_seed.memory();
         let registry = jojobot::wiring::run_startup_passes(
             &sessions_mentioned,
             &seed_memory,
@@ -1040,7 +1040,7 @@ impl Story {
             issuer: Some(crate::support::ISS.to_string()),
             validator: None,
             metadata_url: format!("http://{addr}/.well-known/oauth-protected-resource"),
-            memory: indexed.clone(),
+            memory: indexed.memory(),
             search,
             mailboxes: boxes,
             sessions: sessions_mentioned,

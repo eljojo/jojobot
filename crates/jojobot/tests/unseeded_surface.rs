@@ -41,7 +41,7 @@ async fn an_unseeded_surface_says_so_and_recites_no_kinds() {
         issuer: None,
         validator: None,
         metadata_url: format!("http://{addr}/.well-known/oauth-protected-resource"),
-        memory: indexed.clone(),
+        memory: indexed.memory(),
         search: Arc::new(Retrieval::new(indexed.index(), vec![indexed.clone()])),
         mailboxes: Arc::new(
             jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner(),

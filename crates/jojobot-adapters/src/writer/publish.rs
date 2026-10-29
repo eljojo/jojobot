@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use jojobot_domain::mailbox::{MailboxName, MessageId};
+use jojobot_domain::memory::{EntityId, WriteSummary};
 
 /// One change the State applied.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -18,6 +19,18 @@ pub enum Change {
     /// The mail State's count of writes after one write finished. A write that
     /// changes no message publishes it alone.
     MailPosition(u64),
+    /// The store's own change signal from before a write, published when the memory
+    /// State held no image to count the write in.
+    Began(WriteSummary),
+    /// These things changed in the memory State, each to be read again from it.
+    /// `names_changed` says a handle moved, so dependents re-read under the new
+    /// names. `generation` is the State's change count after this change was
+    /// applied, or `None` when the State held no image to count it in.
+    Things {
+        touched: Vec<EntityId>,
+        names_changed: bool,
+        generation: Option<u64>,
+    },
 }
 
 /// A reader of the writer's publication. It runs in the writer task, after the

@@ -134,7 +134,7 @@ async fn serve(operator: &str, homer_boxes: usize) -> Served {
         issuer: Some(support::ISS.to_string()),
         validator: None,
         metadata_url: format!("http://{addr}/.well-known/oauth-protected-resource"),
-        memory: indexed.clone(),
+        memory: indexed.memory(),
         search,
         mailboxes: mailboxes.clone() as Arc<dyn Mailboxes>,
         sessions: Arc::new(InMemorySessions::new()) as Arc<dyn Sessions>,

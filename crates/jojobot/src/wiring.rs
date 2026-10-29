@@ -210,9 +210,10 @@ pub async fn assemble_memory_with(
     // a claim has to see the full entity list, and what search holds must
     // be what a reader sees.
     let memory: Arc<dyn Memory> = Arc::new(mention::Mentioning::new(folded.clone()));
-    let indexed =
-        IndexedMemory::with_writer(memory, folded.writer()).context("opening the search index")?;
-    Ok((folded, Arc::new(indexed)))
+    let indexed = Arc::new(
+        IndexedMemory::with_writer(memory, folded.writer()).context("opening the search index")?,
+    );
+    Ok((folded, indexed))
 }
 
 /// The three ports left, wrapped in the decorators every jojobot serves
@@ -272,11 +273,13 @@ pub fn assemble_ports(
         Arc::new(FoldedSessions::new(bare_sessions, stamp, clock).with_writer(writer));
     let bare_mail: Arc<dyn Mailboxes> = mail_image.clone();
     let bare_sessions: Arc<dyn Sessions> = sessions_image.clone();
-    let mail_mentioned: Arc<dyn Mailboxes> =
-        Arc::new(mailbox_mention::Mentioning::new(bare_mail, indexed.clone()));
+    let mail_mentioned: Arc<dyn Mailboxes> = Arc::new(mailbox_mention::Mentioning::new(
+        bare_mail,
+        indexed.memory(),
+    ));
     let sessions_mentioned: Arc<dyn Sessions> = Arc::new(session_mention::Mentioning::new(
         bare_sessions,
-        indexed.clone(),
+        indexed.memory(),
     ));
 
     // Mail goes through the search index too: the index reads each message the
@@ -769,7 +772,7 @@ pub async fn boot_store_observed(
     // created FOR somebody, the entity world is somewhere else now, and "does
     // this handle resolve" is the whole of what crosses. It reads through the
     // projection so a bot created this session is an owner this session.
-    let owners: Arc<dyn OwnerIndex> = Arc::new(MemoryOwners::new(indexed.clone()));
+    let owners: Arc<dyn OwnerIndex> = Arc::new(MemoryOwners::new(indexed.memory()));
     let bare_mail_store = match pushing {
         true => DoltMailboxes::open(store.pool().clone(), owners)
             .pushing()
@@ -808,7 +811,7 @@ pub async fn boot_store_observed(
         "permanent-ids",
         jojobot_adapters::dolt::migrate_permanent_ids(
             store.pool(),
-            indexed.as_ref(),
+            &*indexed.memory(),
             &bare_mail_store,
             &bare_sessions,
         ),
@@ -848,8 +851,8 @@ pub async fn boot_store_observed(
     match timed("due-days", async {
         jojobot_adapters::dolt::backfill_unreadable_due_days(
             store.pool(),
-            indexed.as_ref(),
-            the_day_of_this_boot(indexed.as_ref(), &clock).await,
+            &*indexed.memory(),
+            the_day_of_this_boot(&*indexed.memory(), &clock).await,
         )
         .await
     })
@@ -985,15 +988,10 @@ pub async fn boot_store_observed(
 
     let registry = timed(
         "startup-passes",
-        run_startup_passes(
-            &sessions,
-            &(indexed.clone() as Arc<dyn Memory>),
-            &mailboxes,
-            &clock,
-        ),
+        run_startup_passes(&sessions, &indexed.memory(), &mailboxes, &clock),
     )
     .await;
-    let seed_memory: Arc<dyn Memory> = indexed.clone();
+    let seed_memory: Arc<dyn Memory> = indexed.memory();
     // **A role claimed before roles were objects is carried onto its object.** An
     // older build kept the holder and the moment on the bot, and nothing reads
     // them as a lease now, so a store restored from before the change would seat a
@@ -1032,7 +1030,7 @@ pub async fn boot_store_observed(
 
     Ok(Booted {
         store,
-        memory: indexed,
+        memory: indexed.memory(),
         search,
         mailboxes,
         outbox,

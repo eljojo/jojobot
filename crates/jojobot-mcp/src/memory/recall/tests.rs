@@ -6854,7 +6854,7 @@ async fn a_field_filtered_recall_asks_for_the_carriers(
     });
     let record_reads = || counting.as_ref().map_or(0, |store| store.record_reads());
     let jojobot = Jojobot::new(
-        indexed.clone(),
+        indexed.memory(),
         port.clone(),
         Arc::new(InMemoryMailboxes::knowing_any_owner()),
         Arc::new(InMemorySessions::new()),

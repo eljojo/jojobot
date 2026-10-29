@@ -183,6 +183,7 @@ impl Folded {
     /// write gate. An error leaves the image as it was.
     pub(in crate::fold) async fn patch(&self, change: Change<'_>) -> Result<(), MemoryError> {
         if !self.wanted.load(Ordering::SeqCst) {
+            self.publish_things(Vec::new(), true);
             return Ok(());
         }
         let Some((plan, old_names)) = self.held(|image| {
@@ -197,6 +198,11 @@ impl Folded {
         }) else {
             return self.fill().await.map(|_| ());
         };
+        let plan_handles: Vec<EntityId> = plan
+            .touched
+            .iter()
+            .flat_map(|(held, read)| [held.clone(), read.clone()])
+            .collect();
         let entities = self.inner.list_entities(None).await?;
         let former = self.inner.former_handles().await?;
         let events = self.inner.merge_events(None).await?;
@@ -241,6 +247,11 @@ impl Folded {
         };
         image.patched(reads);
         self.generation.fetch_add(1, Ordering::SeqCst);
+        drop(slot);
+        let mut touched: Vec<EntityId> = plan_handles;
+        touched.sort();
+        touched.dedup();
+        self.publish_things(touched, true);
         Ok(())
     }
 }

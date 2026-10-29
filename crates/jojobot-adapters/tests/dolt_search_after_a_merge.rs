@@ -35,7 +35,7 @@ async fn a_claim_of_the_folded_thing_is_found_under_the_survivor_in_the_real_sto
     );
     indexed.rebuild().await.expect("the boot scan reads");
     contract::a_claim_of_the_folded_thing_is_found_under_the_survivor_after_a_fold(
-        indexed.as_ref(),
+        &*indexed.state(),
         &Retrieval::new(indexed.index(), vec![indexed.clone()]),
     )
     .await;

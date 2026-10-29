@@ -375,8 +375,8 @@ async fn writer_recovery_rebuild_teachings_uses_the_process_writer() {
 
 #[tokio::test]
 async fn writer_recovery_indexed_memory_uses_the_process_writer() {
+    use jojobot_domain::memory::NewEntity;
     use jojobot_domain::memory::testing::InMemoryMemory;
-    use jojobot_domain::memory::{Memory, NewEntity};
     behind_teaching(|writer| async move {
         let memory =
             crate::search::IndexedMemory::with_writer(Arc::new(InMemoryMemory::booted()), writer)

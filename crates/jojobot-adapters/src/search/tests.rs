@@ -54,7 +54,7 @@ async fn a_things_own_word_is_found_stored_and_supplied() {
     supplied_store.rebuild().await.expect("the boot scan reads");
 
     contract::a_things_own_word_is_found_stored_and_supplied(
-        stored.as_ref(),
+        &*stored.state(),
         &Retrieval::new(stored.index(), vec![stored.clone()]),
         &Retrieval::new(supplied_store.index(), vec![supplied_store.clone()]),
     )
@@ -69,7 +69,7 @@ async fn a_search_holding_a_key_and_a_value_finds_exactly_the_things_that_hold_t
     let store =
         Arc::new(IndexedMemory::new(Arc::new(InMemoryMemory::booted())).expect("index opens"));
     contract::search_finds_the_things_holding_a_key_and_a_value(
-        store.as_ref(),
+        &*store.state(),
         &Retrieval::new(store.index(), vec![store.clone()]),
     )
     .await;
@@ -84,7 +84,7 @@ async fn a_fold_makes_the_holders_of_the_folded_thing_findable_by_the_survivor()
     let store =
         Arc::new(IndexedMemory::new(Arc::new(InMemoryMemory::booted())).expect("index opens"));
     contract::a_holder_of_the_folded_thing_is_found_by_the_survivor_after_a_fold(
-        store.as_ref(),
+        &*store.state(),
         &Retrieval::new(store.index(), vec![store.clone()]),
     )
     .await;
@@ -204,6 +204,15 @@ async fn the_fakes_write_summary_moves_under_every_write_and_holds_under_reads()
 /// document for moves the summary, and a read that finds the summary moved and
 /// scans everything anyway pays the cost of the whole corpus for one claim.
 async fn an_index_over_the_fake() -> (Arc<InMemoryMemory>, Arc<IndexedMemory>, Retrieval) {
+    let (fake, store, retrieval) = an_index_over_the_fake_with_no_image().await;
+    store.state().rebuild().await.expect("the fold loads");
+    (fake, store, retrieval)
+}
+
+/// The same index with a fold that holds no image, so the store's own change
+/// signal is what tells it that a row changed.
+async fn an_index_over_the_fake_with_no_image()
+-> (Arc<InMemoryMemory>, Arc<IndexedMemory>, Retrieval) {
     let fake = Arc::new(InMemoryMemory::booted());
     let store = Arc::new(IndexedMemory::new(fake.clone()).expect("index opens"));
     store.rebuild().await.expect("the boot scan reads");
@@ -263,7 +272,7 @@ async fn a_search_after_a_write_finds_it_without_scanning_the_store() {
 /// past the writes stands for an edit made directly against the real tables.
 #[tokio::test]
 async fn a_change_made_past_the_writes_is_still_found_by_a_scan() {
-    let (fake, store, retrieval) = an_index_over_the_fake().await;
+    let (fake, store, retrieval) = an_index_over_the_fake_with_no_image().await;
     let bart = EntityId::person("person:bart");
     store
         .add_entity(NewEntity::new(bart.clone(), "Bart", "user-named"))
@@ -309,7 +318,7 @@ async fn a_change_made_past_the_writes_is_still_found_by_a_scan() {
 /// summary with it, and the row would never be scanned in.
 #[tokio::test]
 async fn a_write_does_not_hide_a_change_made_past_the_writes() {
-    let (fake, store, retrieval) = an_index_over_the_fake().await;
+    let (fake, store, retrieval) = an_index_over_the_fake_with_no_image().await;
     let bart = EntityId::person("person:bart");
     store
         .add_entity(NewEntity::new(bart.clone(), "Bart", "user-named"))
@@ -510,6 +519,7 @@ async fn a_rename_reaches_the_words_that_mention_the_renamed_thing() {
         )))
         .expect("index opens"),
     );
+    store.state().rebuild().await.expect("the fold loads");
     store.rebuild().await.expect("the boot scan reads");
     let retrieval = Retrieval::new(store.index(), vec![store.clone()]);
     let (pet, holder) = a_pet_and_the_person_who_keeps_it(&store).await;
@@ -727,25 +737,15 @@ async fn an_archive_and_a_restore_are_found_without_a_scan_of_the_store() {
             scans,
             "after the {step} the search scanned the store"
         );
-        fake.past_the_guard(Entity {
-            folded_names: Vec::new(),
-            id: EntityId::person(if step == "archive" {
-                "person:contract-lamplighter"
-            } else {
-                "person:contract-comma-carrier"
-            }),
-            kind: EntityKind::PERSON,
-            name: format!("Oracle {step}"),
-            aliases: Vec::new(),
-            source: "contract-fixture".into(),
-            crm: None,
-            parent: None,
-            boot: Default::default(),
-            merged_into: None,
-            badge: None,
-            archived: None,
-        });
-        let scanned = answers(&retrieval, &pet, &holder).await;
+        // The oracle: a second index over the same store, which reads it whole.
+        let oracle = Arc::new(IndexedMemory::new(fake.clone()).expect("index opens"));
+        oracle.rebuild().await.expect("the oracle scans");
+        let scanned = answers(
+            &Retrieval::new(oracle.index(), vec![oracle.clone()]),
+            &pet,
+            &holder,
+        )
+        .await;
         assert_eq!(
             fake.full_scans(),
             scans + 1,
@@ -3575,7 +3575,7 @@ async fn a_session_read_in_flight_does_not_clear_a_failure_it_predates() {
 /// rename in between — still costs no re-read.
 #[tokio::test]
 async fn a_rename_reaches_the_session_index_without_a_session_write() {
-    use jojobot_domain::memory::{Memory, NewEntity};
+    use jojobot_domain::memory::NewEntity;
     let memory = Arc::new(IndexedMemory::new(Arc::new(InMemoryMemory::booted())).expect("index"));
     let gamma = EntityId("bot:gamma".into());
     memory
@@ -5005,253 +5005,6 @@ impl Memory for SummarizedScan {
     }
 }
 
-/// **A store that answers the three reads itself, and nothing else.**
-///
-/// Every method the trait can default is left `unimplemented!` on purpose:
-/// a decorator that does not forward falls through to a default, and each
-/// default reads `fields`, `history`, `list_entities` or `recall` to build
-/// its answer. So a fall-through here panics naming the method it reached
-/// for, rather than quietly returning the empty answer an unwritten store
-/// would give.
-struct Delegated;
-
-impl Delegated {
-    /// A word no default can produce: the defaults read rows, and this
-    /// store has none.
-    const MARKER: &'static str = "forwarded";
-
-    fn marked() -> Fact {
-        Fact {
-            app_stamp: None,
-            written_by_another: false,
-            sets: Default::default(),
-            reaching: Default::default(),
-            field_links: Default::default(),
-            id: jojobot_domain::memory::FactId("f1".into()),
-            home: EntityId::person("person:alpha"),
-            subject: EntityId::person("person:alpha"),
-            content: Self::MARKER.into(),
-            details: None,
-            provenance: Provenance::Testimony,
-            standing: jojobot_domain::memory::Standing::Settled,
-            status: FactStatus::Active,
-            recorded_at: date(2026, 7, 1),
-            happened_at: None,
-            happened_through: None,
-            edge: None,
-            fields: Default::default(),
-            refs: Vec::new(),
-            derived_from: None,
-            stands_for: Vec::new(),
-            inserted_at: None,
-            stale_after: None,
-            receipt: None,
-        }
-    }
-}
-
-#[async_trait]
-impl Memory for Delegated {
-    async fn former_handles(&self) -> Result<Vec<FormerHandle>, MemoryError> {
-        unimplemented!("this double answers the three reads a store owns")
-    }
-    async fn backing(
-        &self,
-        _: &EntityId,
-    ) -> Result<BTreeMap<String, jojobot_domain::memory::FieldBacking>, MemoryError> {
-        Ok([(
-            Delegated::MARKER.to_string(),
-            jojobot_domain::memory::FieldBacking {
-                recorded_by: None,
-                fact: jojobot_domain::memory::FactId("f1".into()),
-                provenance: Provenance::Testimony,
-                standing: jojobot_domain::memory::Standing::Settled,
-                note: None,
-            },
-        )]
-        .into_iter()
-        .collect())
-    }
-    async fn built_on(&self, _: &FactAddress) -> Result<Vec<Fact>, MemoryError> {
-        Ok(vec![Delegated::marked()])
-    }
-    async fn referring_to(&self, _: &EntityId) -> Result<Vec<Fact>, MemoryError> {
-        Ok(vec![Delegated::marked()])
-    }
-
-    async fn scan(&self) -> Result<Vec<DocScan>, MemoryError> {
-        Ok(Vec::new())
-    }
-    async fn scan_entity(&self, _: &EntityId) -> Result<Option<DocScan>, MemoryError> {
-        Ok(None)
-    }
-    async fn add_entity(&self, _: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
-        unimplemented!("this double answers the three reads a store owns")
-    }
-    async fn list_entities(&self, _: Option<EntityKind>) -> Result<Vec<Entity>, MemoryError> {
-        unimplemented!("a default walked every entity, so this read was not forwarded")
-    }
-    async fn update_entity(
-        &self,
-        _: &EntityId,
-        _: EntityPatch,
-    ) -> Result<Guarded<Entity>, MemoryError> {
-        unimplemented!("this double answers the three reads a store owns")
-    }
-    async fn rename_entity(
-        &self,
-        _: &EntityId,
-        _: &EntityId,
-        _: Option<EntityId>,
-        _: Date,
-        _: jojobot_domain::memory::Override<'_>,
-        _session: Option<&str>,
-    ) -> Result<Guarded<Entity>, MemoryError> {
-        unimplemented!("this double answers the three reads a store owns")
-    }
-    async fn archive_entity(
-        &self,
-        _: &EntityId,
-        _: &str,
-        _session: Option<&str>,
-    ) -> Result<Entity, MemoryError> {
-        unimplemented!("this double answers the three reads a store owns")
-    }
-    async fn restore_entity(
-        &self,
-        _: &EntityId,
-        _session: Option<&str>,
-    ) -> Result<(Entity, Archived), MemoryError> {
-        unimplemented!("this double answers the three reads a store owns")
-    }
-    async fn capture(&self, _: NewFact) -> Result<Guarded<Fact>, MemoryError> {
-        unimplemented!("this double answers the three reads a store owns")
-    }
-    async fn recall(&self, _: &EntityId) -> Result<Vec<Fact>, MemoryError> {
-        unimplemented!("a default read a page, so this read was not forwarded")
-    }
-    async fn history(&self, _: &EntityId, _: &str) -> Result<Vec<FieldWrite>, MemoryError> {
-        unimplemented!("a default read a key's writes, so this read was not forwarded")
-    }
-    async fn claim_history(&self, _: &FactAddress) -> Result<Vec<ClaimWrite>, MemoryError> {
-        unimplemented!("a default read a claim's writes, so this read was not forwarded")
-    }
-    async fn fields(&self, _: &EntityId) -> Result<BTreeMap<String, String>, MemoryError> {
-        unimplemented!("a default read the folded fields, so this read was not forwarded")
-    }
-    async fn update_fact(
-        &self,
-        _: &FactAddress,
-        _: FactPatch,
-        _: &EntityId,
-    ) -> Result<Guarded<Fact>, MemoryError> {
-        unimplemented!("this double answers the three reads a store owns")
-    }
-    async fn retract(
-        &self,
-        _: &FactAddress,
-        _: Option<&str>,
-        _: Date,
-        _: &EntityId,
-        _: Option<&str>,
-    ) -> Result<Retraction, MemoryError> {
-        unimplemented!("this double answers the three reads a store owns")
-    }
-    async fn merge(
-        &self,
-        _: &EntityId,
-        _: &EntityId,
-        _: Option<&str>,
-        _: Date,
-        _: &EntityId,
-        _: Option<&str>,
-    ) -> Result<Merge, MemoryError> {
-        unimplemented!("this double answers the three reads a store owns")
-    }
-    async fn set_prose(
-        &self,
-        _: &EntityId,
-        _: &str,
-        _session: Option<&str>,
-    ) -> Result<String, MemoryError> {
-        unimplemented!("this double answers the three reads a store owns")
-    }
-    async fn declare_type(
-        &self,
-        _: DeclaredType,
-        _: Option<&str>,
-    ) -> Result<DeclaredType, MemoryError> {
-        unimplemented!("this double answers the three reads a store owns")
-    }
-    async fn declared_types(&self) -> Result<Vec<DeclaredType>, MemoryError> {
-        unimplemented!("a default read the declarations, so this read was not forwarded")
-    }
-    async fn declare_kind(
-        &self,
-        _: &str,
-        _: jojobot_domain::memory::types::Origin,
-        _: Vec<jojobot_domain::memory::types::Field>,
-    ) -> Result<bool, MemoryError> {
-        unimplemented!("this double answers the three reads a store owns")
-    }
-    async fn declared_kinds(
-        &self,
-    ) -> Result<Vec<(String, jojobot_domain::memory::types::Origin)>, MemoryError> {
-        unimplemented!("this double answers the three reads a store owns")
-    }
-    async fn reclaim_kind(&self, _: &str) -> Result<(), MemoryError> {
-        unimplemented!("this double answers the three reads a store owns")
-    }
-}
-
-/// **The decorator forwards the reads a store answers for itself.**
-///
-/// The server wraps the store in this decorator and serves the wrapper, so
-/// a method the wrapper does not implement is a method production never
-/// runs — whatever the store underneath it does. That is invisible from
-/// every other case, because a default and an override that agree on their
-/// answer are indistinguishable by their answer.
-///
-/// So the store here answers with a word no default can produce, and every
-/// method a default would read from panics naming itself.
-#[tokio::test]
-async fn the_decorator_forwards_the_reads_the_store_answers_for_itself() {
-    let indexed = IndexedMemory::new(Arc::new(Delegated)).expect("index opens");
-    let alpha = EntityId::person("person:alpha");
-
-    let backed = Memory::backing(&indexed, &alpha)
-        .await
-        .expect("the store answers");
-    assert!(
-        backed.contains_key(Delegated::MARKER),
-        "the decorator answered for itself instead of asking the store: {backed:?}",
-    );
-
-    let standing_on = Memory::built_on(
-        &indexed,
-        &FactAddress {
-            home: alpha.clone(),
-            local: jojobot_domain::memory::FactId("f1".into()),
-        },
-    )
-    .await
-    .expect("the store answers");
-    assert_eq!(
-        standing_on.first().map(|f| f.content.as_str()),
-        Some(Delegated::MARKER),
-        "lineage came from somewhere other than the store: {standing_on:?}",
-    );
-
-    let pointing = Memory::referring_to(&indexed, &alpha)
-        .await
-        .expect("the store answers");
-    assert_eq!(
-        pointing.first().map(|f| f.content.as_str()),
-        Some(Delegated::MARKER),
-        "the records pointing here came from somewhere other than the store: {pointing:?}",
-    );
-}
-
 /// One page with one entity on it, for the tests that turn on what the
 /// decorator does after a write lands.
 fn one_page() -> Arc<Scanned> {
@@ -5942,7 +5695,6 @@ async fn reindexing_a_vanished_doc_evicts_every_hit_it_had() {
 use crate::log_capture::log_sink;
 
 mod derivation_after_rename;
-mod forwards;
 
 /// **A row whose subject names nothing is counted and said out loud.** This
 /// is the split-brain tell a hand edit leaves: the row stays reachable
@@ -9397,7 +9149,7 @@ impl Memory for FixedWriteSummary {
 /// the key a counter and ask again with NOTHING else written — the
 /// store wears a FIXED `write_summary` (see [`FixedWriteSummary`]) so
 /// the ordinary skip-if-unchanged path genuinely fires: without
-/// `declare_type` dropping the cache itself, this would serve the same
+/// the fold counting the declaration as a change, this would serve the same
 /// stale scan it served before.
 #[tokio::test]
 async fn a_declaration_forces_a_real_rescan_even_when_write_summary_is_unchanged() {
@@ -9429,6 +9181,7 @@ async fn a_declaration_forces_a_real_rescan_even_when_write_summary_is_unchanged
         .expect("not blocked");
 
     let indexed = IndexedMemory::new(Arc::new(FixedWriteSummary(inner))).expect("index opens");
+    indexed.state().rebuild().await.expect("the fold loads");
     let scanned = indexed.rescan().await.expect("rescan ok");
     let doc = scanned
         .iter()

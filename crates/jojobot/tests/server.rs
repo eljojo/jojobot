@@ -46,7 +46,7 @@ fn test_ports() -> TestPorts {
     let indexed = Arc::new(IndexedMemory::new(store).expect("the search index opens"));
     let search = Arc::new(Retrieval::new(indexed.index(), vec![indexed.clone()]));
     (
-        indexed,
+        indexed.memory(),
         search,
         Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner()),
         Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),
@@ -434,7 +434,7 @@ fn searchable_state(addr: SocketAddr) -> AppState {
         issuer: None,
         validator: None,
         metadata_url: format!("http://{addr}/.well-known/oauth-protected-resource"),
-        memory: indexed.clone(),
+        memory: indexed.memory(),
         search: Arc::new(Retrieval::new(indexed.index(), vec![indexed.clone()])),
         // **Real session and mailbox ports, unlike the other fixtures here, and
         // not to make a test pass.** A memory write now carries an identity, an

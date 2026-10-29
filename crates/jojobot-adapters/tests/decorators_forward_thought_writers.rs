@@ -11,7 +11,6 @@ use std::sync::Arc;
 use jiff::civil::date;
 use jojobot_adapters::fold::Folded;
 use jojobot_adapters::provisioned::Provisioned;
-use jojobot_adapters::search::IndexedMemory;
 use jojobot_domain::memory::mention::Mentioning;
 use jojobot_domain::memory::owned::Provisions;
 use jojobot_domain::memory::testing::InMemoryMemory;
@@ -66,12 +65,10 @@ async fn each_decorator_forwards_who_wrote_into_a_thread() {
     // the same answer on its own just above it.
     let provisioned = Provisioned::new(Folded::new(store.clone()), Provisions::default());
     let mentioning = Mentioning::new(store.clone());
-    let indexed = IndexedMemory::new(store.clone()).expect("the index opens");
-    let layers: [(&str, &dyn Memory); 4] = [
+    let layers: [(&str, &dyn Memory); 3] = [
         ("Folded", &folded),
         ("Provisioned", &provisioned),
         ("Mentioning", &mentioning),
-        ("IndexedMemory", &indexed),
     ];
     for (name, layer) in layers {
         let (writers, listings) = asked_through(layer, &store, &thread).await;

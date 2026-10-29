@@ -48,7 +48,10 @@ async fn search_lean_setting_uses_the_image_through_the_served_memory_wrappers()
     let counted = Arc::new(Counted::new(stored.clone()));
     let folded = Arc::new(Folded::new(counted.clone()));
     folded.rebuild().await.unwrap();
-    jojobot.memory = Arc::new(IndexedMemory::new(Arc::new(Mentioning::new(folded))).unwrap());
+    let writer = folded.writer();
+    jojobot.memory = IndexedMemory::with_writer(Arc::new(Mentioning::new(folded)), writer)
+        .unwrap()
+        .memory();
     // A write below the fold distinguishes the held value from a store read.
     let mut writer = indexed(Vec::new());
     writer.memory = stored;

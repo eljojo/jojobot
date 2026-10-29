@@ -227,7 +227,7 @@ async fn indexed_contract_part(part: usize) {
             IndexedMemory::new(Arc::new(DoltMemory::open(pool))).expect("the search index opens"),
         );
         memory::run_part_searchable(
-            indexed.as_ref(),
+            &*indexed.state(),
             &Retrieval::new(indexed.index(), vec![indexed.clone()]),
             part,
             memory::PARTS,

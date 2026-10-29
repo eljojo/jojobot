@@ -14,7 +14,7 @@ use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::search::{IndexedMemory, Retrieval};
 use jojobot_adapters::testing::{free_port, migrated_database};
 use jojobot_domain::memory::search::{Hit, Search, SearchQuery};
-use jojobot_domain::memory::{EntityId, Memory, NewEntity, NewFact};
+use jojobot_domain::memory::{EntityId, NewEntity, NewFact};
 use tracing_subscriber::layer::{Context, SubscriberExt};
 
 static STATEMENTS: AtomicUsize = AtomicUsize::new(0);

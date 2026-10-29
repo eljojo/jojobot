@@ -82,7 +82,7 @@ async fn the_stack_the_binary_builds_answers_what_the_layer_beneath_implements()
     let (folded, indexed) = jojobot::wiring::assemble_memory(resolved.clone())
         .await
         .expect("the index opens");
-    let owners = Arc::new(MemoryOwners::new(indexed.clone()));
+    let owners = Arc::new(MemoryOwners::new(indexed.memory()));
     let mail = Arc::new(DoltMailboxes::open(server.pool().clone(), owners));
     let stamp = jojobot_domain::session::history::WriteStamp::new();
     let sessions = Arc::new(DoltSessions::open(server.pool().clone()).stamped_by(stamp.clone()));
@@ -94,8 +94,8 @@ async fn the_stack_the_binary_builds_answers_what_the_layer_beneath_implements()
         jojobot_domain::clock::Clock::Real,
     );
 
-    let gamma = created(indexed.as_ref(), "bot:gamma", "Gamma").await;
-    let piano = created(indexed.as_ref(), "thing:piano", "Piano").await;
+    let gamma = created(&**indexed, "bot:gamma", "Gamma").await;
+    let piano = created(&**indexed, "thing:piano", "Piano").await;
 
     // ── changes: implemented by the counting layer under mention and index ──
     //
@@ -230,7 +230,7 @@ async fn the_stack_the_binary_builds_answers_what_the_layer_beneath_implements()
     // port's default body leaves the count where it was. The positive beside
     // each is that the answer is right: a count says which path ran and
     // nothing about whether it answered.
-    let kettle = created(indexed.as_ref(), "thing:kettle", "Kettle").await;
+    let kettle = created(&**indexed, "thing:kettle", "Kettle").await;
     let tuned = indexed
         .capture(NewFact {
             fields: fields(&[("pitch", "low")]),
@@ -432,8 +432,8 @@ async fn the_stack_the_binary_builds_answers_what_the_layer_beneath_implements()
     // fold installed when it was written, so a refresh that has to beat the
     // installed version is refused and the old fields are served until a
     // restart.
-    let alpha = created(indexed.as_ref(), "person:alpha", "Alpha").await;
-    let beta = created(indexed.as_ref(), "person:beta", "Beta").await;
+    let alpha = created(&**indexed, "person:alpha", "Alpha").await;
+    let beta = created(&**indexed, "person:beta", "Beta").await;
     indexed
         .capture(NewFact {
             fields: fields(&[("due_on", "2026-09-14")]),
@@ -629,8 +629,8 @@ async fn the_stack_the_binary_builds_answers_what_the_layer_beneath_implements()
     //
     // A layer that left either to the trait default would answer "no event" and
     // "nothing moved" in production, over a store that kept both.
-    let keeper = created(indexed.as_ref(), "person:krusty", "Krusty").await;
-    let twin = created(indexed.as_ref(), "person:skinner", "Skinner").await;
+    let keeper = created(&**indexed, "person:krusty", "Krusty").await;
+    let twin = created(&**indexed, "person:skinner", "Skinner").await;
     let claim = indexed
         .capture(NewFact::about(
             twin.clone(),
@@ -677,7 +677,7 @@ async fn the_stack_the_binary_builds_answers_what_the_layer_beneath_implements()
     // the supplied-handle screen and the index. A layer that left the port's
     // default answers "this store cannot record an app's event" here exactly
     // as it would to an app in the deployment.
-    let thread = created(indexed.as_ref(), "thread:deploys-alpha", "Deploys Alpha").await;
+    let thread = created(&**indexed, "thread:deploys-alpha", "Deploys Alpha").await;
     let principal = jojobot_domain::app::AppPrincipal::from_spec(
         &jojobot_domain::app::AppSpec {
             name: "springfield-ci".into(),

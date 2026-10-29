@@ -36,7 +36,7 @@ async fn a_search_on_an_unloaded_process_is_an_answer_rather_than_a_broken_store
         issuer: None,
         validator: None,
         metadata_url: format!("http://{addr}/.well-known/oauth-protected-resource"),
-        memory: indexed.clone(),
+        memory: indexed.memory(),
         search: Arc::new(Retrieval::new(indexed.index(), vec![indexed.clone()])),
         mailboxes: Arc::new(
             jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner(),

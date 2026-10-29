@@ -119,6 +119,7 @@ async fn a_search_after_an_edit_a_rename_an_archive_a_restore_or_prose_costs_wha
     let indexed = Arc::new(
         IndexedMemory::new(Arc::new(Mentioning::new(provisioned))).expect("the search index opens"),
     );
+    indexed.state().rebuild().await.expect("the fold loads");
     indexed.rebuild().await.expect("the boot scan reads");
     let retrieval = Retrieval::new(indexed.index(), vec![indexed.clone()]);
 
@@ -177,7 +178,10 @@ async fn a_search_after_an_edit_a_rename_an_archive_a_restore_or_prose_costs_wha
         .expect("search ok");
     let (idle_hits, idle) = counted(retrieval.search(&SearchQuery::text("Kept"))).await;
     assert!(names(&idle_hits.expect("search ok"), &pet));
-    assert!(idle > 0, "the instrument counts statements: {idle}");
+    assert_eq!(
+        idle, 0,
+        "a search that finds the fold unchanged reads nothing: {idle}"
+    );
 
     // ── an edit, an edit carrying a claim, a page of prose ───────────────────
     let (edited, write) = counted(indexed.update_entity(
@@ -328,7 +332,7 @@ async fn a_search_after_an_edit_a_rename_an_archive_a_restore_or_prose_costs_wha
         "and the old handle does not find that page"
     );
 
-    // ── a change made past the application is still found by a scan ──────────
+    // ── a change made past the application is found once the fold reads again ──
     let badge: Option<String> = sqlx::query_scalar("SELECT badge FROM entity WHERE id = ?")
         .bind(holder.as_str())
         .fetch_one(&pool)
@@ -341,15 +345,13 @@ async fn a_search_after_an_edit_a_rename_an_archive_a_restore_or_prose_costs_wha
         .execute(&pool)
         .await
         .expect("the direct edit lands");
-    let (hand_hits, after_a_hand_edit) =
-        counted(retrieval.search(&SearchQuery::text("Renamed By Hand"))).await;
+    // The fold holds the store as this process wrote it, so a row changed past
+    // the process is seen when the fold reads the store again, as at a start.
+    indexed.state().rebuild().await.expect("the fold loads");
+    let (hand_hits, _) = counted(retrieval.search(&SearchQuery::text("Renamed By Hand"))).await;
     assert!(
         names(&hand_hits.expect("search ok"), &holder),
         "an edit made past the application is found"
-    );
-    assert!(
-        after_a_hand_edit > idle,
-        "the search that finds a hand edit reads the store: {after_a_hand_edit} vs {idle}"
     );
 
     store.stop().await;

@@ -535,7 +535,7 @@ pub async fn spawn_jojobot_clocked(
         issuer: Some(support::ISS.to_string()),
         validator: mcp,
         metadata_url: format!("http://{addr}/.well-known/oauth-protected-resource"),
-        memory: indexed.clone(),
+        memory: indexed.memory(),
         search,
         mailboxes: board.mailboxes.clone() as Arc<dyn Mailboxes>,
         sessions: board.sessions.clone() as Arc<dyn Sessions>,
