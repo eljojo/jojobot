@@ -111,3 +111,6 @@ pub(crate) const RECORD_RESERVE_NOTE: &str = "record_reserve_note";
 /// **The boot floor a write was held to**: not measured, since the bot's fields,
 /// claims or boot could not be read.
 pub(crate) const BOOT_FLOOR: &str = "boot_floor";
+/// **What rests on a claim that was just taken back**: not listed, since the read
+/// of the claims worked out from it failed after the retraction landed.
+pub(crate) const BUILT_ON_THIS: &str = "built_on_this";

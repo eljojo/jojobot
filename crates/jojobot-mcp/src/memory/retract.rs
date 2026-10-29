@@ -195,9 +195,17 @@ impl Jojobot {
         // is when the question is asked and it is the moment a caller can still
         // act on the answer — nothing here changes those claims, because what
         // to do about a claim resting on a withdrawn one is a judgement.
+        //
+        // **The retraction landed, so a failed read of what rests on it is not a
+        // failed retraction** (rule 130): it is named in `reads_left` and the
+        // list is empty because it was not read.
+        let reads = super::reads_left::ReadsLeft::default();
         let standing_on = match self.memory.built_on(&address).await {
             Ok(standing_on) => standing_on,
-            Err(e) => return memory_declined("retract", e),
+            Err(e) => {
+                reads.left(super::reads_left::BUILT_ON_THIS, &address, &e);
+                Vec::new()
+            }
         };
         self.beat("retract", &address.to_string(), args.sid.as_deref())
             .await;
@@ -232,11 +240,10 @@ impl Jojobot {
             crate::answer::note_fold_behind(&mut body, behind);
         }
         if let Some((subject, before)) = held_before {
-            let reads = super::reads_left::ReadsLeft::default();
             self.note_what_left(&mut body, &subject, before, &reads)
                 .await;
-            reads.note(&mut body);
         }
+        reads.note(&mut body);
         crate::answer::note_postcondition(
             &mut body,
             what_a_retraction_left_standing(&address, &standing_on),
@@ -563,6 +570,55 @@ mod tests {
             body["built_on_this"].as_array().map(Vec::len),
             Some(0),
             "a claim nothing rests on names claims anyway: {body}",
+        );
+    }
+
+    /// A store whose read of what rests on a claim fails, while every write and
+    /// every other read answers.
+    struct BuiltOnFails(std::sync::Arc<crate::memory::testing::InMemoryMemory>);
+
+    #[jojobot_domain::forward(jojobot_domain::forward_memory, via = 0)]
+    impl jojobot_domain::memory::Memory for BuiltOnFails {
+        async fn built_on(&self, _source: &FactAddress) -> Result<Vec<Fact>, MemoryError> {
+            Err(MemoryError::Store(
+                "what rests on a claim cannot be read".into(),
+            ))
+        }
+    }
+
+    /// **A retraction that landed is answered as one when the read of what rests
+    /// on it fails** (rule 130). The record is taken back, so the answer is the
+    /// receipt with the read named in `reads_left`; a refusal that says to retry
+    /// would send the caller to a resend that meets an already-retracted claim.
+    #[tokio::test]
+    async fn a_retraction_whose_built_on_read_fails_is_still_answered_as_landed() {
+        let memory = std::sync::Arc::new(crate::memory::testing::InMemoryMemory::seeded());
+        let healthy = crate::harness::handler_over(memory.clone());
+        ensure(&healthy, "person:alpha").await;
+        let address = a_record(&healthy, "the ferry moved to the north pier").await;
+        let mut blind = healthy.clone();
+        blind.memory = std::sync::Arc::new(BuiltOnFails(memory));
+
+        let answered = json_of(
+            &blind
+                .retract(Parameters(retract_args(&address, "the ferry moved back")))
+                .await
+                .expect("answers"),
+        );
+        assert_ne!(answered["status"], "blocked", "{answered}");
+        assert_eq!(answered["retracted"]["address"], address, "{answered}");
+        assert_eq!(
+            answered["reads_left"]["not_worked_out"][0]["what"], "built_on_this",
+            "the read that failed is named: {answered}"
+        );
+        let kept = healthy
+            .memory
+            .recall(&EntityId("person:alpha".into()))
+            .await
+            .expect("reads");
+        assert!(
+            kept.iter().any(|fact| fact.is_retraction()),
+            "the retraction is stored: {kept:?}"
         );
     }
 
