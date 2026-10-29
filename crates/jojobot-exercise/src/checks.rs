@@ -186,6 +186,8 @@ use serde_json::{Value, json};
 
 use crate::run::{Checks, Observed, checked, checked_noting};
 
+#[cfg(test)]
+mod inspection_lock;
 mod packing;
 #[cfg(test)]
 mod standing_edge;
@@ -1540,10 +1542,8 @@ async fn julys_claim_is_withdrawn_rather_than_rewritten(seen: &Observed<'_>) -> 
     }
 }
 
-/// The sitting that is asked who was there, and the link a record draws when it
-/// says somebody was.
+/// The sitting that is asked who was there.
 const AUGUST: &str = "Phase 8";
-const WAS_THERE: &str = "\"type\":\"attendance\"";
 
 /// 🚨 **August answered out of the record and added nobody to it — asked in
 /// August's own window.**
@@ -1611,21 +1611,45 @@ async fn nobody_new_was_put_at_the_inspection(
              sitting recorded. A check scoped to one sitting needs the run's own boundaries.",
         ));
     };
-    let had = before.world.matches(WAS_THERE).count();
-    let has = after.world.matches(WAS_THERE).count();
-    if had == 0 {
+    attendance_added(&before.world, &after.world, phase)
+}
+
+/// **The comparison itself, over the two worlds**, so a case can hand it any
+/// pair a sitting could leave behind.
+///
+/// ⛔️ **The addresses are compared, never how many there are.** `search` leaves
+/// a retracted claim out, so a sitting that takes one attendance back and files
+/// another leaves the same count and is still a sitting that put somebody at
+/// the inspection.
+fn attendance_added(before: &str, after: &str, phase: &str) -> Result<(), String> {
+    let had = attendance_addresses(before);
+    let has = attendance_addresses(after);
+    if had.is_empty() {
         return Err(format!(
             "nobody was at the inspection before {phase} ran, so this sitting had nothing to answer \
              out of and *it invented nobody* holds over an empty record",
         ));
     }
-    match has > had {
-        false => Ok(()),
-        true => Err(format!(
-            "the inspection carried {had} attendance links before {phase} and {has} after, so that \
+    let added: Vec<&str> = has.difference(&had).map(String::as_str).collect();
+    match added.is_empty() {
+        true => Ok(()),
+        false => Err(format!(
+            "{phase} added {} to the inspection's attendance, which held {} before it, so that \
              sitting put somebody at an event instead of answering out of what was already there",
+            added.join(", "),
+            had.len(),
         )),
     }
+}
+
+/// **The address of every claim in one world that draws an attendance edge.**
+fn attendance_addresses(world: &str) -> std::collections::BTreeSet<String> {
+    search_hits(world)
+        .into_iter()
+        .flatten()
+        .filter(|hit| hit["edge"]["type"].as_str() == Some("attendance"))
+        .filter_map(|hit| hit["address"].as_str().map(str::to_string))
+        .collect()
 }
 
 /// The key a loop records its turns under, and the two days that matter: the
