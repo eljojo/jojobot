@@ -183,6 +183,12 @@ def resolve(target):
     return head["commit"]["id"], target
 
 
+def workflow_file(name):
+    """The forge names a workflow by its file, so `prepush` is `prepush.yml`; a dispatched run
+    reports an empty event and is found by this name and its commit alone."""
+    return name if name.endswith(".yml") else name + ".yml"
+
+
 def find(sha, ref, workflow=None):
     """The run to read and the other runs of the same commit, or None."""
     held = [r for r in runs_of(head_sha=sha) if r["commit_sha"] == sha]
@@ -190,7 +196,7 @@ def find(sha, ref, workflow=None):
     mine = [
         r for r in held
         if (ref is None or r["prettyref"] == ref)
-        and (workflow is None or r.get("workflow_id") == workflow)
+        and (workflow is None or r.get("workflow_id") == workflow_file(workflow))
     ]
     if not mine:
         return None

@@ -526,6 +526,27 @@ fn full_dispatch_can_be_read_by_sha_beside_a_newer_targeted_run() {
     );
 }
 
+/// **A dispatched run is found by its workflow's name, with or without `.yml`.**
+/// The shape is the one the forge lists for a dispatched prepush run: `event` is
+/// empty, `trigger_event` is `workflow_dispatch`, and `workflow_id` is the file
+/// name. The paired rows are the file name, which always found it, the bare name a
+/// caller types, and a bare name that belongs to another workflow.
+#[test]
+fn a_dispatched_run_is_found_by_its_workflow_name_with_or_without_yml() {
+    let mut dispatched = run(2169, "carry-alpha", GREEN_SHA, "success");
+    dispatched["workflow_id"] = json!("prepush.yml");
+    dispatched["event"] = json!("");
+    dispatched["trigger_event"] = json!("workflow_dispatch");
+    let forge = stand(Forge {
+        runs: vec![(dispatched, fixture("wait-run-green-job.txt"))],
+        ..Default::default()
+    });
+    for (asked, code) in [("prepush.yml", 0), ("prepush", 0), ("pull-request", 3)] {
+        let (got, out, err) = wait(&forge, &[GREEN_SHA, "--workflow", asked]);
+        assert_eq!(got, code, "--workflow {asked}: {out}{err}");
+    }
+}
+
 /// **A red run exits one and names what failed**, by a full commit and by the
 /// first eight characters of it.
 #[test]
