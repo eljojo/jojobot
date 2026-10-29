@@ -219,7 +219,33 @@ async fn whatever_a_read_serves_the_write_that_sets_it_accepts_as_served() {
             .all(|k| jojobot_domain::memory::copied_read_key(None, k))
     );
     let mut records = Vec::new();
-    reads.iter().for_each(|read| records_in(read, &mut records));
+    assert_eq!(reads.len(), 6, "all seeded read sources must be exercised");
+    for (read, (source, claim, thing)) in reads.iter().zip([
+        ("search", true, None),
+        ("listing", false, Some("thing:sigma")),
+        ("history", true, Some("thing:sigma")),
+        ("sigma", true, Some("thing:sigma")),
+        ("theta", true, Some("thing:theta")),
+        ("list", true, Some("list:packing")),
+    ]) {
+        let first = records.len();
+        records_in(read, &mut records);
+        let served = &records[first..];
+        if claim {
+            assert!(
+                served.iter().any(|(verb, _)| *verb == "capture"),
+                "{source} must contribute a served claim before synthetic controls"
+            );
+        }
+        if let Some(id) = thing {
+            assert!(
+                served
+                    .iter()
+                    .any(|(verb, record)| *verb == "update_entity" && record["id"] == id),
+                "{source} must contribute the seeded thing {id} before synthetic controls"
+            );
+        }
+    }
     for (key, value) in ALONE {
         let fields = json!({ (*key): *value, "source": "copied account" });
         let copy =
