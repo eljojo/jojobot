@@ -2436,7 +2436,7 @@ pub async fn no_read_serves_a_badge_and_every_one_serves_the_handle<M: Memory + 
         "nothing points here, so this read proves nothing about how it renders",
     );
     served.extend(pointed.into_iter().map(|fact| fact.content));
-    capture(
+    let derived = capture(
         store,
         NewFact {
             derived_from: Some(pointing.address()),
@@ -2448,13 +2448,20 @@ pub async fn no_read_serves_a_badge_and_every_one_serves_the_handle<M: Memory + 
         },
     )
     .await;
-    for fact in store
+    let lineage = store
         .built_on(&pointing.address())
         .await
-        .expect("the lineage reads")
-    {
-        served.push(fact.content);
-    }
+        .expect("the lineage reads");
+    assert_eq!(
+        lineage.iter().map(Fact::address).collect::<Vec<_>>(),
+        vec![derived.address()],
+        "built_on must serve the seeded derived claim",
+    );
+    assert!(
+        lineage[0].content.contains(named.as_str()),
+        "built_on must render the derived claim's mention as the handle",
+    );
+    served.extend(lineage.into_iter().map(|fact| fact.content));
     let taken_back = store
         .retract(
             &written.address(),
