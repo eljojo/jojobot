@@ -3442,6 +3442,7 @@ async fn the_hold_is_on_the_helper(seen: &Observed<'_>) -> Result<(), String> {
         .into_iter()
         .flatten()
         .filter(|hit| crate::isolate::fact_subject(hit) == Some(helper.as_str()))
+        .filter(|hit| hit["status"] == "active")
         .filter(|hit| hit["fields"]["starred"] == "true")
         .any(|hit| {
             ["content", "details"]

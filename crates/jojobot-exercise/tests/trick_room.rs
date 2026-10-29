@@ -1467,6 +1467,45 @@ async fn the_hold_lock_reds_when_the_claim_on_the_helper_is_not_carried() {
     assert_eq!(held, all_but(&[HOLD]), "{said}");
 }
 
+/// A star stays on an archived rule, but that rule no longer binds the helper.
+#[tokio::test]
+async fn the_hold_lock_reds_when_the_carried_rule_is_archived() {
+    let (_room, surface, sid) = furnished().await;
+    played(&surface, &sid, right()).await;
+    let read = surface
+        .must("recall", json!({"subject": "bot:gamma", "facts": true}))
+        .await
+        .expect("the helper's rules");
+    let address = read["objects"][0]["facts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|fact| fact["fields"]["starred"] == "true")
+        .unwrap()["address"]
+        .as_str()
+        .unwrap();
+    let archived = as_the_occupant(
+        &surface,
+        &sid,
+        "update_fact",
+        json!({"address": address, "status": "archived", "details": "the hold ended"}),
+    )
+    .await;
+    assert!(!archived.contains("\"status\":\"blocked\""), "{archived}");
+    let boundaries = around_the_brief(&surface).await;
+    let hit = serde_json::Deserializer::from_str(&boundaries[1].world)
+        .into_iter::<Value>()
+        .filter_map(Result::ok)
+        .flat_map(|part| part["results"].as_array().cloned().unwrap_or_default())
+        .find(|hit| hit["address"] == address)
+        .expect("the archived rule stays in default search");
+    assert_eq!(hit["status"], "archived");
+    assert_eq!(hit["fields"]["starred"], "true");
+    let outcomes = judge_all(&surface, &boundaries).await;
+    let held: Vec<bool> = outcomes.iter().map(|outcome| outcome.held).collect();
+    assert_eq!(held, all_but(&[HOLD]), "{}", saying(&outcomes));
+}
+
 /// **A job handed to the helper is not a hold on it.** The rule names the
 /// espresso manual and rides the helper's boot, and it says nothing that keeps
 /// the helper off the job.
