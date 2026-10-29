@@ -15506,22 +15506,22 @@ pub async fn a_cleared_key_is_not_resurrected_by_an_older_record<M: Memory>(stor
     let subject = EntityId("thing:contract-cleared-key".into());
     capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: [("chain_wear".to_string(), "9".to_string())]
                 .into_iter()
                 .collect(),
             ..NewFact::about(subject.clone(), "the first sitting", date(2026, 4, 18))
-        },
+        }),
     )
     .await;
     let newer = capture(
         store,
-        NewFact {
+        state(NewFact {
             fields: [("chain_wear".to_string(), "11".to_string())]
                 .into_iter()
                 .collect(),
             ..NewFact::about(subject.clone(), "the second sitting", date(2026, 4, 19))
-        },
+        }),
     )
     .await;
     edit(
