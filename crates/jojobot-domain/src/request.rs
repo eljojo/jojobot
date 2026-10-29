@@ -36,6 +36,7 @@ use sha2::{Digest, Sha256};
 use crate::memory::EntityId;
 
 pub mod context;
+pub mod events;
 
 pub(crate) const INDETERMINATE_WRITE: &str = "the write outcome is indeterminate; if this call used a request_id, retry with that same id; otherwise read before writing again";
 
