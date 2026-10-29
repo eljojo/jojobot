@@ -1147,7 +1147,6 @@ pub struct IndexedMailboxes {
 /// The value of [`IndexedMailboxes::board_seen_at`] before a board read landed.
 const NOT_SEEN: u64 = u64::MAX;
 
-/// TEMPORARY(9.3.2) the mail write-reaction helpers. Subscribers replace these in 9.3.2-2.
 impl IndexedMailboxes {
     /// Wrap a store, writing into the index the Memory half already uses. **One
     /// index, not two** — that is what makes one ranked list possible at all.
@@ -1269,6 +1268,17 @@ impl IndexedMailboxes {
             self.index.ingest_message(message).map_err(indexing)?;
         }
         Ok(())
+    }
+
+    /// Index the messages a write just changed, read from the State, and move
+    /// the count to the State's when this write is the only change since the
+    /// index held the whole board.
+    async fn absorb(&self, ids: &[jojobot_domain::mailbox::MessageId], position: u64) {
+        let indexed = match self.inner.messages_by_id(ids).await {
+            Ok(messages) => self.reindex(&messages.iter().collect::<Vec<_>>()).await,
+            Err(e) => Err(e),
+        };
+        self.settle(position.checked_sub(1), indexed);
     }
 
     /// **The one place the count of the board the index holds is published.**
@@ -1516,289 +1526,30 @@ fn indexing(e: MemoryError) -> MailboxError {
     MailboxError::Store(format!("search index: {e}"))
 }
 
-/// TEMPORARY(9.3.2) the mail write-reaction wrappers. Subscribers replace these in 9.3.2-2.
+/// **The mail half of the index reads what the mail State changed.** The writer
+/// delivers, after a write, the messages it wrote or changed and the State's new
+/// count. The index re-reads those messages through the same render a reader
+/// gets, so search holds what a reader sees.
+///
+/// A write that changes no message (a box created or repointed) carries only the
+/// count: the index may hold other messages once a box changes owner, so the
+/// next refresh reads the board.
 #[async_trait]
-impl Mailboxes for IndexedMailboxes {
-    /// **Forwarded**: the count of the port beneath is the one that matters.
-    fn changes(&self) -> Option<u64> {
-        self.inner.changes()
-    }
-
-    async fn create_mailbox(
-        &self,
-        name: &jojobot_domain::mailbox::MailboxName,
-        owner: &jojobot_domain::memory::EntityId,
-        override_token: Option<&str>,
-    ) -> Result<jojobot_domain::mailbox::Guarded<jojobot_domain::mailbox::Mailbox>, MailboxError>
-    {
-        // A box holds no text of its own — nothing to index until a message
-        // lands in it. It can change which messages the index may hold, so it
-        // publishes nothing: the port counts it, and the next refresh reads the
-        // board.
-        owned!(
-            self,
-            this,
-            [
-                name = name.clone(),
-                owner = owner.clone(),
-                override_token = override_token.map(str::to_string)
-            ],
-            this.create_mailbox(&name, &owner, override_token.as_deref())
-                .await
-        );
-        self.inner.create_mailbox(name, owner, override_token).await
-    }
-
-    async fn repoint_owner(
-        &self,
-        from: &jojobot_domain::memory::EntityId,
-        to: &jojobot_domain::memory::EntityId,
-    ) -> Result<Option<jojobot_domain::mailbox::Mailbox>, MailboxError> {
-        // Same reason as create_mailbox: a box holds no text of its own, so
-        // there is nothing here to reindex.
-        owned!(
-            self,
-            this,
-            [from = from.clone(), to = to.clone()],
-            this.repoint_owner(&from, &to).await
-        );
-        self.inner.repoint_owner(from, to).await
-    }
-
-    async fn list_mailboxes(&self) -> Result<Vec<jojobot_domain::mailbox::Mailbox>, MailboxError> {
-        self.inner.list_mailboxes().await
-    }
-
-    async fn scan_messages(&self) -> Result<Vec<Message>, MailboxError> {
-        self.inner.scan_messages().await
-    }
-
-    async fn message_by_id(
-        &self,
-        id: &jojobot_domain::mailbox::MessageId,
-    ) -> Result<Option<Message>, MailboxError> {
-        self.inner.message_by_id(id).await
-    }
-
-    async fn messages_by_id(
-        &self,
-        ids: &[jojobot_domain::mailbox::MessageId],
-    ) -> Result<Vec<Message>, MailboxError> {
-        self.inner.messages_by_id(ids).await
-    }
-
-    async fn sent_by(&self, senders: &[&str]) -> Result<Vec<Message>, MailboxError> {
-        self.inner.sent_by(senders).await
-    }
-
-    async fn post_message(
-        &self,
-        message: jojobot_domain::mailbox::NewMessage,
-    ) -> Result<jojobot_domain::mailbox::Guarded<Message>, MailboxError> {
-        owned!(self, this, [], this.post_message(message).await);
-        let before = self.inner.changes();
-        let written = self.inner.post_message(message).await?;
-        let indexed = match &written {
-            jojobot_domain::mailbox::Guarded::Written(message) => {
-                // **A message that replaces another changes the replaced one's
-                // `superseded_by`**, with no verb on it, so it is re-read and
-                // re-indexed with the new one.
-                let replaced = match &message.supersedes {
-                    Some(old) => match self.inner.message_by_id(old).await {
-                        Ok(old) => old,
-                        Err(e) => {
-                            self.index.mail_refresh_failed();
-                            tracing::warn!(
-                                error = %e,
-                                mailbox = %message.mailbox,
-                                "SEARCH INDEX BEHIND — a message replaced another and the \
-                                 replaced one could not be read, so its hit does not name \
-                                 its replacement. Mail search reports itself stale until a \
-                                 board read lands."
-                            );
-                            None
-                        }
-                    },
-                    None => None,
-                };
-                let touched: Vec<&Message> =
-                    std::iter::once(message).chain(replaced.iter()).collect();
-                self.reindex(&touched).await
+impl crate::writer::publish::Subscriber for IndexedMailboxes {
+    async fn changed(&self, changes: &[crate::writer::publish::Change]) {
+        use crate::writer::publish::Change;
+        let mut touched = Vec::new();
+        for change in changes {
+            match change {
+                Change::Messages(ids) => touched.extend(ids.iter().cloned()),
+                Change::MailPosition(position) => {
+                    let ids = std::mem::take(&mut touched);
+                    if !ids.is_empty() {
+                        self.absorb(&ids, *position).await;
+                    }
+                }
+                Change::Posted(_) => {}
             }
-            _ => Ok(()),
-        };
-        self.settle(before, indexed);
-        Ok(written)
-    }
-
-    async fn read_mailbox(
-        &self,
-        name: &jojobot_domain::mailbox::MailboxName,
-        taken_by: jojobot_domain::mailbox::TakenBy,
-        acting: jojobot_domain::mailbox::Acting<'_>,
-    ) -> Result<jojobot_domain::mailbox::Guarded<jojobot_domain::mailbox::Delivery>, MailboxError>
-    {
-        if let Some(delivery) = self.inner.unchanged_delivery(name, taken_by).await? {
-            return Ok(jojobot_domain::mailbox::Guarded::Written(delivery));
         }
-        owned!(
-            self,
-            this,
-            [
-                name = name.clone(),
-                acting_session = acting.session.map(str::to_string),
-                acting_at = acting.at
-            ],
-            this.read_mailbox(
-                &name,
-                taken_by,
-                jojobot_domain::mailbox::Acting {
-                    session: acting_session.as_deref(),
-                    at: acting_at,
-                },
-            )
-            .await
-        );
-        let before = self.inner.changes();
-        let delivered = self.inner.read_mailbox(name, taken_by, acting).await?;
-        let indexed = match &delivered {
-            jojobot_domain::mailbox::Guarded::Written(delivery) => {
-                let delivered: Vec<&Message> =
-                    delivery.messages.iter().map(|d| &d.message).collect();
-                self.reindex(&delivered).await
-            }
-            _ => Ok(()),
-        };
-        self.settle(before, indexed);
-        Ok(delivered)
-    }
-
-    async fn read_message(
-        &self,
-        id: &jojobot_domain::mailbox::MessageId,
-        acting: jojobot_domain::mailbox::Acting<'_>,
-    ) -> Result<jojobot_domain::mailbox::Delivered, MailboxError> {
-        // No case pins this lock: removing it leaves every case green, because the
-        // publication checks in `settle` already refuse the interleavings a case can
-        // pause. It closes the window no case can pause in: a board ingest that lands
-        // between this verb's last index write and its publication.
-        owned!(
-            self,
-            this,
-            [
-                id = id.clone(),
-                acting_session = acting.session.map(str::to_string),
-                acting_at = acting.at
-            ],
-            this.read_message(
-                &id,
-                jojobot_domain::mailbox::Acting {
-                    session: acting_session.as_deref(),
-                    at: acting_at,
-                },
-            )
-            .await
-        );
-        let before = self.inner.changes();
-        let delivered = self.inner.read_message(id, acting).await?;
-        let indexed = self.reindex(&[&delivered.message]).await;
-        self.settle(before, indexed);
-        Ok(delivered)
-    }
-
-    async fn mark_processed(
-        &self,
-        id: &jojobot_domain::mailbox::MessageId,
-        by: &jojobot_domain::mailbox::MailboxName,
-        notes: Option<&str>,
-        acting: jojobot_domain::mailbox::Acting<'_>,
-    ) -> Result<Message, MailboxError> {
-        // No case pins this lock: removing it leaves every case green, because the
-        // publication checks in `settle` already refuse the interleavings a case can
-        // pause. It closes the window no case can pause in: a board ingest that lands
-        // between this verb's last index write and its publication.
-        owned!(
-            self,
-            this,
-            [
-                id = id.clone(),
-                by = by.clone(),
-                notes = notes.map(str::to_string),
-                acting_session = acting.session.map(str::to_string),
-                acting_at = acting.at
-            ],
-            this.mark_processed(
-                &id,
-                &by,
-                notes.as_deref(),
-                jojobot_domain::mailbox::Acting {
-                    session: acting_session.as_deref(),
-                    at: acting_at,
-                },
-            )
-            .await
-        );
-        let before = self.inner.changes();
-        let processed = self.inner.mark_processed(id, by, notes, acting).await?;
-        let indexed = self.reindex(&[&processed]).await;
-        self.settle(before, indexed);
-        Ok(processed)
-    }
-
-    /// **No incremental reindex — there is no `Message` left to feed one.**
-    /// A quarantined row is unreadable by design, the same way a damaged
-    /// one already is, and a damaged row is not incrementally deindexed
-    /// either: it stops answering on the next full refresh, which already
-    /// reads the board through this same port and already excludes
-    /// anything unreadable.
-    async fn quarantine(
-        &self,
-        id: &jojobot_domain::mailbox::MessageId,
-        by: &jojobot_domain::mailbox::MailboxName,
-        reason: &str,
-        acting: jojobot_domain::mailbox::Acting<'_>,
-    ) -> Result<jojobot_domain::mailbox::Quarantined, MailboxError> {
-        owned!(
-            self,
-            this,
-            [
-                id = id.clone(),
-                by = by.clone(),
-                reason = reason.to_string(),
-                acting_session = acting.session.map(str::to_string),
-                acting_at = acting.at
-            ],
-            this.quarantine(
-                &id,
-                &by,
-                &reason,
-                jojobot_domain::mailbox::Acting {
-                    session: acting_session.as_deref(),
-                    at: acting_at,
-                },
-            )
-            .await
-        );
-        self.inner.quarantine(id, by, reason, acting).await
-    }
-
-    async fn message_history(
-        &self,
-        id: &jojobot_domain::mailbox::MessageId,
-    ) -> Result<Vec<jojobot_domain::mailbox::MessageEvent>, jojobot_domain::mailbox::MailboxError>
-    {
-        self.inner.message_history(id).await
-    }
-
-    async fn scan_message_events(
-        &self,
-    ) -> Result<
-        Vec<(
-            jojobot_domain::mailbox::MessageId,
-            Vec<jojobot_domain::mailbox::MessageEvent>,
-        )>,
-        jojobot_domain::mailbox::MailboxError,
-    > {
-        self.inner.scan_message_events().await
     }
 }

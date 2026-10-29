@@ -2536,6 +2536,10 @@ impl SearchViaPort for Arc<IndexedMemory> {
 #[cfg(test)]
 mod mail_fixtures;
 #[cfg(test)]
+mod mail_state;
+#[cfg(test)]
+use mail_state::{FoldedMailboxes, mail_over, subscribed};
+#[cfg(test)]
 mod reload_tests;
 #[cfg(test)]
 mod scope_tests;

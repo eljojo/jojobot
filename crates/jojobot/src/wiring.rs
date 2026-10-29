@@ -218,11 +218,11 @@ pub async fn assemble_memory_with(
 /// The three ports left, wrapped in the decorators every jojobot serves
 /// through, once memory is already open.
 pub struct Wired {
-    /// Mention-resolving, then indexed — what `AppState.mailboxes` is.
-    /// Concrete rather than `Arc<dyn Mailboxes>`, so a caller can call its
-    /// own `rebuild` on it; it coerces to the trait object `AppState` wants
-    /// at the point it is assigned.
-    pub mailboxes: Arc<IndexedMailboxes>,
+    /// Mention-resolving — what `AppState.mailboxes` is.
+    pub mailboxes: Arc<dyn Mailboxes>,
+    /// The mail half of the search index, which reads the changes the writer
+    /// publishes. Concrete, so a caller can call its own `rebuild` on it.
+    pub mail_index: Arc<IndexedMailboxes>,
     /// Mention-resolving — what `AppState.sessions` is directly. Never
     /// further indexed: see `sessions_indexed`.
     pub sessions: Arc<dyn Sessions>,
@@ -279,10 +279,14 @@ pub fn assemble_ports(
         indexed.clone(),
     ));
 
-    // Mail goes through the search index too: every verb that changes a
-    // message re-indexes it, and boot loads the board once (the caller's
+    // Mail goes through the search index too: the index reads each message the
+    // writer publishes as changed, and boot loads the board once (the caller's
     // job — see each call site's own rebuild).
-    let mailboxes = Arc::new(IndexedMailboxes::new(mail_mentioned, indexed.index()));
+    let mail_index = Arc::new(IndexedMailboxes::new(
+        mail_mentioned.clone(),
+        indexed.index(),
+    ));
+    indexed.writer().subscribe(mail_index.clone());
     // **A bot's own runs, indexed for search alone.** `sessions` above stays
     // the mention-resolving port directly, and this wrapped copy is only a
     // source `Retrieval` reads from — and a caller's own `rebuild` target.
@@ -296,11 +300,12 @@ pub fn assemble_ports(
     // jojobot stops being served.
     let search: Arc<dyn Search> = Arc::new(Retrieval::new(
         indexed.index(),
-        vec![indexed, mailboxes.clone(), sessions_indexed.clone()],
+        vec![indexed, mail_index.clone(), sessions_indexed.clone()],
     ));
 
     Wired {
-        mailboxes,
+        mailboxes: mail_mentioned,
+        mail_index,
         sessions: sessions_mentioned,
         sessions_indexed,
         search,
@@ -944,7 +949,7 @@ pub async fn boot_store_observed(
     // gap in every answer rather than passing it off as "nothing matched".
     // Refusing to start over a projection is worse than a thin one that admits
     // what it is.
-    match timed("search-mail", wired.mailboxes.rebuild()).await {
+    match timed("search-mail", wired.mail_index.rebuild()).await {
         Ok(messages) => tracing::info!(messages, "search: mail indexed from a full board read"),
         Err(e) => tracing::warn!(
             error = %e,

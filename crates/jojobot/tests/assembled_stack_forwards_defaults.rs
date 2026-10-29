@@ -21,7 +21,7 @@ use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::dolt::sessions::DoltSessions;
 use jojobot_adapters::owners::MemoryOwners;
 use jojobot_adapters::testing::free_port;
-use jojobot_domain::mailbox::{MailboxName, Mailboxes};
+use jojobot_domain::mailbox::MailboxName;
 use jojobot_domain::memory::owned::Provision;
 use jojobot_domain::memory::types::{DeclaredType, Field, ValueType};
 use jojobot_domain::memory::{EntityId, Memory, NewEntity, NewFact};

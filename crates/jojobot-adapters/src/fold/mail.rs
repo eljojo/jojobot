@@ -31,6 +31,7 @@ use std::sync::Arc;
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
+use crate::writer::publish::Change as Published;
 use async_trait::async_trait;
 use jojobot_domain::mailbox::event::{Change, next_event};
 use jojobot_domain::mailbox::{
@@ -330,7 +331,8 @@ impl FoldedMailboxes {
     ) -> Result<T, MailboxError> {
         let done =
             crate::writer::recovery::guarded(&self.writer, "mail", write, || self.fill()).await;
-        self.changes.fetch_add(1, Ordering::SeqCst);
+        let position = self.changes.fetch_add(1, Ordering::SeqCst) + 1;
+        self.writer.publish(Published::MailPosition(position));
         done
     }
 
@@ -523,8 +525,14 @@ impl Mailboxes for FoldedMailboxes {
             if let Guarded::Written(filed) = &posted {
                 self.follow("post_message", |image| image.file(filed.clone()))
                     .await;
-                self.writer.publish(crate::writer::publish::Change::Posted(
-                    filed.mailbox.clone(),
+                self.writer
+                    .publish(Published::Posted(filed.mailbox.clone()));
+                // **A message that replaces another changes the replaced one's
+                // `superseded_by`**, with no verb on it, so both are published.
+                self.writer.publish(Published::Messages(
+                    std::iter::once(filed.id.clone())
+                        .chain(filed.supersedes.clone())
+                        .collect(),
                 ));
             }
             Ok(posted)
@@ -589,6 +597,15 @@ impl Mailboxes for FoldedMailboxes {
                 })
                 .await;
             }
+            if let Guarded::Written(delivery) = &delivery {
+                self.writer.publish(Published::Messages(
+                    delivery
+                        .messages
+                        .iter()
+                        .map(|d| d.message.id.clone())
+                        .collect(),
+                ));
+            }
             Ok(delivery)
         })
         .await
@@ -645,6 +662,8 @@ impl Mailboxes for FoldedMailboxes {
                 image.put(delivered.message.clone())
             })
             .await;
+            self.writer
+                .publish(Published::Messages(vec![delivered.message.id.clone()]));
             Ok(delivered)
         })
         .await
@@ -702,6 +721,8 @@ impl Mailboxes for FoldedMailboxes {
                 image.put(processed.clone())
             })
             .await;
+            self.writer
+                .publish(Published::Messages(vec![processed.id.clone()]));
             Ok(processed)
         })
         .await

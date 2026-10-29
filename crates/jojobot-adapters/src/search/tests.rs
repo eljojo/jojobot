@@ -7568,10 +7568,10 @@ async fn rebuilding_either_half_leaves_the_other_alone() {
 async fn a_posted_message_is_findable_at_once_and_its_state_follows_it() {
     jojobot_domain::memory::kinds::load_shipped();
     let index = Arc::new(FullTextIndex::open().expect("index opens"));
-    let store = IndexedMailboxes::new(Arc::new(InMemoryMailboxes::new()), index.clone());
-    mail_contract::create(&store, "pm").await;
+    let (store, _) = mail_over(Arc::new(InMemoryMailboxes::new()), index.clone());
+    mail_contract::create(&*store, "pm").await;
 
-    let posted = mail_contract::post(&store, "pm", "dev", "the damper is still hand-cut", 0).await;
+    let posted = mail_contract::post(&*store, "pm", "dev", "the damper is still hand-cut", 0).await;
     let state_of = |index: &FullTextIndex| -> Option<MessageState> {
         index
             .search(&asking_for_mail("damper"))
@@ -7614,16 +7614,16 @@ async fn a_posted_message_is_findable_at_once_and_its_state_follows_it() {
 async fn a_board_whose_index_fails_the_next_commit() -> (
     Arc<InMemoryMailboxes>,
     Arc<FullTextIndex>,
-    IndexedMailboxes,
+    Arc<FoldedMailboxes>,
     jojobot_domain::mailbox::Message,
 ) {
     jojobot_domain::memory::kinds::load_shipped();
     let board = Arc::new(InMemoryMailboxes::new());
     let index = Arc::new(FullTextIndex::open().expect("index opens"));
-    let mail = IndexedMailboxes::new(board.clone(), index.clone());
-    mail_contract::create(&mail, "pm").await;
-    let posted = mail_contract::post(&mail, "pm", "dev", "the damper is still hand-cut", 0).await;
-    mail.rebuild().await.expect("rebuild");
+    let (mail, ix) = mail_over(board.clone(), index.clone());
+    mail_contract::create(&*mail, "pm").await;
+    let posted = mail_contract::post(&*mail, "pm", "dev", "the damper is still hand-cut", 0).await;
+    ix.rebuild().await.expect("rebuild");
     assert_eq!(
         index.mail_coverage(),
         Coverage::Loaded,
@@ -7848,11 +7848,11 @@ async fn a_delivery_lists_the_boxes_once_however_many_messages_it_carries() {
     }
 
     let index = Arc::new(FullTextIndex::open().expect("index opens"));
-    let mail = IndexedMailboxes::new(metered.clone(), index.clone());
+    let (fm, mail) = mail_over(metered.clone(), index.clone());
     mail.rebuild().await.expect("rebuild");
 
     let before = metered.listings();
-    let delivery = mail
+    let delivery = fm
         .read_mailbox(
             &MailboxName("pm".into()),
             jojobot_domain::mailbox::TakenBy::Reading,
@@ -7886,7 +7886,7 @@ async fn a_delivery_lists_the_boxes_once_however_many_messages_it_carries() {
     }
 
     let before = metered.listings();
-    mail.mark_processed(
+    fm.mark_processed(
         &ids[0],
         &MailboxName("pm".into()),
         Some("filed"),
@@ -7910,12 +7910,12 @@ async fn a_delivery_lists_the_boxes_once_however_many_messages_it_carries() {
 async fn a_refresh_with_no_write_since_the_last_one_reads_nothing_and_a_write_makes_it_read() {
     jojobot_domain::memory::kinds::load_shipped();
     let metered = Metered::new(InMemoryMailboxes::new());
-    let counted = Arc::new(crate::fold::mail::FoldedMailboxes::new(metered.clone()));
+    let index = Arc::new(FullTextIndex::open().expect("index opens"));
+    let counted = Arc::new(FoldedMailboxes::new(metered.clone()));
     mail_contract::create(counted.as_ref(), "pm").await;
     mail_contract::post(counted.as_ref(), "pm", "dev", "the kiln is relined", 0).await;
 
-    let index = Arc::new(FullTextIndex::open().expect("index opens"));
-    let mail = IndexedMailboxes::new(counted.clone(), index.clone());
+    let mail = Arc::new(IndexedMailboxes::new(counted.clone(), index.clone()));
     mail.rebuild().await.expect("rebuild");
 
     let before = metered.listings();
@@ -7928,7 +7928,7 @@ async fn a_refresh_with_no_write_since_the_last_one_reads_nothing_and_a_write_ma
         "three refreshes with no write between them listed the boxes"
     );
 
-    // A message arrives past the index: written to the counted port directly.
+    // A message arrives past the index: written to a State the index does not read.
     mail_contract::post(counted.as_ref(), "pm", "dev", "the glaze is mixed", 1).await;
     let before = metered.listings();
     mail.refresh().await;
@@ -7970,17 +7970,17 @@ async fn a_refresh_with_no_write_since_the_last_one_reads_nothing_and_a_write_ma
 /// here on.
 async fn booted_mail() -> (
     Arc<Metered>,
-    Arc<crate::fold::mail::FoldedMailboxes>,
-    IndexedMailboxes,
+    Arc<FoldedMailboxes>,
+    Arc<IndexedMailboxes>,
     Arc<FullTextIndex>,
 ) {
     jojobot_domain::memory::kinds::load_shipped();
     let metered = Metered::new(InMemoryMailboxes::new());
-    let counted = Arc::new(crate::fold::mail::FoldedMailboxes::new(metered.clone()));
+    let index = Arc::new(FullTextIndex::open().expect("index opens"));
+    let counted = Arc::new(FoldedMailboxes::new(metered.clone()).with_writer(index.owner()));
     mail_contract::create(counted.as_ref(), "pm").await;
     mail_contract::post(counted.as_ref(), "pm", "dev", "the kiln is relined", 0).await;
-    let index = Arc::new(FullTextIndex::open().expect("index opens"));
-    let mail = IndexedMailboxes::new(counted.clone(), index.clone());
+    let mail = subscribed(counted.clone(), index.clone());
     mail.rebuild().await.expect("rebuild");
     (metered, counted, mail, index)
 }
@@ -8015,13 +8015,12 @@ fn mail_hits(index: &FullTextIndex, word: &str) -> Vec<Message> {
 /// **A message posted through the port is findable by the next search without a
 /// board read.** The post already put the message in the index, so the refresh
 /// has nothing left to read. Paired with the positive it depends on: the message
-/// is found, and a write that did NOT pass through the port still sends the
-/// refresh to the board.
+/// is found.
 #[tokio::test]
 async fn a_message_posted_through_the_port_is_found_without_a_board_read() {
-    let (metered, counted, mail, index) = booted_mail().await;
+    let (metered, fm, mail, index) = booted_mail().await;
 
-    mail_contract::post(&mail, "pm", "dev", "the glaze is mixed", 1).await;
+    mail_contract::post(&*fm, "pm", "dev", "the glaze is mixed", 1).await;
     let before = metered.scans();
     mail.refresh().await;
     assert_eq!(
@@ -8034,16 +8033,6 @@ async fn a_message_posted_through_the_port_is_found_without_a_board_read() {
         1,
         "the message posted through the port is findable"
     );
-
-    // A message that arrives past the port is only seen by reading the board.
-    mail_contract::post(counted.as_ref(), "pm", "dev", "the anvil is forged", 2).await;
-    mail.refresh().await;
-    assert_eq!(
-        metered.scans() - before,
-        1,
-        "a write past the port did not send the refresh to the board"
-    );
-    assert_eq!(mail_hits(&index, "anvil").len(), 1);
 }
 
 /// **A delivery, a single read and a retirement keep the index current in the
@@ -8051,12 +8040,12 @@ async fn a_message_posted_through_the_port_is_found_without_a_board_read() {
 /// positive: it follows the message.
 #[tokio::test]
 async fn a_delivery_a_read_and_a_retirement_leave_the_next_refresh_nothing_to_read() {
-    let (metered, _counted, mail, index) = booted_mail().await;
-    let second = mail_contract::post(&mail, "pm", "dev", "the glaze is mixed", 1).await;
+    let (metered, fm, mail, index) = booted_mail().await;
+    let second = mail_contract::post(&*fm, "pm", "dev", "the glaze is mixed", 1).await;
     let acting = jojobot_domain::mailbox::Acting::anyone_anytime;
     let before = metered.scans();
 
-    let delivery = mail
+    let delivery = fm
         .read_mailbox(
             &MailboxName("pm".into()),
             jojobot_domain::mailbox::TakenBy::Reading,
@@ -8075,7 +8064,7 @@ async fn a_delivery_a_read_and_a_retirement_leave_the_next_refresh_nothing_to_re
     );
     assert_eq!(mail_hits(&index, "glaze")[0].state, MessageState::Read);
 
-    mail.read_message(&second.id, acting())
+    fm.read_message(&second.id, acting())
         .await
         .expect("read ok");
     mail.refresh().await;
@@ -8085,7 +8074,7 @@ async fn a_delivery_a_read_and_a_retirement_leave_the_next_refresh_nothing_to_re
         "a single read sent the refresh to the board"
     );
 
-    mail.mark_processed(&second.id, &second.mailbox, Some("filed"), acting())
+    fm.mark_processed(&second.id, &second.mailbox, Some("filed"), acting())
         .await
         .expect("retire ok");
     mail.refresh().await;
@@ -8102,11 +8091,11 @@ async fn a_delivery_a_read_and_a_retirement_leave_the_next_refresh_nothing_to_re
 /// the post that replaces it re-indexes it too.
 #[tokio::test]
 async fn a_replacement_posted_through_the_port_updates_the_replaced_hit_without_a_board_read() {
-    let (metered, _counted, mail, index) = booted_mail().await;
-    let old = mail_contract::post(&mail, "pm", "dev", "the flue is forged by hand", 1).await;
+    let (metered, fm, mail, index) = booted_mail().await;
+    let old = mail_contract::post(&*fm, "pm", "dev", "the flue is forged by hand", 1).await;
     let before = metered.scans();
 
-    let new = mail
+    let new = fm
         .post_message(new_message(
             "the chimney is pressed by machine",
             Some(old.id.clone()),
@@ -8137,11 +8126,11 @@ async fn a_replacement_posted_through_the_port_updates_the_replaced_hit_without_
 /// the board, even when a verb that does update it ran in between.
 #[tokio::test]
 async fn a_quarantine_still_sends_the_next_refresh_to_the_board() {
-    let (metered, _counted, mail, index) = booted_mail().await;
-    let doomed = mail_contract::post(&mail, "pm", "dev", "the damper is hand-cut", 1).await;
+    let (metered, fm, mail, index) = booted_mail().await;
+    let doomed = mail_contract::post(&*fm, "pm", "dev", "the damper is hand-cut", 1).await;
     assert_eq!(mail_hits(&index, "damper").len(), 1, "it is indexed first");
 
-    mail.quarantine(
+    fm.quarantine(
         &doomed.id,
         &MailboxName("pm".into()),
         "unreadable",
@@ -8150,7 +8139,7 @@ async fn a_quarantine_still_sends_the_next_refresh_to_the_board() {
     .await
     .expect("quarantine ok");
     // A verb that does update the index runs after it, as in production.
-    mail_contract::post(&mail, "pm", "dev", "the glaze is mixed", 2).await;
+    mail_contract::post(&*fm, "pm", "dev", "the glaze is mixed", 2).await;
     let before = metered.scans();
     mail.refresh().await;
 
@@ -8179,20 +8168,20 @@ async fn a_quarantine_still_sends_the_next_refresh_to_the_board() {
 async fn a_change_the_index_cannot_take_in_made_during_a_post_still_sends_the_refresh_to_the_board()
 {
     for intruder in ["quarantine", "create_mailbox", "repoint_owner"] {
-        let (metered, _counted, mail, index) = booted_mail().await;
-        let doomed = mail_contract::post(&mail, "pm", "dev", "the damper is hand-cut", 1).await;
+        let (metered, fm, mail, index) = booted_mail().await;
+        let doomed = mail_contract::post(&*fm, "pm", "dev", "the damper is hand-cut", 1).await;
         metered
             .hold_post
             .store(true, std::sync::atomic::Ordering::SeqCst);
         let before = metered.scans();
 
-        let post = mail_contract::post(&mail, "pm", "dev", "the glaze is mixed", 2);
+        let post = mail_contract::post(&*fm, "pm", "dev", "the glaze is mixed", 2);
         let in_the_gap = async {
             metered.post_started.notified().await;
             let other = async {
                 match intruder {
                     "quarantine" => {
-                        mail.quarantine(
+                        fm.quarantine(
                             &doomed.id,
                             &MailboxName("pm".into()),
                             "unreadable",
@@ -8202,12 +8191,12 @@ async fn a_change_the_index_cannot_take_in_made_during_a_post_still_sends_the_re
                         .expect("quarantine ok");
                     }
                     "create_mailbox" => {
-                        mail_contract::create(&mail, "springfield").await;
+                        mail_contract::create(&*fm, "springfield").await;
                     }
                     _ => {
                         // Whether a box moves is not the question: the call
                         // counts whatever it answers.
-                        let _ = mail
+                        let _ = fm
                             .repoint_owner(
                                 &jojobot_domain::memory::EntityId("bot:bart".into()),
                                 &jojobot_domain::memory::EntityId("bot:marge".into()),
@@ -8250,16 +8239,16 @@ async fn a_change_the_index_cannot_take_in_made_during_a_post_still_sends_the_re
 /// holds stays behind the port's.
 #[tokio::test]
 async fn a_post_whose_reindex_failed_is_read_from_the_board_after_a_post_that_overlapped_it() {
-    let (metered, _counted, mail, index) = booted_mail().await;
+    let (metered, fm, mail, index) = booted_mail().await;
     metered
         .hold_post
         .store(true, std::sync::atomic::Ordering::SeqCst);
     let before = metered.scans();
 
-    let failing = mail.post_message(new_message("the anvil is forged", None));
+    let failing = fm.post_message(new_message("the anvil is forged", None));
     let overlapping = async {
         metered.post_started.notified().await;
-        let second = mail_contract::post(&mail, "pm", "dev", "the glaze is mixed", 2);
+        let second = mail_contract::post(&*fm, "pm", "dev", "the glaze is mixed", 2);
         tokio::pin!(second);
         let early = tokio::time::timeout(LONG_ENOUGH_TO_SEE_A_WAIT, &mut second).await;
         assert!(early.is_err(), "it did not wait for the held post");
@@ -8298,17 +8287,17 @@ const LONG_ENOUGH_TO_SEE_A_WAIT: std::time::Duration = std::time::Duration::from
 /// board while it holds anything else.
 #[tokio::test]
 async fn a_verb_holding_an_older_state_of_a_message_does_not_bury_a_newer_one() {
-    let (metered, _counted, mail, index) = booted_mail().await;
-    let kept = mail_contract::post(&mail, "pm", "dev", "the glaze is mixed", 1).await;
+    let (metered, fm, mail, index) = booted_mail().await;
+    let kept = mail_contract::post(&*fm, "pm", "dev", "the glaze is mixed", 1).await;
     let acting = jojobot_domain::mailbox::Acting::anyone_anytime;
     metered
         .hold_listing
         .store(true, std::sync::atomic::Ordering::SeqCst);
 
-    let reading = mail.read_message(&kept.id, acting());
+    let reading = fm.read_message(&kept.id, acting());
     let in_the_gap = async {
         metered.listing_started.notified().await;
-        let retiring = mail.mark_processed(&kept.id, &kept.mailbox, Some("filed"), acting());
+        let retiring = fm.mark_processed(&kept.id, &kept.mailbox, Some("filed"), acting());
         tokio::pin!(retiring);
         let early = tokio::time::timeout(LONG_ENOUGH_TO_SEE_A_WAIT, &mut retiring).await;
         metered.listing_release.notify_one();
@@ -8337,7 +8326,7 @@ async fn a_verb_holding_an_older_state_of_a_message_does_not_bury_a_newer_one() 
 /// were ordered.
 #[tokio::test]
 async fn a_board_copy_taken_before_two_posts_does_not_erase_the_first() {
-    let (metered, _counted, mail, index) = booted_mail().await;
+    let (metered, fm, mail, index) = booted_mail().await;
     // A rename makes the refresh read the board although no count moved.
     index.names_changed();
     metered
@@ -8353,8 +8342,8 @@ async fn a_board_copy_taken_before_two_posts_does_not_erase_the_first() {
         // The second post is first in the list, so it is the one held at the store.
         let both = async {
             tokio::join!(
-                mail_contract::post(&mail, "pm", "dev", "the anvil is forged", 3),
-                mail_contract::post(&mail, "pm", "dev", "the glaze is mixed", 2),
+                mail_contract::post(&*fm, "pm", "dev", "the anvil is forged", 3),
+                mail_contract::post(&*fm, "pm", "dev", "the glaze is mixed", 2),
             )
         };
         tokio::pin!(both);
@@ -8382,52 +8371,16 @@ async fn a_board_copy_taken_before_two_posts_does_not_erase_the_first() {
     );
 }
 
-/// **A write that does not pass through the port, made while a verb is in
-/// flight, is read from the board.** The verb counts its own change; the other
-/// write is counted too and nobody indexed it. The count the verb found is not
-/// one change past the count it started from, so it publishes nothing.
+/// **A counted write that put no message in the index, made before a verb, is
+/// read from the board.** A box created is counted and holds no text, so the
+/// index was behind the State when the verb started, and the verb's own
+/// re-index cannot say the index holds the board. The writer runs one write at
+/// a time, so no write can land while another is in flight.
 #[tokio::test]
-async fn a_write_past_the_port_made_during_a_verb_is_read_from_the_board() {
-    let (metered, counted, mail, index) = booted_mail().await;
-    metered
-        .hold_post
-        .store(true, std::sync::atomic::Ordering::SeqCst);
-    let before = metered.scans();
-
-    let through_the_port = mail_contract::post(&mail, "pm", "dev", "the glaze is mixed", 2);
-    let past_the_port = async {
-        metered.post_started.notified().await;
-        mail_contract::post(counted.as_ref(), "pm", "dev", "the anvil is forged", 3).await;
-        metered.post_release.notify_one();
-    };
-    tokio::join!(through_the_port, past_the_port);
-    mail.refresh().await;
-
-    assert_eq!(
-        metered.scans() - before,
-        1,
-        "the verb carried the count past a write nobody indexed"
-    );
-    assert_eq!(
-        mail_hits(&index, "anvil").len(),
-        1,
-        "the write past the port is read in"
-    );
-    assert_eq!(
-        mail_hits(&index, "glaze").len(),
-        1,
-        "the verb's own message stays"
-    );
-}
-
-/// **A write that does not pass through the port, made before a verb, is read
-/// from the board.** The index was behind the port when the verb started, so the
-/// verb's own re-index cannot say the index holds the board.
-#[tokio::test]
-async fn a_write_past_the_port_made_before_a_verb_is_read_from_the_board() {
-    let (metered, counted, mail, index) = booted_mail().await;
-    mail_contract::post(counted.as_ref(), "pm", "dev", "the anvil is forged", 3).await;
-    mail_contract::post(&mail, "pm", "dev", "the glaze is mixed", 2).await;
+async fn a_counted_write_with_no_message_before_a_verb_is_read_from_the_board() {
+    let (metered, fm, mail, index) = booted_mail().await;
+    mail_contract::create(&*fm, "springfield").await;
+    mail_contract::post(&*fm, "pm", "dev", "the glaze is mixed", 2).await;
     let before = metered.scans();
 
     mail.refresh().await;
@@ -8435,12 +8388,7 @@ async fn a_write_past_the_port_made_before_a_verb_is_read_from_the_board() {
     assert_eq!(
         metered.scans() - before,
         1,
-        "the verb carried the count past a write nobody indexed"
-    );
-    assert_eq!(
-        mail_hits(&index, "anvil").len(),
-        1,
-        "the write past the port is read in"
+        "the verb carried the count past a write the index did not take in"
     );
     assert_eq!(
         mail_hits(&index, "glaze").len(),
@@ -8456,8 +8404,8 @@ async fn a_write_past_the_port_made_before_a_verb_is_read_from_the_board() {
 /// second decorator still reports the board as current.
 #[tokio::test]
 async fn two_decorators_over_one_index_cannot_both_publish_over_each_other() {
-    let (metered, counted, second, index) = booted_mail().await;
-    let first = IndexedMailboxes::new(counted.clone(), index.clone());
+    let (metered, fm, second, index) = booted_mail().await;
+    let first = subscribed(fm.clone(), index.clone());
     metered
         .hold_scan
         .store(true, std::sync::atomic::Ordering::SeqCst);
@@ -8465,7 +8413,7 @@ async fn two_decorators_over_one_index_cannot_both_publish_over_each_other() {
     let rebuilding = first.rebuild();
     let in_the_gap = async {
         metered.scan_started.notified().await;
-        let post = mail_contract::post(&second, "pm", "dev", "the glaze is mixed", 2);
+        let post = mail_contract::post(&*fm, "pm", "dev", "the glaze is mixed", 2);
         tokio::pin!(post);
         let early = tokio::time::timeout(LONG_ENOUGH_TO_SEE_A_WAIT, &mut post).await;
         assert!(
@@ -8502,7 +8450,7 @@ async fn a_message_removed_from_the_store_is_gone_from_search_after_the_boot_reb
     // that no longer carries the message.
     let emptied = Metered::new(InMemoryMailboxes::new());
     mail_contract::create(emptied.as_ref(), "pm").await;
-    let restarted = IndexedMailboxes::new(emptied, index.clone());
+    let restarted = IndexedMailboxes::new(Arc::new(FoldedMailboxes::new(emptied)), index.clone());
     restarted.rebuild().await.expect("rebuild");
 
     assert!(
@@ -8524,7 +8472,7 @@ async fn a_reindex_that_cannot_list_the_boxes_logs_why_and_marks_the_mail_half_s
     mail_contract::create(metered.as_ref(), "ledger-down").await;
 
     let index = Arc::new(FullTextIndex::open().expect("index opens"));
-    let mail = IndexedMailboxes::new(metered.clone(), index.clone());
+    let (fm, mail) = mail_over(metered.clone(), index.clone());
     mail.rebuild().await.expect("rebuild");
     assert_eq!(
         index.mail_coverage(),
@@ -8533,8 +8481,8 @@ async fn a_reindex_that_cannot_list_the_boxes_logs_why_and_marks_the_mail_half_s
     );
 
     metered.stop_listing();
-    let posted =
-        mail_contract::post(&mail, "ledger-down", "dev", "the damper is hand-cut", 0).await;
+    let port = &*fm;
+    let posted = mail_contract::post(port, "ledger-down", "dev", "the damper is hand-cut", 0).await;
 
     assert_eq!(
         index.mail_coverage(),
@@ -8688,7 +8636,7 @@ fn the_merge_warning_filter_is_checked_again_when_tantivy_is_bumped() {
 
 /// A board with two messages behind the `search` port, ready to lose one.
 /// Two rather than one so every negative below has a survivor to pair with.
-async fn a_board_of_two() -> (Arc<InMemoryMailboxes>, Arc<IndexedMailboxes>, Retrieval) {
+async fn a_board_of_two() -> (Arc<InMemoryMailboxes>, Arc<FoldedMailboxes>, Retrieval) {
     jojobot_domain::memory::kinds::load_shipped();
     let inner = Arc::new(InMemoryMailboxes::new());
     mail_contract::create(inner.as_ref(), "pm").await;
@@ -8696,10 +8644,11 @@ async fn a_board_of_two() -> (Arc<InMemoryMailboxes>, Arc<IndexedMailboxes>, Ret
     mail_contract::post(inner.as_ref(), "pm", "dev", "the damper is hand-cut", 1).await;
 
     let index = Arc::new(FullTextIndex::open().expect("index opens"));
-    let mail = Arc::new(IndexedMailboxes::new(inner.clone(), index.clone()));
+    let state = Arc::new(FoldedMailboxes::new(inner.clone()).with_writer(index.owner()));
+    let mail = subscribed(inner.clone(), index.clone());
     mail.rebuild().await.expect("rebuild");
     let port = Retrieval::new(index, vec![mail.clone()]);
-    (inner, mail, port)
+    (inner, state, port)
 }
 
 /// **Mail in a person's box never enters the index, by any route.** Search
@@ -8735,7 +8684,7 @@ async fn mail_in_a_persons_box_never_enters_the_index() {
     mail_contract::post(inner.as_ref(), "pm", "dev", "the kiln is relined", 1).await;
 
     let index = Arc::new(FullTextIndex::open().expect("index opens"));
-    let mail = Arc::new(IndexedMailboxes::new(inner.clone(), index.clone()));
+    let (fm, mail) = mail_over(inner.clone(), index.clone());
     mail.rebuild().await.expect("rebuild");
     let port = Retrieval::new(index.clone(), vec![mail.clone()]);
     // **Through the port, a search refreshes the whole board first**, which
@@ -8771,14 +8720,14 @@ async fn mail_in_a_persons_box_never_enters_the_index() {
 
     // A post through the verb.
     let posted = mail_contract::post(
-        mail.as_ref(),
+        &*fm,
         "person-milhouse",
         "dev",
         "the giraffe figure is hidden too",
         2,
     )
     .await;
-    mail_contract::post(mail.as_ref(), "pm", "dev", "the damper is hand-cut", 3).await;
+    mail_contract::post(&*fm, "pm", "dev", "the damper is hand-cut", 3).await;
     assert_eq!(hits("damper").await, 1, "the public post is served");
     assert_eq!(
         hits("giraffe").await,
@@ -8788,14 +8737,14 @@ async fn mail_in_a_persons_box_never_enters_the_index() {
 
     // The verbs that change a message afterwards re-index it, and this one
     // must stay out through each.
-    mail.read_message(
+    fm.read_message(
         &posted.id,
         jojobot_domain::mailbox::Acting::anyone_anytime(),
     )
     .await
     .expect("read ok");
     assert_eq!(hits("giraffe").await, 0, "a read does not index it");
-    mail.mark_processed(
+    fm.mark_processed(
         &posted.id,
         &posted.mailbox,
         Some("filed"),
@@ -8925,8 +8874,8 @@ async fn a_message_removed_from_the_store_stops_being_served() {
 #[tokio::test]
 async fn a_message_indexed_by_a_verb_stops_being_served_when_it_leaves_the_board() {
     let (inner, mail, port) = a_board_of_two().await;
-    let posted = mail_contract::post(mail.as_ref(), "pm", "dev", "the glaze is unmixed", 2).await;
-    mail_contract::post(mail.as_ref(), "pm", "dev", "the shelves are warped", 3).await;
+    let posted = mail_contract::post(&*mail, "pm", "dev", "the glaze is unmixed", 2).await;
+    mail_contract::post(&*mail, "pm", "dev", "the shelves are warped", 3).await;
 
     inner.lose(&posted.id);
 
@@ -9104,7 +9053,7 @@ async fn a_rebuild_loads_the_board_and_a_blocked_post_indexes_nothing() {
     .await;
 
     let index = Arc::new(FullTextIndex::open().expect("index opens"));
-    let store = IndexedMailboxes::new(inner, index.clone());
+    let (store, ix) = mail_over(inner, index.clone());
     assert!(
         index
             .search(&asking_for_mail("started"))
@@ -9112,7 +9061,7 @@ async fn a_rebuild_loads_the_board_and_a_blocked_post_indexes_nothing() {
             .is_empty(),
         "nothing is indexed until the board is read"
     );
-    assert_eq!(store.rebuild().await.expect("rebuild"), 1);
+    assert_eq!(ix.rebuild().await.expect("rebuild"), 1);
     assert_eq!(
         index
             .search(&asking_for_mail("started"))

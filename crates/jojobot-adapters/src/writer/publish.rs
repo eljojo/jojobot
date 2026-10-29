@@ -5,13 +5,19 @@
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use jojobot_domain::mailbox::MailboxName;
+use jojobot_domain::mailbox::{MailboxName, MessageId};
 
 /// One change the State applied.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Change {
     /// A message was written into this box.
     Posted(MailboxName),
+    /// These messages were written or changed. The position that follows in the
+    /// same publication closes the write that changed them.
+    Messages(Vec<MessageId>),
+    /// The mail State's count of writes after one write finished. A write that
+    /// changes no message publishes it alone.
+    MailPosition(u64),
 }
 
 /// A reader of the writer's publication. It runs in the writer task, after the

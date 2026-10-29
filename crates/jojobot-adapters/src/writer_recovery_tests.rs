@@ -177,12 +177,10 @@ async fn writer_recovery_a_known_mailbox_read_passes_a_pending_write() {
         .expect("seed box");
     let mail = crate::fold::mail::FoldedMailboxes::new(mail_store).with_writer(writer.clone());
     mail.rebuild().await.expect("load board");
-    let index = Arc::new(crate::search::FullTextIndex::with_owner(writer.clone()).unwrap());
-    let mentioned = jojobot_domain::mailbox::mention::Mentioning::new(
+    let mail = jojobot_domain::mailbox::mention::Mentioning::new(
         Arc::new(mail),
         Arc::new(jojobot_domain::memory::testing::InMemoryMemory::booted()),
     );
-    let mail = crate::search::IndexedMailboxes::new(Arc::new(mentioned), index);
     let reloads = writer.submitted_jobs();
     let store = Arc::new(AfterCommit::default());
     let teachings = FoldedTeachings::new(store.clone()).with_writer(writer.clone());
@@ -393,29 +391,6 @@ async fn writer_recovery_indexed_memory_uses_the_process_writer() {
             .unwrap()
             .written()
             .unwrap();
-    })
-    .await;
-}
-
-#[tokio::test]
-async fn writer_recovery_indexed_mail_uses_the_process_writer() {
-    use jojobot_domain::mailbox::testing::InMemoryMailboxes;
-    use jojobot_domain::mailbox::{MailboxName, Mailboxes};
-    behind_teaching(|writer| async move {
-        let index = Arc::new(crate::search::FullTextIndex::with_owner(writer).unwrap());
-        let mail = crate::search::IndexedMailboxes::new(
-            Arc::new(InMemoryMailboxes::knowing_any_owner()),
-            index,
-        );
-        mail.create_mailbox(
-            &MailboxName("alpha".into()),
-            &EntityId("bot:alpha".into()),
-            None,
-        )
-        .await
-        .unwrap()
-        .written()
-        .unwrap();
     })
     .await;
 }

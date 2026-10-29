@@ -42,7 +42,7 @@ impl NudgeOnPost {
 impl Subscriber for NudgeOnPost {
     async fn changed(&self, changes: &[Change]) {
         for change in changes {
-            let Change::Posted(to) = change;
+            let Change::Posted(to) = change else { continue };
             if self.is_a_persons(to).await {
                 self.push.nudge();
             }
