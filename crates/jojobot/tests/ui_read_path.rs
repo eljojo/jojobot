@@ -106,9 +106,9 @@ async fn node_read_path_keeps_unreadable_parts_in_the_shared_answer_and_each_ren
             let body = page.text().await.unwrap();
             assert_eq!(body.contains("<pre>alpha</pre>"), failed & 2 == 0);
         }
-        let recall = recall_body(addr).await;
+        let recall = recall_body(addr, failed & 2 != 0).await;
         if failed & 2 != 0 {
-            assert_eq!(recall["status"], "blocked", "{recall}");
+            assert_eq!(recall["code"], -32603, "{recall}");
         } else {
             assert_eq!(recall["objects"][0]["fields"]["pitch"], "14", "{recall}");
         }
@@ -116,7 +116,7 @@ async fn node_read_path_keeps_unreadable_parts_in_the_shared_answer_and_each_ren
     ct.cancel();
 }
 
-async fn recall_body(addr: std::net::SocketAddr) -> serde_json::Value {
+async fn recall_body(addr: std::net::SocketAddr, unreadable: bool) -> serde_json::Value {
     let http = reqwest::Client::new();
     let url = format!("http://{addr}/mcp");
     let (session, _) = support::open_with(&http, &url, "2025-06-18").await;
@@ -132,7 +132,11 @@ async fn recall_body(addr: std::net::SocketAddr) -> serde_json::Value {
         request = request.header("mcp-session-id", session);
     }
     let body = request.send().await.unwrap().text().await.unwrap();
-    support::tool_body(&support::event_stream_result(&body))
+    if unreadable {
+        support::event_stream_error(&body)
+    } else {
+        support::tool_body(&support::event_stream_result(&body))
+    }
 }
 
 #[tokio::test]
