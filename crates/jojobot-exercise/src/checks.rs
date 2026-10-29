@@ -194,6 +194,8 @@ use crate::run::{Checks, Observed, checked, checked_noting};
 mod inspection_lock;
 mod packing;
 #[cfg(test)]
+mod skate_tool_holder;
+#[cfg(test)]
 mod standing_edge;
 
 /// **Read a live reply as JSON, or say plainly that it could not be read —
@@ -1249,6 +1251,7 @@ async fn the_council_was_given_a_claim_in_march(seen: &Observed<'_>) -> Result<(
 /// it says so.
 const FEBRUARY: &str = "Phase 2";
 const HOLDS_IT: &str = "\"object\":\"person:ralph\"";
+const SKATE_TOOL: &str = "thing:skate-tool";
 
 /// 🚨 **Who had the skate tool was recorded by FEBRUARY, asked in February's own
 /// window.**
@@ -1272,8 +1275,14 @@ async fn the_skate_tool_reached_its_holder_in_february(seen: &Observed<'_>) -> R
              boundaries.",
         ));
     };
-    let had = before.world.matches(HOLDS_IT).count();
-    let has = after.world.matches(HOLDS_IT).count();
+    holder_recorded(&before.world, &after.world)
+}
+
+/// **The comparison itself, over the two worlds**, so a case can hand it any
+/// pair a sitting could leave behind.
+fn holder_recorded(before: &str, after: &str) -> Result<(), String> {
+    let had = links_to_the_holder(before);
+    let has = links_to_the_holder(after);
     match has > had {
         true => Ok(()),
         false => Err(format!(
@@ -1281,6 +1290,16 @@ async fn the_skate_tool_reached_its_holder_in_february(seen: &Observed<'_>) -> R
              had it is only in the prose of a sitting that is gone",
         )),
     }
+}
+
+/// **How many records ON THE SKATE TOOL point at the holder.** Scoped to the
+/// tool's own records for the reason [`hits_naming_subject`] gives: a sitting
+/// that points at the same person from anything else has not said who had it.
+fn links_to_the_holder(world: &str) -> usize {
+    hits_naming_subject(world, SKATE_TOOL)
+        .iter()
+        .filter(|hit| hit.contains(HOLDS_IT))
+        .count()
 }
 
 /// The two sittings that each write one account of the skate tool's return, named
