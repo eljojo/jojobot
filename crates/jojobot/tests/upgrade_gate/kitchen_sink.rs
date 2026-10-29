@@ -564,6 +564,16 @@ async fn old_merges(pool: &sqlx::MySqlPool) -> MergeRows {
         .execute(pool)
         .await
         .expect("the old merge is still owed its event");
+    sqlx::query(
+        "INSERT IGNORE INTO field_link (entity, `key`, ordinal, target)
+         SELECT w.entity, w.`key`, w.ordinal, COALESCE(e.badge, e.id)
+         FROM field_write w JOIN entity e ON e.id = w.value
+         WHERE w.`key` = 'merged_from'
+           AND w.entity IN ('ksmrb1', 'ksmrc1', 'ksctlb', 'ksctlc')",
+    )
+    .execute(pool)
+    .await
+    .expect("the historical engine links held before marking");
     merge_rows(pool).await
 }
 
