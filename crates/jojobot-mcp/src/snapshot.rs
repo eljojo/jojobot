@@ -155,6 +155,37 @@ fn pretty(value: &serde_json::Value) -> String {
     serde_json::to_string_pretty(value).expect("a value prints")
 }
 
+// Each line carries its JSON Pointer so a schema edit has its own diff line.
+fn compact_schema(value: &serde_json::Value) -> String {
+    fn walk(node: &serde_json::Value, path: &str, out: &mut Vec<String>) {
+        if let Some(map) = node.as_object().filter(|map| !map.is_empty()) {
+            for (key, value) in map {
+                let child = format!("{path}/{}", key.replace('~', "~0").replace('/', "~1"));
+                if matches!(
+                    child.as_str(),
+                    "/inputSchema" | "/inputSchema/properties" | "/inputSchema/$defs"
+                ) {
+                    walk(value, &child, out);
+                } else {
+                    out.push(
+                        serde_json::to_string(&std::collections::BTreeMap::from([(child, value)]))
+                            .expect("a schema entry prints"),
+                    );
+                }
+            }
+        } else {
+            // An empty properties or definitions map must survive reconstruction.
+            out.push(
+                serde_json::to_string(&std::collections::BTreeMap::from([(path, node)]))
+                    .expect("a schema entry prints"),
+            );
+        }
+    }
+    let mut lines = Vec::new();
+    walk(value, "", &mut lines);
+    lines.join("\n")
+}
+
 /// **Every string in an answer that is a sentence**, with the path it sits at:
 /// long enough, and with a space in it. Ids, counts and handles are not texts.
 fn sentences(node: &serde_json::Value, path: &str, out: &mut Vec<(String, String)>) {
@@ -203,7 +234,12 @@ fn tools(doc: &mut Doc) {
         }
         let mut lifted = Vec::new();
         lift_descriptions(&mut whole, "", &mut lifted);
-        doc.text(4, &format!("`{name}` — structure"), "json", &pretty(&whole));
+        doc.text(
+            4,
+            &format!("`{name}` — structure"),
+            "text",
+            &compact_schema(&whole),
+        );
         for (path, text) in lifted {
             let path = if path.is_empty() { "(tool)" } else { &path };
             doc.text(
@@ -720,6 +756,78 @@ async fn the_snapshot_renders_the_same_every_time() {
             "{name} is not the same on two renders: {}",
             first_difference(a, b)
         );
+    }
+}
+
+#[test]
+fn compact_schema_lines_preserve_the_router_structure() {
+    let mut doc = Doc::new();
+    tools(&mut doc);
+    for tool in Jojobot::tool_router().list_all() {
+        let heading = format!("#### `{}` — structure\n\n", tool.name);
+        let block = doc
+            .out
+            .split_once(&heading)
+            .expect("each tool has a structure")
+            .1;
+        let (language, body) = block.split_once('\n').unwrap();
+        assert_eq!(language, "```text", "{}", tool.name);
+        let body = body.split_once("\n```\n").unwrap().0;
+        let mut restored = serde_json::json!({});
+        for line in body.lines() {
+            let entry: serde_json::Value = serde_json::from_str(line).unwrap();
+            let entry = entry.as_object().unwrap();
+            assert_eq!(entry.len(), 1, "one schema path per line");
+            let (path, value) = entry.iter().next().unwrap();
+            let keys: Vec<_> = path
+                .strip_prefix('/')
+                .unwrap()
+                .split('/')
+                .map(|key| key.replace("~1", "/").replace("~0", "~"))
+                .collect();
+            let (last, parents) = keys.split_last().unwrap();
+            let mut node = &mut restored;
+            for key in parents {
+                node = node
+                    .as_object_mut()
+                    .unwrap()
+                    .entry(key.clone())
+                    .or_insert_with(|| serde_json::json!({}));
+            }
+            assert!(
+                node.as_object_mut()
+                    .unwrap()
+                    .insert(last.clone(), value.clone())
+                    .is_none()
+            );
+        }
+        let mut expected = serde_json::to_value(&tool).unwrap();
+        expected.as_object_mut().unwrap().remove("description");
+        lift_descriptions(&mut expected, "", &mut Vec::new());
+        assert_eq!(restored, expected, "{}", tool.name);
+        // A schema property is one reviewable line, including its type and default.
+        for name in expected["inputSchema"]["properties"]
+            .as_object()
+            .unwrap()
+            .keys()
+        {
+            let path = format!(
+                "/inputSchema/properties/{}",
+                name.replace('~', "~0").replace('/', "~1")
+            );
+            assert_eq!(
+                body.lines()
+                    .filter(|line| {
+                        serde_json::from_str::<serde_json::Value>(line)
+                            .unwrap()
+                            .get(&path)
+                            .is_some()
+                    })
+                    .count(),
+                1,
+                "{path}"
+            );
+        }
     }
 }
 

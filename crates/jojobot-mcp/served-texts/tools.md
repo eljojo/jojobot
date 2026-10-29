@@ -28,103 +28,24 @@ A `request_id` makes a resend safe: a repeat returns the first receipt and write
 
 #### `add_entity` — structure
 
-```json
-{
-  "inputSchema": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "properties": {
-      "aliases": {
-        "default": null,
-        "items": {
-          "type": "string"
-        },
-        "type": [
-          "array",
-          "null"
-        ]
-      },
-      "boot": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "crm": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "handle": {
-        "type": "string"
-      },
-      "kind": {
-        "type": "string"
-      },
-      "name": {
-        "type": "string"
-      },
-      "override_reason": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "override_token": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "parent": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "request_id": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "sets": {
-        "additionalProperties": {
-          "type": "string"
-        },
-        "default": null,
-        "type": [
-          "object",
-          "null"
-        ]
-      },
-      "sid": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "source": {
-        "type": "string"
-      }
-    },
-    "required": [
-      "kind",
-      "handle",
-      "name",
-      "source"
-    ],
-    "type": "object"
-  },
-  "name": "add_entity"
-}
+```text
+{"/inputSchema/$schema":"https://json-schema.org/draft/2020-12/schema"}
+{"/inputSchema/properties/aliases":{"default":null,"items":{"type":"string"},"type":["array","null"]}}
+{"/inputSchema/properties/boot":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/crm":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/handle":{"type":"string"}}
+{"/inputSchema/properties/kind":{"type":"string"}}
+{"/inputSchema/properties/name":{"type":"string"}}
+{"/inputSchema/properties/override_reason":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/override_token":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/parent":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/request_id":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/sets":{"additionalProperties":{"type":"string"},"default":null,"type":["object","null"]}}
+{"/inputSchema/properties/sid":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/source":{"type":"string"}}
+{"/inputSchema/required":["kind","handle","name","source"]}
+{"/inputSchema/type":"object"}
+{"/name":"add_entity"}
 ```
 
 #### `add_entity` — argument `/inputSchema.aliases`
@@ -365,26 +286,13 @@ The receipt's `changed` lists changes, or is `nothing` or `not_read`.
 
 #### `amend_journal` — structure
 
-```json
-{
-  "inputSchema": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "properties": {
-      "entry": {
-        "type": "string"
-      },
-      "sid": {
-        "type": "string"
-      }
-    },
-    "required": [
-      "entry",
-      "sid"
-    ],
-    "type": "object"
-  },
-  "name": "amend_journal"
-}
+```text
+{"/inputSchema/$schema":"https://json-schema.org/draft/2020-12/schema"}
+{"/inputSchema/properties/entry":{"type":"string"}}
+{"/inputSchema/properties/sid":{"type":"string"}}
+{"/inputSchema/required":["entry","sid"]}
+{"/inputSchema/type":"object"}
+{"/name":"amend_journal"}
 ```
 
 #### `amend_journal` — argument `/inputSchema.entry`
@@ -430,47 +338,16 @@ The receipt's `changed` lists changes, or is `nothing` or `not_read`.
 
 #### `archive_entity` — structure
 
-```json
-{
-  "inputSchema": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "properties": {
-      "handle": {
-        "type": "string"
-      },
-      "reason": {
-        "type": "string"
-      },
-      "request_id": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "restore": {
-        "default": null,
-        "type": [
-          "boolean",
-          "null"
-        ]
-      },
-      "sid": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      }
-    },
-    "required": [
-      "handle",
-      "reason"
-    ],
-    "type": "object"
-  },
-  "name": "archive_entity"
-}
+```text
+{"/inputSchema/$schema":"https://json-schema.org/draft/2020-12/schema"}
+{"/inputSchema/properties/handle":{"type":"string"}}
+{"/inputSchema/properties/reason":{"type":"string"}}
+{"/inputSchema/properties/request_id":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/restore":{"default":null,"type":["boolean","null"]}}
+{"/inputSchema/properties/sid":{"default":null,"type":["string","null"]}}
+{"/inputSchema/required":["handle","reason"]}
+{"/inputSchema/type":"object"}
+{"/name":"archive_entity"}
 ```
 
 #### `archive_entity` — argument `/inputSchema.handle`
@@ -542,326 +419,43 @@ The receipt's `changed` lists changes, or is `nothing` or `not_read`.
 
 #### `capture` — structure
 
-```json
-{
-  "inputSchema": {
-    "$defs": {
-      "ConfirmedArg": {
-        "properties": {
-          "at": {
-            "type": "string"
-          },
-          "on": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "on",
-          "at"
-        ],
-        "type": "object"
-      },
-      "EntryItem": {
-        "anyOf": [
-          {
-            "type": "string"
-          },
-          {
-            "properties": {
-              "content": {
-                "type": "string"
-              },
-              "details": {
-                "default": null,
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "object": {
-                "default": null,
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "shape": {
-                "default": null,
-                "type": [
-                  "string",
-                  "null"
-                ]
-              }
-            },
-            "required": [
-              "content"
-            ],
-            "type": "object"
-          }
-        ]
-      },
-      "ReceiptArg": {
-        "properties": {
-          "check": {
-            "default": null,
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "confirmed": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/ConfirmedArg"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "type": "object"
-      },
-      "TickArg": {
-        "properties": {
-          "act": {
-            "type": "string"
-          },
-          "entry": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "entry",
-          "act"
-        ],
-        "type": "object"
-      }
-    },
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "properties": {
-      "after": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "borrow": {
-        "default": null,
-        "type": [
-          "boolean",
-          "null"
-        ]
-      },
-      "check_in": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "content": {
-        "default": "",
-        "type": "string"
-      },
-      "derived_from": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "details": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "drop": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "drop_because": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "entries": {
-        "items": {
-          "$ref": "#/$defs/EntryItem"
-        },
-        "type": [
-          "array",
-          "null"
-        ]
-      },
-      "fields": {
-        "additionalProperties": {
-          "type": "string"
-        },
-        "default": null,
-        "type": [
-          "object",
-          "null"
-        ]
-      },
-      "happened_at": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "happened_through": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "object": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "provenance": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "receipt": {
-        "anyOf": [
-          {
-            "$ref": "#/$defs/ReceiptArg"
-          },
-          {
-            "type": "null"
-          }
-        ]
-      },
-      "recorded_at": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "refs": {
-        "default": null,
-        "items": {
-          "type": "string"
-        },
-        "type": [
-          "array",
-          "null"
-        ]
-      },
-      "request_id": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "sets": {
-        "additionalProperties": {
-          "type": "string"
-        },
-        "default": null,
-        "type": [
-          "object",
-          "null"
-        ]
-      },
-      "sets_add": {
-        "additionalProperties": {
-          "type": "string"
-        },
-        "default": null,
-        "type": [
-          "object",
-          "null"
-        ]
-      },
-      "sets_remove": {
-        "additionalProperties": {
-          "type": "string"
-        },
-        "default": null,
-        "type": [
-          "object",
-          "null"
-        ]
-      },
-      "shape": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "sid": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "stale_after": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "standing": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "subject": {
-        "type": "string"
-      },
-      "tick": {
-        "anyOf": [
-          {
-            "$ref": "#/$defs/TickArg"
-          },
-          {
-            "type": "null"
-          }
-        ]
-      },
-      "ticks": {
-        "items": {
-          "$ref": "#/$defs/TickArg"
-        },
-        "type": [
-          "array",
-          "null"
-        ]
-      }
-    },
-    "required": [
-      "subject"
-    ],
-    "type": "object"
-  },
-  "name": "capture"
-}
+```text
+{"/inputSchema/$defs/ConfirmedArg":{"properties":{"at":{"type":"string"},"on":{"type":"string"}},"required":["on","at"],"type":"object"}}
+{"/inputSchema/$defs/EntryItem":{"anyOf":[{"type":"string"},{"properties":{"content":{"type":"string"},"details":{"default":null,"type":["string","null"]},"object":{"default":null,"type":["string","null"]},"shape":{"default":null,"type":["string","null"]}},"required":["content"],"type":"object"}]}}
+{"/inputSchema/$defs/ReceiptArg":{"properties":{"check":{"default":null,"type":["string","null"]},"confirmed":{"anyOf":[{"$ref":"#/$defs/ConfirmedArg"},{"type":"null"}]}},"type":"object"}}
+{"/inputSchema/$defs/TickArg":{"properties":{"act":{"type":"string"},"entry":{"type":"string"}},"required":["entry","act"],"type":"object"}}
+{"/inputSchema/$schema":"https://json-schema.org/draft/2020-12/schema"}
+{"/inputSchema/properties/after":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/borrow":{"default":null,"type":["boolean","null"]}}
+{"/inputSchema/properties/check_in":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/content":{"default":"","type":"string"}}
+{"/inputSchema/properties/derived_from":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/details":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/drop":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/drop_because":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/entries":{"items":{"$ref":"#/$defs/EntryItem"},"type":["array","null"]}}
+{"/inputSchema/properties/fields":{"additionalProperties":{"type":"string"},"default":null,"type":["object","null"]}}
+{"/inputSchema/properties/happened_at":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/happened_through":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/object":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/provenance":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/receipt":{"anyOf":[{"$ref":"#/$defs/ReceiptArg"},{"type":"null"}]}}
+{"/inputSchema/properties/recorded_at":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/refs":{"default":null,"items":{"type":"string"},"type":["array","null"]}}
+{"/inputSchema/properties/request_id":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/sets":{"additionalProperties":{"type":"string"},"default":null,"type":["object","null"]}}
+{"/inputSchema/properties/sets_add":{"additionalProperties":{"type":"string"},"default":null,"type":["object","null"]}}
+{"/inputSchema/properties/sets_remove":{"additionalProperties":{"type":"string"},"default":null,"type":["object","null"]}}
+{"/inputSchema/properties/shape":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/sid":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/stale_after":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/standing":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/subject":{"type":"string"}}
+{"/inputSchema/properties/tick":{"anyOf":[{"$ref":"#/$defs/TickArg"},{"type":"null"}]}}
+{"/inputSchema/properties/ticks":{"items":{"$ref":"#/$defs/TickArg"},"type":["array","null"]}}
+{"/inputSchema/required":["subject"]}
+{"/inputSchema/type":"object"}
+{"/name":"capture"}
 ```
 
 #### `capture` — argument `/inputSchema/$defs/ConfirmedArg`
@@ -1476,98 +1070,18 @@ The receipt's `changed` lists changes in the type, or is `nothing` or `not_read`
 
 #### `declare_type` — structure
 
-```json
-{
-  "inputSchema": {
-    "$defs": {
-      "FieldArgs": {
-        "properties": {
-          "folds": {
-            "default": null,
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "holds": {
-            "default": null,
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "key": {
-            "type": "string"
-          },
-          "one_of": {
-            "default": null,
-            "items": {
-              "type": "string"
-            },
-            "type": [
-              "array",
-              "null"
-            ]
-          },
-          "required": {
-            "default": false,
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "key"
-        ],
-        "type": "object"
-      }
-    },
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "properties": {
-      "fields": {
-        "items": {
-          "$ref": "#/$defs/FieldArgs"
-        },
-        "type": "array"
-      },
-      "name": {
-        "type": "string"
-      },
-      "override_reason": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "override_token": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "request_id": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "sid": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      }
-    },
-    "required": [
-      "name",
-      "fields"
-    ],
-    "type": "object"
-  },
-  "name": "declare_type"
-}
+```text
+{"/inputSchema/$defs/FieldArgs":{"properties":{"folds":{"default":null,"type":["string","null"]},"holds":{"default":null,"type":["string","null"]},"key":{"type":"string"},"one_of":{"default":null,"items":{"type":"string"},"type":["array","null"]},"required":{"default":false,"type":"boolean"}},"required":["key"],"type":"object"}}
+{"/inputSchema/$schema":"https://json-schema.org/draft/2020-12/schema"}
+{"/inputSchema/properties/fields":{"items":{"$ref":"#/$defs/FieldArgs"},"type":"array"}}
+{"/inputSchema/properties/name":{"type":"string"}}
+{"/inputSchema/properties/override_reason":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/override_token":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/request_id":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/sid":{"default":null,"type":["string","null"]}}
+{"/inputSchema/required":["name","fields"]}
+{"/inputSchema/type":"object"}
+{"/name":"declare_type"}
 ```
 
 #### `declare_type` — argument `/inputSchema/$defs/FieldArgs`
@@ -1787,47 +1301,16 @@ The receipt's `changed` lists changes, or is `nothing` or `not_read`.
 
 #### `journal` — structure
 
-```json
-{
-  "inputSchema": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "properties": {
-      "entry": {
-        "type": "string"
-      },
-      "focus": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "request_id": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "sid": {
-        "type": "string"
-      },
-      "working_on": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      }
-    },
-    "required": [
-      "entry",
-      "sid"
-    ],
-    "type": "object"
-  },
-  "name": "journal"
-}
+```text
+{"/inputSchema/$schema":"https://json-schema.org/draft/2020-12/schema"}
+{"/inputSchema/properties/entry":{"type":"string"}}
+{"/inputSchema/properties/focus":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/request_id":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/sid":{"type":"string"}}
+{"/inputSchema/properties/working_on":{"default":null,"type":["string","null"]}}
+{"/inputSchema/required":["entry","sid"]}
+{"/inputSchema/type":"object"}
+{"/name":"journal"}
 ```
 
 #### `journal` — argument `/inputSchema.entry`
@@ -1901,46 +1384,14 @@ An empty answer carries `searched`: one line naming what it looked through and w
 
 #### `list_entities` — structure
 
-```json
-{
-  "inputSchema": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "properties": {
-      "kind": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "offset": {
-        "default": null,
-        "format": "uint32",
-        "minimum": 0,
-        "type": [
-          "integer",
-          "null"
-        ]
-      },
-      "parent": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "sid": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      }
-    },
-    "type": "object"
-  },
-  "name": "list_entities"
-}
+```text
+{"/inputSchema/$schema":"https://json-schema.org/draft/2020-12/schema"}
+{"/inputSchema/properties/kind":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/offset":{"default":null,"format":"uint32","minimum":0,"type":["integer","null"]}}
+{"/inputSchema/properties/parent":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/sid":{"default":null,"type":["string","null"]}}
+{"/inputSchema/type":"object"}
+{"/name":"list_entities"}
 ```
 
 #### `list_entities` — argument `/inputSchema.kind`
@@ -2000,41 +1451,13 @@ A call with no `sid` at all comes back status: blocked — jojobot will not gues
 
 #### `list_runs` — structure
 
-```json
-{
-  "inputSchema": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "properties": {
-      "limit": {
-        "default": null,
-        "format": "uint32",
-        "minimum": 1,
-        "type": [
-          "integer",
-          "null"
-        ]
-      },
-      "offset": {
-        "default": null,
-        "format": "uint32",
-        "minimum": 0,
-        "type": [
-          "integer",
-          "null"
-        ]
-      },
-      "sid": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      }
-    },
-    "type": "object"
-  },
-  "name": "list_runs"
-}
+```text
+{"/inputSchema/$schema":"https://json-schema.org/draft/2020-12/schema"}
+{"/inputSchema/properties/limit":{"default":null,"format":"uint32","minimum":1,"type":["integer","null"]}}
+{"/inputSchema/properties/offset":{"default":null,"format":"uint32","minimum":0,"type":["integer","null"]}}
+{"/inputSchema/properties/sid":{"default":null,"type":["string","null"]}}
+{"/inputSchema/type":"object"}
+{"/name":"list_runs"}
 ```
 
 #### `list_runs` — argument `/inputSchema.limit`
@@ -2080,62 +1503,16 @@ Twenty newest by default; an answer stops at the ceiling, never mid-message, and
 
 #### `list_sent` — structure
 
-```json
-{
-  "inputSchema": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "properties": {
-      "include_bodies": {
-        "default": null,
-        "type": [
-          "boolean",
-          "null"
-        ]
-      },
-      "limit": {
-        "default": null,
-        "format": "uint32",
-        "minimum": 0,
-        "type": [
-          "integer",
-          "null"
-        ]
-      },
-      "offset": {
-        "default": null,
-        "format": "uint32",
-        "minimum": 0,
-        "type": [
-          "integer",
-          "null"
-        ]
-      },
-      "sender": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "sid": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "to": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      }
-    },
-    "type": "object"
-  },
-  "name": "list_sent"
-}
+```text
+{"/inputSchema/$schema":"https://json-schema.org/draft/2020-12/schema"}
+{"/inputSchema/properties/include_bodies":{"default":null,"type":["boolean","null"]}}
+{"/inputSchema/properties/limit":{"default":null,"format":"uint32","minimum":0,"type":["integer","null"]}}
+{"/inputSchema/properties/offset":{"default":null,"format":"uint32","minimum":0,"type":["integer","null"]}}
+{"/inputSchema/properties/sender":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/sid":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/to":{"default":null,"type":["string","null"]}}
+{"/inputSchema/type":"object"}
+{"/name":"list_sent"}
 ```
 
 #### `list_sent` — argument `/inputSchema.include_bodies`
@@ -2217,58 +1594,16 @@ The receipt's `changed` lists changes, or is `nothing` or `not_read`.
 
 #### `mark_processed` — structure
 
-```json
-{
-  "inputSchema": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "properties": {
-      "message_id": {
-        "default": "",
-        "type": "string"
-      },
-      "message_ids": {
-        "default": null,
-        "items": {
-          "type": "string"
-        },
-        "type": [
-          "array",
-          "null"
-        ]
-      },
-      "notes": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "quarantine": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "request_id": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "sid": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      }
-    },
-    "type": "object"
-  },
-  "name": "mark_processed"
-}
+```text
+{"/inputSchema/$schema":"https://json-schema.org/draft/2020-12/schema"}
+{"/inputSchema/properties/message_id":{"default":"","type":"string"}}
+{"/inputSchema/properties/message_ids":{"default":null,"items":{"type":"string"},"type":["array","null"]}}
+{"/inputSchema/properties/notes":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/quarantine":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/request_id":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/sid":{"default":null,"type":["string","null"]}}
+{"/inputSchema/type":"object"}
+{"/name":"mark_processed"}
 ```
 
 #### `mark_processed` — argument `/inputSchema.message_id`
@@ -2370,54 +1705,17 @@ The receipt's `changed` lists changes, or is `nothing` or `not_read`.
 
 #### `merge_entities` — structure
 
-```json
-{
-  "inputSchema": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "properties": {
-      "duplicate": {
-        "type": "string"
-      },
-      "reason": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "recorded_at": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "request_id": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "sid": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "survivor": {
-        "type": "string"
-      }
-    },
-    "required": [
-      "duplicate",
-      "survivor"
-    ],
-    "type": "object"
-  },
-  "name": "merge_entities"
-}
+```text
+{"/inputSchema/$schema":"https://json-schema.org/draft/2020-12/schema"}
+{"/inputSchema/properties/duplicate":{"type":"string"}}
+{"/inputSchema/properties/reason":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/recorded_at":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/request_id":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/sid":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/survivor":{"type":"string"}}
+{"/inputSchema/required":["duplicate","survivor"]}
+{"/inputSchema/type":"object"}
+{"/name":"merge_entities"}
 ```
 
 #### `merge_entities` — argument `/inputSchema.duplicate`
@@ -2506,23 +1804,11 @@ No side effects.
 
 #### `ping` — structure
 
-```json
-{
-  "inputSchema": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "properties": {
-      "sid": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      }
-    },
-    "type": "object"
-  },
-  "name": "ping"
-}
+```text
+{"/inputSchema/$schema":"https://json-schema.org/draft/2020-12/schema"}
+{"/inputSchema/properties/sid":{"default":null,"type":["string","null"]}}
+{"/inputSchema/type":"object"}
+{"/name":"ping"}
 ```
 
 #### `ping` — argument `/inputSchema.sid`
@@ -2558,58 +1844,18 @@ The receipt's `changed` lists what moved.
 
 #### `post_message` — structure
 
-```json
-{
-  "inputSchema": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "properties": {
-      "body": {
-        "type": "string"
-      },
-      "in_reply_to": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "request_id": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "sid": {
-        "type": "string"
-      },
-      "subject": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "supersedes": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "to": {
-        "type": "string"
-      }
-    },
-    "required": [
-      "to",
-      "body",
-      "sid"
-    ],
-    "type": "object"
-  },
-  "name": "post_message"
-}
+```text
+{"/inputSchema/$schema":"https://json-schema.org/draft/2020-12/schema"}
+{"/inputSchema/properties/body":{"type":"string"}}
+{"/inputSchema/properties/in_reply_to":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/request_id":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/sid":{"type":"string"}}
+{"/inputSchema/properties/subject":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/supersedes":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/to":{"type":"string"}}
+{"/inputSchema/required":["to","body","sid"]}
+{"/inputSchema/type":"object"}
+{"/name":"post_message"}
 ```
 
 #### `post_message` — argument `/inputSchema.body`
@@ -2748,92 +1994,22 @@ A `request_id` makes a resend of a put finish the sections that did not land.
 
 #### `put_document` — structure
 
-```json
-{
-  "inputSchema": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "properties": {
-      "after": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "confirmed_by_user": {
-        "default": null,
-        "type": [
-          "boolean",
-          "null"
-        ]
-      },
-      "document": {
-        "type": "string"
-      },
-      "markdown": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "provenance": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "recorded_at": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "request_id": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "restore_to": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "sid": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "source": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "source_ref": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      }
-    },
-    "required": [
-      "document"
-    ],
-    "type": "object"
-  },
-  "name": "put_document"
-}
+```text
+{"/inputSchema/$schema":"https://json-schema.org/draft/2020-12/schema"}
+{"/inputSchema/properties/after":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/confirmed_by_user":{"default":null,"type":["boolean","null"]}}
+{"/inputSchema/properties/document":{"type":"string"}}
+{"/inputSchema/properties/markdown":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/provenance":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/recorded_at":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/request_id":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/restore_to":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/sid":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/source":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/source_ref":{"default":null,"type":["string","null"]}}
+{"/inputSchema/required":["document"]}
+{"/inputSchema/type":"object"}
+{"/name":"put_document"}
 ```
 
 #### `put_document` — argument `/inputSchema.after`
@@ -2959,45 +2135,15 @@ A document that does not exist is a blocked result with candidates.
 
 #### `read_document` — structure
 
-```json
-{
-  "inputSchema": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "properties": {
-      "as_of": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "document": {
-        "type": "string"
-      },
-      "offset": {
-        "default": null,
-        "format": "uint",
-        "minimum": 0,
-        "type": [
-          "integer",
-          "null"
-        ]
-      },
-      "sid": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      }
-    },
-    "required": [
-      "document"
-    ],
-    "type": "object"
-  },
-  "name": "read_document"
-}
+```text
+{"/inputSchema/$schema":"https://json-schema.org/draft/2020-12/schema"}
+{"/inputSchema/properties/as_of":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/document":{"type":"string"}}
+{"/inputSchema/properties/offset":{"default":null,"format":"uint","minimum":0,"type":["integer","null"]}}
+{"/inputSchema/properties/sid":{"default":null,"type":["string","null"]}}
+{"/inputSchema/required":["document"]}
+{"/inputSchema/type":"object"}
+{"/name":"read_document"}
 ```
 
 #### `read_document` — argument `/inputSchema.as_of`
@@ -3057,37 +2203,13 @@ An empty delivery names what it looked through, as searched.
 
 #### `read_mailbox` — structure
 
-```json
-{
-  "inputSchema": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "properties": {
-      "counts_only": {
-        "default": null,
-        "type": [
-          "boolean",
-          "null"
-        ]
-      },
-      "new_only": {
-        "default": null,
-        "type": [
-          "boolean",
-          "null"
-        ]
-      },
-      "sid": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      }
-    },
-    "type": "object"
-  },
-  "name": "read_mailbox"
-}
+```text
+{"/inputSchema/$schema":"https://json-schema.org/draft/2020-12/schema"}
+{"/inputSchema/properties/counts_only":{"default":null,"type":["boolean","null"]}}
+{"/inputSchema/properties/new_only":{"default":null,"type":["boolean","null"]}}
+{"/inputSchema/properties/sid":{"default":null,"type":["string","null"]}}
+{"/inputSchema/type":"object"}
+{"/name":"read_mailbox"}
 ```
 
 #### `read_mailbox` — argument `/inputSchema.counts_only`
@@ -3160,36 +2282,14 @@ A message a DIFFERENT run posted than the one reading it carries `written_by_oth
 
 #### `read_message` — structure
 
-```json
-{
-  "inputSchema": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "properties": {
-      "history": {
-        "default": null,
-        "type": [
-          "boolean",
-          "null"
-        ]
-      },
-      "message_id": {
-        "type": "string"
-      },
-      "sid": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      }
-    },
-    "required": [
-      "message_id"
-    ],
-    "type": "object"
-  },
-  "name": "read_message"
-}
+```text
+{"/inputSchema/$schema":"https://json-schema.org/draft/2020-12/schema"}
+{"/inputSchema/properties/history":{"default":null,"type":["boolean","null"]}}
+{"/inputSchema/properties/message_id":{"type":"string"}}
+{"/inputSchema/properties/sid":{"default":null,"type":["string","null"]}}
+{"/inputSchema/required":["message_id"]}
+{"/inputSchema/type":"object"}
+{"/name":"read_message"}
 ```
 
 #### `read_message` — argument `/inputSchema.history`
@@ -3243,467 +2343,53 @@ Empty answers name what they searched.
 
 #### `recall` — structure
 
-```json
-{
-  "inputSchema": {
-    "$defs": {
-      "FollowArgs": {
-        "properties": {
-          "depth": {
-            "default": null,
-            "format": "uint32",
-            "minimum": 0,
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "direction": {
-            "default": null,
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "fits_type": {
-            "default": null,
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "keeping": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/Keeping"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "relation": {
-            "default": null,
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "shape": {
-            "default": null,
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        },
-        "type": "object"
-      },
-      "Keeping": {
-        "anyOf": [
-          {
-            "type": "string"
-          },
-          {
-            "items": {
-              "$ref": "#/$defs/KeyFilterArgs"
-            },
-            "type": "array"
-          }
-        ]
-      },
-      "KeyFilterArgs": {
-        "properties": {
-          "compare": {
-            "default": null,
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "key": {
-            "default": null,
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "scope": {
-            "default": null,
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "value": {
-            "default": null,
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        },
-        "type": "object"
-      },
-      "NearArgs": {
-        "properties": {
-          "clock": {
-            "default": null,
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "day": {
-            "default": null,
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "within_days": {
-            "default": null,
-            "format": "uint32",
-            "minimum": 0,
-            "type": [
-              "integer",
-              "null"
-            ]
-          }
-        },
-        "type": "object"
-      },
-      "OrderArgs": {
-        "properties": {
-          "direction": {
-            "default": null,
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "key": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "key"
-        ],
-        "type": "object"
-      },
-      "OverdueArgs": {
-        "properties": {
-          "as_of": {
-            "default": null,
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        },
-        "type": "object"
-      }
-    },
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "properties": {
-      "answers_type": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "backing": {
-        "default": null,
-        "type": [
-          "boolean",
-          "null"
-        ]
-      },
-      "built_on": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "charter": {
-        "default": null,
-        "type": [
-          "boolean",
-          "null"
-        ]
-      },
-      "details": {
-        "default": null,
-        "type": [
-          "boolean",
-          "null"
-        ]
-      },
-      "facts": {
-        "default": null,
-        "type": [
-          "boolean",
-          "null"
-        ]
-      },
-      "fields": {
-        "items": {
-          "$ref": "#/$defs/KeyFilterArgs"
-        },
-        "type": [
-          "array",
-          "null"
-        ]
-      },
-      "follow": {
-        "anyOf": [
-          {
-            "$ref": "#/$defs/FollowArgs"
-          },
-          {
-            "type": "null"
-          }
-        ]
-      },
-      "held": {
-        "default": null,
-        "type": [
-          "boolean",
-          "null"
-        ]
-      },
-      "history": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "history_most": {
-        "default": null,
-        "format": "uint32",
-        "minimum": 0,
-        "type": [
-          "integer",
-          "null"
-        ]
-      },
-      "history_record": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "inputs": {
-        "additionalProperties": true,
-        "default": null,
-        "type": [
-          "object",
-          "null"
-        ]
-      },
-      "keys": {
-        "default": null,
-        "items": {
-          "type": "string"
-        },
-        "type": [
-          "array",
-          "null"
-        ]
-      },
-      "kind": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "limit": {
-        "default": null,
-        "format": "uint32",
-        "minimum": 1,
-        "type": [
-          "integer",
-          "null"
-        ]
-      },
-      "near": {
-        "anyOf": [
-          {
-            "$ref": "#/$defs/NearArgs"
-          },
-          {
-            "type": "null"
-          }
-        ]
-      },
-      "offset": {
-        "default": null,
-        "format": "uint32",
-        "minimum": 0,
-        "type": [
-          "integer",
-          "null"
-        ]
-      },
-      "order": {
-        "anyOf": [
-          {
-            "$ref": "#/$defs/OrderArgs"
-          },
-          {
-            "type": "null"
-          }
-        ]
-      },
-      "overdue": {
-        "anyOf": [
-          {
-            "$ref": "#/$defs/OverdueArgs"
-          },
-          {
-            "type": "null"
-          }
-        ]
-      },
-      "parent": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "prose": {
-        "default": null,
-        "type": [
-          "boolean",
-          "null"
-        ]
-      },
-      "record_keys": {
-        "default": null,
-        "items": {
-          "type": "string"
-        },
-        "type": [
-          "array",
-          "null"
-        ]
-      },
-      "records": {
-        "default": null,
-        "items": {
-          "type": "string"
-        },
-        "type": [
-          "array",
-          "null"
-        ]
-      },
-      "review_marks": {
-        "default": null,
-        "type": [
-          "boolean",
-          "null"
-        ]
-      },
-      "scope": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "sid": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "status": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "stood_for": {
-        "default": null,
-        "type": [
-          "boolean",
-          "null"
-        ]
-      },
-      "subject": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "ticks": {
-        "default": null,
-        "type": [
-          "boolean",
-          "null"
-        ]
-      },
-      "ticks_offset": {
-        "default": null,
-        "format": "uint32",
-        "minimum": 0,
-        "type": [
-          "integer",
-          "null"
-        ]
-      },
-      "unreviewed": {
-        "default": null,
-        "type": [
-          "boolean",
-          "null"
-        ]
-      },
-      "values": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "values_most": {
-        "default": null,
-        "format": "uint32",
-        "minimum": 0,
-        "type": [
-          "integer",
-          "null"
-        ]
-      },
-      "view": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "where": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      }
-    },
-    "type": "object"
-  },
-  "name": "recall"
-}
+```text
+{"/inputSchema/$defs/FollowArgs":{"properties":{"depth":{"default":null,"format":"uint32","minimum":0,"type":["integer","null"]},"direction":{"default":null,"type":["string","null"]},"fits_type":{"default":null,"type":["string","null"]},"keeping":{"anyOf":[{"$ref":"#/$defs/Keeping"},{"type":"null"}]},"relation":{"default":null,"type":["string","null"]},"shape":{"default":null,"type":["string","null"]}},"type":"object"}}
+{"/inputSchema/$defs/Keeping":{"anyOf":[{"type":"string"},{"items":{"$ref":"#/$defs/KeyFilterArgs"},"type":"array"}]}}
+{"/inputSchema/$defs/KeyFilterArgs":{"properties":{"compare":{"default":null,"type":["string","null"]},"key":{"default":null,"type":["string","null"]},"scope":{"default":null,"type":["string","null"]},"value":{"default":null,"type":["string","null"]}},"type":"object"}}
+{"/inputSchema/$defs/NearArgs":{"properties":{"clock":{"default":null,"type":["string","null"]},"day":{"default":null,"type":["string","null"]},"within_days":{"default":null,"format":"uint32","minimum":0,"type":["integer","null"]}},"type":"object"}}
+{"/inputSchema/$defs/OrderArgs":{"properties":{"direction":{"default":null,"type":["string","null"]},"key":{"type":"string"}},"required":["key"],"type":"object"}}
+{"/inputSchema/$defs/OverdueArgs":{"properties":{"as_of":{"default":null,"type":["string","null"]}},"type":"object"}}
+{"/inputSchema/$schema":"https://json-schema.org/draft/2020-12/schema"}
+{"/inputSchema/properties/answers_type":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/backing":{"default":null,"type":["boolean","null"]}}
+{"/inputSchema/properties/built_on":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/charter":{"default":null,"type":["boolean","null"]}}
+{"/inputSchema/properties/details":{"default":null,"type":["boolean","null"]}}
+{"/inputSchema/properties/facts":{"default":null,"type":["boolean","null"]}}
+{"/inputSchema/properties/fields":{"items":{"$ref":"#/$defs/KeyFilterArgs"},"type":["array","null"]}}
+{"/inputSchema/properties/follow":{"anyOf":[{"$ref":"#/$defs/FollowArgs"},{"type":"null"}]}}
+{"/inputSchema/properties/held":{"default":null,"type":["boolean","null"]}}
+{"/inputSchema/properties/history":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/history_most":{"default":null,"format":"uint32","minimum":0,"type":["integer","null"]}}
+{"/inputSchema/properties/history_record":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/inputs":{"additionalProperties":true,"default":null,"type":["object","null"]}}
+{"/inputSchema/properties/keys":{"default":null,"items":{"type":"string"},"type":["array","null"]}}
+{"/inputSchema/properties/kind":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/limit":{"default":null,"format":"uint32","minimum":1,"type":["integer","null"]}}
+{"/inputSchema/properties/near":{"anyOf":[{"$ref":"#/$defs/NearArgs"},{"type":"null"}]}}
+{"/inputSchema/properties/offset":{"default":null,"format":"uint32","minimum":0,"type":["integer","null"]}}
+{"/inputSchema/properties/order":{"anyOf":[{"$ref":"#/$defs/OrderArgs"},{"type":"null"}]}}
+{"/inputSchema/properties/overdue":{"anyOf":[{"$ref":"#/$defs/OverdueArgs"},{"type":"null"}]}}
+{"/inputSchema/properties/parent":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/prose":{"default":null,"type":["boolean","null"]}}
+{"/inputSchema/properties/record_keys":{"default":null,"items":{"type":"string"},"type":["array","null"]}}
+{"/inputSchema/properties/records":{"default":null,"items":{"type":"string"},"type":["array","null"]}}
+{"/inputSchema/properties/review_marks":{"default":null,"type":["boolean","null"]}}
+{"/inputSchema/properties/scope":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/sid":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/status":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/stood_for":{"default":null,"type":["boolean","null"]}}
+{"/inputSchema/properties/subject":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/ticks":{"default":null,"type":["boolean","null"]}}
+{"/inputSchema/properties/ticks_offset":{"default":null,"format":"uint32","minimum":0,"type":["integer","null"]}}
+{"/inputSchema/properties/unreviewed":{"default":null,"type":["boolean","null"]}}
+{"/inputSchema/properties/values":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/values_most":{"default":null,"format":"uint32","minimum":0,"type":["integer","null"]}}
+{"/inputSchema/properties/view":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/where":{"default":null,"type":["string","null"]}}
+{"/inputSchema/type":"object"}
+{"/name":"recall"}
 ```
 
 #### `recall` — argument `/inputSchema/$defs/FollowArgs`
@@ -4812,68 +3498,19 @@ The receipt's `changed` lists changes, or is `nothing` or `not_read`.
 
 #### `rename_entity` — structure
 
-```json
-{
-  "inputSchema": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "properties": {
-      "handle": {
-        "type": "string"
-      },
-      "override_reason": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "override_token": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "parent": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "recorded_at": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "request_id": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "sid": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "to": {
-        "type": "string"
-      }
-    },
-    "required": [
-      "handle",
-      "to"
-    ],
-    "type": "object"
-  },
-  "name": "rename_entity"
-}
+```text
+{"/inputSchema/$schema":"https://json-schema.org/draft/2020-12/schema"}
+{"/inputSchema/properties/handle":{"type":"string"}}
+{"/inputSchema/properties/override_reason":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/override_token":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/parent":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/recorded_at":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/request_id":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/sid":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/to":{"type":"string"}}
+{"/inputSchema/required":["handle","to"]}
+{"/inputSchema/type":"object"}
+{"/name":"rename_entity"}
 ```
 
 #### `rename_entity` — argument `/inputSchema.handle`
@@ -4988,50 +3625,16 @@ The receipt's `changed` lists changes, or is `nothing` or `not_read`.
 
 #### `retract` — structure
 
-```json
-{
-  "inputSchema": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "properties": {
-      "address": {
-        "type": "string"
-      },
-      "reason": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "recorded_at": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "request_id": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "sid": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      }
-    },
-    "required": [
-      "address"
-    ],
-    "type": "object"
-  },
-  "name": "retract"
-}
+```text
+{"/inputSchema/$schema":"https://json-schema.org/draft/2020-12/schema"}
+{"/inputSchema/properties/address":{"type":"string"}}
+{"/inputSchema/properties/reason":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/recorded_at":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/request_id":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/sid":{"default":null,"type":["string","null"]}}
+{"/inputSchema/required":["address"]}
+{"/inputSchema/type":"object"}
+{"/name":"retract"}
 ```
 
 #### `retract` — argument `/inputSchema.address`
@@ -5107,167 +3710,29 @@ See each argument for details.
 
 #### `search` — structure
 
-```json
-{
-  "inputSchema": {
-    "$defs": {
-      "EdgeFilterArgs": {
-        "properties": {
-          "object": {
-            "type": "string"
-          },
-          "shape": {
-            "default": null,
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        },
-        "required": [
-          "object"
-        ],
-        "type": "object"
-      }
-    },
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "properties": {
-      "answers_type": {
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "clock": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "details": {
-        "default": null,
-        "type": [
-          "boolean",
-          "null"
-        ]
-      },
-      "edge": {
-        "anyOf": [
-          {
-            "$ref": "#/$defs/EdgeFilterArgs"
-          },
-          {
-            "type": "null"
-          }
-        ]
-      },
-      "fits_type": {
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "include_history": {
-        "default": null,
-        "type": [
-          "boolean",
-          "null"
-        ]
-      },
-      "include_links": {
-        "default": null,
-        "type": [
-          "boolean",
-          "null"
-        ]
-      },
-      "include_mail": {
-        "default": null,
-        "type": [
-          "boolean",
-          "null"
-        ]
-      },
-      "kind": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "limit": {
-        "default": null,
-        "format": "uint32",
-        "minimum": 0,
-        "type": [
-          "integer",
-          "null"
-        ]
-      },
-      "offset": {
-        "default": null,
-        "format": "uint32",
-        "minimum": 0,
-        "type": [
-          "integer",
-          "null"
-        ]
-      },
-      "provenance": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "query": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "review_marks": {
-        "default": null,
-        "type": [
-          "boolean",
-          "null"
-        ]
-      },
-      "sid": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "standing": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "status": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "subject": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      }
-    },
-    "type": "object"
-  },
-  "name": "search"
-}
+```text
+{"/inputSchema/$defs/EdgeFilterArgs":{"properties":{"object":{"type":"string"},"shape":{"default":null,"type":["string","null"]}},"required":["object"],"type":"object"}}
+{"/inputSchema/$schema":"https://json-schema.org/draft/2020-12/schema"}
+{"/inputSchema/properties/answers_type":{"type":["string","null"]}}
+{"/inputSchema/properties/clock":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/details":{"default":null,"type":["boolean","null"]}}
+{"/inputSchema/properties/edge":{"anyOf":[{"$ref":"#/$defs/EdgeFilterArgs"},{"type":"null"}]}}
+{"/inputSchema/properties/fits_type":{"type":["string","null"]}}
+{"/inputSchema/properties/include_history":{"default":null,"type":["boolean","null"]}}
+{"/inputSchema/properties/include_links":{"default":null,"type":["boolean","null"]}}
+{"/inputSchema/properties/include_mail":{"default":null,"type":["boolean","null"]}}
+{"/inputSchema/properties/kind":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/limit":{"default":null,"format":"uint32","minimum":0,"type":["integer","null"]}}
+{"/inputSchema/properties/offset":{"default":null,"format":"uint32","minimum":0,"type":["integer","null"]}}
+{"/inputSchema/properties/provenance":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/query":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/review_marks":{"default":null,"type":["boolean","null"]}}
+{"/inputSchema/properties/sid":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/standing":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/status":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/subject":{"default":null,"type":["string","null"]}}
+{"/inputSchema/type":"object"}
+{"/name":"search"}
 ```
 
 #### `search` — argument `/inputSchema/$defs/EdgeFilterArgs`
@@ -5541,40 +4006,15 @@ Who reports to a bot is the other direction, a second call: recall that bot with
 
 #### `set_charter` — structure
 
-```json
-{
-  "inputSchema": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "properties": {
-      "bot": {
-        "type": "string"
-      },
-      "prose": {
-        "type": "string"
-      },
-      "request_id": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "sid": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      }
-    },
-    "required": [
-      "bot",
-      "prose"
-    ],
-    "type": "object"
-  },
-  "name": "set_charter"
-}
+```text
+{"/inputSchema/$schema":"https://json-schema.org/draft/2020-12/schema"}
+{"/inputSchema/properties/bot":{"type":"string"}}
+{"/inputSchema/properties/prose":{"type":"string"}}
+{"/inputSchema/properties/request_id":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/sid":{"default":null,"type":["string","null"]}}
+{"/inputSchema/required":["bot","prose"]}
+{"/inputSchema/type":"object"}
+{"/name":"set_charter"}
 ```
 
 #### `set_charter` — argument `/inputSchema.bot`
@@ -5642,121 +4082,25 @@ A boot writes the sweep, a missing box's repair, a key note and, when asked, a c
 
 #### `start_here` — structure
 
-```json
-{
-  "inputSchema": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "properties": {
-      "ask_for_code": {
-        "default": null,
-        "type": [
-          "boolean",
-          "null"
-        ]
-      },
-      "bot": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "brief": {
-        "default": null,
-        "type": [
-          "boolean",
-          "null"
-        ]
-      },
-      "challenge": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "claim": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "code": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "compacted": {
-        "default": null,
-        "type": [
-          "boolean",
-          "null"
-        ]
-      },
-      "offer_code": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "request_id": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "resume": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "section": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "sid": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "skill": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "timezone": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "today": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      }
-    },
-    "type": "object"
-  },
-  "name": "start_here"
-}
+```text
+{"/inputSchema/$schema":"https://json-schema.org/draft/2020-12/schema"}
+{"/inputSchema/properties/ask_for_code":{"default":null,"type":["boolean","null"]}}
+{"/inputSchema/properties/bot":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/brief":{"default":null,"type":["boolean","null"]}}
+{"/inputSchema/properties/challenge":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/claim":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/code":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/compacted":{"default":null,"type":["boolean","null"]}}
+{"/inputSchema/properties/offer_code":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/request_id":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/resume":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/section":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/sid":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/skill":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/timezone":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/today":{"default":null,"type":["string","null"]}}
+{"/inputSchema/type":"object"}
+{"/name":"start_here"}
 ```
 
 #### `start_here` — argument `/inputSchema.ask_for_code`
@@ -6039,98 +4383,22 @@ The receipt's `changed` lists changes.
 
 #### `update_entity` — structure
 
-```json
-{
-  "inputSchema": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "properties": {
-      "aliases": {
-        "default": null,
-        "items": {
-          "type": "string"
-        },
-        "type": [
-          "array",
-          "null"
-        ]
-      },
-      "crm": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "handle": {
-        "type": "string"
-      },
-      "name": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "override_reason": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "override_token": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "request_id": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "reviewed": {
-        "default": null,
-        "type": [
-          "boolean",
-          "null"
-        ]
-      },
-      "sets": {
-        "additionalProperties": {
-          "type": "string"
-        },
-        "default": null,
-        "type": [
-          "object",
-          "null"
-        ]
-      },
-      "sid": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "source": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      }
-    },
-    "required": [
-      "handle"
-    ],
-    "type": "object"
-  },
-  "name": "update_entity"
-}
+```text
+{"/inputSchema/$schema":"https://json-schema.org/draft/2020-12/schema"}
+{"/inputSchema/properties/aliases":{"default":null,"items":{"type":"string"},"type":["array","null"]}}
+{"/inputSchema/properties/crm":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/handle":{"type":"string"}}
+{"/inputSchema/properties/name":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/override_reason":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/override_token":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/request_id":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/reviewed":{"default":null,"type":["boolean","null"]}}
+{"/inputSchema/properties/sets":{"additionalProperties":{"type":"string"},"default":null,"type":["object","null"]}}
+{"/inputSchema/properties/sid":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/source":{"default":null,"type":["string","null"]}}
+{"/inputSchema/required":["handle"]}
+{"/inputSchema/type":"object"}
+{"/name":"update_entity"}
 ```
 
 #### `update_entity` — argument `/inputSchema.aliases`
@@ -6276,322 +4544,48 @@ The receipt is read back from the store; `changed` lists what moved.
 
 #### `update_fact` — structure
 
-```json
-{
-  "inputSchema": {
-    "$defs": {
-      "ConfirmedArg": {
-        "properties": {
-          "at": {
-            "type": "string"
-          },
-          "on": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "on",
-          "at"
-        ],
-        "type": "object"
-      },
-      "ReceiptArg": {
-        "properties": {
-          "check": {
-            "default": null,
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "confirmed": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/ConfirmedArg"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "type": "object"
-      }
-    },
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "properties": {
-      "address": {
-        "type": "string"
-      },
-      "after": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "clear_derived_from": {
-        "default": null,
-        "type": [
-          "boolean",
-          "null"
-        ]
-      },
-      "clear_edge": {
-        "default": null,
-        "type": [
-          "boolean",
-          "null"
-        ]
-      },
-      "clear_fields": {
-        "default": null,
-        "items": {
-          "type": "string"
-        },
-        "type": [
-          "array",
-          "null"
-        ]
-      },
-      "clear_happened_at": {
-        "default": null,
-        "type": [
-          "boolean",
-          "null"
-        ]
-      },
-      "clear_happened_through": {
-        "default": null,
-        "type": [
-          "boolean",
-          "null"
-        ]
-      },
-      "clear_stale_after": {
-        "default": null,
-        "type": [
-          "boolean",
-          "null"
-        ]
-      },
-      "clear_stands_for": {
-        "default": null,
-        "type": [
-          "boolean",
-          "null"
-        ]
-      },
-      "confirmed_by_user": {
-        "default": null,
-        "type": [
-          "boolean",
-          "null"
-        ]
-      },
-      "content": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "derived_from": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "details": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "expected_revision": {
-        "default": null,
-        "format": "uint32",
-        "minimum": 0,
-        "type": [
-          "integer",
-          "null"
-        ]
-      },
-      "field": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "fields": {
-        "additionalProperties": {
-          "type": "string"
-        },
-        "default": null,
-        "type": [
-          "object",
-          "null"
-        ]
-      },
-      "find": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "happened_at": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "happened_through": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "keep": {
-        "default": null,
-        "type": [
-          "boolean",
-          "null"
-        ]
-      },
-      "object": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "provenance": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "receipt": {
-        "anyOf": [
-          {
-            "$ref": "#/$defs/ReceiptArg"
-          },
-          {
-            "type": "null"
-          }
-        ]
-      },
-      "recorded_at": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "replace": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "request_id": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "sets": {
-        "additionalProperties": {
-          "type": "string"
-        },
-        "default": null,
-        "type": [
-          "object",
-          "null"
-        ]
-      },
-      "sets_add": {
-        "additionalProperties": {
-          "type": "string"
-        },
-        "default": null,
-        "type": [
-          "object",
-          "null"
-        ]
-      },
-      "sets_remove": {
-        "additionalProperties": {
-          "type": "string"
-        },
-        "default": null,
-        "type": [
-          "object",
-          "null"
-        ]
-      },
-      "shape": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "sid": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "stale_after": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "standing": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "stands_for": {
-        "default": null,
-        "items": {
-          "type": "string"
-        },
-        "type": [
-          "array",
-          "null"
-        ]
-      },
-      "status": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      }
-    },
-    "required": [
-      "address"
-    ],
-    "type": "object"
-  },
-  "name": "update_fact"
-}
+```text
+{"/inputSchema/$defs/ConfirmedArg":{"properties":{"at":{"type":"string"},"on":{"type":"string"}},"required":["on","at"],"type":"object"}}
+{"/inputSchema/$defs/ReceiptArg":{"properties":{"check":{"default":null,"type":["string","null"]},"confirmed":{"anyOf":[{"$ref":"#/$defs/ConfirmedArg"},{"type":"null"}]}},"type":"object"}}
+{"/inputSchema/$schema":"https://json-schema.org/draft/2020-12/schema"}
+{"/inputSchema/properties/address":{"type":"string"}}
+{"/inputSchema/properties/after":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/clear_derived_from":{"default":null,"type":["boolean","null"]}}
+{"/inputSchema/properties/clear_edge":{"default":null,"type":["boolean","null"]}}
+{"/inputSchema/properties/clear_fields":{"default":null,"items":{"type":"string"},"type":["array","null"]}}
+{"/inputSchema/properties/clear_happened_at":{"default":null,"type":["boolean","null"]}}
+{"/inputSchema/properties/clear_happened_through":{"default":null,"type":["boolean","null"]}}
+{"/inputSchema/properties/clear_stale_after":{"default":null,"type":["boolean","null"]}}
+{"/inputSchema/properties/clear_stands_for":{"default":null,"type":["boolean","null"]}}
+{"/inputSchema/properties/confirmed_by_user":{"default":null,"type":["boolean","null"]}}
+{"/inputSchema/properties/content":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/derived_from":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/details":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/expected_revision":{"default":null,"format":"uint32","minimum":0,"type":["integer","null"]}}
+{"/inputSchema/properties/field":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/fields":{"additionalProperties":{"type":"string"},"default":null,"type":["object","null"]}}
+{"/inputSchema/properties/find":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/happened_at":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/happened_through":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/keep":{"default":null,"type":["boolean","null"]}}
+{"/inputSchema/properties/object":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/provenance":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/receipt":{"anyOf":[{"$ref":"#/$defs/ReceiptArg"},{"type":"null"}]}}
+{"/inputSchema/properties/recorded_at":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/replace":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/request_id":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/sets":{"additionalProperties":{"type":"string"},"default":null,"type":["object","null"]}}
+{"/inputSchema/properties/sets_add":{"additionalProperties":{"type":"string"},"default":null,"type":["object","null"]}}
+{"/inputSchema/properties/sets_remove":{"additionalProperties":{"type":"string"},"default":null,"type":["object","null"]}}
+{"/inputSchema/properties/shape":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/sid":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/stale_after":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/standing":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/stands_for":{"default":null,"items":{"type":"string"},"type":["array","null"]}}
+{"/inputSchema/properties/status":{"default":null,"type":["string","null"]}}
+{"/inputSchema/required":["address"]}
+{"/inputSchema/type":"object"}
+{"/name":"update_fact"}
 ```
 
 #### `update_fact` — argument `/inputSchema/$defs/ConfirmedArg`
@@ -7112,26 +5106,13 @@ Pass your `sid`.
 
 #### `wrap_session` — structure
 
-```json
-{
-  "inputSchema": {
-    "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "properties": {
-      "sid": {
-        "type": "string"
-      },
-      "story": {
-        "type": "string"
-      }
-    },
-    "required": [
-      "story",
-      "sid"
-    ],
-    "type": "object"
-  },
-  "name": "wrap_session"
-}
+```text
+{"/inputSchema/$schema":"https://json-schema.org/draft/2020-12/schema"}
+{"/inputSchema/properties/sid":{"type":"string"}}
+{"/inputSchema/properties/story":{"type":"string"}}
+{"/inputSchema/required":["story","sid"]}
+{"/inputSchema/type":"object"}
+{"/name":"wrap_session"}
 ```
 
 #### `wrap_session` — argument `/inputSchema.sid`
