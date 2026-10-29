@@ -4932,7 +4932,7 @@ async fn a_lease_renewal_moves_the_version_the_cache_keys_on() {
         .expect("a versioned read answers");
 
     let renewed_at = t0 + jiff::SignedDuration::from_mins(6);
-    let renewed = memory
+    let renewed = folded
         .update_fact(
             &claim.address(),
             jojobot_domain::memory::testing::contract::state_patch(FactPatch {
@@ -4964,19 +4964,17 @@ async fn a_lease_renewal_moves_the_version_the_cache_keys_on() {
         "a renewal adds no claim write, so the version has to move some other way: \
          {before} then {after}"
     );
-    // Through the same wrapper recall reads: the write refreshes it.
-    let through = Folded::new(memory.clone());
-    through.rebuild().await.expect("the fold fills");
+    // Through the same fold, built before the renewal and not rebuilt: the
+    // write refreshes it.
     assert_eq!(
-        through
+        folded
             .fields(&role)
             .await
             .expect("the fold answers")
             .get(ROLE_CLAIMED_AT),
         Some(&renewed_at.to_string()),
-        "a fold rebuilt after the renewal holds the renewed moment"
+        "the fold built before the renewal holds the renewed moment"
     );
-    drop(folded);
 
     store.stop().await;
 }
