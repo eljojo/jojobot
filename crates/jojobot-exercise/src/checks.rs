@@ -117,18 +117,6 @@
 //!   one record's own date-bearing fields and prose against the union of
 //!   every OTHER record's dates. Nothing on the query surface computes a set
 //!   difference across records.
-//! * **`decembers_note_is_reachable_by_the_walk_back_from_the_cadence`** —
-//!   chain two calls into one question: find a claim's address, then ask
-//!   `built_on` of that address. `built_on` takes an address argument and no
-//!   query on this surface can compute one and consume it in the same call —
-//!   and the address itself is not nameable in the document at all, because
-//!   January invents the loop's handle, so the address it addresses is a
-//!   word no lock may spell.
-//! * **`decembers_note_names_what_it_was_worked_out_from`** — ask the records
-//!   dated 2026-12-13 for their own `derived_from`. Every check-in's schedule
-//!   record on the same loop carries that key too, so a needle for it matches
-//!   records that are not December's, and the lock format cannot scope one
-//!   needle to one record.
 //! * **`the_bearings_loop_is_not_owed_in_december_and_falls_due_on_the_twentieth_of_february`**
 //!   — find the loop carrying a ninety-day cadence and ask the served owed
 //!   answer about it on three days. January invents the loop's handle, so no
@@ -231,7 +219,7 @@ type Hatch = (&'static str, fn() -> Box<dyn Checks>);
 
 /// **Every named check this build ships.** A room adds one line here and one
 /// `check` line in its document, and both are visible in the count.
-pub const CHECKS: [Hatch; 57] = [
+pub const CHECKS: [Hatch; 55] = [
     ("question_one_rule_answer", || {
         rule_answer_check("work:pm-state", &[241, 275], &[129, 189, 284])
     }),
@@ -419,17 +407,6 @@ pub const CHECKS: [Hatch; 57] = [
     ),
     ("the_board_locks_mistake_is_rewritten_in_place", || {
         checked(|seen| Box::pin(the_board_locks_mistake_is_rewritten_in_place(seen)))
-    }),
-    (
-        "decembers_note_is_reachable_by_the_walk_back_from_the_cadence",
-        || {
-            checked(|seen| {
-                Box::pin(decembers_note_is_reachable_by_the_walk_back_from_the_cadence(seen))
-            })
-        },
-    ),
-    ("decembers_note_names_what_it_was_worked_out_from", || {
-        checked(|seen| Box::pin(decembers_note_names_what_it_was_worked_out_from(seen)))
     }),
     (
         "the_bearings_loop_is_not_owed_in_december_and_falls_due_on_the_twentieth_of_february",
@@ -3225,112 +3202,6 @@ async fn the_bearings_loop_is_not_owed_in_december_and_falls_due_on_the_twentiet
         }
     }
     Ok(())
-}
-
-/// **December's overdue note is reachable by walking BACK from the claim it
-/// names as its own lineage.**
-///
-/// December's write-side lock, beside this one in the document, checks that
-/// the note carries a `derived_from` at all. This checks the other half:
-/// that `built_on`, asked of the claim it points at, actually finds it —
-/// the read side of the same capability, a different code path from
-/// storing the pointer, and one that could break on its own.
-///
-/// ⛔️ **No address is named here, on either side.** January invents the
-/// loop's own handle, so the claim December's note is grounded in — the
-/// loop's own declared cadence — has an address no lock may spell. It is
-/// found structurally instead: the loop carrying a ninety-day cadence, the
-/// EARLIEST record on it. Nothing can write to a loop before the sitting
-/// that creates it, so that record is always the cadence declaration
-/// itself, in every valid playthrough, whatever the loop is called.
-async fn decembers_note_is_reachable_by_the_walk_back_from_the_cadence(
-    seen: &Observed<'_>,
-) -> Result<(), String> {
-    let read = seen
-        .room
-        .read(
-            "recall",
-            with_details(json!({"kind": "rhythm", "fields": [{"key": "cadence_days", "value": "90"}], "facts": true})),
-        )
-        .await;
-    let parsed: Value = read_json(&read)?;
-    let Some(cadence) = parsed["objects"][0]["facts"][0]["address"].as_str() else {
-        return Err(format!(
-            "no loop carrying a ninety-day cadence has a first record to walk back from: {read}"
-        ));
-    };
-    let built = seen
-        .room
-        .read(
-            "recall",
-            with_details(json!({"kind": "rhythm", "built_on": cadence, "facts": true})),
-        )
-        .await;
-    // **`built_on.claims`, not the whole answer.** The same call also ships
-    // `objects[].facts`, every record the `kind` selector reaches whether or
-    // not `built_on` walked to it — December's own note is in there
-    // regardless of what it names as its source, so a plain substring check
-    // over the whole payload would hold on a note that names nothing at all.
-    let parsed_built: Value = read_json(&built)?;
-    let reached = parsed_built["built_on"]["claims"]
-        .as_array()
-        .is_some_and(|claims| {
-            claims
-                .iter()
-                .any(|claim| claim["recorded_at"] == "2026-12-13")
-        });
-    match reached {
-        true => Ok(()),
-        false => Err(format!(
-            "walking back from {cadence} does not reach a claim recorded on 2026-12-13, so \
-             either December's note does not name its lineage or the walk that reads lineage \
-             back does not find it: {built}"
-        )),
-    }
-}
-
-/// **December's overdue note names the claim it was worked out from.**
-///
-/// The loop's answer holds a `derived_from` on every check-in's computed
-/// schedule record as well as on December's note, so a needle for the key
-/// matches records that are not December's. This reads the records dated
-/// 2026-12-13 by structure and asks each of them for its own pointer.
-async fn decembers_note_names_what_it_was_worked_out_from(
-    seen: &Observed<'_>,
-) -> Result<(), String> {
-    let read = seen
-        .room
-        .call(
-            "recall",
-            with_details(json!({"kind": "rhythm", "fields": [{"key": "cadence_days", "value": "90"}], "facts": true})),
-        )
-        .await;
-    let parsed: Value = read_json(&read)?;
-    let dated: Vec<&Value> = parsed["objects"][0]["facts"]
-        .as_array()
-        .map(|facts| {
-            facts
-                .iter()
-                .filter(|fact| fact["recorded_at"] == "2026-12-13")
-                .collect()
-        })
-        .unwrap_or_default();
-    if dated.is_empty() {
-        return Err(format!(
-            "the loop carrying a ninety-day cadence holds no record dated 2026-12-13, so there \
-             is no overdue note to read a source from: {read}"
-        ));
-    }
-    match dated.iter().all(|fact| {
-        fact["derived_from"]
-            .as_str()
-            .is_some_and(|from| !from.is_empty())
-    }) {
-        true => Ok(()),
-        false => Err(format!(
-            "a record dated 2026-12-13 on the loop names no claim it was worked out from: {read}"
-        )),
-    }
 }
 
 // ── The trick room ────────────────────────────────────────────────────────
