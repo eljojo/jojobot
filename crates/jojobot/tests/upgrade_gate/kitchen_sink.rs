@@ -931,6 +931,15 @@ async fn the_kitchen_sink_boots_once_and_reads_every_tolerated_shape() {
             && passes.iter().any(|p| p == "field value links marked"),
     ));
     let events = merge_rows(store.pool()).await;
+    let chain: Vec<_> = events
+        .iter()
+        .filter(|row| row.1 == 0 && matches!(row.2.as_str(), "ksmra1" | "ksmrb1"))
+        .collect();
+    assert_eq!(chain.len(), 2, "both merges retain their event");
+    assert!(
+        chain[0].2 == "ksmrb1" && chain[1].2 == "ksmra1" && chain[0].0 < chain[1].0,
+        "the repaired event sorts after the later merge: {chain:?}"
+    );
     results.push((
         "old-merge-event",
         ledger_history
@@ -962,12 +971,83 @@ async fn the_kitchen_sink_boots_once_and_reads_every_tolerated_shape() {
     drop(scratch);
 }
 
-async fn a_second_boot_keeps_the_store(label: &str, settled: &str) {
+async fn account_links(restored: &Restored) -> Vec<(String, i64, String)> {
+    let mut store = open_the_store(&restored.state_dir, restored.store_port).await;
+    let rows = sqlx::query_as(
+        "SELECT entity, ordinal, target FROM field_link WHERE `key` = 'merged_from'
+         ORDER BY entity, ordinal, target",
+    )
+    .fetch_all(store.pool())
+    .await
+    .expect("the historical engine account links");
+    store.stop().await;
+    rows
+}
+
+async fn repair_tables(restored: &Restored) -> Vec<String> {
+    let mut store = open_the_store(&restored.state_dir, restored.store_port).await;
+    let mut hashes = Vec::new();
+    for table in ["field_write", "field_link", "merge_event", "entity"] {
+        hashes.push(
+            sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+                "SELECT DOLT_HASHOF_TABLE('{table}')"
+            )))
+            .fetch_one(store.pool())
+            .await
+            .expect("the repair table's hash"),
+        );
+    }
+    let marked: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM store_pass WHERE name = 'old merge events'")
+            .fetch_one(store.pool())
+            .await
+            .expect("the repair marker");
+    assert_eq!(marked, 1, "the repair's marker is present");
+    store.stop().await;
+    hashes
+}
+
+async fn a_second_boot_keeps_the_store(label: &str, settled: &str, replay: bool) {
     let planted = prepared(label).await;
     let restored = planted.restored;
+    let links = account_links(&restored).await;
+    assert!(
+        !links.is_empty(),
+        "the planted merges must supply account links"
+    );
     let first = boot_current(&restored.state_dir, restored.store_port, &restored.git_ref).await;
     first.stop().await;
-    let after_first = dump_store(&restored.state_dir).await;
+    assert_eq!(
+        account_links(&restored).await,
+        links,
+        "the first marking boot changed an engine account link row"
+    );
+    let mut after_first = dump_store(&restored.state_dir).await;
+    if replay {
+        let repaired = repair_tables(&restored).await;
+        // A death after the repair commits but before its marker lands.
+        let mut store = open_the_store(&restored.state_dir, restored.store_port).await;
+        sqlx::query("DELETE FROM store_pass WHERE name = 'old merge events'")
+            .execute(store.pool())
+            .await
+            .expect("the interrupted repair has no marker");
+        store.stop().await;
+        let repeated =
+            boot_current(&restored.state_dir, restored.store_port, &restored.git_ref).await;
+        let ran = repeated
+            .log
+            .iter()
+            .any(|line| line.contains("repair pass finished") && line.contains("old merge events"));
+        repeated.stop().await;
+        assert!(ran, "the missing-marker boot must repeat the repair");
+        assert_eq!(
+            repair_tables(&restored).await,
+            repaired,
+            "the repeated repair changed a table"
+        );
+        // The replacement marker has a new finished_at; the settled boot keeps it.
+        after_first = dump_store(&restored.state_dir).await;
+    }
     let second = boot_current(&restored.state_dir, restored.store_port, &restored.git_ref).await;
     let quiet = second.log.iter().any(|line| line.contains(settled));
     second.stop().await;
@@ -986,11 +1066,12 @@ async fn link_marking_changes_no_row_on_the_second_boot() {
     a_second_boot_keeps_the_store(
         "kitchen-marked-again",
         "field value links marked: already done",
+        false,
     )
     .await;
 }
 
 #[tokio::test]
 async fn old_merge_repair_changes_no_row_on_the_second_boot() {
-    a_second_boot_keeps_the_store("kitchen-repaired-again", "repair pass already done").await;
+    a_second_boot_keeps_the_store("kitchen-repaired-again", "repair pass already done", true).await;
 }
