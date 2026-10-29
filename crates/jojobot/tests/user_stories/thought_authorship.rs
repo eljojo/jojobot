@@ -237,7 +237,7 @@ async fn a_starred_connection_claim_another_bot_writes_is_neither_the_bots_rule_
         .to_string();
     lisa.call(
         "update_fact",
-        json!({"address": moved, "fields": {"starred": "true"}}),
+        json!({"address": &moved, "fields": {"starred": "true"}}),
     )
     .await;
 
@@ -251,7 +251,7 @@ async fn a_starred_connection_claim_another_bot_writes_is_neither_the_bots_rule_
         "the other bot's claim is not a rule: {rules}"
     );
     assert!(
-        !rules.contains("fern"),
+        !rules.contains(&moved),
         "a star put on the other bot's claim by an edit makes no rule either: {rules}"
     );
     s.call(
