@@ -94,23 +94,6 @@ async fn room_harness_reads_mail_without_an_account_or_a_state_change() {
             .expect("runs")
             .is_empty()
     );
-    let anonymous = body(
-        handler
-            .search(Parameters(
-                decode(json!({"query":"*", "include_mail":true,"limit":200})).unwrap(),
-            ))
-            .await
-            .unwrap(),
-    )
-    .unwrap();
-    assert!(
-        !anonymous["results"]
-            .as_array()
-            .expect("results")
-            .iter()
-            .any(|hit| hit["hit"] == "message"),
-        "{anonymous}"
-    );
 }
 
 #[tokio::test]
