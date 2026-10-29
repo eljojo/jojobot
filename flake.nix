@@ -409,6 +409,40 @@
               test ${builtins.toJSON (off ? JOJOBOT_METRICS_BIND)} = false
               touch $out
             '';
+
+          # **The module sets no RUST_LOG unless the operator names a level**, so
+          # the binary's own default filter applies in production. A level the
+          # operator names reaches the unit whole.
+          logModule =
+            let
+              evaluate =
+                extra:
+                (nixpkgs.lib.nixosSystem {
+                  inherit system;
+                  modules = [
+                    self.nixosModules.default
+                    {
+                      boot.isContainer = true;
+                      system.stateVersion = "26.05";
+                      services.jojobot = {
+                        enable = true;
+                        allowNoAuth = true;
+                        package = jojobot;
+                        doltPackage = dolt;
+                      }
+                      // extra;
+                    }
+                  ];
+                }).config.systemd.services.jojobot.environment;
+              unset = evaluate { };
+              named = evaluate { logLevel = "debug"; };
+            in
+            pkgs.runCommand "jojobot-log-module" { } ''
+              set -eu
+              test ${builtins.toJSON (unset ? RUST_LOG)} = false
+              test ${builtins.toJSON (named.RUST_LOG == "debug")} = true
+              touch $out
+            '';
         };
 
         devShells.default = pkgs.mkShell {

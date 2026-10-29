@@ -127,9 +127,13 @@ in
     };
 
     logLevel = mkOption {
-      type = types.str;
-      default = "info";
-      description = "RUST_LOG value for the service.";
+      type = types.nullOr types.str;
+      default = null;
+      description = ''
+        RUST_LOG value for the service. Null leaves RUST_LOG unset, so the
+        binary's own default filter applies; a value set here replaces that
+        filter whole.
+      '';
     };
 
     environmentFile = mkOption {
@@ -350,8 +354,8 @@ in
 
       environment = {
         JOJOBOT_BIND = "${cfg.listenAddress}:${toString cfg.port}";
-        RUST_LOG = cfg.logLevel;
       }
+      // optionalAttrs (cfg.logLevel != null) { RUST_LOG = cfg.logLevel; }
       // optionalAttrs (cfg.issuer != null) { JOJOBOT_ISSUER = cfg.issuer; }
       // optionalAttrs (cfg.audience != null) { JOJOBOT_AUDIENCE = cfg.audience; }
       // optionalAttrs (cfg.resource != null) { JOJOBOT_RESOURCE = cfg.resource; }
