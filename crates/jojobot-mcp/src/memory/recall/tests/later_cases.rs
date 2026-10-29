@@ -295,3 +295,56 @@ async fn a_limit_caps_a_page_of_a_runs_field_history_the_way_offset_counts_it() 
     positions.dedup();
     assert_eq!(positions.len(), total, "every change once: {positions:?}");
 }
+
+/// **Each object carries its own distance when `overdue` is asked beside
+/// `unreviewed`.** The owed pass sorts the objects by when they fall due and the
+/// review pass sorts them again by when they last changed, so the distances have
+/// to follow their objects and not their places. The thing that fell due first
+/// was written second here, so the two orders disagree.
+#[tokio::test]
+async fn overdue_beside_unreviewed_serves_each_object_its_own_distance() {
+    let jojobot = crate::harness::handler_shipped();
+    let acting = run_on(&jojobot, "2026-03-15").await;
+    for (slug, runs_out) in [("zeta", "2026-03-12"), ("epsilon", "2026-03-01")] {
+        let made = jojobot
+            .add_entity(Parameters(AddEntityArgs {
+                sets: Some(
+                    [("runs_out".to_string(), runs_out.to_string())]
+                        .into_iter()
+                        .collect(),
+                ),
+                ..add_args("thing", slug, slug)
+            }))
+            .await
+            .expect("add ok");
+        assert_ne!(json_of(&made)["status"], "blocked", "{}", json_of(&made));
+    }
+
+    let answered = json_of(
+        &jojobot
+            .recall(Parameters(RecallArgs {
+                kind: Some("thing".into()),
+                overdue: Some(OverdueArgs { as_of: None }),
+                unreviewed: Some(true),
+                sid: Some(acting),
+                ..of_nothing()
+            }))
+            .await
+            .expect("recall answers"),
+    );
+    let days = |handle: &str| {
+        answered["objects"]
+            .as_array()
+            .expect("objects")
+            .iter()
+            .find(|row| row["id"] == handle)
+            .map(|row| row["overdue_by_days"].clone())
+    };
+    assert_eq!(
+        handles(&answered),
+        ["thing:zeta", "thing:epsilon"],
+        "the review pass puts the older change first, which is the order this case needs: {answered}"
+    );
+    assert_eq!(days("thing:epsilon"), Some(14.into()), "{answered}");
+    assert_eq!(days("thing:zeta"), Some(3.into()), "{answered}");
+}

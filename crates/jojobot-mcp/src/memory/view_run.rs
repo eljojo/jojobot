@@ -332,7 +332,9 @@ pub(crate) fn owed_by(
     )
 }
 
-/// **What the overdue pass found**, aligned with the objects it kept.
+/// **What the overdue pass found**, keyed by the objects it kept: a later
+/// narrowing or window reorders or drops objects, and a value kept by position
+/// would then belong to another object.
 pub struct OwedPass {
     /// How many objects the pass dropped.
     pub excluded: usize,
@@ -343,9 +345,9 @@ pub struct OwedPass {
     /// How many days past the day it is measured from each kept object fell
     /// due (below zero: how many days ahead), read off the same `Due` the order
     /// came from, so the number cannot disagree with the position it is in.
-    pub by_days: Vec<Option<i64>>,
+    pub by_days: BTreeMap<EntityId, Option<i64>>,
     /// Why each kept object that cannot say when it falls due cannot.
-    pub unreadable_because: Vec<Option<attention::Unreadable>>,
+    pub unreadable_because: BTreeMap<EntityId, attention::Unreadable>,
 }
 
 /// **Why the owed pass left an object out.** An object is in exactly one.
@@ -453,17 +455,23 @@ pub fn keep_owed(
     found.sort_by_key(|object| owed_by(carriers, object, instance).staleness());
     let by_days = found
         .iter()
-        .map(|object| owed_by(carriers, object, instance).days_overdue(measured_from))
+        .map(|object| {
+            (
+                object.entity.id.clone(),
+                owed_by(carriers, object, instance).days_overdue(measured_from),
+            )
+        })
         .collect();
     let unreadable_because = found
         .iter()
-        .map(|object| {
+        .filter_map(|object| {
             matches!(
                 owed_by(carriers, object, instance),
                 attention::Due::Unreadable
             )
             .then(|| attention::unreadable_because(carriers, &object.fields))
             .flatten()
+            .map(|why| (object.entity.id.clone(), why))
         })
         .collect();
     OwedPass {

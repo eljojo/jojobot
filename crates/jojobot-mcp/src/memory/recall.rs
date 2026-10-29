@@ -3845,11 +3845,13 @@ impl Jojobot {
         // `overdue_as_of` and `overdue_excluded` already read — a caller that
         // asked nothing is told nothing, rather than a distance for a
         // question it never asked.
-        let mut overdue_by_days: Option<Vec<Option<i64>>> = None;
+        let mut overdue_by_days: Option<std::collections::BTreeMap<EntityId, Option<i64>>> = None;
         // **Why each object that cannot say when it falls due cannot**, aligned
         // with `found` the same way. Only the carrier that answers for the object
         // knows which keys of its schedule are missing or unreadable.
-        let mut unreadable_because: Option<Vec<Option<attention::Unreadable>>> = None;
+        let mut unreadable_because: Option<
+            std::collections::BTreeMap<EntityId, attention::Unreadable>,
+        > = None;
         // **The read compares a moment to a day and computes none of them.**
         // Which moment a thing falls due at is its carrier's answer, so a
         // second sort of owed thing lands by answering there rather than by
@@ -4565,7 +4567,7 @@ impl Jojobot {
                     // never a lateness below zero. Only a view that asks about a
                     // later day than the run's own can reach it.
                     if let Some(distances) = &overdue_by_days {
-                        match distances[idx] {
+                        match distances.get(&o.entity.id).copied().flatten() {
                             Some(days) if days < 0 => rendered["due_in_days"] = (-days).into(),
                             Some(days) => rendered["overdue_by_days"] = days.into(),
                             None => rendered["overdue_by_days"] = serde_json::Value::Null,
@@ -4578,7 +4580,7 @@ impl Jojobot {
                     // schedule the thing lacks or holds unreadably. Absent on an
                     // object that has a day.
                     if let Some(reasons) = &unreadable_because
-                        && let Some(why) = &reasons[idx]
+                        && let Some(why) = reasons.get(&o.entity.id)
                     {
                         rendered["unreadable_because"] = serde_json::json!({
                             "lacks": why.lacks,
