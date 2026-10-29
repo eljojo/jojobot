@@ -26,6 +26,13 @@ pub(crate) fn lease() -> String {
     counted(LEASE_FRESHNESS.as_secs() / 60, "minute")
 }
 
+/// `45 minutes`: how long a run must have been quiet to be picked up by its
+/// name, whole minutes. The handler's own period, which is the lease unless a
+/// configuration sets it back.
+pub(crate) fn quiet(quiet_after: jiff::SignedDuration) -> String {
+    counted(quiet_after.as_secs() / 60, "minute")
+}
+
 /// `4 minutes 30 seconds`: how old the last renewal must be for a write to
 /// renew the lease again.
 pub(crate) fn renewal() -> String {

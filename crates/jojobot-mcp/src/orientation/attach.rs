@@ -341,16 +341,19 @@ impl Jojobot {
                     // back beside `resume`, once, it is what lets the answer
                     // leave out what this boot shipped.
                     "offer_code": self.registry.mint_offer(bot, offered_at),
-                    "how_to_proceed": "This identity has work already in flight. Call start_here \
-                                       again with resume: the name of the run you are picking up, \
-                                       or resume: \"new\" for a fresh session, and send \
-                                       offer_code beside it to get an answer that carries only \
-                                       what is new. Without the code the answer is the full boot. \
-                                       Only a run that has been quiet for 45 \
-                                       minutes can be picked up by its name; a run still writing \
-                                       is continued with its own key. Nothing was closed but the runs under \
-                                       `swept`; choosing new leaves the runs above \
-                                       running.",
+                    "how_to_proceed": format!(
+                        "This identity has work already in flight. Call start_here \
+                         again with resume: the name of the run you are picking up, \
+                         or resume: \"new\" for a fresh session, and send \
+                         offer_code beside it to get an answer that carries only \
+                         what is new. Without the code the answer is the full boot. \
+                         Only a run that has been quiet for {} \
+                         can be picked up by its name; a run still writing \
+                         is continued with its own key. Nothing was closed but the runs under \
+                         `swept`; choosing new leaves the runs above \
+                         running.",
+                        crate::windows::quiet(self.quiet_after),
+                    ),
                 })
             }
         };
@@ -809,7 +812,7 @@ impl Jojobot {
                     "No session was started. Run {name} wrote at {wrote}, so it is still \
                      its own: {way}. A run quiet for {} can be picked up by its \
                      name, which for this one is from {free_at}.",
-                    crate::windows::lease(),
+                    crate::windows::quiet(self.quiet_after),
                 ),
             ));
         }
@@ -4362,6 +4365,46 @@ mod tests {
         assert_eq!(keyed["status"], "blocked", "{keyed}");
         let how = keyed["how_to_proceed"].as_str().unwrap_or_default();
         assert!(!how.contains("exchange"), "{keyed}");
+    }
+
+    /// **The quiet period the offer and the refusal state is the one the decision
+    /// uses.** A handler whose period is set back to seven minutes says seven in
+    /// the offer of a stopped run and in the refusal of a name picked up too soon.
+    #[tokio::test]
+    async fn the_offer_and_the_refusal_state_the_handlers_quiet_period() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone()).quiet_after(jiff::SignedDuration::from_mins(7));
+        a_bot_whose_boot_offers_a_run(&jojobot, &store).await;
+
+        let offering = boot(&jojobot, "gamma").await;
+        let how = offering["session"]["how_to_proceed"]
+            .as_str()
+            .unwrap_or_else(|| panic!("the offer says how to proceed: {offering}"));
+        assert!(how.contains("quiet for 7 minutes"), "{how}");
+        assert!(!how.contains("45"), "{how}");
+
+        make_bot(&jojobot, "delta").await;
+        store
+            .begin(NewSession {
+                timezone: None,
+                bot: EntityId("bot:delta".into()),
+                sid: Sid("cde456".into()),
+                focus: "a run that just wrote".into(),
+                started_at: jiff::Timestamp::now(),
+                started_on: None,
+                id: None,
+                key_hash: None,
+            })
+            .await
+            .expect("the run is on the board");
+        let board = store.all_sessions().await.expect("the board");
+        jojobot.registry.rebuild_from(&board);
+        let refused = boot_answering(&jojobot, "delta", "cde456").await;
+        assert_eq!(refused["status"], "blocked", "{refused}");
+        assert!(
+            refused.to_string().contains("quiet for 7 minutes"),
+            "{refused}"
+        );
     }
 
     /// The parts of a boot an answer to the offer leaves out, by the name the
