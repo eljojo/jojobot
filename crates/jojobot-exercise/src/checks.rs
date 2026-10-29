@@ -200,6 +200,8 @@ mod rule_answer;
 #[cfg(test)]
 mod said_the_count;
 #[cfg(test)]
+mod september_correction;
+#[cfg(test)]
 mod skate_tool_holder;
 #[cfg(test)]
 mod standing_edge;
@@ -1449,14 +1451,7 @@ async fn septembers_account_of_the_skate_tool_is_superseded_by_a_derived_correct
              corrected rather than something else: {read}"
         ));
     };
-    // The standing claims that name this address as their source.
-    let derived = facts.is_some_and(|facts| {
-        facts.iter().any(|fact| {
-            fact["status"] == "active"
-                && fact["derived_from"] == address.as_str()
-                && fact["edge"]["object"] == "person:nelson"
-        })
-    });
+    let derived = facts.is_some_and(|facts| a_standing_correction_names(facts, address));
     if current["status"] == "active" {
         return Err(format!(
             "{address} still stands, so October's statement about the skate tool either went nowhere \
@@ -1496,6 +1491,20 @@ async fn septembers_account_of_the_skate_tool_is_superseded_by_a_derived_correct
              the earlier wording instead of superseding it: {read}"
         )),
     }
+}
+
+/// **Whether a standing claim about Nelson names `address` as its source.**
+///
+/// ⚠️ **Nelson is accepted as an edge or as a mention in the claim's words**,
+/// the two ways this lock already accepts Ralph on the original: which one a
+/// sitting writes is not what this lock measures.
+fn a_standing_correction_names(facts: &[Value], address: &str) -> bool {
+    facts.iter().any(|fact| {
+        fact["status"] == "active"
+            && fact["derived_from"] == address
+            && (fact["edge"]["object"] == "person:nelson"
+                || written(fact).contains("person:nelson"))
+    })
 }
 
 /// The sitting that takes the March claim back.
