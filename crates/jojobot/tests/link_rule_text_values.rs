@@ -75,7 +75,10 @@ async fn a_text_value_warns_only_while_its_claim_stands() {
             .expect("the kinds are seeded");
         add(&memory, "bot:beta", "Beta").await;
         let holder = add(&memory, "work:alpha-queue", "Alpha queue").await;
-        memory.migrate_field_links().await.expect("lowering");
+        sqlx::query("INSERT INTO store_pass (name, finished_at) VALUES ('field value lowering', '2026-06-01T00:00:00Z')")
+            .execute(&pool)
+            .await
+            .expect("the legacy lowering finished");
 
         let mut old = NewFact::about(holder.clone(), "the old label", date(2026, 9, 1));
         old.fields.insert("label".into(), "plain words".into());

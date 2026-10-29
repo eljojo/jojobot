@@ -761,12 +761,6 @@ async fn engine_merge_accounts_are_never_lowered_or_reported_as_r1() {
         stored(&pool, &survivor, "merged_from").await.as_bytes(),
         original.as_bytes()
     );
-    let legacy = memory.migrate_field_links().await.unwrap();
-    assert!(legacy.left_as_text.is_empty(), "{legacy:?}");
-    assert_eq!(
-        stored(&pool, &survivor, "merged_from").await.as_bytes(),
-        original.as_bytes()
-    );
     assert!(
         link_rows(&pool)
             .await

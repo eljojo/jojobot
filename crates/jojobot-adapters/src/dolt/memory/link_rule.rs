@@ -50,6 +50,9 @@ pub(super) fn held_ordinals(
         .collect()
 }
 
+/// The legacy lowering mark W18 reads to retain earlier text decisions.
+const FIELD_LOWERING_PASS: &str = "field value lowering";
+
 /// **The name the marking of every link in a stored field value is done under**
 /// in `store_pass`.
 const FIELD_MARKS_PASS: &str = "field value links marked";

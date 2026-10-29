@@ -15,10 +15,8 @@
 # they share a hash.
 #
 # Format: CONSTANT | the name stores record | hash of the driving function
-FORWARD_NAMES_PASS | forwarding rows name the current handle | ce9902628369d89c
 FORWARDED_LINKS_PASS | forwarded field links repaired | cd801524c854f0c2
-FIELD_LOWERING_PASS | field value lowering | e8929717db1d9188
-REFERENCE_LOWERING_PASS | reference field lowering | c0ae7b1b845dc6c1
+FIELD_LOWERING_PASS | field value lowering | 04f7ee1a212a702e
 UNREADABLE_DUE_PASS | unreadable due day | a7c683d30e4248fc
 OLD_ROLE_CLAIMS_PASS | old role claims | 57767b348d06e1cc
 PASSES | mail mentions | 2171b5815c1f23b6

@@ -712,40 +712,7 @@ pub async fn boot_store_observed(
         ),
     }
 
-    // **A reference-typed field value, stored as plain handle text before
-    // this build lowered it at write time, rewritten onto the permanent id
-    // it names** (rule 290). Runs after the three passes above for the same
-    // reason: it reads the badge and the rename history they just made
-    // current. **It also runs after the kinds are loaded**, which
-    // `open_provisioned` does: a `reference:<kind>` cell is parsed through the
-    // kind set, so a pass that ran before it would fail on any store holding a
-    // kind-narrowed reference type. Louder than the first two, for the reason
-    // `resolve_stale_pointer_columns` is: a row left unresolved holds a
-    // stale handle a later collision could still hijack, so it is reported
-    // as a problem to repair rather than a routine retry. **Over the instance
-    // that is told what the build supplies**, as the pass above is: a value
-    // naming a shipped record has no row to resolve through, and is valid as it
-    // stands.
-    match timed(
-        "migrate-reference-fields",
-        linking.migrate_reference_fields(),
-    )
-    .await
-    {
-        Ok(0) => {}
-        Ok(rewritten) => tracing::info!(
-            rewritten,
-            "store: resolved stale reference-typed field values onto the badges they name"
-        ),
-        Err(e) => tracing::error!(
-            error = %e,
-            "REFERENCE FIELDS NOT RESOLVED — the values named above still hold a stale handle \
-             rather than a badge. Nothing already resolved was undone. The pass has finished \
-             and is not repeated, so this is the one report; a person has to repair them."
-        ),
-    }
-
-    // **The field-link step**, after reference fields and kinds load. It marks
+    // **The field-link step**, after kinds load. It marks
     // links and reconciles their rows. Unresolved and ambiguous handles stay
     // text and are reported, because the pass does not guess. A finished pass keeps
     // its text decisions; the link table is checked and rebuilt when it disagrees.
@@ -755,30 +722,8 @@ pub async fn boot_store_observed(
     // leaves the value as text with no link.
     timed("field-links", field_links::boot_field_links(&linking)).await;
 
-    // **Forwarding rows an older build left naming a handle their survivor wore
-    // before a rename, brought to the handle it wears now.** Runs before the pass
-    // below, which reads the same rows. Marked finished once it has committed
-    // and skipped no row; a row it could not place is warned about once, the first boot that
-    // meets it.
-    match timed("migrate-forward-names", linking.migrate_forward_names()).await {
-        Ok(report) if report.settled => {
-            tracing::info!("store: forwarding rows name their survivor: already done");
-        }
-        Ok(report) => tracing::info!(
-            renamed = report.renamed,
-            skipped = report.skipped.len(),
-            "store: forwarding rows brought to the handle their survivor wears now"
-        ),
-        Err(e) => tracing::error!(
-            error = %e,
-            "FORWARDING ROWS NOT BROUGHT TO THEIR SURVIVOR'S HANDLE — a folded thing may \
-             name the handle its survivor wore before a rename. Nothing was lost; a restart \
-             repeats the pass."
-        ),
-    }
-
     // **Links a fold of an older build left on the forwarding row, repointed at
-    // the thing it ended in.** Runs after the pass above, which makes the link
+    // the thing it ended in.** Runs after the field-link pass, which makes the link
     // table agree with the writes it reads. Marked finished once it has
     // committed and skipped no forward, so it is made once; a forward it could
     // not place keeps it open and is warned about once, the first boot that meets it.

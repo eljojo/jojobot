@@ -9,12 +9,12 @@
 //!
 //! This is the shape of the actual outage, generalised: a read taken after
 //! the store itself is healthy failed, and the boot crash-looped on it as
-//! though the store were down. Two of these passes —
-//! `resolve_stale_pointer_columns` and `migrate_reference_fields` — read
+//! though the store were down. The
+//! `resolve_stale_pointer_columns` pass reads
 //! `entity_former_handle`. Dropping that table after the schema migration
 //! that creates it has already been recorded gives a real store where the
 //! server comes up fine, the schema ledger says nothing needs re-applying,
-//! and those two specific reads fail with a real SQL error — while `entity`
+//! and that read fails with a real SQL error — while `entity`
 //! itself, and everything boot needs it for, is untouched.
 //!
 //! **A test binary of its own.** `boot_store` seeds the process-wide kind set
@@ -52,7 +52,7 @@ async fn boot_store_does_not_refuse_when_a_downstream_read_fails_on_an_otherwise
     // restart. The schema ledger records the migration that created
     // `entity_former_handle` as already applied, so this run's own
     // `migrate::run` will not recreate it: `resolve_stale_pointer_columns`
-    // and `migrate_reference_fields` will hit a real "table doesn't exist"
+    // will hit a real "table doesn't exist"
     // error, while every other pass reads tables that are still there.
     let booted = jojobot::wiring::boot_store(&path, port, Clock::Real)
         .await
