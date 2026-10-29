@@ -5412,7 +5412,7 @@ pub enum Landed {
 
 /// Why a memory operation failed. Adapters map their transport/parse errors into
 /// these; the domain and the MCP layer speak only this vocabulary.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum MemoryError {
     /// The commit may have landed, but no result can be reconstructed.
     #[error("{}", crate::request::INDETERMINATE_WRITE)]

@@ -1548,6 +1548,7 @@ dependencies = [
  "jojobot-domain",
  "jojobot-exercise",
  "jojobot-mcp",
+ "jojobot-query-api",
  "jsonwebtoken",
  "openmetrics-parser",
  "prometheus-client",
@@ -1660,6 +1661,7 @@ dependencies = [
  "jiff",
  "jojobot-adapters",
  "jojobot-domain",
+ "jojobot-query-api",
  "rmcp",
  "rmcp-macros",
  "schemars",
@@ -1677,6 +1679,16 @@ name = "jojobot-ports"
 version = "0.1.0"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "jojobot-query-api"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "jiff",
+ "jojobot-domain",
+ "serde_json",
 ]
 
 [[package]]

@@ -258,7 +258,17 @@ fn build_app_with(
             .route(ui::org::PATH, get(ui::org::chart))
             .route(ui::search::PATH, get(ui::search::results))
             .route("/ui/kind/{kind}/", get(ui::home::kind_page))
-            .route("/{*path}", get(ui::pages::node))
+            .merge(
+                Router::new()
+                    .route("/{*path}", get(ui::pages::node))
+                    .with_state(ui::pages::NodeState {
+                        app: state.clone(),
+                        queries: jojobot_mcp::memory::view_run::handle(
+                            state.memory.clone(),
+                            state.sessions.clone(),
+                        ),
+                    }),
+            )
             .route_layer(axum::middleware::from_fn_with_state(
                 state.clone(),
                 ui::require_browser,

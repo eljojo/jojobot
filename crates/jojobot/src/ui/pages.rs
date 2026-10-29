@@ -162,14 +162,25 @@ fn left_out_line(id: &str, left: usize, what: &str, where_read: &str) -> String 
     )
 }
 
+/// The composition root supplies the read boundary beside the state used by
+/// page groups that have not moved yet.
+#[derive(Clone)]
+pub(crate) struct NodeState {
+    pub app: AppState,
+    pub queries: jojobot_query_api::QueryHandle,
+}
+
 /// `/{path}` — one node: what sits below it, and the facts held there.
 ///
 /// **The path is the entity's ancestry, so there is one URL per entity.** A
 /// handle reached by any other path is the same entity somewhere it does not
 /// live, and the browser is sent to where it does — a second URL serving the
 /// same node is how two readers come to disagree about where something is.
-pub async fn node(
-    State(state): State<AppState>,
+pub(crate) async fn node(
+    State(NodeState {
+        app: state,
+        queries,
+    }): State<NodeState>,
     Path(path): Path<String>,
     axum::extract::Query(asked): axum::extract::Query<NodeQuery>,
     axum::extract::RawQuery(raw_query): axum::extract::RawQuery,
@@ -208,73 +219,45 @@ pub async fn node(
         .collect();
     children.sort_by(|a, b| a.id.cmp(&b.id));
 
-    // **The review mark and a bot's record of the release notes it was told are
-    // bookkeeping, so the page leaves them out the way `recall` does**, through the
-    // same predicates.
-    let facts = match state.memory.recall(&entity.id).await {
-        Ok(mut facts) => {
-            facts.retain(|fact| {
-                !jojobot_domain::memory::review::is_review_mark(&fact.fields)
-                    && !jojobot_domain::memory::review::is_release_notes_record(&fact.fields)
-            });
-            facts
-        }
-        Err(err) => return unreadable(err),
+    let mut question = jojobot_query_api::Question::new(
+        graph::Selection {
+            subject: Some(entity.id.clone()),
+            ..Default::default()
+        },
+        graph::Include {
+            facts: true,
+            prose: true,
+            stood_for: true,
+            status: None,
+        },
+        None,
+        None,
+    );
+    question.asks.backing = true;
+    let mut answer = match queries.ask(question).await {
+        Ok(answer) => answer,
+        Err(
+            jojobot_query_api::Failed::Selection(error)
+            | jojobot_query_api::Failed::Readiness(error),
+        ) => return unreadable(error),
     };
-
-    // **What the thing IS is a read of its own**, and it fails the page the way
-    // a failed read of its records does: the row is the headline of this page,
-    // and a page that quietly showed an empty one would be reporting that
-    // nothing is recorded here.
-    let held = match state.memory.fields(&entity.id).await {
-        // **jojobot's bookkeeping keys are not what the thing is**, so the page
-        // leaves them out the way `recall` does, through the same predicate.
-        Ok(mut held) => {
-            held.retain(|key, _| !jojobot_domain::memory::review::is_bookkeeping_key(key));
-            held
-        }
-        Err(err) => return unreadable(err),
+    let working_on_unknown = answer.stale_working_on.contains(&entity.id);
+    let backing = match answer.backing.remove(&entity.id).transpose() {
+        Ok(backing) => backing.unwrap_or_default(),
+        Err(error) => return unreadable(error),
     };
-    // **What a bot is working on is shown only while the session that wrote it
-    // is live**, the same answer the other readers of a bot get.
-    let mut held = held;
-    let mut working_on_unknown = false;
-    if entity.kind == EntityKind::BOT
-        && held.contains_key(jojobot_domain::memory::kinds::WORKING_ON)
-    {
-        use jojobot_mcp::memory::working_on::{WorkingOn, working_on_of};
-        if !matches!(
-            working_on_of(&*state.memory, &*state.sessions, &entity.id).await,
-            Ok(WorkingOn::Live(_))
-        ) {
-            held.remove(jojobot_domain::memory::kinds::WORKING_ON);
-            working_on_unknown = true;
-        }
+    let Some(object) = answer.selected.subject_object(&entity.id) else {
+        return not_found();
+    };
+    // Ages determine the visible order. An unreadable clock still refuses the
+    // page; an unreadable prose read leaves the rest of the answer readable.
+    if let Some(error) = object.ages_unreadable {
+        return unreadable(error);
     }
-    // **When each key was written is what orders the section**, so it is read
-    // the way the keys are and fails the page the same way.
-    let ages = match state.memory.field_ages(&entity.id).await {
-        Ok(ages) => ages,
-        Err(err) => return unreadable(err),
-    };
-    // **Which write each value came from is the domain's to say** (rule 598), so
-    // the page asks for it and does not pick a record itself.
-    let backing = match state.memory.backing(&entity.id).await {
-        Ok(backing) => backing,
-        Err(err) => return unreadable(err),
-    };
-
-    // Prose is the human half of the record — a charter, a portrait. Its
-    // absence is ordinary, and a store that cannot be asked for it costs the
-    // prose rather than the page.
-    let prose = match state.memory.scan_entity(&entity.id).await {
-        Ok(Some(scan)) => scan.prose,
-        Ok(None) => String::new(),
-        Err(err) => {
-            tracing::debug!(error = %err, entity = %entity.id, "the listing could not read prose");
-            String::new()
-        }
-    };
+    let ages = object.ages.unwrap_or_default();
+    let held = object.fields;
+    let facts = object.facts;
+    let prose = object.prose.unwrap_or_default();
 
     let mut typed_page = String::new();
     let mut generic = String::new();
@@ -357,7 +340,6 @@ pub async fn node(
         );
     }
     generic.push_str(&history_section(&state, &entity.id, asked.history.as_deref()).await);
-    generic.push_str(&conforms_section(&state, &held).await);
 
     generic.push_str("<h2>Below here</h2>\n");
     if children.is_empty() {
@@ -1341,14 +1323,23 @@ pub(crate) async fn answer_view(
     );
     let (found, omitted, ticks) = match view_run::answer(&*state.memory, &question, &context).await
     {
-        Ok(answered) => (
-            answered.selected.objects,
-            left_out_lines(
-                &answered.narrowed,
-                question.asks.ready.as_ref().map(|asked| asked.ask),
-            ),
-            answered.ticks,
-        ),
+        Ok(answered) => {
+            if let Some(error) = graph::unreadable_scan(&answered.selected) {
+                return Err(blind(
+                    "What this view answers",
+                    "the records it selects",
+                    &error.to_string(),
+                ));
+            }
+            (
+                answered.selected.objects,
+                left_out_lines(
+                    &answered.narrowed,
+                    question.asks.ready.as_ref().map(|asked| asked.ask),
+                ),
+                answered.ticks,
+            )
+        }
         Err(view_run::Failed::Selection(err)) => {
             return Err(blind(
                 "What this view answers",
@@ -1675,62 +1666,6 @@ async fn history_section(state: &AppState, entity: &EntityId, key: Option<&str>)
     }
     out.push_str("</table>\n");
     out
-}
-
-/// **What the thing's fields add up to**: every declared type it answers, the
-/// keys it holds, the keys it lacks and the keys it holds badly.
-///
-/// This is the payoff of the fold and the one thing on the page a reader cannot
-/// work out unaided — it would mean holding every declaration in mind.
-///
-/// **One extra read, and no walk.** The declarations are a table of their own
-/// and the thing's fields are already in hand, so this costs one query on a
-/// small table rather than a pass over the corpus per thing.
-///
-/// **Absent when the thing answers nothing.** A standing "conforms to nothing"
-/// on every page is a judgement nobody asked for, and a store with no
-/// declarations at all would carry it everywhere.
-async fn conforms_section(state: &AppState, folded: &BTreeMap<String, String>) -> String {
-    if folded.is_empty() {
-        return String::new();
-    }
-    let declared = match state.memory.declared_types().await {
-        Ok(declared) => declared,
-        Err(err) => {
-            tracing::debug!(error = %err, "the listing could not read the declared types");
-            return String::new();
-        }
-    };
-    let mut rows = String::new();
-    for declaration in &declared {
-        let Some(found) = declaration.matched_by(folded) else {
-            continue;
-        };
-        // **A key the thing holds badly is named with the value it holds.**
-        // `Holds` lists every key that is there, the wrong ones included, so
-        // the verdict alone would say "partly" and leave the reader to find
-        // which key.
-        let wrong: Vec<String> = found
-            .mistyped
-            .iter()
-            .map(|bad| format!("{}: {}", bad.key, bad.value))
-            .collect();
-        rows.push_str(&format!(
-            "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>\n",
-            escape(&declaration.name),
-            if found.complete() { "whole" } else { "partly" },
-            escape(&found.held.join(", ")),
-            escape(&found.lacking.join(", ")),
-            escape(&wrong.join(", ")),
-        ));
-    }
-    if rows.is_empty() {
-        return String::new();
-    }
-    format!(
-        "<h2>Conforms to</h2>\n<table id=\"conforms\">\n\
-         <tr><th>Type</th><th>How far</th><th>Holds</th><th>Lacks</th><th>Wrong</th></tr>\n{rows}</table>\n"
-    )
 }
 
 /// The facts held at this node.

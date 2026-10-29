@@ -373,12 +373,7 @@ pub(crate) fn parse_zone(raw: Option<&str>) -> Result<jiff::tz::TimeZone, McpErr
 /// records with the day the run really executed, which is a date nobody
 /// uttered.
 pub(crate) fn parse_date(raw: Option<&str>) -> Result<Option<jiff::civil::Date>, McpError> {
-    let Some(named) = raw.map(str::trim).filter(|day| !day.is_empty()) else {
-        return Ok(None);
-    };
-    named.parse().map(Some).map_err(|e| {
-        McpError::invalid_params(format!("date must be YYYY-MM-DD, got '{named}': {e}"), None)
-    })
+    jojobot_query_api::parse_date(raw).map_err(|error| McpError::invalid_params(error, None))
 }
 
 #[cfg(test)]

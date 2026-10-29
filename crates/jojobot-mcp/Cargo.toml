@@ -11,7 +11,9 @@ rust-version.workspace = true
 room-harness = ["jojobot-domain/room-harness"]
 
 [dependencies]
+jojobot-query-api.workspace = true
 jojobot-domain.workspace = true
+async-trait.workspace = true
 rmcp.workspace = true
 # Not imported by name — see the workspace manifest. It is a dependency so that
 # the workspace's `=` pin on it is the one cargo resolves, holding it in step
@@ -39,8 +41,6 @@ tokio = { workspace = true }
 # The fake behind the domain's `testing` feature backs the MCP verb tests, so
 # capture/recall are exercised through the handler with no network.
 jojobot-domain = { workspace = true, features = ["testing"] }
-# The start_here down-world test stubs the Mailboxes port, which is async-trait.
-async-trait = { workspace = true }
 # The release-notes pass is read by the operator through its log lines, so a
 # case captures what it logs.
 tracing-subscriber = { workspace = true }

@@ -21,142 +21,92 @@ use std::collections::BTreeMap;
 use jojobot_domain::attention;
 use jojobot_domain::memory::entries;
 use jojobot_domain::memory::graph;
-use jojobot_domain::memory::readiness;
 use jojobot_domain::memory::search::DocScan;
-use jojobot_domain::memory::types::DeclaredType;
 use jojobot_domain::memory::{EntityId, EntityKind, Memory, MemoryError};
 
 use super::list_ticks::TickRead;
-use super::ready::{self, Verdict};
+use super::ready;
+pub use jojobot_query_api::{
+    Answered, Asks, Failed, LeftOut, Narrowed, OwedPass, Question, Readiness, ReadyPass, TickCell,
+    Verdict,
+};
 
-/// **The two narrowings a selection cannot express.**
-#[derive(Default)]
-pub struct Asks {
-    /// **Only what is owed on this day**, oldest due first.
-    pub overdue: Option<jiff::civil::Date>,
-    /// **The day each kept object's lateness is measured from**, when it is not
-    /// the day asked about. A view that asks what falls due by a later day
-    /// measures from the run's own day, so an object not yet due says how many
-    /// days away it is instead of a lateness below zero. `None` measures from the
-    /// day asked about, as a `recall` of its own does.
-    pub measure_from: Option<jiff::civil::Date>,
-    /// **What of the work to keep, by readiness**: only what can be started, or
-    /// the whole plan.
-    pub ready: Option<Readiness>,
-    /// **Only what defrag has not reviewed**, oldest change first. See
-    /// [`keep_unreviewed`].
-    pub unreviewed: bool,
-}
-
-/// **A readiness question.**
-pub struct Readiness {
-    pub ask: readiness::Ask,
-    /// The one thing a call named, which always comes back so a caller can read
-    /// why.
-    pub named: Option<EntityId>,
-}
-
-/// **A question, ready to be answered**: a query for the graph and its
-/// narrowings.
-pub struct Question {
-    /// What the graph is asked. A caller may adjust it before the walk, as the
-    /// verb does when an address or an index narrows the selection.
-    pub query: graph::GraphQuery,
-    /// What is kept of the objects the query finds.
-    pub asks: Asks,
-}
-
-impl Question {
-    /// **The one place a selection becomes a query.** No narrowing is asked: a
-    /// caller adds `overdue` and `ready` to the question it gets back.
-    pub fn new(
-        select: graph::Selection,
-        include: graph::Include,
-        follow: Option<graph::Follow>,
-        history: Option<graph::History>,
-    ) -> Question {
-        Question {
-            query: graph::GraphQuery {
-                select,
-                include,
-                follow,
-                history,
-                masked: Default::default(),
-            },
-            asks: Asks::default(),
+/// Build the read facade from the two read dependencies, without the MCP
+/// handler, its teaching ledger, or the composition root's application state.
+pub fn handle(
+    memory: std::sync::Arc<dyn Memory>,
+    sessions: std::sync::Arc<dyn jojobot_domain::session::Sessions>,
+) -> jojobot_query_api::QueryHandle {
+    struct Reader {
+        memory: std::sync::Arc<dyn Memory>,
+        sessions: std::sync::Arc<dyn jojobot_domain::session::Sessions>,
+        carriers: Vec<Box<dyn attention::Carrier>>,
+    }
+    #[async_trait::async_trait]
+    impl jojobot_query_api::Answerer for Reader {
+        async fn ask(&self, mut question: Question) -> Result<Answered, Failed> {
+            let stale =
+                super::working_on::stale_working_on_bots(&*self.memory, &*self.sessions).await;
+            question
+                .query
+                .masked
+                .extend(super::working_on::masked_working_on(&stale));
+            let instance = if question.asks.overdue.is_some() {
+                crate::orientation::instance_zone::instance_fields_of(&*self.memory)
+                    .await
+                    .map_err(Failed::Selection)?
+            } else {
+                BTreeMap::new()
+            };
+            let carriers: Vec<&dyn attention::Carrier> =
+                self.carriers.iter().map(AsRef::as_ref).collect();
+            let mut read = answer(
+                &*self.memory,
+                &question,
+                &Context {
+                    carriers: &carriers,
+                    instance: &instance,
+                },
+            )
+            .await?;
+            read.stale_working_on = super::working_on::stale_in(&read.selected.objects, &stale);
+            for object in &mut read.selected.objects {
+                object
+                    .fields
+                    .retain(|key, _| !jojobot_domain::memory::review::is_bookkeeping_key(key));
+                object.facts.retain(|fact| visible_fact(fact, false, false));
+            }
+            Ok(read)
         }
     }
+    jojobot_query_api::QueryHandle::from(std::sync::Arc::new(Reader {
+        memory,
+        sessions,
+        carriers: attention::shipped(),
+    }) as std::sync::Arc<dyn jojobot_query_api::Answerer>)
+}
 
-    /// **A stored view read as a question, with nothing beside it.** The kind
-    /// is the one `selects` resolved to, and `answers_type` is the declaration
-    /// its name resolved to; both are the caller's to look up, because the
-    /// verb refuses a call where the page says the view cannot be run. `parent`
-    /// is the thing the view lists the children of, once its inputs are filled.
-    ///
-    /// **What is asked of each object is the objects and nothing of each**: a
-    /// view's `shows` says what of each one comes back on a read, and a
-    /// listing of the answer needs none of it. `today` is the day a relative
-    /// date in `where` and an overdue ask are read against.
-    ///
-    /// **A view that asks what is ready, with no kind, is asked of work**, as the
-    /// verb asks it: only work is ready or blocked. **A view that narrows nothing
-    /// is refused** with [`MemoryError::ViewNarrowsNothing`], decided by the same
-    /// [`graph::Selection::narrows_nothing`] the verb asks, so a view the verb
-    /// answers alone is answered here and one it refuses alone is refused here.
-    pub fn of_view(
-        view: &EntityId,
-        asked: &graph::Asked,
-        kind: Option<EntityKind>,
-        answers_type: Option<DeclaredType>,
-        parent: Option<EntityId>,
-        today: jiff::civil::Date,
-    ) -> Result<Question, MemoryError> {
-        let (fields, order) = (asked.filters(today)?, asked.ordering()?);
-        let kind = kind.or_else(|| asked.ready.is_some().then_some(EntityKind::WORK));
-        let mut question = Question::new(
-            graph::Selection {
-                kind,
-                answers_type,
-                parent,
-                fields,
-                order,
-                owed: asked.overdue,
-                ready: asked.ready.is_some(),
-                unreviewed: asked.unreviewed,
-                ..graph::Selection::default()
-            },
-            graph::Include {
-                facts: false,
-                prose: false,
-                stood_for: false,
-                status: None,
-            },
-            None,
-            None,
-        );
-        // **The day the view's input named, read by the parser the verb reads it
-        // with**, or the run's own when the view names none or the input was left
-        // out. A day that is no day is refused, never read as today.
-        let overdue = if asked.overdue {
-            let named = crate::memory::parse::parse_date(asked.as_of.as_deref())
-                .map_err(|e| MemoryError::InvalidQuery(e.message.to_string()))?;
-            Some(named.unwrap_or(today))
-        } else {
-            None
-        };
-        question.asks = Asks {
-            overdue,
-            measure_from: asked.overdue.then_some(today),
-            ready: asked.ready.map(|ask| Readiness { ask, named: None }),
-            unreviewed: asked.unreviewed,
-        };
-        if question.query.select.narrows_nothing() {
-            return Err(MemoryError::ViewNarrowsNothing {
-                view: view.to_string(),
-            });
-        }
-        Ok(question)
+pub(crate) fn visible_fact(fact: &jojobot_domain::memory::Fact, review: bool, notes: bool) -> bool {
+    (review || !jojobot_domain::memory::review::is_review_mark(&fact.fields))
+        && (notes || !jojobot_domain::memory::review::is_release_notes_record(&fact.fields))
+}
+
+pub(crate) async fn backing_of(
+    memory: &dyn Memory,
+    objects: &[graph::Object],
+    masked: &BTreeMap<EntityId, Vec<String>>,
+) -> BTreeMap<EntityId, Result<jojobot_query_api::Backing, MemoryError>> {
+    let mut all = BTreeMap::new();
+    for object in objects {
+        let backing = memory.backing(&object.entity.id).await.map(|mut backing| {
+            for key in masked.get(&object.entity.id).into_iter().flatten() {
+                backing.remove(key);
+            }
+            backing
+        });
+        all.insert(object.entity.id.clone(), backing);
     }
+    all
 }
 
 /// **What the narrowings are read against**, which the caller supplies so no
@@ -166,14 +116,6 @@ pub struct Context<'a> {
     pub carriers: &'a [&'a dyn attention::Carrier],
     /// The operator's own status words. Read only for an overdue question.
     pub instance: &'a BTreeMap<String, String>,
-}
-
-/// **What the narrowings found**, aligned with the objects they kept.
-pub struct Narrowed {
-    /// Present when the question asked what is owed.
-    pub owed: Option<OwedPass>,
-    /// Present when the question asked what is ready.
-    pub ready: Option<ReadyPass>,
 }
 
 /// **The selection, walked.** `sessions` are the runs the caller joins to the
@@ -259,39 +201,6 @@ pub fn cut_to_window<T>(
     (skipped, total - passed)
 }
 
-/// **Where a question failed**, because a caller says different things about a
-/// selection it could not read and a dependency it could not read.
-pub enum Failed {
-    /// The walk over the records the question selects.
-    Selection(MemoryError),
-    /// The read of the work a ready question depends on.
-    Readiness(MemoryError),
-}
-
-/// **A question, answered**: the selection and then its narrowings.
-pub struct Answered {
-    /// The objects the question found, after the narrowings.
-    pub selected: graph::Selected,
-    /// What the narrowings found.
-    pub narrowed: Narrowed,
-    /// **What the ticks of each object come to**, one entry to an object and in
-    /// its order: the read a `recall` gives a list, for an object that is a list
-    /// and nothing for any other. The same function builds both
-    /// ([`TickRead::of`], rule 498).
-    pub ticks: Vec<TickCell>,
-}
-
-/// **What the tick read of one object came to.** A list whose records could not
-/// be read is its own case, never the same as a list nobody ticked (rule 130).
-pub enum TickCell {
-    /// The object is not a list.
-    NotAList,
-    /// The records of the list were read.
-    Read(TickRead),
-    /// The object is a list and its records could not be read.
-    Unreadable,
-}
-
 /// **Answer a question** as the page of a view does: the whole selection, no
 /// window, no runs joined.
 pub async fn answer(
@@ -321,7 +230,14 @@ pub async fn answer(
         };
         ticks.push(read);
     }
+    let backing = if question.asks.backing {
+        backing_of(memory, &selected.objects, &question.query.masked).await
+    } else {
+        BTreeMap::new()
+    };
     Ok(Answered {
+        backing,
+        stale_working_on: Default::default(),
         selected,
         narrowed,
         ticks,
@@ -341,60 +257,6 @@ pub(crate) fn owed_by(
         &object.fields,
         instance,
     )
-}
-
-/// **What the overdue pass found**, keyed by the objects it kept: a later
-/// narrowing or window reorders or drops objects, and a value kept by position
-/// would then belong to another object.
-pub struct OwedPass {
-    /// How many objects the pass dropped.
-    pub excluded: usize,
-    /// **Why the dropped objects were dropped, and of what kind.** The counts
-    /// add up to [`OwedPass::excluded`]: this groups the same objects and
-    /// counts none of them differently.
-    pub excluded_because: BTreeMap<LeftOut, BTreeMap<String, usize>>,
-    /// How many days past the day it is measured from each kept object fell
-    /// due (below zero: how many days ahead), read off the same `Due` the order
-    /// came from, so the number cannot disagree with the position it is in.
-    pub by_days: BTreeMap<EntityId, Option<i64>>,
-    /// Why each kept object that cannot say when it falls due cannot.
-    pub unreadable_because: BTreeMap<EntityId, attention::Unreadable>,
-}
-
-/// **Why the owed pass left an object out.** An object is in exactly one.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum LeftOut {
-    /// It has a due day and the day is after the day asked about.
-    NotDueYet,
-    /// It has a cadence and has never been checked in, so its first cycle has
-    /// not started.
-    NotYetOpened,
-    /// A work item or project that is finished, or a thing its carrier reads as
-    /// ended, owes nothing.
-    Finished,
-    /// Its carrier answers that nothing falls due: it carries none of the keys a
-    /// due day is worked out from, so no carrier speaks for it.
-    NoSchedule,
-}
-
-impl LeftOut {
-    /// Every reason there is.
-    pub const ALL: [LeftOut; 4] = [
-        LeftOut::NotDueYet,
-        LeftOut::NotYetOpened,
-        LeftOut::Finished,
-        LeftOut::NoSchedule,
-    ];
-
-    /// The word a served answer uses for this reason.
-    pub fn token(self) -> &'static str {
-        match self {
-            LeftOut::NotDueYet => "not_due_yet",
-            LeftOut::NotYetOpened => "not_yet_opened",
-            LeftOut::Finished => "finished",
-            LeftOut::NoSchedule => "no_schedule",
-        }
-    }
 }
 
 /// **Why this object owes nothing on the day asked about.** Asked of the
@@ -491,14 +353,6 @@ pub fn keep_owed(
         by_days,
         unreadable_because,
     }
-}
-
-/// **What the readiness pass found**, aligned with the objects it kept.
-pub struct ReadyPass {
-    /// The verdict on each kept object.
-    pub verdicts: Vec<Verdict>,
-    /// How many pieces of work the pass left out.
-    pub left_out: usize,
 }
 
 /// **Keep the work the ask keeps**: what can be started, or the whole plan, see

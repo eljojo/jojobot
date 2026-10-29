@@ -103,7 +103,12 @@ where
                     .cloned(),
             );
         } else if selected.contains(&entity.id) || walks_by_keys {
-            scanned.push(read_doc(store, entity, false, &query.masked).await?);
+            let mut unreadable = BTreeMap::new();
+            let doc = read_doc(store, entity, false, &query.masked, &mut unreadable).await?;
+            if let Some(error) = unreadable.remove(&entity.id) {
+                return Err(error);
+            }
+            scanned.push(doc);
         } else {
             scanned.push(DocScan {
                 doc_id: entity.id.to_string(),

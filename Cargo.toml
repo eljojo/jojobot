@@ -118,6 +118,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 tracing-log = "0.2"
 
 # --- internal crates ---
+jojobot-query-api = { path = "crates/jojobot-query-api" }
 jojobot-domain = { path = "crates/jojobot-domain" }
 jojobot-adapters = { path = "crates/jojobot-adapters" }
 jojobot-mcp = { path = "crates/jojobot-mcp" }

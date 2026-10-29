@@ -1560,6 +1560,8 @@ pub struct Object {
     /// object in the answer; `None` where the store could not say (a thing the
     /// memory store does not hold, such as a session). See [`FieldAges`].
     pub ages: Option<super::FieldAges>,
+    /// A failed age read is distinct from a store that recorded no moments.
+    pub ages_unreadable: Option<MemoryError>,
     /// **The thread this object is a standing decision of**, when the read of
     /// that thread put it ahead of the thread. `None` on every other object. It
     /// is what tells a renderer to serve the decision's words whether or not the
@@ -1833,6 +1835,9 @@ pub struct Selected {
     /// The objects the caller may read, in handle order, or in the order the
     /// selection asked for.
     pub objects: Vec<Object>,
+    /// Every document read that failed, including an object later filtered out.
+    /// Renderers choose whether a failed prose read prevents their answer.
+    pub unreadable_scans: BTreeMap<EntityId, MemoryError>,
     /// **What the ordering did**, when the selection asked for one. It says
     /// whether a key read as text although its values would have parsed as
     /// numbers or dates, which the answer owes a caller who did not declare it.
@@ -1972,6 +1977,7 @@ fn resolve_keys(
         ctx.put_standing_decisions_first(&mut objects, query);
     Ok(Selected {
         objects,
+        unreadable_scans: BTreeMap::new(),
         ordered,
         withheld: ctx.withheld(&query.select),
         unplaced: ctx.unplaced(&query.select),
@@ -2893,6 +2899,7 @@ impl<'a> Ctx<'a> {
             run_history: None,
             fact_revisions: std::collections::HashMap::new(),
             ages: None,
+            ages_unreadable: None,
             standing_for: None,
             replaced_by: self.replacement_of(id),
         }
@@ -3174,7 +3181,16 @@ pub async fn walk<M>(
 where
     M: super::Memory + ?Sized,
 {
-    walk_in_window(store, sessions, query, None).await
+    let selected = walk_in_window(store, sessions, query, None).await?;
+    if let Some(error) = unreadable_scan(&selected) {
+        return Err(error);
+    }
+    Ok(selected)
+}
+
+/// A renderer that requires a readable scan refuses with the original error.
+pub fn unreadable_scan(selected: &Selected) -> Option<MemoryError> {
+    selected.unreadable_scans.values().next().cloned()
 }
 
 /// **The part of a browse a caller will actually serve.**
@@ -3437,6 +3453,7 @@ where
     // **What the shortcut below read before it gave the question up**, kept for the
     // full read that follows, so an object is read once whichever way it is served.
     let mut pre_read: HashMap<EntityId, PreRead> = HashMap::new();
+    let mut unreadable_scans = BTreeMap::new();
 
     // **A browse that asks nothing of what a thing holds is decided by the
     // entities alone**, so its objects are selected from the index and read
@@ -3479,7 +3496,8 @@ where
                     .filter(|entity| chosen.contains(&entity.id))
                     .collect();
                 for entity in masked_candidates {
-                    let doc = read_doc(store, entity, false, &query.masked).await?;
+                    let doc = read_doc(store, entity, false, &query.masked, &mut unreadable_scans)
+                        .await?;
                     if resolve_keys(std::slice::from_ref(&doc), &declarations, query, keys_here)?
                         .objects
                         .is_empty()
@@ -3548,7 +3566,10 @@ where
                     .iter()
                     .filter(|entity| query.select.counts_as_left_out(entity))
                 {
-                    left_out.push(read_doc(store, entity, false, &query.masked).await?);
+                    left_out.push(
+                        read_doc(store, entity, false, &query.masked, &mut unreadable_scans)
+                            .await?,
+                    );
                 }
                 if !left_out.is_empty() {
                     let counted = resolve_keys(&left_out, &declarations, query, keys_here)?;
@@ -3580,8 +3601,14 @@ where
                     break 'ordered;
                 }
                 passed += 1;
-                let doc =
-                    read_doc(store, &shell.entity, query.include.prose, &query.masked).await?;
+                let doc = read_doc(
+                    store,
+                    &shell.entity,
+                    query.include.prose,
+                    &query.masked,
+                    &mut unreadable_scans,
+                )
+                .await?;
                 let Some(mut object) =
                     resolve_keys(std::slice::from_ref(&doc), &declarations, query, keys_here)?
                         .objects
@@ -3596,7 +3623,11 @@ where
                     shell.entity.id.clone(),
                     PreRead {
                         doc,
-                        filled: Some((object.fact_revisions.clone(), object.ages.clone())),
+                        filled: Some((
+                            object.fact_revisions.clone(),
+                            object.ages.clone(),
+                            object.ages_unreadable.clone(),
+                        )),
                     },
                 );
                 let last = room.takes((window.size_of)(&object));
@@ -3610,6 +3641,7 @@ where
             }
             return Ok(Selected {
                 objects,
+                unreadable_scans,
                 skipped,
                 left_over: total - passed,
                 subject_children: resolved_subject
@@ -3683,7 +3715,16 @@ where
         if wanted.iter().any(|w| w.id == entity.id) {
             scanned.push(match pre_read.get(&entity.id) {
                 Some(read) => read.doc.clone(),
-                None => read_doc(store, entity, query.include.prose, &query.masked).await?,
+                None => {
+                    read_doc(
+                        store,
+                        entity,
+                        query.include.prose,
+                        &query.masked,
+                        &mut unreadable_scans,
+                    )
+                    .await?
+                }
             });
         } else {
             scanned.push(DocScan {
@@ -3717,7 +3758,7 @@ where
             .get(&object.entity.id)
             .and_then(|read| read.filled.as_ref())
         {
-            Some((revisions, _)) => object.fact_revisions = revisions.clone(),
+            Some((revisions, _, _)) => object.fact_revisions = revisions.clone(),
             None => fill_revision_counts(store, object).await?,
         }
     }
@@ -3729,15 +3770,25 @@ where
             .get(&object.entity.id)
             .and_then(|read| read.filled.as_ref())
         {
-            Some((_, ages)) => object.ages = ages.clone(),
+            Some((_, ages, unreadable)) => {
+                object.ages = ages.clone();
+                object.ages_unreadable = unreadable.clone();
+            }
             None => fill_ages(store, object).await,
         }
     }
+    found.unreadable_scans = unreadable_scans;
     found.subject_children = resolved_subject
         .as_ref()
         .map(|subject| ChildCounts::of(&entities, subject));
     Ok(found)
 }
+
+type Filled = (
+    HashMap<FactId, usize>,
+    Option<super::FieldAges>,
+    Option<MemoryError>,
+);
 
 /// **What the ordered shortcut read of one object before it gave the question
 /// up**: the document, and the revision counts and ages the object was given
@@ -3745,7 +3796,7 @@ where
 /// reading the object again.
 struct PreRead {
     doc: DocScan,
-    filled: Option<(HashMap<FactId, usize>, Option<super::FieldAges>)>,
+    filled: Option<Filled>,
 }
 
 /// **One entity's document, read from the store**: its records, its prose when
@@ -3755,19 +3806,27 @@ async fn read_doc<M>(
     entity: &Entity,
     prose: bool,
     masked: &BTreeMap<EntityId, Vec<String>>,
+    unreadable_scans: &mut BTreeMap<EntityId, MemoryError>,
 ) -> Result<DocScan, MemoryError>
 where
     M: super::Memory + ?Sized,
 {
     let facts = store.recall(&entity.id).await?;
-    let scanned = store.scan_entity(&entity.id).await?;
+    let mut fields = store.fields(&entity.id).await?;
+    let scanned = match store.scan_entity(&entity.id).await {
+        Ok(scanned) => scanned,
+        Err(error) => {
+            unreadable_scans.insert(entity.id.clone(), error);
+            None
+        }
+    };
     // **Asked of the store, never folded from the records above.** What a thing
     // holds is decided in the order its keys were written, which the records have
     // already projected away — so a walk that folded them for itself would answer
     // with a value the store does not hold.
-    let (mut fields, mut field_links) = scanned
+    let mut field_links = scanned
         .as_ref()
-        .map(|doc| (doc.fields.clone(), doc.field_links.clone()))
+        .map(|doc| doc.field_links.clone())
         .unwrap_or_default();
     let prose = if prose {
         scanned.map(|doc| doc.prose).unwrap_or_default()
@@ -3804,7 +3863,10 @@ where
     M: super::Memory + ?Sized,
 {
     Box::pin(async move {
-        object.ages = store.field_ages(&object.entity.id).await.ok();
+        match store.field_ages(&object.entity.id).await {
+            Ok(ages) => object.ages = Some(ages),
+            Err(error) => object.ages_unreadable = Some(error),
+        }
         for reached in &mut object.connected {
             fill_ages(store, reached).await;
         }

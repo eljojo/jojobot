@@ -7,6 +7,7 @@ lib-jojobot-exercise
 lib-jojobot-forward
 lib-jojobot-mcp
 lib-jojobot-ports
+lib-jojobot-query-api
 lib-jojobot-roster
 test-adoption_frozen
 test-adoption_room
@@ -119,6 +120,7 @@ test-phase_end_lock
 test-phase_times
 test-piano_lock
 test-querying_room
+test-read_dependencies
 test-reads_the_rooms
 test-ready_over_stores
 test-real_binary_answers_stored_merge_damage
@@ -169,6 +171,7 @@ test-ui_client_id_is_not_the_audience
 test-ui_instance_unread
 test-ui_operator_mail
 test-ui_past_runs_date
+test-ui_read_path
 test-unit_kill_mode
 test-unseeded
 test-unseeded_boot_order

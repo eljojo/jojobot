@@ -16,6 +16,7 @@ room-harness = ["jojobot-mcp/room-harness"]
 # auth layer meet. Nothing user-specific is compiled in — issuer, audience and
 # resource are all runtime configuration.
 [dependencies]
+jojobot-query-api.workspace = true
 jojobot-mcp.workspace = true
 jojobot-domain.workspace = true
 jojobot-adapters.workspace = true

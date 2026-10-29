@@ -1,0 +1,12 @@
+[package]
+name = "jojobot-query-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+jojobot-domain.workspace = true
+async-trait.workspace = true
+jiff.workspace = true
+serde_json.workspace = true

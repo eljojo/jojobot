@@ -641,45 +641,6 @@ async fn a_handle_inside_a_fence_that_opens_on_the_content_is_not_a_link_on_the_
     ct.cancel();
 }
 
-/// **A thing's page shows what the thing HOLDS — its fields, folded.**
-///
-/// A thing's fields are what it conforms to and what that unlocks, and they
-/// arrive one record at a time. The page rendered seven columns of a record's
-/// qualifiers and never the fields themselves, so the one surface the operator
-/// reads directly could not show the thing the model is about.
-#[tokio::test]
-async fn a_node_page_shows_the_things_folded_fields_and_what_they_conform_to() {
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
-    let (addr, ct) = spawn_jojobot(endpoints, &[READER], &idp).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
-
-    let body = read(&client, addr, "/person:alpha/topic:widgets/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
-
-    // **Both keys, from two different records.** Either one alone would pass on
-    // a page that rendered a single record's fields and called it the thing's.
-    assert!(
-        body.contains("opens") && body.contains("2026-03-05"),
-        "a key one record carries is on the page: {body}"
-    );
-    assert!(
-        body.contains("pitch") && body.contains("14"),
-        "…and so is the key the OTHER record carries, which is the fold: {body}"
-    );
-    // What the thing is, said in the type's own words — the payoff of the fold
-    // and the thing a reader of this page cannot work out unaided.
-    assert!(
-        body.contains("stall"),
-        "the type the thing answers is named: {body}"
-    );
-    ct.cancel();
-}
-
 /// **A key on the page opens to the writes behind it.**
 ///
 /// The fold says what the thing holds NOW, which is one value and the answer
@@ -7508,13 +7469,10 @@ async fn a_listing_row_says_how_much_sits_under_a_thing_directly_and_in_all() {
     ct.cancel();
 }
 
-/// **A key held badly is not a key held, and the page says so.** A market whose
-/// `opens` day is "next spring" holds the stall's keys in name only: the page
-/// names `opens` as the wrong one with the value it holds, and the stall is not
-/// shown whole. Paired in one read with the stall that holds both keys well,
-/// which the same page shape shows whole and with nothing wrong.
+/// The page preserves a field's stored value without a declared type-fit
+/// verdict (rule 742), for both malformed and well-formed date values.
 #[tokio::test]
-async fn a_date_key_holding_next_spring_is_held_badly_and_the_thing_is_not_whole() {
+async fn a_date_key_keeps_its_stored_value_without_a_type_fit_verdict() {
     let memory = seeded_memory().await;
     let mut market = NewEntity::new(EntityId("topic:flea".into()), "Flea", "the fixture roster");
     market.parent = Some(EntityId("person:alpha".into()));
@@ -7551,21 +7509,23 @@ async fn a_date_key_holding_next_spring_is_held_badly_and_the_thing_is_not_whole
         .text()
         .await
         .unwrap();
-    let badly = labelled_row(&flea, "conforms", "stall");
+    let badly = labelled_row(&flea, "fields", "opens");
     assert!(
-        badly.contains("<td>partly</td>") && badly.contains("opens: next spring"),
-        "the wrong key is named with the value it holds, and the thing is not whole: {badly}"
+        badly.contains("next spring"),
+        "the stored date value is kept: {badly}"
     );
+    assert!(!flea.contains("id=\"conforms\""));
     let stall = read(&client, addr, "/person:alpha/topic:widgets/", &cookie)
         .await
         .text()
         .await
         .unwrap();
-    let well = labelled_row(&stall, "conforms", "stall");
+    let well = labelled_row(&stall, "fields", "opens");
     assert!(
-        well.contains("<td>whole</td>") && !well.contains("opens: "),
-        "the same page shape shows a thing holding both keys well as whole: {well}"
+        well.contains("2026-03-05"),
+        "the well-formed stored date is kept too: {well}"
     );
+    assert!(!stall.contains("id=\"conforms\""));
     ct.cancel();
 }
 

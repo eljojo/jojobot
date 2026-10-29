@@ -56,14 +56,7 @@ impl Lookup for Referents {
     }
 }
 
-/// **The verdict on one piece of work.**
-pub struct Verdict {
-    /// Whether the work can be started: the readiness tree's answer, and
-    /// nothing else decides it.
-    pub ready: bool,
-    /// What stops it, to explain the verdict. Empty when it is ready.
-    pub blockers: Vec<Blocker>,
-}
+pub use jojobot_query_api::Verdict;
 
 /// **The verdict on each piece of work, in the order they were given.**
 pub async fn verdicts_of(
