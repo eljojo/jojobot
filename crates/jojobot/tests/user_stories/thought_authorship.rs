@@ -250,19 +250,27 @@ async fn a_starred_connection_claim_another_bot_writes_is_neither_the_bots_rule_
         !rules.contains("couch"),
         "the other bot's claim is not a rule: {rules}"
     );
+    assert!(
+        !rules.contains("fern"),
+        "a star put on the other bot's claim by an edit makes no rule either: {rules}"
+    );
     s.call(
         "recall",
         json!({"subject": "bot:milhouse", "facts": true, "status": "active"}),
     )
     .await
     .says("lisa asks for the couch to be moved");
-    // Milhouse's own room holds its one thought; a second of its own is refused.
+    // Milhouse's own room holds its one thought; a second of its own is refused,
+    // and the reserve it names lands at two of one: the other bot's two starred
+    // claims took no seat.
+    let second = json!({"subject": "bot:milhouse", "content": "the couch needs a leg",
+                        "shape": "connection", "object": "thing:the-couch"});
     milhouse
-        .refused(
-            "capture",
-            json!({"subject": "bot:milhouse", "content": "the couch needs a leg",
-                   "shape": "connection", "object": "thing:the-couch"}),
-        )
-        .await;
+        .refused("capture", second.clone())
+        .await
+        .says("borrow");
+    let mut borrowing = second;
+    borrowing["borrow"] = json!(true);
+    milhouse.call("capture", borrowing).await.says("2 of 1");
     story.finish().await;
 }
