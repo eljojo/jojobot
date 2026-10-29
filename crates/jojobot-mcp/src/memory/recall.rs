@@ -176,7 +176,7 @@ pub struct FollowArgs {
 }
 
 /// Arguments to `recall`.
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Default, serde::Deserialize, schemars::JsonSchema)]
 pub struct RecallArgs {
     /// One entity, as `kind:slug` (a bare handle is read as a person).
     ///

@@ -50,43 +50,9 @@ async fn captured(memory: &InMemoryMemory, id: &str) -> Entity {
 /// asserting on a claim's own wording has to ask for the claim.
 fn of(subject: &str) -> RecallArgs {
     RecallArgs {
-        ticks: None,
-        ticks_offset: None,
-        unreviewed: None,
-        details: None,
-        view: None,
-        inputs: None,
         subject: Some(subject.into()),
-        kind: None,
-        parent: None,
-        answers_type: None,
-        fields: None,
-        expression: None,
-        scope: None,
-        order: None,
         facts: Some(true),
-        stood_for: None,
-        review_marks: None,
-        status: None,
-        prose: None,
-        charter: None,
-        keys: None,
-        record_keys: None,
-        follow: None,
-        overdue: None,
-        near: None,
-        sid: None,
-        history: None,
-        history_record: None,
-        records: None,
-        history_most: None,
-        offset: None,
-        limit: None,
-        values: None,
-        values_most: None,
-        built_on: None,
-        backing: None,
-        held: None,
+        ..Default::default()
     }
 }
 
@@ -116,40 +82,38 @@ async fn nears_happened_at_clock_reaches_the_served_surface() {
     )
     .await;
 
-    let near_the_event = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                sid: Some(sid.clone()),
-                near: Some(NearArgs {
-                    day: Some("2027-06-04".into()),
-                    within_days: Some(7),
-                    clock: Some("happened_at".into()),
-                }),
-                ..of("person:milhouse")
-            }))
-            .await
-            .expect("recall ok"),
+    let near_the_event = recall_json(
+        &jojobot,
+        RecallArgs {
+            sid: Some(sid.clone()),
+            near: Some(NearArgs {
+                day: Some("2027-06-04".into()),
+                within_days: Some(7),
+                clock: Some("happened_at".into()),
+            }),
+            ..of("person:milhouse")
+        },
     )
+    .await
     .to_string();
     assert!(
         near_the_event.contains("booked the trip"),
         "a window around the day the claim HAPPENED did not find it: {near_the_event}",
     );
 
-    let near_the_recording = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                sid: Some(sid),
-                near: Some(NearArgs {
-                    day: Some("2026-08-18".into()),
-                    within_days: Some(7),
-                    clock: Some("happened_at".into()),
-                }),
-                ..of("person:milhouse")
-            }))
-            .await
-            .expect("recall ok"),
+    let near_the_recording = recall_json(
+        &jojobot,
+        RecallArgs {
+            sid: Some(sid),
+            near: Some(NearArgs {
+                day: Some("2026-08-18".into()),
+                within_days: Some(7),
+                clock: Some("happened_at".into()),
+            }),
+            ..of("person:milhouse")
+        },
     )
+    .await
     .to_string();
     assert!(
         !near_the_recording.contains("booked the trip"),
@@ -255,27 +219,26 @@ async fn a_carrier_the_read_never_heard_of_answers_in_the_same_read() {
     )
     .await;
 
-    let owed = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                sid: Some(sid),
-                // **One selection reaching every kind**, which is what
-                // makes this the SAME answer rather than two reads
-                // compared.
-                fields: Some(vec![KeyFilterArgs {
-                    key: Some("promised_for".into()),
-                    value: None,
-                    compare: None,
-                    scope: None,
-                }]),
-                overdue: Some(OverdueArgs {
-                    as_of: Some("2026-08-19".into()),
-                }),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let owed = recall_json(
+        &jojobot,
+        RecallArgs {
+            sid: Some(sid),
+            // **One selection reaching every kind**, which is what
+            // makes this the SAME answer rather than two reads
+            // compared.
+            fields: Some(vec![KeyFilterArgs {
+                key: Some("promised_for".into()),
+                value: None,
+                compare: None,
+                scope: None,
+            }]),
+            overdue: Some(OverdueArgs {
+                as_of: Some("2026-08-19".into()),
+            }),
+            ..of_nothing()
+        },
+    )
+    .await;
     let said = owed.to_string();
     assert!(
         said.contains("work:phi"),
@@ -792,17 +755,16 @@ async fn a_read_answers_in_the_day_the_run_states() {
     ))
     .expect("a boot that states a day hands back a handle");
 
-    let in_march = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                kind: Some("rhythm".into()),
-                overdue: Some(OverdueArgs { as_of: None }),
-                sid: Some(acting.clone()),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let in_march = recall_json(
+        &jojobot,
+        RecallArgs {
+            kind: Some("rhythm".into()),
+            overdue: Some(OverdueArgs { as_of: None }),
+            sid: Some(acting.clone()),
+            ..of_nothing()
+        },
+    )
+    .await;
     assert_eq!(
         in_march["overdue_as_of"], "2026-03-15",
         "the read was taken as of the server's day: {in_march}"
@@ -815,16 +777,15 @@ async fn a_read_answers_in_the_day_the_run_states() {
     // ⚠️ **A run that stated no day still gets the clock**, and the loop
     // that had not gone quiet in March has gone quiet by now. Without this
     // half the case passes on a build that answers nothing to anybody.
-    let now = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                kind: Some("rhythm".into()),
-                overdue: Some(OverdueArgs { as_of: None }),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let now = recall_json(
+        &jojobot,
+        RecallArgs {
+            kind: Some("rhythm".into()),
+            overdue: Some(OverdueArgs { as_of: None }),
+            ..of_nothing()
+        },
+    )
+    .await;
     assert_eq!(
         handles(&now),
         vec!["rhythm:descale".to_string()],
@@ -834,19 +795,18 @@ async fn a_read_answers_in_the_day_the_run_states() {
     // **And a day the call names still wins over the run's.** A run working
     // through a period asks about other days, exactly as it writes about
     // them.
-    let named = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                kind: Some("rhythm".into()),
-                overdue: Some(OverdueArgs {
-                    as_of: Some("2026-03-30".into()),
-                }),
-                sid: Some(acting),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let named = recall_json(
+        &jojobot,
+        RecallArgs {
+            kind: Some("rhythm".into()),
+            overdue: Some(OverdueArgs {
+                as_of: Some("2026-03-30".into()),
+            }),
+            sid: Some(acting),
+            ..of_nothing()
+        },
+    )
+    .await;
     assert_eq!(named["overdue_as_of"], "2026-03-30");
     assert_eq!(handles(&named), vec!["rhythm:descale".to_string()]);
 }
@@ -873,18 +833,17 @@ async fn the_owed_read_orders_the_longest_quiet_first() {
     a_rhythm(&jojobot, "polish", "7", "2026-01-01").await;
     a_rhythm(&jojobot, "descale", "7", "2026-03-01").await;
 
-    let found = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                kind: Some("rhythm".into()),
-                overdue: Some(OverdueArgs {
-                    as_of: Some("2026-06-01".into()),
-                }),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let found = recall_json(
+        &jojobot,
+        RecallArgs {
+            kind: Some("rhythm".into()),
+            overdue: Some(OverdueArgs {
+                as_of: Some("2026-06-01".into()),
+            }),
+            ..of_nothing()
+        },
+    )
+    .await;
     assert_eq!(
         handles(&found),
         vec!["rhythm:polish".to_string(), "rhythm:descale".to_string()],
@@ -902,15 +861,14 @@ async fn the_owed_read_orders_the_longest_quiet_first() {
 
     // The paired negative: a read that asks no overdue question states no
     // distance either, on the same objects.
-    let unfiltered = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                kind: Some("rhythm".into()),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let unfiltered = recall_json(
+        &jojobot,
+        RecallArgs {
+            kind: Some("rhythm".into()),
+            ..of_nothing()
+        },
+    )
+    .await;
     assert!(
         unfiltered["objects"]
             .as_array()
@@ -951,18 +909,17 @@ async fn an_unreadable_schedule_sorts_first_and_carries_no_distance() {
         &[("advances_from", "due_date")],
     );
 
-    let found = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                kind: Some("rhythm".into()),
-                overdue: Some(OverdueArgs {
-                    as_of: Some("2026-09-01".into()),
-                }),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let found = recall_json(
+        &jojobot,
+        RecallArgs {
+            kind: Some("rhythm".into()),
+            overdue: Some(OverdueArgs {
+                as_of: Some("2026-09-01".into()),
+            }),
+            ..of_nothing()
+        },
+    )
+    .await;
     assert_eq!(
         handles(&found),
         vec!["rhythm:half-made".to_string(), "rhythm:descale".to_string()],
@@ -997,18 +954,17 @@ async fn recall_says_which_rhythms_have_gone_quiet_as_of_a_date() {
     a_rhythm(&jojobot, "descale", "7", "2026-08-01").await;
     a_rhythm(&jojobot, "deep-clean", "90", "2026-08-01").await;
 
-    let quiet = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                kind: Some("rhythm".into()),
-                overdue: Some(OverdueArgs {
-                    as_of: Some("2026-08-10".into()),
-                }),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let quiet = recall_json(
+        &jojobot,
+        RecallArgs {
+            kind: Some("rhythm".into()),
+            overdue: Some(OverdueArgs {
+                as_of: Some("2026-08-10".into()),
+            }),
+            ..of_nothing()
+        },
+    )
+    .await;
     assert_eq!(
         handles(&quiet),
         vec!["rhythm:descale".to_string()],
@@ -1021,18 +977,17 @@ async fn recall_says_which_rhythms_have_gone_quiet_as_of_a_date() {
 
     // The same store, a later day: the quarterly one has fallen due too.
     // Without this the case passes on a build that keeps whatever it likes.
-    let later = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                kind: Some("rhythm".into()),
-                overdue: Some(OverdueArgs {
-                    as_of: Some("2026-11-01".into()),
-                }),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let later = recall_json(
+        &jojobot,
+        RecallArgs {
+            kind: Some("rhythm".into()),
+            overdue: Some(OverdueArgs {
+                as_of: Some("2026-11-01".into()),
+            }),
+            ..of_nothing()
+        },
+    )
+    .await;
     assert_eq!(
         handles(&later),
         // Oldest due first: descale fell due on the eighth of August,
@@ -1047,15 +1002,14 @@ async fn recall_says_which_rhythms_have_gone_quiet_as_of_a_date() {
 
     // And the positive the filter rests on: without it the read is the
     // ordinary one and both come back whatever the date.
-    let all = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                kind: Some("rhythm".into()),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let all = recall_json(
+        &jojobot,
+        RecallArgs {
+            kind: Some("rhythm".into()),
+            ..of_nothing()
+        },
+    )
+    .await;
     assert_eq!(
         handles(&all).len(),
         2,
@@ -1079,18 +1033,17 @@ async fn the_overdue_filter_says_how_many_it_dropped() {
     a_rhythm(&jojobot, "descale", "7", "2026-08-01").await;
     a_rhythm(&jojobot, "deep-clean", "90", "2026-08-01").await;
 
-    let quiet = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                kind: Some("rhythm".into()),
-                overdue: Some(OverdueArgs {
-                    as_of: Some("2026-08-10".into()),
-                }),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let quiet = recall_json(
+        &jojobot,
+        RecallArgs {
+            kind: Some("rhythm".into()),
+            overdue: Some(OverdueArgs {
+                as_of: Some("2026-08-10".into()),
+            }),
+            ..of_nothing()
+        },
+    )
+    .await;
     assert_eq!(
         handles(&quiet),
         vec!["rhythm:descale".to_string()],
@@ -1103,15 +1056,14 @@ async fn the_overdue_filter_says_how_many_it_dropped() {
 
     // The positive the count rests on: a read that asked no overdue
     // question carries none, not a zero — there was no filter to report on.
-    let all = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                kind: Some("rhythm".into()),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let all = recall_json(
+        &jojobot,
+        RecallArgs {
+            kind: Some("rhythm".into()),
+            ..of_nothing()
+        },
+    )
+    .await;
     assert_eq!(
         all["overdue_excluded"],
         serde_json::Value::Null,
@@ -1135,15 +1087,14 @@ async fn a_browse_with_no_handle_named_excludes_what_is_archived() {
         .await
         .expect("archive_entity ok");
 
-    let body = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                kind: Some("person".into()),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let body = recall_json(
+        &jojobot,
+        RecallArgs {
+            kind: Some("person".into()),
+            ..of_nothing()
+        },
+    )
+    .await;
     let ids: Vec<&str> = body["objects"]
         .as_array()
         .expect("an answer carries objects")
@@ -1176,15 +1127,14 @@ async fn a_browse_with_no_handle_named_reports_how_many_archival_excluded() {
         .await
         .expect("archive_entity ok");
 
-    let body = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                kind: Some("person".into()),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let body = recall_json(
+        &jojobot,
+        RecallArgs {
+            kind: Some("person".into()),
+            ..of_nothing()
+        },
+    )
+    .await;
     assert_eq!(
         body["archived_excluded"], 1,
         "one archived person did not count against a kind browse: {body}",
@@ -1218,15 +1168,14 @@ async fn a_kind_browse_leaves_out_a_merged_away_entity_and_counts_it() {
         "the merge landed: {landed}"
     );
 
-    let body = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                kind: Some("person".into()),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let body = recall_json(
+        &jojobot,
+        RecallArgs {
+            kind: Some("person".into()),
+            ..of_nothing()
+        },
+    )
+    .await;
     let ids: Vec<&str> = body["objects"]
         .as_array()
         .expect("an answer carries objects")
@@ -1281,15 +1230,14 @@ async fn a_browse_that_holds_something_and_left_something_out_names_the_route() 
     );
     assert_eq!(landed["merged"], "person:homer", "{landed}");
 
-    let body = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                kind: Some("person".into()),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let body = recall_json(
+        &jojobot,
+        RecallArgs {
+            kind: Some("person".into()),
+            ..of_nothing()
+        },
+    )
+    .await;
     assert!(
         !body["objects"].as_array().expect("objects").is_empty(),
         "the case is about an answer that holds something: {body}"
@@ -1314,15 +1262,14 @@ async fn a_browse_that_holds_something_and_left_something_out_names_the_route() 
         .archive_entity(&EntityId("person:bart".into()), "a mistaken write", None)
         .await
         .expect("archive_entity ok");
-    let body = json_of(
-        &archived_only
-            .recall(Parameters(RecallArgs {
-                kind: Some("person".into()),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let body = recall_json(
+        &archived_only,
+        RecallArgs {
+            kind: Some("person".into()),
+            ..of_nothing()
+        },
+    )
+    .await;
     let note = body["excluded_note"].as_str().expect("a note");
     assert!(
         note.contains("recall") && !note.contains("merged_into"),
@@ -1334,15 +1281,14 @@ async fn a_browse_that_holds_something_and_left_something_out_names_the_route() 
     for handle in ["person:bart", "person:milhouse"] {
         ensure(&whole, handle).await;
     }
-    let body = json_of(
-        &whole
-            .recall(Parameters(RecallArgs {
-                kind: Some("person".into()),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let body = recall_json(
+        &whole,
+        RecallArgs {
+            kind: Some("person".into()),
+            ..of_nothing()
+        },
+    )
+    .await;
     assert!(
         body.get("excluded_note").is_none(),
         "an answer that left nothing out carries a note: {body}"
@@ -1364,15 +1310,14 @@ async fn a_direct_handle_on_an_archived_entity_reports_nothing_excluded() {
         .await
         .expect("archive_entity ok");
 
-    let body = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                subject: Some("person:bart".into()),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let body = recall_json(
+        &jojobot,
+        RecallArgs {
+            subject: Some("person:bart".into()),
+            ..of_nothing()
+        },
+    )
+    .await;
     assert_eq!(
         body["archived_excluded"], 0,
         "a direct-handle read excluded nothing, so it should count nothing: {body}",
@@ -1421,19 +1366,18 @@ async fn one_loop_falls_due_in_one_zone_and_not_yet_in_the_other() {
     a_rhythm(&jojobot, "descale", "1", &counts_from.to_string()).await;
 
     let overdue_for = async |sid: String| {
-        let body = json_of(
-            &jojobot
-                .recall(Parameters(RecallArgs {
-                    kind: Some("rhythm".into()),
-                    sid: Some(sid),
-                    // No `as_of`: the whole point is which day the RUN
-                    // thinks it is.
-                    overdue: Some(OverdueArgs { as_of: None }),
-                    ..of_nothing()
-                }))
-                .await
-                .expect("recall ok"),
-        );
+        let body = recall_json(
+            &jojobot,
+            RecallArgs {
+                kind: Some("rhythm".into()),
+                sid: Some(sid),
+                // No `as_of`: the whole point is which day the RUN
+                // thinks it is.
+                overdue: Some(OverdueArgs { as_of: None }),
+                ..of_nothing()
+            },
+        )
+        .await;
         (handles(&body), body)
     };
 
@@ -1484,18 +1428,17 @@ async fn a_rhythm_with_half_a_schedule_is_overdue_rather_than_invisible() {
 
     // A date before the whole loop is due: the only reason the half-made
     // one is here is that nothing can say when it falls due.
-    let quiet = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                kind: Some("rhythm".into()),
-                overdue: Some(OverdueArgs {
-                    as_of: Some("2026-08-02".into()),
-                }),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let quiet = recall_json(
+        &jojobot,
+        RecallArgs {
+            kind: Some("rhythm".into()),
+            overdue: Some(OverdueArgs {
+                as_of: Some("2026-08-02".into()),
+            }),
+            ..of_nothing()
+        },
+    )
+    .await;
     assert_eq!(
         handles(&quiet),
         vec!["rhythm:half-made".to_string()],
@@ -1535,15 +1478,14 @@ async fn recall_answers_with_the_writes_behind_a_key_when_asked() {
         .await;
     }
 
-    let asked = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                history: Some("donuts_eaten".into()),
-                ..of("alpha")
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let asked = recall_json(
+        &jojobot,
+        RecallArgs {
+            history: Some("donuts_eaten".into()),
+            ..of("alpha")
+        },
+    )
+    .await;
     let history = &asked["objects"][0]["history"];
     assert_eq!(history["key"], "donuts_eaten");
     assert_eq!(
@@ -1566,12 +1508,7 @@ async fn recall_answers_with_the_writes_behind_a_key_when_asked() {
     );
     assert_eq!(history["writes"][2]["record"], "person:alpha#f3");
 
-    let plain = json_of(
-        &jojobot
-            .recall(Parameters(of("alpha")))
-            .await
-            .expect("recall ok"),
-    );
+    let plain = recall_json(&jojobot, of("alpha")).await;
     assert!(
         plain["objects"][0].get("history").is_none(),
         "a call that asked for no key is not charged for one: {plain}"
@@ -1603,15 +1540,14 @@ async fn recall_answers_with_the_folded_row_and_names_what_it_left_out() {
         .await;
     }
 
-    let dense = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                facts: Some(false),
-                ..of("thing:gravel-bike")
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let dense = recall_json(
+        &jojobot,
+        RecallArgs {
+            facts: Some(false),
+            ..of("thing:gravel-bike")
+        },
+    )
+    .await;
     let object = &dense["objects"][0];
     assert_eq!(
         object["fields"],
@@ -1633,15 +1569,14 @@ async fn recall_answers_with_the_folded_row_and_names_what_it_left_out() {
     // The other half: asked for, they come back — with the addresses that
     // make them editable, which is what a caller loses if the dense read
     // is the only one.
-    let whole = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                facts: Some(true),
-                ..of("thing:gravel-bike")
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let whole = recall_json(
+        &jojobot,
+        RecallArgs {
+            facts: Some(true),
+            ..of("thing:gravel-bike")
+        },
+    )
+    .await;
     let object = &whole["objects"][0];
     assert_eq!(
         object["facts"].as_array().map(Vec::len),
@@ -1680,15 +1615,14 @@ async fn recall_folds_a_shapes_sources_out_of_the_facts_listing() {
         .await
         .expect("update ok");
 
-    let folded = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                facts: Some(true),
-                ..of("person:alpha")
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let folded = recall_json(
+        &jojobot,
+        RecallArgs {
+            facts: Some(true),
+            ..of("person:alpha")
+        },
+    )
+    .await;
     let facts = folded["objects"][0]["facts"].as_array().expect("facts");
     assert!(
         facts.iter().any(|f| f["address"] == shape_address),
@@ -1707,16 +1641,15 @@ async fn recall_folds_a_shapes_sources_out_of_the_facts_listing() {
     );
 
     // The other argument: asking for the sources back serves both.
-    let whole = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                facts: Some(true),
-                stood_for: Some(true),
-                ..of("person:alpha")
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let whole = recall_json(
+        &jojobot,
+        RecallArgs {
+            facts: Some(true),
+            stood_for: Some(true),
+            ..of("person:alpha")
+        },
+    )
+    .await;
     let facts = whole["objects"][0]["facts"].as_array().expect("facts");
     assert!(
         facts.iter().any(|f| f["address"] == source_address),
@@ -1751,15 +1684,14 @@ async fn a_plain_recall_ships_the_fields_and_not_the_records() {
     )
     .await;
 
-    let plain = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                subject: Some("thing:gravel-bike".into()),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let plain = recall_json(
+        &jojobot,
+        RecallArgs {
+            subject: Some("thing:gravel-bike".into()),
+            ..of_nothing()
+        },
+    )
+    .await;
     let object = &plain["objects"][0];
     assert_eq!(
         object["fields"],
@@ -1802,16 +1734,15 @@ async fn a_long_history_is_capped_on_the_wire_and_says_what_it_left_out() {
         .await;
     }
 
-    let capped = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                history: Some("donuts_eaten".into()),
-                facts: Some(false),
-                ..of("alpha")
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let capped = recall_json(
+        &jojobot,
+        RecallArgs {
+            history: Some("donuts_eaten".into()),
+            facts: Some(false),
+            ..of("alpha")
+        },
+    )
+    .await;
     let history = &capped["objects"][0]["history"];
     assert_eq!(
         history["count"], written,
@@ -1841,17 +1772,16 @@ async fn a_long_history_is_capped_on_the_wire_and_says_what_it_left_out() {
 
     // Raising the window is that way, and it works — the whole history,
     // and no note, because nothing was left out.
-    let whole = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                history: Some("donuts_eaten".into()),
-                history_most: Some(written as u32),
-                facts: Some(false),
-                ..of("alpha")
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let whole = recall_json(
+        &jojobot,
+        RecallArgs {
+            history: Some("donuts_eaten".into()),
+            history_most: Some(written as u32),
+            facts: Some(false),
+            ..of("alpha")
+        },
+    )
+    .await;
     let history = &whole["objects"][0]["history"];
     assert_eq!(history["writes"].as_array().map(Vec::len), Some(written));
     assert_eq!(history["writes"][0]["value"], "1");
@@ -1888,16 +1818,15 @@ async fn recall_answers_with_the_writes_behind_a_record_when_asked() {
         .await
         .expect("update ok");
 
-    let asked = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                history_record: Some("person:alpha#f1".into()),
-                facts: Some(false),
-                ..of("alpha")
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let asked = recall_json(
+        &jojobot,
+        RecallArgs {
+            history_record: Some("person:alpha#f1".into()),
+            facts: Some(false),
+            ..of("alpha")
+        },
+    )
+    .await;
     let chain = &asked["objects"][0]["record_history"];
     assert_eq!(chain["record"], "person:alpha#f1");
     assert_eq!(
@@ -1941,16 +1870,15 @@ async fn recall_answers_with_the_writes_behind_a_record_when_asked() {
 
     // **A claim nobody corrected has one write.** Asked of the second
     // record, on the same object, through the same call.
-    let untouched = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                history_record: Some("person:alpha#f2".into()),
-                facts: Some(false),
-                ..of("alpha")
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let untouched = recall_json(
+        &jojobot,
+        RecallArgs {
+            history_record: Some("person:alpha#f2".into()),
+            facts: Some(false),
+            ..of("alpha")
+        },
+    )
+    .await;
     let alone = &untouched["objects"][0]["record_history"];
     assert_eq!(
         alone["count"], 1,
@@ -1958,12 +1886,7 @@ async fn recall_answers_with_the_writes_behind_a_record_when_asked() {
     );
     assert_eq!(alone["writes"][0]["content"], "rides to work");
 
-    let plain = json_of(
-        &jojobot
-            .recall(Parameters(of("alpha")))
-            .await
-            .expect("recall ok"),
-    );
+    let plain = recall_json(&jojobot, of("alpha")).await;
     assert!(
         plain["objects"][0].get("record_history").is_none(),
         "a call that asked for no record is not charged for one: {plain}"
@@ -2044,17 +1967,16 @@ async fn recall_answers_with_the_writes_behind_a_thing_when_its_handle_is_the_hi
         .expect("rename ok");
 
     // Asked by the handle it wears now; the thing was made as person:teddy.
-    let asked = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                history_record: Some("person:lisa".into()),
-                facts: Some(false),
-                subject: None,
-                ..of("person:lisa")
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let asked = recall_json(
+        &jojobot,
+        RecallArgs {
+            history_record: Some("person:lisa".into()),
+            facts: Some(false),
+            subject: None,
+            ..of("person:lisa")
+        },
+    )
+    .await;
     let chain = &asked["objects"][0]["entity_history"];
     assert_eq!(chain["entity"], "person:lisa");
     assert_eq!(chain["count"], 5, "one version per write: {chain}");
@@ -2091,33 +2013,31 @@ async fn recall_answers_with_the_writes_behind_a_thing_when_its_handle_is_the_hi
     );
 
     // **A window cuts from the old end and says so.**
-    let cut = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                history_record: Some("person:lisa".into()),
-                history_most: Some(2),
-                facts: Some(false),
-                subject: None,
-                ..of("person:lisa")
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let cut = recall_json(
+        &jojobot,
+        RecallArgs {
+            history_record: Some("person:lisa".into()),
+            history_most: Some(2),
+            facts: Some(false),
+            subject: None,
+            ..of("person:lisa")
+        },
+    )
+    .await;
     let newest = &cut["objects"][0]["entity_history"];
     assert_eq!(newest["shown"], 2);
     assert_eq!(newest["versions"][0]["nth"], 4, "the newest two: {newest}");
     assert!(newest["older"].is_string(), "a cut says so: {newest}");
 
     // **A subject beside the handle has to be the same thing.**
-    let refused = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                history_record: Some("person:lisa".into()),
-                ..of("person:alpha")
-            }))
-            .await
-            .expect("recall answers"),
-    );
+    let refused = recall_json(
+        &jojobot,
+        RecallArgs {
+            history_record: Some("person:lisa".into()),
+            ..of("person:alpha")
+        },
+    )
+    .await;
     assert!(
         refused
             .to_string()
@@ -2125,12 +2045,7 @@ async fn recall_answers_with_the_writes_behind_a_thing_when_its_handle_is_the_hi
         "two arguments pointing at two things is refused: {refused}"
     );
 
-    let plain = json_of(
-        &jojobot
-            .recall(Parameters(of("person:lisa")))
-            .await
-            .expect("recall ok"),
-    );
+    let plain = recall_json(&jojobot, of("person:lisa")).await;
     assert!(
         plain["objects"][0].get("entity_history").is_none(),
         "a call that asked for no history is not charged for one: {plain}"
@@ -2159,12 +2074,7 @@ async fn an_ordinary_read_says_a_claim_was_written_more_than_once() {
         .await
         .expect("update ok");
 
-    let read = json_of(
-        &jojobot
-            .recall(Parameters(of("alpha")))
-            .await
-            .expect("recall ok"),
-    );
+    let read = recall_json(&jojobot, of("alpha")).await;
     let facts = read["objects"][0]["facts"].as_array().expect("a list");
     let corrected = facts
         .iter()
@@ -2209,15 +2119,14 @@ async fn built_on_alone_is_selection_enough_and_returns_the_derived_claims() {
     )
     .await;
 
-    let alone = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                built_on: Some(source.clone()),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let alone = recall_json(
+        &jojobot,
+        RecallArgs {
+            built_on: Some(source.clone()),
+            ..of_nothing()
+        },
+    )
+    .await;
     assert_eq!(
         alone["objects"][0]["id"], "person:alpha",
         "the address names its own subject and the read did not use it: {alone}"
@@ -2246,16 +2155,15 @@ async fn built_on_with_a_matching_subject_gives_the_same_answer() {
     )
     .await;
 
-    let named = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                subject: Some("alpha".into()),
-                built_on: Some(source.clone()),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let named = recall_json(
+        &jojobot,
+        RecallArgs {
+            subject: Some("alpha".into()),
+            built_on: Some(source.clone()),
+            ..of_nothing()
+        },
+    )
+    .await;
     assert_eq!(named["built_on"]["count"], 1, "{named}");
     assert!(
         named["built_on"]["claims"][0]["content"] == "built on the source claim",
@@ -2358,15 +2266,14 @@ async fn a_traced_record_is_selection_enough_and_a_contradicting_subject_is_refu
     ensure(&jojobot, "person:beta").await;
 
     // **The address alone.** No subject, no kind, no filter.
-    let alone = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                history_record: Some("person:alpha#f1".into()),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let alone = recall_json(
+        &jojobot,
+        RecallArgs {
+            history_record: Some("person:alpha#f1".into()),
+            ..of_nothing()
+        },
+    )
+    .await;
     assert_eq!(
         alone["objects"][0]["id"], "person:alpha",
         "the address names its own subject and the read did not use it: {alone}"
@@ -2414,17 +2321,16 @@ async fn a_traced_record_the_call_never_selected_is_said_rather_than_missing() {
     // the two arguments point at different things — where a KIND is a
     // legitimate question whose answer simply does not include the record's
     // home.
-    let elsewhere = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                kind: Some("org".into()),
-                history_record: Some("person:alpha#f1".into()),
-                facts: Some(false),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let elsewhere = recall_json(
+        &jojobot,
+        RecallArgs {
+            kind: Some("org".into()),
+            history_record: Some("person:alpha#f1".into()),
+            facts: Some(false),
+            ..of_nothing()
+        },
+    )
+    .await;
     let said = elsewhere["record_history_unreached"]
         .as_str()
         .unwrap_or_else(|| panic!("the answer says the record was not reached: {elsewhere}"));
@@ -2439,16 +2345,15 @@ async fn a_traced_record_the_call_never_selected_is_said_rather_than_missing() {
         "the sentence does not read as one: {said:?}"
     );
 
-    let reached = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                history_record: Some("person:alpha#f1".into()),
-                facts: Some(false),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let reached = recall_json(
+        &jojobot,
+        RecallArgs {
+            history_record: Some("person:alpha#f1".into()),
+            facts: Some(false),
+            ..of_nothing()
+        },
+    )
+    .await;
     assert!(
         reached["record_history_unreached"].is_null(),
         "a chain that came back carries no marker saying it did not: {reached}"
@@ -2490,12 +2395,7 @@ async fn recall_returns_addresses_that_update_fact_accepts() {
     let jojobot = handler();
     capture_ok(&jojobot, capture_args("alpha", "works at the old place")).await;
 
-    let body = json_of(
-        &jojobot
-            .recall(Parameters(of("alpha")))
-            .await
-            .expect("recall ok"),
-    );
+    let body = recall_json(&jojobot, of("alpha")).await;
     let address = body["objects"][0]["facts"][0]["address"]
         .as_str()
         .expect("every fact carries an address");
@@ -2517,15 +2417,14 @@ async fn recall_returns_addresses_that_update_fact_accepts() {
     // through the verb that reads, since the edit answers with a receipt.
     assert_eq!(updated["address"], "person:alpha#f1");
     assert_eq!(updated["content_elided"], true, "{updated}");
-    let read = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                details: Some(true),
-                ..recall_args("person:alpha")
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let read = recall_json(
+        &jojobot,
+        RecallArgs {
+            details: Some(true),
+            ..recall_args("person:alpha")
+        },
+    )
+    .await;
     let claim = &read["objects"][0]["facts"][0];
     assert_eq!(claim["content"], "works at the new place", "{read}");
     assert_eq!(claim["details"], "changed jobs in July", "{read}");
@@ -2556,12 +2455,7 @@ async fn recall_of_an_unknown_entity_is_a_miss_with_candidates() {
         "the near candidate surfaces: {missed}"
     );
 
-    let body = json_of(
-        &jojobot
-            .recall(Parameters(of("person:zenith")))
-            .await
-            .expect("an existing entity's empty page still reads"),
-    );
+    let body = recall_json(&jojobot, of("person:zenith")).await;
     assert_eq!(
         body["objects"][0]["facts"]
             .as_array()
@@ -2592,12 +2486,7 @@ async fn recall_returns_the_edge_a_fact_draws() {
     )
     .await;
 
-    let body = json_of(
-        &jojobot
-            .recall(Parameters(of("alpha")))
-            .await
-            .expect("recall ok"),
-    );
+    let body = recall_json(&jojobot, of("alpha")).await;
     let edged = body["objects"][0]["facts"]
         .as_array()
         .expect("recall returns a list")
@@ -2631,12 +2520,7 @@ async fn a_walk_takes_either_word_for_a_shape_and_refuses_a_third() {
     )
     .await;
 
-    let read = json_of(
-        &jojobot
-            .recall(Parameters(of("milhouse")))
-            .await
-            .expect("recall ok"),
-    );
+    let read = recall_json(&jojobot, of("milhouse")).await;
     assert_eq!(
         read["objects"][0]["facts"][0]["edge"]["type"], "connection",
         "reads serve the writable shape: {read}"
@@ -2652,12 +2536,7 @@ async fn a_walk_takes_either_word_for_a_shape_and_refuses_a_third() {
         ..of_nothing()
     };
     for word in ["connection", "relatedTo"] {
-        let walked = json_of(
-            &jojobot
-                .recall(Parameters(walk(word)))
-                .await
-                .expect("recall ok"),
-        );
+        let walked = recall_json(&jojobot, walk(word)).await;
         assert_eq!(
             walked["objects"][0]["connected"][0]["id"], "person:nelson",
             "following with {word} reaches the edge: {walked}"
@@ -2707,13 +2586,8 @@ async fn a_kind_comes_back_with_each_objects_prose() {
         facts: Some(false),
         ..of_nothing()
     };
-    let body = json_of(&jojobot.recall(Parameters(asked)).await.expect("recall ok"));
-    let gamma = body["objects"]
-        .as_array()
-        .expect("a list of objects")
-        .iter()
-        .find(|o| o["id"] == "bot:gamma")
-        .unwrap_or_else(|| panic!("the bot must be in a query for its kind: {body}"));
+    let body = recall_json(&jojobot, asked).await;
+    let gamma = listed_object(&body, "bot:gamma");
     assert_eq!(
         gamma["prose"], charter,
         "the page comes back whole: {gamma}"
@@ -2723,15 +2597,14 @@ async fn a_kind_comes_back_with_each_objects_prose() {
         "facts were declined, so the key is absent: {gamma}"
     );
 
-    let unasked = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                kind: Some("bot".into()),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let unasked = recall_json(
+        &jojobot,
+        RecallArgs {
+            kind: Some("bot".into()),
+            ..of_nothing()
+        },
+    )
+    .await;
     assert!(
         unasked["objects"][0].get("prose").is_none(),
         "prose nobody asked for is absent rather than empty: {unasked}"
@@ -2795,18 +2668,17 @@ async fn a_type_only_overdue_read_routes_through_search_and_a_kind_scoped_one_ne
         answers: None,
     }]));
     let routed = handler_on(memory.clone(), spy.clone());
-    let found = json_of(
-        &routed
-            .recall(Parameters(RecallArgs {
-                answers_type: Some("runs-out".into()),
-                overdue: Some(OverdueArgs {
-                    as_of: Some("2026-06-01".into()),
-                }),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let found = recall_json(
+        &routed,
+        RecallArgs {
+            answers_type: Some("runs-out".into()),
+            overdue: Some(OverdueArgs {
+                as_of: Some("2026-06-01".into()),
+            }),
+            ..of_nothing()
+        },
+    )
+    .await;
     assert_eq!(
         found["objects"][0]["id"], "thing:battery",
         "the routed read did not find what its own search port handed it: {found}",
@@ -2830,19 +2702,18 @@ async fn a_type_only_overdue_read_routes_through_search_and_a_kind_scoped_one_ne
     // "runs-out" is already a declared type here.
     let guarded = Arc::new(SpySearch::default());
     let kind_and_type = handler_on(memory, guarded.clone());
-    let _ = json_of(
-        &kind_and_type
-            .recall(Parameters(RecallArgs {
-                kind: Some("thing".into()),
-                answers_type: Some("runs-out".into()),
-                overdue: Some(OverdueArgs {
-                    as_of: Some("2026-06-01".into()),
-                }),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let _ = recall_json(
+        &kind_and_type,
+        RecallArgs {
+            kind: Some("thing".into()),
+            answers_type: Some("runs-out".into()),
+            overdue: Some(OverdueArgs {
+                as_of: Some("2026-06-01".into()),
+            }),
+            ..of_nothing()
+        },
+    )
+    .await;
     assert!(
         !guarded.reached(),
         "a query naming both a kind and a type reached the search port anyway",
@@ -2858,18 +2729,17 @@ async fn a_type_only_overdue_read_routes_through_search_and_a_kind_scoped_one_ne
     a_rhythm(&rhythm_setup, "descale", "7", "2026-01-01").await;
     let untouched = Arc::new(SpySearch::default());
     let kind_scoped = handler_on(rhythm_memory, untouched.clone());
-    let overdue = json_of(
-        &kind_scoped
-            .recall(Parameters(RecallArgs {
-                kind: Some("rhythm".into()),
-                overdue: Some(OverdueArgs {
-                    as_of: Some("2026-06-01".into()),
-                }),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let overdue = recall_json(
+        &kind_scoped,
+        RecallArgs {
+            kind: Some("rhythm".into()),
+            overdue: Some(OverdueArgs {
+                as_of: Some("2026-06-01".into()),
+            }),
+            ..of_nothing()
+        },
+    )
+    .await;
     assert_eq!(
         handles(&overdue),
         vec!["rhythm:descale".to_string()],
@@ -2937,15 +2807,14 @@ async fn a_type_only_recall_says_when_it_hit_its_own_candidate_ceiling() {
         .take(CARRIER_CANDIDATES_LIMIT)
         .collect();
     let capped_reader = handler_on(memory.clone(), Arc::new(SpySearch::answering(at_ceiling)));
-    let capped = json_of(
-        &capped_reader
-            .recall(Parameters(RecallArgs {
-                answers_type: Some("runs-out".into()),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let capped = recall_json(
+        &capped_reader,
+        RecallArgs {
+            answers_type: Some("runs-out".into()),
+            ..of_nothing()
+        },
+    )
+    .await;
     assert_eq!(
         capped["candidates_capped"], true,
         "a search answer sitting exactly at the ceiling was not reported as capped: {capped}"
@@ -2955,15 +2824,14 @@ async fn a_type_only_recall_says_when_it_hit_its_own_candidate_ceiling() {
         .take(CARRIER_CANDIDATES_LIMIT - 1)
         .collect();
     let plain_reader = handler_on(memory, Arc::new(SpySearch::answering(under_ceiling)));
-    let plain = json_of(
-        &plain_reader
-            .recall(Parameters(RecallArgs {
-                answers_type: Some("runs-out".into()),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let plain = recall_json(
+        &plain_reader,
+        RecallArgs {
+            answers_type: Some("runs-out".into()),
+            ..of_nothing()
+        },
+    )
+    .await;
     assert_eq!(
         plain["candidates_capped"], false,
         "an answer one short of the ceiling was reported as capped anyway: {plain}"
@@ -3031,16 +2899,15 @@ async fn a_narrowed_key_reports_the_set_it_wanted() {
         }])),
     );
 
-    let body = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                answers_type: Some("shift".into()),
-                facts: Some(false),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let body = recall_json(
+        &jojobot,
+        RecallArgs {
+            answers_type: Some("shift".into()),
+            facts: Some(false),
+            ..of_nothing()
+        },
+    )
+    .await;
     let mistyped = &body["objects"][0]["answers"]["mistyped"][0];
     let declared = mistyped["declared"]
         .as_str()
@@ -3092,16 +2959,15 @@ async fn a_charter_reads_whole_without_booting_as_the_bot_it_belongs_to() {
         .await
         .expect("set_charter ok");
 
-    let body = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                charter: Some(true),
-                facts: Some(false),
-                ..of("bot:assistant")
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let body = recall_json(
+        &jojobot,
+        RecallArgs {
+            charter: Some(true),
+            facts: Some(false),
+            ..of("bot:assistant")
+        },
+    )
+    .await;
     let read = body["objects"][0]["charter"]
         .as_str()
         .unwrap_or_else(|| panic!("the charter comes back: {body}"))
@@ -3126,16 +2992,15 @@ async fn a_charter_reads_whole_without_booting_as_the_bot_it_belongs_to() {
 
     // **And the reader who asked for the page is told what is missing from
     // it**, since a fraction of a charter reads exactly like all of one.
-    let page = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                prose: Some(true),
-                facts: Some(false),
-                ..of("bot:assistant")
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let page = recall_json(
+        &jojobot,
+        RecallArgs {
+            prose: Some(true),
+            facts: Some(false),
+            ..of("bot:assistant")
+        },
+    )
+    .await;
     assert_eq!(
         page["objects"][0]["prose"], own,
         "the page is what the store holds, unchanged: {page}",
@@ -3168,15 +3033,14 @@ async fn a_bot_recalled_without_charter_says_so_and_names_the_way_back() {
         .await
         .expect("set_charter ok");
 
-    let body = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                facts: Some(false),
-                ..of("bot:gamma")
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let body = recall_json(
+        &jojobot,
+        RecallArgs {
+            facts: Some(false),
+            ..of("bot:gamma")
+        },
+    )
+    .await;
     let object = &body["objects"][0];
     assert!(
         object["charter"].is_null(),
@@ -3208,15 +3072,14 @@ async fn a_bot_with_no_charter_is_not_told_to_ask_again_for_one() {
     let jojobot = handler();
     make_bot(&jojobot, "gamma").await;
 
-    let body = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                facts: Some(false),
-                ..of("bot:gamma")
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let body = recall_json(
+        &jojobot,
+        RecallArgs {
+            facts: Some(false),
+            ..of("bot:gamma")
+        },
+    )
+    .await;
     let object = &body["objects"][0];
     assert!(
         object["charter"].is_null(),
@@ -3249,16 +3112,15 @@ async fn asking_for_the_charter_lifts_the_elision() {
         .await
         .expect("set_charter ok");
 
-    let body = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                charter: Some(true),
-                facts: Some(false),
-                ..of("bot:gamma")
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let body = recall_json(
+        &jojobot,
+        RecallArgs {
+            charter: Some(true),
+            facts: Some(false),
+            ..of("bot:gamma")
+        },
+    )
+    .await;
     let object = &body["objects"][0];
     assert_eq!(object["charter"], own, "{body}");
     assert_eq!(
@@ -3324,12 +3186,7 @@ async fn a_bot_selecting_view_answers_with_the_small_list_by_default() {
             .expect("set_charter ok");
     }
 
-    let body = json_of(
-        &jojobot
-            .recall(Parameters(by_view("colleagues")))
-            .await
-            .expect("recall ok"),
-    );
+    let body = recall_json(&jojobot, by_view("colleagues")).await;
     assert!(
         body["count"].as_u64().unwrap_or(0) >= 2,
         "both colleagues come back: {body}",
@@ -3365,21 +3222,15 @@ async fn a_bot_selecting_view_still_hands_over_a_charter_when_asked() {
         .await
         .expect("set_charter ok");
 
-    let body = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                charter: Some(true),
-                ..by_view("colleagues")
-            }))
-            .await
-            .expect("recall ok"),
-    );
-    let gamma = body["objects"]
-        .as_array()
-        .expect("objects is a list")
-        .iter()
-        .find(|o| o["id"] == "bot:gamma")
-        .unwrap_or_else(|| panic!("gamma is in the answer: {body}"));
+    let body = recall_json(
+        &jojobot,
+        RecallArgs {
+            charter: Some(true),
+            ..by_view("colleagues")
+        },
+    )
+    .await;
+    let gamma = listed_object(&body, "bot:gamma");
     assert_eq!(gamma["charter"], own, "{body}");
 }
 
@@ -3405,35 +3256,15 @@ async fn a_view_declaring_shows_facts_returns_the_claims_unasked() {
     )
     .await;
 
-    let shown = json_of(
-        &jojobot
-            .recall(Parameters(by_view("shows-facts")))
-            .await
-            .expect("recall ok"),
-    );
-    let gamma = shown["objects"]
-        .as_array()
-        .expect("objects is a list")
-        .iter()
-        .find(|o| o["id"] == "bot:gamma")
-        .unwrap_or_else(|| panic!("gamma is in the answer: {shown}"));
+    let shown = recall_json(&jojobot, by_view("shows-facts")).await;
+    let gamma = listed_object(&shown, "bot:gamma");
     assert_eq!(
         gamma["facts"][0]["content"], "gamma keeps the kitchen running",
         "the view's own shows: facts must be honoured without the caller asking: {shown}",
     );
 
-    let neither = json_of(
-        &jojobot
-            .recall(Parameters(by_view("shows-neither")))
-            .await
-            .expect("recall ok"),
-    );
-    let gamma = neither["objects"]
-        .as_array()
-        .expect("objects is a list")
-        .iter()
-        .find(|o| o["id"] == "bot:gamma")
-        .unwrap_or_else(|| panic!("gamma is in the answer: {neither}"));
+    let neither = recall_json(&jojobot, by_view("shows-neither")).await;
+    let gamma = listed_object(&neither, "bot:gamma");
     assert!(
         gamma.get("facts").is_none(),
         "a view declaring neither facts nor prose must ship neither: {neither}",
@@ -3464,35 +3295,15 @@ async fn a_view_declaring_shows_prose_returns_the_prose_unasked() {
         .await
         .expect("set_charter ok");
 
-    let shown = json_of(
-        &jojobot
-            .recall(Parameters(by_view("shows-prose")))
-            .await
-            .expect("recall ok"),
-    );
-    let gamma = shown["objects"]
-        .as_array()
-        .expect("objects is a list")
-        .iter()
-        .find(|o| o["id"] == "bot:gamma")
-        .unwrap_or_else(|| panic!("gamma is in the answer: {shown}"));
+    let shown = recall_json(&jojobot, by_view("shows-prose")).await;
+    let gamma = listed_object(&shown, "bot:gamma");
     assert_eq!(
         gamma["prose"], own,
         "the view's own shows: prose must be honoured without the caller asking: {shown}",
     );
 
-    let neither = json_of(
-        &jojobot
-            .recall(Parameters(by_view("prose-not-shown")))
-            .await
-            .expect("recall ok"),
-    );
-    let gamma = neither["objects"]
-        .as_array()
-        .expect("objects is a list")
-        .iter()
-        .find(|o| o["id"] == "bot:gamma")
-        .unwrap_or_else(|| panic!("gamma is in the answer: {neither}"));
+    let neither = recall_json(&jojobot, by_view("prose-not-shown")).await;
+    let gamma = listed_object(&neither, "bot:gamma");
     assert!(
         gamma.get("prose").is_none(),
         "a view declaring neither facts nor prose must ship neither: {neither}",
@@ -3524,35 +3335,15 @@ async fn a_view_declaring_shows_charter_returns_the_charter_unasked() {
         .await
         .expect("set_charter ok");
 
-    let shown = json_of(
-        &jojobot
-            .recall(Parameters(by_view("shows-charter")))
-            .await
-            .expect("recall ok"),
-    );
-    let gamma = shown["objects"]
-        .as_array()
-        .expect("objects is a list")
-        .iter()
-        .find(|o| o["id"] == "bot:gamma")
-        .unwrap_or_else(|| panic!("gamma is in the answer: {shown}"));
+    let shown = recall_json(&jojobot, by_view("shows-charter")).await;
+    let gamma = listed_object(&shown, "bot:gamma");
     assert_eq!(
         gamma["charter"], own,
         "the view's own shows: charter must be honoured without the caller asking: {shown}",
     );
 
-    let neither = json_of(
-        &jojobot
-            .recall(Parameters(by_view("charter-not-shown")))
-            .await
-            .expect("recall ok"),
-    );
-    let gamma = neither["objects"]
-        .as_array()
-        .expect("objects is a list")
-        .iter()
-        .find(|o| o["id"] == "bot:gamma")
-        .unwrap_or_else(|| panic!("gamma is in the answer: {neither}"));
+    let neither = recall_json(&jojobot, by_view("charter-not-shown")).await;
+    let gamma = listed_object(&neither, "bot:gamma");
     assert_eq!(
         gamma["charter_elided"], true,
         "a view declaring neither key must elide the charter: {neither}",
@@ -3633,12 +3424,7 @@ async fn a_view_carrying_a_filter_reaches_what_the_five_flags_alone_cannot() {
             .collect()
     };
 
-    let viewed = json_of(
-        &jojobot
-            .recall(Parameters(by_view("urgent-things")))
-            .await
-            .expect("recall ok"),
-    );
+    let viewed = recall_json(&jojobot, by_view("urgent-things")).await;
     let viewed_ids = ids(&viewed);
     assert!(
         viewed_ids.contains(&"thing:contract-view-filter-urgent".to_string()),
@@ -3649,16 +3435,15 @@ async fn a_view_carrying_a_filter_reaches_what_the_five_flags_alone_cannot() {
         "the view's own filter must exclude the non-matching thing: {viewed}",
     );
 
-    let bare = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                subject: None,
-                kind: Some("thing".into()),
-                ..of("unused")
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let bare = recall_json(
+        &jojobot,
+        RecallArgs {
+            subject: None,
+            kind: Some("thing".into()),
+            ..of("unused")
+        },
+    )
+    .await;
     let bare_ids = ids(&bare);
     assert!(
         bare_ids.contains(&"thing:contract-view-filter-routine".to_string()),
@@ -3696,20 +3481,19 @@ async fn a_callers_own_fields_still_override_the_views_filter() {
     )
     .await;
 
-    let body = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                fields: Some(vec![KeyFilterArgs {
-                    key: Some("priority".into()),
-                    value: Some("routine".into()),
-                    compare: None,
-                    scope: None,
-                }]),
-                ..by_view("urgent-things")
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let body = recall_json(
+        &jojobot,
+        RecallArgs {
+            fields: Some(vec![KeyFilterArgs {
+                key: Some("priority".into()),
+                value: Some("routine".into()),
+                compare: None,
+                scope: None,
+            }]),
+            ..by_view("urgent-things")
+        },
+    )
+    .await;
     let ids: Vec<String> = body["objects"]
         .as_array()
         .expect("objects is a list")
@@ -3797,12 +3581,7 @@ async fn a_view_naming_a_type_reaches_what_a_bare_kind_cannot() {
             })
             .collect()
     };
-    let viewed = json_of(
-        &jojobot
-            .recall(Parameters(by_view("marked-things")))
-            .await
-            .expect("recall ok"),
-    );
+    let viewed = recall_json(&jojobot, by_view("marked-things")).await;
     let viewed_ids = ids_of(&viewed);
     assert!(
         viewed_ids.contains(&"thing:contract-view-answers-marked".to_string()),
@@ -3813,16 +3592,15 @@ async fn a_view_naming_a_type_reaches_what_a_bare_kind_cannot() {
         "the view's own type must exclude the thing carrying none of its keys: {viewed}",
     );
 
-    let bare = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                subject: None,
-                kind: Some("thing".into()),
-                ..of("unused")
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let bare = recall_json(
+        &jojobot,
+        RecallArgs {
+            subject: None,
+            kind: Some("thing".into()),
+            ..of("unused")
+        },
+    )
+    .await;
     let bare_ids = ids_of(&bare);
     assert!(
         bare_ids.contains(&"thing:contract-view-second-thing".to_string()),
@@ -3882,15 +3660,14 @@ async fn a_view_naming_a_walk_reaches_the_neighbour_a_bare_selection_cannot() {
     )
     .await;
 
-    let body = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                subject: Some("person:contract-view-walk-owner".into()),
-                ..by_view("my-pets")
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let body = recall_json(
+        &jojobot,
+        RecallArgs {
+            subject: Some("person:contract-view-walk-owner".into()),
+            ..by_view("my-pets")
+        },
+    )
+    .await;
     let object = &body["objects"][0];
     let connected: Vec<&str> = object["connected"]
         .as_array()
@@ -3931,12 +3708,7 @@ async fn a_colleagues_one_liner_rides_in_the_small_list_and_absence_is_plain() {
     )
     .await;
 
-    let body = json_of(
-        &jojobot
-            .recall(Parameters(by_view("colleagues")))
-            .await
-            .expect("recall ok"),
-    );
+    let body = recall_json(&jojobot, by_view("colleagues")).await;
     let objects = body["objects"].as_array().expect("objects is a list");
     let gamma = objects
         .iter()
@@ -3979,12 +3751,7 @@ async fn the_shipped_colleagues_view_answers_with_the_small_list_by_default() {
         .await
         .expect("set_charter ok");
 
-    let body = json_of(
-        &jojobot
-            .recall(Parameters(by_view("colleagues")))
-            .await
-            .expect("recall ok"),
-    );
+    let body = recall_json(&jojobot, by_view("colleagues")).await;
     assert!(
         body["count"].as_u64().unwrap_or(0) >= 2,
         "the shipped view selects bots: {body}",
@@ -4036,25 +3803,24 @@ async fn a_value_selects_and_a_walk_nests() {
     .await;
     capture_ok(&jojobot, capture_args("ralph", "vegetarian")).await;
 
-    let selected = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                fields: Some(vec![KeyFilterArgs {
-                    key: Some("answer".into()),
-                    value: Some("yes".into()),
-                    compare: None,
-                    // The record that answered is what this half is about,
-                    // so it asks the question that is about records.
-                    scope: Some("record".into()),
-                }]),
-                // The claim that answered is what this case is about, so
-                // it asks for the records the fold is taken from.
-                facts: Some(true),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let selected = recall_json(
+        &jojobot,
+        RecallArgs {
+            fields: Some(vec![KeyFilterArgs {
+                key: Some("answer".into()),
+                value: Some("yes".into()),
+                compare: None,
+                // The record that answered is what this half is about,
+                // so it asks the question that is about records.
+                scope: Some("record".into()),
+            }]),
+            // The claim that answered is what this case is about, so
+            // it asks for the records the fold is taken from.
+            facts: Some(true),
+            ..of_nothing()
+        },
+    )
+    .await;
     assert_eq!(selected["objects"][0]["id"], "person:ralph", "{selected}");
     assert_eq!(
         selected["objects"][0]["facts"].as_array().map(Vec::len),
@@ -4062,26 +3828,25 @@ async fn a_value_selects_and_a_walk_nests() {
         "the object carries the record that answered, not its whole page: {selected}"
     );
 
-    let walked = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                subject: Some("event:birthday-party".into()),
-                follow: Some(FollowArgs {
-                    shape: Some("attendance".into()),
-                    relation: None,
-                    direction: Some("in".into()),
-                    depth: None,
-                    keeping: None,
-                    fits_type: None,
-                }),
-                // The claim a reached object carries is what the walk half
-                // asserts on, so this half asks for the records too.
-                facts: Some(true),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let walked = recall_json(
+        &jojobot,
+        RecallArgs {
+            subject: Some("event:birthday-party".into()),
+            follow: Some(FollowArgs {
+                shape: Some("attendance".into()),
+                relation: None,
+                direction: Some("in".into()),
+                depth: None,
+                keeping: None,
+                fits_type: None,
+            }),
+            // The claim a reached object carries is what the walk half
+            // asserts on, so this half asks for the records too.
+            facts: Some(true),
+            ..of_nothing()
+        },
+    )
+    .await;
     let guest = &walked["objects"][0]["connected"][0];
     assert_eq!(guest["id"], "person:ralph", "{walked}");
     assert_eq!(guest["via"]["direction"], "in", "{walked}");
@@ -4129,24 +3894,23 @@ async fn keys_narrow_every_objects_fields_and_the_answer_names_what_it_left_out(
     )
     .await;
 
-    let walked = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                subject: Some("event:birthday-party".into()),
-                follow: Some(FollowArgs {
-                    shape: Some("attendance".into()),
-                    relation: None,
-                    direction: Some("in".into()),
-                    depth: None,
-                    keeping: None,
-                    fits_type: None,
-                }),
-                keys: Some(vec!["nick".into(), "absent".into()]),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let walked = recall_json(
+        &jojobot,
+        RecallArgs {
+            subject: Some("event:birthday-party".into()),
+            follow: Some(FollowArgs {
+                shape: Some("attendance".into()),
+                relation: None,
+                direction: Some("in".into()),
+                depth: None,
+                keeping: None,
+                fits_type: None,
+            }),
+            keys: Some(vec!["nick".into(), "absent".into()]),
+            ..of_nothing()
+        },
+    )
+    .await;
     let guest = &walked["objects"][0]["connected"][0];
     assert_eq!(guest["id"], "person:ned-flanders", "{walked}");
     // The asked-for key is there, and only it: the walked object is narrowed
@@ -4175,15 +3939,14 @@ async fn keys_narrow_every_objects_fields_and_the_answer_names_what_it_left_out(
     );
 
     // And the same call without `keys` returns every key and no note.
-    let whole = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                subject: Some("person:ned-flanders".into()),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let whole = recall_json(
+        &jojobot,
+        RecallArgs {
+            subject: Some("person:ned-flanders".into()),
+            ..of_nothing()
+        },
+    )
+    .await;
     assert_eq!(whole["objects"][0]["fields"]["mood"], "calm", "{whole}");
     assert!(
         whole["objects"][0].get("fields_left_out").is_none(),
@@ -4289,23 +4052,22 @@ async fn a_wide_inbound_fan_in_is_capped_and_names_what_it_left_out() {
         .await;
     }
 
-    let walked = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                subject: Some("place:leftorium".into()),
-                follow: Some(FollowArgs {
-                    shape: Some("about".into()),
-                    relation: None,
-                    direction: Some("in".into()),
-                    depth: None,
-                    keeping: None,
-                    fits_type: None,
-                }),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let walked = recall_json(
+        &jojobot,
+        RecallArgs {
+            subject: Some("place:leftorium".into()),
+            follow: Some(FollowArgs {
+                shape: Some("about".into()),
+                relation: None,
+                direction: Some("in".into()),
+                depth: None,
+                keeping: None,
+                fits_type: None,
+            }),
+            ..of_nothing()
+        },
+    )
+    .await;
     let root = &walked["objects"][0];
     let connected = root["connected"]
         .as_array()
@@ -4360,16 +4122,15 @@ async fn a_record_scoped_filter_says_what_it_left_out() {
     .await;
     capture_ok(&jojobot, capture_args("ralph", "vegetarian")).await;
 
-    let unscoped = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                subject: Some("person:ralph".into()),
-                facts: Some(true),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let unscoped = recall_json(
+        &jojobot,
+        RecallArgs {
+            subject: Some("person:ralph".into()),
+            facts: Some(true),
+            ..of_nothing()
+        },
+    )
+    .await;
     assert_eq!(
         unscoped["objects"][0]["facts"].as_array().map(Vec::len),
         Some(2),
@@ -4380,22 +4141,21 @@ async fn a_record_scoped_filter_says_what_it_left_out() {
         "nothing was left out, so there is nothing to name: {unscoped}"
     );
 
-    let scoped = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                subject: Some("person:ralph".into()),
-                fields: Some(vec![KeyFilterArgs {
-                    key: Some("answer".into()),
-                    value: Some("yes".into()),
-                    compare: None,
-                    scope: Some("record".into()),
-                }]),
-                facts: Some(true),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let scoped = recall_json(
+        &jojobot,
+        RecallArgs {
+            subject: Some("person:ralph".into()),
+            fields: Some(vec![KeyFilterArgs {
+                key: Some("answer".into()),
+                value: Some("yes".into()),
+                compare: None,
+                scope: Some("record".into()),
+            }]),
+            facts: Some(true),
+            ..of_nothing()
+        },
+    )
+    .await;
     assert_eq!(
         scoped["objects"][0]["facts"].as_array().map(Vec::len),
         Some(1),
@@ -4450,12 +4210,7 @@ async fn an_empty_thing_scoped_key_filter_says_a_claims_own_field_needs_record_s
         ..of_nothing()
     };
 
-    let asked = json_of(
-        &jojobot
-            .recall(Parameters(filter("mood", "happy", None)))
-            .await
-            .expect("recall ok"),
-    );
+    let asked = recall_json(&jojobot, filter("mood", "happy", None)).await;
     assert_eq!(asked["count"], 0, "{asked}");
     let note = asked["scope_note"]
         .as_str()
@@ -4466,30 +4221,15 @@ async fn an_empty_thing_scoped_key_filter_says_a_claims_own_field_needs_record_s
     );
 
     // The record scope finds the claim and has nothing to add.
-    let found = json_of(
-        &jojobot
-            .recall(Parameters(filter("mood", "happy", Some("record"))))
-            .await
-            .expect("recall ok"),
-    );
+    let found = recall_json(&jojobot, filter("mood", "happy", Some("record"))).await;
     assert_eq!(found["count"], 1, "{found}");
     assert!(found.get("scope_note").is_none(), "{found}");
     // A thing-scope filter that selects something has nothing to add either.
-    let held = json_of(
-        &jojobot
-            .recall(Parameters(filter("hat", "red", None)))
-            .await
-            .expect("recall ok"),
-    );
+    let held = recall_json(&jojobot, filter("hat", "red", None)).await;
     assert_eq!(held["count"], 1, "{held}");
     assert!(held.get("scope_note").is_none(), "{held}");
     // …and an empty record-scope answer is not told to use the scope it used.
-    let none = json_of(
-        &jojobot
-            .recall(Parameters(filter("mood", "sad", Some("record"))))
-            .await
-            .expect("recall ok"),
-    );
+    let none = recall_json(&jojobot, filter("mood", "sad", Some("record"))).await;
     assert_eq!(none["count"], 0, "{none}");
     assert!(none.get("scope_note").is_none(), "{none}");
 }
@@ -4570,16 +4310,15 @@ async fn a_type_query_reaches_a_record_written_with_no_label() {
         }])),
     );
 
-    let found = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                answers_type: Some("service".into()),
-                facts: Some(true),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let found = recall_json(
+        &jojobot,
+        RecallArgs {
+            answers_type: Some("service".into()),
+            facts: Some(true),
+            ..of_nothing()
+        },
+    )
+    .await;
     assert_eq!(
         found["objects"][0]["id"], "person:alpha",
         "the record answers the type by its key: {found}"
@@ -4656,21 +4395,20 @@ async fn a_relation_is_walkable_and_a_walk_can_filter_what_it_reaches() {
         .await;
     }
 
-    let has_many = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                subject: Some("person:bart".into()),
-                facts: Some(false),
-                follow: Some(FollowArgs {
-                    relation: Some("owner".into()),
-                    direction: Some("in".into()),
-                    ..no_follow()
-                }),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let has_many = recall_json(
+        &jojobot,
+        RecallArgs {
+            subject: Some("person:bart".into()),
+            facts: Some(false),
+            follow: Some(FollowArgs {
+                relation: Some("owner".into()),
+                direction: Some("in".into()),
+                ..no_follow()
+            }),
+            ..of_nothing()
+        },
+    )
+    .await;
     let reached: Vec<&str> = has_many["objects"][0]["connected"]
         .as_array()
         .expect("the pets hang off the owner")
@@ -4687,27 +4425,26 @@ async fn a_relation_is_walkable_and_a_walk_can_filter_what_it_reaches() {
         "and a reached object says which relation carried it: {has_many}"
     );
 
-    let older = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                subject: Some("person:bart".into()),
-                facts: Some(false),
-                follow: Some(FollowArgs {
-                    relation: Some("owner".into()),
-                    direction: Some("in".into()),
-                    keeping: Some(Keeping::Filters(vec![KeyFilterArgs {
-                        key: Some("born".into()),
-                        value: Some("2020-01-01".into()),
-                        compare: Some("before".into()),
-                        scope: None,
-                    }])),
-                    ..no_follow()
-                }),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let older = recall_json(
+        &jojobot,
+        RecallArgs {
+            subject: Some("person:bart".into()),
+            facts: Some(false),
+            follow: Some(FollowArgs {
+                relation: Some("owner".into()),
+                direction: Some("in".into()),
+                keeping: Some(Keeping::Filters(vec![KeyFilterArgs {
+                    key: Some("born".into()),
+                    value: Some("2020-01-01".into()),
+                    compare: Some("before".into()),
+                    scope: None,
+                }])),
+                ..no_follow()
+            }),
+            ..of_nothing()
+        },
+    )
+    .await;
     let kept: Vec<&str> = older["objects"][0]["connected"]
         .as_array()
         .expect("a filtered walk still answers with a list")
@@ -4851,21 +4588,20 @@ async fn a_value_is_found_without_naming_its_key_and_prose_is_not() {
         let value = value.to_string();
         let sid = sid.clone();
         async {
-            json_of(
-                &jojobot
-                    .recall(Parameters(RecallArgs {
-                        fields: Some(vec![KeyFilterArgs {
-                            key: None,
-                            value: Some(value),
-                            compare: None,
-                            scope: None,
-                        }]),
-                        sid: Some(sid),
-                        ..of_nothing()
-                    }))
-                    .await
-                    .expect("a value filter is a selection"),
+            recall_json(
+                &jojobot,
+                RecallArgs {
+                    fields: Some(vec![KeyFilterArgs {
+                        key: None,
+                        value: Some(value),
+                        compare: None,
+                        scope: None,
+                    }]),
+                    sid: Some(sid),
+                    ..of_nothing()
+                },
             )
+            .await
         }
     };
 
@@ -4920,43 +4656,7 @@ fn no_follow() -> FollowArgs {
 /// A call naming nothing at all — the base every case above varies.
 fn of_nothing() -> RecallArgs {
     RecallArgs {
-        ticks: None,
-        ticks_offset: None,
-        unreviewed: None,
-        details: None,
-        view: None,
-        inputs: None,
-        subject: None,
-        kind: None,
-        parent: None,
-        answers_type: None,
-        fields: None,
-        expression: None,
-        scope: None,
-        order: None,
-        facts: None,
-        stood_for: None,
-        review_marks: None,
-        status: None,
-        prose: None,
-        charter: None,
-        keys: None,
-        record_keys: None,
-        follow: None,
-        overdue: None,
-        near: None,
-        sid: None,
-        history: None,
-        history_record: None,
-        records: None,
-        history_most: None,
-        offset: None,
-        limit: None,
-        values: None,
-        values_most: None,
-        built_on: None,
-        backing: None,
-        held: None,
+        ..Default::default()
     }
 }
 
@@ -4995,15 +4695,14 @@ async fn a_query_naming_a_displaced_type_names_it_once_in_the_answer() {
         .await
         .expect("the software's own write replaces a caller's");
 
-    let found = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                answers_type: Some("roster".into()),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let found = recall_json(
+        &jojobot,
+        RecallArgs {
+            answers_type: Some("roster".into()),
+            ..of_nothing()
+        },
+    )
+    .await;
     let notes = found["type_displaced"]
         .as_array()
         .unwrap_or_else(|| panic!("names what the query's own type displaced: {found}"));
@@ -5034,15 +4733,14 @@ async fn a_query_naming_a_type_never_displaced_names_nothing() {
         .await
         .expect("the software declares its own types");
 
-    let found = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                answers_type: Some("always-shipped-recall".into()),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let found = recall_json(
+        &jojobot,
+        RecallArgs {
+            answers_type: Some("always-shipped-recall".into()),
+            ..of_nothing()
+        },
+    )
+    .await;
     assert!(
         found.get("type_displaced").is_none(),
         "nothing was ever a caller's under this name, so nothing is named: {found}"
@@ -5116,19 +4814,18 @@ async fn an_unscoped_follow_in_reaches_the_edge_the_mention_and_the_ref_labelled
     )
     .await;
 
-    let walked = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                subject: Some("topic:all-rules".into()),
-                follow: Some(FollowArgs {
-                    direction: Some("in".into()),
-                    ..no_follow()
-                }),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let walked = recall_json(
+        &jojobot,
+        RecallArgs {
+            subject: Some("topic:all-rules".into()),
+            follow: Some(FollowArgs {
+                direction: Some("in".into()),
+                ..no_follow()
+            }),
+            ..of_nothing()
+        },
+    )
+    .await;
     let reached = walked["objects"][0]["connected"]
         .as_array()
         .expect("connected objects");
@@ -5195,20 +4892,19 @@ async fn a_follow_scoped_to_one_edge_shape_never_returns_a_mention_or_a_ref() {
     )
     .await;
 
-    let walked = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                subject: Some("topic:all-rules".into()),
-                follow: Some(FollowArgs {
-                    shape: Some("connection".into()),
-                    direction: Some("in".into()),
-                    ..no_follow()
-                }),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let walked = recall_json(
+        &jojobot,
+        RecallArgs {
+            subject: Some("topic:all-rules".into()),
+            follow: Some(FollowArgs {
+                shape: Some("connection".into()),
+                direction: Some("in".into()),
+                ..no_follow()
+            }),
+            ..of_nothing()
+        },
+    )
+    .await;
     let reached = walked["objects"][0]["connected"]
         .as_array()
         .expect("connected objects");
@@ -5236,19 +4932,18 @@ async fn an_unscoped_follow_out_reaches_the_target_of_its_own_mention() {
     )
     .await;
 
-    let walked = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                subject: Some("person:gayle".into()),
-                follow: Some(FollowArgs {
-                    direction: Some("out".into()),
-                    ..no_follow()
-                }),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let walked = recall_json(
+        &jojobot,
+        RecallArgs {
+            subject: Some("person:gayle".into()),
+            follow: Some(FollowArgs {
+                direction: Some("out".into()),
+                ..no_follow()
+            }),
+            ..of_nothing()
+        },
+    )
+    .await;
     let reached = walked["objects"][0]["connected"]
         .as_array()
         .expect("connected objects");
@@ -5318,20 +5013,19 @@ async fn an_unscoped_follow_reaches_a_handle_held_under_an_undeclared_key() {
     let walk = |subject: &'static str, direction: &'static str, shape: Option<&'static str>| {
         let jojobot = &jojobot;
         async move {
-            json_of(
-                &jojobot
-                    .recall(Parameters(RecallArgs {
-                        subject: Some(subject.into()),
-                        follow: Some(FollowArgs {
-                            shape: shape.map(Into::into),
-                            direction: Some(direction.into()),
-                            ..no_follow()
-                        }),
-                        ..of_nothing()
-                    }))
-                    .await
-                    .expect("recall ok"),
+            recall_json(
+                jojobot,
+                RecallArgs {
+                    subject: Some(subject.into()),
+                    follow: Some(FollowArgs {
+                        shape: shape.map(Into::into),
+                        direction: Some(direction.into()),
+                        ..no_follow()
+                    }),
+                    ..of_nothing()
+                },
             )
+            .await
         }
     };
     let inbound = walk("topic:all-rules", "in", None).await;
@@ -5385,12 +5079,7 @@ async fn a_handle_naming_nothing_under_an_undeclared_key_is_blocked_with_candida
     let body = blocked(&result);
     assert_eq!(body["attempted"], "work:sigmo", "{body}");
     assert_eq!(body["candidates"][0]["handle"], "work:sigma", "{body}");
-    let held = json_of(
-        &jojobot
-            .recall(Parameters(recall_args("person:milhouse")))
-            .await
-            .expect("recall ok"),
-    );
+    let held = recall_json(&jojobot, recall_args("person:milhouse")).await;
     assert!(
         held["objects"][0]["facts"]
             .as_array()
@@ -5406,19 +5095,18 @@ async fn a_handle_naming_nothing_under_an_undeclared_key_is_blocked_with_candida
         },
     )
     .await;
-    let walked = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                subject: Some("work:sigma".into()),
-                follow: Some(FollowArgs {
-                    direction: Some("in".into()),
-                    ..no_follow()
-                }),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let walked = recall_json(
+        &jojobot,
+        RecallArgs {
+            subject: Some("work:sigma".into()),
+            follow: Some(FollowArgs {
+                direction: Some("in".into()),
+                ..no_follow()
+            }),
+            ..of_nothing()
+        },
+    )
+    .await;
     assert_eq!(
         walked["objects"][0]["connected"][0]["id"], "person:milhouse",
         "the thing that now waits on it is reached from the other end: {walked}"
@@ -5464,19 +5152,18 @@ async fn a_rename_of_the_target_is_still_followed_through_a_mention() {
         text_of(&renamed)
     );
 
-    let walked = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                subject: Some("topic:the-five-words".into()),
-                follow: Some(FollowArgs {
-                    direction: Some("in".into()),
-                    ..no_follow()
-                }),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let walked = recall_json(
+        &jojobot,
+        RecallArgs {
+            subject: Some("topic:the-five-words".into()),
+            follow: Some(FollowArgs {
+                direction: Some("in".into()),
+                ..no_follow()
+            }),
+            ..of_nothing()
+        },
+    )
+    .await;
     let reached = walked["objects"][0]["connected"]
         .as_array()
         .expect("connected objects");
@@ -5538,15 +5225,14 @@ async fn a_sessions_chronology_is_recalled_and_capture_onto_it_stays_refused() {
         .to_string();
     let handle = format!("session:{session_id}");
 
-    let found = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                sid: Some(sid.clone()),
-                ..of(&handle)
-            }))
-            .await
-            .expect("recall answers rather than failing the protocol"),
+    let found = recall_json(
+        &jojobot,
+        RecallArgs {
+            sid: Some(sid.clone()),
+            ..of(&handle)
+        },
     )
+    .await
     .to_string();
     assert!(
         found.contains("traced the boot slowdown"),
@@ -5660,18 +5346,17 @@ async fn browsing_runs_by_kind_finds_only_the_callers_own_and_counts_the_rest() 
     )
     .await;
 
-    let answer = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                subject: None,
-                kind: Some("session".into()),
-                prose: Some(true),
-                sid: Some(sid),
-                ..of("unused")
-            }))
-            .await
-            .expect("recall answers rather than failing the protocol"),
-    );
+    let answer = recall_json(
+        &jojobot,
+        RecallArgs {
+            subject: None,
+            kind: Some("session".into()),
+            prose: Some(true),
+            sid: Some(sid),
+            ..of("unused")
+        },
+    )
+    .await;
     assert_ne!(answer["status"], "blocked", "{answer}");
     let objects = answer["objects"]
         .as_array()
@@ -5773,16 +5458,15 @@ async fn recall_reads_only_the_wanted_runs_chronology_not_every_ones() {
     let sid = last_sid;
 
     let before = sessions.full_reads();
-    let answer = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                sid: Some(sid),
-                prose: Some(true),
-                ..of(&wanted_handle)
-            }))
-            .await
-            .expect("recall answers rather than failing the protocol"),
-    );
+    let answer = recall_json(
+        &jojobot,
+        RecallArgs {
+            sid: Some(sid),
+            prose: Some(true),
+            ..of(&wanted_handle)
+        },
+    )
+    .await;
     assert_ne!(answer["status"], "blocked", "{answer}");
     assert_eq!(
         answer["objects"][0]["prose"], "run 2's own beat",
@@ -5864,12 +5548,7 @@ async fn a_bots_room_read_says_what_aged_out_without_a_write() {
     }
 
     // Nothing captured since the runs — a plain read, adding nothing.
-    let recalled = json_of(
-        &jojobot
-            .recall(Parameters(recall_args(bot)))
-            .await
-            .expect("recall ok"),
-    );
+    let recalled = recall_json(&jojobot, recall_args(bot)).await;
     let object = &recalled["objects"][0];
     assert_eq!(object["room"]["capacity"], 1, "{object}");
     assert_eq!(
@@ -5934,12 +5613,7 @@ async fn naming_a_run_withholds_nothing_and_a_browse_of_runs_still_counts_the_re
     };
 
     // Its own run: shown, and nothing is withheld.
-    let mine = json_of(
-        &jojobot
-            .recall(Parameters(named(&own_handle)))
-            .await
-            .expect("recall answers"),
-    );
+    let mine = recall_json(&jojobot, named(&own_handle)).await;
     assert_eq!(mine["objects"][0]["id"], own_handle, "{mine}");
     assert_eq!(
         mine["withheld"], 0,
@@ -5968,17 +5642,16 @@ async fn naming_a_run_withholds_nothing_and_a_browse_of_runs_still_counts_the_re
 
     // A browse is unchanged: the caller's own, and delta's two and epsilon's one
     // counted.
-    let browse = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                kind: Some("session".into()),
-                subject: None,
-                sid: Some(gamma.clone()),
-                ..of("unused")
-            }))
-            .await
-            .expect("recall answers"),
-    );
+    let browse = recall_json(
+        &jojobot,
+        RecallArgs {
+            kind: Some("session".into()),
+            subject: None,
+            sid: Some(gamma.clone()),
+            ..of("unused")
+        },
+    )
+    .await;
     assert_eq!(
         browse["objects"].as_array().map(Vec::len),
         Some(1),
@@ -6049,12 +5722,7 @@ async fn a_read_of_runs_asks_for_the_callers_own_and_counts_the_rest() {
     };
 
     // A browse: the caller's own, and the two of the other bot counted.
-    let browse = json_of(
-        &jojobot
-            .recall(Parameters(ask(Some(&sid), None, None)))
-            .await
-            .expect("recall answers"),
-    );
+    let browse = recall_json(&jojobot, ask(Some(&sid), None, None)).await;
     assert_eq!(
         browse["objects"].as_array().map(Vec::len),
         Some(1),
@@ -6064,24 +5732,14 @@ async fn a_read_of_runs_asks_for_the_callers_own_and_counts_the_rest() {
     assert_eq!(browse["withheld"], 2, "{browse}");
 
     // The parent narrows what is counted, in both directions.
-    let theirs_only = json_of(
-        &jojobot
-            .recall(Parameters(ask(Some(&sid), None, Some("bot:milhouse"))))
-            .await
-            .expect("recall answers"),
-    );
+    let theirs_only = recall_json(&jojobot, ask(Some(&sid), None, Some("bot:milhouse"))).await;
     assert_eq!(
         theirs_only["objects"].as_array().map(Vec::len),
         Some(0),
         "{theirs_only}"
     );
     assert_eq!(theirs_only["withheld"], 2, "{theirs_only}");
-    let mine_only = json_of(
-        &jojobot
-            .recall(Parameters(ask(Some(&sid), None, Some("bot:otto"))))
-            .await
-            .expect("recall answers"),
-    );
+    let mine_only = recall_json(&jojobot, ask(Some(&sid), None, Some("bot:otto"))).await;
     assert_eq!(mine_only["objects"][0]["id"], own_handle, "{mine_only}");
     assert_eq!(mine_only["withheld"], 0, "{mine_only}");
 
@@ -6151,12 +5809,7 @@ async fn a_read_of_runs_asks_for_the_callers_own_and_counts_the_rest() {
     );
 
     // A caller with no identity: how many exist, and none shown.
-    let anonymous = json_of(
-        &jojobot
-            .recall(Parameters(ask(None, None, None)))
-            .await
-            .expect("recall answers"),
-    );
+    let anonymous = recall_json(&jojobot, ask(None, None, None)).await;
     assert_eq!(
         anonymous["objects"].as_array().map(Vec::len),
         Some(0),
@@ -6206,12 +5859,7 @@ async fn a_caller_with_no_identity_is_told_how_many_runs_exist_and_nothing_else(
         ..recall_args("person:bart")
     };
     // What an identified caller sees: its own run shown, the rest counted.
-    let identified = json_of(
-        &jojobot
-            .recall(Parameters(runs_query(Some(sid.clone()), None)))
-            .await
-            .expect("recall ok"),
-    );
+    let identified = recall_json(&jojobot, runs_query(Some(sid.clone()), None)).await;
     let own = identified["objects"].as_array().expect("a list").len() as u64;
     assert_eq!(own, 1, "the run exists and is the caller's: {identified}");
     let run_id = identified["objects"][0]["id"]
@@ -6226,12 +5874,7 @@ async fn a_caller_with_no_identity_is_told_how_many_runs_exist_and_nothing_else(
     };
 
     // The count: every run that exists, shown none.
-    let anonymous = json_of(
-        &jojobot
-            .recall(Parameters(runs_query(None, None)))
-            .await
-            .expect("recall ok"),
-    );
+    let anonymous = recall_json(&jojobot, runs_query(None, None)).await;
     assert!(
         anonymous["objects"].as_array().expect("a list").is_empty(),
         "a caller with no identity owns no run: {anonymous}"
@@ -6305,12 +5948,7 @@ async fn a_fits_type_that_reached_nothing_names_the_types_keys() {
         ..recall_args("person:alpha")
     };
 
-    let empty = json_of(
-        &jojobot
-            .recall(Parameters(walk("trip")))
-            .await
-            .expect("recall ok"),
-    );
+    let empty = recall_json(&jojobot, walk("trip")).await;
     let names: Vec<&str> = empty["type_keys"][0]["fields"]
         .as_array()
         .expect("a walk that reached nothing describes the type it was asked for")
@@ -6386,12 +6024,7 @@ async fn a_room_read_ages_on_the_bots_own_setting_and_names_where_it_came_from()
     }
 
     for (bot, threshold, from) in [(set, 2, "thought_ages_after_runs"), (unset, 20, "default")] {
-        let recalled = json_of(
-            &jojobot
-                .recall(Parameters(recall_args(bot)))
-                .await
-                .expect("recall ok"),
-        );
+        let recalled = recall_json(&jojobot, recall_args(bot)).await;
         let room = &recalled["objects"][0]["room"];
         assert_eq!(room["aged_out"], 1, "{bot}: {recalled}");
         assert_eq!(room["ages_after_runs"], threshold, "{bot}: {recalled}");
@@ -6435,12 +6068,7 @@ async fn a_room_nothing_has_aged_out_of_carries_no_room_block() {
     )
     .await;
 
-    let recalled = json_of(
-        &jojobot
-            .recall(Parameters(recall_args(bot)))
-            .await
-            .expect("recall ok"),
-    );
+    let recalled = recall_json(&jojobot, recall_args(bot)).await;
     let object = &recalled["objects"][0];
     assert!(
         object["facts"].as_array().is_some_and(|facts| facts
@@ -6467,18 +6095,17 @@ async fn an_archived_loop_drops_out_of_the_owed_read_and_is_counted() {
     a_rhythm(&jojobot, "descale", "7", "2026-08-01").await;
     a_rhythm(&jojobot, "polish", "7", "2026-08-01").await;
     async fn owed(jojobot: &Jojobot) -> serde_json::Value {
-        json_of(
-            &jojobot
-                .recall(Parameters(RecallArgs {
-                    kind: Some("rhythm".into()),
-                    overdue: Some(OverdueArgs {
-                        as_of: Some("2026-08-20".into()),
-                    }),
-                    ..of_nothing()
-                }))
-                .await
-                .expect("recall ok"),
+        recall_json(
+            jojobot,
+            RecallArgs {
+                kind: Some("rhythm".into()),
+                overdue: Some(OverdueArgs {
+                    as_of: Some("2026-08-20".into()),
+                }),
+                ..of_nothing()
+            },
         )
+        .await
     }
 
     let before = owed(&jojobot).await;
@@ -6578,16 +6205,15 @@ async fn a_merge_names_the_duplicates_names_and_leaves_both_pages() {
         !said.contains("forwards"),
         "the receipt still says the folded handle forwards: {receipt}",
     );
-    let husk = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                subject: Some("place:ocean-avenue".into()),
-                prose: Some(true),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    )["objects"][0]
+    let husk = recall_json(
+        &jojobot,
+        RecallArgs {
+            subject: Some("place:ocean-avenue".into()),
+            prose: Some(true),
+            ..of_nothing()
+        },
+    )
+    .await["objects"][0]
         .clone();
     assert_eq!(husk["status"], "merged", "{husk}");
     assert_eq!(husk["merged_into"], "place:moes-tavern", "{husk}");
@@ -6596,16 +6222,15 @@ async fn a_merge_names_the_duplicates_names_and_leaves_both_pages() {
         "the folded handle serves prose: {husk}"
     );
 
-    let survivor = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                subject: Some("place:moes-tavern".into()),
-                prose: Some(true),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    )["objects"][0]
+    let survivor = recall_json(
+        &jojobot,
+        RecallArgs {
+            subject: Some("place:moes-tavern".into()),
+            prose: Some(true),
+            ..of_nothing()
+        },
+    )
+    .await["objects"][0]
         .clone();
     // **The folded names are named, not moved**: the survivor's aliases are the
     // one it was given, and its read lists what was folded in beside them.
@@ -6664,15 +6289,14 @@ async fn one_update_moves_a_value_from_one_key_to_another() {
         .await
         .expect("update ok");
 
-    let held = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                subject: Some("thing:floor-pump".into()),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    )["objects"][0]["fields"]
+    let held = recall_json(
+        &jojobot,
+        RecallArgs {
+            subject: Some("thing:floor-pump".into()),
+            ..of_nothing()
+        },
+    )
+    .await["objects"][0]["fields"]
         .clone();
     assert_eq!(
         held["runs_out"], "2026-11-03",
@@ -6760,12 +6384,7 @@ async fn an_empty_selection_names_the_population_it_looked_through() {
         ..asked()
     };
 
-    let empty = json_of(
-        &jojobot
-            .recall(Parameters(asked_of_kind()))
-            .await
-            .expect("recall ok"),
-    );
+    let empty = recall_json(&jojobot, asked_of_kind()).await;
     assert_eq!(empty["count"], 0, "{empty}");
     let line = empty["searched"]
         .as_str()
@@ -6798,12 +6417,7 @@ async fn an_empty_selection_names_the_population_it_looked_through() {
         },
     )
     .await;
-    let full = json_of(
-        &jojobot
-            .recall(Parameters(asked_of_kind()))
-            .await
-            .expect("recall ok"),
-    );
+    let full = recall_json(&jojobot, asked_of_kind()).await;
     assert_eq!(full["count"], 1, "{full}");
     assert!(
         full["searched"].is_null(),
@@ -6835,7 +6449,7 @@ async fn an_empty_selection_names_where_parent_and_follow_among_what_it_looked_t
         let jojobot = &jojobot;
         async move {
             let args: RecallArgs = serde_json::from_value(call).expect("a recall call");
-            let body = json_of(&jojobot.recall(Parameters(args)).await.expect("recall ok"));
+            let body = recall_json(jojobot, args).await;
             assert_eq!(body["count"], 0, "{body}");
             body["searched"]
                 .as_str()
@@ -6918,43 +6532,40 @@ async fn a_parent_selects_its_direct_children_and_combines_with_a_kind() {
         found
     };
 
-    let children = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                parent: Some("project:atlas".into()),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let children = recall_json(
+        &jojobot,
+        RecallArgs {
+            parent: Some("project:atlas".into()),
+            ..of_nothing()
+        },
+    )
+    .await;
     assert_eq!(
         ids(&children),
         vec!["work:atlas-kwik-e-mart", "work:atlas-x-donut-stand"],
         "{children}",
     );
 
-    let works = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                parent: Some("project:atlas".into()),
-                kind: Some("work".into()),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let works = recall_json(
+        &jojobot,
+        RecallArgs {
+            parent: Some("project:atlas".into()),
+            kind: Some("work".into()),
+            ..of_nothing()
+        },
+    )
+    .await;
     assert_eq!(ids(&works).len(), 2, "{works}");
 
-    let none = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                parent: Some("project:atlas".into()),
-                kind: Some("person".into()),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let none = recall_json(
+        &jojobot,
+        RecallArgs {
+            parent: Some("project:atlas".into()),
+            kind: Some("person".into()),
+            ..of_nothing()
+        },
+    )
+    .await;
     assert!(ids(&none).is_empty(), "no child is a person: {none}");
 }
 
@@ -6998,12 +6609,7 @@ async fn a_subject_recall_counts_the_block_it_adds_when_it_cuts_at_every_size_of
             );
             memory.capture(fact).await.expect("a fact lands");
         }
-        let body = json_of(
-            &jojobot
-                .recall(Parameters(of(subject.as_str())))
-                .await
-                .expect("recall ok"),
-        );
+        let body = recall_json(&jojobot, of(subject.as_str())).await;
         let size = crate::answer::served_len(&body);
         assert!(
             size + crate::answer::STATUS_BAR_ROOM <= jojobot_domain::text::ANSWER_CEILING,
@@ -7056,15 +6662,14 @@ async fn a_kind_recall_counts_the_block_it_adds_when_it_cuts_at_every_size_of_ob
                 "a note lands: {noted:?}"
             );
         }
-        let body = json_of(
-            &jojobot
-                .recall(Parameters(RecallArgs {
-                    kind: Some("thing".into()),
-                    ..of_nothing()
-                }))
-                .await
-                .expect("recall ok"),
-        );
+        let body = recall_json(
+            &jojobot,
+            RecallArgs {
+                kind: Some("thing".into()),
+                ..of_nothing()
+            },
+        )
+        .await;
         let size = crate::answer::served_len(&body);
         assert!(
             size + crate::answer::STATUS_BAR_ROOM <= jojobot_domain::text::ANSWER_CEILING,
@@ -7117,22 +6722,16 @@ async fn a_subject_recall_is_full_to_within_one_fact_as_the_answer_is_served() {
             );
             memory.capture(fact).await.expect("a fact lands");
         }
-        let mut page = json_of(
-            &jojobot
-                .recall(Parameters(of(subject.as_str())))
-                .await
-                .expect("recall ok"),
-        );
+        let mut page = recall_json(&jojobot, of(subject.as_str())).await;
         let shown = page["objects"][0]["facts"].as_array().expect("facts").len();
-        let mut after = json_of(
-            &jojobot
-                .recall(Parameters(RecallArgs {
-                    offset: Some(shown as u32),
-                    ..of(subject.as_str())
-                }))
-                .await
-                .expect("recall ok"),
-        );
+        let mut after = recall_json(
+            &jojobot,
+            RecallArgs {
+                offset: Some(shown as u32),
+                ..of(subject.as_str())
+            },
+        )
+        .await;
         let reserved = reserved_beyond(&page);
         crate::answer::strip_nulls(&mut page);
         crate::answer::strip_nulls(&mut after);
@@ -7192,19 +6791,9 @@ async fn a_kind_recall_is_full_to_within_one_object_as_the_answer_is_served() {
             offset,
             ..of_nothing()
         };
-        let mut page = json_of(
-            &jojobot
-                .recall(Parameters(recalled(None)))
-                .await
-                .expect("recall ok"),
-        );
+        let mut page = recall_json(&jojobot, recalled(None)).await;
         let shown = page["objects"].as_array().expect("objects").len();
-        let mut after = json_of(
-            &jojobot
-                .recall(Parameters(recalled(Some(shown as u32))))
-                .await
-                .expect("recall ok"),
-        );
+        let mut after = recall_json(&jojobot, recalled(Some(shown as u32))).await;
         let reserved = reserved_beyond(&page);
         crate::answer::strip_nulls(&mut page);
         crate::answer::strip_nulls(&mut after);
@@ -7341,15 +6930,14 @@ async fn a_field_filtered_recall_asks_for_the_carriers(
         let (jojobot, port, record_reads) = (&jojobot, &port, &record_reads);
         async move {
             let (reads, asked) = (record_reads(), port.asked.lock().expect("asked").len());
-            let answer = json_of(
-                &jojobot
-                    .recall(Parameters(RecallArgs {
-                        fields: Some(filters),
-                        ..of_nothing()
-                    }))
-                    .await
-                    .expect("recall ok"),
-            );
+            let answer = recall_json(
+                jojobot,
+                RecallArgs {
+                    fields: Some(filters),
+                    ..of_nothing()
+                },
+            )
+            .await;
             let mut ids: Vec<String> = answer["objects"]
                 .as_array()
                 .expect("objects")
@@ -7572,14 +7160,14 @@ async fn a_key_filtered_recall_falls_back_to_the_full_read_when_the_index_answer
         memory.clone(),
         Arc::new(SpySearch::answering(hits(CARRIER_CANDIDATES_LIMIT))),
     );
-    let cut = json_of(&cut.recall(Parameters(asked())).await.expect("recall ok"));
+    let cut = recall_json(&cut, asked()).await;
     assert_eq!(ids(&cut), ["thing:teapot"], "{cut}");
 
     let whole = handler_on(
         memory,
         Arc::new(SpySearch::answering(hits(CARRIER_CANDIDATES_LIMIT - 1))),
     );
-    let whole = json_of(&whole.recall(Parameters(asked())).await.expect("recall ok"));
+    let whole = recall_json(&whole, asked()).await;
     assert!(
         ids(&whole).is_empty(),
         "a list one short of the ceiling is the whole answer, and it names no carrier: {whole}"
@@ -7671,7 +7259,7 @@ async fn a_recall_reads_everyone_when_the_index_is_behind_the_store() {
             Arc::new(SpySearch::over_memory(coverage, hits.clone())),
         );
         for (asked, args) in [("key", by_key()), ("type", by_type())] {
-            let body = json_of(&reader.recall(Parameters(args)).await.expect("recall ok"));
+            let body = recall_json(&reader, args).await;
             let found = ids(&body);
             // The type question reports whether its routed search hit the
             // ceiling. A search that was not believed routed nothing, so it
@@ -7751,12 +7339,7 @@ async fn a_browse_that_does_not_fit_reads_only_what_it_serves_and_counts_the_res
     };
 
     let before = memory.record_reads();
-    let first = json_of(
-        &jojobot
-            .recall(Parameters(browse(None)))
-            .await
-            .expect("recall ok"),
-    );
+    let first = recall_json(&jojobot, browse(None)).await;
     let reads = memory.record_reads() - before;
     let shown = first["objects"].as_array().expect("objects").len();
     assert!(
@@ -7782,12 +7365,7 @@ async fn a_browse_that_does_not_fit_reads_only_what_it_serves_and_counts_the_res
         .collect();
     let mut next = first["not_shown"]["offset"].as_u64();
     while let Some(offset) = next {
-        let part = json_of(
-            &jojobot
-                .recall(Parameters(browse(Some(offset as u32))))
-                .await
-                .expect("recall ok"),
-        );
+        let part = recall_json(&jojobot, browse(Some(offset as u32))).await;
         let objects = part["objects"].as_array().expect("objects");
         assert!(
             !objects.is_empty(),
@@ -7843,18 +7421,17 @@ async fn work_with_slug(jojobot: &Jojobot, slug: &str, sets: &[(&str, &str)]) {
 
 /// What the `ready` view answers, optionally for one named piece of work.
 async fn ready_view(jojobot: &Jojobot, subject: Option<&str>) -> serde_json::Value {
-    json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                view: Some("ready".into()),
-                subject: subject.map(str::to_string),
-                facts: None,
-                sid: Some(writing_as(jojobot)),
-                ..recall_args("work:phi")
-            }))
-            .await
-            .expect("recall ok"),
+    recall_json(
+        jojobot,
+        RecallArgs {
+            view: Some("ready".into()),
+            subject: subject.map(str::to_string),
+            facts: None,
+            sid: Some(writing_as(jojobot)),
+            ..recall_args("work:phi")
+        },
     )
+    .await
 }
 
 /// The handles an answer lists, in order.
@@ -8055,18 +7632,17 @@ async fn finished_work_is_not_ready() {
 async fn an_ordinary_read_of_work_carries_no_readiness() {
     let jojobot = crate::harness::handler_shipped();
     work_with(&jojobot, "work:sigma", &[("status", "next")]).await;
-    let body = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                kind: Some("work".into()),
-                subject: None,
-                facts: None,
-                sid: Some(writing_as(&jojobot)),
-                ..recall_args("work:sigma")
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let body = recall_json(
+        &jojobot,
+        RecallArgs {
+            kind: Some("work".into()),
+            subject: None,
+            facts: None,
+            sid: Some(writing_as(&jojobot)),
+            ..recall_args("work:sigma")
+        },
+    )
+    .await;
     assert_eq!(listed(&body), ["work:sigma"], "{body}");
     let object = &body["objects"][0];
     assert!(object.get("ready").is_none(), "{body}");
@@ -8331,19 +7907,18 @@ async fn paging_the_ready_view_walks_ready_work_only() {
     while let Some(offset) = next {
         pages += 1;
         assert!(pages < 20, "the pages never ended: served {}", served.len());
-        let part = json_of(
-            &jojobot
-                .recall(Parameters(RecallArgs {
-                    view: Some("ready".into()),
-                    subject: None,
-                    offset: Some(offset as u32),
-                    facts: None,
-                    sid: Some(writing_as(&jojobot)),
-                    ..recall_args("work:phi")
-                }))
-                .await
-                .expect("recall ok"),
-        );
+        let part = recall_json(
+            &jojobot,
+            RecallArgs {
+                view: Some("ready".into()),
+                subject: None,
+                offset: Some(offset as u32),
+                facts: None,
+                sid: Some(writing_as(&jojobot)),
+                ..recall_args("work:phi")
+            },
+        )
+        .await;
         let objects = listed(&part);
         assert!(!objects.is_empty(), "page at {offset} was empty: {part}");
         served.extend(objects);
@@ -8418,19 +7993,18 @@ async fn the_plan_view_answers_a_whole_plan_in_one_call() {
     work_under(&jojobot, "delta", "project:atlas", &[("status", "now")]).await;
     work_under(&jojobot, "omega", "project:atlas", &[("status", "done")]).await;
 
-    let body = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                view: Some("plan".into()),
-                parent: Some("project:atlas".into()),
-                subject: None,
-                facts: None,
-                sid: Some(writing_as(&jojobot)),
-                ..recall_args("work:kappa")
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let body = recall_json(
+        &jojobot,
+        RecallArgs {
+            view: Some("plan".into()),
+            parent: Some("project:atlas".into()),
+            subject: None,
+            facts: None,
+            sid: Some(writing_as(&jojobot)),
+            ..recall_args("work:kappa")
+        },
+    )
+    .await;
 
     assert_eq!(
         listed(&body),
@@ -8443,15 +8017,7 @@ async fn the_plan_view_answers_a_whole_plan_in_one_call() {
         ],
         "{body}"
     );
-    let object = |handle: &str| {
-        body["objects"]
-            .as_array()
-            .expect("objects")
-            .iter()
-            .find(|o| o["id"] == handle)
-            .unwrap_or_else(|| panic!("{handle} is not in the answer: {body}"))
-            .clone()
-    };
+    let object = |handle: &str| listed_object(&body, handle).clone();
     for ready in ["work:sigma", "work:delta"] {
         assert_eq!(object(ready)["ready"], true, "{ready}: {body}");
         assert!(object(ready).get("blocked_by").is_none(), "{ready}: {body}");
@@ -8489,18 +8055,17 @@ async fn the_plan_note_is_true_of_a_finished_piece_named_by_subject() {
     let jojobot = crate::harness::handler_shipped();
     work_with(&jojobot, "work:omega", &[("status", "done")]).await;
 
-    let body = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                view: Some("plan".into()),
-                subject: Some("work:omega".into()),
-                facts: None,
-                sid: Some(writing_as(&jojobot)),
-                ..recall_args("work:omega")
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let body = recall_json(
+        &jojobot,
+        RecallArgs {
+            view: Some("plan".into()),
+            subject: Some("work:omega".into()),
+            facts: None,
+            sid: Some(writing_as(&jojobot)),
+            ..recall_args("work:omega")
+        },
+    )
+    .await;
 
     assert_eq!(listed(&body), ["work:omega"], "{body}");
     assert_eq!(body["objects"][0]["ready"], false, "{body}");
@@ -8532,27 +8097,25 @@ async fn the_ready_view_refuses_a_kind_that_is_not_work() {
         sid: Some(writing_as(&jojobot)),
         ..recall_args("work:phi")
     };
-    let refused = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                subject: None,
-                ..ask("person")
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let refused = recall_json(
+        &jojobot,
+        RecallArgs {
+            subject: None,
+            ..ask("person")
+        },
+    )
+    .await;
     assert_eq!(refused["status"], "blocked", "{refused}");
     assert_eq!(refused["fix_by"], "change", "{refused}");
     assert!(refused.to_string().contains("work"), "{refused}");
-    let answered = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                subject: None,
-                ..ask("work")
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let answered = recall_json(
+        &jojobot,
+        RecallArgs {
+            subject: None,
+            ..ask("work")
+        },
+    )
+    .await;
     assert_eq!(listed(&answered), ["work:phi"], "{answered}");
 }
 
@@ -8629,19 +8192,18 @@ async fn a_record_address_is_no_subject_for_the_ready_view_and_selects_nothing_b
     // Through history_record alone: the same ready list for either address,
     // and the positive beside it, that the view does list ready work.
     for address in [&work_address, &person_address] {
-        let listed_by_address = json_of(
-            &jojobot
-                .recall(Parameters(RecallArgs {
-                    view: Some("ready".into()),
-                    history_record: Some(address.clone()),
-                    subject: None,
-                    facts: None,
-                    sid: Some(writing_as(&jojobot)),
-                    ..recall_args("work:phi")
-                }))
-                .await
-                .expect("recall ok"),
-        );
+        let listed_by_address = recall_json(
+            &jojobot,
+            RecallArgs {
+                view: Some("ready".into()),
+                history_record: Some(address.clone()),
+                subject: None,
+                facts: None,
+                sid: Some(writing_as(&jojobot)),
+                ..recall_args("work:phi")
+            },
+        )
+        .await;
         assert_eq!(
             listed(&listed_by_address),
             ["work:sigma"],
@@ -8731,22 +8293,16 @@ async fn a_stored_where_past_a_cap_is_refused_naming_the_view_and_the_fix() {
         );
     }
     // The positive: the caller's own where is the one that runs.
-    let own = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                expression: Some("status = now".into()),
-                ..by_view("urgent-things")
-            }))
-            .await
-            .expect("recall answers"),
-    );
+    let own = recall_json(
+        &jojobot,
+        RecallArgs {
+            expression: Some("status = now".into()),
+            ..by_view("urgent-things")
+        },
+    )
+    .await;
     assert_ne!(own["status"], "blocked", "{own}");
-    let plain = json_of(
-        &jojobot
-            .recall(Parameters(by_view("plain-things")))
-            .await
-            .expect("recall answers"),
-    );
+    let plain = recall_json(&jojobot, by_view("plain-things")).await;
     assert_ne!(plain["status"], "blocked", "{plain}");
 }
 
@@ -8818,15 +8374,14 @@ async fn a_kitchen_answer(
         )
         .await;
     }
-    json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                sid: Some(sid.clone()),
-                ..of("thread:simpson-kitchen")
-            }))
-            .await
-            .expect("recall ok"),
+    recall_json(
+        &jojobot,
+        RecallArgs {
+            sid: Some(sid.clone()),
+            ..of("thread:simpson-kitchen")
+        },
     )
+    .await
 }
 
 /// **A thread cut in its standing decisions AND in its own records keeps room
@@ -8934,12 +8489,7 @@ async fn recall_of_a_survivor_names_the_claim_the_merge_did_not_list() {
     // Only Bart's row gets a claim the event does not map.
     let stray = memory.stray_claim_under(&EntityId("person:bart".into()), "a stray claim");
 
-    let answered = json_of(
-        &jojobot
-            .recall(Parameters(of("person:milhouse")))
-            .await
-            .expect("recall ok"),
-    );
+    let answered = recall_json(&jojobot, of("person:milhouse")).await;
     let object = &answered["objects"][0];
     let left_out = &object["claims_left_out"];
     assert_eq!(left_out["count"], 1, "{answered}");
@@ -8963,29 +8513,23 @@ async fn recall_of_a_survivor_names_the_claim_the_merge_did_not_list() {
     assert!(!served.contains(&"a stray claim"), "{served:?}");
 
     // The address named reads the claim.
-    let read = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                subject: None,
-                facts: None,
-                history_record: Some(stray.to_string()),
-                ..of("person:milhouse")
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let read = recall_json(
+        &jojobot,
+        RecallArgs {
+            subject: None,
+            facts: None,
+            history_record: Some(stray.to_string()),
+            ..of("person:milhouse")
+        },
+    )
+    .await;
     assert!(
         read.to_string().contains("a stray claim"),
         "the address reads the claim: {read}"
     );
 
     // Pairs: a survivor with no stray claim names none.
-    let clean = json_of(
-        &jojobot
-            .recall(Parameters(of("person:nelson")))
-            .await
-            .expect("recall ok"),
-    );
+    let clean = recall_json(&jojobot, of("person:nelson")).await;
     assert!(
         clean["objects"][0].get("claims_left_out").is_none(),
         "{clean}"
@@ -9049,28 +8593,26 @@ async fn a_runs_history_is_recalled_through_the_history_argument() {
     let traced = |key: &'static str| {
         let (jojobot, sid, handle) = (&jojobot, sid.clone(), handle.clone());
         async move {
-            json_of(
-                &jojobot
-                    .recall(Parameters(RecallArgs {
-                        sid: Some(sid),
-                        history: Some(key.into()),
-                        ..of(&handle)
-                    }))
-                    .await
-                    .expect("recall answers"),
+            recall_json(
+                jojobot,
+                RecallArgs {
+                    sid: Some(sid),
+                    history: Some(key.into()),
+                    ..of(&handle)
+                },
             )
+            .await
         }
     };
 
-    let plain = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                sid: Some(sid.clone()),
-                ..of(&handle)
-            }))
-            .await
-            .expect("recall answers"),
-    );
+    let plain = recall_json(
+        &jojobot,
+        RecallArgs {
+            sid: Some(sid.clone()),
+            ..of(&handle)
+        },
+    )
+    .await;
 
     // The field's changes, oldest first, each with its place, its kind, its
     // moment and the focus it set. The run began with the focus the first
@@ -9172,16 +8714,15 @@ async fn a_runs_history_is_recalled_through_the_history_argument() {
         .mint(&EntityId("bot:otto".into()))
         .expect("a second run of the same bot")
         .to_string();
-    let keyed = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                sid: Some(reader),
-                history: Some("key".into()),
-                ..of(&handle)
-            }))
-            .await
-            .expect("recall answers"),
-    );
+    let keyed = recall_json(
+        &jojobot,
+        RecallArgs {
+            sid: Some(reader),
+            history: Some("key".into()),
+            ..of(&handle)
+        },
+    )
+    .await;
     let writes = keyed["objects"][0]["history"]["writes"]
         .as_array()
         .unwrap_or_else(|| panic!("the key's changes come back: {keyed}"));
@@ -9224,18 +8765,17 @@ async fn a_large_journal_history_reads_back_in_parts_and_a_small_one_whole() {
     let part = |offset: Option<u32>, history_most: Option<u32>| {
         let (jojobot, sid, handle) = (&jojobot, sid.clone(), handle.clone());
         async move {
-            json_of(
-                &jojobot
-                    .recall(Parameters(RecallArgs {
-                        sid: Some(sid),
-                        history: Some("journal".into()),
-                        history_most,
-                        offset,
-                        ..of(&handle)
-                    }))
-                    .await
-                    .expect("recall answers"),
+            recall_json(
+                jojobot,
+                RecallArgs {
+                    sid: Some(sid),
+                    history: Some("journal".into()),
+                    history_most,
+                    offset,
+                    ..of(&handle)
+                },
             )
+            .await
         }
     };
 
@@ -9307,16 +8847,15 @@ async fn a_large_journal_history_reads_back_in_parts_and_a_small_one_whole() {
         "session:{}",
         small["session"].as_str().expect("the run it landed in")
     );
-    let whole = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                sid: Some(other),
-                history: Some("journal".into()),
-                ..of(&small_handle)
-            }))
-            .await
-            .expect("recall answers"),
-    );
+    let whole = recall_json(
+        &jojobot,
+        RecallArgs {
+            sid: Some(other),
+            history: Some("journal".into()),
+            ..of(&small_handle)
+        },
+    )
+    .await;
     let history = &whole["objects"][0]["history"];
     assert_eq!(history["count"], 2, "{whole}");
     assert_eq!(history["shown"], 2, "{whole}");
@@ -9352,20 +8891,19 @@ async fn ready_under(
     keys: Option<&[&str]>,
     facts: Option<bool>,
 ) -> serde_json::Value {
-    json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                view: Some("ready".into()),
-                subject: None,
-                parent: Some(parent.into()),
-                keys: keys.map(|keys| keys.iter().map(|key| key.to_string()).collect()),
-                facts,
-                sid: Some(writing_as(jojobot)),
-                ..recall_args("work:phi")
-            }))
-            .await
-            .expect("recall ok"),
+    recall_json(
+        jojobot,
+        RecallArgs {
+            view: Some("ready".into()),
+            subject: None,
+            parent: Some(parent.into()),
+            keys: keys.map(|keys| keys.iter().map(|key| key.to_string()).collect()),
+            facts,
+            sid: Some(writing_as(jojobot)),
+            ..recall_args("work:phi")
+        },
     )
+    .await
 }
 
 /// **A read that names keys carries, on each row, its handle, name, the keys it
@@ -9492,21 +9030,20 @@ async fn a_narrowed_read_of_many_things_is_smaller_than_one_that_asks_for_held()
     hostile_children(&jojobot, "project:atlas", 60).await;
 
     let narrowed = ready_under(&jojobot, "project:atlas", Some(&["status"]), None).await;
-    let with_held = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                view: Some("ready".into()),
-                subject: None,
-                parent: Some("project:atlas".into()),
-                keys: Some(vec!["status".into()]),
-                facts: None,
-                held: Some(true),
-                sid: Some(writing_as(&jojobot)),
-                ..recall_args("work:phi")
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let with_held = recall_json(
+        &jojobot,
+        RecallArgs {
+            view: Some("ready".into()),
+            subject: None,
+            parent: Some("project:atlas".into()),
+            keys: Some(vec!["status".into()]),
+            facts: None,
+            held: Some(true),
+            sid: Some(writing_as(&jojobot)),
+            ..recall_args("work:phi")
+        },
+    )
+    .await;
     let (small, big) = (narrowed.to_string().len(), with_held.to_string().len());
     let (small_rows, big_rows) = (
         narrowed["objects"].as_array().expect("objects").len(),
@@ -9545,10 +9082,7 @@ async fn the_narrowed_note_says_only_what_is_true_of_the_answer() {
             ..recall_args("person:homer")
         };
         let jojobot = jojobot.clone();
-        async move {
-            json_of(&jojobot.recall(Parameters(asked)).await.expect("recall ok"))["narrowed"]
-                .clone()
-        }
+        async move { recall_json(&jojobot, asked).await["narrowed"].clone() }
     };
 
     // Nothing recorded on the thing: no records, no values, nothing left out.
@@ -9693,14 +9227,7 @@ async fn unreviewed_and_near_narrow_a_call_alone_and_overdue_does_not() {
     let blocked = |answered: &serde_json::Value| answered["status"] == "blocked";
     let ask = |args: RecallArgs| {
         let jojobot = &jojobot;
-        async move {
-            json_of(
-                &jojobot
-                    .recall(Parameters(args))
-                    .await
-                    .expect("recall answers"),
-            )
-        }
+        async move { recall_json(jojobot, args).await }
     };
     let unreviewed = ask(RecallArgs {
         unreviewed: Some(true),
@@ -9756,17 +9283,18 @@ async fn a_named_subject_is_dropped_by_overdue_and_kept_without_it() {
         let jojobot = &jojobot;
         let sid = sid.clone();
         async move {
-            handles(&json_of(
-                &jojobot
-                    .recall(Parameters(RecallArgs {
+            handles(
+                &recall_json(
+                    jojobot,
+                    RecallArgs {
                         subject: Some("person:ned-flanders".into()),
                         overdue,
                         sid: Some(sid),
                         ..of_nothing()
-                    }))
-                    .await
-                    .expect("recall answers"),
-            ))
+                    },
+                )
+                .await,
+            )
         }
     };
     assert_eq!(ask(None).await, vec!["person:ned-flanders".to_string()]);
@@ -9809,25 +9337,24 @@ async fn a_walked_object_of_a_narrowed_read_carries_none_of_the_identity_fields(
     )
     .await;
 
-    let walked = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                subject: Some("event:birthday-party".into()),
-                follow: Some(FollowArgs {
-                    shape: Some("attendance".into()),
-                    relation: None,
-                    direction: Some("in".into()),
-                    depth: None,
-                    keeping: None,
-                    fits_type: None,
-                }),
-                keys: Some(vec!["nick".into()]),
-                facts: None,
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let walked = recall_json(
+        &jojobot,
+        RecallArgs {
+            subject: Some("event:birthday-party".into()),
+            follow: Some(FollowArgs {
+                shape: Some("attendance".into()),
+                relation: None,
+                direction: Some("in".into()),
+                depth: None,
+                keeping: None,
+                fits_type: None,
+            }),
+            keys: Some(vec!["nick".into()]),
+            facts: None,
+            ..of_nothing()
+        },
+    )
+    .await;
     let root = &walked["objects"][0];
     let guest = &root["connected"][0];
     assert_eq!(guest["id"], "person:ned-flanders", "{walked}");
@@ -9885,17 +9412,16 @@ async fn project_with_children(jojobot: &Jojobot) {
 }
 
 async fn recall_subject(jojobot: &Jojobot, subject: &str) -> serde_json::Value {
-    json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                subject: Some(subject.into()),
-                facts: None,
-                sid: Some(writing_as(jojobot)),
-                ..recall_args(subject)
-            }))
-            .await
-            .expect("recall ok"),
+    recall_json(
+        jojobot,
+        RecallArgs {
+            subject: Some(subject.into()),
+            facts: None,
+            sid: Some(writing_as(jojobot)),
+            ..recall_args(subject)
+        },
     )
+    .await
 }
 
 /// **A parent says it is one.** Recall of a project that three pieces of work
@@ -9927,18 +9453,17 @@ async fn the_parent_call_a_children_count_names_lists_those_children() {
     let jojobot = crate::harness::handler_shipped();
     project_with_children(&jojobot).await;
 
-    let body = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                parent: Some("project:atlas".into()),
-                subject: None,
-                facts: None,
-                sid: Some(writing_as(&jojobot)),
-                ..recall_args("project:atlas")
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let body = recall_json(
+        &jojobot,
+        RecallArgs {
+            parent: Some("project:atlas".into()),
+            subject: None,
+            facts: None,
+            sid: Some(writing_as(&jojobot)),
+            ..recall_args("project:atlas")
+        },
+    )
+    .await;
 
     assert_eq!(
         listed(&body),
@@ -9968,25 +9493,24 @@ async fn a_thing_reached_by_a_walk_does_not_carry_a_child_count() {
     let jojobot = crate::harness::handler_shipped();
     project_with_children(&jojobot).await;
 
-    let body = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                subject: Some("work:sigma".into()),
-                follow: Some(FollowArgs {
-                    shape: None,
-                    relation: Some("parent".into()),
-                    direction: None,
-                    depth: Some(1),
-                    keeping: None,
-                    fits_type: None,
-                }),
-                facts: None,
-                sid: Some(writing_as(&jojobot)),
-                ..recall_args("work:sigma")
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let body = recall_json(
+        &jojobot,
+        RecallArgs {
+            subject: Some("work:sigma".into()),
+            follow: Some(FollowArgs {
+                shape: None,
+                relation: Some("parent".into()),
+                direction: None,
+                depth: Some(1),
+                keeping: None,
+                fits_type: None,
+            }),
+            facts: None,
+            sid: Some(writing_as(&jojobot)),
+            ..recall_args("work:sigma")
+        },
+    )
+    .await;
 
     assert!(
         !body.to_string().contains("how_to_list"),
@@ -10032,18 +9556,17 @@ async fn a_folded_child_is_neither_counted_nor_listed_and_a_live_sibling_is_both
         "the reader lists the live sibling and the archived one, and not the folded child"
     );
 
-    let listed_under = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                parent: Some("project:atlas".into()),
-                subject: None,
-                facts: None,
-                sid: Some(writing_as(&jojobot)),
-                ..recall_args("project:atlas")
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let listed_under = recall_json(
+        &jojobot,
+        RecallArgs {
+            parent: Some("project:atlas".into()),
+            subject: None,
+            facts: None,
+            sid: Some(writing_as(&jojobot)),
+            ..recall_args("project:atlas")
+        },
+    )
+    .await;
     assert_eq!(
         listed(&listed_under),
         ["work:kappa", "work:sigma"],
@@ -10104,24 +9627,28 @@ async fn view_asked(
     acting: &str,
     inputs: &[(&str, &str)],
 ) -> serde_json::Value {
-    json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                view: Some(view.into()),
-                subject: None,
-                facts: None,
-                inputs: (!inputs.is_empty()).then(|| {
-                    inputs
-                        .iter()
-                        .map(|(name, value)| (name.to_string(), serde_json::json!(value)))
-                        .collect()
-                }),
-                sid: Some(acting.to_string()),
-                ..recall_args("work:phi")
-            }))
-            .await
-            .expect("recall ok"),
+    recall_json(
+        jojobot,
+        RecallArgs {
+            view: Some(view.into()),
+            subject: None,
+            facts: None,
+            inputs: (!inputs.is_empty()).then(|| {
+                inputs
+                    .iter()
+                    .map(|(name, value)| (name.to_string(), serde_json::json!(value)))
+                    .collect()
+            }),
+            sid: Some(acting.to_string()),
+            ..recall_args("work:phi")
+        },
     )
+    .await
+}
+
+// Refusals are JSON answers too; each case decides which status it expects.
+async fn recall_json(jojobot: &Jojobot, args: RecallArgs) -> serde_json::Value {
+    json_of(&jojobot.recall(Parameters(args)).await.expect("recall ok"))
 }
 
 /// The object an answer lists under a handle.
@@ -10309,16 +9836,15 @@ async fn a_due_view_names_why_it_left_things_out_and_the_call_that_lists_them() 
 
     // **Following the call.** A recall of a kind named in the note, with no
     // overdue question, returns the things the note counted.
-    let rhythms = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                kind: Some("rhythm".into()),
-                sid: Some(acting.clone()),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let rhythms = recall_json(
+        &jojobot,
+        RecallArgs {
+            kind: Some("rhythm".into()),
+            sid: Some(acting.clone()),
+            ..of_nothing()
+        },
+    )
+    .await;
     assert_eq!(
         handles(&rhythms).len(),
         2,
@@ -10326,16 +9852,15 @@ async fn a_due_view_names_why_it_left_things_out_and_the_call_that_lists_them() 
     );
     assert_eq!(rhythms["overdue_excluded"], serde_json::Value::Null);
     assert!(rhythms["overdue_excluded_because"].is_null(), "{rhythms}");
-    let people = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                kind: Some("person".into()),
-                sid: Some(acting),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let people = recall_json(
+        &jojobot,
+        RecallArgs {
+            kind: Some("person".into()),
+            sid: Some(acting),
+            ..of_nothing()
+        },
+    )
+    .await;
     assert_eq!(handles(&people), ["person:milhouse"], "{people}");
 }
 
@@ -10430,16 +9955,11 @@ async fn recall_reads_records_on_two_subjects_in_one_call_with_only_their_curren
             .expect("update ok");
     }
 
-    let answered = json_of(
-        &jojobot
-            .recall(Parameters(of_records(&[
-                "person:alpha#f1",
-                "person:alpha#f2",
-                "person:beta#f1",
-            ])))
-            .await
-            .expect("recall ok"),
-    );
+    let answered = recall_json(
+        &jojobot,
+        of_records(&["person:alpha#f1", "person:alpha#f2", "person:beta#f1"]),
+    )
+    .await;
     let records = answered["records"]
         .as_array()
         .unwrap_or_else(|| panic!("the records come back as a list: {answered}"));
@@ -10491,18 +10011,17 @@ async fn recall_names_an_address_that_names_nothing_and_serves_the_rest() {
     capture_ok(&jojobot, capture_args("alpha", "rides to work")).await;
     capture_ok(&jojobot, capture_args("beta", "keeps bees")).await;
 
-    let answered = json_of(
-        &jojobot
-            .recall(Parameters(of_records(&[
-                "person:alpha#f1",
-                "person:alpha#f9",
-                "person:zeta#f1",
-                "not an address",
-                "person:beta#f1",
-            ])))
-            .await
-            .expect("recall ok"),
-    );
+    let answered = recall_json(
+        &jojobot,
+        of_records(&[
+            "person:alpha#f1",
+            "person:alpha#f9",
+            "person:zeta#f1",
+            "not an address",
+            "person:beta#f1",
+        ]),
+    )
+    .await;
     let records = answered["records"]
         .as_array()
         .unwrap_or_else(|| panic!("the records come back as a list: {answered}"));
@@ -10538,15 +10057,14 @@ async fn recall_reads_records_in_parts_under_the_answer_ceiling() {
     let mut offset = 0u32;
     let mut parts = 0;
     loop {
-        let part = json_of(
-            &jojobot
-                .recall(Parameters(RecallArgs {
-                    offset: Some(offset),
-                    ..of_records(&asked)
-                }))
-                .await
-                .expect("recall ok"),
-        );
+        let part = recall_json(
+            &jojobot,
+            RecallArgs {
+                offset: Some(offset),
+                ..of_records(&asked)
+            },
+        )
+        .await;
         parts += 1;
         assert!(
             part.to_string().chars().count() <= jojobot_domain::text::ANSWER_CEILING,
@@ -10606,14 +10124,7 @@ async fn recall_reads_records_whole_with_room_for_the_details_line() {
     .await;
     addresses.push("person:beta#f1".into());
     let asked: Vec<&str> = addresses.iter().map(String::as_str).collect();
-    let ask = || async {
-        json_of(
-            &jojobot
-                .recall(Parameters(of_records(&asked)))
-                .await
-                .expect("recall ok"),
-        )
-    };
+    let ask = || async { recall_json(&jojobot, of_records(&asked)).await };
 
     let served = |answer: &serde_json::Value| {
         crate::answer::served_len(answer) + crate::answer::STATUS_BAR_ROOM
@@ -10656,50 +10167,38 @@ async fn recall_refuses_records_beside_another_selection_or_with_none() {
     let jojobot = handler();
     capture_ok(&jojobot, capture_args("alpha", "rides to work")).await;
 
-    let beside = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                subject: Some("person:alpha".into()),
-                ..of_records(&["person:alpha#f1"])
-            }))
-            .await
-            .expect("recall answers"),
-    );
+    let beside = recall_json(
+        &jojobot,
+        RecallArgs {
+            subject: Some("person:alpha".into()),
+            ..of_records(&["person:alpha#f1"])
+        },
+    )
+    .await;
     assert!(
         beside["status"] == "blocked"
             && beside["wrote"] == false
             && beside.to_string().contains("subject"),
         "a subject beside records was not refused, naming it: {beside}"
     );
-    let shaped = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                facts: Some(true),
-                ..of_records(&["person:alpha#f1"])
-            }))
-            .await
-            .expect("recall answers"),
-    );
+    let shaped = recall_json(
+        &jojobot,
+        RecallArgs {
+            facts: Some(true),
+            ..of_records(&["person:alpha#f1"])
+        },
+    )
+    .await;
     assert!(
         shaped["status"] == "blocked" && shaped.to_string().contains("facts"),
         "an argument that shapes another question was dropped without a word: {shaped}"
     );
-    let empty = json_of(
-        &jojobot
-            .recall(Parameters(of_records(&[])))
-            .await
-            .expect("recall answers"),
-    );
+    let empty = recall_json(&jojobot, of_records(&[])).await;
     assert!(
         empty["status"] == "blocked" && empty["wrote"] == false,
         "an empty list was not refused: {empty}"
     );
-    let alone = json_of(
-        &jojobot
-            .recall(Parameters(of_records(&["person:alpha#f1"])))
-            .await
-            .expect("recall answers"),
-    );
+    let alone = recall_json(&jojobot, of_records(&["person:alpha#f1"])).await;
     assert_eq!(
         alone["records"][0]["content"], "rides to work",
         "the same list, sent alone, is served: {alone}"
@@ -11036,12 +10535,7 @@ async fn an_app_written_claim_says_so_on_a_records_read_and_on_its_history_and_a
     capture_ok(&jojobot, capture_args("beta", "keeps bees")).await;
     let by_bot = "person:beta#f1";
 
-    let records = json_of(
-        &jojobot
-            .recall(Parameters(of_records(&[&by_app, by_bot])))
-            .await
-            .expect("recall ok"),
-    );
+    let records = recall_json(&jojobot, of_records(&[&by_app, by_bot])).await;
     assert_eq!(
         records["records"][0]["recorded_by"]["app"], "alpha-deployer",
         "{records}"
@@ -11056,16 +10550,15 @@ async fn an_app_written_claim_says_so_on_a_records_read_and_on_its_history_and_a
     );
 
     for (address, app_wrote) in [(by_app.as_str(), true), (by_bot, false)] {
-        let history = json_of(
-            &jojobot
-                .recall(Parameters(RecallArgs {
-                    history_record: Some(address.into()),
-                    facts: Some(false),
-                    ..of(address.split('#').next().expect("a subject"))
-                }))
-                .await
-                .expect("recall ok"),
-        );
+        let history = recall_json(
+            &jojobot,
+            RecallArgs {
+                history_record: Some(address.into()),
+                facts: Some(false),
+                ..of(address.split('#').next().expect("a subject"))
+            },
+        )
+        .await;
         let write = &history["objects"][0]["record_history"]["writes"][0];
         if app_wrote {
             assert_eq!(write["recorded_by"]["app"], "alpha-deployer", "{history}");
@@ -11109,12 +10602,7 @@ async fn recall_serves_recorded_by_on_an_app_claim_and_the_claim_is_not_rewritte
         .expect("the app's claim lands");
     let app_claim = landed.written().expect("not blocked").address();
 
-    let read = json_of(
-        &jojobot
-            .recall(Parameters(of("thing:delta")))
-            .await
-            .expect("recall answers"),
-    );
+    let read = recall_json(&jojobot, of("thing:delta")).await;
     let facts = read["objects"][0]["facts"].as_array().expect("facts");
     let app = facts
         .iter()
@@ -11261,16 +10749,15 @@ async fn a_list_read_that_leaves_the_linked_blocks_out_answers_when_the_linked_w
     // A plan, so the read has a plan block to leave out as well.
     a_plan(&healthy, "list:homer-chores", "Homer's chores", "2026-W43").await;
 
-    let named = json_of(
-        &blind
-            .recall(Parameters(RecallArgs {
-                kind: Some("list".into()),
-                keys: Some(vec!["name".into()]),
-                ..of_nothing()
-            }))
-            .await
-            .expect("a read that names only name answers"),
-    );
+    let named = recall_json(
+        &blind,
+        RecallArgs {
+            kind: Some("list".into()),
+            keys: Some(vec!["name".into()]),
+            ..of_nothing()
+        },
+    )
+    .await;
     let names: Vec<&str> = named["objects"]
         .as_array()
         .unwrap_or_else(|| panic!("objects: {named}"))
@@ -11293,15 +10780,14 @@ async fn a_list_read_that_leaves_the_linked_blocks_out_answers_when_the_linked_w
         assert!(left_out.contains(&block), "{block} is left out: {named}");
     }
 
-    let viewed = json_of(
-        &blind
-            .recall(Parameters(RecallArgs {
-                view: Some("lists".into()),
-                ..of_nothing()
-            }))
-            .await
-            .expect("the view that lists lists answers"),
-    );
+    let viewed = recall_json(
+        &blind,
+        RecallArgs {
+            view: Some("lists".into()),
+            ..of_nothing()
+        },
+    )
+    .await;
     assert_eq!(
         viewed["objects"].as_array().map(Vec::len),
         Some(2),
@@ -11353,31 +10839,29 @@ async fn a_list_read_that_leaves_the_entries_out_does_not_read_where_they_were_c
     )
     .await;
 
-    let named = json_of(
-        &blind
-            .recall(Parameters(RecallArgs {
-                kind: Some("list".into()),
-                keys: Some(vec!["name".into()]),
-                ..of_nothing()
-            }))
-            .await
-            .expect("a read that names only name answers"),
-    );
+    let named = recall_json(
+        &blind,
+        RecallArgs {
+            kind: Some("list".into()),
+            keys: Some(vec!["name".into()]),
+            ..of_nothing()
+        },
+    )
+    .await;
     assert_eq!(
         named["objects"].as_array().map(Vec::len),
         Some(2),
         "both plans: {named}"
     );
 
-    let whole = json_of(
-        &healthy
-            .recall(Parameters(RecallArgs {
-                facts: Some(false),
-                ..recall_args("list:homer-chores")
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let whole = recall_json(
+        &healthy,
+        RecallArgs {
+            facts: Some(false),
+            ..recall_args("list:homer-chores")
+        },
+    )
+    .await;
     assert!(
         whole["objects"][0]["entries"][0]["carried_to"]
             .as_array()
@@ -11426,13 +10910,8 @@ async fn a_list_whose_linked_works_verdicts_cannot_be_worked_out_answers_an_outa
 async fn a_tick_that_landed_is_answered_when_the_linked_work_cannot_be_read() {
     let (healthy, blind) = healthy_and_down(Down::FieldsOf("work:gamma"));
     a_list_of_three_linked_works(&healthy, None).await;
-    let entries = json_of(
-        &healthy
-            .recall(Parameters(recall_args("list:errands")))
-            .await
-            .expect("recall ok"),
-    )["objects"][0]["entries"]
-        .clone();
+    let entries =
+        recall_json(&healthy, recall_args("list:errands")).await["objects"][0]["entries"].clone();
     let gamma = entries
         .as_array()
         .and_then(|all| all.iter().find(|entry| entry["text"] == "work:gamma"))
@@ -11832,21 +11311,20 @@ async fn walked_along(
     relation: &str,
     direction: &str,
 ) -> Vec<String> {
-    let body = json_of(
-        &jojobot
-            .recall(Parameters(RecallArgs {
-                subject: Some(subject.into()),
-                follow: Some(FollowArgs {
-                    relation: Some(relation.into()),
-                    direction: Some(direction.into()),
-                    ..no_follow()
-                }),
-                sid: Some(writing_as(jojobot)),
-                ..of_nothing()
-            }))
-            .await
-            .expect("recall ok"),
-    );
+    let body = recall_json(
+        jojobot,
+        RecallArgs {
+            subject: Some(subject.into()),
+            follow: Some(FollowArgs {
+                relation: Some(relation.into()),
+                direction: Some(direction.into()),
+                ..no_follow()
+            }),
+            sid: Some(writing_as(jojobot)),
+            ..of_nothing()
+        },
+    )
+    .await;
     let mut reached: Vec<String> = body["objects"][0]["connected"]
         .as_array()
         .map(|connected| {
