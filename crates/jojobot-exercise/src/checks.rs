@@ -194,6 +194,8 @@ use crate::run::{Checks, Observed, checked, checked_noting};
 mod inspection_lock;
 mod packing;
 #[cfg(test)]
+mod party_guests;
+#[cfg(test)]
 mod plus_one;
 #[cfg(test)]
 mod rule_answer;
@@ -3970,6 +3972,31 @@ async fn the_move_is_open_only_on_the_utilities(seen: &Observed<'_>) -> Result<(
     }
 }
 
+/// The party the room furnishes, by the handle every other lock on it spells.
+const PARTY: &str = "event:goodbye-party";
+
+/// **The standing guests of the party alone**, by their slug, sorted and
+/// without repeats. ⚠️ **Only the party's own walk is read**: an attendance at
+/// any other event is somebody else's evening, and counting it here would charge
+/// the party with a guest it never had.
+fn party_guests(walked: &Value) -> Vec<String> {
+    let mut guests: Vec<String> = Vec::new();
+    for event in walked["objects"].as_array().into_iter().flatten() {
+        if event["id"] != PARTY {
+            continue;
+        }
+        for guest in event["connected"].as_array().into_iter().flatten() {
+            if guest["via"]["type"] == "attendance" && guest["via"]["retracted"].is_null() {
+                let id = guest["id"].as_str().unwrap_or_default().to_lowercase();
+                guests.push(id.rsplit(':').next().unwrap_or_default().to_string());
+            }
+        }
+    }
+    guests.sort();
+    guests.dedup();
+    guests
+}
+
 /// **The party was attended by the eight who came, and by nobody who did not.**
 ///
 /// Read off the walk INTO the party along attendance, with a link whose claim
@@ -3993,17 +4020,7 @@ async fn the_party_was_attended_by_those_who_came_and_nobody_else(
             )
             .await,
     )?;
-    let mut guests: Vec<String> = Vec::new();
-    for event in walked["objects"].as_array().cloned().unwrap_or_default() {
-        for guest in event["connected"].as_array().cloned().unwrap_or_default() {
-            if guest["via"]["type"] == "attendance" && guest["via"]["retracted"].is_null() {
-                let id = guest["id"].as_str().unwrap_or_default().to_lowercase();
-                guests.push(id.rsplit(':').next().unwrap_or_default().to_string());
-            }
-        }
-    }
-    guests.sort();
-    guests.dedup();
+    let guests = party_guests(&walked);
     if guests.is_empty() {
         return Err("nobody is recorded as having attended anything".into());
     }
