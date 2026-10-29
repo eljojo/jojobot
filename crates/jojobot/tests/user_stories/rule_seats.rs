@@ -1334,15 +1334,14 @@ fn taught_unstarred(answer: &super::dsl::Answer) -> bool {
     })
 }
 
-/// **Unstarring three rules is taught the organizing skill, unless the record
-/// that lands names what it replaces.** A rule that is unstarred is kept but no
+/// **Unstarring three rules is taught the organizing skill when the record that
+/// lands beside them names nothing.** A rule that is unstarred is kept but no
 /// longer rides the boot, and a record written beside the unstars does not lead
-/// back to them unless it stands for them. The receipt of that record says so,
-/// naming the skill that files them under an index rule (rule 593). The pair
-/// beside it: the same three unstars and a summary that stands for them carry no
-/// such teaching, and two unstars alone are not enough.
+/// back to them. The receipt of that record says so, naming the skill that files
+/// them under an index rule (rule 593). Two unstars alone are not enough. The
+/// record that stands for the rules is the sibling case below.
 #[tokio::test]
-async fn unstarring_three_rules_is_taught_organizing_unless_the_summary_names_them() {
+async fn unstarring_three_rules_is_taught_organizing_when_the_record_names_nothing() {
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
     s.add("bot:delta", "Delta").await;
@@ -1469,6 +1468,9 @@ async fn three_unstars_then_an_edit(stands_for: bool) -> bool {
     taught
 }
 
+/// **A record that stands for the unstarred rules carries no such teaching.** The
+/// same three unstars and the same edit of the record beside them, once without
+/// `stands_for` (taught) and once with it (not taught), each in a story of its own.
 #[tokio::test]
 async fn an_edit_beside_three_unstars_is_taught_unless_it_stands_for_them() {
     assert!(
