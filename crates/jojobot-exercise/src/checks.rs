@@ -194,6 +194,8 @@ use crate::run::{Checks, Observed, checked, checked_noting};
 mod inspection_lock;
 mod packing;
 #[cfg(test)]
+mod rule_answer;
+#[cfg(test)]
 mod said_the_count;
 #[cfg(test)]
 mod skate_tool_holder;
@@ -505,32 +507,44 @@ fn rule_answer_check(
     checked(move |seen| {
         Box::pin(async move {
             let records = answer_records(seen, subject).await?;
-            let numbers = answer_numbers(&records);
-            for number in required {
-                if !numbers.contains(number) {
-                    return Err(format!("answer on {subject} lacks rule {number}"));
-                }
-            }
-            for number in forbidden {
-                if numbers.contains(number) {
-                    return Err(format!(
-                        "answer on {subject} includes unrelated rule {number}"
-                    ));
-                }
-            }
-            Ok(())
+            rule_answer_verdict(subject, &records, required, forbidden)
         })
     })
 }
 
-fn answer_numbers(records: &[Value]) -> std::collections::BTreeSet<u16> {
+/// **The verdict over the answer's records**, so a case can hand it any answer.
+///
+/// ⚠️ **A rule is required by `content` or `details`, and forbidden by
+/// `content` alone.** `details` is where a sitting explains itself, and
+/// dismissing a candidate by number there ("rule 129 is not this") is not
+/// naming it as the answer.
+fn rule_answer_verdict(
+    subject: &str,
+    records: &[Value],
+    required: &[u16],
+    forbidden: &[u16],
+) -> Result<(), String> {
+    let numbers = answer_numbers(records, &["content", "details"]);
+    for number in required {
+        if !numbers.contains(number) {
+            return Err(format!("answer on {subject} lacks rule {number}"));
+        }
+    }
+    let named = answer_numbers(records, &["content"]);
+    for number in forbidden {
+        if named.contains(number) {
+            return Err(format!(
+                "answer on {subject} includes unrelated rule {number}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn answer_numbers(records: &[Value], keys: &[&str]) -> std::collections::BTreeSet<u16> {
     records
         .iter()
-        .flat_map(|record| {
-            ["content", "details"]
-                .into_iter()
-                .filter_map(|key| record[key].as_str())
-        })
+        .flat_map(|record| keys.iter().filter_map(|key| record[*key].as_str()))
         .flat_map(|part| part.split(|ch: char| !ch.is_ascii_alphanumeric()))
         .filter_map(|word| word.parse::<u16>().ok())
         .collect()
@@ -4576,15 +4590,18 @@ mod tests {
     #[test]
     fn answer_numbers_ignore_timestamps_and_read_details_across_records() {
         let without_answer = [serde_json::json!({"recorded_at":"2026-11-11T00:00:00.241Z"})];
-        assert!(super::answer_numbers(&without_answer).is_empty());
+        assert!(super::answer_numbers(&without_answer, &["content", "details"]).is_empty());
         let answer = [
             serde_json::json!({"content":"answer", "details":"rule 241", "recorded_at":"2026-11-11T00:00:00.129Z"}),
             serde_json::json!({"content":"275"}),
         ];
-        assert_eq!(super::answer_numbers(&answer), [241, 275].into());
+        assert_eq!(
+            super::answer_numbers(&answer, &["content", "details"]),
+            [241, 275].into()
+        );
         let overinclusive = [serde_json::json!({"content":"241, 275, 129"})];
         assert_eq!(
-            super::answer_numbers(&overinclusive),
+            super::answer_numbers(&overinclusive, &["content", "details"]),
             [129, 241, 275].into()
         );
     }
