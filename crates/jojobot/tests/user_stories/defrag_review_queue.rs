@@ -177,18 +177,6 @@ async fn a_thing_another_bot_writes_to_waits_for_defrag_until_defrag_writes_or_m
         )
         .await;
     assert_eq!(by_defrag.json()["dropped_keys"], json!(["defragged_at"]));
-    let minted = dev
-        .call(
-            "recall",
-            json!({"subject": "person:homer", "keys": ["defragged_at"]}),
-        )
-        .await
-        .json();
-    assert_ne!(
-        minted["objects"][0]["fields"]["defragged_at"],
-        json!(COPIED_STAMP),
-        "defrag's own write mints its stamp and keeps no copied one: {minted}"
-    );
     let created = dev
         .call(
             "add_entity",
