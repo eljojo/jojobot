@@ -3137,3 +3137,43 @@ fn an_empty_or_blank_value_takes_the_key_off_the_thing() {
     ];
     assert_eq!(folded_fields(&again, &[])["probe"], "back");
 }
+
+/// **A number written blank is a bad number, not an absent one.** The fold reads
+/// a blank value as unset, so what the numbering sees of a write is the keys the
+/// write set blank; a member given one is refused as no number, and a member
+/// whose write set no blank key is left unnumbered.
+#[test]
+fn a_blank_number_on_a_numbered_member_is_refused_not_unset() {
+    use super::numbered::{Change, Member, Numbered, Reach};
+    use std::collections::BTreeSet;
+    let sign = EntityId("topic:milhouse-moves".into());
+    let reach = Reach {
+        scopes: vec![Numbered {
+            collection: EntityId("topic:marge-baking".into()),
+            key: "number".into(),
+            members: vec![Member {
+                handle: sign.clone(),
+                value: None,
+                retired: BTreeSet::new(),
+            }],
+        }],
+        chain: BTreeSet::new(),
+        founded: Vec::new(),
+    };
+    let rows: [(&str, &str, bool); 3] = [
+        ("an empty number is refused", "", true),
+        ("a whitespace number is refused", " \t", true),
+        ("a real number is not refused", "7", false),
+    ];
+    for (rule, written, refused) in rows {
+        let fields = BTreeMap::from([("number".to_string(), written.to_string())]);
+        // What the fold serves: a blank value is not there.
+        let after = folded_fields(&[wrote("number", 1, Some(written))], &[]);
+        let change = Change::of_capture(&sign, &after, &fields);
+        assert_eq!(
+            matches!(reach.refuses(&change), Some(MemoryError::NotANumber { .. })),
+            refused,
+            "{rule}"
+        );
+    }
+}

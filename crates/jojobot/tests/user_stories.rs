@@ -72,6 +72,8 @@ mod chart;
 mod citing;
 #[path = "user_stories/clearing_a_key.rs"]
 mod clearing_a_key;
+#[path = "user_stories/clearing_a_key_with_an_empty_value.rs"]
+mod clearing_a_key_with_an_empty_value;
 #[path = "user_stories/closing_mail.rs"]
 mod closing_mail;
 #[path = "user_stories/colleagues.rs"]

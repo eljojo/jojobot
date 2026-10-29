@@ -3230,10 +3230,7 @@ impl Memory for InMemoryMemory {
             )?;
         }
         self.guards_numbering(
-            &super::super::numbered::Change {
-                holds: vec![(subject_entity.id.clone(), after.clone())],
-                ..Default::default()
-            },
+            &super::super::numbered::Change::capture(&subject_entity.id, &after, &stored),
             None,
             &self.known(),
             &facts,
@@ -4389,6 +4386,7 @@ impl Memory for InMemoryMemory {
                             .map(|e| (e.id.clone(), fields.get(&e.id).cloned().unwrap_or_default()))
                             .collect()
                     },
+                    ..Default::default()
                 },
                 Some(&survivor_handle),
                 &known_rows,

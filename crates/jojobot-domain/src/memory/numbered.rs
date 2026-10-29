@@ -496,9 +496,42 @@ pub struct Change {
     /// everything under it; a merge moves what was under the duplicate to the
     /// survivor.
     pub moved: Vec<(EntityId, BTreeMap<String, String>)>,
+    /// The keys the write set to an empty or blank value, per thing. The fold
+    /// reads such a value as unset, so `holds` no longer carries it; a number a
+    /// member was given blank is a bad number, not an absent one.
+    pub blank: Vec<(EntityId, BTreeSet<String>)>,
 }
 
 impl Change {
+    /// **What a capture of this record changes**: see [`Change::of_capture`].
+    pub fn capture(
+        subject: &EntityId,
+        after: &BTreeMap<String, String>,
+        stored: &super::Fact,
+    ) -> Change {
+        Change::of_capture(subject, after, &stored.fields)
+    }
+
+    /// **What a capture changes**: the subject as it will stand, and the keys the
+    /// record set blank, which the fold reads as unset and `holds` no longer
+    /// carries.
+    pub fn of_capture(
+        subject: &EntityId,
+        after: &BTreeMap<String, String>,
+        written: &BTreeMap<String, String>,
+    ) -> Change {
+        let blank = written
+            .iter()
+            .filter(|(_, value)| !super::types::holds_a_value(value))
+            .map(|(key, _)| key.clone())
+            .collect();
+        Change {
+            holds: vec![(subject.clone(), after.clone())],
+            blank: vec![(subject.clone(), blank)],
+            ..Default::default()
+        }
+    }
+
     /// **Whether a thing the change leaves in place holds a `numbers_by`**, so a
     /// store that numbers nothing yet still has to ask.
     pub fn sets_numbering(&self) -> bool {
@@ -615,9 +648,16 @@ impl Numbered {
         }
         for (handle, fields) in &change.holds {
             if is_member(handle) {
+                let blank = change
+                    .blank
+                    .iter()
+                    .any(|(h, keys)| h == handle && keys.contains(&self.key));
                 edits.push(Edit::Set {
                     handle: handle.clone(),
-                    value: fields.get(&self.key).cloned(),
+                    value: fields
+                        .get(&self.key)
+                        .cloned()
+                        .or_else(|| blank.then(String::new)),
                 });
             }
         }

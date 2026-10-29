@@ -2857,10 +2857,7 @@ impl DoltMemory {
         }
         self.guard_numbering(
             tx,
-            &jojobot_domain::memory::numbered::Change {
-                holds: vec![(subject_handle.clone(), after.clone())],
-                ..Default::default()
-            },
+            &jojobot_domain::memory::numbered::Change::capture(&subject_handle, &after, &stored),
             None,
         )
         .await?;
@@ -6624,6 +6621,7 @@ impl Memory for DoltMemory {
                     holds: vec![(survivor_handle.clone(), Default::default())],
                     leaves: vec![folded_handle.clone()],
                     moved: children_moved.clone(),
+                    ..Default::default()
                 },
                 Some(&survivor_handle),
             )
@@ -6849,6 +6847,7 @@ impl Memory for DoltMemory {
             holds: vec![(survivor_handle.clone(), survivor_after)],
             leaves: vec![folded_handle.clone()],
             moved: children_moved,
+            ..Default::default()
         }) {
             return Err(refusal);
         }
