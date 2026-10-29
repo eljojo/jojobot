@@ -332,10 +332,10 @@ A session here starts at jojobot, not at these files. The whole protocol:
   the carry (rules 501, 622). **In CI a job that goes red cancels its sibling
   jobs**, so a cancelled job in a red run is unproven, never passed.
 - **The size ratchet** (`size-ratchet.toml`, checked by `bar size`): a file over
-  `cap` lines (5,000) is red, a new one is refused and a red one may not grow
-  against the base; over 2,000 is yellow and warns. `test_file_bytes` caps an
-  added file under a tests directory at 100 KB (rule 661). Both only fall; a
-  raise is a `[[raise]]` table naming the operator's rule.
+  `cap` lines (5,000) is red and a new one is refused; over 2,000 is yellow and
+  warns. **Any file may grow when the change honestly needs it, with the reason
+  in the report (rule 741)**; the limits never force a worse design.
+  `test_file_bytes` caps an added test file at 100 KB (rule 661). Both only fall.
 - **The bar has levels, and `make check` runs no room.** Each suite that
   stands up a room sits behind a cargo feature, so the bar compiles and lints
   it and never runs it. `make rooms` runs every room but the year,
