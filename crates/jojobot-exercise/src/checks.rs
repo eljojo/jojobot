@@ -193,6 +193,8 @@ use crate::run::{Checks, Observed, checked, checked_noting};
 #[cfg(test)]
 mod donuts;
 #[cfg(test)]
+mod fold_dates;
+#[cfg(test)]
 mod inspection_lock;
 mod packing;
 #[cfg(test)]
@@ -2974,38 +2976,56 @@ async fn the_longboards_fold_invents_no_date_the_repairs_never_gave(
     seen: &Observed<'_>,
 ) -> Result<(), String> {
     let facts = longboards_facts(seen).await;
-    let Some(fold) = the_fold(&facts) else {
+    fold_invents_no_date(&facts)
+}
+
+/// **Every fold on the longboard, not the first one found.** A second record
+/// that stands for others is read like the first: a day it names has to be a day
+/// some other record on the longboard gives.
+fn fold_invents_no_date(facts: &[Value]) -> Result<(), String> {
+    let folds: Vec<&Value> = facts
+        .iter()
+        .filter(|fact| {
+            fact["stands_for"]
+                .as_array()
+                .is_some_and(|marks| !marks.is_empty())
+        })
+        .collect();
+    if folds.is_empty() {
         return Err(
             "no record on the longboard stands for any other, so there is nothing here to check for \
              an invented date"
                 .into(),
         );
-    };
-    let fold_address = fold["address"].as_str().unwrap_or_default().to_string();
-    let mut known: std::collections::HashSet<&str> = facts
-        .iter()
-        .filter_map(|fact| fact["recorded_at"].as_str())
-        .collect();
-    known.extend(
-        facts
-            .iter()
-            .filter(|fact| fact["address"] != fold_address.as_str())
-            .filter_map(|fact| fact["happened_at"].as_str()),
-    );
-    if let Some(claimed) = fold["happened_at"].as_str()
-        && !known.contains(claimed)
-    {
-        return Err(format!(
-            "the fold says the pile happened on {claimed}, a day none of the longboard's other \
-             records give"
-        ));
     }
-    let content = fold["content"].as_str().unwrap_or_default();
-    for date in iso_dates_in(content) {
-        if !known.contains(date.as_str()) {
+    for fold in folds {
+        let fold_address = fold["address"].as_str().unwrap_or_default();
+        let mut known: std::collections::HashSet<&str> = facts
+            .iter()
+            .filter_map(|fact| fact["recorded_at"].as_str())
+            .collect();
+        known.extend(
+            facts
+                .iter()
+                .filter(|fact| fact["address"] != fold_address)
+                .filter_map(|fact| fact["happened_at"].as_str()),
+        );
+        if let Some(claimed) = fold["happened_at"].as_str()
+            && !known.contains(claimed)
+        {
             return Err(format!(
-                "the fold's own words name {date}, a day none of the longboard's other records give"
+                "the fold {fold_address} says the pile happened on {claimed}, a day none of the \
+                 longboard's other records give"
             ));
+        }
+        let content = fold["content"].as_str().unwrap_or_default();
+        for date in iso_dates_in(content) {
+            if !known.contains(date.as_str()) {
+                return Err(format!(
+                    "the fold {fold_address}'s own words name {date}, a day none of the longboard's \
+                     other records give"
+                ));
+            }
         }
     }
     Ok(())
