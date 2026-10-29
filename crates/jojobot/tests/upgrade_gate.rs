@@ -70,8 +70,8 @@ struct Restored {
     handles: Vec<String>,
     /// **The key of the recorded holder run, when the recording build kept one.**
     /// A build that keys its runs stores only the hash of a key, so the gate sets
-    /// that hash to the hash of a key of its own and holds the key here; a build
-    /// that began runs without keys leaves the holder to be exchanged by its name.
+    /// that hash to the hash of a key of its own and holds the key here. The gate
+    /// supports no recording from a build that began runs without keys.
     holder_key: Option<String>,
 }
 
@@ -225,8 +225,8 @@ async fn restore_a_fixture_recorded_earlier(
     // lease and past the renewal age: a younger moment would make the holder's
     // write renew nothing, so the claim would not move. It changes a moment, not a
     // shape: the key is the old build's own. **A recording from a build that keys
-    // its runs holds no such key, so this matches no row there**, and the checks
-    // that read an old-shaped role claim do not run on it (`keyed` below).
+    // its runs holds no such key, so this matches no row there**; the lease check
+    // below ages the claim itself.
     sqlx::query("UPDATE field_write SET value = ? WHERE `key` = ?")
         .bind((jiff::Timestamp::now() - jiff::SignedDuration::from_mins(10)).to_string())
         .bind("role/upgrade-fixture-holder/claimed_at")
@@ -472,35 +472,23 @@ async fn boots_on_a_restored_store(fixture_dir: &str, restored: Restored) {
     // **The recorded holder holds a key already**: a build that keys its runs
     // recorded it, and a name is no longer exchanged for a key, so a recording from
     // an older build is not supported. Every call below carries the key.
-    let keyed = holder_key.is_some();
     let role_key = holder_key.expect("the recording is of a build that keys its runs");
     assert_every_recorded_record_reads_back(&surface, &git_ref, &role_holder).await;
     assert_what_a_real_store_holds_reads_back(&surface, &git_ref, &role_key).await;
-    if !keyed {
-        assert_a_role_claimed_in_the_old_shape_is_carried_by_the_boot_and_stays_held(
-            &surface,
-            &git_ref,
-            &role_holder,
-            &role_key,
-        )
-        .await;
-    }
     assert_the_voucher_kind_arrives_and_no_voucher_exists(&surface, &git_ref).await;
     surface.finish().await;
     third.stop().await;
 
     // The role is now claim-shaped, with the claim the holder's write made. A
     // fourth boot is the restart of the deployed server over it.
-    if !keyed {
-        assert_a_claim_shaped_lease_renews_in_place(
-            &state_dir,
-            store_port,
-            &git_ref,
-            &role_holder,
-            &role_key,
-        )
-        .await;
-    }
+    assert_a_claim_shaped_lease_renews_in_place(
+        &state_dir,
+        store_port,
+        &git_ref,
+        &role_holder,
+        &role_key,
+    )
+    .await;
     drop(scratch);
 }
 
@@ -1418,72 +1406,6 @@ fn the_statement_splitter_keeps_a_semicolon_inside_a_value() {
             "DROP TABLE IF EXISTS `u`;".to_string(),
         ]
     );
-}
-
-/// **A role claimed before roles were objects is carried onto its object by the
-/// first boot, and stays held.** The recording keeps the claim on the bot. The
-/// boot writes the holder and the moment onto a role object and takes the keys
-/// off, so the role object names the holder before and after the holder's next
-/// write, and the bot holds no key of the old shape. Without the pass, every
-/// role in the store would read as empty here.
-async fn assert_a_role_claimed_in_the_old_shape_is_carried_by_the_boot_and_stays_held(
-    surface: &Surface,
-    git_ref: &str,
-    role_holder: &str,
-    role_key: &str,
-) {
-    let fail = |what: &str, body: &str| -> ! { panic!("recorded at {git_ref}: {what}: {body}") };
-    let the_role_object = || async {
-        let read = surface
-            .call("recall", json!({"kind": "role", "parent": "bot:assistant"}))
-            .await;
-        let parsed: serde_json::Value =
-            serde_json::from_str(&read).unwrap_or_else(|_| fail("the role objects", &read));
-        parsed["objects"]
-            .as_array()
-            .and_then(|all| {
-                all.iter()
-                    .find(|o| o["id"] == "role:upgrade-fixture-holder")
-            })
-            .cloned()
-            .unwrap_or_else(|| fail("the role object the boot made", &read))
-    };
-
-    let carried = the_role_object().await;
-    if carried["fields"]["holder"] != role_holder
-        || carried["fields"]["claimed_at"].as_str().is_none()
-    {
-        fail(
-            "the boot carrying the old claim onto the role object",
-            &carried.to_string(),
-        );
-    }
-    // The holder writes. That renews the claim on the role object.
-    let beat = surface
-        .call(
-            "journal",
-            json!({"entry": "worked on after the upgrade", "sid": role_key}),
-        )
-        .await;
-    if beat.contains("\"status\":\"blocked\"") {
-        fail("the holder's write after the upgrade was refused", &beat);
-    }
-    let renewed = the_role_object().await;
-    // **An equal moment is right here**: a renewal inside the renewal age keeps the
-    // moment the lease already holds, and the aged renewal further on is the check
-    // that a renewal moves it.
-    if renewed["fields"]["holder"] != role_holder {
-        fail(
-            "the holder's write keeping the claim on the role object",
-            &renewed.to_string(),
-        );
-    }
-    if renewed["fields"]["claimed_at"].as_str() < carried["fields"]["claimed_at"].as_str() {
-        fail(
-            "the holder's write moving the claim's moment forward",
-            &renewed.to_string(),
-        );
-    }
 }
 
 /// **What a store that has run for a while holds beyond the plain records, read
