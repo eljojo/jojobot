@@ -49,6 +49,7 @@ test-discriminating_case
 test-documents_corpus
 test-dolt_app_write
 test-dolt_bare_names
+test-dolt_check_current_writes
 test-dolt_check_precision
 test-dolt_claim_ids_after_a_merge
 test-dolt_contract_parts
