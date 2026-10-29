@@ -518,3 +518,30 @@ async fn writer_recovery_native_request_receipt_uses_the_process_writer() {
     })
     .await;
 }
+
+/// A write that panics fails its own caller and no other. The queue lives in one
+/// task, so a panic that ended it would fail every later write on every rail.
+#[tokio::test]
+async fn a_panicking_write_fails_only_its_own_caller() {
+    let writer = crate::writer::Writer::default();
+    let doomed = writer.clone();
+    let panicked = tokio::spawn(async move {
+        doomed
+            .run(async {
+                panic!("a write that panics");
+            })
+            .await
+    })
+    .await;
+    assert!(panicked.is_err(), "the caller of the panicking write fails");
+    let next = tokio::spawn({
+        let writer = writer.clone();
+        async move { writer.run(async { 7 }).await }
+    })
+    .await;
+    assert_eq!(
+        next.expect("a later write is accepted and answered"),
+        7,
+        "the writer still serves after one write panicked"
+    );
+}

@@ -2,10 +2,12 @@
 
 use std::collections::BTreeSet;
 use std::future::Future;
+use std::panic::AssertUnwindSafe;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
+use futures_util::FutureExt;
 use jojobot_domain::request::context::Context;
 use tokio::sync::{mpsc, oneshot};
 use tracing::Instrument;
@@ -144,7 +146,12 @@ impl Writer {
                 id,
                 OWNER.scope(owner, async move {
                     while let Some(job) = jobs.recv().await {
-                        job.await;
+                        // A job that panics fails its own caller (its answer
+                        // channel drops) and must not end the queue for every
+                        // later write on every rail.
+                        if AssertUnwindSafe(job).catch_unwind().await.is_err() {
+                            tracing::error!("a write panicked; the writer keeps serving");
+                        }
                     }
                 }),
             ));
