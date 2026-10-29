@@ -26,7 +26,19 @@ fn unit(target: &Path, name: &str) -> PathBuf {
 
 /// Run the guard over `command` from a copy of the script inside a checkout
 /// named `checkout`. The stub cargo reports `reported` as the target directory.
+/// The run is not a forge runner's: the marker is removed whatever CI runs this.
 fn guard(root: &Path, reported: &Path, checkout: &str, command: &str) -> Output {
+    guard_as(root, reported, checkout, command, None)
+}
+
+/// As `guard`, with `GITHUB_ACTIONS` set to `runner` when it is given.
+fn guard_as(
+    root: &Path,
+    reported: &Path,
+    checkout: &str,
+    command: &str,
+    runner: Option<&str>,
+) -> Output {
     let script = root
         .join("checkouts")
         .join(checkout)
@@ -48,7 +60,11 @@ fn guard(root: &Path, reported: &Path, checkout: &str, command: &str) -> Output 
     let mut run = Command::new("python3");
     run.arg(&script)
         .args(["sh", "-c", command])
-        .env("CARGO", &cargo);
+        .env("CARGO", &cargo)
+        .env_remove("GITHUB_ACTIONS");
+    if let Some(value) = runner {
+        run.env("GITHUB_ACTIONS", value);
+    }
     support::output_fenced(&mut run).expect("the guard runs")
 }
 
@@ -78,6 +94,26 @@ fn a_target_dir_that_is_not_the_lines_own_refuses_before_the_command_starts() {
         assert_eq!(out.status.code(), Some(0), "{}", said(&out));
         assert!(started.exists());
     }
+    let _ = fs::remove_dir_all(root);
+}
+
+/// **A forge runner's job owns the target dir its runner sets**, a shared one
+/// named after neither the checkout nor a line. The same dir refuses off a runner,
+/// and for any value of `GITHUB_ACTIONS` but `true`.
+#[test]
+fn a_forge_runners_shared_target_dir_runs_the_command_and_a_line_s_does_not() {
+    let root = scratch("runner");
+    let shared = root.join("cargo-target");
+    let started = root.join("started");
+    let command = format!("touch {}", started.display());
+    for runner in [None, Some("false"), Some("")] {
+        let out = guard_as(&root, &shared, "hostexecutor", &command, runner);
+        assert_eq!(out.status.code(), Some(2), "{}", said(&out));
+        assert!(!started.exists(), "the command started: {}", said(&out));
+    }
+    let out = guard_as(&root, &shared, "hostexecutor", &command, Some("true"));
+    assert_eq!(out.status.code(), Some(0), "{}", said(&out));
+    assert!(started.exists());
     let _ = fs::remove_dir_all(root);
 }
 
