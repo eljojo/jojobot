@@ -4813,7 +4813,7 @@ fn fold(
     // ends the total the same way it ends the value.
     let mut totals: BTreeMap<&str, Total> = BTreeMap::new();
     for write in standing {
-        let Some(value) = &write.value else {
+        let Some(value) = write.value.as_ref().filter(|v| types::holds_a_value(v)) else {
             folded.remove(&write.key);
             moments.remove(&write.key);
             totals.remove(write.key.as_str());

@@ -3111,3 +3111,29 @@ fn the_supplied_record_refusal_does_not_speak_of_rows() {
 async fn the_record_ceiling_contract_holds_against_the_fake() {
     contract::run_all_record_capacity(&InMemoryMemory::booted()).await;
 }
+
+/// **A value that is empty or only whitespace takes its key off the thing.**
+///
+/// The build writes `line ""` and `shelf ""` to mean unset, so the fold reads
+/// them that way: an empty write clears like `None`, and a real value sets. One
+/// row for each rule, and a key written again after a clear comes back.
+#[test]
+fn an_empty_or_blank_value_takes_the_key_off_the_thing() {
+    let rows: [(&str, Option<&str>, bool); 4] = [
+        ("a real value sets", Some("x"), true),
+        ("an empty value removes", Some(""), false),
+        ("a whitespace value removes", Some("  \t"), false),
+        ("a clear removes", None, false),
+    ];
+    for (rule, value, held) in rows {
+        let writes = vec![wrote("probe", 1, Some("first")), wrote("probe", 2, value)];
+        let folded = folded_fields(&writes, &[]);
+        assert_eq!(folded.contains_key("probe"), held, "{rule}: {folded:?}");
+    }
+    let again = vec![
+        wrote("probe", 1, Some("first")),
+        wrote("probe", 2, Some("")),
+        wrote("probe", 3, Some("back")),
+    ];
+    assert_eq!(folded_fields(&again, &[])["probe"], "back");
+}

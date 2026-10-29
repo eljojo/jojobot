@@ -153,6 +153,14 @@ impl Fold {
     }
 }
 
+/// **Whether a written value is a value at all.** An empty or blank one means
+/// unset, the way callers already write it (`line ""`, `shelf ""`), so the fold
+/// clears the key for it exactly as for a `None` and never keeps a key holding
+/// nothing.
+pub fn holds_a_value(value: &str) -> bool {
+    !value.trim().is_empty()
+}
+
 /// **How a key folds, over everything that has been declared.**
 ///
 /// **A key's fold is the instance's, not the type's.** Every declaration is
