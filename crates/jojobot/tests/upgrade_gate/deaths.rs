@@ -62,6 +62,7 @@ async fn a_death_inside_one_migration(version: &str, how: Interruption) {
 // store's ledger.
 deaths_beyond_the_last_release!(
     field_write_fact_write_ordinal => "0118_field_write_fact_write_ordinal",
+    event_log => "0119_event_log",
 );
 
 #[tokio::test]
