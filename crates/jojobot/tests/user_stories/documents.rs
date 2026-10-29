@@ -1678,3 +1678,68 @@ async fn a_section_is_found_by_its_own_words_and_not_by_the_name_of_its_document
     by_name.never_says(&address);
     story.finish().await;
 }
+
+/// **A heading captured onto a document is a claim about it and no section, and
+/// every answer on the way says that put_document adds a section.** The capture
+/// lands and the document reads as before; the refusals that follow name the verb
+/// that works.
+#[tokio::test]
+async fn a_heading_captured_onto_a_document_points_to_put_document() {
+    let story = Story::begin("bot:gamma").await;
+    let session = story.session().await;
+    session.add("document:homer", "Fryer manual").await;
+    session
+        .call(
+            "put_document",
+            json!({"document": "document:homer", "markdown": MANUAL}),
+        )
+        .await;
+    let before = session
+        .call("read_document", json!({"document": "document:homer"}))
+        .await
+        .json();
+
+    let captured = session
+        .call(
+            "capture",
+            json!({"subject": "document:homer", "content": "## Cleaning",
+                   "provenance": "testimony"}),
+        )
+        .await
+        .json();
+    assert!(
+        captured["hint"]
+            .as_str()
+            .is_some_and(|hint| hint.contains("put_document")),
+        "{captured}"
+    );
+    let after = session
+        .call("read_document", json!({"document": "document:homer"}))
+        .await
+        .json();
+    assert_eq!(after["markdown"], before["markdown"], "{after}");
+
+    let loose = captured["address"].as_str().expect("the claim's address");
+    let section =
+        session.recall("document:homer").await.json()["objects"][0]["facts"][1]["address"]
+            .as_str()
+            .expect("a section has an address")
+            .to_string();
+    let placed = session
+        .refused(
+            "capture",
+            json!({"subject": "document:homer", "content": "Wipe it",
+                   "provenance": "testimony", "after": section}),
+        )
+        .await;
+    placed.says("put_document");
+    let moved_loose = session
+        .refused("update_fact", json!({"address": loose, "after": section}))
+        .await;
+    moved_loose.says("put_document");
+    let moved_behind_loose = session
+        .refused("update_fact", json!({"address": section, "after": loose}))
+        .await;
+    moved_behind_loose.says("put_document");
+    story.finish().await;
+}

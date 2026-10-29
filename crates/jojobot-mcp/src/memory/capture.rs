@@ -958,6 +958,18 @@ impl Jojobot {
         crate::answer::note_postcondition(&mut body, line);
         self.note_reach_and_hint(&mut body, &fact, &own_sent, &sets_named)
             .await;
+        if fact.subject.as_str().starts_with("document:")
+            && fact.content.trim_start().starts_with('#')
+            && body.get("hint").is_none()
+        {
+            crate::answer::note_hint(
+                &mut body,
+                "This is a claim about the document, not a section, so read_document \
+                 does not show it. put_document with `after` the last section adds \
+                 a section."
+                    .into(),
+            );
+        }
         self.note_view_narrows_nothing(&mut body, &fact.subject)
             .await;
         self.note_status_word(&fact, &mut body, &unread).await;
@@ -1510,7 +1522,8 @@ impl Jojobot {
                 MemoryError::InvalidFact(format!(
                     "`after` ({after}) places an entry on a list, and {subject} is not a thing \
                      of kind list. Make the list first (add_entity with kind list, under the \
-                     thing it is about), then capture each entry on it"
+                     thing it is about), then capture each entry on it. To add a section to a \
+                     document, use put_document with `after` the last section"
                 )),
             )
             .map(Err);

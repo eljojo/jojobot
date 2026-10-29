@@ -858,7 +858,8 @@ impl Jojobot {
         let Some(at) = live.iter().position(|held| is(held, address)) else {
             return Err(refused(format!(
                 "{address} is not a live section: it is no part of a document, or it was \
-                 archived. Edit an ordinary claim without `after`"
+                 archived. Edit an ordinary claim without `after`. To add a section to a \
+                 document, use put_document with `after` the last section"
             )));
         };
         if live[at].head.is_some() {
@@ -871,7 +872,8 @@ impl Jojobot {
         let Some(target_at) = live.iter().position(|held| is(held, &target)) else {
             return Err(refused(format!(
                 "{after} is not a live section of {}. Name the address of the section it \
-                 should follow",
+                 should follow. To add a section, use put_document with `after` the last \
+                 section",
                 address.home
             )));
         };
