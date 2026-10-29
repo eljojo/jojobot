@@ -208,6 +208,42 @@ fn the_test_file_limit_cannot_be_raised_without_a_base() {
     fs::remove_dir_all(dir).unwrap();
 }
 
+#[test]
+fn a_lowered_base_cap_in_the_current_format_still_only_falls() {
+    use jojobot_bar::size::Offence;
+
+    let mut mismatches = Vec::new();
+    for (cap, expected) in [(2000, 0), (3000, 0), (4000, 1), (5000, 1)] {
+        let dir = repo(&format!("lowered-base-cap-{cap}"));
+        let base = commit_files(
+            &dir,
+            &[(
+                "size-ratchet.toml",
+                "cap = 3000\nstep = \"9.3.1\"\n".to_string(),
+            )],
+        );
+        fs::write(
+            dir.join("size-ratchet.toml"),
+            format!("cap = {cap}\nstep = \"9.3.1\"\n"),
+        )
+        .unwrap();
+        let ran = bar(&dir, "size", Some(&base));
+        let raised = Offence::CapRaised {
+            base: 3000,
+            now: cap,
+        }
+        .line();
+        if ran.code != Some(expected) || (expected == 1 && !ran.stdout.contains(&raised)) {
+            mismatches.push(format!(
+                "head cap {cap}, expected exit {expected}, got {:?}: {}",
+                ran.code, ran.stdout
+            ));
+        }
+        fs::remove_dir_all(dir).unwrap();
+    }
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+}
+
 /// **A tree that changed nothing is green, and the size line is on the verdict
 /// block** between `verdict:` and `log:`, naming both counts and the base.
 #[test]

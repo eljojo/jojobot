@@ -88,8 +88,8 @@ impl Limits {
 
     /// The same read for the file as it stood at the base: the `[[file]]` entries of
     /// the list this replaces and the `[[raise]]` entries of rule 704 are skipped,
-    /// not refused, and the old cap, which then meant the yellow line, is read as
-    /// the ceiling.
+    /// not refused. Only a file with those legacy tables has its old yellow cap
+    /// read as the ceiling; a current-format cap keeps its value.
     fn parse_base(text: &str) -> Result<Limits, String> {
         Self::read(text, true)
     }
@@ -157,7 +157,7 @@ impl Limits {
             return Err("test_file_bytes may not exceed 100000".into());
         }
         let cap = match cap {
-            Some(cap) if lenient && cap < CEILING => CEILING,
+            Some(cap) if skipping && cap < CEILING => CEILING,
             Some(cap) if cap < YELLOW => {
                 return Err(format!("cap may not be under {YELLOW}, the yellow line"));
             }
