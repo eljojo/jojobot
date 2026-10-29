@@ -92,7 +92,7 @@ async fn an_edit_that_sets_a_day_says_the_thing_falls_due_on_it() {
     let set = s
         .call(
             "update_fact",
-            json!({"address": address, "sets": {"decide_by": "2026-11-01"}}),
+            json!({"address": address, "sets": {"decide_by": "2026-11-01", "status": "now"}}),
         )
         .await;
     let body = set.json();
@@ -119,14 +119,23 @@ async fn an_edit_that_sets_a_day_says_the_thing_falls_due_on_it() {
         ordinary.json()
     );
 
+    let before = s.recall("work:sigma").await.json();
+    let fields = &before["objects"][0]["fields"];
+    assert_eq!(fields["status"], "now", "{before}");
+    assert_eq!(fields["due_on"], "2026-11-01", "{before}");
+
     let done = s
         .call(
             "update_fact",
-            json!({"address": address, "fields": {"status": "done"}}),
+            json!({"address": address, "sets": {"status": "done"}}),
         )
         .await;
     let body = done.json();
-    assert!(body["derived"]["due_on"].is_null(), "{body}");
+    assert!(body["derived"].get("due_on").is_none(), "{body}");
+    let after = s.recall("work:sigma").await.json();
+    let fields = &after["objects"][0]["fields"];
+    assert_eq!(fields["status"], "done", "{after}");
+    assert!(fields.get("due_on").is_none(), "{after}");
     story.finish().await;
 }
 
