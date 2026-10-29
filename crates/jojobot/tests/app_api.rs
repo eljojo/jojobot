@@ -78,7 +78,6 @@ async fn serve_counting(apps: Vec<AppPrincipal>, auth_on: bool, counting: bool) 
         registry: Arc::new(jojobot_mcp::sid::SessionRegistry::new()),
         ui: None,
         clock: jojobot_domain::clock::Clock::default(),
-        push: None,
         quiet_after: None,
         apps: Apps::new(apps),
         metrics: counting.then(|| Arc::new(jojobot::metrics::Metrics::new())),

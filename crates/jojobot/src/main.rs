@@ -157,9 +157,15 @@ async fn main() -> anyhow::Result<()> {
             )))
         }
     };
-    let push = runner
-        .clone()
-        .map(|runner| runner as Arc<dyn jojobot_domain::push::Nudge>);
+    // **Every post into a person's box wakes the push**, whichever path posted:
+    // the writer publishes each post once.
+    if let Some(runner) = runner.clone() {
+        jojobot_adapters::nudge::NudgeOnPost::subscribe(
+            &booted.writer,
+            booted.mailboxes.clone(),
+            runner,
+        );
+    }
 
     let metadata_url = format!(
         "{}/.well-known/oauth-protected-resource",
@@ -197,7 +203,6 @@ async fn main() -> anyhow::Result<()> {
         registry: booted.registry,
         ui,
         clock: booted.clock,
-        push,
         quiet_after: None,
         apps: jojobot::app_api::Apps::new(apps.clone()),
         metrics: metrics.clone(),

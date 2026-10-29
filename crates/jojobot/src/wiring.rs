@@ -370,6 +370,8 @@ pub struct Booted {
     /// The clock the boot was given, continued after the newest stamp the store
     /// already holds when that clock states a day.
     pub clock: Clock,
+    /// **The one writer**, which subscribers read the State's changes from.
+    pub writer: jojobot_adapters::writer::Writer,
 }
 
 /// **The fill a server makes before it serves**: the fold takes a full read of
@@ -1042,6 +1044,7 @@ pub async fn boot_store_observed(
                 .with_writer(folded.writer()),
         )),
         clock,
+        writer: folded.writer(),
     })
 }
 

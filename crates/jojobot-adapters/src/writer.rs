@@ -13,6 +13,7 @@ use tokio::sync::{mpsc, oneshot};
 use tracing::Instrument;
 
 mod fence;
+pub mod publish;
 pub(crate) mod recovery;
 pub(crate) mod sql;
 
@@ -56,6 +57,7 @@ struct Driver {
     sender: OnceLock<mpsc::UnboundedSender<Job>>,
     sql: OnceLock<fence::Session>,
     uncertain: Mutex<BTreeSet<&'static str>>,
+    publication: publish::Publication,
     attempted: AtomicU64,
     recovered: AtomicU64,
     failed: AtomicU64,
@@ -79,6 +81,7 @@ impl Default for Writer {
             sender: OnceLock::new(),
             sql: OnceLock::new(),
             uncertain: Mutex::new(BTreeSet::new()),
+            publication: publish::Publication::default(),
             attempted: AtomicU64::new(0),
             recovered: AtomicU64::new(0),
             failed: AtomicU64::new(0),
@@ -100,6 +103,17 @@ impl Writer {
     #[cfg(test)]
     pub(crate) fn has_native_connection(&self) -> bool {
         self.0.sql.get().is_some()
+    }
+
+    /// Read every change this writer publishes, after the State holds it.
+    pub fn subscribe(&self, subscriber: Arc<dyn publish::Subscriber>) {
+        self.0.publication.subscribe(subscriber);
+    }
+
+    /// Record a change the State just applied. The writer delivers it once,
+    /// when the write that made it has finished.
+    pub(crate) fn publish(&self, change: publish::Change) {
+        self.0.publication.record(change);
     }
 
     pub(crate) fn rail_uncertain(&self, rail: &str) -> bool {
@@ -166,6 +180,10 @@ impl Writer {
         sender
             .send(Box::pin(async move {
                 let result = sql::job(&owner, context.run(work)).instrument(span).await;
+                // After the State holds the write and before the next write
+                // starts. The job owns this step, so a caller that stopped
+                // waiting cannot lose it.
+                owner.0.publication.deliver().await;
                 let _ = answer.send(result);
             }))
             .unwrap_or_else(|_| panic!("the writer task stopped before accepting its write"));

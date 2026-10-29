@@ -511,6 +511,9 @@ impl Mailboxes for FoldedMailboxes {
             if let Guarded::Written(filed) = &posted {
                 self.follow("post_message", |image| image.file(filed.clone()))
                     .await;
+                self.writer.publish(crate::writer::publish::Change::Posted(
+                    filed.mailbox.clone(),
+                ));
             }
             Ok(posted)
         })

@@ -143,7 +143,6 @@ async fn serve(operator: &str, homer_boxes: usize) -> Served {
         registry: Arc::new(jojobot_mcp::sid::SessionRegistry::new()),
         ui: Some(Arc::new(ui)),
         clock: jojobot_domain::clock::Clock::default(),
-        push: None,
         quiet_after: None,
     };
     let ct = CancellationToken::new();

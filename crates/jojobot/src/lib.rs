@@ -88,9 +88,6 @@ pub struct AppState {
     /// built per connection, so a day read once at startup has to reach every
     /// handler the factory makes after it.
     pub clock: jojobot_domain::clock::Clock,
-    /// **Told after a post to the operator lands**, when the instance is set up
-    /// to push to a phone. `None` pushes nothing.
-    pub push: Option<Arc<dyn jojobot_domain::push::Nudge>>,
     /// **How long a run must have gone without a write before its public name
     /// can take it.** `None` is the lease, which is what every instance runs
     /// with; a test of the other rules shortens it so it need not wait out the
@@ -181,17 +178,7 @@ fn build_app_with(
 
     let memory = state.memory.clone();
     let search = state.search.clone();
-    // **Every path into a person's box wakes the push**, because the wake is
-    // made on the port every handler posts through. A path that posts to the
-    // operator and is not the `post_message` verb (a code asked for at the door)
-    // cannot leave its message unpushed.
-    let mailboxes: Arc<dyn jojobot_domain::mailbox::Mailboxes> = match &state.push {
-        Some(push) => Arc::new(jojobot_domain::push::Nudging::new(
-            state.mailboxes.clone(),
-            push.clone(),
-        )),
-        None => state.mailboxes.clone(),
-    };
+    let mailboxes = state.mailboxes.clone();
     let sessions = state.sessions.clone();
     let teachings = state.teachings.clone();
     let requests = state.requests.clone();

@@ -1026,9 +1026,13 @@ impl Story {
                 policy,
             ))
         });
-        let push: Option<Arc<dyn jojobot_domain::push::Nudge>> = runner
-            .clone()
-            .map(|runner| runner as Arc<dyn jojobot_domain::push::Nudge>);
+        if let Some(runner) = runner.clone() {
+            jojobot_adapters::nudge::NudgeOnPost::subscribe(
+                &folded.writer(),
+                boxes.clone(),
+                runner,
+            );
+        }
         let state = AppState {
             apps,
             metrics: None,
@@ -1053,7 +1057,6 @@ impl Story {
             // The shape a story runs against is the one a fresh instance
             // serves: an operator who set nothing gets both lines.
             clock,
-            push,
             quiet_after,
         };
         let ct = CancellationToken::new();

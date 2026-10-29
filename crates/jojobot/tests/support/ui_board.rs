@@ -544,7 +544,6 @@ pub async fn spawn_jojobot_clocked(
         registry: Arc::new(jojobot_mcp::sid::SessionRegistry::new()),
         ui: Some(Arc::new(ui)),
         clock,
-        push: None,
         quiet_after: None,
     };
 
