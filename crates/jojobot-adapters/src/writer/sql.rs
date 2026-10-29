@@ -19,7 +19,11 @@ pub(super) enum Phase {
     InProcess,
     BeforeCommit,
     Committed,
+    /// A COMMIT was sent and its outcome is not known.
     Unknown,
+    /// A statement is running on the native connection. The server's own error
+    /// code says it did not run; a lost connection does not say either way.
+    InFlight,
 }
 
 #[derive(Default)]
@@ -78,10 +82,15 @@ pub(super) fn handled() {
 }
 
 pub(crate) fn store_error<E: super::recovery::StoreError>(error: sqlx::Error) -> E {
-    if phase() == Phase::Unknown {
+    let answered = error.as_database_error().is_some();
+    if phase() == Phase::Unknown || (phase() == Phase::InFlight && !answered) {
         let _ = NATIVE.try_with(|native| native.borrow_mut().unhandled = true);
         E::indeterminate()
     } else {
+        if phase() == Phase::InFlight {
+            // The server answered with an error code: the statement did not run.
+            set_phase(Phase::BeforeCommit);
+        }
         E::store_native(error.to_string())
     }
 }
@@ -190,7 +199,7 @@ impl Pool {
         }
         set_phase(Phase::BeforeCommit);
         let conn = self.writer().acquire().await?;
-        set_phase(Phase::Unknown);
+        set_phase(Phase::InFlight);
         Ok(conn)
     }
 }
@@ -209,7 +218,7 @@ impl<'p> Executor<'p> for &Pool {
         Box::pin(async move {
             set_phase(Phase::BeforeCommit);
             let mut conn = pool.acquire().await?;
-            set_phase(Phase::Unknown);
+            set_phase(Phase::InFlight);
             let result = conn.execute(query).await;
             if result.is_ok() {
                 set_phase(Phase::Committed);
@@ -225,7 +234,7 @@ impl<'p> Executor<'p> for &Pool {
     where
         E: 'q + Execute<'q, MySql>,
     {
-        set_phase(Phase::Unknown);
+        set_phase(Phase::InFlight);
         self.writer()
             .fetch_many(query)
             .try_filter_map(|step| async move {

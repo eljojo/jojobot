@@ -17,6 +17,9 @@ pub(crate) mod sql;
 #[cfg(test)]
 mod fence_tests;
 
+#[cfg(test)]
+mod definite_error_tests;
+
 /// Recovery attempts and their publication results.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct RecoveryCounts {
