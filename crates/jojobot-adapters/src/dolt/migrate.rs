@@ -885,6 +885,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../../migrations/0118_field_write_fact_write_ordinal.sql"),
         leaves: Leaves::Column("field_write", "fact_write_ordinal"),
     },
+    Migration {
+        version: "0119_event_log",
+        sql: include_str!("../../migrations/0119_event_log.sql"),
+        leaves: Leaves::Table("event_log"),
+    },
 ];
 
 /// The table recording what has run. Created by hand rather than by a
