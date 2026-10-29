@@ -507,6 +507,7 @@ pub(crate) fn published_argument_names() -> std::collections::BTreeSet<String> {
 #[cfg(test)]
 mod aliases_tests;
 
+#[cfg(test)]
 #[path = "arguments/leftovers_tests.rs"]
 mod leftovers_tests;
 
