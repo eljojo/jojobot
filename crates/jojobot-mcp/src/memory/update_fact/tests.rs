@@ -4129,6 +4129,103 @@ async fn a_due_moment_no_carrier_derives_can_be_cleared_and_a_derived_one_cannot
     );
 }
 
+/// **A key sent with a space around it is the key the store keeps**, so the due
+/// guard and the due watcher read it as that key. The store trims keys on write;
+/// a guard that compared the sent spelling let a hand-written `due_on` through
+/// and ignored a padded `cadence_days` when it moved the stored day.
+#[tokio::test]
+async fn a_padded_key_is_judged_as_the_key_the_store_keeps_for_the_due_moment() {
+    let memory = std::sync::Arc::new(InMemoryMemory::booted());
+    let jojobot = handler_over(memory.clone());
+    ensure(&jojobot, "thing:the-couch").await;
+    memory.fields_past_the_guard(
+        &EntityId("thing:the-couch".into()),
+        &[("due_on", "2026-06-01")],
+    );
+    let stale = "thing:the-couch#f1".to_string();
+    let refused_write = blocked(
+        &jojobot
+            .update_fact(Parameters(UpdateFactArgs {
+                sets: Some(
+                    [(" due_on".to_string(), "2026-07-01".to_string())]
+                        .into_iter()
+                        .collect(),
+                ),
+                ..update_args(&stale)
+            }))
+            .await
+            .expect("answers"),
+    );
+    assert!(
+        refused_write.to_string().contains("promised_by"),
+        "a padded write of due_on is refused like the plain one: {refused_write}",
+    );
+    assert_eq!(
+        fields_of(&jojobot, "thing:the-couch").await["due_on"],
+        "2026-06-01",
+        "a refused write moves nothing",
+    );
+
+    ensure(&jojobot, "thing:kettle").await;
+    jojobot
+        .add_entity(Parameters(AddEntityArgs {
+            parent: Some("thing:kettle".into()),
+            ..add_args("rhythm", "descale", "descale")
+        }))
+        .await
+        .expect("add ok");
+    let captured = capture_ok(
+        &jojobot,
+        CaptureArgs {
+            provenance: Some("testimony".into()),
+            sets: Some(
+                [
+                    ("cadence_days".to_string(), "7".to_string()),
+                    ("advances_from".to_string(), "check_in_date".to_string()),
+                    ("counts_from".to_string(), "2026-08-01".to_string()),
+                ]
+                .into_iter()
+                .collect(),
+            ),
+            ..capture_args("rhythm:descale", "descale it weekly")
+        },
+    )
+    .await;
+    let rhythm = address_of(&captured);
+    let refused_clear = blocked(
+        &jojobot
+            .update_fact(Parameters(UpdateFactArgs {
+                clear_fields: Some(vec![" due_on".into()]),
+                ..update_args(&rhythm)
+            }))
+            .await
+            .expect("answers"),
+    );
+    assert!(
+        refused_clear.to_string().contains("cadence_days"),
+        "a padded clear of a derived due_on is refused like the plain one: {refused_clear}",
+    );
+
+    capture_ok(
+        &jojobot,
+        CaptureArgs {
+            provenance: Some("testimony".into()),
+            sets: Some(
+                [(" cadence_days".to_string(), "14".to_string())]
+                    .into_iter()
+                    .collect(),
+            ),
+            ..capture_args("rhythm:descale", "let's do it every two weeks instead")
+        },
+    )
+    .await;
+    assert_eq!(
+        fields_of(&jojobot, "rhythm:descale").await["due_on"],
+        "2026-08-15",
+        "a padded cadence_days is the cadence the store keeps, so the stored day moves with it",
+    );
+}
+
 /// **A work item at `done` is not owed, and its date stays on the record.**
 /// The same item at `now` is owed. The stored due moment comes off when the
 /// item is finished and comes back when it leaves `done`, and the cross-kind

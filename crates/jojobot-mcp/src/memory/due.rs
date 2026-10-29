@@ -193,6 +193,15 @@ impl Jojobot {
         today: jiff::civil::Date,
         unread: &super::instance_unread::InstanceUnread,
     ) -> (attention::DueMove, bool) {
+        // **The keys as the store keeps them**: it trims a key on write, so a
+        // padded spelling moves the stored moment like the plain one.
+        let incoming: std::collections::BTreeMap<String, String> = incoming
+            .iter()
+            .map(|(k, v)| (k.trim().to_string(), v.clone()))
+            .collect();
+        let incoming = &incoming;
+        let cleared: Vec<String> = cleared.iter().map(|k| k.trim().to_string()).collect();
+        let cleared = cleared.as_slice();
         let carriers = self.carriers();
         // **The keys a carrier's answer reads, not only the ones that make a
         // thing its business** — see `Carrier::also_reads`.
@@ -629,9 +638,15 @@ impl Jojobot {
         sent: &std::collections::BTreeMap<String, String>,
         cleared: &[String],
     ) -> Option<CallToolResult> {
+        // **The keys as the store keeps them**: it trims a key on write, so a
+        // padded spelling is the same key here.
+        let sent: std::collections::BTreeMap<String, String> = sent
+            .iter()
+            .map(|(k, v)| (k.trim().to_string(), v.clone()))
+            .collect();
         let key = attention::DUE_ON;
         let writes = sent.contains_key(key);
-        if !writes && !cleared.iter().any(|k| k == key) {
+        if !writes && !cleared.iter().any(|k| k.trim() == key) {
             return None;
         }
         let held = self.memory.fields(subject).await.ok();
