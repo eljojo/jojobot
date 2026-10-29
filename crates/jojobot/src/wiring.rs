@@ -258,24 +258,20 @@ pub fn assemble_ports(
     // **Mentions resolve above the raw store and below the index here too**
     // — the same placement as memory's own `Mentioning`.
     //
-    // **Both stores are counted underneath that**, so search can tell that
-    // nothing changed without asking the store: every write to mail and to a
-    // run goes through these ports.
+    // **Both images count their writes**, so search can tell that nothing
+    // changed without asking the store: every write to mail and to a run goes
+    // through these ports.
     //
     // **And both are held in memory underneath that, closest to the store**
     // (decision log 292): the image answers every read once its `rebuild` has
-    // run, and the count above it sees every write on its way to the store.
+    // run, and each image counts every write it takes on its way to the store.
     let mail_image = Arc::new(FoldedMailboxes::new(bare_mail).with_writer(writer.clone()));
     // **The run image and the store beneath it share one stamp**, so the records
     // of a change are one record rather than two with different times.
     let sessions_image =
         Arc::new(FoldedSessions::new(bare_sessions, stamp, clock).with_writer(writer));
-    let bare_mail: Arc<dyn Mailboxes> = Arc::new(jojobot_adapters::changes::MailChanges::new(
-        mail_image.clone(),
-    ));
-    let bare_sessions: Arc<dyn Sessions> = Arc::new(
-        jojobot_adapters::changes::SessionChanges::new(sessions_image.clone(), indexed.writer()),
-    );
+    let bare_mail: Arc<dyn Mailboxes> = mail_image.clone();
+    let bare_sessions: Arc<dyn Sessions> = sessions_image.clone();
     let mail_mentioned: Arc<dyn Mailboxes> =
         Arc::new(mailbox_mention::Mentioning::new(bare_mail, indexed.clone()));
     let sessions_mentioned: Arc<dyn Sessions> = Arc::new(session_mention::Mentioning::new(

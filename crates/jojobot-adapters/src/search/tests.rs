@@ -7910,7 +7910,7 @@ async fn a_delivery_lists_the_boxes_once_however_many_messages_it_carries() {
 async fn a_refresh_with_no_write_since_the_last_one_reads_nothing_and_a_write_makes_it_read() {
     jojobot_domain::memory::kinds::load_shipped();
     let metered = Metered::new(InMemoryMailboxes::new());
-    let counted = Arc::new(crate::changes::MailChanges::new(metered.clone()));
+    let counted = Arc::new(crate::fold::mail::FoldedMailboxes::new(metered.clone()));
     mail_contract::create(counted.as_ref(), "pm").await;
     mail_contract::post(counted.as_ref(), "pm", "dev", "the kiln is relined", 0).await;
 
@@ -7970,13 +7970,13 @@ async fn a_refresh_with_no_write_since_the_last_one_reads_nothing_and_a_write_ma
 /// here on.
 async fn booted_mail() -> (
     Arc<Metered>,
-    Arc<crate::changes::MailChanges>,
+    Arc<crate::fold::mail::FoldedMailboxes>,
     IndexedMailboxes,
     Arc<FullTextIndex>,
 ) {
     jojobot_domain::memory::kinds::load_shipped();
     let metered = Metered::new(InMemoryMailboxes::new());
-    let counted = Arc::new(crate::changes::MailChanges::new(metered.clone()));
+    let counted = Arc::new(crate::fold::mail::FoldedMailboxes::new(metered.clone()));
     mail_contract::create(counted.as_ref(), "pm").await;
     mail_contract::post(counted.as_ref(), "pm", "dev", "the kiln is relined", 0).await;
     let index = Arc::new(FullTextIndex::open().expect("index opens"));

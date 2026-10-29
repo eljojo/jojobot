@@ -24,7 +24,7 @@ use crate::writer::owned;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::RwLock;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use async_trait::async_trait;
 use jiff::Timestamp;
@@ -187,6 +187,10 @@ pub struct FoldedSessions {
     stamp: WriteStamp,
     /// The clock the moment is taken from.
     clock: Clock,
+    /// **A count of the writes that changed what the search index holds about
+    /// runs**, moved after the write has landed so a reader that sees a number
+    /// reads at least the state it counts.
+    changes: Arc<AtomicU64>,
 }
 
 impl FoldedSessions {
@@ -203,6 +207,7 @@ impl FoldedSessions {
             wanted: Arc::new(AtomicBool::new(false)),
             stamp,
             clock,
+            changes: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -281,6 +286,23 @@ impl FoldedSessions {
         write: impl std::future::Future<Output = Result<T, SessionError>>,
     ) -> Result<T, SessionError> {
         crate::writer::recovery::guarded(&self.writer, "runs", write, || self.fill()).await
+    }
+
+    /// [`scoped`](Self::scoped) for a write the search index reads: a run begun,
+    /// an entry appended or amended, a focus set. **The store counts the rows it
+    /// appends for those five and for nothing else.** A run's state, zone, stated
+    /// day, wrap window, served count, key hash and charter marks are never
+    /// indexed, so counting them would send the index back to read every run
+    /// after each answer, which is what the signal exists to avoid. A call counts
+    /// whatever it answers, because a write that failed partway may have changed
+    /// something.
+    async fn indexed_write<T>(
+        &self,
+        write: impl std::future::Future<Output = Result<T, SessionError>>,
+    ) -> Result<T, SessionError> {
+        let done = self.scoped(write).await;
+        self.changes.fetch_add(1, Ordering::SeqCst);
+        done
     }
 
     /// Answer from the image when one is held; `None` sends the read to the
@@ -502,9 +524,10 @@ impl Sessions for FoldedSessions {
         }
     }
 
+    /// A count of the writes the search index reads, not the store's own rows.
     async fn write_summary(&self) -> Result<Option<(i64, Option<Timestamp>)>, SessionError> {
         self.unheld()?;
-        self.inner.write_summary().await
+        Ok(Some((self.changes.load(Ordering::SeqCst) as i64, None)))
     }
 
     async fn read_session(&self, id: &SessionId) -> Result<Session, SessionError> {
@@ -523,7 +546,7 @@ impl Sessions for FoldedSessions {
         owned!(self, this, [], this.begin(new).await);
         // An unacknowledged begin reloads the rail under the fence. A same-sid
         // retry then sees the store's original Begin rather than stamping another.
-        self.scoped(async {
+        self.indexed_write(async {
             let (_held, at) = self.moment();
             let run = self.inner.begin(new).await?;
             self.follow("begin", |image| {
@@ -544,7 +567,7 @@ impl Sessions for FoldedSessions {
 
     async fn append(&self, id: &SessionId, entry: NewEntry) -> Result<JournalEntry, SessionError> {
         owned!(self, this, [id = id.clone()], this.append(&id, entry).await);
-        self.scoped(async {
+        self.indexed_write(async {
             let (_held, at) = self.moment();
             let written = self.inner.append(id, entry).await?;
             self.follow("append", |image| match image.run_mut(id) {
@@ -569,7 +592,7 @@ impl Sessions for FoldedSessions {
             [id = id.clone(), text = text.to_string()],
             this.amend_last(&id, &text).await
         );
-        self.scoped(async {
+        self.indexed_write(async {
             let (_held, at) = self.moment();
             let written = self.inner.amend_last(id, text).await?;
             self.follow("amend_last", |image| {
@@ -601,7 +624,7 @@ impl Sessions for FoldedSessions {
             ],
             this.amend_beat(&id, &entry, &text, at).await
         );
-        self.scoped(async {
+        self.indexed_write(async {
             let (_held, moment) = self.moment();
             let written = self.inner.amend_beat(id, entry, text, at).await?;
             self.follow("amend_beat", |image| {
@@ -623,7 +646,7 @@ impl Sessions for FoldedSessions {
             [id = id.clone(), focus = focus.to_string()],
             this.set_focus(&id, &focus).await
         );
-        self.scoped(async {
+        self.indexed_write(async {
             let (_held, at) = self.moment();
             let run = self.inner.set_focus(id, focus).await?;
             self.put("set_focus", run, |image, run| {

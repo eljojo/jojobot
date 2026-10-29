@@ -1,6 +1,6 @@
 //! **The change signal search reads for sessions, held to the store's own.**
 //!
-//! `SessionChanges` answers `write_summary` with a count of its own calls where
+//! `FoldedSessions` answers `write_summary` with a count of its own calls where
 //! the store counts a row it appends to `session_write`. The two must move on
 //! the same calls: a count that moved on more would send the index back to read
 //! every run after each answer, and one that moved on fewer would leave a hit
@@ -10,13 +10,14 @@
 use std::sync::Arc;
 
 use jiff::civil::date;
-use jojobot_adapters::changes::SessionChanges;
 use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::dolt::sessions::DoltSessions;
+use jojobot_adapters::fold::sessions::FoldedSessions;
 use jojobot_adapters::testing::{free_port, migrated_database};
 use jojobot_domain::memory::EntityId;
+use jojobot_domain::session::history::WriteStamp;
 use jojobot_domain::session::testing::contract as sessions;
 use jojobot_domain::session::{NewEntry, NewSession, SessionState, Sessions, Sid, WrapWindow};
 
@@ -36,9 +37,15 @@ async fn the_sessions_signal_moves_on_the_calls_the_stores_own_count_moves_on() 
         .await
         .expect("the kinds are seeded");
 
+    let stamp = WriteStamp::new();
     let writer = jojobot_adapters::writer::Writer::default();
-    let store = Arc::new(DoltSessions::open(pool).with_writer(writer.clone()));
-    let counted = SessionChanges::new(store.clone(), writer);
+    let store = Arc::new(
+        DoltSessions::open(pool)
+            .stamped_by(stamp.clone())
+            .with_writer(writer.clone()),
+    );
+    let counted = FoldedSessions::new(store.clone(), stamp, jojobot_domain::clock::Clock::Real)
+        .with_writer(writer);
     let at = sessions::epoch();
 
     // Each step: the call, made through the signal's port, and whether the

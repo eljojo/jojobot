@@ -179,7 +179,7 @@ async fn writer_recovery_a_known_mailbox_read_passes_a_pending_write() {
     mail.rebuild().await.expect("load board");
     let index = Arc::new(crate::search::FullTextIndex::with_owner(writer.clone()).unwrap());
     let mentioned = jojobot_domain::mailbox::mention::Mentioning::new(
-        Arc::new(crate::changes::MailChanges::new(Arc::new(mail))),
+        Arc::new(mail),
         Arc::new(jojobot_domain::memory::testing::InMemoryMemory::booted()),
     );
     let mail = crate::search::IndexedMailboxes::new(Arc::new(mentioned), index);

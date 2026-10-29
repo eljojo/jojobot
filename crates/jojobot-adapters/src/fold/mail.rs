@@ -29,7 +29,7 @@ use crate::writer::owned;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::RwLock;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use async_trait::async_trait;
 use jojobot_domain::mailbox::event::{Change, next_event};
@@ -244,6 +244,14 @@ pub struct FoldedMailboxes {
     image: Arc<RwLock<Option<Image>>>,
     /// Set by the first `rebuild`, whether or not its fill succeeded.
     wanted: Arc<AtomicBool>,
+    /// **A count of the writes that can change what the index holds about mail**:
+    /// a box made or repointed, a message posted, delivered, read, retired or
+    /// quarantined. It moves AFTER the write has landed, so a reader that sees a
+    /// number reads at least the state it counts. A call counts whatever it
+    /// answers, because a write that failed partway may have changed something,
+    /// and one refresh too many costs a board read where one too few costs a
+    /// wrong hit.
+    changes: Arc<AtomicU64>,
 }
 
 impl FoldedMailboxes {
@@ -255,6 +263,7 @@ impl FoldedMailboxes {
             inner,
             image: Arc::new(RwLock::new(None)),
             wanted: Arc::new(AtomicBool::new(false)),
+            changes: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -319,7 +328,10 @@ impl FoldedMailboxes {
         &self,
         write: impl std::future::Future<Output = Result<T, MailboxError>>,
     ) -> Result<T, MailboxError> {
-        crate::writer::recovery::guarded(&self.writer, "mail", write, || self.fill()).await
+        let done =
+            crate::writer::recovery::guarded(&self.writer, "mail", write, || self.fill()).await;
+        self.changes.fetch_add(1, Ordering::SeqCst);
+        done
     }
 
     /// Answer from the image when one is held; `None` sends the read to the
@@ -376,7 +388,7 @@ impl FoldedMailboxes {
 #[async_trait]
 impl Mailboxes for FoldedMailboxes {
     fn changes(&self) -> Option<u64> {
-        self.inner.changes()
+        Some(self.changes.load(Ordering::SeqCst))
     }
 
     async fn create_mailbox(
