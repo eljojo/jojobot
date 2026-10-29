@@ -69,7 +69,10 @@ impl Teachings for GatedTeaching {
         domain: &str,
         at: Timestamp,
     ) -> Result<bool, TeachingError> {
-        self.writes.fetch_add(1, Ordering::SeqCst);
+        if self.writes.fetch_add(1, Ordering::SeqCst) > 0 {
+            // Only the first write is gated; a later one is an ordinary write.
+            return self.inner.first_contact(sid, domain, at).await;
+        }
         let mut conn = self.pool.acquire().await.expect("the dedicated connection");
         let id: u64 = sqlx::query_scalar("SELECT CONNECTION_ID()")
             .fetch_one(&mut *conn)
@@ -306,6 +309,20 @@ async fn gated_commit(release_before_receipt: bool) {
         .take()
         .expect("old query");
     child.await.expect("the old client ends");
+    if !release_before_receipt {
+        folded
+            .first_contact(&Sid("gammaq".into()), "claims", Timestamp::UNIX_EPOCH)
+            .await
+            .expect("the next write retries the recovery and then runs");
+        assert!(!writer.rail_uncertain("teachings"));
+        assert_eq!(writer.recovery_counts().recovered, 1);
+        assert!(
+            folded
+                .has_contact(&Sid("gammaq".into()), "claims")
+                .await
+                .expect("published after the retry")
+        );
+    }
     server.stop().await;
 }
 

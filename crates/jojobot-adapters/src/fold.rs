@@ -277,7 +277,7 @@ impl Folded {
         &self,
         write: impl std::future::Future<Output = Result<T, MemoryError>>,
     ) -> Result<T, MemoryError> {
-        crate::writer::recovery::guarded(&self.writer, "memory", write, self.fill()).await
+        crate::writer::recovery::guarded(&self.writer, "memory", write, || self.fill()).await
     }
 
     /// A write that has no [`Landed`] to carry its own answer, whose image could

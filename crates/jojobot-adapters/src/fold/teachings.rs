@@ -106,7 +106,7 @@ impl FoldedTeachings {
         &self,
         write: impl std::future::Future<Output = Result<T, TeachingError>>,
     ) -> Result<T, TeachingError> {
-        crate::writer::recovery::guarded(&self.writer, "teachings", write, self.fill()).await
+        crate::writer::recovery::guarded(&self.writer, "teachings", write, || self.fill()).await
     }
 
     /// Bring the set up to date with a write that landed. With no set held, a
@@ -162,11 +162,6 @@ impl Teachings for FoldedTeachings {
         domain: &str,
         at: Timestamp,
     ) -> Result<bool, TeachingError> {
-        if self.writer.rail_uncertain("teachings") {
-            return Err(TeachingError::Store(
-                "the teaching rail is uncertain; this contact was not written".into(),
-            ));
-        }
         let pair = (sid.clone(), domain.to_string());
         // A pair the ledger holds changes nothing, so it never reaches the store.
         if self.holds(&pair) == Some(true) {

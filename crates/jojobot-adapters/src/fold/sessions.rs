@@ -280,7 +280,7 @@ impl FoldedSessions {
         &self,
         write: impl std::future::Future<Output = Result<T, SessionError>>,
     ) -> Result<T, SessionError> {
-        crate::writer::recovery::guarded(&self.writer, "runs", write, self.fill()).await
+        crate::writer::recovery::guarded(&self.writer, "runs", write, || self.fill()).await
     }
 
     /// Answer from the image when one is held; `None` sends the read to the
