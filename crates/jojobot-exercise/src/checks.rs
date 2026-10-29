@@ -191,6 +191,8 @@ use serde_json::{Value, json};
 use crate::run::{Checks, Observed, checked, checked_noting};
 
 #[cfg(test)]
+mod donuts;
+#[cfg(test)]
 mod inspection_lock;
 mod packing;
 #[cfg(test)]
@@ -3378,7 +3380,7 @@ const EACH: [&str; 2] = ["3", "three"];
 /// **What makes a claim about the donuts.** "Three" alone is any claim that
 /// says three, such as a standing rule about options, so the figure for each
 /// guest is read only from a claim that names what each guest eats.
-const DONUTS: [&str; 3] = ["donut", "donuts", "doughnuts"];
+const DONUTS: [&str; 4] = ["donut", "donuts", "doughnut", "doughnuts"];
 
 /// **Whether a claim states the figure the occupant works out.** Twelve people
 /// at three donuts each is thirty-six, and the operator never says so.
