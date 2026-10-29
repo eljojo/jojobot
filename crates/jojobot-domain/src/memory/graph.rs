@@ -1492,8 +1492,8 @@ pub struct Object {
     /// nobody merged into.
     pub unmapped: Vec<super::unmapped::UnmappedClaim>,
     /// **How many times each of [`Object::facts`] has been written**, keyed by
-    /// the fact's local id. Present, one entry per fact, whenever facts were
-    /// asked for — empty otherwise, exactly as `facts` is.
+    /// the fact's local id. Present, one entry per fact with readable history,
+    /// whenever facts were asked for — empty otherwise, exactly as `facts` is.
     ///
     /// **This is the signal, not the history.** A claim rewritten twice comes
     /// back field-for-field identical to one written once unless something
@@ -1503,6 +1503,9 @@ pub struct Object {
     /// itself stays the separate, opt-in door it already was: `history`
     /// traces one record a caller names.
     pub fact_revisions: std::collections::HashMap<FactId, usize>,
+    /// A failed revision read leaves the other data readable, but the revision
+    /// counts are incomplete. Renderers that use them must refuse this answer.
+    pub revisions_unreadable: Option<MemoryError>,
     /// Its prose, whole. `None` when prose was not asked for, so a caller can
     /// tell "not asked for" from "the page is blank".
     pub prose: Option<String>,
@@ -2898,6 +2901,7 @@ impl<'a> Ctx<'a> {
             entity_history: None,
             run_history: None,
             fact_revisions: std::collections::HashMap::new(),
+            revisions_unreadable: None,
             ages: None,
             ages_unreadable: None,
             standing_for: None,
@@ -3182,7 +3186,7 @@ where
     M: super::Memory + ?Sized,
 {
     let selected = walk_in_window(store, sessions, query, None).await?;
-    if let Some(error) = unreadable_scan(&selected) {
+    if let Some(error) = unreadable_scan(&selected).or_else(|| unreadable_revisions(&selected)) {
         return Err(error);
     }
     Ok(selected)
@@ -3191,6 +3195,20 @@ where
 /// A renderer that requires a readable scan refuses with the original error.
 pub fn unreadable_scan(selected: &Selected) -> Option<MemoryError> {
     selected.unreadable_scans.values().next().cloned()
+}
+
+/// Revision counts on reached objects require the same readable history as
+/// counts on the roots of an answer.
+pub fn unreadable_revisions(selected: &Selected) -> Option<MemoryError> {
+    fn in_objects(objects: &[Object]) -> Option<MemoryError> {
+        objects.iter().find_map(|object| {
+            object
+                .revisions_unreadable
+                .clone()
+                .or_else(|| in_objects(&object.connected))
+        })
+    }
+    in_objects(&selected.objects)
 }
 
 /// **The part of a browse a caller will actually serve.**
@@ -3617,7 +3635,7 @@ where
                     pre_read.insert(shell.entity.id.clone(), PreRead { doc, filled: None });
                     continue;
                 };
-                fill_revision_counts(store, &mut object).await?;
+                fill_revision_counts(store, &mut object).await;
                 fill_ages(store, &mut object).await;
                 pre_read.insert(
                     shell.entity.id.clone(),
@@ -3625,6 +3643,7 @@ where
                         doc,
                         filled: Some((
                             object.fact_revisions.clone(),
+                            object.revisions_unreadable.clone(),
                             object.ages.clone(),
                             object.ages_unreadable.clone(),
                         )),
@@ -3758,8 +3777,11 @@ where
             .get(&object.entity.id)
             .and_then(|read| read.filled.as_ref())
         {
-            Some((revisions, _, _)) => object.fact_revisions = revisions.clone(),
-            None => fill_revision_counts(store, object).await?,
+            Some((revisions, unreadable, _, _)) => {
+                object.fact_revisions = revisions.clone();
+                object.revisions_unreadable = unreadable.clone();
+            }
+            None => fill_revision_counts(store, object).await,
         }
     }
     // **How old what each object holds is**, read for every object in the
@@ -3770,7 +3792,7 @@ where
             .get(&object.entity.id)
             .and_then(|read| read.filled.as_ref())
         {
-            Some((_, ages, unreadable)) => {
+            Some((_, _, ages, unreadable)) => {
                 object.ages = ages.clone();
                 object.ages_unreadable = unreadable.clone();
             }
@@ -3786,6 +3808,7 @@ where
 
 type Filled = (
     HashMap<FactId, usize>,
+    Option<MemoryError>,
     Option<super::FieldAges>,
     Option<MemoryError>,
 );
@@ -3878,19 +3901,24 @@ where
 fn fill_revision_counts<'a, M>(
     store: &'a M,
     object: &'a mut Object,
-) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), MemoryError>> + Send + 'a>>
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>>
 where
     M: super::Memory + ?Sized,
 {
     Box::pin(async move {
         for fact in &object.facts {
-            let total = store.claim_history(&fact.address()).await?.len();
-            object.fact_revisions.insert(fact.id.clone(), total);
+            match store.claim_history(&fact.address()).await {
+                Ok(history) => {
+                    object.fact_revisions.insert(fact.id.clone(), history.len());
+                }
+                Err(error) => {
+                    object.revisions_unreadable.get_or_insert(error);
+                }
+            }
         }
         for reached in &mut object.connected {
-            fill_revision_counts(store, reached).await?;
+            fill_revision_counts(store, reached).await;
         }
-        Ok(())
     })
 }
 

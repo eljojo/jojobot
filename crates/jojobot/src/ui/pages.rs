@@ -1324,7 +1324,9 @@ pub(crate) async fn answer_view(
     let (found, omitted, ticks) = match view_run::answer(&*state.memory, &question, &context).await
     {
         Ok(answered) => {
-            if let Some(error) = graph::unreadable_scan(&answered.selected) {
+            if let Some(error) = graph::unreadable_scan(&answered.selected)
+                .or_else(|| graph::unreadable_revisions(&answered.selected))
+            {
                 return Err(blind(
                     "What this view answers",
                     "the records it selects",

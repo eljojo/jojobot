@@ -9,16 +9,27 @@ use support::{browser, log_in, spawn_idp};
 use jojobot_domain::memory::{EntityId, Memory};
 use std::sync::{
     Arc,
-    atomic::{AtomicU8, Ordering},
+    atomic::{AtomicU8, AtomicUsize, Ordering},
 };
 
 struct UnreadableParts {
     inner: Arc<dyn Memory>,
     failed: AtomicU8,
+    history_reads: AtomicUsize,
 }
 
 #[jojobot_domain::forward(jojobot_domain::forward_memory, via = inner)]
 impl Memory for UnreadableParts {
+    async fn claim_history(&self, address: &FactAddress) -> Result<Vec<ClaimWrite>, MemoryError> {
+        if address.home.as_str() == "topic:widgets" {
+            self.history_reads.fetch_add(1, Ordering::SeqCst);
+            if self.failed.load(Ordering::SeqCst) & 4 != 0 {
+                return Err(MemoryError::Store("history unavailable".into()));
+            }
+        }
+        self.inner.claim_history(address).await
+    }
+
     async fn field_ages(&self, entity: &EntityId) -> Result<FieldAges, MemoryError> {
         if entity.as_str() == "topic:widgets" && self.failed.load(Ordering::SeqCst) & 1 != 0 {
             return Err(MemoryError::Store("ages unavailable".into()));
@@ -62,7 +73,29 @@ async fn node_read_path_keeps_unreadable_parts_in_the_shared_answer_and_each_ren
     let memory = Arc::new(UnreadableParts {
         inner: seeded_memory().await,
         failed: AtomicU8::new(0),
+        history_reads: AtomicUsize::new(0),
     });
+    use jojobot_domain::memory::filter::{Direction, Order};
+    use jojobot_domain::memory::{EntityKind, NewEntity, NewFact, graph};
+    for (handle, key, value) in [
+        ("topic:beta", "pitch", "15"),
+        ("view:bare-listing", "selects", "topic"),
+    ] {
+        let id = EntityId(handle.into());
+        memory
+            .inner
+            .add_entity(NewEntity::new(id.clone(), handle, "the fixture roster"))
+            .await
+            .unwrap();
+        let mut fact = NewFact::about(
+            id,
+            "the question's fields",
+            jiff::civil::Date::constant(2026, 3, 10),
+        );
+        fact.fields = [(key.into(), value.into())].into();
+        fact.sets = [key.into()].into();
+        memory.inner.capture(fact).await.unwrap();
+    }
     memory
         .inner
         .set_prose(&EntityId("topic:widgets".into()), "alpha", None)
@@ -75,12 +108,12 @@ async fn node_read_path_keeps_unreadable_parts_in_the_shared_answer_and_each_ren
     let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
     let client = browser();
     let cookie = log_in(&client, addr, "/").await;
-    for failed in 0..4 {
+    for failed in 0..8 {
         memory.failed.store(failed, Ordering::SeqCst);
         let shared = queries
             .ask(question())
             .await
-            .unwrap_or_else(|_| panic!("the shared answer keeps unreadability"));
+            .unwrap_or_else(|_| panic!("the shared answer keeps unreadability in row {failed}"));
         let scan_unreadable = shared
             .selected
             .unreadable_scans
@@ -93,6 +126,13 @@ async fn node_read_path_keeps_unreadable_parts_in_the_shared_answer_and_each_ren
         assert_eq!(object.ages.is_some(), failed & 1 == 0);
         assert_eq!(object.ages_unreadable.is_some(), failed & 1 != 0);
         assert_eq!(scan_unreadable, failed & 2 != 0);
+        assert_eq!(object.revisions_unreadable.is_some(), failed & 4 != 0);
+        assert!(!object.facts.is_empty());
+        if failed & 4 == 0 {
+            for fact in &object.facts {
+                assert_eq!(object.fact_revisions[&fact.id], 1);
+            }
+        }
         assert_eq!(
             object.prose.as_deref(),
             Some(if failed & 2 == 0 { "alpha" } else { "" })
@@ -106,17 +146,81 @@ async fn node_read_path_keeps_unreadable_parts_in_the_shared_answer_and_each_ren
             let body = page.text().await.unwrap();
             assert_eq!(body.contains("<pre>alpha</pre>"), failed & 2 == 0);
         }
-        let recall = recall_body(addr, failed & 2 != 0).await;
-        if failed & 2 != 0 {
-            assert_eq!(recall["code"], -32603, "{recall}");
-        } else {
-            assert_eq!(recall["objects"][0]["fields"]["pitch"], "14", "{recall}");
+        for view in [None, Some("bare-listing")] {
+            let recall = recall_body(addr, failed & 6 != 0, view).await;
+            if failed & 6 != 0 {
+                assert_eq!(recall["code"], -32603, "{recall}");
+            } else {
+                assert_eq!(recall["objects"][0]["fields"]["pitch"], "14", "{recall}");
+            }
+        }
+        assert_eq!(
+            graph::walk(memory.as_ref(), &[], &question().query)
+                .await
+                .is_err(),
+            failed & 6 != 0
+        );
+        let mut browse = question().query;
+        browse.select.subject = None;
+        browse.select.kind = Some(EntityKind::TOPIC);
+        browse.select.order = Some(Order::new("pitch", Direction::Ascending));
+        let head = memory
+            .inner
+            .ordered_first_k(
+                "pitch",
+                jojobot_domain::memory::types::ValueType::Number,
+                Direction::Ascending,
+                Some(EntityKind::TOPIC),
+                None,
+                1,
+            )
+            .await
+            .unwrap();
+        assert!(head.cut);
+        assert_eq!(head.head[0].0.as_str(), "topic:widgets");
+        browse.select.ordered_head = Some(head);
+        for budget in [0, usize::MAX] {
+            let before = memory.history_reads.load(Ordering::SeqCst);
+            let selected = jojobot_mcp::memory::view_run::select(
+                memory.as_ref(),
+                &[],
+                &browse,
+                Some(graph::Window {
+                    offset: 0,
+                    budget,
+                    size_of: &|_| 1,
+                }),
+            )
+            .await
+            .unwrap();
+            assert_eq!(selected.left_over, usize::from(budget == 0));
+            let widget = selected
+                .subject_object(&EntityId("topic:widgets".into()))
+                .unwrap();
+            assert_eq!(widget.revisions_unreadable.is_some(), failed & 4 != 0);
+            assert_eq!(
+                memory.history_reads.load(Ordering::SeqCst) - before,
+                widget.facts.len(),
+                "the cached object is not read twice"
+            );
+            assert_eq!(
+                widget.fact_revisions.len(),
+                if failed & 4 == 0 {
+                    widget.facts.len()
+                } else {
+                    0
+                }
+            );
         }
     }
     ct.cancel();
 }
 
-async fn recall_body(addr: std::net::SocketAddr, unreadable: bool) -> serde_json::Value {
+async fn recall_body(
+    addr: std::net::SocketAddr,
+    unreadable: bool,
+    view: Option<&str>,
+) -> serde_json::Value {
     let http = reqwest::Client::new();
     let url = format!("http://{addr}/mcp");
     let (session, _) = support::open_with(&http, &url, "2025-06-18").await;
@@ -126,7 +230,7 @@ async fn recall_body(addr: std::net::SocketAddr, unreadable: bool) -> serde_json
         .header("accept", "application/json, text/event-stream")
         .json(
             &serde_json::json!({"jsonrpc":"2.0", "id":2, "method":"tools/call",
-            "params":{"name":"recall", "arguments":{"subject":"topic:widgets", "facts":true}}}),
+            "params":{"name":"recall", "arguments":{"subject":"topic:widgets", "facts":true, "view":view}}}),
         );
     if let Some(session) = session {
         request = request.header("mcp-session-id", session);

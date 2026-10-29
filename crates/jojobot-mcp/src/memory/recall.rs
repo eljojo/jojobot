@@ -3269,7 +3269,9 @@ impl Jojobot {
         } = match view_run::select(self.memory.as_ref(), &projected_docs, &query, walk_window).await
         {
             Ok(answer) => {
-                if let Some(error) = graph::unreadable_scan(&answer) {
+                if let Some(error) =
+                    graph::unreadable_scan(&answer).or_else(|| graph::unreadable_revisions(&answer))
+                {
                     return self.recall_declined(through_view(error)).await;
                 }
                 answer
