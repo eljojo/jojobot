@@ -9,6 +9,30 @@ use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::testing::{Scratch, free_port, migrated_database};
 use jojobot_domain::memory::testing::contract;
 
+/// **The real store still names a missing subject before it judges the write.**
+/// The decided order refuses a setting with no value first; this pins what the
+/// real store does today. The admission that moves in 9.3.3-c2 makes it follow the
+/// decided order; that change removes `should_panic` and runs the case like the
+/// others.
+#[tokio::test]
+#[should_panic(expected = "a malformed write is refused before the subject is judged")]
+async fn dolt_still_names_a_missing_subject_before_it_judges_a_malformed_write() {
+    let scratch = Scratch::new("refusal-order-malformed");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "refusalordermalformed")
+        .await
+        .expect("a database of the case's own");
+    migrate::run(&pool).await.expect("the schema");
+    jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
+        .await
+        .expect("the kinds are seeded");
+    let memory = DoltMemory::open(pool);
+    contract::a_setting_with_no_value_is_refused_before_a_missing_subject(&memory).await;
+    store.stop().await;
+}
+
 #[tokio::test]
 async fn dolt_judges_two_missing_names_in_the_decided_order() {
     let scratch = Scratch::new("refusal-order");

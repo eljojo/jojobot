@@ -57,6 +57,7 @@ async fn the_fake_judges_the_subject_the_edge_and_the_refs_in_the_decided_order(
     let store = InMemoryMemory::booted();
     contract::a_missing_subject_is_refused_before_a_missing_edge_object(&store).await;
     contract::a_missing_edge_object_is_refused_before_a_missing_ref(&store).await;
+    contract::a_setting_with_no_value_is_refused_before_a_missing_subject(&store).await;
 }
 
 /// **The fake judges a reference field's value before the refs, and the decided

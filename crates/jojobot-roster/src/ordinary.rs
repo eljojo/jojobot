@@ -28,6 +28,7 @@ pub const ORDINARY: &[&str] = &[
     "thing:contract-order-no-subject",
     "thing:contract-order-edge-subject",
     "thing:contract-order-field-subject",
+    "thing:contract-order-malformed-subject",
     "place:contract-order-no-place",
     "place:contract-order-no-edge",
     "person:contract-order-edge-ref",

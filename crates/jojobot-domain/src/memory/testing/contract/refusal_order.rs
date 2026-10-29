@@ -23,6 +23,26 @@ async fn missed<M: Memory>(store: &M, fact: NewFact) -> String {
     }
 }
 
+/// **A malformed write is refused before a missing subject is named.** A setting
+/// that has no value is a fault of the write alone, and it is judged first, so the
+/// answer is the refusal of the write and not a request to create the subject.
+/// **The real store judges the subject first and answers `Blocked`**, so this case
+/// reddens against it until the admission moves, and only the fake runs it.
+pub async fn a_setting_with_no_value_is_refused_before_a_missing_subject<M: Memory>(store: &M) {
+    let fact = NewFact {
+        sets: ["contract_order_setting".to_string()].into(),
+        ..NewFact::about(
+            EntityId("thing:contract-order-malformed-subject".into()),
+            "a malformed write on nobody",
+            date(2026, 7, 1),
+        )
+    };
+    match store.capture(fact).await {
+        Err(MemoryError::InvalidFact(_)) => {}
+        other => panic!("a malformed write is refused before the subject is judged, got {other:?}"),
+    }
+}
+
 /// **The subject is judged before the edge's object.** Both name nobody; the
 /// answer names the subject.
 pub async fn a_missing_subject_is_refused_before_a_missing_edge_object<M: Memory>(store: &M) {
