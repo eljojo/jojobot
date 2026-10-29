@@ -22,6 +22,9 @@ macro_rules! deaths_beyond_the_last_release {
     };
 }
 
+// No migration is beyond today's deployed ledger, but the next pair's entire
+// interruption/boot path must still be type-checked on this head.
+#[allow(dead_code)]
 async fn a_death_inside_one_migration(version: &str, how: Interruption) {
     use jojobot_adapters::dolt::migrate::{leave_interrupted, shipped_versions};
     assert!(
@@ -55,15 +58,9 @@ async fn a_death_inside_one_migration(version: &str, how: Interruption) {
     boots_on_a_restored_store(&fixture, restored).await;
 }
 
-// Every migration beyond the recorded ledger gets both interrupted starts.
-deaths_beyond_the_last_release!(
-    tool_call_refusal_code => "0112_tool_call_refusal_code",
-    run_call_refusal_code => "0113_run_call_refusal_code",
-    tool_call_code_key_drop => "0114_tool_call_code_key_drop",
-    tool_call_code_key_add => "0115_tool_call_code_key_add",
-    run_call_code_key_drop => "0116_run_call_code_key_drop",
-    run_call_code_key_add => "0117_run_call_code_key_add",
-);
+// deploy-9.3.1 already holds every migration this head ships. Add a named pair
+// here with each migration introduced beyond that cached store's ledger.
+deaths_beyond_the_last_release!();
 
 #[tokio::test]
 async fn every_migration_added_since_the_last_release_has_a_death_case() {
