@@ -299,7 +299,8 @@ impl Jojobot {
                     // claim's first write names the run that wrote it, and a
                     // later rewrite of the claim is judged against that run.
                     session: by_session.map(str::to_string),
-                    written_by_bot: Some(author.clone()),
+                    // Scenario furniture has no run from which to read its author.
+                    written_by_bot: by_session.is_none().then(|| author.clone()),
                     // **A bot is born with the record of the notes it was told**, as a
                     // record of the engine's own beside the caller's claim, in the
                     // same act (rule 130).

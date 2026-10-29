@@ -65,7 +65,18 @@ impl Harness {
             .list_entities(Some(EntityKind::BOT))
             .await
             .map_err(|error| error.to_string())?;
-        let day = self.handler.clock.today_in(&jiff::tz::TimeZone::UTC);
+        let today = crate::memory::parse::parse_day(arguments["today"].as_str())
+            .map_err(|error| error.to_string())?;
+        let instance_zone = self.handler.instance_zone().await;
+        let zone = crate::memory::parse::parse_zone(
+            arguments["timezone"]
+                .as_str()
+                .map(str::trim)
+                .filter(|zone| !zone.is_empty())
+                .or(instance_zone.name()),
+        )
+        .map_err(|error| error.to_string())?;
+        let day = today.unwrap_or_else(|| self.handler.clock.today_in(&zone));
         view["identity"] = self
             .handler
             .identity(
@@ -78,18 +89,19 @@ impl Harness {
             .await
             .map_err(|error| error.to_string())?
             .map_err(|_| "the observed bot does not exist")?;
-        let choices: Vec<_> = self
-            .handler
-            .sessions
-            .sessions_of(&bot)
-            .await
-            .map_err(|error| error.to_string())?
-            .into_iter()
-            .filter(|run| {
-                run.state == jojobot_domain::session::SessionState::Active
-                    || run.is_offerable(self.handler.clock.now(), Some(day))
-            })
-            .map(|run| serde_json::json!({"id":run.id.as_str(),"working_on":run.focus}))
+        let board = jojobot_domain::session::find_without_sweeping(
+            self.handler.sessions.as_ref(),
+            &bot,
+            self.handler.clock.now(),
+            today,
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+        let choices: Vec<_> = board
+            .live
+            .iter()
+            .chain(board.offerable.iter())
+            .map(crate::orientation::in_flight::choice_json)
             .collect();
         view["session"] = serde_json::json!({"choices":choices});
         Ok(view)

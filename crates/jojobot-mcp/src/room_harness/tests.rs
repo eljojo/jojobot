@@ -270,7 +270,7 @@ async fn room_harness_seed_obeys_the_write_guard_for_engine_owned_keys() {
         )
         .await
         .expect("person furnished");
-    let refused = grader
+    grader
         .seed(
             "bot:assistant",
             vec![SeedWrite::AsTheOccupant(
@@ -279,24 +279,26 @@ async fn room_harness_seed_obeys_the_write_guard_for_engine_owned_keys() {
                     "sets":{"defragged_at":"2026-01-01T00:00:00Z"}}),
             )],
         )
-        .await;
-    assert!(
-        refused.is_err(),
-        "the engine's own key was accepted: {refused:?}"
-    );
-    let refused = refused.unwrap_err();
+        .await
+        .expect("the copied stamp is dropped, as on a served capture");
+    let facts = handler
+        .memory
+        .recall(&EntityId("person:milhouse".into()))
+        .await
+        .unwrap();
+    assert_eq!(facts.len(), 1);
     assert_eq!(
-        serde_json::from_str::<Value>(&refused).unwrap()["status"],
-        "blocked"
+        facts[0].content, "Milhouse was reviewed",
+        "dropping a copied key must keep the ordinary claim"
     );
-    assert!(refused.contains("defragged_at"), "{refused}");
+    assert!(!facts[0].fields.contains_key("defragged_at"));
     assert!(
-        handler
+        !handler
             .memory
-            .recall(&EntityId("person:milhouse".into()))
+            .fields(&EntityId("person:milhouse".into()))
             .await
             .unwrap()
-            .is_empty()
+            .contains_key("defragged_at")
     );
     grader
         .seed(
@@ -371,4 +373,128 @@ async fn room_harness_notices_resume_from_a_cursor_without_a_participant() {
             .expect("runs")
             .is_empty()
     );
+}
+
+#[tokio::test]
+async fn room_harness_creation_keeps_the_served_first_claim_writer() {
+    let handler = room().await;
+    let sid = crate::harness::as_bot(&handler, "assistant");
+    let mut args = json!({"kind":"thread", "handle":"alpha", "name":"Alpha",
+        "source":"the room", "sets":{"colour":"blue"}, "sid":sid});
+    let created = body(
+        handler
+            .add_entity(Parameters(decode(args.clone()).unwrap()))
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_ne!(created["status"], "blocked", "{created}");
+    let thread = EntityId("thread:alpha".into());
+    let claim = handler.memory.recall(&thread).await.unwrap().remove(0);
+    let history = handler
+        .memory
+        .claim_history(&claim.address())
+        .await
+        .unwrap();
+    assert!(history[0].session.is_some());
+    assert_eq!(
+        history[0].bot, None,
+        "served creation keeps the writer on its run"
+    );
+    let mut without_run = handler.clone();
+    without_run.sessions = Arc::new(InMemorySessions::new());
+    assert!(
+        without_run
+            .record_writers(&thread)
+            .await
+            .unwrap()
+            .is_empty(),
+        "a run no session row answers to cannot supply a fill writer"
+    );
+
+    args.as_object_mut().unwrap().remove("sid");
+    args["handle"] = json!("beta");
+    args["name"] = json!("Beta");
+    Harness::new(handler.clone())
+        .seed(
+            "assistant",
+            vec![SeedWrite::AsTheOccupant("add_entity".into(), args)],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        handler
+            .record_writers(&EntityId("thread:beta".into()))
+            .await
+            .unwrap(),
+        vec![EntityId("bot:assistant".into())],
+        "scenario writes have an author without a run"
+    );
+}
+
+#[tokio::test]
+async fn room_harness_resume_choices_match_a_boot_on_its_stated_day_without_writing() {
+    use jojobot_domain::session::{NewSession, SessionState, Sid};
+    for today in [None, Some("2026-06-02"), Some("2026-06-04")] {
+        let handler = room().await.on_clock(jojobot_domain::clock::Clock::stating(
+            "2026-06-03".parse().unwrap(),
+        ));
+        for (name, day, abandoned, hours) in [
+            ("sa01", "2026-06-01", false, 1),
+            ("sb01", "2026-06-02", false, 2),
+            ("sc01", "2026-06-01", true, 3),
+            ("sd01", "2026-06-01", true, 4),
+        ] {
+            let run = handler
+                .sessions
+                .begin(NewSession {
+                    bot: EntityId("bot:assistant".into()),
+                    sid: Sid(name.into()),
+                    focus: name.into(),
+                    started_at: handler.clock.now() - jiff::SignedDuration::from_hours(hours),
+                    started_on: Some(day.parse().unwrap()),
+                    timezone: None,
+                    id: None,
+                    key_hash: None,
+                })
+                .await
+                .unwrap();
+            if abandoned {
+                handler
+                    .sessions
+                    .close(&run.id, SessionState::Abandoned)
+                    .await
+                    .unwrap();
+            }
+        }
+        let before = handler.sessions.all_summaries().await.unwrap();
+        let held = handler
+            .registry
+            .held_runs_of(&EntityId("bot:assistant".into()));
+        let args = json!({"bot":"assistant", "brief":true, "today":today});
+        let observed = Harness::new(handler.clone())
+            .read("start_here", args.clone())
+            .await
+            .unwrap();
+        assert_eq!(handler.sessions.all_summaries().await.unwrap(), before);
+        assert_eq!(
+            handler
+                .registry
+                .held_runs_of(&EntityId("bot:assistant".into()))
+                .len(),
+            held.len()
+        );
+        let boot = body(
+            handler
+                .start_here(Parameters(decode(args).unwrap()))
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(boot["session"]["choices"].is_array(), "{boot}");
+        assert_eq!(
+            observed["session"]["choices"], boot["session"]["choices"],
+            "today={today:?}"
+        );
+    }
 }
