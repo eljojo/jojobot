@@ -7473,6 +7473,16 @@ async fn a_listing_row_says_how_much_sits_under_a_thing_directly_and_in_all() {
 /// verdict (rule 742), for both malformed and well-formed date values.
 #[tokio::test]
 async fn a_date_key_keeps_its_stored_value_without_a_type_fit_verdict() {
+    fn opens_row(page: &str) -> &str {
+        section(page, "fields")
+            .split_once("?history=opens")
+            .expect("the opens key is in the fields table")
+            .1
+            .split_once("</tr>")
+            .expect("the opens row closes")
+            .0
+    }
+
     let memory = seeded_memory().await;
     let mut market = NewEntity::new(EntityId("topic:flea".into()), "Flea", "the fixture roster");
     market.parent = Some(EntityId("person:alpha".into()));
@@ -7509,7 +7519,7 @@ async fn a_date_key_keeps_its_stored_value_without_a_type_fit_verdict() {
         .text()
         .await
         .unwrap();
-    let badly = labelled_row(&flea, "fields", "opens");
+    let badly = opens_row(&flea);
     assert!(
         badly.contains("next spring"),
         "the stored date value is kept: {badly}"
@@ -7520,7 +7530,7 @@ async fn a_date_key_keeps_its_stored_value_without_a_type_fit_verdict() {
         .text()
         .await
         .unwrap();
-    let well = labelled_row(&stall, "fields", "opens");
+    let well = opens_row(&stall);
     assert!(
         well.contains("2026-03-05"),
         "the well-formed stored date is kept too: {well}"
