@@ -63,6 +63,7 @@ test-dolt_due_pass_instance
 test-dolt_due_pass_unread
 test-dolt_id_case
 test-dolt_links_by_mark
+test-dolt_log_contract
 test-dolt_must_back
 test-dolt_numbered_restart
 test-dolt_repair

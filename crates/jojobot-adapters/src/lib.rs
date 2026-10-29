@@ -13,6 +13,7 @@
 //! context rather than a store: mail does not know what an entity is.
 
 pub mod dolt;
+pub mod dolt_log;
 pub mod fold;
 pub mod nudge;
 pub mod observe;
