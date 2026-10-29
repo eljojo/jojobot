@@ -1,3 +1,5 @@
+//! **This file is a contract, not a story.**
+//!
 //! A write reports a derived due day once, beside the thing's identity.
 //! Ordinary writes carry no due day. All four write doors use the same shape.
 

@@ -1,3 +1,5 @@
+//! **This file is a contract, not a story.**
+//!
 //! The fixed synthetic receipt set. No operator day is replayed.
 use super::dsl::Story;
 use serde_json::{Value, json};

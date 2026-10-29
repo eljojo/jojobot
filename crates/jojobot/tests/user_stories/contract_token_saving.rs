@@ -1,3 +1,5 @@
+//! **This file is a contract, not a story.**
+//!
 //! The calling bot chooses lean receipts through its held setting.
 use super::dsl::Story;
 use serde_json::{Value, json};

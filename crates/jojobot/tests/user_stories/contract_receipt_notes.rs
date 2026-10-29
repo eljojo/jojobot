@@ -1,3 +1,5 @@
+//! **This file is a contract, not a story.**
+//!
 //! A receipt teaches its explanations once, using the session ledger.
 use super::dsl::Story;
 use serde_json::json;

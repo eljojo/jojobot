@@ -199,6 +199,8 @@ mod keys_by_value;
 /// A listing leads with each claim; details come when asked.
 #[path = "user_stories/lean_defaults.rs"]
 mod lean_defaults;
+#[path = "user_stories/lean_receipts.rs"]
+mod lean_receipts;
 /// A read names the keys of each record, and a page holds at most `limit`.
 #[path = "user_stories/lean_records.rs"]
 mod lean_records;
