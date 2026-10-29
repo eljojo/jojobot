@@ -32,28 +32,41 @@ use support::ui_board::*;
 
 // --- the tests -------------------------------------------------------------
 
+/// **Every gated route sends a browser with no session to the login, carrying
+/// the page it wanted.** One row per route family: the index, a node page and
+/// the search page, so a route added outside the gate fails on its own row.
 #[tokio::test]
 async fn a_browser_with_no_session_is_sent_to_the_login() {
     let idp = support::TestIdp::new();
     let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
-    let (addr, ct) = spawn_jojobot(endpoints, &[], &idp).await;
+    let (addr, ct) = spawn_jojobot(endpoints, &[READER], &idp).await;
 
-    let response = browser()
-        .get(format!("http://{addr}/"))
-        .send()
-        .await
-        .unwrap();
+    for (path, carried) in [
+        ("/", "next="),
+        ("/person:alpha/", "person%3Aalpha"),
+        ("/ui/search?q=widgets", "next="),
+    ] {
+        let response = browser()
+            .get(format!("http://{addr}{path}"))
+            .send()
+            .await
+            .unwrap();
 
-    assert!(response.status().is_redirection());
-    let to = location(&response);
-    assert!(
-        to.starts_with("/ui/login"),
-        "the gate must send a person to the login, not refuse them: {to}"
-    );
-    assert!(
-        to.contains("next="),
-        "the login must be told where the browser was going: {to}"
-    );
+        assert!(
+            response.status().is_redirection(),
+            "{path}: {}",
+            response.status()
+        );
+        let to = location(&response);
+        assert!(
+            to.starts_with("/ui/login"),
+            "the gate must send a person to the login, not refuse them: {path} -> {to}"
+        );
+        assert!(
+            to.contains(carried),
+            "the login must be told where the browser was going: {path} -> {to}"
+        );
+    }
     ct.cancel();
 }
 
@@ -867,28 +880,6 @@ async fn a_handle_nobody_has_is_not_found() {
             "{missing} names nothing, so it is missing rather than empty"
         );
     }
-    ct.cancel();
-}
-
-#[tokio::test]
-async fn a_node_page_is_closed_to_a_browser_with_no_session() {
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
-    let (addr, ct) = spawn_jojobot(endpoints, &[READER], &idp).await;
-
-    let response = browser()
-        .get(format!("http://{addr}/person:alpha/"))
-        .send()
-        .await
-        .unwrap();
-
-    assert!(response.status().is_redirection());
-    let to = location(&response);
-    assert!(to.starts_with("/ui/login"), "{to}");
-    assert!(
-        to.contains("person%3Aalpha"),
-        "the login must carry the page the browser wanted: {to}"
-    );
     ct.cancel();
 }
 
@@ -6816,23 +6807,6 @@ async fn a_page_with_only_unlisted_hits_does_not_say_nothing_found_or_name_mail(
         nothing.contains("id=\"nothing-found\"") && !nothing.contains("not-listed"),
         "a word nothing holds still says so: {nothing}"
     );
-    ct.cancel();
-}
-
-/// **A search page needs a login like every other page**, and looking writes and
-/// delivers nothing: the page is the same gate.
-#[tokio::test]
-async fn the_search_page_is_sent_to_the_login_without_a_session() {
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
-    let (addr, ct) = spawn_jojobot(endpoints, &[READER], &idp).await;
-    let response = browser()
-        .get(format!("http://{addr}/ui/search?q=widgets"))
-        .send()
-        .await
-        .unwrap();
-    assert!(response.status().is_redirection(), "{}", response.status());
-    assert!(location(&response).starts_with("/ui/login"));
     ct.cancel();
 }
 
