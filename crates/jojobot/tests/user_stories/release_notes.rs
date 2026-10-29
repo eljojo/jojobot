@@ -23,6 +23,7 @@ const SHIPPED_NOTES: &[&str] = &[
     "a-field-value-naming-a-handle-is-a-link",
     "closing-mail-costs-what-reading-costs",
     "defrag-ships-a-charter",
+    "edge-types-use-writable-tokens",
     "list-read-pages-and-counts-ticks",
     "many-entries-or-ticks-in-one-call",
     "memory-write-receipts",
