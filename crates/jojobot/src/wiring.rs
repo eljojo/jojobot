@@ -571,36 +571,6 @@ pub async fn boot_store_observed(
         ),
     }
 
-    // **Rekey what the badge fill just made possible.** A row written before
-    // a thing wore a badge still names it by handle in `fact`, `fact_write`
-    // and `field_write`; every read here resolves a handle to a badge before
-    // it queries, so a row still keyed by the handle is a row nothing can
-    // reach. This has to run after the fill above — it reads the badge the
-    // fill just gave out — so it cannot be a migration, which runs before
-    // either exists.
-    //
-    // **Not fatal, for the same reason the fill above is not**: the store
-    // already reports on itself, and a restart once it is reachable finishes
-    // what this pass could not.
-    match timed(
-        "rekey-handle-keyed-rows",
-        badging.backfill_handle_keyed_rows(),
-    )
-    .await
-    {
-        Ok(0) => {}
-        Ok(given) => tracing::info!(
-            given,
-            "store: rekeyed rows written under a handle to the badge they answer to now"
-        ),
-        Err(e) => tracing::warn!(
-            error = %e,
-            "ROWS NOT REKEYED — some rows written before a thing's badge existed may still be \
-             unreachable by handle. Nothing was lost; a restart once the store is reachable \
-             finishes the rekey."
-        ),
-    }
-
     // **One set, read by both halves.** The layer above resolves what the
     // build supplies into an answer; the store below has to see the same set
     // when its guard decides whether a handle names anything, or a claim
@@ -818,7 +788,7 @@ pub async fn boot_store_observed(
     // may still hold a bare `@kind:slug`; this rewrites it onto the badge,
     // once, against the bare stores — before either is wrapped in its own
     // `Mentioning` below. It is not a migration proper, for the same reason
-    // `DoltMemory::backfill_handle_keyed_rows` is not one: it needs the
+    // `DoltMemory::badge_the_unbadged` is not one: it needs the
     // badged entity list, which exists only now that the memory store has
     // run its own boot steps. Idempotent by construction — see
     // `DoltSessions::migrate_mentions`'s own doc — so a failed half is not

@@ -404,75 +404,11 @@ impl DoltMemory {
         Ok(given)
     }
 
-    /// **Rekey a row written before entities carried a badge**, onto the
-    /// badge the row's own entity wears now.
-    ///
-    /// A migration cannot do this: it runs before [`Self::badge_the_unbadged`]
-    /// does, over a database where the badge column may exist but no row's
-    /// badge is drawn yet — so a migrated backfill would rewrite nothing, the
-    /// ledger would record it as applied, and it would never run again. This
-    /// sits beside the badge fill instead, at startup, immediately after it —
-    /// the one place both preconditions (the column, and the values in it)
-    /// are actually met.
-    ///
-    /// **The completion gate is a live question, not a memory of having
-    /// run.** There is no ledger row for this: a second call re-asks, of
-    /// every badged entity, whether any of its rows still hold its handle,
-    /// and only touches the ones that answer yes. A boot that half-finished
-    /// and a boot that never started reach the same place, because both are
-    /// just "some entities still answer yes" to the same question.
-    ///
-    /// **Every badge-keyed column, and no other.** `fact.entity`,
-    /// `fact.derived_from`, `field_write.entity`, `fact_write.entity`,
-    /// `fact_write.derived_from` and `fact_event_metadata`/`fact_event_ref`'s
-    /// `fact_home` are what [`Self::merge`] already treats as holding a
-    /// storage key rather than a plain handle — the same list, because a fold
-    /// and a backfill are rekeying the same columns for different reasons.
-    /// `entity_alias.entity` joins the list here: it is an alias row's own
-    /// foreign key back to the entity it belongs to, the same shape
-    /// `fact.entity` was, so a rename that left it on the handle would sever
-    /// a thing from its own nicknames — and from every search hit that came
-    /// through one — the moment the row moved.
-    ///
-    /// **`field_link` and `fact_stands_for` are in this list.** Both were
-    /// born badge-keyed: the write path resolves an address to a badge before
-    /// anything lands. A home the build supplies has no badge to resolve to,
-    /// so a write on it files the handle's own text, and the adoption of a
-    /// handle the build stopped supplying has to move those rows too.
-    /// `fact_event_ref.entity`, `entity.parent` and `edge_object` are
-    /// badge-keyed too (rule 268), but not by this call: they name a
-    /// DIFFERENT entity rather than the row's own, and [`Self::
-    /// resolve_stale_pointer_columns`] is the migration that rekeys those,
-    /// separately, because an unresolvable value there is an error rather
-    /// than a row this backfill can quietly skip.
-    ///
-    /// Returns how many entities had rows rekeyed. **Idempotent**: a second
-    /// run touches none.
-    pub async fn backfill_handle_keyed_rows(&self) -> Result<usize, MemoryError> {
-        let badged: Vec<(String, String)> =
-            sqlx::query_as("SELECT id, badge FROM entity WHERE badge IS NOT NULL")
-                .fetch_all(&self.pool)
-                .await
-                .map_err(store)?;
-        let mut rekeyed = 0;
-        for (handle, badge) in badged {
-            if !Self::still_handle_keyed(&self.pool, &handle, &badge).await? {
-                continue;
-            }
-            let mut tx = self.pool.begin().await.map_err(store)?;
-            Self::rekey_to_badge(&mut tx, &handle, &badge).await?;
-            tx.commit().await.map_err(store)?;
-            rekeyed += 1;
-        }
-        Ok(rekeyed)
-    }
-
     /// **Every column that holds a thing's storage key, moved from the handle
     /// it was filed under onto the badge the thing wears.** The one list
-    /// ([`HANDLE_KEYED_COLUMNS`]), so the backfill of rows written before
-    /// badges, its completion gate and the adoption of a handle whose writes
-    /// outlived its record cannot drift apart about which columns hold a
-    /// storage key.
+    /// ([`HANDLE_KEYED_COLUMNS`]), so the adoption of a handle whose writes
+    /// outlived its record has one answer about which columns hold a storage
+    /// key.
     async fn rekey_to_badge(
         tx: &mut Transaction<'_, MySql>,
         handle: &str,
@@ -533,46 +469,6 @@ impl DoltMemory {
         Self::rekey_to_badge(tx, handle, badge).await?;
         Self::repoint_field_links(tx, handle, badge).await?;
         Ok(())
-    }
-
-    /// **The completion gate `backfill_handle_keyed_rows` asks**, over one
-    /// entity: does any badge-keyed column still hold this handle rather than
-    /// the badge it now wears. A handle that already equals its own badge
-    /// (never true in practice, but checked rather than assumed) needs
-    /// nothing either.
-    async fn still_handle_keyed(
-        pool: &MySqlPool,
-        handle: &str,
-        badge: &str,
-    ) -> Result<bool, MemoryError> {
-        if handle == badge {
-            return Ok(false);
-        }
-        for (table, column) in HANDLE_KEYED_COLUMNS {
-            let hit: Option<i64> = sqlx::query_scalar(AssertSqlSafe(format!(
-                "SELECT 1 FROM {table} WHERE {column} = ? LIMIT 1"
-            )))
-            .bind(handle)
-            .fetch_optional(pool)
-            .await
-            .map_err(store)?;
-            if hit.is_some() {
-                return Ok(true);
-            }
-        }
-        for (table, column) in HANDLE_KEYED_JSON_COLUMNS {
-            let hit: Option<i64> = sqlx::query_scalar(AssertSqlSafe(format!(
-                "SELECT 1 FROM {table} WHERE {column} LIKE ? LIMIT 1"
-            )))
-            .bind(json_string_pattern(handle))
-            .fetch_optional(pool)
-            .await
-            .map_err(store)?;
-            if hit.is_some() {
-                return Ok(true);
-            }
-        }
-        Ok(false)
     }
 
     /// **Rekey `fact.edge_object` (and its `fact_write` mirror),

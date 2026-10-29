@@ -156,7 +156,7 @@ impl DoltSessions {
     /// **Rewrite a handle written into a focus line or a journal beat before
     /// mention resolution reached this port, onto the permanent id it
     /// names** (rule 260) — the text-column sibling of
-    /// [`crate::dolt::memory::DoltMemory::backfill_handle_keyed_rows`].
+    /// [`crate::dolt::memory::DoltMemory::badge_the_unbadged`].
     ///
     /// **Not a migration**, for the same reason that one is not: it needs the
     /// badged entity list, which exists only once the memory store has run

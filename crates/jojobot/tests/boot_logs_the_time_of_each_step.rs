@@ -35,17 +35,14 @@ impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Kept {
 }
 
 /// The steps of `wiring::boot_store`, in the order it runs them.
-const STEPS: [&str; 20] = [
+const STEPS: [&str; 17] = [
     "store-up",
     "badge-the-unbadged",
-    "rekey-handle-keyed-rows",
     "load-kinds",
     "record-supplied-handles",
     "adopt-handles-without-a-row",
     "resolve-stale-pointer-columns",
-    "migrate-reference-fields",
     "field-links",
-    "migrate-forward-names",
     "migrate-forwarded-links",
     "repair-stored-rows",
     "storage-check",
