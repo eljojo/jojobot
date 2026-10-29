@@ -168,6 +168,10 @@ async fn a_swept_run_is_refused_naming_no_displacing_run() {
     let store = Arc::new(InMemorySessions::new());
     let jojobot = with_sessions(store.clone());
     make_bot(&jojobot, "gamma").await;
+    // Another run of the bot holds a role, so there is a run a refusal could name.
+    let holder = claiming(&jojobot, "gamma", "dev-dispatch").await;
+    let holder_run = run_of(&holder).expect("a run");
+    journalled(&jojobot, &sid_of(&holder).expect("a handle")).await;
     // A run the sweep closed: no displacing run, so no run is named.
     let quiet = sid_of(&boot_new(&jojobot, "gamma", None).await).expect("a handle");
     journalled(&jojobot, &quiet).await;
@@ -188,10 +192,9 @@ async fn a_swept_run_is_refused_naming_no_displacing_run() {
         .expect("the sweep closes it");
     let swept = journalled(&jojobot, &quiet).await;
     assert_eq!(swept["status"], "blocked", "{swept}");
+    let refusal = swept.to_string();
     assert!(
-        !swept["how_to_proceed"]
-            .as_str()
-            .is_some_and(|how| how.contains("was displaced")),
+        !refusal.contains(&holder_run) && !refusal.contains("displaced_by"),
         "a swept run names no displacing run: {swept}"
     );
 }
