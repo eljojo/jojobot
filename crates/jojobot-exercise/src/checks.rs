@@ -194,6 +194,8 @@ use crate::run::{Checks, Observed, checked, checked_noting};
 mod inspection_lock;
 mod packing;
 #[cfg(test)]
+mod plus_one;
+#[cfg(test)]
 mod rule_answer;
 #[cfg(test)]
 mod said_the_count;
@@ -4355,11 +4357,24 @@ fn claim_number_of(address: &str) -> u64 {
 }
 
 /// Whether a claim says a plus-one or a partner is coming.
+///
+/// ⚠️ **One sentence at a time, and a sentence that denies one does not say
+/// it.** "No plus-one this time" names the plus-one and says the opposite.
 fn says_a_plus_one_is_coming(fact: &Value) -> bool {
+    const DENIALS: [&str; 7] = [
+        "no ", "not ", "n't", "without ", "never ", "none ", "nobody ",
+    ];
     ["content", "details"].iter().any(|key| {
         fact[*key].as_str().is_some_and(|said| {
-            let said = said.to_lowercase();
-            said.contains("partner") || said.contains("plus-one") || said.contains("plus one")
+            said.to_lowercase()
+                .split(['.', ';', '!', '?', '\n'])
+                .any(|sentence| {
+                    let sentence = format!("{sentence} ");
+                    let names_one = sentence.contains("partner")
+                        || sentence.contains("plus-one")
+                        || sentence.contains("plus one");
+                    names_one && !DENIALS.iter().any(|denial| sentence.contains(denial))
+                })
         })
     })
 }
