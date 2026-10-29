@@ -447,6 +447,7 @@ async fn lean_receipts_review_derivations_warn_only_at_or_over_capacity() {
                 .is_some_and(|lines| !lines.is_empty()),
             "{body}"
         );
+        // Pins the receipt trim of `postcondition`, not a retired key.
         assert!(body.get("postcondition").is_none(), "{body}");
     }
     assert!(

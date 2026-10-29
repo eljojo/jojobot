@@ -40,6 +40,8 @@ async fn two_accounts_of_one_evening_and_the_receipt_that_says_both_stand() {
         )
         .await;
     assert_eq!(first.json()["success"], true);
+    // The write receipt trims `postcondition` (write_receipts trim_record), so
+    // this absence goes red if the trim is dropped.
     assert!(
         first.json().get("postcondition").is_none(),
         "{}",
@@ -222,6 +224,7 @@ async fn a_receipt_says_a_mark_stayed_on_the_record_and_an_ordinary_key_moved_to
         )
         .await
         .json();
+    // Pins the receipt trim of `postcondition`, not a retired key.
     assert!(both.get("postcondition").is_none(), "{both}");
     assert_eq!(both["reached_the_thing"], json!(["one_liner"]), "{both}");
     assert_eq!(both["stayed_on_the_record"], json!(["starred"]), "{both}");

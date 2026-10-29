@@ -177,6 +177,7 @@ async fn an_own_field_the_caller_sent_still_stays_on_the_record_and_is_told() {
         .filter_map(Value::as_str)
         .collect();
     assert_eq!(stayed, ["mood"], "{}", sunny.raw());
+    // Pins the receipt trim of `postcondition`, not a retired key.
     assert!(body.get("postcondition").is_none(), "{body}");
     assert!(body["a_key_stayed_off_the_thing"].is_string(), "{body}");
 
