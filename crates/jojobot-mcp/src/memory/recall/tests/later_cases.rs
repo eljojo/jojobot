@@ -348,3 +348,48 @@ async fn overdue_beside_unreviewed_serves_each_object_its_own_distance() {
     assert_eq!(days("thing:epsilon"), Some(14.into()), "{answered}");
     assert_eq!(days("thing:zeta"), Some(3.into()), "{answered}");
 }
+
+/// **Each object carries its own readiness when `ready` is asked beside
+/// `unreviewed`.** The readiness pass hands back one verdict per object in the
+/// order it found them, and the review pass then sorts the objects by when they
+/// last changed, so the verdicts have to follow their objects and not their
+/// places. The ready piece was written first here, so the two orders disagree.
+#[tokio::test]
+async fn the_plan_beside_unreviewed_serves_each_piece_its_own_readiness() {
+    let jojobot = crate::harness::handler_shipped();
+    let acting = run_on(&jojobot, "2026-03-15").await;
+    work_with(&jojobot, "work:zeta", &[("status", "next")]).await;
+    work_with(
+        &jojobot,
+        "work:epsilon",
+        &[("status", "next"), ("depends_on", "work:zeta")],
+    )
+    .await;
+
+    let answered = json_of(
+        &jojobot
+            .recall(Parameters(RecallArgs {
+                view: Some("plan".into()),
+                unreviewed: Some(true),
+                sid: Some(acting),
+                ..of_nothing()
+            }))
+            .await
+            .expect("recall answers"),
+    );
+    assert_eq!(
+        listed(&answered),
+        ["work:zeta", "work:epsilon"],
+        "the review pass puts the older change first, which is the order this case needs: {answered}"
+    );
+    assert_eq!(
+        listed_object(&answered, "work:zeta")["ready"],
+        true,
+        "{answered}"
+    );
+    assert_eq!(
+        listed_object(&answered, "work:epsilon")["ready"],
+        false,
+        "{answered}"
+    );
+}

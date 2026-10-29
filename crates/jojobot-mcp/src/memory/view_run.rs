@@ -204,12 +204,23 @@ pub async fn narrow(
             asks.measure_from.unwrap_or(as_of),
         )
     });
-    let ready = match &asks.ready {
+    let mut ready = match &asks.ready {
         Some(asked) => Some(keep_ready(memory, found, asked).await?),
         None => None,
     };
     if asks.unreviewed {
+        // The review pass drops and re-sorts objects, so the verdicts, one per
+        // object in the readiness pass's order, are re-keyed by object.
+        let held: Vec<EntityId> = found.iter().map(|o| o.entity.id.clone()).collect();
         keep_unreviewed(found);
+        if let Some(pass) = ready.as_mut() {
+            let mut by_object: BTreeMap<EntityId, Verdict> =
+                held.into_iter().zip(pass.verdicts.drain(..)).collect();
+            pass.verdicts = found
+                .iter()
+                .filter_map(|o| by_object.remove(&o.entity.id))
+                .collect();
+        }
     }
     Ok(Narrowed { owed, ready })
 }
