@@ -3671,17 +3671,15 @@ async fn junes_mention_lock_is_not_satisfied_by_a_retracted_address_the_rename_a
 /// must hold on every one of them, not refuse for finding more than one.
 #[tokio::test]
 async fn junes_mention_lock_holds_when_every_one_of_junes_addresses_is_renamed_together() {
-    // **Late October left out on purpose.** Its own honest work retracts
-    // Nelson's June attendance for a reason that has nothing to do with a
-    // rename — he was never at the inspection — and this case is about the
-    // rename alone. The lock itself does not read late October's boundary at
-    // all, so nothing here needs it to have run.
-    const WORKED_WITHOUT_LATE_OCTOBER: [usize; 12] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 12, 14];
+    // **Late October is worked, and its honest work retracts Nelson's June
+    // attendance** for a reason that has nothing to do with a rename — he was
+    // never at the inspection. The lock reads the end of October's rename
+    // sitting, so that later retraction is not a failed rename.
     let (_room, surface) = furnished().await;
     let boundaries = work_the_year(
         &surface,
         &room_document(),
-        &WORKED_WITHOUT_LATE_OCTOBER,
+        &WORKED,
         &[JUNE_ATTENDANCE_AS_MENTIONS],
     )
     .await;

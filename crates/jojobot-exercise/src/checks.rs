@@ -2358,11 +2358,6 @@ fn event_mentions_by_address(world: &str) -> std::collections::HashMap<String, S
         .collect()
 }
 
-/// The subject half of a record's address — everything before the `#`.
-fn subject_of(address: &str) -> &str {
-    address.split('#').next().unwrap_or(address)
-}
-
 /// 🚨 **A stored mention renders under whichever handle its thing wears NOW,
 /// and this is where that is watched rather than assumed.**
 ///
@@ -2387,9 +2382,10 @@ fn subject_of(address: &str) -> &str {
 /// records only, [`septembers_account_of_the_skate_tool_is_superseded_by_a_derived_correction`]
 /// says why — so this
 /// finds June's own addresses by the same window-diff that check uses, and
-/// asks a LIVE, status-aware read of each one whether it is still active
-/// before comparing what it renders now against what June's window first
-/// recorded. A retracted address fails naming that rather than reporting an
+/// asks the reading taken at the end of October's rename sitting whether each
+/// one is still there, then compares what it renders then against what June's
+/// window first recorded. A later, independent retraction is not read. An
+/// address October retracted fails naming that rather than reporting an
 /// unrelated handle as unchanged.
 ///
 /// 🚨 **Plural, on purpose — a run 19 transcript wrote June's claim as more
@@ -2433,69 +2429,39 @@ async fn junes_inspection_mention_renders_under_the_current_handle(
              claim here to watch get renamed",
         ));
     }
-    // **One live read per distinct subject, never per candidate.** June may
-    // point at the inspection from more than one subject — the council's own claim,
-    // an attendance claim on a person — and a read is asked once of each.
-    let mut subjects: Vec<&str> = candidates
-        .iter()
-        .map(|(address, _)| subject_of(address))
-        .collect();
-    subjects.sort_unstable();
-    subjects.dedup();
-    let mut current: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
-    for subject in subjects {
-        let read = seen
-            .room
-            .call(
-                "recall",
-                with_details(json!({"subject": subject, "facts": true})),
-            )
-            .await;
-        let parsed: Value = read_json(&read)?;
-        for fact in parsed["objects"][0]["facts"]
-            .as_array()
-            .into_iter()
-            .flatten()
-        {
-            if let Some(address) = fact["address"].as_str() {
-                current.insert(address.to_string(), fact.clone());
-            }
-        }
-    }
+    // **Read at the end of October's rename sitting, not live.** The rename
+    // happens there, and a later, independent retraction (late October takes
+    // Nelson's attendance back because he was never at the inspection) must not
+    // count as a failed earlier rename. `search` serves active records only, so
+    // a June address October retracted, or retracted and wrote again, is absent
+    // from this reading and fails naming that.
+    let Some((_, renamed)) = seen.across(OCTOBER) else {
+        return Err(format!(
+            "this run took no reading either side of {OCTOBER}, so nothing here can say what \
+             {JUNE}'s own claims render as once the inspection was renamed",
+        ));
+    };
+    let now = event_mentions_by_address(&renamed.world);
     // **Every candidate, not the first one that passes.** A rename that
     // reached some of June's claims and not others is a worse result than
     // one that reached none, and an answer satisfied by any single candidate
     // would call that a pass.
     for (address, original) in &candidates {
-        let Some(fact) = current.get(address) else {
-            return Err(format!(
-                "{address} — one of {JUNE}'s own claims pointing at the inspection — is not on its \
-                 subject's record any more"
-            ));
-        };
-        if fact["status"] != "active" {
-            return Err(format!(
-                "{address} — one of {JUNE}'s own claims pointing at the inspection — is {} rather \
-                 than active, so whatever satisfies a different mention there is a fresh claim \
-                 naming a different event rather than a rename of the one {JUNE} pointed at",
-                fact["status"],
-            ));
-        }
-        let now = fact["content"]
-            .as_str()
-            .and_then(|content| mention_of_kind(content, "event"));
-        match now {
-            Some(now) if now != *original => {}
+        match now.get(address) {
+            None => {
+                return Err(format!(
+                    "{address} — one of {JUNE}'s own claims pointing at the inspection — is not an \
+                     active record pointing at an event after {OCTOBER}, so whatever satisfies a \
+                     different mention there is a fresh claim naming a different event rather \
+                     than a rename of the one {JUNE} pointed at"
+                ));
+            }
+            Some(now) if now != original => {}
             Some(now) => {
                 return Err(format!(
                     "{address} still renders the inspection under {now}, the handle {JUNE}'s own \
                      window recorded there, so nothing here shows that mention resolving to a \
                      handle it did not wear when it was written"
-                ));
-            }
-            None => {
-                return Err(format!(
-                    "{address} no longer renders as pointing at an event at all"
                 ));
             }
         }
