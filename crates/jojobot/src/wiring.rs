@@ -1315,7 +1315,9 @@ mod tests {
         use jojobot_domain::session::{NewEntry, NewSession, Sid};
         use std::future::Future;
 
-        let (_, indexed) = assemble_memory(Arc::new(InMemoryMemory::booted())).unwrap();
+        let (_, indexed) = assemble_memory(Arc::new(InMemoryMemory::booted()))
+            .await
+            .unwrap();
         let writer = indexed.writer();
         let bare = Arc::new(InMemorySessions::new());
         let counted = Arc::new(CountedSessions::new(bare.clone()));
