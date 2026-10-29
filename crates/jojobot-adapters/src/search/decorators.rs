@@ -352,6 +352,16 @@ impl IndexedMemory {
 
 /// TEMPORARY(9.3.2) the memory write-reaction follow-up. Subscribers replace it in 9.3.2-2.
 impl IndexedMemory {
+    /// **Drop the scan cache after a declaration verb that may have landed.**
+    /// An indeterminate answer means the commit state was unknown and the fold
+    /// was reloaded, so the declaration can be in force while the answer is an
+    /// error; any other error means nothing landed and the cache stays.
+    fn drop_scan_after_declaration<T>(&self, answer: &Result<T, MemoryError>) {
+        if matches!(answer, Ok(_) | Err(MemoryError::Indeterminate)) {
+            *self.last_scan.write().expect("scan cache poisoned") = None;
+        }
+    }
+
     /// **The one door every write that changes a document goes through.** A write
     /// the store committed whose fold could not follow answers
     /// [`MemoryError::FoldBehind`], and the write still landed: this reads the
@@ -1012,9 +1022,9 @@ impl Memory for IndexedMemory {
             [by_session = by_session.map(str::to_string)],
             this.declare_type(declared, by_session.as_deref()).await
         );
-        let written = self.inner.declare_type(declared, by_session).await?;
-        *self.last_scan.write().expect("scan cache poisoned") = None;
-        Ok(written)
+        let written = self.inner.declare_type(declared, by_session).await;
+        self.drop_scan_after_declaration(&written);
+        written
     }
 
     async fn declared_types(&self) -> Result<Vec<DeclaredType>, MemoryError> {
@@ -1045,9 +1055,9 @@ impl Memory for IndexedMemory {
             [token = token.to_string()],
             this.declare_kind(&token, origin, fields).await
         );
-        let changed = self.inner.declare_kind(token, origin, fields).await?;
-        *self.last_scan.write().expect("scan cache poisoned") = None;
-        Ok(changed)
+        let changed = self.inner.declare_kind(token, origin, fields).await;
+        self.drop_scan_after_declaration(&changed);
+        changed
     }
 
     async fn declared_kinds(
@@ -1066,9 +1076,9 @@ impl Memory for IndexedMemory {
             [token = token.to_string()],
             this.reclaim_kind(&token).await
         );
-        self.inner.reclaim_kind(token).await?;
-        *self.last_scan.write().expect("scan cache poisoned") = None;
-        Ok(())
+        let reclaimed = self.inner.reclaim_kind(token).await;
+        self.drop_scan_after_declaration(&reclaimed);
+        reclaimed
     }
 }
 
