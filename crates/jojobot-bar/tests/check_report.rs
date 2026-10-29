@@ -428,6 +428,51 @@ fn a_missing_key_fails_and_names_it() {
     }
 }
 
+/// **A FALSIFY whose only evidence is a line window or a count fails, and the
+/// refusal names the shape.** A line range, a count and a bare `file:LINE` go
+/// stale the day the code above them moves; falsifying by name does not.
+#[test]
+fn a_falsify_that_is_only_a_line_window_or_a_count_fails_naming_the_shape() {
+    let repo = repository();
+    let api = stand(green(&repo));
+    let head = header(&repo);
+    for (falsify, shape) in [
+        ("sed -n '475,500p' crates/x/src/y.rs", "sed -n"),
+        ("grep -c keyed crates/x/src/y.rs", "grep -c"),
+        ("git grep -c keyed -- crates", "grep -c"),
+        ("wc -l crates/x/src/y.rs", "wc -l"),
+        ("head -40 crates/x/src/y.rs", "head"),
+        ("tail -n 20 crates/x/src/y.rs", "tail"),
+        ("crates/x/src/y.rs:475 never runs the check", "file:LINE"),
+    ] {
+        let (code, out, _) = check(&repo, &api, &report(&with(&head, "FALSIFY", falsify)));
+        assert_eq!(code, 1, "{falsify}: {out}");
+        assert!(
+            failures(&out)
+                .iter()
+                .any(|l| l.contains("FALSIFY") && l.contains(shape)),
+            "{falsify}: the refusal does not name {shape}: {out}"
+        );
+    }
+}
+
+/// **A FALSIFY that carries a window or a count and also falsifies by name
+/// passes.** The name is what survives the code moving.
+#[test]
+fn a_falsify_that_also_greps_for_a_name_passes() {
+    let repo = repository();
+    let api = stand(green(&repo));
+    let head = header(&repo);
+    for falsify in [
+        "git grep -n holder_key -- crates/x/src/y.rs; sed -n '475,500p' crates/x/src/y.rs",
+        "git grep -n keyed crates/x/src/y.rs | head -5",
+        "crates/x/src/y.rs:475 holds a keyed flag; git grep -n keyed crates",
+    ] {
+        let (code, out, err) = check(&repo, &api, &report(&with(&head, "FALSIFY", falsify)));
+        assert_eq!(code, 0, "{falsify}: {out}\n{err}");
+    }
+}
+
 /// **A report with no net table fails NET, and a RETIRES of `none` with no reason
 /// fails RETIRES.**
 #[test]

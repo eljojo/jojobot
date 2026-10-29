@@ -84,6 +84,28 @@ def header_of(text):
     return found
 
 
+LOCATORS = (
+    ("sed -n", re.compile(r"\bsed\s+(-\S*n\S*)\s+['\"]?\d+(,\d+)?p")),
+    ("grep -c", re.compile(r"\bgrep\s+(-\w*c\w*|--count)\b")),
+    ("wc -l", re.compile(r"\bwc\s+-l\b")),
+    ("head", re.compile(r"\bhead\s+-(n\s*)?\d+\b")),
+    ("tail", re.compile(r"\btail\s+-(n\s*)?\d+\b")),
+    ("file:LINE", re.compile(r"\S+\.\w+:\d+\b")),
+)
+NAME_GREP = re.compile(r"\bgrep\b(?!\s+(-\w*c\w*|--count)\b)")
+
+
+def locator_shape(falsify):
+    """The shape of a FALSIFY whose only evidence is a line window or a count, or
+    None. A FALSIFY that also carries a grep or git grep for a name is accepted."""
+    if NAME_GREP.search(falsify):
+        return None
+    for shape, pattern in LOCATORS:
+        if pattern.search(falsify):
+            return shape
+    return None
+
+
 def merge_base_says(base, commit):
     """Whether BASE is an ancestor of COMMIT in this checkout, and the reason if not."""
     ran = subprocess.run(
@@ -261,6 +283,13 @@ def main():
     for key in NAMED:
         if key in header:
             results[key] = (True, "named")
+    shape = locator_shape(header.get("FALSIFY", ""))
+    if shape:
+        results["FALSIFY"] = (
+            False,
+            f"{shape} goes stale when the code moves: falsify by name, with git grep for "
+            "the function, string or key",
+        )
     if re.fullmatch(r"(?i)none\W*", header.get("RETIRES", "")):
         results["RETIRES"] = (False, "none needs its reason")
     if re.search(r"^net lines by area since \S+", text, re.M) and re.search(r"total; source plus tests", text):
