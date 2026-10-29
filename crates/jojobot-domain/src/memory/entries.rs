@@ -70,7 +70,8 @@ pub fn refuses_a_callers_placement<'a>(
         crate::memory::MemoryError::InvalidFact(
             "`edges`, the blank lines around a section's words, is a key only jojobot \
              writes and a caller never sends or clears it. To put a section behind \
-             another, send `update_fact` on the section's address with `after`"
+             another, send `update_fact` on the section's address with `after`. To add \
+             a new section, use `put_document` with `after` the last section"
                 .into(),
         )
     })
@@ -1584,5 +1585,17 @@ mod tests {
         );
         assert!(refuses_a_callers_placement(Some(EntityKind::LIST), true, ["edges"]).is_none());
         assert!(refuses_a_callers_placement(Some(EntityKind::PERSON), true, ["edges"]).is_none());
+    }
+
+    /// **The refusal on a section teaches both placements a caller may want**: a
+    /// section already there is moved with `update_fact`, a new one is added with
+    /// `put_document`. The verb names are what a caller types, so they are pinned.
+    #[test]
+    fn the_edges_refusal_names_the_verb_that_adds_a_section() {
+        let refused = refuses_a_callers_placement(Some(EntityKind::DOCUMENT), true, ["edges"])
+            .expect("edges on a section is refused")
+            .to_string();
+        assert!(refused.contains("put_document"), "{refused}");
+        assert!(refused.contains("update_fact"), "{refused}");
     }
 }
