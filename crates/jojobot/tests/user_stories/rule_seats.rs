@@ -1325,6 +1325,15 @@ async fn a_refusal_at_the_floor_names_the_summary_that_keeps_its_sources_and_fol
     story.finish().await;
 }
 
+/// Whether an answer's teaching list carries the lesson about unstarred rules.
+fn taught_unstarred(answer: &super::dsl::Answer) -> bool {
+    answer.json()["teaching"].as_array().is_some_and(|lines| {
+        lines
+            .iter()
+            .any(|line| line.as_str().is_some_and(|l| l.contains("unstarred")))
+    })
+}
+
 /// **Unstarring three rules is taught the organizing skill, unless the record
 /// that lands names what it replaces.** A rule that is unstarred is kept but no
 /// longer rides the boot, and a record written beside the unstars does not lead
@@ -1371,13 +1380,7 @@ async fn unstarring_three_rules_is_taught_organizing_unless_the_summary_names_th
     };
     // The teaching sits in the receipt's teaching list; the unstar's own receipt
     // never carries it, whichever unstar it is.
-    let taught = |answer: &super::dsl::Answer| {
-        answer.json()["teaching"].as_array().is_some_and(|lines| {
-            lines
-                .iter()
-                .any(|line| line.as_str().is_some_and(|l| l.contains("unstarred")))
-        })
-    };
+    let taught = taught_unstarred;
 
     // ── two unstars and a record: not enough to teach anything ──────────────
     for address in &rules["bot:gamma"][..2] {
@@ -1410,36 +1413,72 @@ async fn unstarring_three_rules_is_taught_organizing_unless_the_summary_names_th
     );
     alone.says("organizing");
 
-    // ── the pair: the summary that stands for them carries no teaching ──────
-    let third = unstar(rules["bot:gamma"][2].clone()).await;
-    assert!(!taught(&third), "an unstar is not taught about itself");
+    s.wrap("unstarred rules and was taught to file them").await;
+    story.finish().await;
+}
+
+/// **Three unstars, then one edit of the record beside them: the edit is taught
+/// unless it makes the record stand for the unstarred rules.** Each half runs in
+/// a story of its own, because a lesson is delivered once in a session and the
+/// first half would spend it. The two edits differ only in `stands_for`.
+async fn three_unstars_then_an_edit(stands_for: bool) -> bool {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:gamma", "Gamma").await;
+    let mut rules = Vec::new();
+    for n in 0..3 {
+        rules.push(
+            s.call(
+                "capture",
+                json!({"subject": "bot:gamma", "content": format!("rule {n}"),
+                       "fields": {"starred": "true"}}),
+            )
+            .await
+            .field("address"),
+        );
+    }
     let summary = s
         .call(
             "capture",
             json!({"subject": "bot:gamma", "content": "the three rules, in short"}),
         )
-        .await;
-    // The same lesson was delivered for Delta in this session.
-    assert!(!taught(&summary), "the lesson was already delivered");
-    let address = summary.field("address");
-    let marked = s
-        .call(
+        .await
+        .field("address");
+    for address in &rules {
+        s.call(
             "update_fact",
-            json!({"address": &address, "stands_for": &rules["bot:gamma"]}),
+            json!({"address": address, "fields": {"starred": "false"}}),
         )
         .await;
-    assert!(
-        !taught(&marked),
-        "a record that stands for them carries no teaching: {}",
-        marked.raw()
-    );
-
-    let read = s.recall("bot:gamma").await;
-    for source in &rules["bot:gamma"] {
-        read.claim(&address).says(source);
     }
-    s.wrap("unstarred rules and summarised them").await;
+    let edit = if stands_for {
+        json!({"address": &summary, "stands_for": &rules})
+    } else {
+        json!({"address": &summary, "content": "the three rules, reworded"})
+    };
+    let edited = s.call("update_fact", edit).await;
+    if stands_for {
+        let read = s.recall("bot:gamma").await;
+        for source in &rules {
+            read.claim(&summary).says(source);
+        }
+    }
+    let taught = taught_unstarred(&edited);
+    s.wrap("unstarred rules and edited their summary").await;
     story.finish().await;
+    taught
+}
+
+#[tokio::test]
+async fn an_edit_beside_three_unstars_is_taught_unless_it_stands_for_them() {
+    assert!(
+        three_unstars_then_an_edit(false).await,
+        "an edit that stands for nothing is taught"
+    );
+    assert!(
+        !three_unstars_then_an_edit(true).await,
+        "an edit that stands for the unstarred rules carries no teaching"
+    );
 }
 
 /// **A bot creation whose own arguments take the new bot's boot over the ceiling
