@@ -436,13 +436,13 @@ another bot's mail counts are never shown here — only its own boot or its own 
 the `kind` argument of add_entity lists the kinds you can create
 ```
 
-#### Named boot with unfiled rules — `.identity.rules_off_the_tree.warning`
+#### Named boot with unfiled rules — `.identity.attention_rules_off_the_tree.warning`
 
 ```text
 Rules in force that name no purpose branch: this bot is not fully on its rules tree, and its charter's branches cannot load them.
 ```
 
-#### Named boot with unfiled rules — `.identity.rules_off_the_tree.how_to_fix`
+#### Named boot with unfiled rules — `.identity.attention_rules_off_the_tree.how_to_fix`
 
 ```text
 Give each of these rules a `purpose` naming the branch its charter loads it by.

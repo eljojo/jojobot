@@ -335,10 +335,12 @@ async fn orientation(doc: &mut Doc) {
     for key in ["warning", "how_to_fix"] {
         doc.text(
             4,
-            &format!("Named boot with unfiled rules — `.identity.rules_off_the_tree.{key}`"),
+            &format!(
+                "Named boot with unfiled rules — `.identity.attention_rules_off_the_tree.{key}`"
+            ),
             "text",
             &sentence_per_line(
-                answer["identity"]["rules_off_the_tree"][key]
+                answer["identity"]["attention_rules_off_the_tree"][key]
                     .as_str()
                     .expect("an unfiled rule's boot carries warning and repair text"),
             ),

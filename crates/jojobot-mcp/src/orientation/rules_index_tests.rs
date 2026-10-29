@@ -1,9 +1,14 @@
 //! A rule index names whole labels and leaves engine records out.
 
 use super::identity::unseated_rules;
-use crate::harness::{boot, handler_over};
+use super::{OrientArgs, Parameters};
+use crate::harness::{boot, handler_over, json_of, make_bot, text_of};
+use crate::memory::testing::{capture_args, capture_ok};
+use crate::session::testing::{fixture_sid, with_sessions};
 use jojobot_domain::memory::testing::{InMemoryMemory, contract::rules_index_records};
 use jojobot_domain::memory::{EntityId, Fact};
+use jojobot_domain::session::testing::InMemorySessions;
+use jojobot_domain::session::{NewEntry, NewSession, SessionState, Sessions};
 use std::sync::Arc;
 
 async fn unseated_rule() -> Fact {
@@ -50,16 +55,19 @@ async fn rules_index_boot_counts_and_lists_only_rules() {
 
 /// **The boot carries the domain's count, and counts rules only**: the fixture
 /// holds two rules and three bookkeeping records, none of which names a purpose.
-/// The table of the condition itself is the domain's (`rules_tree`).
+/// The table of the condition itself is the domain's (`unfiled_tests` in `seats.rs`).
 #[tokio::test]
 async fn off_the_tree_rides_the_boot_of_a_bot_with_unfiled_rules() {
     let memory = Arc::new(InMemoryMemory::booted());
     let records = rules_index_records(memory.as_ref()).await;
     let answer = boot(&handler_over(memory), records[0].subject.slug()).await;
     let identity = &answer["identity"];
-    assert_eq!(identity["rules_off_the_tree"]["count"], 2, "{identity}");
+    assert_eq!(
+        identity["attention_rules_off_the_tree"]["count"], 2,
+        "{identity}"
+    );
     for key in ["warning", "how_to_fix"] {
-        let text = identity["rules_off_the_tree"][key]
+        let text = identity["attention_rules_off_the_tree"][key]
             .as_str()
             .unwrap_or_else(|| panic!("{key} is readable text: {identity}"));
         assert!(!text.is_empty(), "{key}: {identity}");
@@ -75,7 +83,9 @@ async fn off_the_tree_rides_the_boot_of_a_bot_with_unfiled_rules() {
 async fn off_the_tree_is_absent_from_the_boot_of_a_bot_with_no_rules() {
     let answer = boot(&crate::harness::handler(), "gamma").await;
     assert!(
-        answer["identity"].get("rules_off_the_tree").is_none(),
+        answer["identity"]
+            .get("attention_rules_off_the_tree")
+            .is_none(),
         "{}",
         answer["identity"]
     );
@@ -233,4 +243,105 @@ async fn rules_index_engine_settings_are_marked_but_authored_sets_remain_rules()
             .unwrap()
             .contains_key("settings_record")
     );
+}
+
+/// **The off-the-tree warning reaches a bot on every named boot, and sits
+/// before the charter, which can be long.** The bot holds two rules that name
+/// no purpose and an abandoned run. The fresh boot, the answer to the offer and
+/// the boot a compaction report is owed all carry the count, and in the served
+/// text the warning comes ahead of the charter key. The paired case above gives
+/// a bot with no rules none of it.
+#[tokio::test]
+async fn the_off_the_tree_warning_rides_every_named_boot_ahead_of_the_charter() {
+    let store = Arc::new(InMemorySessions::new());
+    let jojobot = with_sessions(store.clone());
+    make_bot(&jojobot, "gamma").await;
+    for content in ["checks the board first", "reports at the end of each piece"] {
+        capture_ok(&jojobot, capture_args("bot:gamma", content)).await;
+    }
+    let begun = |sid, focus: &str| {
+        store.begin(NewSession {
+            timezone: None,
+            bot: EntityId("bot:gamma".into()),
+            sid,
+            focus: focus.into(),
+            started_at: jiff::Timestamp::now() - jiff::SignedDuration::from_hours(3),
+            started_on: None,
+            id: None,
+            key_hash: None,
+        })
+    };
+    let wrapped = begun(fixture_sid(line!()), "the run that wrapped")
+        .await
+        .expect("begin ok");
+    store
+        .append(
+            &wrapped.id,
+            NewEntry::manual("wrapped half done", jiff::Timestamp::now(), None),
+        )
+        .await
+        .expect("append ok");
+    store
+        .close(&wrapped.id, SessionState::Wrapped)
+        .await
+        .expect("close ok");
+    store
+        .begin(NewSession {
+            timezone: None,
+            bot: EntityId("bot:gamma".into()),
+            sid: fixture_sid(line!()),
+            focus: "reading the hand-off".into(),
+            started_at: jiff::Timestamp::now(),
+            started_on: None,
+            id: None,
+            key_hash: None,
+        })
+        .await
+        .expect("begin ok");
+    let key = "attention_rules_off_the_tree";
+
+    let offering = boot(&jojobot, "gamma").await;
+    assert_eq!(offering["identity"][key]["count"], 2, "{offering}");
+    let run = offering["session"]["choices"][0]["run"]
+        .as_str()
+        .expect("the wrapped run is offered")
+        .to_string();
+    let code = offering["session"]["offer_code"]
+        .as_str()
+        .expect("the offer carries a code")
+        .to_string();
+
+    let call =
+        |compacted: Option<bool>, resume: Option<String>, sid: Option<String>, offer_code| {
+            jojobot.start_here(Parameters(OrientArgs {
+                request_id: None,
+                compacted,
+                claim: None,
+                timezone: None,
+                today: None,
+                bot: Some("gamma".into()),
+                brief: None,
+                skill: None,
+                section: None,
+                resume,
+                sid,
+                ask_for_code: None,
+                challenge: None,
+                code: None,
+                offer_code,
+            }))
+        };
+    let answer = json_of(&call(None, Some(run), None, Some(code)).await.expect("ok"));
+    assert_eq!(answer["identity"][key]["count"], 2, "{answer}");
+    let sid = answer["session"]["sid"]
+        .as_str()
+        .expect("a key")
+        .to_string();
+
+    let compacted = call(Some(true), None, Some(sid), None).await.expect("ok");
+    let text = text_of(&compacted);
+    assert_eq!(json_of(&compacted)["identity"][key]["count"], 2, "{text}");
+    let warning = text.find(key).expect("the warning is served");
+    let charter = text.find("\"charter\":").expect("the charter is served");
+    assert!(warning < charter, "the warning comes first: {text}");
 }

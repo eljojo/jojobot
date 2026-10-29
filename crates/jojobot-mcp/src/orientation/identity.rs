@@ -592,8 +592,11 @@ impl Jojobot {
         ) {
             obj.insert("unseated_rules".into(), map);
         }
+        // **The key name puts the warning first.** The answer serves its keys in
+        // alphabetical order, and a charter can be long, so a name that sorts
+        // before `bot` is the only way the warning is read ahead of it.
         if let (Some(warning), Some(obj)) = (off_the_tree(in_force), body.as_object_mut()) {
-            obj.insert("rules_off_the_tree".into(), warning);
+            obj.insert("attention_rules_off_the_tree".into(), warning);
         }
         // **Defrag's boot fronts its queue**: how many things wait for it and the
         // first of them, so its session starts on what changed since it last looked.
