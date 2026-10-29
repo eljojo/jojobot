@@ -182,11 +182,12 @@ impl DoltMemory {
             .collect();
 
         // **After the marking has run once, only the writes the rule before it
-        // linked are marked.** The rule can be switched off and on again, and a
-        // write made while it was off holds a link row that no mark implies: the
-        // decision to link it was made at that write, so it is marked now and its
-        // row stays. A word left as text, and a write made while the rule was on,
-        // are never decided again.
+        // linked are marked.** A store written while the rule could be switched
+        // off holds a write whose link row no mark implies: the decision to link
+        // it was made at that write, so it is marked now and its row stays. A word
+        // left as text, and a write made while the rule was on, are never decided
+        // again. `a_link_row_with_no_mark_is_marked_and_kept_after_the_marking_pass`
+        // pins it.
         let legacy_only: BTreeSet<(String, String, i64)> = match marked_before {
             true => held
                 .difference(&links_implied(&writes))
@@ -485,6 +486,9 @@ impl Directory {
                         marking.bare += 1;
                         return jojobot_domain::memory::marked_stored_handle(item);
                     }
+                    // **A bare name under a reference key is loose text.** It is
+                    // kept and draws no link, and no log line names it: the repair
+                    // that did is retired, and the write refuses that shape now.
                     marking.mixed = true;
                     return (*item).to_string();
                 }

@@ -546,6 +546,54 @@ async fn a_link_set_missing_one_target_is_rebuilt_at_boot() {
     store.stop().await;
 }
 
+/// **A write that holds a link row and no mark keeps its row after the marking
+/// has run once.** A store written while the link rule could be off holds such a
+/// write: the decision to link it was made at the write, so the later pass marks
+/// it and leaves the row, and does not read the row as stray.
+#[tokio::test]
+async fn a_link_row_with_no_mark_is_marked_and_kept_after_the_marking_pass() {
+    let (_scratch, mut store, pool, memory, [holder, alpha, _]) =
+        world("links-by-mark-legacy-only").await;
+    memory
+        .capture(memory::state(NewFact {
+            fields: [("labels".to_string(), format!("kitchen, {alpha}"))]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(holder.clone(), "worded loosely", date(2026, 8, 1))
+        }))
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("the claim lands");
+    memory
+        .migrate_field_links_marked()
+        .await
+        .expect("the first pass runs");
+    let holder_badge = badge_of(&pool, holder.as_str()).await;
+    let marked = stored(&pool, &holder_badge, "labels").await;
+    let before = link_rows(&pool).await;
+    assert_eq!(before.len(), 1, "one target, one row: {before:?}");
+
+    sqlx::query("UPDATE field_write SET value = ? WHERE entity = ? AND `key` = 'labels'")
+        .bind(format!("kitchen, {alpha}"))
+        .bind(&holder_badge)
+        .execute(&pool)
+        .await
+        .expect("the write is put back to plain handle text");
+
+    let report = memory
+        .migrate_field_links_marked()
+        .await
+        .expect("the pass runs");
+    assert!(
+        report.disagreed && report.lowered == 1 && report.unlinked == 0 && report.linked == 0,
+        "{report:?}"
+    );
+    assert_eq!(stored(&pool, &holder_badge, "labels").await, marked);
+    assert_eq!(link_rows(&pool).await, before, "the row stays");
+    store.stop().await;
+}
+
 #[tokio::test]
 async fn link_rule_leftovers_an_extra_wrong_target_is_removed_while_valid_rows_survive() {
     let (_scratch, mut store, pool, memory, [holder, alpha, beta]) =
