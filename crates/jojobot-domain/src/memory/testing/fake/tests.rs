@@ -22,6 +22,120 @@ async fn say(store: &InMemoryMemory, about: &EntityId, what: &str) -> FactAddres
         .address()
 }
 
+async fn refused_claimed_edit(drop_thought: bool) {
+    use crate::memory::{EdgeShape, THOUGHT_CAPACITY};
+    use crate::request::{Request, RequestId, Scope, armed, digest_of, within};
+    let ledger = crate::request::testing::InMemoryRequests::new();
+    let store = InMemoryMemory::booted().with_requests(ledger);
+    let handle = if drop_thought {
+        "bot:gamma"
+    } else {
+        "person:lisa"
+    };
+    let subject = thing(&store, handle, if drop_thought { "Gamma" } else { "Lisa" }).await;
+    let target = thing(&store, "person:ralph", "Ralph").await;
+    if drop_thought {
+        store
+            .capture(NewFact {
+                fields: [(THOUGHT_CAPACITY.into(), "1".into())].into(),
+                sets: [THOUGHT_CAPACITY.into()].into(),
+                ..NewFact::about(subject.clone(), "one thought at a time", date(2026, 6, 2))
+            })
+            .await
+            .unwrap()
+            .written()
+            .unwrap();
+    }
+    let claim = |colour: &str| NewFact {
+        fields: [("colour".into(), colour.into())].into(),
+        sets: ["colour".into()].into(),
+        edge: drop_thought.then(|| Edge::new(EdgeShape::Connection, target.clone())),
+        ..NewFact::about(subject.clone(), "set with the edit", date(2026, 6, 2))
+    };
+    let patch = |name: &str| EntityPatch {
+        name: Some(name.into()),
+        ..Default::default()
+    };
+    let under_the_id = |patch: EntityPatch, claim: NewFact| {
+        let store = &store;
+        let subject = &subject;
+        async move {
+            let scope = Scope::new(Request {
+                bot: EntityId("bot:sigma".into()),
+                id: RequestId::parse("claimed-edit-1").unwrap(),
+                verb: "update_entity".into(),
+                digest: digest_of("{}"),
+            });
+            within(
+                scope,
+                armed(store.update_entity_with_claim(subject, patch, claim)),
+            )
+            .await
+        }
+    };
+    let (edited, first) = under_the_id(patch("First edit"), claim("red"))
+        .await
+        .unwrap()
+        .written()
+        .unwrap();
+    assert_eq!(edited.name, "First edit");
+    assert_eq!(store.fields(&subject).await.unwrap()["colour"], "red");
+    let entities = store.list_entities(None).await.unwrap();
+    let facts = store.recall(&subject).await.unwrap();
+    let fields = store.fields(&subject).await.unwrap();
+    let history = store.history(&subject, "colour").await.unwrap();
+    let entity_history = store.entity_history(&subject).await.unwrap();
+    let claim_history = store.claim_history(&first.address()).await.unwrap();
+    let mut second = claim("blue");
+    if drop_thought {
+        second.drop = Some(first.address());
+        second.drop_because = Some("replace the old thought".into());
+    }
+    let refused = under_the_id(patch("Refused edit"), second)
+        .await
+        .unwrap_err();
+    assert!(matches!(refused, MemoryError::Conflict), "{refused:?}");
+    assert_eq!(
+        store.recall(&subject).await.unwrap(),
+        facts,
+        "no claim or drop survives"
+    );
+    assert_eq!(store.fields(&subject).await.unwrap(), fields);
+    assert_eq!(store.history(&subject, "colour").await.unwrap(), history);
+    assert_eq!(store.list_entities(None).await.unwrap(), entities);
+    assert_eq!(
+        store.entity_history(&subject).await.unwrap(),
+        entity_history
+    );
+    assert_eq!(
+        store.claim_history(&first.address()).await.unwrap(),
+        claim_history
+    );
+    let mut fresh = claim("green");
+    if drop_thought {
+        fresh.drop = Some(first.address());
+        fresh.drop_because = Some("replace the old thought".into());
+    }
+    let (edited, _) = store
+        .update_entity_with_claim(&subject, patch("Final edit"), fresh)
+        .await
+        .unwrap()
+        .written()
+        .unwrap();
+    assert_eq!(edited.name, "Final edit");
+    assert_eq!(store.fields(&subject).await.unwrap()["colour"], "green");
+}
+
+#[tokio::test]
+async fn claimed_edit_rollback_leaves_no_claim_after_a_spent_request() {
+    refused_claimed_edit(false).await;
+}
+
+#[tokio::test]
+async fn claimed_edit_rollback_restores_a_dropped_thought() {
+    refused_claimed_edit(true).await;
+}
+
 /// **Two merges under one request id leave one event.** The first spends the
 /// id and lands; the second finds it spent and is refused, and the store holds
 /// nothing of it: the event is recorded after the id is spent, as the real

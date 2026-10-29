@@ -2283,13 +2283,25 @@ impl Memory for InMemoryMemory {
         }
         // **One spend for the act**, after its last step.
         let request = crate::request::take();
-        let before = self
-            .entities
+        // A drop can rewrite an existing claim; truncating appended rows cannot undo it.
+        let entities_before = self.entities.lock().expect("fake mutex poisoned").clone();
+        let facts_before = self.facts.lock().expect("fake mutex poisoned").clone();
+        let writes_before = self.writes.lock().expect("fake mutex poisoned").clone();
+        let claim_writes_before = self
+            .claim_writes
             .lock()
             .expect("fake mutex poisoned")
-            .iter()
-            .find(|held| held.id == *handle)
-            .cloned();
+            .clone();
+        let entity_writes_before = self
+            .entity_writes
+            .lock()
+            .expect("fake mutex poisoned")
+            .clone();
+        let entity_versions_before = self
+            .entity_versions
+            .lock()
+            .expect("fake mutex poisoned")
+            .clone();
         let entity = match self.update_entity(handle, patch).await? {
             Guarded::Written(entity) => entity,
             Guarded::Blocked {
@@ -2303,12 +2315,14 @@ impl Memory for InMemoryMemory {
             }
         };
         let take_back = || {
-            if let Some(before) = &before {
-                let mut held = self.entities.lock().expect("fake mutex poisoned");
-                if let Some(row) = held.iter_mut().find(|row| row.id == before.id) {
-                    *row = before.clone();
-                }
-            }
+            *self.entities.lock().expect("fake mutex poisoned") = entities_before.clone();
+            *self.facts.lock().expect("fake mutex poisoned") = facts_before.clone();
+            *self.writes.lock().expect("fake mutex poisoned") = writes_before.clone();
+            *self.claim_writes.lock().expect("fake mutex poisoned") = claim_writes_before.clone();
+            *self.entity_writes.lock().expect("fake mutex poisoned") = entity_writes_before.clone();
+            *self.entity_versions.lock().expect("fake mutex poisoned") =
+                entity_versions_before.clone();
+            *self.world_cache.lock().expect("fake mutex poisoned") = None;
         };
         match self.capture(claim).await {
             Ok(Guarded::Written(fact)) => {
