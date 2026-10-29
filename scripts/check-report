@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """**Check the facts in a line report's header, before the prose is read.**
 
-    scripts/check-report < report.txt
+    scripts/check-report [--card FILE] < report.txt
 
 The report comes on stdin. Its top carries COMMIT:, BRANCH:, BASE:, RUN:, OWNER:,
 RETIRES:, FALSIFY: and SELF-REVIEW: lines, one value each; the header ends at the
@@ -24,6 +24,15 @@ per key, `pass` or `FAIL` and the reason, and exits 0 only when all pass.
 
 A key the header lacks is a FAIL that names it. A check that needs a missing key
 says which one.
+
+**The card's own keys.** `--card FILE` names a JSON file holding the card's fields as
+`recall` returns them under `fields` for one item, made with `recall` subject
+work:q-CARD keys [owner_module, retires, falsify, review, self_review]. OWNER,
+RETIRES, FALSIFY and SELF-REVIEW that the header lacks are taken from `owner_module`,
+`retires`, `falsify` and `self_review` (then `review`, unless it is `none`), and are
+checked exactly as a header value is. A header value wins over the card's. The card
+adds nothing to a review report. The file is read from disk; no credential or
+network is used for it.
 
 **Review mode.** A review report carries a header line `REVIEW: BASE..H` and, below
 the header, a block opened by a line `COVERAGE:` with one line for each file:
@@ -104,6 +113,40 @@ def locator_shape(falsify):
         if pattern.search(falsify):
             return shape
     return None
+
+
+# The header key each card field fills. SELF-REVIEW reads `self_review`, then `review`.
+CARD_FIELDS = (
+    ("OWNER", ("owner_module",)),
+    ("RETIRES", ("retires",)),
+    ("FALSIFY", ("falsify",)),
+    ("SELF-REVIEW", ("self_review", "review")),
+)
+
+
+def card_value(card, fields):
+    """The first card field of `fields` that holds a value. A `review` of none is the
+    card's reset state, so it holds no review."""
+    for field in fields:
+        value = card.get(field)
+        if not isinstance(value, str) or not value.strip():
+            continue
+        if field == "review" and re.fullmatch(r"(?i)none\W*", value.strip()):
+            continue
+        return value.strip()
+    return None
+
+
+def with_card(header, card):
+    """The header, with each of OWNER, RETIRES, FALSIFY and SELF-REVIEW it lacks taken
+    from the card. A value the header holds wins, even a bad one."""
+    filled = dict(header)
+    for key, fields in CARD_FIELDS:
+        if key not in filled:
+            value = card_value(card, fields)
+            if value is not None:
+                filled[key] = value
+    return filled
 
 
 def merge_base_says(base, commit):
@@ -214,9 +257,16 @@ def json_head(wr, branch):
 
 def main():
     wr = wait_run()
+    args = sys.argv[1:]
+    if args and (len(args) != 2 or args[0] != "--card"):
+        print("usage: scripts/check-report [--card FILE] < report.txt", file=sys.stderr)
+        sys.exit(2)
     text = sys.stdin.read()
     header = header_of(text)
     review = header.get("REVIEW")
+    if args and not review:
+        with open(args[1]) as handle:
+            header = with_card(header, json.load(handle))
     if not wr.API and not (review and not any(key in header for key in KEYS)):
         print("WAIT_RUN_API is not set: set it to the repository's API root", file=sys.stderr)
         sys.exit(4)

@@ -214,7 +214,23 @@ fn with<'a>(
 
 /// The tool on `text`, in `repo`, against the forge at `api`.
 fn check(repo: &Repository, api: &str, text: &str) -> (i32, String, String) {
-    let mut child = Command::new(tool())
+    check_card(repo, api, text, None)
+}
+
+/// The tool on `text` with `--card FILE`, the file holding `card` as JSON.
+fn check_card(
+    repo: &Repository,
+    api: &str,
+    text: &str,
+    card: Option<&Value>,
+) -> (i32, String, String) {
+    let mut command = Command::new(tool());
+    if let Some(card) = card {
+        let file = scratch("card").join("card.json");
+        std::fs::write(&file, card.to_string()).expect("the card file");
+        command.arg("--card").arg(file);
+    }
+    let mut child = command
         .current_dir(&repo.dir)
         .env("WAIT_RUN_API", api)
         .stdin(Stdio::piped())
@@ -471,6 +487,174 @@ fn a_falsify_that_also_greps_for_a_name_passes() {
         let (code, out, err) = check(&repo, &api, &report(&with(&head, "FALSIFY", falsify)));
         assert_eq!(code, 0, "{falsify}: {out}\n{err}");
     }
+}
+
+/// The card's own keys, as `recall` returns them under `fields` for one item.
+fn card() -> Value {
+    json!({
+        "owner_module": "scripts/check-report",
+        "retires": "the retyped header lines, because the card carries them",
+        "falsify": "git grep -n card -- scripts/check-report",
+        "self_review": "read the diff once",
+    })
+}
+
+/// A header of the four facts the forge and the checkout decide, and nothing else.
+fn facts_only(repo: &Repository) -> Vec<(&'static str, String)> {
+    header(repo).into_iter().take(4).collect()
+}
+
+fn as_pairs<'a>(header: &'a [(&'static str, String)]) -> Vec<(&'static str, &'a str)> {
+    header.iter().map(|(k, v)| (*k, v.as_str())).collect()
+}
+
+/// **A header of COMMIT, BRANCH, BASE and RUN, given the card, passes OWNER,
+/// RETIRES, FALSIFY and SELF-REVIEW from the card's keys.** The report types none of
+/// the four.
+#[test]
+fn a_card_fills_the_four_named_keys_a_header_lacks() {
+    let repo = repository();
+    let api = stand(green(&repo));
+    let facts = facts_only(&repo);
+    let text = report(&as_pairs(&facts));
+    let (code, out, err) = check_card(&repo, &api, &text, Some(&card()));
+    assert_eq!(code, 0, "{out}\n{err}");
+    for key in ["OWNER", "RETIRES", "FALSIFY", "SELF-REVIEW"] {
+        assert!(
+            out.lines()
+                .any(|l| l.starts_with("pass") && l.contains(key)),
+            "{key} has no pass line: {out}"
+        );
+    }
+    let (code, out, _) = check_card(&repo, &api, &text, None);
+    assert_eq!(
+        code, 1,
+        "the same report with no card must still fail: {out}"
+    );
+}
+
+/// **A value the header holds wins over the card's, in both directions.** A good
+/// header FALSIFY passes beside a card FALSIFY that would fail; a bare `none` in
+/// the header fails beside a card RETIRES that would pass.
+#[test]
+fn a_header_value_wins_over_the_cards() {
+    let repo = repository();
+    let api = stand(green(&repo));
+    let mut facts = facts_only(&repo);
+    facts.push(("FALSIFY", "git grep -n x -- y".to_string()));
+    let mut bad_falsify = card();
+    bad_falsify["falsify"] = json!("wc -l scripts/check-report");
+    let (code, out, err) = check_card(&repo, &api, &report(&as_pairs(&facts)), Some(&bad_falsify));
+    assert_eq!(code, 0, "{out}\n{err}");
+
+    let mut facts = facts_only(&repo);
+    facts.push(("RETIRES", "none".to_string()));
+    let (code, out, _) = check_card(&repo, &api, &report(&as_pairs(&facts)), Some(&card()));
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        failures(&out).iter().any(|l| l.contains("RETIRES")),
+        "{out}"
+    );
+}
+
+/// **Each of the four fails from the card as it fails from a header.** A missing
+/// or blank value is missing; a RETIRES of `none` needs its reason; a FALSIFY that is
+/// only a line window names its shape.
+#[test]
+fn each_named_key_fails_from_the_card_as_from_a_header() {
+    let repo = repository();
+    let api = stand(green(&repo));
+    let facts = facts_only(&repo);
+    let text = report(&as_pairs(&facts));
+    for (field, key) in [
+        ("owner_module", "OWNER"),
+        ("retires", "RETIRES"),
+        ("falsify", "FALSIFY"),
+        ("self_review", "SELF-REVIEW"),
+    ] {
+        for blank in [None, Some("   ")] {
+            let mut held = card();
+            match blank {
+                None => {
+                    held.as_object_mut().expect("an object").remove(field);
+                }
+                Some(blank) => held[field] = json!(blank),
+            }
+            let (code, out, _) = check_card(&repo, &api, &text, Some(&held));
+            assert_eq!(code, 1, "{field} {blank:?}: {out}");
+            assert!(
+                failures(&out)
+                    .iter()
+                    .any(|l| l.contains(key) && l.contains("missing")),
+                "{field} {blank:?}: {key} is not named as missing: {out}"
+            );
+        }
+    }
+    let mut held = card();
+    held["retires"] = json!("none");
+    let (code, out, _) = check_card(&repo, &api, &text, Some(&held));
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        failures(&out).iter().any(|l| l.contains("RETIRES")),
+        "{out}"
+    );
+    let mut held = card();
+    held["falsify"] = json!("sed -n '475,500p' crates/x/src/y.rs");
+    let (code, out, _) = check_card(&repo, &api, &text, Some(&held));
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        failures(&out)
+            .iter()
+            .any(|l| l.contains("FALSIFY") && l.contains("sed -n")),
+        "{out}"
+    );
+}
+
+/// **The card's `review` stands for SELF-REVIEW only once a review happened.** A
+/// card the line has just reset to `review: none` holds no review; `self_review`
+/// wins over `review` when both are there.
+#[test]
+fn the_cards_review_counts_for_self_review_unless_it_is_none() {
+    let repo = repository();
+    let api = stand(green(&repo));
+    let facts = facts_only(&repo);
+    let text = report(&as_pairs(&facts));
+    let mut held = card();
+    held.as_object_mut()
+        .expect("an object")
+        .remove("self_review");
+    held["review"] = json!("none");
+    let (code, out, _) = check_card(&repo, &api, &text, Some(&held));
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        failures(&out)
+            .iter()
+            .any(|l| l.contains("SELF-REVIEW") && l.contains("missing")),
+        "{out}"
+    );
+    held["review"] = json!("clean");
+    let (code, out, err) = check_card(&repo, &api, &text, Some(&held));
+    assert_eq!(code, 0, "{out}\n{err}");
+    let mut both = card();
+    both["review"] = json!("none");
+    let (code, out, err) = check_card(&repo, &api, &text, Some(&both));
+    assert_eq!(code, 0, "{out}\n{err}");
+}
+
+/// **A review report is checked as it was with a card beside it.** The card's keys
+/// add no check the review did not ask for, so no forge is needed.
+#[test]
+fn a_card_adds_no_key_to_a_review_report() {
+    let files = files_repository();
+    let lines: Vec<String> = CHANGED.iter().map(|path| read_by(path)).collect();
+    let (code, out, err) = check_card(
+        &files.repo,
+        "http://127.0.0.1:1/api/v1/repos/homer/jojobot",
+        &review(&files, &lines),
+        Some(&card()),
+    );
+    assert_eq!(code, 0, "{out}\n{err}");
+    assert!(failures(&out).is_empty(), "{out}");
 }
 
 /// **A report with no net table fails NET, and a RETIRES of `none` with no reason
