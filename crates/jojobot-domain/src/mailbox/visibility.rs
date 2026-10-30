@@ -181,6 +181,78 @@ mod tests {
         }
     }
 
+    /// **The chart gives each caller exactly these answers, written out.** Alpha
+    /// manages beta, who manages gamma; delta stands beside them; milhouse is a
+    /// person; `stranger` is a box nobody lists. The expected answers are spelled
+    /// here and not derived from the rule, so a visible_boxes that lets an
+    /// ancestor's box in, drops a descendant, or reads the wrong direction turns
+    /// this red where a comparison of two views of the same sets would not.
+    #[test]
+    fn the_chart_gives_each_caller_exactly_these_answers() {
+        use MessageVisibility::{Readable as R, Receipt as P, Withheld as W};
+        let chart = BTreeMap::from([
+            (EntityId("bot:beta".into()), "bot:alpha".to_string()),
+            (EntityId("bot:gamma".into()), "bot:beta".to_string()),
+        ]);
+        let board = [
+            box_of("bot", "alpha"),
+            box_of("bot", "beta"),
+            box_of("bot", "gamma"),
+            box_of("bot", "delta"),
+            box_of("person", "milhouse"),
+        ];
+        // For each caller: what a message from the outsider homer gets in each box,
+        // in the order alpha, beta, gamma, delta, milhouse, stranger.
+        let expected = [
+            ("bot:alpha", [R, R, R, W, P, W]),
+            ("bot:beta", [W, R, R, W, P, W]),
+            ("bot:gamma", [W, W, R, W, P, W]),
+            ("bot:delta", [W, W, W, R, P, W]),
+        ];
+        let names = ["alpha", "beta", "gamma", "delta", "milhouse", "stranger"];
+        for (caller, answers) in expected {
+            let seen = visible_boxes(Some(&EntityId(caller.into())), &chart, &board);
+            for (name, answer) in names.iter().zip(answers) {
+                assert_eq!(
+                    seen.message(&MailboxName((*name).into()), Some("bot:homer")),
+                    answer,
+                    "{caller} reading {name} from homer"
+                );
+            }
+        }
+
+        // The direction of reading: a caller reads inside its own box and below it,
+        // never above or beside, and is told which boxes are above it.
+        let gamma = visible_boxes(Some(&EntityId("bot:gamma".into())), &chart, &board);
+        let alpha = visible_boxes(Some(&EntityId("bot:alpha".into())), &chart, &board);
+        for (seen, name, inside) in [
+            (&alpha, "gamma", true),
+            (&alpha, "delta", false),
+            (&gamma, "gamma", true),
+            (&gamma, "beta", false),
+            (&gamma, "delta", false),
+        ] {
+            assert_eq!(
+                seen.reads_inside(&MailboxName(name.into())),
+                inside,
+                "reads_inside {name}"
+            );
+        }
+        assert_eq!(
+            gamma.above,
+            BTreeSet::from([MailboxName("alpha".into()), MailboxName("beta".into())])
+        );
+        assert!(alpha.above.is_empty());
+
+        // An author reads its own message in a bot box above or beside it, and
+        // gets only a receipt for one in a person's box or a box nobody lists.
+        let own = Some("bot:gamma");
+        assert_eq!(gamma.message(&MailboxName("beta".into()), own), R);
+        assert_eq!(gamma.message(&MailboxName("delta".into()), own), R);
+        assert_eq!(gamma.message(&MailboxName("milhouse".into()), own), P);
+        assert_eq!(gamma.message(&MailboxName("stranger".into()), own), P);
+    }
+
     /// **The scope is the rule asked once for all mail.** For every caller of a
     /// chart, a grader and a caller with none, a message is readable under
     /// [`VisibleBoxes::message`] exactly when its box and sender fall inside
