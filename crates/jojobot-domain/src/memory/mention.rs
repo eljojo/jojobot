@@ -875,9 +875,10 @@ impl Mentioning {
     /// **Render the field values that are words or expressions.** Every other
     /// value is returned as the store served it.
     ///
-    /// Used by [`Self::render_fact`], over a fact's own fields. A thing's folded
-    /// fields come from [`Memory::fields`](super::Memory::fields) already
-    /// resolved by the store, so that door resolves nothing here.
+    /// Used by [`Self::render_fact`], over a fact's own fields, and by
+    /// [`Self::render_scan`], over the folded fields a scan carries.
+    /// [`Memory::fields`](super::Memory::fields) unbinds the same keys at its own
+    /// door, so a thing's fields read the same by either.
     fn render_fields(
         fields: &mut std::collections::BTreeMap<String, String>,
         known: &[Entity],
@@ -917,6 +918,9 @@ impl Mentioning {
         declared: &[super::types::DeclaredType],
     ) {
         doc.prose = rendered(&doc.prose, known);
+        // The folded fields ride the scan, and a reader that takes them from it
+        // is served what `fields` serves: a saved expression unbound.
+        Self::render_fields(&mut doc.fields, known, declared);
         for fact in &mut doc.facts {
             self.render_fact(fact, known, declared);
         }
