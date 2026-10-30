@@ -36,6 +36,7 @@ fn linked(handle: &str, by_id: &HashMap<&EntityId, &Entity>) -> String {
 /// work is dropped. A card names the work and says what it needs and who owns it.
 pub async fn board(
     state: &AppState,
+    queries: &jojobot_query_api::QueryHandle,
     project: &Entity,
     held: &BTreeMap<String, String>,
     by_id: &HashMap<&EntityId, &Entity>,
@@ -48,13 +49,12 @@ pub async fn board(
     // **A record of the operator's words that cannot be read is said**, never an
     // instance that mapped none: a board drawn without them puts work in the
     // wrong columns and counts none of it done (rule 130).
-    let instance =
-        match jojobot_mcp::orientation::instance_zone::instance_fields_of(&*state.memory).await {
-            Ok(instance) => instance,
-            Err(err) => {
-                return pages::blind("Board", "the operator's status words", &err.to_string());
-            }
-        };
+    let instance = match pages::instance_fields(queries).await {
+        Ok(instance) => instance,
+        Err(err) => {
+            return pages::blind("Board", "the operator's status words", &err.to_string());
+        }
+    };
     let mut words = kinds::accepted_words(&instance, Some(held));
     for object in &answer.found {
         let word = object
@@ -204,8 +204,17 @@ pub fn work(
 /// when it falls due next, and how late it is. The due day is the one the domain
 /// computes from the loop's keys ([`attention::owed`]), and today is the day in
 /// the instance's zone.
-pub async fn rhythm(state: &AppState, rhythm: &Entity, held: &BTreeMap<String, String>) -> String {
-    let frame = jojobot_mcp::orientation::instance_zone::unzoned_frame(&*state.memory).await;
+pub async fn rhythm(
+    state: &AppState,
+    queries: &jojobot_query_api::QueryHandle,
+    rhythm: &Entity,
+    held: &BTreeMap<String, String>,
+) -> String {
+    // **A record that cannot be read falls back to UTC**, as every unzoned read
+    // does; the boot says so.
+    let frame = jojobot_mcp::orientation::instance_zone::frame_of_fields(
+        &pages::instance_fields(queries).await.unwrap_or_default(),
+    );
     let today = state.clock.today_in(&frame);
     let carriers = attention::shipped();
     let carriers: Vec<&dyn attention::Carrier> =

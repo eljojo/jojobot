@@ -80,6 +80,18 @@ pub async fn unzoned_frame(memory: &dyn Memory) -> jiff::tz::TimeZone {
         .unwrap_or(jiff::tz::TimeZone::UTC)
 }
 
+/// **The frame an unzoned read is answered in, from the instance's folded
+/// fields** a reader already holds: UTC when they hold no zone or one this build
+/// cannot resolve. The same frame [`unzoned_frame`] answers.
+pub fn frame_of_fields(fields: &std::collections::BTreeMap<String, String>) -> jiff::tz::TimeZone {
+    fields
+        .get(INSTANCE_ZONE_KEY)
+        .map(|raw| raw.trim())
+        .filter(|raw| !raw.is_empty())
+        .and_then(|raw| jiff::tz::TimeZone::get(raw).ok())
+        .unwrap_or(jiff::tz::TimeZone::UTC)
+}
+
 /// **The instance's own record, folded**, for the readers that need what the
 /// operator wrote on it besides a zone: the status words it maps and the columns
 /// it lists. **A record nobody wrote is an instance that mapped nothing; a store

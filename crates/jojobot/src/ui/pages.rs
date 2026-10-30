@@ -288,7 +288,7 @@ pub(crate) async fn node(
     generic.push_str(&about(entity));
     // **A project is a board**, its work in the project's own status columns.
     if entity.kind == EntityKind::PROJECT {
-        typed_page.push_str(&typed::board(&state, entity, &held, &by_id).await);
+        typed_page.push_str(&typed::board(&state, &queries, entity, &held, &by_id).await);
         typed_page.push_str(&typed::project_rest(
             &held, &backing, &facts, &children, &by_id,
         ));
@@ -299,7 +299,9 @@ pub(crate) async fn node(
         EntityKind::WORK => {
             typed_page.push_str(&typed::work(entity, &held, &by_id, &status_writes))
         }
-        EntityKind::RHYTHM => typed_page.push_str(&typed::rhythm(&state, entity, &held).await),
+        EntityKind::RHYTHM => {
+            typed_page.push_str(&typed::rhythm(&state, &queries, entity, &held).await)
+        }
         EntityKind::THREAD => {
             typed_page.push_str(&typed::decisions(&decisions, &by_id));
             typed_page.push_str(&typed::claims(&facts, &by_id));
@@ -1920,6 +1922,44 @@ pub fn not_found() -> Response {
         StatusCode::NOT_FOUND,
         "No entity has that handle. Nothing is filed at this path.",
     )
+}
+
+/// **The instance's own record, folded**, read through the shared boundary. A
+/// record nobody wrote is an instance that mapped nothing; a record that cannot be
+/// read is an error (rule 130).
+pub(crate) async fn instance_fields(
+    queries: &jojobot_query_api::QueryHandle,
+) -> Result<BTreeMap<String, String>, jojobot_domain::memory::MemoryError> {
+    use jojobot_domain::memory::MemoryError;
+    let record = EntityId(jojobot_domain::memory::INSTANCE_RECORD.to_string());
+    let question = jojobot_query_api::Question::new(
+        graph::Selection {
+            subject: Some(record.clone()),
+            ..Default::default()
+        },
+        graph::Include {
+            facts: false,
+            prose: false,
+            stood_for: false,
+            status: None,
+        },
+        None,
+        None,
+    );
+    match queries.ask(question).await {
+        Ok(answer) => Ok(answer
+            .selected
+            .subject_object(&record)
+            .map(|object| object.fields)
+            .unwrap_or_default()),
+        Err(
+            jojobot_query_api::Failed::Selection(MemoryError::UnknownEntity { .. })
+            | jojobot_query_api::Failed::Readiness(MemoryError::UnknownEntity { .. }),
+        ) => Ok(BTreeMap::new()),
+        Err(
+            jojobot_query_api::Failed::Selection(err) | jojobot_query_api::Failed::Readiness(err),
+        ) => Err(err),
+    }
 }
 
 pub(crate) fn unreadable(err: jojobot_domain::memory::MemoryError) -> Response {
