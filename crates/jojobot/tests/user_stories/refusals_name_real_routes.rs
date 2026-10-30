@@ -106,11 +106,12 @@ async fn copied_places_are_dropped_and_moves_use_the_verbs_that_take_after() {
 }
 
 /// **A caller's `edges` on a section is refused, and the refusal names
-/// `update_fact` for putting a section behind another, never `put_document`**,
-/// which writes new text. The paired positive is a move through `update_fact`
-/// with `after`, which lands.
+/// `update_fact` for putting a section behind another and `put_document` for
+/// adding a new one**: `put_document` writes new text, so it is offered for a
+/// new section and never for a move. The paired positive is a move through
+/// `update_fact` with `after`, which lands.
 #[tokio::test]
-async fn a_refused_edges_names_update_fact_for_a_move_and_not_put_document() {
+async fn a_refused_edges_names_update_fact_for_a_move_and_put_document_for_a_new_section() {
     let story = Story::begin("bot:gamma").await;
     let s = story.session().await;
     s.add("document:homer", "Fryer manual").await;
@@ -134,10 +135,7 @@ async fn a_refused_edges_names_update_fact_for_a_move_and_not_put_document() {
         .await;
     let named = verbs_named(&s, &refused).await;
     assert!(named.iter().any(|verb| verb == "update_fact"), "{named:?}");
-    assert!(
-        !named.iter().any(|verb| verb == "put_document"),
-        "{named:?}"
-    );
+    assert!(named.iter().any(|verb| verb == "put_document"), "{named:?}");
 
     // The document reads title first, then the opening, before the move.
     let order = |markdown: &str| {
