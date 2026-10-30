@@ -175,6 +175,35 @@ impl Surface {
 /// with it, and lets any other panic through.
 pub(crate) const OBSERVATION_FAILED: &str = "room harness observation failed";
 
+/// **Run a future, and turn the panic of a failed harness read into its
+/// message.** `require_observation` panics so that no lock can read an empty
+/// room; this is the one place that catches it. Any other panic goes on.
+pub(crate) async fn catching<T>(future: impl std::future::Future<Output = T>) -> Result<T, String> {
+    use std::task::Poll;
+    let mut future = std::pin::pin!(future);
+    std::future::poll_fn(|cx| {
+        let polled =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| future.as_mut().poll(cx)));
+        match polled {
+            Ok(Poll::Pending) => Poll::Pending,
+            Ok(Poll::Ready(value)) => Poll::Ready(Ok(value)),
+            Err(payload) => {
+                let text = payload
+                    .downcast_ref::<String>()
+                    .map(String::as_str)
+                    .or_else(|| payload.downcast_ref::<&str>().copied());
+                match text {
+                    Some(text) if text.starts_with(crate::surface::OBSERVATION_FAILED) => {
+                        Poll::Ready(Err(text.to_string()))
+                    }
+                    _ => std::panic::resume_unwind(payload),
+                }
+            }
+        }
+    })
+    .await
+}
+
 pub(crate) fn require_observation(result: Result<Value>) -> Value {
     // A failed read is no evidence that a negative lock's object is absent, so it
     // is a signal and never a value; `run::go` catches it once.

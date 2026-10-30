@@ -400,3 +400,36 @@ async fn a_read_that_fails_while_the_locks_are_judged_keeps_the_transcript() {
     assert_eq!(results.transcript.len(), 3, "the sittings are kept");
     assert_read_failure_is_kept(&results, "the locks");
 }
+
+/// **A read that fails while the locks are judged is kept even when the run is
+/// already incomplete from a limit.** The limit stays the reason the run
+/// stopped, and the failed read is named beside it, so the locks that did not
+/// finish are not missing without a trace.
+#[tokio::test]
+async fn a_failed_read_after_a_limit_is_named_beside_the_limit() {
+    let (results, _) = run_failing_at_judged_by(
+        2,
+        LIMIT_WORDS,
+        vec![Box::new(ReadsWhatTheRoomDoesNotServe { ending: None })],
+    )
+    .await;
+    let incomplete = results.incomplete.as_ref().expect("the limit ends the run");
+    assert!(
+        incomplete.phase.starts_with("Phase 2"),
+        "the limit still names its sitting: {}",
+        incomplete.phase,
+    );
+    assert!(
+        incomplete
+            .failed_read
+            .as_deref()
+            .is_some_and(|failure| failure.contains("no_such_verb")),
+        "the failed read is kept on the incomplete run: {:?}",
+        incomplete.failed_read,
+    );
+    let rendered = results.rendered(None);
+    assert!(
+        rendered.contains("usage limit") && rendered.contains("no_such_verb"),
+        "the verdict names both the limit and the read: {rendered}"
+    );
+}
