@@ -348,8 +348,12 @@ impl crate::writer::publish::Subscriber for IndexedMemory {
             };
             // A run's owner, and a mention in a message, read as the handle a
             // thing wears now.
+            // **A rename changes what other things' documents say**, so the
+            // touched things are not the whole change: the index is not marked
+            // current, and the next search reads the corpus again.
             if *names_changed {
                 self.index.names_changed();
+                uncounted = true;
             }
             for entity in touched {
                 reread.push(self.refresh(entity).await);

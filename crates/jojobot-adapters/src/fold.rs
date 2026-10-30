@@ -578,7 +578,13 @@ impl Memory for Folded {
                     from,
                     to: &entity.id,
                 };
-                Folded::follow("rename_entity", self.patched_or_reloaded(patch).await);
+                let followed = self.patched_or_reloaded(patch).await;
+                // **An image that could not follow still tells the index which
+                // things the rename touched**, so it re-reads them itself.
+                if followed.is_err() {
+                    self.publish_things(vec![from.clone(), entity.id.clone()], true);
+                }
+                Folded::follow("rename_entity", followed);
             }
             Ok(renamed)
         })
@@ -948,7 +954,12 @@ impl Memory for Folded {
             let patch = image::patch::Change::Merged { folded, survivor };
             match self.patched_or_reloaded(patch).await {
                 Ok(()) => Ok(done),
-                Err(source) => Err(fold_behind(Landed::Merge(Box::new(done)), source)),
+                Err(source) => {
+                    // The index re-reads both things itself when the image could
+                    // not follow the merge.
+                    self.publish_things(vec![folded.clone(), survivor.clone()], false);
+                    Err(fold_behind(Landed::Merge(Box::new(done)), source))
+                }
             }
         })
         .await
