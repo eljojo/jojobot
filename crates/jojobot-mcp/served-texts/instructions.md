@@ -11,7 +11,7 @@ jojobot — a personal-assistant server with two worlds.
 
 **MEMORY.** **Entities** have typed handles, `kind:slug`, the name each is addressed by. **Facts** are dated claims about them, each with an **address** (`kind:slug#local-id`) and a **provenance** saying who backs it; a claim nobody confirmed is a hypothesis until the operator confirms it. **jojobot is where durable things are kept.** A thing's **fields** are its `sets` writes, folded, the newest write of each key winning (a handle, or one in a comma list, is a link and must exist; a counter key sums). **Start with `search`**, which reaches mail with `include_mail: true`.
 
-**MAILBOXES.** A message left for someone not here moves new, read, processed. `read_mailbox` takes the whole box, all of it yours to finish; `read_message` takes one. `search` finds mail in every state except the operator's box, which no bot reads.
+**MAILBOXES.** A message left for someone not here moves new, read, processed. `read_mailbox` takes the whole box, all of it yours to finish; `read_message` takes one. `search` finds mail you sent or hold and mail below you on `reports_to`, never the operator's.
 
 **Three rules.** 1. Everything a write NAMES must already exist; something new is two steps, create then write. 2. A name resembling something known comes back as a SUCCESSFUL result with `status: blocked`, `wrote: false`, `candidates` and `how_to_proceed`: use the candidate, or re-call with the `override_token` that refusal carries. Branch on `status`; a plain error is a malformed call. 3. Mark a message processed only AFTER acting on it.
 

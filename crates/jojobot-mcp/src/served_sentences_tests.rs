@@ -288,3 +288,21 @@ fn the_key_descriptions_of_declare_type_offer_no_rule_that_refuses() {
         "the schema publishes a `must` argument"
     );
 }
+
+/// **The instructions every client reads say whose mail a search reaches.** A
+/// search finds mail the caller sent, mail in its own box and mail in the boxes
+/// below it on the chart; the instructions name that chart by the key it is made
+/// of, so a rewording that drops the rule drops the key.
+#[test]
+fn the_instructions_name_the_chart_a_mail_search_follows() {
+    let instructions = crate::instructions();
+    let mailboxes = instructions
+        .split("**MAILBOXES.**")
+        .nth(1)
+        .and_then(|rest| rest.split("**Three rules.**").next())
+        .expect("the instructions carry a MAILBOXES paragraph");
+    assert!(
+        mailboxes.contains("`search`") && mailboxes.contains("reports_to"),
+        "the paragraph that says what search finds names the chart rule: {mailboxes}"
+    );
+}

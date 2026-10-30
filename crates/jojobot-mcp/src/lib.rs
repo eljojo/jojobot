@@ -563,8 +563,8 @@ pub(crate) const INSTRUCTIONS: &str = "jojobot — a personal-assistant server w
                  with `search`**, which reaches mail with `include_mail: true`.\
                  \n\n**MAILBOXES.** A message left for someone not here moves new, \
                  read, processed. `read_mailbox` takes the whole box, all of it \
-                 yours to finish; `read_message` takes one. `search` finds mail in \
-                 every state except the operator's box, which no bot reads.\
+                 yours to finish; `read_message` takes one. `search` finds mail you \
+                 sent or hold and mail below you on `reports_to`, never the operator's.\
                  \n\n**Three rules.** 1. Everything a write NAMES must \
                  already exist; something new is two steps, create then write. 2. A \
                  name resembling something known comes back as a SUCCESSFUL result \
