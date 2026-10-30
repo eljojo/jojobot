@@ -5085,7 +5085,7 @@ attributed, never journalled.
 
 ```text
 The front door — use it first, and any time you do not already hold the exact handle or address.
-One ranked list over entities, claims, free prose AND mail you sent or in your own box and every bot's box below you on the reports_to chain (other mail above or beside you and the operator's box are excluded).
+One ranked list over entities, claims, free prose AND mail you sent or in your own box and every bot's box below you on the reports_to chain (other mail above or beside you and the operator's box are excluded; your own mail in a box above yours comes without the recipient's notes, flagged notes_withheld).
 `query` matches by stem, needing at least half its terms, rounded up.
 It is optional when a filter narrows: kind, status (unset: active claims, then archived ones ranked below them, retracted ones left out; `active` is current truth only; `archived` reads the archive, retracted claims too), provenance, standing (`open` asks which claims are still in doubt), subject, edge {shape, object}, answers_type or fits_type (one of the two, never both; prefer answers_type, which names each thing's gaps).
 A call with neither a query nor one of those filters is refused, and include_mail is not a filter.

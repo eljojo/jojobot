@@ -298,6 +298,12 @@ async fn mail_visible_an_upward_author_read_leaves_out_the_recipients_notes() {
             "{authored}"
         );
     }
+    // A search is the same read: the author finds the message, notes left out.
+    let found = find(&jojobot, Some(&lisa), 0, 20).await;
+    let text = found.to_string();
+    assert!(text.contains("chartneedle"), "{found}");
+    assert!(!text.contains("recipient only"), "{found}");
+    assert!(text.contains("notes_withheld"), "{found}");
     // The outbox is the same read: the author lists the message, notes left out.
     for bodies in [false, true] {
         let listed = sent(&jojobot, &lisa, "bot:lisa", bodies).await;

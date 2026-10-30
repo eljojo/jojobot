@@ -329,7 +329,8 @@ impl Jojobot {
                        the exact handle or address. One ranked list over entities, claims, \
                        free prose AND mail you sent or in your own box and every bot's box below you on \
                        the reports_to chain (other mail above or beside you and the operator's box \
-                       are excluded). `query` matches by stem, needing at least half its terms, rounded up. It is optional when a \
+                       are excluded; your own mail in a box above yours comes without the \
+                       recipient's notes, flagged notes_withheld). `query` matches by stem, needing at least half its terms, rounded up. It is optional when a \
                        filter narrows: kind, status (unset: active claims, then archived ones \
                        ranked below them, retracted ones left out; `active` is current truth \
                        only; `archived` reads the archive, retracted claims too), provenance, \
@@ -695,6 +696,13 @@ impl Jojobot {
                     _ => None,
                 };
                 let mut json = hit_json(hit, as_of, details_asked, snippet.as_deref());
+                // **An author finding its own mail in a box above it** reads no
+                // notes the recipient wrote (rule 139: never up).
+                if let Hit::Message { message, .. } = hit
+                    && !query.mail_visibility.reads_inside(&message.mailbox)
+                {
+                    crate::mailboxes::wire::withhold_notes(&mut json);
+                }
                 // **Beside the name**, so a list of resembling things tells them
                 // apart without a second call. Absent for a thing nobody said how
                 // to tell apart.
