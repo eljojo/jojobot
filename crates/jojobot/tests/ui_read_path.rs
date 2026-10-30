@@ -391,11 +391,11 @@ async fn node_key_history_shows_the_window_recall_answers_and_says_what_it_left_
     for n in 0..writes {
         let mut claim = NewFact::about(
             id.clone(),
-            "a takings write",
+            "a gate write",
             jiff::civil::Date::constant(2026, 3, 10),
         );
-        claim.fields = [("takings".into(), format!("{n}"))].into();
-        claim.sets = ["takings".into()].into();
+        claim.fields = [("gate_count".into(), format!("{n}"))].into();
+        claim.sets = ["gate_count".into()].into();
         memory.capture(claim).await.unwrap();
     }
     let board = seeded_board_over(memory.clone()).await;
@@ -407,7 +407,7 @@ async fn node_key_history_shows_the_window_recall_answers_and_says_what_it_left_
     let page = read(
         &client,
         addr,
-        "/person:alpha/topic:widgets/?history=takings",
+        "/person:alpha/topic:widgets/?history=gate_count",
         &cookie,
     )
     .await
@@ -424,11 +424,68 @@ async fn node_key_history_shows_the_window_recall_answers_and_says_what_it_left_
     assert_eq!(table.matches("<tr><td>").count(), graph::WRITES_SHOWN);
     let after = table.rsplit_once("<tr><td>").unwrap().1;
     assert!(after.starts_with(&format!("{}<", writes - 1)), "{after}");
-    // The seeded roster already wrote the key twice.
-    let left = writes + 2 - graph::WRITES_SHOWN;
+    let left = writes - graph::WRITES_SHOWN;
     assert!(
         page.contains(&format!("id=\"history-left-out\" data-left-out=\"{left}\"")),
         "{page}"
     );
+    ct.cancel();
+}
+
+#[tokio::test]
+async fn node_key_history_shows_a_clear_as_a_clear() {
+    use jojobot_domain::memory::{FactPatch, NewFact};
+    use support::ui_board::{seeded_board_over, seeded_memory, spawn_jojobot_over};
+    let memory = seeded_memory().await;
+    let id = EntityId("topic:widgets".into());
+    let mut claim = NewFact::about(
+        id.clone(),
+        "a gate count",
+        jiff::civil::Date::constant(2026, 3, 10),
+    );
+    claim.fields = [("gate_count".into(), "7".into())].into();
+    claim.sets = ["gate_count".into()].into();
+    let address = memory
+        .capture(claim)
+        .await
+        .unwrap()
+        .written()
+        .unwrap()
+        .address();
+    memory
+        .update_fact(
+            &address,
+            FactPatch {
+                clear_fields: vec!["gate_count".into()],
+                ..Default::default()
+            },
+            &EntityId("person:alpha".into()),
+        )
+        .await
+        .unwrap();
+    let board = seeded_board_over(memory.clone()).await;
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+    let page = read(
+        &client,
+        addr,
+        "/person:alpha/topic:widgets/?history=gate_count",
+        &cookie,
+    )
+    .await
+    .text()
+    .await
+    .unwrap();
+    let table = page
+        .split_once("id=\"history\"")
+        .expect("the history table is present")
+        .1
+        .split_once("</table>")
+        .expect("the history table closes")
+        .0;
+    assert!(table.contains("<em>taken off</em>"), "{table}");
     ct.cancel();
 }

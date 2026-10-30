@@ -1722,7 +1722,7 @@ async fn history_section(
             left,
             "earlier writes are",
             &format!(
-                "`recall` with history on {} reads every write.",
+                "`recall` with history and a larger history_most on {} reads more of them.",
                 escape(key)
             ),
         ));
