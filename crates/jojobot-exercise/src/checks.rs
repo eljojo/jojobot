@@ -129,10 +129,6 @@
 //!   record on the same loop carries that key too, so a needle for it matches
 //!   records that are not December's, and the lock format cannot scope one
 //!   needle to one record.
-//! * **`the_bearings_loop_is_not_owed_in_december_and_falls_due_on_the_twentieth_of_february`**
-//!   — find the loop carrying a ninety-day cadence and ask the served owed
-//!   answer about it on three days. January invents the loop's handle, so no
-//!   lock may spell it, and one lock cannot ask one question on three days.
 //! * **`one_place_after_the_correction`** — accept either of two end states for
 //!   one claim: a merge record on a place, or both claims active on one place
 //!   with the other place archived. The lock format does not branch, and
@@ -231,7 +227,7 @@ type Hatch = (&'static str, fn() -> Box<dyn Checks>);
 
 /// **Every named check this build ships.** A room adds one line here and one
 /// `check` line in its document, and both are visible in the count.
-pub const CHECKS: [Hatch; 57] = [
+pub const CHECKS: [Hatch; 56] = [
     ("question_one_rule_answer", || {
         rule_answer_check("work:pm-state", &[241, 275], &[129, 189, 284])
     }),
@@ -431,14 +427,6 @@ pub const CHECKS: [Hatch; 57] = [
     ("decembers_note_names_what_it_was_worked_out_from", || {
         checked(|seen| Box::pin(decembers_note_names_what_it_was_worked_out_from(seen)))
     }),
-    (
-        "the_bearings_loop_is_not_owed_in_december_and_falls_due_on_the_twentieth_of_february",
-        || {
-            checked(|seen| {
-                Box::pin(the_bearings_loop_is_not_owed_in_december_and_falls_due_on_the_twentieth_of_february(seen))
-            })
-        },
-    ),
     (
         "the_my_bikes_view_returns_exactly_the_bikes_still_owned",
         || {
@@ -3160,71 +3148,6 @@ async fn the_board_locks_mistake_is_rewritten_in_place(seen: &Observed<'_>) -> R
              being caught and corrected in the same breath it was made: {trace}"
         )),
     }
-}
-
-/// 🚨 **The loop January opened is not owed in December, and falls due on the
-/// day ninety days after November's service.** The room's opening counts a
-/// ninety-day loop from the day it was actually done, so after the November 22
-/// service the next due day is 2027-02-20. Asked of the served owed answer on
-/// three days: December 13 and February 19 do not hold the loop, and February 20
-/// does. A year that never recorded November's service leaves the loop owed in
-/// December and fails the first day; a year that checked it in again later
-/// fails the last.
-///
-/// ⛔️ **The loop is found by its schedule, not by a handle**: January invents
-/// the handle, so no lock may spell it. The loop is the one carrying a
-/// ninety-day cadence, and it must be exactly one.
-async fn the_bearings_loop_is_not_owed_in_december_and_falls_due_on_the_twentieth_of_february(
-    seen: &Observed<'_>,
-) -> Result<(), String> {
-    let found = seen
-        .room
-        .call(
-            "recall",
-            json!({"kind": "rhythm", "fields": [{"key": "cadence_days", "value": "90"}]}),
-        )
-        .await;
-    let parsed: Value = read_json(&found)?;
-    let loops: Vec<&str> = parsed["objects"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|object| object["id"].as_str())
-        .collect();
-    let [handle] = loops.as_slice() else {
-        return Err(format!(
-            "{} loops carry a ninety-day cadence, so there is not one loop here to ask the owed \
-             answer about",
-            loops.len()
-        ));
-    };
-    for (day, owed) in [
-        ("2026-12-13", false),
-        ("2027-02-19", false),
-        ("2027-02-20", true),
-    ] {
-        let read = seen
-            .room
-            .call(
-                "recall",
-                json!({"kind": "rhythm", "overdue": {"as_of": day}}),
-            )
-            .await;
-        let parsed: Value = read_json(&read)?;
-        let held = parsed["objects"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .any(|object| object["id"] == *handle);
-        if held != owed {
-            return Err(format!(
-                "the loop {} on {day}: after the service it was recorded under, it falls due on \
-                 2027-02-20",
-                if held { "is owed" } else { "is not owed" },
-            ));
-        }
-    }
-    Ok(())
 }
 
 /// **December's overdue note is reachable by walking BACK from the claim it

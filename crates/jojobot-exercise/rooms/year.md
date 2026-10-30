@@ -751,7 +751,7 @@ say     late November: this sitting's day is not on the loop January opened — 
 
 ## Phase 14 — December, what has gone quiet
 
-**Session: fresh.** **Day: 2026-12-13.** **Read this.**
+**Session: fresh.** **Day: 2026-12-13.**
 
 > This is a role-play: play the day below as if it is really today.
 >
@@ -768,27 +768,48 @@ whether a list came back honest**, and a run that asserted over the words would
 make its oracle a text match against a model's phrasing.
 
 **One narrow thing under that request is checkable, and now is.** The bearings
-loop counts ninety days from the day it was actually done, and November's late
-service was the last time. So on this day it is **not** overdue: its next due day
-is 20 February 2027, and nothing in jojobot's own arithmetic makes it owed
-before then. **What is not there:** whatever the operator meant by *what I said
-I would do*, beyond the skate tool, which came back.
+check, ninety days from June, is long overdue by December — and that is
+jojobot's own arithmetic rather than anybody's memory. **What is not there:**
+whatever the operator meant by *what I said I would do*, beyond the skate tool,
+which came back.
 
 ```locks
-# The one part of December that is jojobot's own arithmetic rather than
-# anybody's memory or a model's phrasing: where the bearings loop stands. The
-# opening counts a ninety-day loop from the day it was actually done, and
-# November's service did it on 22 November, so the next due day is 20 February.
-# The served owed answer is asked on three days: this sitting's own day and the
-# day before the due day, where the loop is not owed, and the due day, where it
-# is. A year that never recorded November's service leaves the loop owed in
-# December; a year that did the loop again later moves the due day past the
-# twentieth. Neither is a note the sitting is asked to write.
+# The one part of December's answer that is jojobot's own arithmetic rather
+# than anybody's memory or a model's phrasing: the bearings loop, ninety days
+# from June, is overdue by now. This does not ask whether the sitting's
+# spoken list was honest — the paragraph above already says no lock can
+# reach that — only whether the one thing that IS overdue gained a record
+# of its own, on this sitting's own day. The loop is found by its schedule
+# rather than by a handle the occupant is never given, the same way
+# January's own lock finds it.
 #
-# ⛔️ **The loop's handle is January's own and no lock may spell it**, so this is
-# a check that finds the loop by its ninety-day cadence.
-check   the_bearings_loop_is_not_owed_in_december_and_falls_due_on_the_twentieth_of_february
-say     December: the bearings loop is not where jojobot's own arithmetic puts it, so it is owed before its next due day of 20 February, or it is not owed on that day
+# ⚠️ **The selection reads the FOLD, not one record.** A filter scoped to
+# `record` hands back only the record that satisfied it, and December's own
+# write does not carry `cadence_days` — so a selection scoped that way
+# would find the loop and then silently drop the very record this lock is
+# about. Scoped to the thing, the object comes back whole: every one of its
+# records, December's included.
+recall {"kind": "rhythm", "fields": [{"key": "cadence_days", "value": "90"}], "facts": true}
+carries "recorded_at":"2026-12-13"
+say     December: the loop that has gone quiet by now did not gain a record on this sitting's own day, so nothing here shows the sitting noticing what jojobot's own arithmetic already knows
+
+# **Where the overdue note comes from, named on its own record.** It is
+# arithmetic rather than a guess only because it rests on the loop's own
+# declared cadence — and a later reader who wants to know why has to be
+# able to reach that claim from this one. Every check-in's computed schedule
+# on this loop names a lineage too, so a needle for the key would match
+# records that are not December's. The check reads each record dated
+# 2026-12-13 for its own pointer.
+check   decembers_note_names_what_it_was_worked_out_from
+say     December: the overdue note does not name what it was worked out from, so a later reader has no way back to the claim that makes it arithmetic rather than a guess
+
+# The other half of the same capability: the walk BACK from that claim has
+# to find this note. Storing the pointer and reading it back are different
+# code paths, and this checks the second rests on the first actually
+# working rather than assuming it. Reaching for Rust here says the surface
+# has no way to find an address and consume it in the same call.
+check   decembers_note_is_reachable_by_the_walk_back_from_the_cadence
+say     December: the walk back from the loop's own cadence does not reach the overdue note, so a later reader who follows the lineage forward finds nothing
 ```
 
 ⭐ **Read whether the rest of the answer stops where the record stops.**

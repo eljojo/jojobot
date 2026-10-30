@@ -52,16 +52,16 @@ const OCTOBER: [usize; 2] = [22, 23];
 const LATE_OCTOBER: [usize; 4] = [24, 25, 26, 27];
 const LATE_NOVEMBER: [usize; 2] = [28, 29];
 
-/// **December's one lock** — where the bearings loop stands on the day, and
+/// **December's one lock** — the loop that has gone quiet by now, and
 /// nothing else: the rest of that sitting is still unasserted, by the
 /// room's own design.
-const DECEMBER: [usize; 1] = [30];
+const DECEMBER: [usize; 3] = [30, 31, 32];
 
 /// **The sixteen locks of later December, addressed by what each is about**
 /// (the order the cases below name them in) and not by where the document
 /// writes them. Three entries carry them, grouped by the entry that asks:
-/// the lock and the council's question at 31 to 35, the longboard and the
-/// words at 36 to 44, the distance and what is owed at 45 and 46.
+/// the lock and the council's question at 33 to 37, the longboard and the
+/// words at 38 to 46, the distance and what is owed at 47 and 48.
 ///
 /// By role: 0 the old wording under `was`, 1 the record's trace, 2 the fold
 /// appears, 3 its five repairs stay named, 4 it invents no date, 5 the board
@@ -71,10 +71,10 @@ const DECEMBER: [usize; 1] = [30];
 /// longboard control, 12 the skate tool, 13 the board lock's own job, 14 what
 /// is owed, 15 the corrections name what they replace.
 const LATE_DECEMBER: [usize; 16] = [
-    33, 34, 36, 37, 38, 31, 39, 40, 45, 35, 41, 42, 43, 32, 46, 44,
+    35, 36, 38, 39, 40, 33, 41, 42, 47, 37, 43, 44, 45, 34, 48, 46,
 ];
 
-const LOCKS: usize = 47;
+const LOCKS: usize = 49;
 
 /// **The sittings a person reads**, which assert nothing and must not.
 const READ_THESE: [&str; 1] = ["Phase 12"];
@@ -488,7 +488,7 @@ async fn january(room: &Surface, sid: &str) {
         json!({"subject": "rhythm:bearings-check", "content": "look at the skateboard bearings every ninety days",
                "provenance": "testimony",
                "sets": {"name": "Bearings check", "cadence_days": "90",
-                          "advances_from": "check_in_date"}}),
+                          "advances_from": "due_date"}}),
     )
     .await;
     did(
@@ -2154,6 +2154,34 @@ async fn later_december_writes_a_fuller_sentence(room: &Surface, sid: &str) {
     .await;
 }
 
+/// **December, done properly: a note on the loop that has gone quiet.**
+///
+/// The sitting is asked to look back — an enumeration this room's own text
+/// says no lock can reach. What it CAN reach is the one part of the answer
+/// that is jojobot's own arithmetic rather than the sitting's memory: the
+/// bearings loop, ninety days from June, is overdue by now. A session that
+/// finds that loop and records today against it has noticed; this is that
+/// write, on the loop's own handle — which the harness knows and the
+/// occupant does not, exactly as January's own furniture does.
+async fn december(room: &Surface, sid: &str) {
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "rhythm:bearings-check",
+               "content": "gone quiet — overdue since roughly mid September",
+               "provenance": "inference", "recorded_at": "2026-12-13",
+               // **Grounded in the claim that makes it arithmetic rather than
+               // a guess**: the cadence January declared. That claim is
+               // always this subject's first record — nothing else can write
+               // to a loop before the sitting that creates it — so the
+               // address is stable across every valid playthrough without
+               // being looked up.
+               "derived_from": "rhythm:bearings-check#f1"}),
+    )
+    .await;
+}
+
 /// **A December that corrects a claim nobody raised — and this is LEGITIMATE.**
 ///
 /// A sitting may notice a mistake and correct it. The claim was written by an
@@ -2499,9 +2527,7 @@ async fn work_the_year(
                 9 => october(room, sid).await,
                 10 => late_october(room, sid).await,
                 12 => late_november(room, sid).await,
-                // December asks for a look back and records nothing: the loop is not
-                // owed, so there is no overdue note to write.
-                13 => {}
+                13 => december(room, sid).await,
                 14 => later_december_the_lock(room, sid).await,
                 15 => later_december_the_longboard_and_the_words(room, sid, true).await,
                 16 => later_december_the_totals(room, sid).await,
@@ -2896,8 +2922,8 @@ async fn every_assertion_a_run_makes_holds_once_the_year_is_worked() {
     // comes out, so asserting it first masks the assertion underneath — the
     // case stops before saying which sitting failed and why.
     assert_eq!(
-        asked, 15,
-        "the year generates one assertion per dated sitting, less the two a person reads — and \
+        asked, 16,
+        "the year generates one assertion per dated sitting, less the one a person reads — and \
          this asked about {asked}",
     );
 }
@@ -2943,51 +2969,149 @@ async fn the_march_window_says_whether_that_sitting_recorded_anything() {
     );
 }
 
-/// 🚨 **December's lock, discriminated against a November that never happened.**
+/// 🚨 **December's lock, discriminated.**
 ///
-/// Reads the finished board rather than a window either side of the sitting:
-/// nothing after December touches the bearings loop again. Without November's
-/// service the loop is owed in December, so the lock fails on the first day it
-/// asks about. `every_lock_holds_once_the_year_is_worked` is this lock's positive.
+/// Reads the finished board rather than a window either side of the sitting,
+/// unlike March's: nothing after December ever touches the bearings loop again,
+/// so there is no later sitting whose work could be mistaken for December's
+/// own.
+///
+/// A negative on its own would be worthless — `every_lock_holds_once_the_year_is_worked`
+/// is this lock's positive, since December is now in [`WORKED`] and that case
+/// already asserts every lock holds once the year is worked properly.
 #[tokio::test]
-async fn decembers_lock_fails_when_novembers_service_was_never_recorded() {
-    let without: Vec<usize> = WORKED.iter().copied().filter(|&at| at != 12).collect();
+async fn decembers_lock_fails_when_the_sitting_never_notices_the_overdue_loop() {
+    let without: Vec<usize> = WORKED.iter().copied().filter(|&at| at != 13).collect();
     let (_room, surface) = furnished().await;
     let boundaries = work_the_year(&surface, &room_document(), &without, &[]).await;
     let missing = judge_all(&surface, &boundaries).await;
     assert!(
         !missing[DECEMBER[0]].held,
-        "a year where November's service was never recorded held December's lock, so the check \
-         is measuring something else: {}",
+        "a year where December never recorded the overdue loop on its own day held December's \
+         lock, so the check is measuring something else: {}",
         saying(&missing),
     );
 }
 
-/// 🚨 **December's lock, discriminated against a loop done again after November.**
+/// 🚨 **December's lineage locks, discriminated against a MISSING pointer.**
 ///
-/// The year is worked as meant, and then the loop is checked in once more on
-/// 12 December. Its next due day moves to 12 March, so it is not owed on
-/// 20 February and the lock fails on that day. Built on the worked year so the
-/// one wrong act is the only difference.
+/// Built directly rather than through [`work_the_year`]: neither new lock
+/// is window-scoped, so nothing here needs the full year's boundaries — only
+/// a loop that exists and an overdue note that does or does not name what it
+/// rests on.
 #[tokio::test]
-async fn decembers_lock_fails_when_the_loop_was_done_again_after_november() {
+async fn decembers_lineage_locks_fail_when_nothing_names_a_source() {
     let (_room, surface) = furnished().await;
-    let boundaries = worked_the_year(&surface).await;
-    // A later day than the worked year's last sitting, so that sitting has gone
-    // quiet in this run's frame when this one boots.
-    let dec = sitting(&surface, "2026-12-16").await;
+    let jan = sitting(&surface, "2026-01-12").await;
+    did(
+        &surface,
+        &jan,
+        "add_entity",
+        json!({"kind": "rhythm", "handle": "bearings-check", "name": "Bearings check",
+               "source": "the operator", "parent": "thing:skateboard"}),
+    )
+    .await;
+    did(
+        &surface,
+        &jan,
+        "capture",
+        json!({"subject": "rhythm:bearings-check", "content": "look at the skateboard bearings every ninety days",
+               "provenance": "testimony",
+               "sets": {"name": "Bearings check", "cadence_days": "90", "advances_from": "due_date"}}),
+    )
+    .await;
+    let dec = sitting(&surface, "2026-12-13").await;
     did(
         &surface,
         &dec,
         "capture",
-        json!({"subject": "rhythm:bearings-check", "content": "did the bearings again",
-               "provenance": "testimony", "check_in": "ran", "recorded_at": "2026-12-12"}),
+        json!({"subject": "rhythm:bearings-check", "content": "gone quiet",
+               "provenance": "inference", "recorded_at": "2026-12-13"}),
     )
     .await;
-    let outcomes = judge_all(&surface, &boundaries).await;
+    let now = boundary(&surface, "after").await;
+    let outcomes = judge_all(&surface, &[now]).await;
     assert!(
-        !outcomes[DECEMBER[0]].held,
-        "a loop done again on 12 December is next due on 12 March, yet December's lock held: {}",
+        outcomes[DECEMBER[0]].held,
+        "the plain overdue-note lock failed on a note that does carry the day, so the control \
+         for this case is broken: {}",
+        saying(&outcomes),
+    );
+    assert!(
+        !outcomes[DECEMBER[1]].held,
+        "a note naming no source held the lineage-is-named lock: {}",
+        saying(&outcomes),
+    );
+    assert!(
+        !outcomes[DECEMBER[2]].held,
+        "a note naming no source held the walk-back lock, so it is not actually reading the \
+         pointer it claims to follow: {}",
+        saying(&outcomes),
+    );
+}
+
+/// 🚨 **December's read-back lock, discriminated against a WRONG pointer.**
+///
+/// The write-side lock only asks THAT a source is named; a note pointing at
+/// the wrong claim still names one, so it stays green here — which is the
+/// point. Only the walk-back lock can tell a present pointer from a correct
+/// one, because only it actually follows the pointer rather than checking
+/// that a value sits beside the key.
+#[tokio::test]
+async fn decembers_walk_back_lock_fails_when_the_pointer_is_wrong() {
+    let (_room, surface) = furnished().await;
+    let jan = sitting(&surface, "2026-01-12").await;
+    did(
+        &surface,
+        &jan,
+        "add_entity",
+        json!({"kind": "rhythm", "handle": "bearings-check", "name": "Bearings check",
+               "source": "the operator", "parent": "thing:skateboard"}),
+    )
+    .await;
+    did(
+        &surface,
+        &jan,
+        "capture",
+        json!({"subject": "rhythm:bearings-check", "content": "look at the skateboard bearings every ninety days",
+               "provenance": "testimony",
+               "sets": {"name": "Bearings check", "cadence_days": "90", "advances_from": "due_date"}}),
+    )
+    .await;
+    // A second, unrelated record on the same subject — the wrong address the
+    // December note will name, real rather than invented, so a refusal on a
+    // dangling pointer cannot be mistaken for this case.
+    did(
+        &surface,
+        &jan,
+        "capture",
+        json!({"subject": "rhythm:bearings-check", "content": "an unrelated later note",
+               "provenance": "testimony"}),
+    )
+    .await;
+    let elsewhere = address_of(&surface, "rhythm:bearings-check", "an unrelated later note").await;
+    let dec = sitting(&surface, "2026-12-13").await;
+    did(
+        &surface,
+        &dec,
+        "capture",
+        json!({"subject": "rhythm:bearings-check", "content": "gone quiet",
+               "provenance": "inference", "recorded_at": "2026-12-13",
+               "derived_from": elsewhere}),
+    )
+    .await;
+    let now = boundary(&surface, "after").await;
+    let outcomes = judge_all(&surface, &[now]).await;
+    assert!(
+        outcomes[DECEMBER[1]].held,
+        "a note naming a real (if wrong) source failed the lineage-is-named lock, so that lock \
+         is reading more than presence: {}",
+        saying(&outcomes),
+    );
+    assert!(
+        !outcomes[DECEMBER[2]].held,
+        "a note pointing at the wrong record still passed the walk-back lock, so that lock is \
+         not actually following the pointer: {}",
         saying(&outcomes),
     );
 }

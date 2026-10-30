@@ -91,11 +91,11 @@ fn every_registered_controls_proof_still_exists() {
 fn the_registry_reports_blanket_and_discriminating_counts_apart() {
     let (blanket, discriminating) = failability::tally(failability::NEGATIVE_CONTROLS);
     assert_eq!(
-        blanket, 89,
+        blanket, 91,
         "the blanket population drifted without this test noticing",
     );
     assert_eq!(
-        discriminating, 126,
+        discriminating, 124,
         "the discriminating population drifted without this test noticing",
     );
 }
