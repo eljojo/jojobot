@@ -252,6 +252,14 @@ pub(crate) async fn node(
         ) => return unreadable(error),
     };
     let working_on_unknown = answer.stale_working_on.contains(&entity.id);
+    // **The standing decisions of a thread or topic ride the answer ahead of the
+    // thread**, already in the order the verb reads them.
+    let (decisions, rest): (Vec<_>, Vec<_>) = answer
+        .selected
+        .objects
+        .drain(..)
+        .partition(|object| object.standing_for.as_ref() == Some(&entity.id));
+    answer.selected.objects = rest;
     let backing = match answer.backing.remove(&entity.id).transpose() {
         Ok(backing) => backing.unwrap_or_default(),
         Err(error) => return unreadable(error),
@@ -293,13 +301,13 @@ pub(crate) async fn node(
         }
         EntityKind::RHYTHM => typed_page.push_str(&typed::rhythm(&state, entity, &held).await),
         EntityKind::THREAD => {
-            typed_page.push_str(&typed::decisions(&state, entity, &entities, &by_id).await);
+            typed_page.push_str(&typed::decisions(&decisions, &by_id));
             typed_page.push_str(&typed::claims(&facts, &by_id));
         }
         // **A topic that holds standing decisions leads with them**, as the verb
         // puts them first for a topic as it does for a thread.
         EntityKind::TOPIC => {
-            typed_page.push_str(&typed::decisions(&state, entity, &entities, &by_id).await);
+            typed_page.push_str(&typed::decisions(&decisions, &by_id));
         }
         _ => {}
     }

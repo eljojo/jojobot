@@ -9,7 +9,8 @@
 use std::collections::{BTreeMap, HashMap};
 
 use jojobot_domain::attention;
-use jojobot_domain::memory::{Entity, EntityId, EntityKind, Fact, FactStatus, FieldBacking, kinds};
+use jojobot_domain::memory::graph::Object;
+use jojobot_domain::memory::{Entity, EntityId, Fact, FactStatus, FieldBacking, kinds};
 
 use crate::AppState;
 use crate::ui::{pages, shell, tree};
@@ -251,50 +252,14 @@ fn late_is_live(rows: &str) -> bool {
 /// thing it says: the children of the thread that are decisions and are not
 /// archived. A decision that was replaced is archived with its reason, so it is
 /// not among them.
-pub async fn decisions(
-    state: &AppState,
-    thread: &Entity,
-    entities: &[Entity],
-    by_id: &HashMap<&EntityId, &Entity>,
-) -> String {
-    let standing: Vec<&Entity> = entities
-        .iter()
-        .filter(|e| {
-            e.browsable() && e.kind == EntityKind::DECISION && e.parent.as_ref() == Some(&thread.id)
-        })
-        .collect();
-    if standing.is_empty() {
+pub fn decisions(decisions: &[Object], by_id: &HashMap<&EntityId, &Entity>) -> String {
+    if decisions.is_empty() {
         return String::new();
     }
-    // **The order the verb reads a container's decisions in**: by the number each
-    // holds under the key the container numbers by, then by handle.
-    let numbered_by = match state.memory.fields(&thread.id).await {
-        Ok(held) => held.get("numbers_by").map(|key| key.trim().to_string()),
-        Err(err) => return pages::blind("Decisions", "the thread", &err.to_string()),
-    };
-    let mut keyed: Vec<((Option<u64>, &str), &Entity)> = Vec::new();
-    for decision in standing {
-        let held = match state.memory.fields(&decision.id).await {
-            Ok(held) => held,
-            Err(err) => return pages::blind("Decisions", "a decision", &err.to_string()),
-        };
-        keyed.push((
-            jojobot_domain::memory::graph::decision_order(
-                numbered_by.as_deref(),
-                &held,
-                decision.id.as_str(),
-            ),
-            decision,
-        ));
-    }
-    keyed.sort_by(|a, b| a.0.cmp(&b.0));
-    let standing: Vec<&Entity> = keyed.into_iter().map(|(_, decision)| decision).collect();
+    let standing: Vec<&Entity> = decisions.iter().map(|object| &object.entity).collect();
     let mut list = String::from("<ul>");
-    for decision in &standing {
-        let said = match state.memory.recall(&decision.id).await {
-            Ok(facts) => latest_claim(&facts).unwrap_or_default(),
-            Err(err) => return pages::blind("Decisions", "a decision", &err.to_string()),
-        };
+    for (decision, object) in standing.iter().zip(decisions) {
+        let said = latest_claim(&object.facts).unwrap_or_default();
         list.push_str(&format!(
             "<li><span class=\"t\"><a href=\"{}\">{}</a> {}</span></li>",
             pages::escape(&tree::canonical_path(decision, by_id)),
