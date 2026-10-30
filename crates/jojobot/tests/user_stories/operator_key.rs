@@ -66,7 +66,8 @@ async fn the_operator_is_named_by_any_bot_and_changed_only_by_the_head_of_the_ch
         .says("\"operator\":\"person:lisa\"");
 
     // ── a head appears: marge, the coordinator, has a report and no manager ─
-    marge
+    let assistant = story.as_bot("bot:assistant").await;
+    assistant
         .call(
             "capture",
             json!({
@@ -80,7 +81,7 @@ async fn the_operator_is_named_by_any_bot_and_changed_only_by_the_head_of_the_ch
     //
     // Patty has a report of its own now, and still has marge above it.
     let patty = story.as_bot("bot:patty").await;
-    patty
+    assistant
         .call(
             "capture",
             json!({
@@ -273,7 +274,8 @@ async fn a_report_held_by_an_archived_bot_still_makes_its_manager_the_head() {
     let ralph = story.as_bot("bot:ralph").await;
     s.call("capture", naming("person:lisa")).await;
 
-    nelson
+    let assistant = story.as_bot("bot:assistant").await;
+    assistant
         .call(
             "capture",
             json!({

@@ -38,7 +38,9 @@ async fn a_manager_reads_its_reports_weeks_though_another_bots_runs_belong_to_a_
     s.add("bot:milhouse", "Milhouse").await;
     s.add("bot:psi", "Psi").await;
     let marge = story.as_bot("bot:marge").await;
-    marge
+    story
+        .as_bot("bot:assistant")
+        .await
         .call(
             "capture",
             json!({
@@ -96,7 +98,9 @@ async fn a_manager_reads_its_reports_weeks_though_a_run_belongs_to_a_bot_nobody_
     s.add("bot:marge", "Marge").await;
     s.add("bot:bart", "Bart").await;
     let marge = story.as_bot("bot:marge").await;
-    marge
+    story
+        .as_bot("bot:assistant")
+        .await
         .call(
             "capture",
             json!({

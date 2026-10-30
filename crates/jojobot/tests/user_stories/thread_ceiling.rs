@@ -22,7 +22,6 @@ async fn a_threads_ceiling_is_raised_by_a_bot_above_its_writers_and_never_by_the
     let marge = story.as_bot("bot:marge").await;
     let patty = story.as_bot("bot:patty").await;
     let nelson = story.as_bot("bot:nelson").await;
-    let moe = story.as_bot("bot:moe").await;
     let ralph = story.as_bot("bot:ralph").await;
     let reports_to = |bot: &str, manager: &str| {
         json!({
@@ -32,13 +31,15 @@ async fn a_threads_ceiling_is_raised_by_a_bot_above_its_writers_and_never_by_the
     };
 
     // Two charts: ralph reports to patty, patty to marge; nelson to moe.
-    marge
+    let assistant = story.as_bot("bot:assistant").await;
+    assistant
         .call("capture", reports_to("bot:patty", "bot:marge"))
         .await;
-    patty
+    assistant
         .call("capture", reports_to("bot:ralph", "bot:patty"))
         .await;
-    moe.call("capture", reports_to("bot:nelson", "bot:moe"))
+    assistant
+        .call("capture", reports_to("bot:nelson", "bot:moe"))
         .await;
 
     // ── nobody has written into the thread: any bot sets its first ceiling ──

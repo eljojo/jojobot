@@ -103,7 +103,9 @@ async fn the_assistant_reads_each_bots_weeks_and_a_bot_reads_only_the_weeks_it_m
     s.add("bot:milhouse", "Milhouse").await;
     // Bart reports to Marge; Milhouse is on nobody's chart.
     let marge = story.as_bot("bot:marge").await;
-    marge
+    story
+        .as_bot("bot:assistant")
+        .await
         .call("capture", reporting_to("bot:bart", "bot:marge"))
         .await;
 

@@ -126,10 +126,11 @@ async fn the_colleagues_view_says_who_each_bot_reports_to_and_a_second_call_says
     s.add("bot:omega", "Omega").await;
     s.add("bot:sigma", "Sigma").await;
     s.add("bot:psi", "Psi").await;
-    // Only a manager places a bot under it, so omega writes its own reports.
-    let omega = story.as_bot("bot:omega").await;
+    // Only the head of the chart adopts a bot, so the assistant places omega's
+    // reports.
+    let assistant = story.as_bot("bot:assistant").await;
     for report in ["bot:sigma", "bot:psi"] {
-        omega
+        assistant
             .event_with(
                 report,
                 "answers to omega",
@@ -223,9 +224,10 @@ async fn the_colleagues_view_leaves_operational_keys_out_and_names_what_it_left_
         &[],
     )
     .await;
-    // Only a manager places a bot under it, so omega writes sigma's record.
-    let omega = story.as_bot("bot:omega").await;
-    omega
+    // Only the head of the chart adopts a bot, so the assistant writes sigma's
+    // record.
+    let assistant = story.as_bot("bot:assistant").await;
+    assistant
         .event_with(
             "bot:sigma",
             "what sigma is for",

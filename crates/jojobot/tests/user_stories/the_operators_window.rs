@@ -82,8 +82,9 @@ async fn the_org_chart_puts_each_bot_under_the_bot_it_reports_to() {
     let s = story.session().await;
     s.add("bot:omega", "Omega").await;
     s.add("bot:sigma", "Sigma").await;
-    let omega = story.as_bot("bot:omega").await;
-    omega
+    story
+        .as_bot("bot:assistant")
+        .await
         .call(
             "capture",
             json!({"subject": "bot:sigma", "content": "sigma reports to omega",

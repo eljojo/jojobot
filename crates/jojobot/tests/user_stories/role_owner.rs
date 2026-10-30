@@ -151,7 +151,9 @@ async fn only_the_owner_or_the_chart_head_may_archive_or_restore_a_role_object()
 
     // Smithers is the household's coordinator and heads the chart: marge reports
     // to it and it reports to nobody.
-    smithers
+    story
+        .as_bot("bot:assistant")
+        .await
         .call("capture", reporting_to("bot:marge", "bot:smithers"))
         .await;
 
@@ -382,7 +384,9 @@ async fn only_the_owner_or_the_chart_head_may_move_or_merge_a_role_object() {
     let marge = story.as_bot("bot:marge").await;
     let bart = story.as_bot("bot:bart").await;
     let smithers = story.as_bot("bot:smithers").await;
-    smithers
+    story
+        .as_bot("bot:assistant")
+        .await
         .call("capture", reporting_to("bot:marge", "bot:smithers"))
         .await;
 

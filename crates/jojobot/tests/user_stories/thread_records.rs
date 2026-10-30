@@ -257,10 +257,10 @@ async fn the_bots_that_write_into_a_thread_never_raise_its_number() {
     for bot in ["marge", "patty", "ralph"] {
         s.add(&format!("bot:{bot}"), bot).await;
     }
-    let marge = story.as_bot("bot:marge").await;
     let patty = story.as_bot("bot:patty").await;
     let ralph = story.as_bot("bot:ralph").await;
-    marge
+    let assistant = story.as_bot("bot:assistant").await;
+    assistant
         .call(
             "capture",
             json!({
@@ -269,7 +269,7 @@ async fn the_bots_that_write_into_a_thread_never_raise_its_number() {
             }),
         )
         .await;
-    patty
+    assistant
         .call(
             "capture",
             json!({
@@ -440,14 +440,17 @@ async fn a_merge_is_held_to_the_lower_of_the_two_numbers() {
     // otto sets the numbers and merges; marge writes the notes, and reports to
     // otto, so otto is above marge and is not one of the bots that fill the threads.
     s.add("bot:marge", "Marge").await;
-    s.call(
-        "capture",
-        json!({
-            "subject": "bot:marge", "content": "marge reports up",
-            "provenance": "testimony", "sets": {"reports_to": "bot:otto"},
-        }),
-    )
-    .await;
+    story
+        .as_bot("bot:assistant")
+        .await
+        .call(
+            "capture",
+            json!({
+                "subject": "bot:marge", "content": "marge reports up",
+                "provenance": "testimony", "sets": {"reports_to": "bot:otto"},
+            }),
+        )
+        .await;
     let marge = story.as_bot("bot:marge").await;
     // The duplicate's lower number is set FIRST and the survivor's higher one
     // LAST, so a merge that took the number set last would take the survivor's.
@@ -525,14 +528,17 @@ async fn the_bot_that_fills_a_container_does_not_raise_its_number() {
     s.add("bot:marge", "Marge").await;
     let marge = story.as_bot("bot:marge").await;
     // marge reports to otto, so otto is above marge.
-    s.call(
-        "capture",
-        json!({
-            "subject": "bot:marge", "content": "marge reports up",
-            "provenance": "testimony", "sets": {"reports_to": "bot:otto"},
-        }),
-    )
-    .await;
+    story
+        .as_bot("bot:assistant")
+        .await
+        .call(
+            "capture",
+            json!({
+                "subject": "bot:marge", "content": "marge reports up",
+                "provenance": "testimony", "sets": {"reports_to": "bot:otto"},
+            }),
+        )
+        .await;
     for (handle, name) in [
         ("topic:marge-baking", "Marge baking"),
         (THREAD, "Milhouse moves"),
@@ -604,14 +610,17 @@ async fn a_thread_merge_refused_for_its_writers_names_who_may_make_it() {
     s.add("bot:marge", "Marge").await;
     let marge = story.as_bot("bot:marge").await;
     // marge reports to otto, so otto is above marge.
-    s.call(
-        "capture",
-        json!({
-            "subject": "bot:marge", "content": "marge reports up",
-            "provenance": "testimony", "sets": {"reports_to": "bot:otto"},
-        }),
-    )
-    .await;
+    story
+        .as_bot("bot:assistant")
+        .await
+        .call(
+            "capture",
+            json!({
+                "subject": "bot:marge", "content": "marge reports up",
+                "provenance": "testimony", "sets": {"reports_to": "bot:otto"},
+            }),
+        )
+        .await;
     // marge keeps a thought about the survivor, so marge is one of its writers.
     s.add(THREAD, "Milhouse moves").await;
     marge
@@ -683,14 +692,17 @@ async fn a_bot_that_filled_a_thread_cannot_raise_its_number_by_merging() {
     s.add("bot:marge", "Marge").await;
     let marge = story.as_bot("bot:marge").await;
     // marge reports to otto, so otto is above marge.
-    s.call(
-        "capture",
-        json!({
-            "subject": "bot:marge", "content": "marge reports up",
-            "provenance": "testimony", "sets": {"reports_to": "bot:otto"},
-        }),
-    )
-    .await;
+    story
+        .as_bot("bot:assistant")
+        .await
+        .call(
+            "capture",
+            json!({
+                "subject": "bot:marge", "content": "marge reports up",
+                "provenance": "testimony", "sets": {"reports_to": "bot:otto"},
+            }),
+        )
+        .await;
     // marge writes two plain notes into the survivor and keeps no thought about it.
     s.add(THREAD, "Milhouse moves").await;
     for n in 1..=2 {
@@ -1157,14 +1169,17 @@ async fn a_merge_refusal_names_a_clear_only_to_a_caller_who_may_make_it() {
     let s = story.session().await;
     s.add("bot:marge", "Marge").await;
     let marge = story.as_bot("bot:marge").await;
-    s.call(
-        "capture",
-        json!({
-            "subject": "bot:marge", "content": "marge reports up",
-            "provenance": "testimony", "sets": {"reports_to": "bot:otto"},
-        }),
-    )
-    .await;
+    story
+        .as_bot("bot:assistant")
+        .await
+        .call(
+            "capture",
+            json!({
+                "subject": "bot:marge", "content": "marge reports up",
+                "provenance": "testimony", "sets": {"reports_to": "bot:otto"},
+            }),
+        )
+        .await;
     s.add(THREAD, "Milhouse moves").await;
     marge_writes_into(&marge, THREAD).await;
     for (duplicate, name) in [

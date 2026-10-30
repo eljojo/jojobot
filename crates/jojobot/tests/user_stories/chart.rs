@@ -26,14 +26,21 @@ async fn the_chart_is_changed_only_by_a_superior() {
     let omega = story.as_bot("bot:omega").await;
     let sigma = story.as_bot("bot:sigma").await;
 
-    // ── a bot with no manager takes the one named by that manager ───────────
+    // ── a bot with no manager is adopted only by the head of the chart ──────
     //
-    // A stranger cannot place sigma under omega; omega adopts it.
+    // Neither a stranger nor the manager named can place sigma under omega;
+    // the assistant, the head of the chart, adopts it.
     s.refused("capture", reporting_to("bot:sigma", "bot:omega"))
         .await
         .says("\"wrote\":false")
-        .says("bot:omega");
+        .says("bot:assistant");
     omega
+        .refused("capture", reporting_to("bot:sigma", "bot:omega"))
+        .await
+        .says("\"wrote\":false")
+        .says("bot:assistant");
+    let assistant = story.as_bot("bot:assistant").await;
+    assistant
         .call("capture", reporting_to("bot:sigma", "bot:omega"))
         .await;
     s.call("recall", json!({"subject": "bot:sigma"}))
@@ -147,9 +154,10 @@ async fn the_head_of_a_chart_places_itself() {
     }
     let alpha = story.as_bot("bot:alpha").await;
     let omega = story.as_bot("bot:omega").await;
+    let assistant = story.as_bot("bot:assistant").await;
 
     // ── alpha heads a chart: beta reports to it, and alpha reports to none ──
-    alpha
+    assistant
         .call("capture", reporting_to("bot:beta", "bot:alpha"))
         .await;
     s.call("recall", json!({"subject": "bot:beta"}))
@@ -193,8 +201,8 @@ async fn the_head_of_a_chart_places_itself() {
         .await
         .never_says("\"reports_to\":\"bot:omega\"");
 
-    // ── a thing with no reports is still adopted by the manager it names ────
-    omega
+    // ── a thing with no reports is adopted by the head of the chart ─────────
+    assistant
         .call("capture", reporting_to("bot:gamma", "bot:omega"))
         .await;
     s.call("recall", json!({"subject": "bot:gamma"}))
@@ -231,15 +239,18 @@ async fn the_chart_is_guarded_the_same_through_an_edit_a_retraction_and_a_merge(
     ] {
         s.add(handle, name).await;
     }
-    let omega = story.as_bot("bot:omega").await;
+    let assistant = story.as_bot("bot:assistant").await;
 
-    // Omega places sigma under itself, and again epsilon: epsilon is the
-    // duplicate that will carry a manager into a merge.
-    let placed = omega
+    // Omega reports to the assistant, so the assistant is above sigma too.
+    assistant
+        .call("capture", reporting_to("bot:omega", "bot:assistant"))
+        .await;
+    let placed = assistant
         .call("capture", reporting_to("bot:sigma", "bot:omega"))
         .await;
     let address = placed.field("address");
-    omega
+    // Epsilon is the duplicate that will carry a manager into a merge.
+    assistant
         .call("capture", reporting_to("bot:epsilon", "bot:omega"))
         .await;
 
@@ -273,16 +284,16 @@ async fn the_chart_is_guarded_the_same_through_an_edit_a_retraction_and_a_merge(
                "reason": "trying to place psi by merging"}),
     )
     .await
-    .says("bot:omega");
+    .says("bot:assistant");
     s.call("recall", json!({"subject": "bot:psi"}))
         .await
         .never_says("\"reports_to\":\"bot:omega\"");
 
     // ── and each lands for the manager ──────────────────────────────────────
     //
-    // The edit first: omega moves sigma under otto, so the retraction below is
-    // otto's, the manager sigma has now.
-    omega
+    // The edit first: the assistant, above sigma, moves it under otto, so the
+    // retraction below is otto's, the manager sigma has now.
+    assistant
         .call(
             "update_fact",
             json!({"address": address, "sets": {"reports_to": "bot:otto"}}),
@@ -292,7 +303,7 @@ async fn the_chart_is_guarded_the_same_through_an_edit_a_retraction_and_a_merge(
         .await
         .says("\"reports_to\":\"bot:otto\"")
         .never_says("\"reports_to\":\"bot:omega\"");
-    omega
+    assistant
         .call(
             "merge_entities",
             json!({"duplicate": "bot:epsilon", "survivor": "bot:psi",
@@ -404,11 +415,11 @@ async fn a_write_that_names_no_manager_is_told_to_name_one_and_sends_nobody_look
         s.add(handle, name).await;
     }
     let alpha = story.as_bot("bot:alpha").await;
-    let omega = story.as_bot("bot:omega").await;
     let sigma = story.as_bot("bot:sigma").await;
+    let assistant = story.as_bot("bot:assistant").await;
 
     // Alpha heads a chart, and sigma stands alone.
-    alpha
+    assistant
         .call("capture", reporting_to("bot:beta", "bot:alpha"))
         .await;
 
@@ -430,7 +441,7 @@ async fn a_write_that_names_no_manager_is_told_to_name_one_and_sends_nobody_look
     }
 
     // ── the same two bots naming a bot: sigma is adopted, the head places itself
-    omega
+    assistant
         .call("capture", reporting_to("bot:sigma", "bot:omega"))
         .await;
     s.call("recall", json!({"subject": "bot:sigma"}))

@@ -83,12 +83,15 @@ async fn a_read_mail_pile_teaches_batch_close_and_names_the_manager_once_until_c
     let gamma = story.session().await;
     gamma.add("bot:otto", "Otto").await;
     let otto = story.as_bot("bot:otto").await;
-    otto.call(
-        "capture",
-        json!({"subject": "bot:gamma", "content": "reports to Otto",
+    story
+        .as_bot("bot:assistant")
+        .await
+        .call(
+            "capture",
+            json!({"subject": "bot:gamma", "content": "reports to Otto",
                    "provenance": "testimony", "sets": {"reports_to": "bot:otto"}}),
-    )
-    .await;
+        )
+        .await;
     for _ in 0..19 {
         otto.post("gamma", "Ledger dispatch", "Check one ledger entry.")
             .await;

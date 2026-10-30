@@ -28,14 +28,17 @@ async fn a_merge_refusal_names_a_clear_only_to_a_caller_whose_clear_lands() {
     let marge = story.as_bot("bot:marge").await;
     let bart = story.as_bot("bot:bart").await;
     // bart reports to otto, so otto is above bart.
-    s.call(
-        "capture",
-        json!({
-            "subject": "bot:bart", "content": "bart reports up",
-            "provenance": "testimony", "sets": {"reports_to": "bot:otto"},
-        }),
-    )
-    .await;
+    story
+        .as_bot("bot:assistant")
+        .await
+        .call(
+            "capture",
+            json!({
+                "subject": "bot:bart", "content": "bart reports up",
+                "provenance": "testimony", "sets": {"reports_to": "bot:otto"},
+            }),
+        )
+        .await;
     // marge keeps a thought in the survivor, and nobody is above her.
     s.add(SURVIVOR, "Milhouse moves").await;
     marge
