@@ -239,30 +239,9 @@ async fn a_type_declared_today_finds_records_written_before_it() {
     let fields = page.section("fields");
     fields.says("serviced").says("2026-03-14");
     fields.says("distance").says("80");
-    // What the fields add up to, in the type's own words. It is the one thing
-    // on the page a reader could not work out unaided without holding every
-    // declaration in mind.
-    //
-    // **Pinned to the row's own cells, because the type is named `service` and
-    // the key it asks for is `serviced`.** The keys the thing holds are a
-    // column of this same table, so a needle for the type's name anywhere in
-    // the table is answered by the key — and a beat written that way says
-    // nothing about the Type column, on a page where that column is empty.
-    //
-    // **Its last two cells are empty**: nothing is lacking and nothing is held
-    // badly. That is the half that makes the row below mean something.
-    page.section("conforms")
-        .says("<tr><td>service</td><td>whole</td>")
-        .says("<td></td><td></td></tr>");
-
-    // **A thing holding every key with one of them wrong is not whole, and the
-    // page names the key.** The pump's `serviced` is a phrase where the type
-    // declared a date. The keys it holds are the same two the bike holds, so
-    // only the verdict and the wrong-valued cell tell the two rows apart.
-    let pump = story.page("thing:floor-pump").await;
-    pump.section("conforms")
-        .says("<tr><td>service</td><td>partly</td>")
-        .says("<td>serviced: some time in may</td>");
+    // The page no longer says what a thing conforms to: the section was dropped,
+    // so a thing's page holds its fields and nothing about the types it fits.
+    page.never_says("Conforms to");
 
     story.finish().await;
 }
