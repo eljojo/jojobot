@@ -95,3 +95,46 @@ async fn leftovers_a_numbered_mention_walks_to_the_member_and_a_miss_writes_noth
     assert_eq!(after["objects"][0]["facts"], before, "{after}");
     story.finish().await;
 }
+
+#[tokio::test]
+async fn leftovers_an_argument_the_verb_does_not_have_is_named_and_nothing_is_written() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("thing:kettle", "Kettle").await;
+    let call = json!({"subject": "thing:kettle", "provenance": "testimony",
+                      "content": "the kettle whistles"});
+
+    let mut with_extra = call.clone();
+    with_extra["confidence"] = json!("high");
+    let refused = s.refused("capture", with_extra).await.json();
+    assert_eq!(refused["status"], "blocked", "{refused}");
+    assert_eq!(refused["refusal_code"], "UnknownArgument", "{refused}");
+    assert!(
+        refused["how_to_proceed"]
+            .as_str()
+            .is_some_and(|how| how.contains("confidence")),
+        "{refused}"
+    );
+    let read = s
+        .call("recall", json!({"subject": "thing:kettle", "facts": true}))
+        .await
+        .json();
+    assert!(
+        read["objects"][0]["facts"]
+            .as_array()
+            .is_none_or(|facts| facts.is_empty()),
+        "{read}"
+    );
+
+    s.call("capture", call).await;
+    let read = s
+        .call("recall", json!({"subject": "thing:kettle", "facts": true}))
+        .await
+        .json();
+    assert_eq!(
+        read["objects"][0]["facts"].as_array().map(Vec::len),
+        Some(1),
+        "{read}"
+    );
+    story.finish().await;
+}
