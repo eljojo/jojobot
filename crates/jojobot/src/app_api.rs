@@ -330,6 +330,29 @@ pub async fn unstable_operation(
     }
 }
 
+/// **Refuse to start on a grant the registry does not serve.** The domain reads
+/// only that an operation's name is a plain one, because it does not know the
+/// registry. A name nobody serves would be a grant that never works, and the
+/// operator would learn it from a 404.
+pub fn check_grants_are_served(
+    apps: &[AppPrincipal],
+    registry: &jojobot_mcp::app_ops::Registry,
+) -> Result<(), String> {
+    for app in apps {
+        for grant in &app.operations {
+            if registry.get(&grant.operation).is_none() {
+                return Err(format!(
+                    "app {}: the operation {:?} is not one the server serves; the ones are {}",
+                    app.id,
+                    grant.operation,
+                    registry.names().join(", ")
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// **What `jojobot app-token` prints**: a fresh token and its hash. It touches no
 /// store. The operator puts the hash in the secret the module reads and gives the
 /// token to the app.
@@ -342,6 +365,40 @@ pub fn token_report() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The server refuses to start on a grant of an operation the registry does
+    /// not serve, and names the operations it does.
+    #[test]
+    fn a_grant_of_an_operation_nobody_serves_is_refused_at_start() {
+        use jojobot_domain::app::operations::OperationSpec;
+        use jojobot_domain::app::{AppSpec, hash_token, mint_token};
+        let app = |operation: &str| {
+            AppPrincipal::from_spec(
+                &AppSpec {
+                    name: "springfield-watch".into(),
+                    operation: String::new(),
+                    thread: String::new(),
+                    kind: String::new(),
+                    keys: vec![],
+                    operations: vec![OperationSpec {
+                        operation: operation.into(),
+                        kinds: vec![],
+                        keys: vec![],
+                    }],
+                    revoked: false,
+                },
+                &hash_token(&mint_token()),
+            )
+            .expect("a plain grant")
+        };
+        let registry = jojobot_mcp::app_ops::Registry::shipped();
+        assert_eq!(
+            check_grants_are_served(&[app("post_message")], &registry),
+            Ok(())
+        );
+        let why = check_grants_are_served(&[app("dance")], &registry).expect_err("not served");
+        assert!(why.contains("dance") && why.contains("capture"), "{why}");
+    }
 
     /// `jojobot app-token` prints a token an app can send and the hash the
     /// operator stores, and the hash is the one the server looks the token up by.

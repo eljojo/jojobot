@@ -175,6 +175,11 @@ async fn main() -> anyhow::Result<()> {
         mailboxes: booted.mailboxes.clone(),
         memory: booted.memory.clone(),
     };
+    jojobot::app_api::check_grants_are_served(
+        &config.apps,
+        &jojobot_mcp::app_ops::Registry::shipped(),
+    )
+    .map_err(|why| anyhow::anyhow!(why))?;
     let state = AppState {
         resource: config.resource.clone(),
         issuer,

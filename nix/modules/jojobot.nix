@@ -6,20 +6,30 @@ let
   cfg = config.services.jojobot;
 
   # **The apps file the server reads at boot.** One entry for each registered
-  # app: its name, the one operation it may do, the thread it records under, the
-  # kind it writes and the keys it may send. The token's hash is not in it; the
-  # hash arrives as a credential (see `LoadCredential` below), so nothing a
-  # token could be derived from is in the store.
+  # app: its name, the deploy event it may record (the thread it records under
+  # and the keys it may send) when it holds that grant, and the operations of the
+  # unstable tier it may call, each with the kinds and keys it may write. The
+  # token's hash is not in it; the hash arrives as a credential (see
+  # `LoadCredential` below), so nothing a token could be derived from is in the
+  # store.
   appsFile = pkgs.writeText "jojobot-apps.json" (
     builtins.toJSON (
-      mapAttrsToList (name: app: {
-        inherit name;
-        operation = "record_deploy_event";
-        thread = app.thread;
-        kind = "event";
-        keys = app.writableKeys;
-        revoked = app.revoked;
-      }) cfg.apps
+      mapAttrsToList (
+        name: app:
+        {
+          inherit name;
+          operations = map (o: {
+            inherit (o) operation kinds keys;
+          }) app.operations;
+          revoked = app.revoked;
+        }
+        // optionalAttrs (app.thread != null) {
+          operation = "record_deploy_event";
+          thread = app.thread;
+          kind = "event";
+          keys = app.writableKeys;
+        }
+      ) cfg.apps
     )
   );
 in
@@ -155,8 +165,9 @@ in
         The outside programs allowed to write to jojobot, each with a token of
         its own and one grant it cannot widen. An app is not a bot: it has no
         session, charter, mailbox or lease, and nothing it sends can start, stop
-        or message a session. Today the one thing an app can do is record a
-        deploy event under a thread, with `POST /app/v1/deploy-events`.
+        or message a session. An app may record a deploy event under a thread,
+        with `POST /app/v1/deploy-events`, and may call the operations it is
+        granted in `operations`, with `POST /app/unstable/OPERATION`.
 
         Registering, changing and revoking an app is a change to this option
         that you deploy; there is no other way in. The route exists only when at
@@ -174,26 +185,75 @@ in
             writableKeys = [ "commit" "host" "unit" ];
             tokenHashFile = "/run/agenix/springfield-ci-token-hash";
           };
+          # An app that watches: it writes its own keys on two kinds and posts to
+          # the operator's box. It holds no deploy-event grant.
+          springfield-watch = {
+            operations = [
+              {
+                operation = "capture";
+                kinds = [ "role" "work" ];
+                keys = [ "watch_state" "watch_seen" ];
+              }
+              { operation = "post_message"; }
+            ];
+            tokenHashFile = "/run/agenix/springfield-watch-token-hash";
+          };
         }
       '';
       type = types.attrsOf (types.submodule {
         options = {
           thread = mkOption {
-            type = types.str;
+            type = types.nullOr types.str;
+            default = null;
             example = "thread:deploys-alpha";
             description = ''
               The handle of the thread every event of this app is recorded under.
-              It must already exist in jojobot. The app cannot name another.
+              It must already exist in jojobot. The app cannot name another. Leave
+              it null for an app that records no deploy event.
             '';
           };
           writableKeys = mkOption {
             type = types.listOf types.str;
+            default = [ ];
             example = [ "commit" "host" "unit" ];
             description = ''
-              The keys the app may send. A key jojobot guards, reserves or reads to
-              decide when something is owed cannot be granted, and the server
-              refuses to start if one is listed.
+              The keys the app may send in a deploy event. A key jojobot guards,
+              reserves or reads to decide when something is owed cannot be
+              granted, and the server refuses to start if one is listed.
             '';
+          };
+          operations = mkOption {
+            default = [ ];
+            description = ''
+              The operations of the unstable tier the app may call, one entry for
+              each. A write names the kinds the app may write and the keys it may
+              set. `recall` and `post_message` name none: a message goes to the
+              operator's box only. An identity key, a due-making key and a label
+              key cannot be listed, `bot` cannot be a kind and `set_charter`
+              cannot be granted. The server refuses to start on a name its
+              registry does not serve.
+            '';
+            type = types.listOf (types.submodule {
+              options = {
+                operation = mkOption {
+                  type = types.str;
+                  example = "capture";
+                  description = "The operation's name.";
+                };
+                kinds = mkOption {
+                  type = types.listOf types.str;
+                  default = [ ];
+                  example = [ "role" "work" ];
+                  description = "The kinds a write may be made on.";
+                };
+                keys = mkOption {
+                  type = types.listOf types.str;
+                  default = [ ];
+                  example = [ "watch_state" ];
+                  description = "The keys a write may set.";
+                };
+              };
+            });
           };
           revoked = mkOption {
             type = types.bool;
@@ -260,10 +320,15 @@ in
   };
 
   config = mkIf cfg.enable {
-    assertions = mapAttrsToList (name: _: {
-      assertion = builtins.match "[a-z][a-z0-9-]{0,31}" name != null;
-      message = "services.jojobot.apps.${name}: an app name is 1 to 32 lowercase letters, digits or hyphens, starting with a letter.";
-    }) cfg.apps;
+    assertions =
+      mapAttrsToList (name: _: {
+        assertion = builtins.match "[a-z][a-z0-9-]{0,31}" name != null;
+        message = "services.jojobot.apps.${name}: an app name is 1 to 32 lowercase letters, digits or hyphens, starting with a letter.";
+      }) cfg.apps
+      ++ mapAttrsToList (name: app: {
+        assertion = app.thread != null || app.operations != [ ];
+        message = "services.jojobot.apps.${name}: an app is granted nothing; set `thread` and `writableKeys`, or `operations`.";
+      }) cfg.apps;
 
     systemd.services.jojobot = {
       description = "jojobot personal-assistant MCP server";
