@@ -30,6 +30,14 @@ pub enum MessageVisibility {
 }
 
 impl VisibleBoxes {
+    /// **Whether the caller reads the inside of this box**: its own, one below
+    /// it, or any bot box for a grading handler. An author also reads its own
+    /// message in a box above it (see [`message`](Self::message)), and this is
+    /// what tells that read from the others: the recipient's notes are not for it.
+    pub fn reads_inside(&self, mailbox: &MailboxName) -> bool {
+        self.reads_every_bot_box || self.allowed.contains(mailbox)
+    }
+
     /// One predicate for every read, from the message's box and sender.
     /// An unknown sender cannot establish an author's outbox entitlement.
     pub fn message(&self, mailbox: &MailboxName, sender: Option<&str>) -> MessageVisibility {

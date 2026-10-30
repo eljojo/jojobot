@@ -266,6 +266,40 @@ async fn mail_visible_an_archived_middle_manager_keeps_the_chain_above_it_whole(
     );
 }
 
+/// **The author of mail into an ancestor's box reads it, and never the notes
+/// and reasons the recipient wrote on it** (rule 139: never up). The recipient
+/// and the manager above the recipient read them, and the answer says when it
+/// left notes out.
+#[tokio::test]
+async fn mail_visible_an_upward_author_read_leaves_out_the_recipients_notes() {
+    let (jojobot, [homer, bart, lisa, _]) = chart().await;
+    let note = send(&jojobot, "bart", "lisa", "chartneedle").await;
+    let id = note["id"].as_str().unwrap();
+    jojobot
+        .mark_processed(Parameters(MarkProcessedArgs {
+            request_id: None,
+            message_id: id.into(),
+            notes: Some("recipient only".into()),
+            sid: Some(bart.clone()),
+            quarantine: None,
+            message_ids: None,
+        }))
+        .await
+        .expect("bart closes it");
+    for history in [false, true] {
+        let seen = |answer: &serde_json::Value| answer.to_string().contains("recipient only");
+        assert!(seen(&open(&jojobot, &bart, id, history).await), "owner");
+        assert!(seen(&open(&jojobot, &homer, id, history).await), "above");
+        let authored = open(&jojobot, &lisa, id, history).await;
+        assert!(!seen(&authored), "{authored}");
+        assert_eq!(authored["state"], "processed", "{authored}");
+        assert!(
+            authored.to_string().contains("notes_withheld"),
+            "{authored}"
+        );
+    }
+}
+
 async fn sent(jojobot: &Jojobot, sid: &str, sender: &str, bodies: bool) -> serde_json::Value {
     json_of(
         &jojobot

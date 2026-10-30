@@ -3198,7 +3198,9 @@ With `true` the call takes NO delivery and moves nothing: the message is
 left in the state it is in, and the answer is its changes in the order
 they happened, each naming the run, when, the state it left, and the
 notes or reason it was given. Allowed exactly where reading the message
-is. Without it a read of your own box takes delivery.
+is. The author of a message in a box above its own reads it without the
+recipient's notes and reasons, and `notes_withheld` says so. Without it a
+read of your own box takes delivery.
 ```
 
 #### `read_message` — argument `/inputSchema.message_id`

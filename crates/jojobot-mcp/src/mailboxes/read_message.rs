@@ -21,7 +21,9 @@ pub struct ReadMessageArgs {
     /// left in the state it is in, and the answer is its changes in the order
     /// they happened, each naming the run, when, the state it left, and the
     /// notes or reason it was given. Allowed exactly where reading the message
-    /// is. Without it a read of your own box takes delivery.
+    /// is. The author of a message in a box above its own reads it without the
+    /// recipient's notes and reasons, and `notes_withheld` says so. Without it a
+    /// read of your own box takes delivery.
     #[serde(default)]
     pub(crate) history: Option<bool>,
 }
@@ -92,6 +94,9 @@ impl Jojobot {
         }
         let readable = located;
         let mut peek = false;
+        // **An author reading its own mail in a box above it** is told nothing the
+        // recipient wrote on it (rule 139: never up).
+        let mut upward = false;
         if let Some(message) = &readable {
             // The same three refusals a read of your own box gets — no handle,
             // a world that cannot say, a bot whose box is missing — because it
@@ -112,6 +117,7 @@ impl Jojobot {
                 ));
             }
             peek = mine.name != message.mailbox;
+            upward = !visible.reads_inside(&message.mailbox);
             // **A read of one's own box renews the claim**, as `read_mailbox`
             // does: a session that only reads its mail writes nothing.
             if !peek {
@@ -134,7 +140,7 @@ impl Jojobot {
             && let Some(message) = &readable
         {
             return match self.mailboxes.message_history(&id).await {
-                Ok(events) => json_result(&history_json(message, &events)),
+                Ok(events) => json_result(&history_json(message, &events, upward)),
                 Err(e) => mailbox_declined(e),
             };
         }
@@ -142,6 +148,12 @@ impl Jojobot {
         // even a new message stays new, with no delivery event or obligation.
         if peek && let Some(message) = &readable {
             let mut rendered = message_json(message);
+            if upward && let Some(fields) = rendered.as_object_mut() {
+                // Eliding is never silent: the answer says the notes were left out.
+                if fields.remove("notes").is_some_and(|notes| !notes.is_null()) {
+                    fields.insert("notes_withheld".into(), true.into());
+                }
+            }
             rendered["seen_before"] = (message.state != mailbox::MessageState::New).into();
             rendered["taken"] = false.into();
             let viewer = self
@@ -181,7 +193,12 @@ impl Jojobot {
 /// says what that means**, because a message changed before jojobot kept events
 /// reads the same as one nobody has touched, and an empty list would pass for
 /// *nothing happened*.
-fn history_json(message: &mailbox::Message, events: &[mailbox::MessageEvent]) -> serde_json::Value {
+fn history_json(
+    message: &mailbox::Message,
+    events: &[mailbox::MessageEvent],
+    upward: bool,
+) -> serde_json::Value {
+    let mut withheld = false;
     let rendered: Vec<serde_json::Value> = events
         .iter()
         .map(|event| {
@@ -198,11 +215,15 @@ fn history_json(message: &mailbox::Message, events: &[mailbox::MessageEvent]) ->
                 if let Some(by_box) = &event.by_box {
                     fields.insert("box".into(), by_box.as_str().into());
                 }
-                if let Some(notes) = &event.notes {
-                    fields.insert("notes".into(), notes.as_str().into());
-                }
-                if let Some(reason) = &event.reason {
-                    fields.insert("reason".into(), reason.as_str().into());
+                if upward {
+                    withheld |= event.notes.is_some() || event.reason.is_some();
+                } else {
+                    if let Some(notes) = &event.notes {
+                        fields.insert("notes".into(), notes.as_str().into());
+                    }
+                    if let Some(reason) = &event.reason {
+                        fields.insert("reason".into(), reason.as_str().into());
+                    }
                 }
             }
             one
@@ -212,6 +233,9 @@ fn history_json(message: &mailbox::Message, events: &[mailbox::MessageEvent]) ->
         "count": events.len(),
         "events": rendered,
     });
+    if withheld && let Some(fields) = history.as_object_mut() {
+        fields.insert("notes_withheld".into(), true.into());
+    }
     if let Some(fields) = history.as_object_mut()
         && events.is_empty()
     {
