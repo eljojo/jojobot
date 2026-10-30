@@ -236,6 +236,14 @@ pub(crate) async fn node(
         None,
     );
     question.asks.backing = true;
+    // **A task's page lists the last writes of its status**, which the one answer
+    // carries when the question asks for them.
+    if entity.kind == EntityKind::WORK {
+        question.query.history = Some(graph::History {
+            of: graph::Trace::Key(kinds::STATUS.to_string()),
+            most: typed::HISTORY_SHOWN,
+        });
+    }
     let mut answer = match queries.ask(question).await {
         Ok(answer) => answer,
         Err(
@@ -257,6 +265,7 @@ pub(crate) async fn node(
         return unreadable(error);
     }
     let ages = object.ages.unwrap_or_default();
+    let status_writes = object.history.map(|kept| kept.writes).unwrap_or_default();
     let held = object.fields;
     let facts = object.facts;
     let prose = object.prose.unwrap_or_default();
@@ -279,7 +288,9 @@ pub(crate) async fn node(
     // **A piece of work is a task, a rhythm is a loop, a thread leads with what
     // was decided.** A kind with no rendering of its own is the generic page.
     match entity.kind {
-        EntityKind::WORK => typed_page.push_str(&typed::work(&state, entity, &held, &by_id).await),
+        EntityKind::WORK => {
+            typed_page.push_str(&typed::work(entity, &held, &by_id, &status_writes))
+        }
         EntityKind::RHYTHM => typed_page.push_str(&typed::rhythm(&state, entity, &held).await),
         EntityKind::THREAD => {
             typed_page.push_str(&typed::decisions(&state, entity, &entities, &by_id).await);

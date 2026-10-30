@@ -139,7 +139,7 @@ pub async fn board(
 }
 
 /// The most writes of a key a task's history shows.
-const HISTORY_SHOWN: usize = 5;
+pub(super) const HISTORY_SHOWN: usize = 5;
 
 /// A value the thing holds, when it holds one that says something.
 fn held_value<'a>(held: &'a BTreeMap<String, String>, key: &str) -> Option<&'a str> {
@@ -161,17 +161,14 @@ fn handles(value: Option<&str>, by_id: &HashMap<&EntityId, &Entity>) -> String {
 }
 
 /// **A piece of work as a task**: its status, what it needs, who owns it, and the
-/// last writes of its status, newest first.
-pub async fn work(
-    state: &AppState,
+/// last writes of its status, newest first. `history` is the writes of its status
+/// the page's one answer carried, oldest first.
+pub fn work(
     work: &Entity,
     held: &BTreeMap<String, String>,
     by_id: &HashMap<&EntityId, &Entity>,
+    history: &[jojobot_domain::memory::FieldWrite],
 ) -> String {
-    let history = match state.memory.history(&work.id, kinds::STATUS).await {
-        Ok(writes) => writes,
-        Err(err) => return pages::blind("Status", "its history", &err.to_string()),
-    };
     let writes: String = history
         .iter()
         .rev()
