@@ -2889,6 +2889,7 @@ impl DoltMemory {
             !self.own_fields_reach,
         )?;
         let lowered_writes = self.lower_writes(tx, written_keys(&stored)).await?;
+        let served = self.serve_written_fields(tx, &lowered_writes).await?;
         Self::append_writes(
             tx,
             &stored.home,
@@ -2918,16 +2919,14 @@ impl DoltMemory {
         for object in &stored.refs {
             served_refs.push(self.current_handle(tx, object).await?);
         }
-        let mut served_fields = stored.fields.clone();
-        self.compose_reference_fields(tx, &mut served_fields)
-            .await?;
         Ok(Guarded::Written(Fact {
             home: subject_handle.clone(),
             subject: subject_handle,
             derived_from: served_derived_from,
             edge: served_edge,
             refs: served_refs,
-            fields: served_fields,
+            fields: served.values,
+            field_links: served.links,
             // **The keys this record set on its thing**, as the bags were decided
             // above and as a read of it will answer.
             sets: classes
@@ -6472,9 +6471,7 @@ impl Memory for DoltMemory {
         // answer's `sets` is the claim as it stands after this write and never the
         // one it had before it: a setting this edit cleared must not stay in `sets`
         // with no value left in `fields`.
-        let (mut fields, sets, reaching) =
-            Self::fields_and_sets_of(&mut tx, &on_disk.home, &on_disk.id).await?;
-        self.compose_reference_fields(&mut tx, &mut fields).await?;
+        let (served, sets, reaching) = self.read_write_fields(&mut tx, &on_disk).await?;
         // **Served under the handle, stored under the key.**
         let served_derived_from = match &fact.derived_from {
             Some(source) => Some(FactAddress::new(
@@ -6510,7 +6507,8 @@ impl Memory for DoltMemory {
         .await
         .map_err(store)?;
         Ok(Guarded::Written(Fact {
-            fields,
+            fields: served.values,
+            field_links: served.links,
             sets,
             reaching,
             home: handle.clone(),
@@ -8322,6 +8320,7 @@ use jojobot_domain::memory::merge::{Side, interleave};
 #[cfg(test)]
 mod tests;
 mod walks;
+mod write_result;
 mod writer;
 
 impl DoltMemory {

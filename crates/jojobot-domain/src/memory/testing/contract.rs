@@ -49,6 +49,7 @@ pub mod thread_writers_folded;
 pub mod typed_addresses;
 pub mod typed_kinds;
 pub mod where_keys;
+pub mod write_results;
 pub mod writer_identity;
 
 pub use app::*;

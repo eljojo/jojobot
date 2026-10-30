@@ -16,6 +16,8 @@ use jojobot_domain::memory::{EntityId, Memory, NewEntity, NewFact};
 
 #[path = "boot_reads_link_rule_dolt/rendering.rs"]
 mod rendering;
+#[path = "boot_reads_link_rule_dolt/write_results.rs"]
+mod write_results;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn the_boot_reader_and_the_read_of_one_thing_agree_on_a_mixed_list() {

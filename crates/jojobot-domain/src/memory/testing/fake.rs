@@ -3266,27 +3266,16 @@ impl Memory for InMemoryMemory {
         // keeps it, so a claim nobody has corrected answers with one write.
         self.append_claim_write(&stored, fact.session.clone(), fact.written_by_bot.clone());
         self.append_writes(&stored.home, &stored.id, wrote, &classes);
-        // **The keys this record set on its thing**, as the bags were decided above
-        // and as a read of it will answer.
-        let stored = Fact {
-            sets: classes
-                .iter()
-                .filter(|(_, class)| **class == super::super::WriteClass::Sets)
-                .map(|(key, _)| key.clone())
-                .collect(),
-            reaching: classes
-                .iter()
-                .filter(|(_, class)| super::super::reaches_the_thing(**class))
-                .map(|(key, _)| key.clone())
-                .collect(),
-            ..stored
-        };
         // **Stored under the storage key; served under the handle.** The row
         // just pushed keeps the badge, exactly as every other row does; the
         // caller that just wrote it reads back the handle it wrote with,
         // never the internal key — the same rule an edge and a mention
-        // already answer to.
-        Ok(Guarded::Written(self.served(stored, &subject_entity.id)))
+        // already answer to. **The fields, the keys the record set on its thing
+        // and the links come from the writes just kept**, the projection a read
+        // of the record answers.
+        Ok(Guarded::Written(
+            self.served(self.projected(&stored), &subject_entity.id),
+        ))
     }
 
     /// Home-doc membership counts alongside the subject, as it does in the real

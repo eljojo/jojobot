@@ -9,6 +9,8 @@ use jojobot_domain::memory::{EntityId, Memory, NewEntity, NewFact, Override};
 
 #[path = "link_rule_on/rendering.rs"]
 mod rendering;
+#[path = "link_rule_on/write_results.rs"]
+mod write_results;
 
 macro_rules! typed_kind_cases {
     ($($test:ident => $case:ident),+ $(,)?) => {$(
