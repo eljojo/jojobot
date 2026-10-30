@@ -256,12 +256,13 @@ def blocked(words, depth=0):
         # `sh -c STRING` and a cluster such as `bash -lc STRING` run STRING as a command.
         # The options end at the first word that is not one: after a script name, -c
         # is the script's own argument.
+        # A `+` option (`+x`, `+o name`) turns an option off and is an option too.
         index = 1
-        while index < len(words) and words[index].startswith("-"):
+        while index < len(words) and words[index].startswith(("-", "+")):
             word = words[index]
-            if not word.startswith("--") and "c" in word:
+            if word.startswith("-") and not word.startswith("--") and "c" in word:
                 return index + 1 < len(words) and judge(words[index + 1], depth + 1)
-            index += 2 if word in ("-o", "-O", "--rcfile", "--init-file") else 1
+            index += 2 if word in ("-o", "-O", "+o", "+O", "--rcfile", "--init-file") else 1
         return False
     if program == "export":
         return any(sets_target(word) for word in words[1:])
@@ -300,12 +301,18 @@ def blocked(words, depth=0):
 
 def substitutions(command):
     """The text of every command substitution, `$(...)` or backquotes, that the shell
-    would run: in double quotes too, and not inside single quotes or after a backslash."""
+    would run: in double quotes too, and not inside single quotes or after a backslash.
+
+    It also returns the command with each backquote span cut down to an empty pair, so
+    that the lexer reads the span as one word: it holds the text of a substitution that
+    is judged on its own, and a space inside it would split the word it is part of."""
     found = []
+    masked = []
     quote = None
     i, n = 0, len(command)
     while i < n:
         c = command[i]
+        start = i
         if quote == "'":
             quote = None if c == "'" else quote
             i += 1
@@ -321,6 +328,8 @@ def substitutions(command):
             # backslash is taken off, so a nested substitution is written \`...\`.
             found.append(re.sub(r"\\([\\`$])", r"\1", command[i + 1 : close]))
             i = close + 1
+            masked.append("``")
+            continue
         elif c == "$" and command[i + 1 : i + 2] == "(":
             depth, j = 1, i + 2
             while j < n and depth:
@@ -339,7 +348,8 @@ def substitutions(command):
             elif c == "'" and quote is None:
                 quote = "'"
             i += 1
-    return found
+        masked.append(command[start:i])
+    return found, "".join(masked)
 
 
 def judge(command, depth=0):
@@ -349,9 +359,12 @@ def judge(command, depth=0):
     nesting beyond a few levels is refused."""
     if depth > DEPTH:
         return True
-    if any(judge(inner, depth + 1) for inner in substitutions(command)):
+    # Comments are dropped first: an apostrophe in one opens no quote, and the
+    # substitutions after it still run.
+    found, masked = substitutions(strip_redirections(command))
+    if any(judge(inner, depth + 1) for inner in found):
         return True
-    lexer = shlex.shlex(strip_redirections(command), posix=True, punctuation_chars=";&|()\n")
+    lexer = shlex.shlex(masked, posix=True, punctuation_chars=";&|()\n")
     lexer.whitespace = " \t\r"
     # A word ends at whitespace or a separator and nowhere else: without this the
     # lexer cuts `a::b`, `-I{}` and `user@host` into pieces, and the comments are

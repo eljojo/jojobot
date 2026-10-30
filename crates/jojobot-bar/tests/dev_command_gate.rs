@@ -174,6 +174,14 @@ fn dev_command_gate_refuses_local_build_bypasses() {
         // A shell string after a script name is the script's argument, but a string
         // after the options is run.
         "bash -x -c 'cargo test'",
+        // An apostrophe in a comment opens no quote: the substitution after it runs.
+        "echo # it's\necho \"$(cargo test)\"",
+        // A backquote value with a space is one word of the assignment, and the
+        // command after the assignment is `cargo test`.
+        "FOO=`echo x` cargo test",
+        // An option that starts with `+` is still an option, so -c still follows it.
+        "bash +x -c \"cargo test\"",
+        "bash +o noglob -c 'make check'",
     ];
     let failures: Vec<_> = commands
         .iter()
@@ -255,6 +263,10 @@ fn dev_command_gate_allows_narrow_and_read_commands() {
         "bash ./run.sh -c 'cargo test'",
         "make -j 8 narrow CRATE=jojobot-domain FILTER=foo",
         "make -j narrow CRATE=jojobot-domain FILTER=foo",
+        // The same three shapes with a harmless command.
+        "echo # it's\necho \"$(date)\"",
+        "FOO=`echo x` make dev",
+        "bash +x -c 'make dev'",
     ];
     let failures: Vec<_> = commands
         .iter()
