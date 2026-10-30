@@ -268,12 +268,31 @@ pub fn names_in_fields(fields: &BTreeMap<String, String>) -> Vec<String> {
 /// **Whether a record's fields link to `target`**: whether the marks the record
 /// was stored with say so ([`Fact::field_links`]).
 pub fn fact_names_target(fact: &Fact, target: &EntityId) -> bool {
+    count_a_link_read();
     fact.field_links.values().flatten().any(|id| id == target)
+}
+
+thread_local! {
+    static LINK_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+fn count_a_link_read() {
+    LINK_READS.with(|reads| reads.set(reads.get() + 1));
+}
+
+/// **How many times this thread has read a record's links**, through
+/// [`fact_names_target`] and [`names_in_fact`], the two ways a reader takes them.
+/// A test instrument: a case reads it before and after a write on one thread to
+/// hold the write's cost to a number of passes over the records, whichever reader
+/// the write used.
+pub fn link_reads_on_this_thread() -> usize {
+    LINK_READS.with(std::cell::Cell::get)
 }
 
 /// **Every name a record's fields link to**: the counterpart of
 /// [`fact_names_target`] for a reader that holds the records by what they name.
 pub fn names_in_fact(fact: &Fact) -> Vec<String> {
+    count_a_link_read();
     fact.field_links
         .values()
         .flatten()

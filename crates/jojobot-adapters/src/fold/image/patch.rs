@@ -424,18 +424,14 @@ mod tests {
                 .written()
                 .expect("not blocked");
         }
-        let before = folded
-            .held(|image| image.link_reads())
-            .expect("the image is held");
+        let before = jojobot_domain::memory::link_reads_on_this_thread();
         folded
             .capture(claim(0))
             .await
             .expect("a claim lands")
             .written()
             .expect("not blocked");
-        let after = folded
-            .held(|image| image.link_reads())
-            .expect("the image is held");
+        let after = jojobot_domain::memory::link_reads_on_this_thread();
         (after - before, counted, folded)
     }
 
