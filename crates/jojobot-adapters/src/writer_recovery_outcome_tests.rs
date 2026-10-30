@@ -127,7 +127,11 @@ async fn writer_recovery_an_unheld_read_refuses_until_the_native_rail_recovers()
         folded.write_summary().await.expect("recovered write count"),
         native.write_summary().await.expect("native write count")
     );
-    assert_eq!(counted.calls.reads(), 1);
+    assert_eq!(
+        counted.calls.reads(),
+        0,
+        "the count is the State's own, so it asks the source nothing"
+    );
     let stored = native.all_sessions().await.expect("native run");
     assert_eq!(stored.len(), 1);
     counted.calls.reset();

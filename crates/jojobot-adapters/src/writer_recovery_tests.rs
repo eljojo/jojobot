@@ -374,13 +374,14 @@ async fn writer_recovery_rebuild_teachings_uses_the_process_writer() {
 }
 
 #[tokio::test]
-async fn writer_recovery_indexed_memory_uses_the_process_writer() {
-    use jojobot_domain::memory::NewEntity;
+async fn writer_recovery_memory_state_uses_the_process_writer() {
     use jojobot_domain::memory::testing::InMemoryMemory;
+    use jojobot_domain::memory::{Memory, NewEntity};
+    // The index no longer wraps the store: a write enters the memory State, which
+    // runs it in the process writer.
     behind_teaching(|writer| async move {
         let memory =
-            crate::search::IndexedMemory::with_writer(Arc::new(InMemoryMemory::booted()), writer)
-                .unwrap();
+            crate::fold::Folded::new(Arc::new(InMemoryMemory::booted())).with_writer(writer);
         memory
             .add_entity(NewEntity::new(
                 EntityId("person:alpha".into()),
