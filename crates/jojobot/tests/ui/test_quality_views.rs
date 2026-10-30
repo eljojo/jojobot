@@ -48,12 +48,13 @@ async fn a_view_with_a_blank_selects_is_refused_and_one_that_selects_a_kind_list
         refused.contains("cannot be run") && !refused.contains("<table id=\"answer\">"),
         "the page refuses and lists nothing: {refused}"
     );
-    // The reason names the key that is blank, as the verb's refusal does.
+    // The reason is the kind resolver's own refusal for the blank value, as the
+    // verb gives it, and it sits in the refusal paragraph, not elsewhere on the page.
     assert!(
         refused
             .split_once("cannot be run")
             .and_then(|(_, rest)| rest.split_once("</p>"))
-            .is_some_and(|(reason, _)| reason.contains("selects")),
+            .is_some_and(|(reason, _)| reason.contains("no kind is named &#39;&#39;")),
         "the page gives the verb's reason: {refused}"
     );
 
