@@ -1128,3 +1128,24 @@ async fn a_note_on_a_dock_linked_by_reference_reddens_only_the_theta_selection_l
         vec![true, true, true, false]
     );
 }
+
+/// **A lock reads what the handles it names stand for through the grader, never over
+/// MCP.** Over MCP a transport error became "no name", and a `lacks` lock could go green
+/// over a broken read. The server counts an MCP request as it ends and the grader's route
+/// is not one, so a lock that sends none leaves the count where it was.
+#[tokio::test]
+async fn a_lock_reads_the_handles_it_names_through_the_grader_and_sends_no_mcp_request() {
+    let (room, surface, _sid) = furnished().await;
+    let lock = lock_named(FAIR_DEADLINE_FRAGMENT);
+    let sent = || jojobot_exercise::timing::server_time(&room.server_log()).requests;
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    let before = sent();
+    let outcome = held(&surface, &lock).await;
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    assert_eq!(
+        sent(),
+        before,
+        "the lock sent an MCP request while it read the room: {}",
+        outcome.saying,
+    );
+}

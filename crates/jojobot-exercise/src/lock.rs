@@ -522,11 +522,11 @@ fn holds_nothing(answer: &str) -> bool {
         .is_some_and(|text| text.trim().is_empty())
 }
 
-/// **The name `handle` stands for in the room**, read by `recall` of it with no identity, as
+/// **The name `handle` stands for in the room**, read by `recall` of it through the grader, as
 /// every lock reads. A handle the room does not hold, or one with an empty name, has none.
 async fn name_in(room: &crate::surface::Surface, handle: &str) -> Option<String> {
     let read = room
-        .call("recall", serde_json::json!({"subject": handle}))
+        .read("recall", serde_json::json!({"subject": handle}))
         .await;
     serde_json::from_str::<serde_json::Value>(&read)
         .ok()
