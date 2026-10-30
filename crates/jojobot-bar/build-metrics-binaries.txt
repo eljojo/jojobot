@@ -132,6 +132,7 @@ test-real_binary_serves_a_store_with_existing_rows
 test-real_binary_serves_before_it_mails_the_release_notes
 test-real_store_scratch
 test-record_upgrade_fixture
+test-refusal_count_read
 test-release_notes_over_dolt
 test-repair_room
 test-replay_room

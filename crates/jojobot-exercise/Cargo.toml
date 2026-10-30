@@ -187,6 +187,10 @@ name = "run_timing"
 required-features = ["rooms"]
 
 [[test]]
+name = "refusal_count_read"
+required-features = ["rooms"]
+
+[[test]]
 name = "usage_limit_run"
 required-features = ["rooms"]
 

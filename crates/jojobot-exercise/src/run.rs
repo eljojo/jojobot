@@ -1063,7 +1063,16 @@ pub async fn go(
     let mut conversation = Conversation::fresh();
     let mut incomplete: Option<Incomplete> = None;
     for (at, phase) in playbook.phases.iter().enumerate() {
-        let refused_before = surface.refusal_count().await?;
+        // **A read that fails keeps the sittings already run.** The phases
+        // before this one are in `transcript`, and leaving through `?` here
+        // would drop them unkept.
+        let refused_before = match surface.refusal_count().await {
+            Ok(count) => count,
+            Err(failure) => {
+                incomplete = Some(read_failed(&phase.name, format!("{failure:#}")));
+                break;
+            }
+        };
         // **The playbook decides how many sessions a run uses.** The first
         // phase starts one; after that, a phase carries the last conversation
         // on unless it says it must meet jojobot with no memory of it.
@@ -1109,9 +1118,11 @@ pub async fn go(
                 break;
             }
         }
-        let refused_after = surface.refusal_count().await?;
-        if refused_after > refused_before {
-            harness_refusals.push((phase.name.clone(), refused_after - refused_before));
+        let refused_after = surface.refusal_count().await;
+        if let Ok(after) = &refused_after
+            && *after > refused_before
+        {
+            harness_refusals.push((phase.name.clone(), after - refused_before));
         }
         transcript.push(Said {
             phase: phase.name.clone(),
@@ -1122,6 +1133,15 @@ pub async fn go(
             continuing: !(at == 0 || phase.fresh_session),
             read_this: phase.read_this,
         });
+        // **The sitting is kept before a failed read ends the run**, and a limit
+        // the sitting hit stays the reason, with the failed read named beside it.
+        if let Err(failure) = refused_after {
+            let mut cut = stops_the_run(hit_limit, &phase.name)
+                .unwrap_or_else(|| read_failed(&phase.name, String::new()));
+            cut.failed_read = Some(format!("{failure:#}"));
+            incomplete = Some(cut);
+            break;
+        }
         // Taken after every phase and named for the one that comes next, so a
         // claim about a change has both sides of its boundary.
         let asked = phase_end_queries(expectations, phase_key(&phase.name));
