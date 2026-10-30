@@ -11606,6 +11606,42 @@ async fn a_plan_that_cannot_be_worked_out_is_an_error_not_a_missing_plan() {
         .expect_err("a plan that cannot be worked out is an error");
 }
 
+/// **A plan whose owed work cannot be scanned is an error, not a shorter plan**
+/// (rule 130). The shared walk keeps a failed scan beside the answer instead of
+/// failing; the plan reads the same objects and must refuse it, exactly as it did
+/// when the walk failed itself. **Paired**: the healthy handler names the work.
+#[tokio::test]
+async fn a_plan_whose_owed_work_cannot_be_scanned_is_an_error_not_a_shorter_plan() {
+    let (healthy, blind) =
+        crate::memory::testing::shipped_healthy_and_down(Down::ScanOf("work:gamma"));
+    let _ = writing_as(&healthy);
+    healthy
+        .add_entity(Parameters(add_args("project", "project:atlas", "Atlas")))
+        .await
+        .expect("add ok");
+    healthy
+        .add_entity(Parameters(AddEntityArgs {
+            sets: Some(std::collections::BTreeMap::from([
+                ("status".to_string(), "next".to_string()),
+                ("runs_out".to_string(), "2026-10-20".to_string()),
+            ])),
+            parent: Some("project:atlas".into()),
+            ..add_args("work", "gamma", "gamma")
+        }))
+        .await
+        .expect("add ok");
+    let day = jiff::civil::date(2026, 10, 20);
+    let plan = healthy
+        .plan_of_period("2026-10-20", day, day)
+        .await
+        .expect("the healthy handler works the plan out");
+    assert!(plan.to_string().contains("work:gamma"), "{plan}");
+    blind
+        .plan_of_period("2026-10-20", day, day)
+        .await
+        .expect_err("a plan over work that cannot be scanned is an error");
+}
+
 /// **An instance that maps `shipped` to done and `doing` to now**, written
 /// through the healthy handler: both handlers share the store, so the blind one
 /// holds the same record and cannot read it.

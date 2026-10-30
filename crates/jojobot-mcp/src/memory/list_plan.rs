@@ -42,9 +42,15 @@ impl Jojobot {
             None,
             None,
         );
-        let mut found = view_run::select(self.memory.as_ref(), &[], &question.query, None)
-            .await?
-            .objects;
+        let selected = view_run::select(self.memory.as_ref(), &[], &question.query, None).await?;
+        // The walk keeps an unreadable scan or history beside its answer; a plan
+        // built from a partial read would name less than it owes.
+        if let Some(error) =
+            graph::unreadable_scan(&selected).or_else(|| graph::unreadable_revisions(&selected))
+        {
+            return Err(error);
+        }
+        let mut found = selected.objects;
         let instance = self.instance_fields().await?;
         let carriers = self.carriers();
         // Owed by the last day of the period, measured from the first: a thing
