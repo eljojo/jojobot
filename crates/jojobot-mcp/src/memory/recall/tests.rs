@@ -11004,6 +11004,7 @@ async fn an_app_written_claim_says_so_on_a_records_read_and_on_its_history_and_a
             thread: "thread:springfield-deploys".into(),
             kind: "event".into(),
             keys: vec!["commit".into(), "host".into()],
+            operations: vec![],
             revoked: false,
         },
         &hash_token(&mint_token()),

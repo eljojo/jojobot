@@ -419,6 +419,7 @@ impl Story {
             thread: thread.to_string(),
             kind: "event".to_string(),
             keys: keys.iter().map(|key| key.to_string()).collect(),
+            operations: vec![],
             revoked: false,
         };
         let principal = jojobot_domain::app::AppPrincipal::from_spec(

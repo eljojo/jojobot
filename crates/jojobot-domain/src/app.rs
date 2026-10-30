@@ -20,6 +20,8 @@ use serde::{Deserialize, Serialize};
 use crate::memory::{EntityId, EntityKind};
 use crate::request::RequestId;
 
+pub mod operations;
+
 /// **Every app token starts with this**, so a bearer that is an app token is
 /// told from a run key or a JWT without looking anything up.
 pub const TOKEN_PREFIX: &str = "ak-";
@@ -124,8 +126,10 @@ pub struct AppPrincipal {
     pub id: AppId,
     /// The hash of its token, from [`hash_token`].
     pub token_hash: String,
-    /// What it may do.
-    pub grant: Grant,
+    /// The one deploy event it may record, when it holds that grant.
+    pub grant: Option<Grant>,
+    /// The unstable-tier operations it may call, one grant each.
+    pub operations: Vec<operations::OperationGrant>,
     /// Whether the operator has switched it off. A revoked app writes nothing.
     pub revoked: bool,
 }
@@ -136,14 +140,21 @@ pub struct AppPrincipal {
 pub struct AppSpec {
     /// The app's name.
     pub name: String,
-    /// The operation granted.
+    /// The deploy-event operation granted. Empty when the app holds none.
+    #[serde(default)]
     pub operation: String,
     /// The thread handle events go under.
+    #[serde(default)]
     pub thread: String,
     /// The kind of what is written.
+    #[serde(default)]
     pub kind: String,
     /// The keys the app may send.
+    #[serde(default)]
     pub keys: Vec<String>,
+    /// The unstable-tier operations granted, one entry each.
+    #[serde(default)]
+    pub operations: Vec<operations::OperationSpec>,
     /// Whether the app is switched off.
     #[serde(default)]
     pub revoked: bool,
@@ -242,63 +253,85 @@ impl AppPrincipal {
     pub fn from_spec(spec: &AppSpec, token_hash: &str) -> Result<Self, AppError> {
         let id = AppId::parse(&spec.name)?;
         let named = |why: String| AppError::Config(format!("app {id}: {why}"));
-        if spec.operation != RECORD_DEPLOY_EVENT {
-            return Err(named(format!(
-                "the operation {:?} is not one an app can be granted; the only one is \
-                 {RECORD_DEPLOY_EVENT}",
-                spec.operation
-            )));
+        let holds_deploy_event = !(spec.operation.is_empty()
+            && spec.thread.is_empty()
+            && spec.kind.is_empty()
+            && spec.keys.is_empty());
+        if !holds_deploy_event && spec.operations.is_empty() {
+            return Err(named("it is granted nothing".into()));
         }
-        if spec.kind != EntityKind::EVENT.as_token() {
-            return Err(named(format!(
-                "the kind {:?} is not one an app can write; the only one is event",
-                spec.kind
-            )));
-        }
-        let thread = EntityId(spec.thread.trim().to_string());
-        // **The handle check a write uses**, so a grant a write would refuse
-        // fails here, at start, and not at the first event. A slash is how a
-        // numbered member is read, not a handle to give a thread.
-        if thread.kind_token() != EntityKind::THREAD.as_token()
-            || thread.slug().is_empty()
-            || crate::memory::validate_shape(&thread).is_err()
-            || crate::memory::validate_new_handle(&thread).is_err()
-        {
-            return Err(named(format!(
-                "the thread {:?} is not a thread handle",
-                spec.thread
-            )));
-        }
-        if spec.keys.is_empty() {
-            return Err(named("the grant names no keys".into()));
-        }
-        let mut writable_keys = BTreeSet::new();
-        for key in &spec.keys {
-            if !key_shape_ok(key) {
-                return Err(named(format!("the key {key:?} is not a plain key name")));
-            }
-            if let Some(why) = key_never_granted(key) {
-                return Err(named(format!(
-                    "the key {key:?} is {why} and cannot be granted"
-                )));
-            }
-            writable_keys.insert(key.clone());
-        }
+        let grant = if holds_deploy_event {
+            Some(deploy_event_grant(spec, &named)?)
+        } else {
+            None
+        };
+        let operations = operations::grants_from_specs(&spec.operations, &named)?;
         if token_hash.len() != 64 || !token_hash.bytes().all(|b| b.is_ascii_hexdigit()) {
             return Err(named("its token hash is not 64 hex characters".into()));
         }
         Ok(AppPrincipal {
             id,
             token_hash: token_hash.to_ascii_lowercase(),
-            grant: Grant {
-                operation: spec.operation.clone(),
-                thread,
-                kind: EntityKind::EVENT,
-                writable_keys,
-            },
+            grant,
+            operations,
             revoked: spec.revoked,
         })
     }
+}
+
+/// **The deploy-event grant an app's spec names**, or why the operator is wrong.
+fn deploy_event_grant(
+    spec: &AppSpec,
+    named: &dyn Fn(String) -> AppError,
+) -> Result<Grant, AppError> {
+    if spec.operation != RECORD_DEPLOY_EVENT {
+        return Err(named(format!(
+            "the operation {:?} is not one an app can be granted; the only one is \
+                 {RECORD_DEPLOY_EVENT}",
+            spec.operation
+        )));
+    }
+    if spec.kind != EntityKind::EVENT.as_token() {
+        return Err(named(format!(
+            "the kind {:?} is not one an app can write; the only one is event",
+            spec.kind
+        )));
+    }
+    let thread = EntityId(spec.thread.trim().to_string());
+    // **The handle check a write uses**, so a grant a write would refuse
+    // fails here, at start, and not at the first event. A slash is how a
+    // numbered member is read, not a handle to give a thread.
+    if thread.kind_token() != EntityKind::THREAD.as_token()
+        || thread.slug().is_empty()
+        || crate::memory::validate_shape(&thread).is_err()
+        || crate::memory::validate_new_handle(&thread).is_err()
+    {
+        return Err(named(format!(
+            "the thread {:?} is not a thread handle",
+            spec.thread
+        )));
+    }
+    if spec.keys.is_empty() {
+        return Err(named("the grant names no keys".into()));
+    }
+    let mut writable_keys = BTreeSet::new();
+    for key in &spec.keys {
+        if !key_shape_ok(key) {
+            return Err(named(format!("the key {key:?} is not a plain key name")));
+        }
+        if let Some(why) = key_never_granted(key) {
+            return Err(named(format!(
+                "the key {key:?} is {why} and cannot be granted"
+            )));
+        }
+        writable_keys.insert(key.clone());
+    }
+    Ok(Grant {
+        operation: spec.operation.clone(),
+        thread,
+        kind: EntityKind::EVENT,
+        writable_keys,
+    })
 }
 
 /// **The mark an app's write carries on the claim it made.**
@@ -508,16 +541,20 @@ pub fn authorize(app: &AppPrincipal, event: &DeployEvent) -> Result<AuthorizedWr
             app.id
         )));
     }
-    if app.grant.operation != RECORD_DEPLOY_EVENT || app.grant.kind != EntityKind::EVENT {
+    let Some(grant) = app
+        .grant
+        .as_ref()
+        .filter(|g| g.operation == RECORD_DEPLOY_EVENT && g.kind == EntityKind::EVENT)
+    else {
         return Err(AppError::OutsideGrant(
             "the grant does not cover recording a deploy event".into(),
         ));
-    }
+    };
     if event.fields.is_empty() {
         return Err(AppError::Invalid("the event names no keys".into()));
     }
     for key in event.fields.keys() {
-        if !app.grant.writable_keys.contains(key) {
+        if !grant.writable_keys.contains(key) {
             return Err(AppError::OutsideGrant(format!(
                 "the key {key:?} is not one this app may write"
             )));
@@ -534,7 +571,7 @@ pub fn authorize(app: &AppPrincipal, event: &DeployEvent) -> Result<AuthorizedWr
         .map_err(|e| AppError::Invalid(format!("attempt_id: {e}")))?;
     Ok(AuthorizedWrite {
         app: app.id.clone(),
-        thread: app.grant.thread.clone(),
+        thread: grant.thread.clone(),
         attempt_id,
         fields: event.fields.clone(),
     })
@@ -551,6 +588,7 @@ mod tests {
             thread: "thread:deploys-alpha".into(),
             kind: "event".into(),
             keys: keys.iter().map(|k| k.to_string()).collect(),
+            operations: vec![],
             revoked: false,
         }
     }

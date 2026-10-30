@@ -177,6 +177,7 @@ fn principal() -> crate::app::AppPrincipal {
             thread: "thread:contract-deploys".into(),
             kind: "event".into(),
             keys: vec!["commit".into(), "host".into()],
+            operations: vec![],
             revoked: false,
         },
         &crate::app::hash_token(&crate::app::mint_token()),

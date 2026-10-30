@@ -25,6 +25,7 @@ fn spec(name: &str, revoked: bool) -> AppSpec {
         thread: THREAD.into(),
         kind: "event".into(),
         keys: vec!["commit".into(), "host".into(), "unit".into()],
+        operations: vec![],
         revoked,
     }
 }

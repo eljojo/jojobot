@@ -684,6 +684,7 @@ async fn the_stack_the_binary_builds_answers_what_the_layer_beneath_implements()
             thread: thread.to_string(),
             kind: "event".into(),
             keys: vec!["commit".into()],
+            operations: vec![],
             revoked: false,
         },
         &jojobot_domain::app::hash_token(&jojobot_domain::app::mint_token()),

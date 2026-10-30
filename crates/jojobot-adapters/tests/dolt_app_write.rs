@@ -76,6 +76,7 @@ fn principal() -> AppPrincipal {
             thread: "thread:deploys-alpha".into(),
             kind: "event".into(),
             keys: vec!["commit".into(), "host".into()],
+            operations: vec![],
             revoked: false,
         },
         &hash_token(&mint_token()),
