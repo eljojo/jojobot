@@ -261,6 +261,75 @@ pub async fn deploy_event(
     }
 }
 
+/// The path an app calls an operation at: the unstable tier.
+pub const UNSTABLE_PATH: &str = "/app/unstable/{operation}";
+
+/// **What the unstable route serves from**: the handler the write functions run
+/// on and the registry of operations. The route holds no code for any operation.
+pub struct UnstableOps {
+    pub handler: jojobot_mcp::Jojobot,
+    pub registry: jojobot_mcp::app_ops::Registry,
+}
+
+/// **Call one operation of the registry as the app.** The entry judges the call
+/// against the app's grant before anything is written, and the route only maps
+/// what it answers to a status.
+pub async fn unstable_operation(
+    State(state): State<AppState>,
+    axum::Extension(ops): axum::Extension<Arc<UnstableOps>>,
+    axum::Extension(app): axum::Extension<AppPrincipal>,
+    axum::extract::Path(operation): axum::extract::Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    use jojobot_mcp::app_ops::{Answer, Call};
+    let Some(entry) = ops.registry.get(&operation) else {
+        tracing::info!(app = %app.id, reason = "no such operation", "app call refused");
+        return answer(
+            StatusCode::NOT_FOUND,
+            json!({ "error": format!("there is no operation {operation:?}") }),
+        );
+    };
+    let stamp = jojobot_domain::app::AppStamp {
+        app: app.id.to_string(),
+        grant: operation.clone(),
+        received_at: state.clock.now().to_string(),
+    };
+    let app_id = app.id.clone();
+    let answered = entry
+        .run(Call {
+            handler: ops.handler.clone(),
+            app,
+            stamp,
+            body,
+        })
+        .await;
+    match answered {
+        Answer::Done(view) => {
+            tracing::info!(app = %app_id, operation, outcome = "done", "app call landed");
+            answer(StatusCode::OK, view)
+        }
+        Answer::Outside(why) => {
+            tracing::info!(app = %app_id, operation, reason = "outside the grant", "app call refused");
+            answer(StatusCode::FORBIDDEN, json!({ "error": why }))
+        }
+        Answer::Invalid(why) => {
+            tracing::info!(app = %app_id, operation, reason = "invalid", "app call refused");
+            answer(StatusCode::UNPROCESSABLE_ENTITY, json!({ "error": why }))
+        }
+        Answer::Refused(refusal) => {
+            tracing::info!(app = %app_id, operation, reason = "refused by the verb", "app call refused");
+            answer(StatusCode::CONFLICT, json!({ "refused": refusal }))
+        }
+        Answer::Unavailable(why) => {
+            tracing::warn!(app = %app_id, operation, error = %why, "app call not taken");
+            answer(
+                StatusCode::SERVICE_UNAVAILABLE,
+                json!({ "error": "the store could not take the call; send the same call again" }),
+            )
+        }
+    }
+}
+
 /// **What `jojobot app-token` prints**: a fresh token and its hash. It touches no
 /// store. The operator puts the hash in the secret the module reads and gives the
 /// token to the app.

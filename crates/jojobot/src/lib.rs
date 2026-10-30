@@ -120,7 +120,29 @@ pub fn build_app_serving(
     ct: CancellationToken,
     skills: &'static [jojobot_mcp::orientation::skills::Skill],
 ) -> Router {
-    build_app_with(state, ct, skills, None)
+    build_app_with(
+        state,
+        ct,
+        skills,
+        None,
+        jojobot_mcp::app_ops::Registry::shipped(),
+    )
+}
+
+/// [`build_app`] serving the unstable tier from `registry`, **for tests**: an entry
+/// added to it is served at `/app/unstable/NAME` with no other change.
+pub fn build_app_operating(
+    state: AppState,
+    ct: CancellationToken,
+    registry: jojobot_mcp::app_ops::Registry,
+) -> Router {
+    build_app_with(
+        state,
+        ct,
+        jojobot_mcp::orientation::skills::SKILLS,
+        None,
+        registry,
+    )
 }
 
 /// [`build_app`] ending every `subscriptions/listen` after `budget`, **for
@@ -135,6 +157,7 @@ pub fn build_app_listening(
         ct,
         jojobot_mcp::orientation::skills::SKILLS,
         Some(budget),
+        jojobot_mcp::app_ops::Registry::shipped(),
     )
 }
 
@@ -143,6 +166,7 @@ fn build_app_with(
     ct: CancellationToken,
     skills: &'static [jojobot_mcp::orientation::skills::Skill],
     listen_budget: Option<std::time::Duration>,
+    operations: jojobot_mcp::app_ops::Registry,
 ) -> Router {
     // The transport guards against DNS rebinding by only accepting loopback
     // `Host` headers by default. Behind a TLS-terminating tunnel the inbound
@@ -179,35 +203,41 @@ fn build_app_with(
     let clock = state.clock;
     let quiet_after = state.quiet_after;
     let observer = state.metrics.clone();
+    // **One way to build a handler**, for a session and for an app's call.
+    let make_handler = move || {
+        let handler = Jojobot::new(
+            memory.clone(),
+            search.clone(),
+            mailboxes.clone(),
+            sessions.clone(),
+            teachings.clone(),
+            registry.clone(),
+        )
+        .on_clock(clock)
+        .with_skills(skills)
+        .quiet_after_unless_default(quiet_after);
+        let handler = match listen_budget {
+            Some(budget) => handler.listening_for(budget),
+            None => handler,
+        };
+        let handler = match &observer {
+            Some(observer) => handler.with_call_observer(observer.clone()),
+            None => handler,
+        };
+        match &requests {
+            Some(requests) => handler.with_requests(requests.clone()),
+            None => handler,
+        }
+    };
+    let app_ops = Arc::new(app_api::UnstableOps {
+        handler: make_handler(),
+        registry: operations,
+    });
     let mcp = StreamableHttpService::new(
         // **One handler per MCP session, and that is what makes the connection
         // binding a connection binding**: the factory runs per connect, so a
         // session bound here belongs to this client and evaporates with it.
-        move || {
-            let handler = Jojobot::new(
-                memory.clone(),
-                search.clone(),
-                mailboxes.clone(),
-                sessions.clone(),
-                teachings.clone(),
-                registry.clone(),
-            )
-            .on_clock(clock)
-            .with_skills(skills)
-            .quiet_after_unless_default(quiet_after);
-            let handler = match listen_budget {
-                Some(budget) => handler.listening_for(budget),
-                None => handler,
-            };
-            let handler = match &observer {
-                Some(observer) => handler.with_call_observer(observer.clone()),
-                None => handler,
-            };
-            Ok(match &requests {
-                Some(requests) => handler.with_requests(requests.clone()),
-                None => handler,
-            })
-        },
+        move || Ok(make_handler()),
         LocalSessionManager::default().into(),
         server_config,
     );
@@ -316,10 +346,16 @@ fn build_app_with(
     // **The app route exists only when an app is registered.** It sits outside
     // the UI's GET catch-all and behind its own gate.
     if !state.apps.is_empty() {
-        let mut app_router = Router::new().route(
-            app_api::DEPLOY_EVENTS_PATH,
-            axum::routing::post(app_api::deploy_event),
-        );
+        let mut app_router = Router::new()
+            .route(
+                app_api::DEPLOY_EVENTS_PATH,
+                axum::routing::post(app_api::deploy_event),
+            )
+            .route(
+                app_api::UNSTABLE_PATH,
+                axum::routing::post(app_api::unstable_operation),
+            )
+            .route_layer(axum::Extension(app_ops));
         // **Inside the gate**, because the gate is what names the app.
         if let Some(metrics) = &state.metrics {
             app_router = app_router.route_layer(axum::middleware::from_fn_with_state(

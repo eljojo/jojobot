@@ -19,19 +19,9 @@ use serde::Deserialize;
 use super::{AppError, AppPrincipal, key_never_granted, key_shape_ok};
 use crate::memory::EntityKind;
 
-/// **The operations the unstable tier serves**, in the order the registry lists
-/// them. An app can be granted all of them but `set_charter`.
-pub const OPERATIONS: [&str; 5] = [
-    "recall",
-    "capture",
-    "add_entity",
-    "post_message",
-    "set_charter",
-];
-
 /// The arguments an app may send to `capture`. Everything else is refused: a
 /// tick, a check-in, a drop and the claim's labels are a bot's.
-const CAPTURE_ARGS: [&str; 8] = [
+const CAPTURE_ARGS: [&str; 7] = [
     "subject",
     "content",
     "details",
@@ -39,11 +29,10 @@ const CAPTURE_ARGS: [&str; 8] = [
     "happened_at",
     "happened_through",
     "sets",
-    "request_id",
 ];
 
 /// The arguments an app may send to `add_entity`.
-const ADD_ENTITY_ARGS: [&str; 6] = ["kind", "handle", "name", "source", "sets", "request_id"];
+const ADD_ENTITY_ARGS: [&str; 5] = ["kind", "handle", "name", "source", "sets"];
 
 /// The arguments an app may send to `post_message`.
 const POST_MESSAGE_ARGS: [&str; 3] = ["to", "body", "subject"];
@@ -89,10 +78,11 @@ pub(super) fn grants_from_specs(
                     .into(),
             ));
         }
-        if !OPERATIONS.contains(&name) {
+        // **Whether the registry serves it is the server's check at start**, which
+        // knows the registry; this one reads only that the name is a plain one.
+        if !key_shape_ok(name) {
             return Err(named(format!(
-                "the operation {name:?} is not one an app can be granted; the ones are {}",
-                OPERATIONS.join(", ")
+                "the operation {name:?} is not a plain operation name"
             )));
         }
         if grants.iter().any(|g| g.operation == name) {
@@ -363,7 +353,7 @@ mod tests {
             op("capture", &[], &["k"]),
             op("capture", &["role"], &["runs_out"]),
             op("recall", &["role"], &[]),
-            op("dance", &[], &[]),
+            op("Dance!", &[], &[]),
         ] {
             assert!(
                 AppPrincipal::from_spec(&spec(vec![bad.clone()]), &hash).is_err(),

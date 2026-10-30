@@ -13,6 +13,7 @@ test-adoption_frozen
 test-adoption_room
 test-agency_room
 test-app_api
+test-app_api_unstable
 test-arbiter
 test-argument_coverage
 test-asking_room

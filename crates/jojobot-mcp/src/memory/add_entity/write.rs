@@ -18,6 +18,15 @@ pub(crate) struct Added {
 }
 
 impl Added {
+    /// **What an app is served of a creation**, never the receipt a bot reads.
+    pub(crate) fn view(&self) -> crate::app_ops::AddedView {
+        crate::app_ops::AddedView {
+            handle: self.entity.id.to_string(),
+            first_claim: self.first_claim.as_ref().map(|f| f.address().to_string()),
+            fold_behind: self.fold_behind.is_some(),
+        }
+    }
+
     #[cfg(any(test, feature = "room-harness"))]
     pub(crate) fn complete(&self) -> bool {
         !self.opened.failed

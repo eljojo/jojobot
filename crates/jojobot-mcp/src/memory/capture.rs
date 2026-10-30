@@ -542,6 +542,17 @@ pub(crate) struct Captured {
     check_in_dates_disagree: bool,
     _placing: Option<tokio::sync::OwnedMutexGuard<()>>,
 }
+impl Captured {
+    /// **What an app is served of a capture**, never the receipt a bot reads.
+    pub(crate) fn view(&self) -> crate::app_ops::CapturedView {
+        crate::app_ops::CapturedView {
+            address: self.captured.address().to_string(),
+            subject: self.captured.subject.to_string(),
+            recorded_at: self.captured.recorded_at.to_string(),
+            fold_behind: self.fold_behind.is_some(),
+        }
+    }
+}
 struct Declared {
     subject: String,
     provenance: Option<String>,

@@ -30,6 +30,7 @@
 use std::sync::Arc;
 
 mod answer;
+pub mod app_ops;
 mod arguments;
 mod beat;
 mod boundary;

@@ -14,7 +14,7 @@ pub(crate) struct MessageWrite {
 
 pub(crate) struct Recipient {
     pub(super) addressee: EntityId,
-    pub(super) to_the_operator: bool,
+    pub(crate) to_the_operator: bool,
     pub(super) fold: Option<folded::Fold>,
 }
 
