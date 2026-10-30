@@ -355,7 +355,7 @@ fn read_item(answered: &CallToolResult) -> Item {
             .split_once(NOTHING_MISSING)
             .map_or(said, |(reason, _)| reason);
         let why = reason
-            .trim_start_matches("invalid fact: ")
+            .trim_start_matches("bad claim: ")
             .trim_end()
             .trim_end_matches('.')
             .to_string();
@@ -1415,3 +1415,5 @@ mod capacity_cases;
 mod due_cases;
 #[cfg(test)]
 mod notes_cases;
+#[cfg(test)]
+mod refusal_cases;
