@@ -1,13 +1,15 @@
 use super::*;
 use jojobot_domain::memory::kinds::NotAKind;
 
-/// The text of each paragraph of a page. A page puts a view's refusal in one, and
-/// the form that echoes the address is not one, so a needle found here was said as
-/// the refusal and not echoed.
+/// The text of each paragraph of a page that holds no form control. A page puts a
+/// view's refusal in a paragraph, and the view's form echoes each entered value
+/// inside a paragraph of its own (`<input value=…>`), so a needle found here was
+/// said as the refusal and not echoed.
 fn paragraphs(page: &str) -> impl Iterator<Item = &str> {
     page.split("<p>")
         .skip(1)
         .filter_map(|rest| rest.split_once("</p>").map(|(text, _)| text))
+        .filter(|text| !text.contains("<input"))
 }
 
 /// **A view whose `selects` is blank is refused on its page, as the verb refuses
