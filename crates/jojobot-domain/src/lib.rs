@@ -5,6 +5,7 @@
 //! and the ports its adapters implement, so the compiler and the tests hold
 //! the method that used to live in prose.
 
+pub mod actor;
 pub mod app;
 pub mod attention;
 pub mod challenge;
