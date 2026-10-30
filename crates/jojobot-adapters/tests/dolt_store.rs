@@ -7449,6 +7449,61 @@ async fn dolt_lists_a_child_of_a_folded_row_under_the_thing_the_fold_meant() {
     store.stop().await;
 }
 
+/// **A fold and a rename are ordered as moments, and a moment that cannot be read
+/// orders nothing.** The "before" fold of the heir scenes is restamped twice, in
+/// the shape an older build left it. A stamp's fractional digits vary in length, so
+/// the text `...:00Z` sorts after `...:00.2Z` though it is the earlier moment. The
+/// fold at `...:00Z` came before the rename at `...:00.2Z`, so the child stays with
+/// the survivor; ordered as text it would go to the new thing that took the handle.
+/// A rename stamp that is no moment at all leaves the fold unplaceable, so the child
+/// stays under the folded thing; an unreadable stamp read as the epoch would place
+/// it with the new thing.
+#[tokio::test]
+async fn dolt_orders_a_fold_by_moments_and_leaves_an_unreadable_moment_alone() {
+    let scratch = Scratch::new("heir-moments");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "heir_moments")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let memory = DoltMemory::open(pool.clone());
+    children_of_folds_that_name_a_worn_handle(&memory, &pool).await;
+    let (folded, moved, child) = (
+        heir_handle("before", "folded"),
+        heir_handle("before", "moved"),
+        heir_handle("before", "child"),
+    );
+    let parent_of_child = || async {
+        memory
+            .scan_entity(&child)
+            .await
+            .expect("the document reads")
+            .expect("the child has a document")
+            .entity
+            .expect("a document of a thing holds the thing")
+            .parent
+    };
+
+    stamp_writes(&pool, &folded, "2026-09-05T00:00:00Z").await;
+    stamp_writes(&pool, &moved, "2026-09-05T00:00:00.2Z").await;
+    assert_eq!(
+        parent_of_child().await.as_ref(),
+        Some(&moved),
+        "a fold made before the rename is served with the survivor, though its text sorts after"
+    );
+
+    stamp_writes(&pool, &moved, "not a moment").await;
+    assert_eq!(
+        parent_of_child().await.as_ref(),
+        Some(&folded),
+        "a rename with no readable moment places nothing"
+    );
+    store.stop().await;
+}
+
 /// **A forwarding row the store cannot place is warned about once per process,
 /// whichever path meets it.** The row is the "at one moment" shape: a fold and a
 /// rename the stamps cannot order. The listing, a document read and a rename sweep
