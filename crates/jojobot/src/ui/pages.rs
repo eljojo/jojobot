@@ -1947,11 +1947,16 @@ pub(crate) async fn instance_fields(
         None,
     );
     match queries.ask(question).await {
-        Ok(answer) => Ok(answer
-            .selected
-            .subject_object(&record)
-            .map(|object| object.fields)
-            .unwrap_or_default()),
+        // **A record whose scan failed is unreadable, never an instance that
+        // mapped nothing** (rule 130): the walk keeps the failure beside the answer.
+        Ok(answer) => match graph::unreadable_scan(&answer.selected) {
+            Some(err) => Err(err),
+            None => Ok(answer
+                .selected
+                .subject_object(&record)
+                .map(|object| object.fields)
+                .unwrap_or_default()),
+        },
         Err(
             jojobot_query_api::Failed::Selection(MemoryError::UnknownEntity { .. })
             | jojobot_query_api::Failed::Readiness(MemoryError::UnknownEntity { .. }),

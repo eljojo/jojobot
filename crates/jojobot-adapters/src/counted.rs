@@ -508,6 +508,18 @@ impl Memory for Counted {
     }
     async fn scan_entity(&self, entity: &EntityId) -> Result<Option<DocScan>, MemoryError> {
         self.hit("scan_entity");
+        // **A scan carries the folded fields**, so a store that cannot read a
+        // handle's fields cannot hand its scan either: the double lies where a
+        // reader that takes fields from the scan would meet the same failure.
+        if self
+            .fields_down_for
+            .lock()
+            .expect("count lock")
+            .as_deref()
+            .is_some_and(|down| down == entity.as_str())
+        {
+            return Err(MemoryError::Store("the fields cannot be read".into()));
+        }
         self.inner.scan_entity(entity).await
     }
     async fn has_prose(&self, entity: &EntityId) -> Result<bool, MemoryError> {

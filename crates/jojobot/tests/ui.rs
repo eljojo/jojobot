@@ -7446,7 +7446,16 @@ async fn a_page_that_maps_status_words_says_when_the_instance_record_cannot_be_r
     let due_page = page("/view:due/").await;
     assert!(!due_page.contains(words), "{due_page}");
 
-    // The record cannot be read: both say so.
+    // The record cannot be read: both say so. A record nobody wrote cannot be
+    // unreadable, so it is written first.
+    counted
+        .add_entity(NewEntity::new(
+            EntityId("topic:instance".into()),
+            "The instance",
+            "the fixture roster",
+        ))
+        .await
+        .expect("the instance record is written");
     counted.fail_fields_of(Some("topic:instance"));
     let board_page = page("/project:atlas/").await;
     assert!(board_page.contains(words), "{board_page}");
