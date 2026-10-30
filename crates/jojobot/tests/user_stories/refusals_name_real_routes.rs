@@ -228,10 +228,20 @@ async fn capture_and_update_fact_publish_no_override_while_no_refusal_of_theirs_
             );
         }
     }
-    s.refused(
-        "capture",
-        json!({"subject": "bot:gamma", "content": "a note", "provenance": "inference",
-               "override_token": "t", "override_reason": "r"}),
-    )
-    .await;
+    let call = json!({"subject": "bot:gamma", "content": "a note", "provenance": "inference"});
+    let mut with_override = call.clone();
+    with_override["override_token"] = json!("t");
+    with_override["override_reason"] = json!("r");
+    let refused = s.refused("capture", with_override).await;
+    // Refused for the argument, and for nothing else: the same call without it
+    // lands and reads back.
+    assert_eq!(
+        refused.json()["refusal_code"],
+        "UnknownArgument",
+        "{}",
+        refused.raw()
+    );
+    refused.says("override_token");
+    s.call("capture", call).await;
+    s.recall("bot:gamma").await.says("a note");
 }
