@@ -70,8 +70,12 @@ type FlightKey = (EntityId, String);
 pub(crate) const FLIGHT_WAIT: std::time::Duration = if cfg!(test) {
     std::time::Duration::from_millis(500)
 } else {
-    std::time::Duration::from_secs(30)
+    PRODUCTION_FLIGHT_WAIT
 };
+
+/// **The wait a running server uses**, a named value so a case can pin it: the
+/// unit cases run on the short one above and prove only that a bound exists.
+pub(crate) const PRODUCTION_FLIGHT_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// The turn of an id was still held when [`FLIGHT_WAIT`] ran out.
 #[derive(Debug)]
@@ -762,5 +766,20 @@ mod dispatch_tests {
             ),
             "once the first call left, the same id runs"
         );
+    }
+}
+
+#[cfg(test)]
+mod production_wait_tests {
+    use super::*;
+
+    /// **The wait a running server holds a resend for is thirty seconds.** The
+    /// cases above run on a short wait and prove that a bound exists; this pins
+    /// the value a deployed server uses, which nothing outside this process
+    /// declares, so a change to it is a change a reader sees here.
+    #[test]
+    fn the_wait_a_running_server_uses_is_thirty_seconds() {
+        assert_eq!(PRODUCTION_FLIGHT_WAIT, std::time::Duration::from_secs(30));
+        assert!(FLIGHT_WAIT <= PRODUCTION_FLIGHT_WAIT);
     }
 }

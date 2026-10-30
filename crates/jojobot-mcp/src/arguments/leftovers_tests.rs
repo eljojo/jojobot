@@ -46,3 +46,49 @@ async fn leftovers_subject_lists_are_not_taught_as_a_scalar_subject() {
     );
     assert!(jojobot.unimplemented_arguments(&accepted).is_none());
 }
+
+/// **A call that sends an override argument to a verb that no longer publishes
+/// it is refused as an unknown argument**, naming the argument. Each argument is
+/// sent alone, so the refusal is for that one and a verb that still published
+/// the other could not carry the case. Paired with the verbs that still publish
+/// both, which take them.
+#[tokio::test]
+async fn leftovers_an_override_argument_is_refused_where_it_is_not_published() {
+    let jojobot = handler();
+    let sent = |verb: &str, argument: &str| {
+        CallToolRequestParams::new(verb.to_string())
+            .with_arguments(json!({ argument: "x" }).as_object().unwrap().clone())
+    };
+    for verb in ["capture", "update_fact"] {
+        for argument in ["override_token", "override_reason"] {
+            let body = json_of(
+                &jojobot
+                    .unimplemented_arguments(&sent(verb, argument))
+                    .unwrap_or_else(|| panic!("{verb} took {argument}")),
+            );
+            assert_eq!(body["refusal_code"], "UnknownArgument", "{verb}: {body}");
+            assert_eq!(body["wrote"], false, "{verb}: {body}");
+            assert!(
+                body["how_to_proceed"]
+                    .as_str()
+                    .is_some_and(|how| how.contains(argument)),
+                "{verb} {argument}: {body}"
+            );
+        }
+    }
+    for verb in [
+        "add_entity",
+        "update_entity",
+        "rename_entity",
+        "declare_type",
+    ] {
+        for argument in ["override_token", "override_reason"] {
+            assert!(
+                jojobot
+                    .unimplemented_arguments(&sent(verb, argument))
+                    .is_none(),
+                "{verb} no longer publishes {argument}"
+            );
+        }
+    }
+}
