@@ -554,7 +554,7 @@ impl Jojobot {
         };
         match self
             .post_message_write(
-                &caller.bot,
+                &jojobot_domain::actor::Actor::Bot(caller.bot.clone()),
                 args,
                 &recipient,
                 destination,

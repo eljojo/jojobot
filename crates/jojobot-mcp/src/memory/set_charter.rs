@@ -4,6 +4,7 @@
 //! and an entrypoint that chains the systems below it.
 
 use super::*;
+use jojobot_domain::actor::Actor;
 
 /// Arguments to `set_charter`.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -95,7 +96,12 @@ impl Jojobot {
             before,
             reads,
         } = match self
-            .set_charter_write(&caller.bot, &bot, &args.prose, Some(caller.sid.as_str()))
+            .set_charter_write(
+                &Actor::Bot(caller.bot.clone()),
+                &bot,
+                &args.prose,
+                Some(caller.sid.as_str()),
+            )
             .await?
         {
             Ok(written) => written,
@@ -148,11 +154,20 @@ pub(crate) struct WrittenCharter {
 impl Jojobot {
     pub(crate) async fn set_charter_write(
         &self,
-        author: &EntityId,
+        actor: &Actor,
         bot: &EntityId,
         prose: &str,
         by_session: Option<&str>,
     ) -> Result<Result<WrittenCharter, CallToolResult>, McpError> {
+        // **A charter is a bot's to rewrite and the operator's.** An app is
+        // granted none, and the operator and the system write none here yet.
+        let Actor::Bot(author) = actor else {
+            return memory_declined(
+                "set_charter",
+                MemoryError::InvalidFact("this actor does not write charters".into()),
+            )
+            .map(Err);
+        };
         // **A charter is part of what a boot cannot cut**, so it is held to
         // the ceiling where it is written, as a star is — see
         // [`Jojobot::refuses_a_boot_floor_for_charter`].

@@ -1,6 +1,7 @@
 //! Creation decisions shared by the MCP handler and room furniture.
 
 use super::*;
+use jojobot_domain::actor::Actor;
 
 pub(crate) struct Added {
     pub(super) entity: Entity,
@@ -26,12 +27,21 @@ impl Added {
 impl Jojobot {
     pub(crate) async fn add_entity_write(
         &self,
-        author: &EntityId,
+        actor: &Actor,
         args: AddEntityArgs,
         day: jiff::civil::Date,
         by_session: Option<&str>,
         declared_near: Option<&str>,
     ) -> Result<Result<Added, CallToolResult>, McpError> {
+        // **The operator and the system create nothing here yet**, so the write
+        // fails closed rather than file a thing under no actor.
+        if matches!(actor, Actor::Operator | Actor::System) {
+            return memory_declined(
+                "add_entity",
+                MemoryError::InvalidFact("this actor does not create things yet".into()),
+            )
+            .map(Err);
+        }
         let retry = declared_near.map(|near| (args.clone(), near));
         // **What this write could not work out for want of the instance record**,
         // named on the receipt.
@@ -113,7 +123,8 @@ impl Jojobot {
                 Err(e) => return memory_declined("add_entity", e).map(Err),
             };
             (
-                (!sets.is_empty() || self.review_stamp(author).is_some()).then_some(sets),
+                (!sets.is_empty() || actor.bot().and_then(|a| self.review_stamp(a)).is_some())
+                    .then_some(sets),
                 dropped,
             )
         };
@@ -153,14 +164,15 @@ impl Jojobot {
                         claim_words,
                         recorded_at,
                     );
-                    if let Some(refused) = self
-                        .refuses_a_boot_floor_for_creation(
-                            &bare,
-                            &entity_as_it_will_be(&new),
-                            author,
-                            &floor_reads,
-                        )
-                        .await
+                    if let Some(author) = actor.bot()
+                        && let Some(refused) = self
+                            .refuses_a_boot_floor_for_creation(
+                                &bare,
+                                &entity_as_it_will_be(&new),
+                                author,
+                                &floor_reads,
+                            )
+                            .await
                     {
                         return memory_declined("add_entity", refused).map(Err);
                     }
@@ -224,9 +236,11 @@ impl Jojobot {
                 // **A guarded key is licensed here as on a capture**, through
                 // the same call: the store's combined write takes no caller, so
                 // this is the only place a creation's `sets` is judged.
-                if let Some(refused) = self
-                    .refuses_an_unlicensed_key("add_entity", &creating, false, author, &fields)
-                    .await?
+                // An app's keys were judged by `permit` before this write ran.
+                if let Some(author) = actor.bot()
+                    && let Some(refused) = self
+                        .refuses_an_unlicensed_key("add_entity", &creating, false, author, &fields)
+                        .await?
                 {
                     return Ok(Err(refused));
                 }
@@ -280,7 +294,7 @@ impl Jojobot {
                 }
                 // **The stamp of a write by defrag**, a key on the new thing riding
                 // its first claim, as it rides every other write by defrag.
-                if let Some((key, moment)) = self.review_stamp(author) {
+                if let Some((key, moment)) = actor.bot().and_then(|a| self.review_stamp(a)) {
                     fields.insert(key.clone(), moment);
                     derived.insert(key);
                 }
@@ -300,7 +314,8 @@ impl Jojobot {
                     // later rewrite of the claim is judged against that run.
                     session: by_session.map(str::to_string),
                     // Scenario furniture has no run from which to read its author.
-                    written_by_bot: by_session.is_none().then(|| author.clone()),
+                    written_by_bot: by_session.is_none().then(|| actor.bot().cloned()).flatten(),
+                    app_stamp: actor.app_stamp().cloned(),
                     // **A bot is born with the record of the notes it was told**, as a
                     // record of the engine's own beside the caller's claim, in the
                     // same act (rule 130).
@@ -329,9 +344,10 @@ impl Jojobot {
                 // exist** once the creation commits: the same check a capture
                 // makes, with the entity the boot would name.
                 let creating = entity_as_it_will_be(&new);
-                if let Some(refused) = self
-                    .refuses_a_boot_floor_for_creation(&first, &creating, author, &floor_reads)
-                    .await
+                if let Some(author) = actor.bot()
+                    && let Some(refused) = self
+                        .refuses_a_boot_floor_for_creation(&first, &creating, author, &floor_reads)
+                        .await
                 {
                     return memory_declined("add_entity", refused).map(Err);
                 }
@@ -393,7 +409,7 @@ impl Jojobot {
             retry.override_reason = Some(format!(
                 "The scenario declares {creating} and {near} to be distinct things."
             ));
-            return Box::pin(self.add_entity_write(author, retry, day, by_session, None)).await;
+            return Box::pin(self.add_entity_write(actor, retry, day, by_session, None)).await;
         }
         let refused = match added {
             Guarded::Written(entity) => {

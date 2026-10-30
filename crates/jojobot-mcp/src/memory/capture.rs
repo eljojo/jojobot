@@ -7,6 +7,7 @@
 
 use std::collections::BTreeMap;
 
+use jojobot_domain::actor::Actor;
 use jojobot_domain::attention;
 use jojobot_domain::memory::graph;
 
@@ -858,7 +859,7 @@ impl Jojobot {
             _placing,
         } = match self
             .capture_write(
-                &caller.bot,
+                &Actor::Bot(caller.bot.clone()),
                 writing_args,
                 day,
                 Some(caller.sid.as_str()),
@@ -1052,13 +1053,22 @@ impl Jojobot {
     /// session accounting belongs to the handler that resolved them.
     pub(crate) async fn capture_write(
         &self,
-        author: &EntityId,
+        actor: &Actor,
         args: CaptureArgs,
         day: jiff::civil::Date,
         by_session: Option<&str>,
         mode: &Mode,
         working_on: Option<&crate::caller::Caller>,
     ) -> Result<Result<Captured, CallToolResult>, McpError> {
+        // **The operator and the system write nothing here yet**, so the write
+        // fails closed rather than file a claim under no actor.
+        if matches!(actor, Actor::Operator | Actor::System) {
+            return memory_declined(
+                "capture",
+                MemoryError::InvalidFact("this actor does not write claims yet".into()),
+            )
+            .map(Err);
+        }
         // **What this write could not work out for want of the instance record**,
         // named on the receipt.
         let unread = super::instance_unread::InstanceUnread::default();
@@ -1197,9 +1207,11 @@ impl Jojobot {
         // **A guarded key is written only by whom its declaration licenses.**
         // Checked before anything else about this write, on the caller's own
         // identity against the subject it is about to write.
-        if let Some(refused) = self
-            .refuses_an_unlicensed_key("capture", &subject, true, author, &fields)
-            .await?
+        // An app's keys were judged by `permit` before this write ran.
+        if let Some(author) = actor.bot()
+            && let Some(refused) = self
+                .refuses_an_unlicensed_key("capture", &subject, true, author, &fields)
+                .await?
         {
             return Ok(Err(refused));
         }
@@ -1267,7 +1279,7 @@ impl Jojobot {
         }
         // **A write by defrag stamps the thing in the same act.** One computed
         // key on the thing, riding this record, so no record is added for it.
-        if let Some((key, moment)) = self.review_stamp(author) {
+        if let Some((key, moment)) = actor.bot().and_then(|author| self.review_stamp(author)) {
             fields.insert(key.clone(), moment);
             derived.insert(key);
         }
@@ -1496,7 +1508,7 @@ impl Jojobot {
             .filter(|_| opened_the_loop)
             .cloned();
         let mut new = NewFact {
-            app_stamp: None,
+            app_stamp: actor.app_stamp().cloned(),
             subject,
             content: args.content,
             details: args.details,
@@ -1529,7 +1541,7 @@ impl Jojobot {
             borrow: args.borrow.unwrap_or(false),
             aged_before,
             session: by_session.map(str::to_string),
-            written_by_bot: Some(author.clone()),
+            written_by_bot: actor.bot().cloned(),
             sets: set_keys,
             derived,
             also_written: Vec::new(),
@@ -1543,9 +1555,10 @@ impl Jojobot {
         // **A star or a seat count that would take the bot's boot over its
         // ceiling is refused here**, before anything lands — see
         // `refuses_a_boot_floor_over`.
-        if let Some(refused) = self
-            .refuses_a_boot_floor_for_capture(&new, author, &reads)
-            .await
+        if let Some(author) = actor.bot()
+            && let Some(refused) = self
+                .refuses_a_boot_floor_for_capture(&new, author, &reads)
+                .await
         {
             return memory_declined("capture", refused).map(Err);
         }
@@ -1632,7 +1645,7 @@ impl Jojobot {
                 )));
             }
         };
-        let schedule_behind = if let Some(schedule) = &schedule {
+        let schedule_behind = if let (Some(schedule), Some(author)) = (&schedule, actor.bot()) {
             match self
                 .write_check_in_schedule(&captured, schedule, author, by_session)
                 .await
@@ -1657,6 +1670,7 @@ impl Jojobot {
                 .await;
         }
         if clears_due_on
+            && let Some(author) = actor.bot()
             && let Some(unfinished) = self
                 .ends_what_is_owed_or_defers(mode, &captured.subject, author, by_session)
                 .await

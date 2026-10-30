@@ -34,6 +34,7 @@ impl Harness {
             return Err(format!("the scenario's author {author} does not exist"));
         }
         let count = writes.len();
+        let actor = jojobot_domain::actor::Actor::Bot(author.clone());
         for write in writes {
             let (verb, args, charter) = match write {
                 SeedWrite::AsTheOccupant(verb, args) => (verb, args, None),
@@ -93,7 +94,7 @@ impl Harness {
                     let near = args["declared_near"].as_str().map(str::to_string);
                     let added = accepted(
                         self.handler
-                            .add_entity_write(&author, decode(args)?, day, None, near.as_deref())
+                            .add_entity_write(&actor, decode(args)?, day, None, near.as_deref())
                             .await
                             .map_err(err)?,
                     )?;
@@ -107,7 +108,7 @@ impl Harness {
                     accepted(
                         self.handler
                             .capture_write(
-                                &author,
+                                &actor,
                                 decode(args)?,
                                 day,
                                 None,
@@ -139,7 +140,7 @@ impl Harness {
                     accepted(
                         self.handler
                             .post_message_write(
-                                &author,
+                                &actor,
                                 args,
                                 &recipient,
                                 destination,
@@ -155,7 +156,7 @@ impl Harness {
                 let bot = crate::memory::parse::bot_id(&handle).map_err(err)?;
                 accepted(
                     self.handler
-                        .set_charter_write(&author, &bot, &charter, None)
+                        .set_charter_write(&actor, &bot, &charter, None)
                         .await
                         .map_err(err)?,
                 )?;

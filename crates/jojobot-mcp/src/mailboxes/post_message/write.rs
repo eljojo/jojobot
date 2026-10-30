@@ -1,6 +1,7 @@
 //! Message decisions shared by the MCP handler and account-free room furniture.
 
 use super::*;
+use jojobot_domain::actor::Actor;
 
 #[derive(serde::Deserialize)]
 pub(crate) struct MessageWrite {
@@ -95,12 +96,20 @@ impl Jojobot {
 
     pub(crate) async fn post_message_write(
         &self,
-        author: &EntityId,
+        actor: &Actor,
         args: MessageWrite,
         recipient: &Recipient,
         destination: MailboxName,
         audit: MessageAudit,
     ) -> Result<Result<Message, CallToolResult>, McpError> {
+        // **Only a bot and an app send mail yet.** The operator and the system
+        // have no spelling to send under, so the write fails closed.
+        let Some(sender) = actor.sender() else {
+            return mailbox_declined(MailboxError::InvalidMessage(
+                "this actor does not send messages yet".into(),
+            ))
+            .map(Err);
+        };
         let to_the_operator = recipient.to_the_operator;
         let supersedes = args
             .supersedes
@@ -124,7 +133,7 @@ impl Jojobot {
             mailbox: destination,
             body,
             subject: args.subject,
-            sender: author.as_str().to_string(),
+            sender,
             // Stamped here, at the edge, for the same reason `capture` stamps a
             // date here: the domain stays clock-free, and a caller does not get
             // to backdate a message it is posting now.
