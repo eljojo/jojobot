@@ -163,8 +163,8 @@ fn mail_coverage(query: &SearchQuery, coverage: Coverage) -> serde_json::Value {
     // out of the index; the chart scope further narrows the bot boxes,
     // and "searched: true" alone read as "no message says that" even for the
     // operator's. Said on every answer that did search mail.
-    let never = "a person's box, the operator's, is never searched: no search finds mail left \
-                 for the operator";
+    let never = "mail left for the operator, and mail in a box above or beside you on the \
+                 reports_to chart, is never searched";
     if let Some(left_out) = MailExcluded::of(query) {
         return excluded(left_out.note());
     }
@@ -1365,7 +1365,7 @@ mod tests {
     /// mail field names the exclusion beside the coverage, and a search that did
     /// not ask for mail carries no such claim, since it searched none.
     #[tokio::test]
-    async fn a_mail_search_says_the_operators_box_is_never_searched() {
+    async fn a_mail_search_says_which_boxes_it_never_searches() {
         let ask = |include_mail: bool| SearchArgs {
             query: Some("kiln".into()),
             include_mail: Some(include_mail),
@@ -1382,6 +1382,10 @@ mod tests {
             .as_str()
             .unwrap_or_else(|| panic!("the exclusion is named: {with_mail}"));
         assert!(note.contains("operator"), "names whose box: {note}");
+        assert!(
+            note.contains("reports_to"),
+            "names the chart that keeps other mail out: {note}"
+        );
         assert!(
             !note.contains('\n') && !note.contains("  "),
             "one line: {note:?}"
