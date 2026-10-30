@@ -223,6 +223,10 @@ pub struct Incomplete {
     pub phase: String,
     /// When the limit resets, in the CLI's own words, when it said.
     pub reset: Option<String>,
+    /// **Set when the run stopped because a harness read failed**, rather than
+    /// because of a limit: the failure, naming the read. `named` and `reset` then
+    /// say nothing.
+    pub failed_read: Option<String>,
 }
 
 /// **Whether one phase's own result means the run stops here** — pure, and
@@ -240,7 +244,49 @@ fn stops_the_run(hit_limit: Option<UsageLimit>, phase: &str) -> Option<Incomplet
         named: limit.named,
         phase: phase.to_string(),
         reset: limit.reset,
+        failed_read: None,
     })
+}
+
+/// **The run stopped because a harness read failed.** A paid run must still
+/// return the transcript it kept, so the failure ends the run as incomplete
+/// and says which read failed.
+fn read_failed(phase: &str, failure: String) -> Incomplete {
+    Incomplete {
+        named: "harness read",
+        phase: phase.to_string(),
+        reset: None,
+        failed_read: Some(failure),
+    }
+}
+
+/// **Run a future, and turn the panic of a failed harness read into its
+/// message.** `require_observation` panics so that no lock can read an empty
+/// room; this is the one place that catches it. Any other panic goes on.
+async fn catching<T>(future: impl std::future::Future<Output = T>) -> Result<T, String> {
+    use std::task::Poll;
+    let mut future = std::pin::pin!(future);
+    std::future::poll_fn(|cx| {
+        let polled =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| future.as_mut().poll(cx)));
+        match polled {
+            Ok(Poll::Pending) => Poll::Pending,
+            Ok(Poll::Ready(value)) => Poll::Ready(Ok(value)),
+            Err(payload) => {
+                let text = payload
+                    .downcast_ref::<String>()
+                    .map(String::as_str)
+                    .or_else(|| payload.downcast_ref::<&str>().copied());
+                match text {
+                    Some(text) if text.starts_with(crate::surface::OBSERVATION_FAILED) => {
+                        Poll::Ready(Err(text.to_string()))
+                    }
+                    _ => std::panic::resume_unwind(payload),
+                }
+            }
+        }
+    })
+    .await
 }
 
 /// **Whether a lock sits at or after the phase that hit the limit.** A lock
@@ -830,7 +876,21 @@ impl Results {
             out,
             "\n── results ─────────────────────────────────────────────────"
         );
-        if let Some(incomplete) = &self.incomplete {
+        if let Some(failure) = self
+            .incomplete
+            .as_ref()
+            .and_then(|cut| cut.failed_read.as_ref())
+        {
+            let _ = writeln!(
+                out,
+                "\nINCOMPLETE: a harness read failed in {} and the run stopped there: {failure}. \
+                 The transcript above is what the run kept. Nothing below is a verdict for a \
+                 lock that needed that read, or any later one.",
+                self.incomplete
+                    .as_ref()
+                    .map_or("", |cut| cut.phase.as_str()),
+            );
+        } else if let Some(incomplete) = &self.incomplete {
             let _ = writeln!(
                 out,
                 "\nINCOMPLETE: the agent hit the plan's {} in {}{} and no later phase was \
@@ -1087,7 +1147,13 @@ pub async fn go(
         // Taken after every phase and named for the one that comes next, so a
         // claim about a change has both sides of its boundary.
         let asked = phase_end_queries(expectations, phase_key(&phase.name));
-        boundaries.push(boundary_asking(&surface, &named[at + 1], &asked).await);
+        match catching(boundary_asking(&surface, &named[at + 1], &asked)).await {
+            Ok(taken) => boundaries.push(taken),
+            Err(failure) => {
+                incomplete = Some(read_failed(&phase.name, failure));
+                break;
+            }
+        }
         // **Stop launching sittings, not the run.** This phase's own effects
         // are already recorded above; what a limit forbids is spending on a
         // NEXT one the agent has no runway left to answer. Pure, so the
@@ -1107,14 +1173,22 @@ pub async fn go(
         boundaries: &boundaries,
     };
     let mut outcomes = Vec::new();
-    for expectation in expectations {
-        outcomes.push(expectation.check(&seen).await);
-    }
-    // **Generated, and deliberately not part of what covers a phase.** A
-    // sitting whose only assertion is the one this run wrote for it is a
-    // sitting nobody wrote a lock for, and it must still read as uncovered.
-    for generated in days_claimed(playbook) {
-        outcomes.push(generated.check(&seen).await);
+    let graded = catching(async {
+        for expectation in expectations {
+            outcomes.push(expectation.check(&seen).await);
+        }
+        // **Generated, and deliberately not part of what covers a phase.** A
+        // sitting whose only assertion is the one this run wrote for it is a
+        // sitting nobody wrote a lock for, and it must still read as uncovered.
+        for generated in days_claimed(playbook) {
+            outcomes.push(generated.check(&seen).await);
+        }
+    })
+    .await;
+    // A lock whose read failed has no verdict, and a phase name that places no
+    // lock leaves every lock unjudged.
+    if let (Err(failure), None) = (graded, &incomplete) {
+        incomplete = Some(read_failed("the locks", failure));
     }
 
     let uncovered = uncovered_phases(playbook, expectations);
@@ -2029,6 +2103,7 @@ mod tests {
             named: "usage limit",
             phase: "Phase 1 — the room".to_string(),
             reset: Some("2:40pm".to_string()),
+            failed_read: None,
         });
         assert!(
             !cut_short.held(),

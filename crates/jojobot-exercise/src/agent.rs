@@ -501,7 +501,7 @@ mod tests {
     }
 
     #[test]
-    fn room_harness_token_is_absent_from_the_occupant_environment() {
+    fn room_harness_token_is_not_inherited_by_the_occupant() {
         let mut invocation = running("true", &[]);
         invocation
             .env
@@ -512,7 +512,7 @@ mod tests {
                 .as_std()
                 .get_envs()
                 .any(|(key, value)| { key == "JOJOBOT_ROOM_HARNESS_TOKEN" && value.is_none() }),
-            "the occupant must explicitly discard the grader credential"
+            "the occupant must not inherit the grader credential; this does not stop it reading the credential elsewhere"
         );
     }
 

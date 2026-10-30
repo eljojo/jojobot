@@ -298,3 +298,105 @@ async fn a_lock_from_before_the_limit_still_reads_failed_and_later_ones_read_not
         "a lock after the limit must read not run: {rendered}"
     );
 }
+
+/// A lock whose read of the room fails: the verb is one the room does not
+/// serve, so the grader route answers 400. It asks at the end of a phase when
+/// `ending` names one, and otherwise when the locks are judged.
+struct ReadsWhatTheRoomDoesNotServe {
+    ending: Option<&'static str>,
+}
+
+#[async_trait::async_trait]
+impl Expectation for ReadsWhatTheRoomDoesNotServe {
+    fn name(&self) -> &str {
+        "a lock whose read fails"
+    }
+
+    fn phase_end_query(&self) -> Option<(String, String, String)> {
+        self.ending.map(|phase| {
+            (
+                phase.to_string(),
+                "no_such_verb".to_string(),
+                "{}".to_string(),
+            )
+        })
+    }
+
+    async fn check(&self, seen: &Observed<'_>) -> Outcome {
+        if self.ending.is_none() {
+            seen.room.read("no_such_verb", serde_json::json!({})).await;
+        }
+        Outcome {
+            name: self.name().to_string(),
+            held: true,
+            applies: true,
+            refused: false,
+            saying: "the read answered".to_string(),
+        }
+    }
+}
+
+/// **A harness read that fails ends the run as incomplete and keeps the
+/// transcript**, instead of unwinding out of the run and losing the sittings
+/// already paid for. Two sites read the room: the boundary after each phase and
+/// the locks at the end; each has its own catch.
+async fn run_with_a_failing_read(ending: Option<&'static str>) -> (Results, usize) {
+    run_failing_at_judged_by(
+        99,
+        LIMIT_WORDS,
+        vec![Box::new(ReadsWhatTheRoomDoesNotServe { ending })],
+    )
+    .await
+}
+
+fn assert_read_failure_is_kept(results: &Results, phase: &str) {
+    let incomplete = results
+        .incomplete
+        .as_ref()
+        .expect("a failed read says the run did not finish");
+    assert!(
+        incomplete.phase.starts_with(phase),
+        "the run names where it stopped: {}",
+        incomplete.phase,
+    );
+    let failure = incomplete
+        .failed_read
+        .as_deref()
+        .expect("the incomplete run names the read that failed");
+    assert!(
+        failure.contains("no_such_verb"),
+        "the failure does not name the read: {failure}"
+    );
+    assert!(!results.held(), "a run whose read failed must never hold");
+    let verdict = incomplete_line(&results.rendered(None));
+    assert!(
+        verdict.contains("no_such_verb"),
+        "the verdict line does not name the read: {verdict}"
+    );
+}
+
+#[tokio::test]
+async fn a_read_that_fails_after_a_sitting_ends_the_run_and_keeps_the_transcript() {
+    let (results, launched) = run_with_a_failing_read(Some("Phase 2")).await;
+    assert_eq!(
+        launched, 2,
+        "the sitting after the failed read was launched"
+    );
+    assert_eq!(
+        results.transcript.len(),
+        2,
+        "the sittings already run are kept"
+    );
+    assert_read_failure_is_kept(&results, "Phase 2");
+}
+
+#[tokio::test]
+async fn a_read_that_fails_while_the_locks_are_judged_keeps_the_transcript() {
+    let (results, launched) = run_with_a_failing_read(None).await;
+    assert_eq!(
+        launched, 3,
+        "every sitting ran before the locks were judged"
+    );
+    assert_eq!(results.transcript.len(), 3, "the sittings are kept");
+    assert_read_failure_is_kept(&results, "the locks");
+}

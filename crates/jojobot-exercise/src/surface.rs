@@ -133,7 +133,8 @@ impl Surface {
     pub async fn read(&self, verb: &str, arguments: Value) -> String {
         require_observation(
             self.harness_request(json!({"operation":"read", "verb":verb, "arguments":arguments}))
-                .await,
+                .await
+                .with_context(|| format!("the {verb} read")),
         )
         .to_string()
     }
@@ -170,9 +171,14 @@ impl Surface {
     }
 }
 
+/// What a failed harness read panics with. `run::go` catches a panic that starts
+/// with it, and lets any other panic through.
+pub(crate) const OBSERVATION_FAILED: &str = "room harness observation failed";
+
 pub(crate) fn require_observation(result: Result<Value>) -> Value {
-    // A failed read is no evidence that a negative lock's object is absent.
-    result.unwrap_or_else(|error| panic!("room harness observation failed: {error:#}"))
+    // A failed read is no evidence that a negative lock's object is absent, so it
+    // is a signal and never a value; `run::go` catches it once.
+    result.unwrap_or_else(|error| panic!("{OBSERVATION_FAILED}: {error:#}"))
 }
 
 /// **What a room is furnished with before a run starts.**
