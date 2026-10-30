@@ -147,8 +147,9 @@ jobs:
       # A branch's first push, a dispatch and a rewritten branch name no commit
       # this checkout holds, and the bar then falls back to the merge base with
       # `main`.
-      # A red sibling cancels this job (scripts/stop-with-siblings); this job keeps
-      # its own status when it is the one that failed.
+      # A red sibling stops this job as failed (scripts/stop-with-siblings), with a
+      # line naming the sibling and exit code 75; the run is not cancelled. This job
+      # keeps its own status when it is the one that failed.
       - name: Last deployed store
         if: ${{ steps.plan.outputs.fast != 'true' }}
         run: scripts/stop-with-siblings nix develop -c python3 scripts/prepare-upgrade-fixture
