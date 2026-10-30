@@ -79,6 +79,12 @@ const LOCKS: usize = 47;
 /// **The sittings a person reads**, which assert nothing and must not.
 const READ_THESE: [&str; 1] = ["Phase 12"];
 
+/// **A sitting marked to be read that a lock still asserts over.** The mark drops
+/// the generated assertion that some record carries the sitting's day, which
+/// December cannot meet because nothing is owed that day; the lock on the loop's
+/// next due day stays.
+const READ_BUT_LOCKED: [&str; 1] = ["Phase 14"];
+
 /// The document a run is driven by.
 fn room_document() -> Playbook {
     let path = expectations::room_document(expectations::YEAR_ROOM);
@@ -2626,9 +2632,19 @@ fn the_sittings_a_person_reads_are_marked_and_every_other_one_is_locked() {
         .collect();
     assert_eq!(
         read_this.len(),
-        READ_THESE.len(),
+        READ_THESE.len() + READ_BUT_LOCKED.len(),
         "the sittings marked to be read are {read_this:?}",
     );
+    for key in READ_BUT_LOCKED {
+        assert!(
+            read_this.iter().any(|name| name.starts_with(key)),
+            "{key} is not marked to be read: {read_this:?}",
+        );
+        assert!(
+            !unasserted.iter().any(|name| name.starts_with(key)),
+            "{key} no longer has a lock over it: {unasserted:?}",
+        );
+    }
     for key in READ_THESE {
         assert!(
             read_this.iter().any(|name| name.starts_with(key)),
@@ -2973,9 +2989,10 @@ async fn decembers_lock_fails_when_novembers_service_was_never_recorded() {
 async fn decembers_lock_fails_when_the_loop_was_done_again_after_november() {
     let (_room, surface) = furnished().await;
     let boundaries = worked_the_year(&surface).await;
-    // A later day than the worked year's last sitting, so that sitting has gone
-    // quiet in this run's frame when this one boots.
-    let dec = sitting(&surface, "2026-12-16").await;
+    // A later day than the worked year's last sitting (26 December), so that
+    // sitting has gone quiet in this run's frame when this one boots. The check-in
+    // below names its own day, so the boot day does not move the date it records.
+    let dec = sitting(&surface, "2027-01-05").await;
     did(
         &surface,
         &dec,
