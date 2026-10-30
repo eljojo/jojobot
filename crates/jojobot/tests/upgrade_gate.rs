@@ -1827,6 +1827,20 @@ async fn assert_every_recorded_record_reads_back(
         fail("the role-claim fields", &read);
     }
 
+    // **A mail search names its caller**: an anonymous call reads no bot's
+    // mail, and the assistant sees the boxes below it on the chart.
+    let booted = surface
+        .call(
+            "start_here",
+            json!({"bot": "assistant", "brief": true, "resume": "new"}),
+        )
+        .await;
+    let booted: serde_json::Value =
+        serde_json::from_str(&booted).unwrap_or_else(|_| fail("booting to verify", &booted));
+    let sid = booted["session"]["sid"]
+        .as_str()
+        .unwrap_or_else(|| fail("booting to verify", &booted.to_string()));
+
     // Mail in each of its three states — read through search, since a
     // message this binary did not send is invisible to list_sent, and
     // read_mailbox drains only the caller's own live box.
@@ -1838,7 +1852,7 @@ async fn assert_every_recorded_record_reads_back(
         let read = surface
             .call(
                 "search",
-                json!({"query": needle, "include_mail": true, "limit": 5}),
+                json!({"query": needle, "include_mail": true, "limit": 5, "sid": sid}),
             )
             .await;
         // **The state rides on the hit as its own key**: the state word is a
@@ -1860,17 +1874,6 @@ async fn assert_every_recorded_record_reads_back(
 
     // The wrapped session — `list_runs` is the direct read on a bot's own
     // runs and their state, attributed to the caller's own sid.
-    let booted = surface
-        .call(
-            "start_here",
-            json!({"bot": "assistant", "brief": true, "resume": "new"}),
-        )
-        .await;
-    let booted: serde_json::Value =
-        serde_json::from_str(&booted).unwrap_or_else(|_| fail("booting to verify", &booted));
-    let sid = booted["session"]["sid"]
-        .as_str()
-        .unwrap_or_else(|| fail("booting to verify", &booted.to_string()));
     let read = surface
         .call("list_runs", json!({"sid": sid, "limit": 30}))
         .await;
