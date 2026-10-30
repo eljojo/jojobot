@@ -139,11 +139,39 @@ async fn a_refused_edges_names_update_fact_for_a_move_and_not_put_document() {
         "{named:?}"
     );
 
+    // The document reads title first, then the opening, before the move.
+    let order = |markdown: &str| {
+        (
+            markdown.find("# Fryer manual").expect("the title is there"),
+            markdown.find("## Opening").expect("the opening is there"),
+        )
+    };
+    let before = s
+        .call("read_document", json!({"document": "document:homer"}))
+        .await
+        .json();
+    let (title, opening) = order(before["markdown"].as_str().expect("markdown"));
+    assert!(title < opening, "{before}");
+
     let moved = s
         .call("update_fact", json!({"address": held[0], "after": held[1]}))
         .await
         .json();
     assert!(moved.get("changed").is_some(), "{moved}");
+    // What a later read returns is the proof: the title section now comes
+    // behind the opening, and no text was lost.
+    let after = s
+        .call("read_document", json!({"document": "document:homer"}))
+        .await
+        .json();
+    let markdown = after["markdown"].as_str().expect("markdown");
+    let (title, opening) = order(markdown);
+    assert!(opening < title, "{after}");
+    assert!(
+        markdown.contains("Read this before the first shift.")
+            && markdown.contains("Switch the fryer on at six."),
+        "{after}"
+    );
 }
 
 /// **A key a served answer carries is named in the text of the verb that
