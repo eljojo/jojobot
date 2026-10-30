@@ -163,8 +163,8 @@ fn mail_coverage(query: &SearchQuery, coverage: Coverage) -> serde_json::Value {
     // out of the index; the chart scope further narrows the bot boxes,
     // and "searched: true" alone read as "no message says that" even for the
     // operator's. Said on every answer that did search mail.
-    let never = "mail left for the operator, and mail in a box above or beside you on the \
-                 reports_to chart, is never searched";
+    let never = "mail left for the operator, and other senders' mail in a box above or beside \
+                 you on the reports_to chart, is never searched";
     if let Some(left_out) = MailExcluded::of(query) {
         return excluded(left_out.note());
     }
@@ -1385,6 +1385,10 @@ mod tests {
         assert!(
             note.contains("reports_to"),
             "names the chart that keeps other mail out: {note}"
+        );
+        assert!(
+            note.contains("senders"),
+            "scopes the chart's exclusion to mail somebody else sent: {note}"
         );
         assert!(
             !note.contains('\n') && !note.contains("  "),
