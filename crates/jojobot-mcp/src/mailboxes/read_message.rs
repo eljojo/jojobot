@@ -148,11 +148,8 @@ impl Jojobot {
         // even a new message stays new, with no delivery event or obligation.
         if peek && let Some(message) = &readable {
             let mut rendered = message_json(message);
-            if upward && let Some(fields) = rendered.as_object_mut() {
-                // Eliding is never silent: the answer says the notes were left out.
-                if fields.remove("notes").is_some_and(|notes| !notes.is_null()) {
-                    fields.insert("notes_withheld".into(), true.into());
-                }
+            if upward {
+                withhold_notes(&mut rendered);
             }
             rendered["seen_before"] = (message.state != mailbox::MessageState::New).into();
             rendered["taken"] = false.into();

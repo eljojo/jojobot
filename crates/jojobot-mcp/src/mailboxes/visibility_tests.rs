@@ -298,6 +298,14 @@ async fn mail_visible_an_upward_author_read_leaves_out_the_recipients_notes() {
             "{authored}"
         );
     }
+    // The outbox is the same read: the author lists the message, notes left out.
+    for bodies in [false, true] {
+        let listed = sent(&jojobot, &lisa, "bot:lisa", bodies).await;
+        let text = listed.to_string();
+        assert!(text.contains("chartneedle") || !bodies, "{listed}");
+        assert!(!text.contains("recipient only"), "{listed}");
+        assert!(text.contains("notes_withheld"), "{listed}");
+    }
 }
 
 async fn sent(jojobot: &Jojobot, sid: &str, sender: &str, bodies: bool) -> serde_json::Value {

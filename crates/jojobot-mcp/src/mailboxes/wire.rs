@@ -250,6 +250,17 @@ pub(crate) fn message_json(message: &Message) -> serde_json::Value {
     rendered
 }
 
+/// **Take the recipient's notes off a message an author reads in a box above
+/// its own** (rule 139: never up). Eliding is never silent: the message says
+/// `notes_withheld` when it had notes to leave out.
+pub(crate) fn withhold_notes(rendered: &mut serde_json::Value) {
+    if let Some(fields) = rendered.as_object_mut()
+        && fields.remove("notes").is_some_and(|notes| !notes.is_null())
+    {
+        fields.insert("notes_withheld".into(), true.into());
+    }
+}
+
 /// A message **without its body shipped back** — the whole record otherwise,
 /// plus enough of the body to recognize which message this is.
 ///
