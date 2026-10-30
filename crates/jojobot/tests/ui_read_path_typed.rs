@@ -148,6 +148,31 @@ async fn a_threads_decisions_come_with_the_pages_one_answer() {
         fact.sets = ["number".to_string()].into();
         memory.inner.capture(fact).await.unwrap();
     }
+    let mut replaced = NewEntity::new(
+        EntityId("decision:paint-cream".into()),
+        "decision:paint-cream",
+        "the fixture roster",
+    );
+    replaced.parent = Some(thread.clone());
+    memory.inner.add_entity(replaced).await.unwrap();
+    memory
+        .inner
+        .capture(NewFact::about(
+            EntityId("decision:paint-cream".into()),
+            "The walls are cream",
+            day,
+        ))
+        .await
+        .unwrap();
+    memory
+        .inner
+        .archive_entity(
+            &EntityId("decision:paint-cream".into()),
+            "replaced by a later choice",
+            None,
+        )
+        .await
+        .unwrap();
     let board = seeded_board_over(memory.clone()).await;
     let idp = support::TestIdp::new();
     let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
@@ -171,10 +196,55 @@ async fn a_threads_decisions_come_with_the_pages_one_answer() {
         list.find("The bridge is oak").expect("decision 10 is said"),
     );
     assert!(roof < bridge, "number order, not handle order: {list}");
-    assert_eq!(
-        memory.reads.load(Ordering::SeqCst),
-        3 * 2,
-        "the answer reads each decision's claims three times and the page adds none"
+    assert!(
+        !page.contains("walls are cream"),
+        "a replaced decision stands nowhere"
     );
+    // **The page adds no read of its own.** The answer's passes read the claims of
+    // each of the thread's three decisions (two standing, one replaced) three
+    // times; the old page code added one read per standing decision to that.
+    // The number is the answer's, so it moves when a pass is added.
+    assert_eq!(memory.reads.load(Ordering::SeqCst), 3 * 3);
+    ct.cancel();
+}
+
+/// **A topic's page leads with the decisions it holds**, from the same answer a
+/// thread's page does.
+#[tokio::test]
+async fn a_topics_standing_decision_comes_with_the_pages_one_answer() {
+    let memory = seeded_memory().await;
+    let day = jiff::civil::Date::constant(2026, 3, 10);
+    let mut new = NewEntity::new(
+        EntityId("decision:cabinets-oak".into()),
+        "decision:cabinets-oak",
+        "the fixture roster",
+    );
+    new.parent = Some(EntityId("topic:widgets".into()));
+    memory.add_entity(new).await.unwrap();
+    memory
+        .capture(NewFact::about(
+            EntityId("decision:cabinets-oak".into()),
+            "The cabinets are oak",
+            day,
+        ))
+        .await
+        .unwrap();
+    let board = seeded_board_over(memory.clone()).await;
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct, _) =
+        support::ui_board::spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+    let page = read(&client, addr, "/person:alpha/topic:widgets/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    let list = page
+        .split("id=\"decisions\"")
+        .nth(1)
+        .unwrap_or_else(|| panic!("the topic's page lists its decisions: {page}"));
+    assert!(list.contains("The cabinets are oak"), "{list}");
     ct.cancel();
 }
