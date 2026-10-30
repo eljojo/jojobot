@@ -1151,12 +1151,7 @@ fn run_dev(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
     );
 
     let started = std::time::Instant::now();
-    let (ok, text) = run_phase(
-        &log_path,
-        "cargo build --workspace --locked",
-        &cargo,
-        &["build", "--workspace", "--locked"],
-    )?;
+    let (ok, text) = room_server::for_tests(&log_path, &cargo, true)?;
     let took = started.elapsed();
     if !ok {
         let verdict = summarize_test_output(&text);

@@ -258,6 +258,25 @@ fn a_change_in_bar_runs_only_bar() {
     let _ = fs::remove_dir_all(&repo);
 }
 
+/// **A dev run builds the binary a room spawns with its grader route.** A room
+/// test spawns the server, and a build without the feature answers its grader
+/// calls with 404.
+#[test]
+fn a_dev_run_builds_the_room_harness_binary() {
+    let repo = repository();
+    fs::write(repo.join("crates/jojobot-bar/src/lib.rs"), "// changed\n").expect("edit");
+    let ran = dev(&repo);
+    assert_eq!(ran.exit, Some(0), "{}", ran.stdout);
+    assert!(
+        ran.calls
+            .iter()
+            .any(|c| c == "build --workspace --locked --features=jojobot/room-harness"),
+        "{:?}",
+        ran.calls
+    );
+    let _ = fs::remove_dir_all(&repo);
+}
+
 /// **The lint phase covers the packages the test phase selected, in one call.**
 /// A change in the bar's own package selects the bar alone, so one `-p` names it;
 /// a change in the domain selects the domain and what depends on it, and the
