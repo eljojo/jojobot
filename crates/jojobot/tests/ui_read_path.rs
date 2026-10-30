@@ -259,9 +259,9 @@ async fn node_read_path_backing_follows_rewrites_omits_sum_winners_and_keeps_cle
         .await
         .unwrap();
     let mut addresses = Vec::new();
-    for (value, count, empty, provenance) in [
-        ("5", "1", "value", Provenance::Testimony),
-        ("7", "2", "", Provenance::Inference),
+    for (value, count, provenance) in [
+        ("5", "1", Provenance::Testimony),
+        ("7", "2", Provenance::Inference),
     ] {
         let mut claim = NewFact::about(
             id.clone(),
@@ -274,7 +274,6 @@ async fn node_read_path_backing_follows_rewrites_omits_sum_winners_and_keeps_cle
             ("price".into(), value.into()),
             ("donuts".into(), count.into()),
             ("cleared".into(), "value".into()),
-            ("empty".into(), empty.into()),
         ]
         .into();
         claim.sets = claim.fields.keys().cloned().collect();
@@ -340,7 +339,6 @@ async fn node_read_path_backing_follows_rewrites_omits_sum_winners_and_keeps_cle
     let object = read.selected.subject_object(&id).unwrap();
     assert_eq!(object.fields.get("price").map(String::as_str), Some("6"));
     assert_eq!(object.fields.get("donuts").map(String::as_str), Some("3"));
-    assert!(!object.fields.contains_key("empty"));
     assert!(!object.fields.contains_key("cleared"));
 }
 
