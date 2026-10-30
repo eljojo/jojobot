@@ -41,10 +41,13 @@ failed_sibling() {
         done
 }
 stopped_by=$(mktemp)
-# Its own process group, so a stop reaches make, cargo and the test binaries below
-# the command and not only the command itself.
-setsid env -u TOKEN "$@" &
+# Its own process group (job control gives each background job one; setsid is not
+# on every runner's PATH), so a stop reaches the programs the command started and
+# not only the command itself.
+set -m
+env -u TOKEN "$@" &
 child=$!
+set +m
 if [ -n "${GITHUB_API_URL:-}" ] && [ -n "${GITHUB_RUN_ID:-}" ]; then
     (
         while sleep "${STOP_POLL_SECONDS:-15}"; do
