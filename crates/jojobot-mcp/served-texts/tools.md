@@ -155,7 +155,7 @@ that layer addresses things. One reference, no space and no comma.
 ```text
 The slug half of the handle (`[a-z0-9-]+`), or a full `kind:slug` id
 whose kind must match `kind`. The handle is the name this entity is
-addressed by, and the only name a caller ever sends: every fact, message
+addressed by, and the only name a caller sends: every claim, message
 and journal beat that refers to it carries this string. Choose it with
 care.
 ```
@@ -218,11 +218,11 @@ for a world-fact belonging to no person, place or project; a thread
 belongs to somebody's life and is never the anchor of last resort.
 
 **A `decision` is what was decided on a thread**, a child of it: `parent`
-is the thread. Its words are an ordinary record on it, testimony when the
+is the thread. Its words are an ordinary claim on it, testimony when the
 operator decided. Reading the thread, or a topic that holds decisions, puts
 its standing decisions first, in number order when the container numbers
 them. A decision that changes is a new `decision` that names the old one in
-`replaces` and in a record's `derived_from`, and the old one is archived with
+`replaces` and in a claim's `derived_from`, and the old one is archived with
 the reason; reading the old one says `replaced_by` with the new words, and
 `standing_replacement` when that one was replaced too.
 
@@ -531,7 +531,7 @@ Every entity the call names — the subject, an edge's object, refs — must ALR
 A connection claim with your OWN bot handle as subject is a `thought`, capped in length (`thought_body_cap`, else 200 with `thought_capacity`) and in count (`thought_capacity`).
 In a full room a new thought needs `drop` with `drop_because`, or `borrow` once to land one over; a room over capacity takes none until you archive back under it.
 Another bot's such claim is ordinary and takes no seat.
-`record_capacity` caps any thing's live records; a THREAD holds 3 unless a bot above its writers sets it.
+`record_capacity` caps any thing's live claims; a THREAD holds 3 unless a bot above its writers sets it.
 On a `list`, `after` places an entry and `tick` marks one.
 `sets_add` and `sets_remove` change a list key by its items.
 A claim too big to read back whole is refused.
@@ -1000,11 +1000,11 @@ which swaps one in for one out and leaves the debt exactly where it
 was. Ignored wherever `drop` already lands the write, or the room is
 not at capacity to begin with.
 
-**A thread holds three live records unless a bot above its writers
+**A thread holds three live claims unless a bot above its writers
 sets `record_capacity` on it**, and a capture past that is refused
-with nothing written. The refusal names four routes: `rewrite` a record in place with
+with nothing written. The refusal names four routes: `rewrite` a claim in place with
 `update_fact`, `archive` one, `split` into a child thread, or move long
-text to a `document`. `borrow` lands one record over the ceiling, once.
+text to a `document`. `borrow` lands one claim over the ceiling, once.
 ```
 
 #### `capture` — argument `/inputSchema.check_in`
@@ -1016,7 +1016,7 @@ refused.
 
 **The difference between the three is whether the cycle is consumed.**
 `ran` happened. `skipped` did not happen and the cycle advances anyway,
-with the record saying plainly that it did not — which is what lets a
+with the claim saying plainly that it did not — which is what lets a
 skipped cycle be told from a completed one later. `snoozed` does NOT
 consume the cycle: it lasts until the day it names in `snoozed_until`,
 and the rhythm comes back then and is acted on again.
@@ -1095,8 +1095,8 @@ does.
 the last free slot in a thing's own room** — the capped set of live
 thoughts `thought_capacity` bounds; see `shape`, above, for what
 makes a claim one. `kind:slug#local-id`,
-exactly as `recall` serves one. Archived in the SAME act as this
-fact is written — never a separate call — because a drop with
+exactly as `recall` serves one. Archived in the SAME act as the
+claim lands — never a separate call — because a drop with
 nothing yet written in its place is a state the room must never
 reach. Ignored when the room this write would join is not full:
 naming one costs nothing until it is actually spent. Requires
@@ -1134,7 +1134,7 @@ with the same `request_id` writes the rest and none twice. Not beside
 #### `capture` — argument `/inputSchema.fields`
 
 ```text
-**The record's fields**, as a flat bag of key/value pairs — anything
+**The claim's fields**, as a flat bag of key/value pairs — anything
 worth recording about this claim beyond the sentence.
 
 Flat and free-form on purpose: jojobot stores what you put here, acts
@@ -1143,7 +1143,7 @@ exactly as you wrote it. **A value that is a handle, or an item of a
 comma list that is a handle, is a link and must name something that
 exists**; the loose items beside it stay text, and a handle inside a
 longer sentence is prose. **Nothing has to be declared first**, and no
-name for the class of thing is asked for: the fields ARE what the record
+name for the class of thing is asked for: the fields ARE what the claim
 says, and a type is something the keys answer rather than something you
 announce.
 
@@ -1186,7 +1186,7 @@ a different question from `recorded_at`, which is about the claim.
 ⛔️ **Leave it off unless you were told a day.** *Over the summer* is not
 a day: a claim that says nothing about when the thing happened is a
 complete claim, and approximating one puts a date nobody stated on a
-record that may carry the operator's own authority. **jojobot never
+claim that may carry the operator's own authority. **jojobot never
 fills this in.**
 ```
 
@@ -1255,13 +1255,13 @@ silently record under the wrong one by mistake.
 #### `capture` — argument `/inputSchema.refs`
 
 ```text
-The entities this record touches, as `kind:slug` — **each must already
+The entities this claim touches, as `kind:slug` — **each must already
 exist**, exactly as `subject` must.
 
 These are links whose MEANING is deliberately not recorded: the pointer
 is real and searchable, and what the connection was is left unsaid
 rather than guessed. That is why they are not `about` edges — `about`
-asserts the record is about that entity, and this only admits that it
+asserts the claim is about that entity, and this only admits that it
 touches it.
 ```
 
@@ -1283,8 +1283,8 @@ spends no id.
 **What this claim sets on its thing**, as key/value pairs: the keys that
 are properties of the thing the claim is about, apart from `fields`, which
 are the claim's own. One call records the claim and sets the thing. A key
-belongs to one of the two for as long as this record holds it, so a key
-named here and in `fields` is refused, and a key the record already holds
+belongs to one of the two for as long as this claim holds it, so a key
+named here and in `fields` is refused, and a key the claim already holds
 in the other is refused with the way to move it. A key that only labels
 the claim (`read_from`, `read_ref`, `starred`, `subject`, `purpose`,
 `recorded_by`) is never a property of the thing and is refused here by name.
@@ -1292,7 +1292,7 @@ The keys that make a thing fall due act on it only when sent here. A list
 key (`depends_on`) changes by its items with `sets_add` and `sets_remove`:
 its whole value sent here replaces what another session added. A key
 comes off the thing again with `update_fact`'s `clear_fields` on the
-record that carries it. Setting `status` to `now` on work your bot owns
+claim that carries it. Setting `status` to `now` on work your bot owns
 also points your bot's `working_on` at it.
 A write whose status words could not be read from `topic:instance` still lands, and its receipt carries `instance_unread`, naming under `not_worked_out` what it left undone. A note the receipt would have carried and a failed read kept from it is named the same way, under `reads_left`.
 
@@ -1333,7 +1333,7 @@ call, the removals are applied first.
 #### `capture` — argument `/inputSchema.shape`
 
 ```text
-The shape of the edge this fact draws: `location` (object is a place) ·
+The edge shape this claim draws: `location` (object is a place) ·
 `membership` (an org) · `attendance` (an event) · `about` (any kind) ·
 `connection` (any kind — a link is there and how it relates was not
 recorded). Requires `object`; neither works alone. Every read and write
@@ -1377,7 +1377,7 @@ Receipt: `success`, `id`, address, `derived` and warnings, read back from the st
 ```text
 **The day after which this reading stops being good**, `YYYY-MM-DD`.
 
-It is a fact about jojobot's knowledge rather than about the world: a
+It is a claim about jojobot's knowledge, not the world: a
 pass that runs out on a date is a claim about the world and belongs in
 the content. Past the day a read SAYS SO and **nothing else happens**:
 no sweep, no reminder, nobody is coming to check it.
@@ -1408,7 +1408,7 @@ standing to `settled`, which takes a `receipt`.
 #### `capture` — argument `/inputSchema.subject`
 
 ```text
-The entity the fact is about — any `kind:slug` id (a bare handle is read
+The entity the claim is on — any `kind:slug` id (a bare handle is read
 as a person), or `<collection>/<N>` for the member of a numbered
 collection holding the number N. **It must already exist**: a subject jojobot doesn't know
 comes back with candidates and nothing is written. Create it with
@@ -1419,7 +1419,7 @@ comes back with candidates and nothing is written. Create it with
 
 ```text
 **Tick an entry of a list**, instead of adding one: `{entry, act}`. The
-subject is the list. One record lands on the list naming the entry, the
+subject is the list. One claim lands on the list naming the entry, the
 act, the session and the day; the entry itself is never edited, so its
 words, author and provenance stay as they were. The list's own `tick`
 setting says what `done` does, and `recall` of the list serves the order
@@ -1442,7 +1442,7 @@ an entry that is not an active entry of the list.
 ```text
 **Tick many entries of a list in one call**, instead of `tick`: each item
 is `{entry, act}` exactly as `tick` takes one. The subject is the list.
-Each item is one tick record, as a single tick is, and each is judged
+Each item is one tick claim, as a single tick is, and each is judged
 against the list as the ticks before it in the batch leave it. One item that fails refuses
 the whole call, names it by its position and writes nothing: that includes
 a tick that changes nothing, such as `done` twice on one entry with no
@@ -1889,7 +1889,7 @@ List the entities jojobot knows, optionally narrowed to one kind and/or to one e
 Use it to orient, or as the cheap existence check before a write that must name an entity; use search when you are looking for something.
 `parent` never reaches a grandchild and never returns the whole subtree — one level at a time, the same way a tree is built one `parent` at a time; ask again with a child's own handle to go deeper.
 A `parent` naming nothing comes back blocked with candidates, never an empty list.
-Metadata only — no facts.
+Metadata only, no claims.
 Ordered by handle, and filled in that order under the answer ceiling: `not_shown` says how many entities came after the ones carried and the `offset` that reads on, and an `offset` past the last says so.
 An archived entity is excluded — recall it by its own handle to read it whole, including why and when it was archived, and call archive_entity with restore: true to bring it back.
 So is one that was merged into another (counted apart, as merged_excluded): its handle still answers, and says where it went.
@@ -2349,7 +2349,7 @@ refused.
 Merge a duplicate into the thing it duplicates — the repair for one thing named twice.
 A deliberate act rather than a flag on an edit, because there is no way back.
 The survivor answers for the duplicate's claims, the edges drawn at it, the history under its keys, and its names, listed as `foldedNames`; its prose stays behind.
-A dated record of the merge lands beside them.
+A dated claim of the merge lands beside them.
 NOTHING IS DELETED: the duplicate's handle keeps answering, so a handle written down anywhere still resolves, but a recall of it comes back with status merged, names the survivor in merged_into and holds nothing of its own.
 It does not answer as the survivor: recall the survivor to read everything.
 USE IT WHEN TWO HANDLES ARE ONE THING.
@@ -2446,8 +2446,8 @@ the one named, with update_fact, then merge again.
 ```text
 Why the two are one thing, in one line. Optional — worth giving: this is
 the one call that destroys structure, and an account of why is what
-makes it readable a year later. Left out, the record says plainly that
-no reason was given rather than inventing one. The dated record of the
+makes it readable a year later. Left out, the claim says plainly that
+no reason was given rather than inventing one. The dated claim of the
 merge names the handle that went and this reason.
 ```
 
@@ -2538,7 +2538,7 @@ stops looking like the one you booted on.
 
 ```text
 Leave a message for someone who is not in this conversation.
-`to` must come down to exactly one box jojobot can read: a bot by name or handle, or the operator by their person handle (`person:` and the slug; your first post or code request to them opens their box and no bot reads it back).
+`to` must come down to exactly one box jojobot can read: a bot by name or handle, or the operator by their person handle (`person:` and the slug; a first post or code request opens their box and no bot reads it back).
 A name no colleague answers to, or a colleague whose mail is missing or doubled, comes back status: blocked with nothing written, and the answer says which.
 A post to a folded bot goes to the bot it was folded into; the receipt's `folded` block says so.
 Give it a one-line `subject`, which a reader sees on a listing before opening anything.
@@ -2731,10 +2731,10 @@ hand over still succeeded.
 ```text
 Write a whole markdown file onto a document: it is split at its headings and every heading with what sits under it is stored as one claim on the document, in order, each with its own address, history and provenance.
 read_document returns the file byte for byte; update_fact edits one section and leaves the others untouched.
-A section too long for one record is cut at the last blank line, else line end, else character that fits, never inside a fenced block.
+A section too long for one claim is cut at the last blank line, else line end, else character that fits, never inside a fenced block.
 The document must already exist (add_entity, kind document).
 Onto a document with sections the call is refused unless it names `after`, a section's address, so an edited file put twice cannot double the text.
-`restore_to` (a day or an instant) instead of `markdown` puts the document back as `read_document` showed it then: a section that differs is edited back to its old wording; one archived since, or with testimony in either version, comes back as a new record that names the old one as what it derives from, and a standing one is archived; one made since is archived; over testimony it needs `confirmed_by_user`.
+`restore_to` (a day or an instant) instead of `markdown` puts the document back as `read_document` showed it then: a section that differs is edited back to its old wording; one archived since, or with testimony in either version, comes back as a new claim that names the old one as what it derives from, and a standing one is archived; one made since is archived; over testimony it needs `confirmed_by_user`.
 Every section's size and links are checked before any is written.
 Answers with a receipt, not the text.
 The receipt's `changed` lists changes, or is `nothing` or `not_read`.
@@ -2838,8 +2838,8 @@ A `request_id` makes a resend of a put finish the sections that did not land.
 **A section's address**, `document:homer#local-id`: write the new sections
 right after it. **Required when the document already has sections**, so
 that putting an edited file again cannot silently double the document.
-To change a section that is there, edit its record with `update_fact`;
-to take one away, archive its record.
+To change a section that is there, edit its claim with `update_fact`;
+to take one away, archive its claim.
 ```
 
 #### `put_document` — argument `/inputSchema.confirmed_by_user`
@@ -2864,8 +2864,8 @@ is its title.
 ```text
 **The whole markdown file**, as it should read back. It is split at its
 headings (`#` to `######`, not inside a fenced block of code) and each
-heading with what sits under it becomes one record on the document. A
-section too long for one record is cut into pieces that read back whole.
+heading with what sits under it becomes one claim on the document. A
+section too long for one claim is cut into pieces that read back whole.
 Reading it back with `read_document` returns these exact bytes.
 
 A `@kind:slug` outside a code span or fence links to a thing that exists
@@ -2895,7 +2895,7 @@ run is in.
 ```text
 **A name of your choosing for this write**, up to 128 bytes.
 **Send it on the first call of a put of `markdown`**, because a call sent
-without one cannot be repeated safely. The put is one record per section:
+without one cannot be repeated safely. The put is one claim per section:
 if an answer is lost or the store stops partway, send the same call again
 with the same `request_id` and the sections that landed are not written
 again and the rest are, in the places the first call chose. It needs a
@@ -2912,7 +2912,7 @@ file**: a day, `YYYY-MM-DD`, meaning the end of that day in your zone, or
 an instant. Send this OR `markdown`, never both; with this, `after` and
 `markdown` are not needed. A section that differs is edited back to its
 old wording. One archived since, or with testimony in either version,
-comes back as a new record that names the old one in `derived_from`, and
+comes back as a new claim that names the old one in `derived_from`, and
 a standing one is archived. A section made since is archived. History is
 never rewritten. Read the moment first with `read_document` and `as_of`.
 ```
@@ -3223,7 +3223,7 @@ The graph query: say the shape you want and get that shape back.
 Use it for a handle, a kind, a type or a key and its value; search is for words.
 THREE AXES COMBINE INTO ONE QUESTION.
 WHICH OBJECTS: subject (one handle or `<collection>/<N>`; a named handle that names nothing is blocked with the nearest), kind, parent, answers_type, fields (a key and the value it holds), where (one line over keys, status != done && owner = bot:gamma) or view (a question worked out, asked by name; start with one if it fits).
-A call that narrows nothing is refused: name one of subject, kind, parent, answers_type, fields, where, view, unreviewed or near, or a record's address (history_record, built_on).
+A call that narrows nothing is refused: name one of subject, kind, parent, answers_type, fields, where, view, unreviewed or near, or a claim's address (history_record, built_on).
 WHAT OF EACH: every object comes back as its FIELDS, what the thing HOLDS: every write on it folded, the newest write of each key winning (a snoozed rhythm also carries `snooze` {until, in_force}).
 facts, prose, charter, history, history_record, values, backing, stood_for and review_marks ask for more, each off by default, each saying what it left out; `keys` asks for less, list blocks too, and `record_keys` for less of each fact record (`records_narrowed` names what it hid; `fields_left_out` does for a view's shows_keys).
 A merged thing carries `foldedNames` and can carry `claims_left_out`: claims under a thing merged into it that it cannot serve, each with a reason and an address that history_record reads with no subject (records reads several).
@@ -3707,7 +3707,7 @@ The `follow` argument of a `recall` — which edges to walk, and how far.
 Leave both `shape` and `relation` unset and a walk also reaches a
 mention (an entity named in a claim's own words), a ref (an entity a
 claim touches with no claim about how) and a field link (an entity whose
-handle a record holds as a whole field value, or as an item of a comma
+handle a thing holds as a whole field value, or as an item of a comma
 list, under any key) — each
 labelled mention, ref or field, never as an edge. Naming a shape or a
 relation narrows to that alone: none has one.
@@ -3725,7 +3725,7 @@ Defaults to 1; 1 to 5 are accepted, and 0 or more than 5 is refused.
 ```text
 **Which end of the edge to leave by**, and it is two different
 questions. `out` (the default) follows the edges this object's own
-records draw — from a guest, the party they are attending. `in` follows
+claims draw — from a guest, the party they are attending. `in` follows
 the edges other objects draw AT this one — from the party, its guests.
 ```
 
@@ -3755,16 +3755,16 @@ by construction, so admitting partials would exclude nothing.
 selection takes, `scope` and all, applied at every hop rather than to
 the roots — so "this person's pets" narrows to "this person's pets born
 before a date". Omit to keep everything. An object kept by a `record`
-filter arrives carrying the records that answered; one kept by a filter
+filter arrives carrying the claims that answered; one kept by a filter
 asked of the thing arrives whole, because the fold answered and no
-record had to. An object reached and not kept leaves the object that
+claim had to. An object reached and not kept leaves the object that
 points at it marked as having edges nobody followed.
 
 **It also takes one expression**, the same line a call's `where` takes
 (see there): `status != done && owner = bot:gamma`. The expression is
 asked of what each reached thing holds now, and of nothing else: a
 `scope: record` sent beside it is refused. To keep what a walk reaches by
-one record, send `keeping` as a list of key filters, each with
+one claim, send `keeping` as a list of key filters, each with
 `scope: record`.
 ```
 
@@ -3778,7 +3778,7 @@ walkable by its name. A value that is a handle is a link under any key;
 an unscoped walk reaches it either way.
 
 **Name the key, and use `direction` to say which way.** `out` follows
-the key off this object's own records — from a pet, `owner` reaches the
+the key off this object's own fields — from a pet, `owner` reaches the
 person. `in` reaches every record pointing here through that key — from
 that person, `owner` reaches the pets.
 
@@ -3858,12 +3858,12 @@ back blocked.
 `thing` is the default: what the object HOLDS — the newest write of the
 key, or the total when the key was declared a counter. *Which friends
 have eaten three or more donuts* is this one, and it finds the friend
-with three separate records of one as readily as the friend with one
-record of three.
+with three separate claims of one as readily as the friend with one
+claim of three.
 
 `record` asks about the occasions instead: an object comes back when a
-single record of its answers every `record` filter, and it arrives
-carrying the records that answered. *Which visits cost more than fifty*
+single claim of its answers every `record` filter, and it arrives
+carrying the claims that answered. *Which visits cost more than fifty*
 is this one — it is about what happened, not about what anybody holds
 now, and no folding can answer it.
 
@@ -3873,7 +3873,7 @@ it with `scope: record`. A key sent in `sets` is held by the thing and is
 found by either scope.
 
 ⚠️ **The two scopes combine in one list, and every `record` filter must
-hold on the SAME record** — they describe a single record rather than a
+hold on the SAME claim** — they describe a single claim rather than a
 list of separate questions.
 ```
 
@@ -3903,7 +3903,7 @@ store already holds.
 
 ```text
 **Which clock to compare**: `recorded_on` — the day in a claim's
-`recorded_at`, the day it was made, the default — `taken_in`, the day jojobot took the record in, or
+`recorded_at`, the day it was made, the default — `taken_in`, the day jojobot took the claim in, or
 `happened_at`, the day the thing itself happened.
 
 ⚠️ **They answer different questions.** *What did Milhouse say back in
@@ -3911,11 +3911,11 @@ August* asks the first. *What was filed that week* asks the second.
 *What was going on around then* asks the third — the day on the claim,
 not the day it was said or filed.
 
-🚨 **A record with nothing on the chosen clock carries none**, so a
+🚨 **A claim with nothing on the chosen clock carries none**, so a
 read on that clock cannot place it. Those are counted in
 `near_unplaced` rather than dropped: an answer that shrank silently
 would be indistinguishable from a day with nothing around it. Every
-record carries a recorded day, so only `taken_in` and `happened_at`
+claim carries a recorded day, so only `taken_in` and `happened_at`
 can be unplaceable.
 ```
 
@@ -4005,7 +4005,7 @@ under it is in the empty answer. The first such answer in a session, under a
 type the software ships and with nothing else narrowing the read, also
 carries a teaching: reading again finds nothing, and what you worked out is
 kept by capturing under those keys. In `type_keys`, `required: true` marks a
-key the type counts as its floor and never means required to write: a record
+key the type counts as its floor and never means required to write: a thing
 that holds some of the keys is kept and found here, with what it lacks named.
 `fits_type` keeps only the things that hold every key, optional ones too.
 ```
@@ -4034,7 +4034,7 @@ once, in `fields_backing_notes`, under that claim.
 `kind:slug#local-id` — lineage walked from the source's end.
 
 A claim names what it rests on; this asks the other way, which is the
-question somebody has the moment a claim is taken back. **Records of
+question somebody has the moment a claim is taken back. **Claims of
 every status come back**, because a claim that was itself withdrawn is
 part of the answer to *what did we build on this*.
 
@@ -4065,29 +4065,29 @@ Objects that are not bots carry no charter at all.
 #### `recall` — argument `/inputSchema.details`
 
 ```text
-**Whether each record comes back with its details.** Off by default: a
-listing leads with each record's one-line claim, its address, provenance
+**Whether each claim comes back with its details.** Off by default: a
+listing leads with each claim's one-line text, its address, provenance
 and standing, and the details (the reasons under a claim) are a paragraph
 the reader has not asked for. An answer that left details out says once,
 in `details_left_out`, how many it left out, the addresses of the first twenty, and how to ask. Send `true` to
-read them. Applies to every record this call returns, `records` included.
+read them. Applies to every claim this call returns, `records` included.
 ```
 
 #### `recall` — argument `/inputSchema.facts`
 
 ```text
-Whether each object's records come back — the claims its fields were
+Whether each object's claims come back — those its fields were
 written in, each with its own wording, provenance and the address that
 edits it.
 
 **Off by default.** The fields are what a thing HOLDS and they come
-back always; the records say the same thing at length, and shipping every one
+back always; the claims say the same thing at length, and shipping every one
 of them unasked is the cost a caller cannot decline. Ask for them when
 you need a claim's own words, where it came from, or its address —
 and an answer that left them out says how many there were.
 
 **A claim written more than once says so.** `revised`/`revision_count`
-come back on any record that was rewritten — absent on one that was
+come back on any claim that was rewritten — absent on one that was
 not, exactly as `stale` is absent on a fresh claim — because two
 claims that were rewritten a different number of times otherwise read
 back identical. `history_record` on this same call is the door that
@@ -4095,19 +4095,19 @@ opens onto the earlier wording; the count only says the door is worth
 opening.
 
 **Who holds what comes back unasked** on a read that names no `keys`: every
-object carries a `held` block listing the records that point at it, best
+object carries a `held` block listing the claims that point at it, best
 first, each marked by its `liveness`: what admits somebody and is good on the
 day (`live`), what admits them and has lapsed (`lapsed`), and, only when
 nothing admits anybody, whatever else points here through a declared key
 (`related`). Each says who holds it (`holder`), what backs it (`provenance`)
 and how sure the operator was (`standing`). It says nothing about whether
 anybody may go, which is a judgement jojobot does not make; it is bounded,
-counts what it left out (`left_out`) and, for admitting records, names the
+counts what it left out (`left_out`) and, for admitting claims, names the
 walk that returns the rest. **A bot's own thoughts age
 quietly:** asking facts of a bot that carries thought_capacity adds a `room`
 block naming the capacity, how many thoughts count against it now and how
 many have gone quiet from being untouched too long (still there, marked
-aged_out on the fact, excluded from the count rather than hidden). The block
+aged_out on the claim, uncounted rather than hidden). The block
 names its threshold (`ages_after_runs`, and `ages_after_from` saying whether
 the bot's own thought_ages_after_runs gave it or the default did) and is
 sent when a thought has gone quiet or the room is over its capacity
@@ -4124,10 +4124,10 @@ value to ask only that the key is there.
 
 ⚠️ **Asked of the THING unless a filter says otherwise**, which is
 `scope` on the filter itself. Asked of the thing, a filter is answered
-by the FOLD — the newest write of the key — so a value some record of an
+by the FOLD — the newest write of the key — so a value some claim of an
 object still carries, and the object no longer holds, selects nothing.
 `scope: record` asks about the occasions instead, and **every `record`
-filter must hold on ONE record**: those describe a single record rather
+filter must hold on ONE claim**: those describe a single claim rather
 than separate questions.
 
 **Several filters asked of the thing must ALL hold on one thing.** The
@@ -4150,14 +4150,14 @@ with `keeping`). An object that draws edges the walk did not follow says so;
 an empty `connected` with no such note is an object with nothing beyond it.
 With `shape` and `relation` both unset a walk also reaches a MENTION (an
 entity named in a claim's own words), a REF (an entity a claim touches with
-no claim about how) and a FIELD LINK (an entity whose handle a record holds
+no claim about how) and a FIELD LINK (an entity whose handle a thing holds
 as a whole field value, or as an item of a comma list, under any key),
 each labelled mention, ref or field rather than as an edge; naming a shape
 or a relation answers only that. For one kind of thing, SELECT it (`kind`
 plus a `fields` filter on the key) rather than walking: traversal reaches,
 selection chooses. A key's declared value type licenses how you compare it
 (`before`/`after` on a date, `less`/`greater` on a number, `equals` on
-anything), and nothing is gated by a declaration: an undeclared record is
+anything), and nothing is gated by a declaration: an undeclared thing is
 still found by the keys it carries.
 ```
 
@@ -4168,7 +4168,7 @@ still found by the keys it carries.
 names keys carries, on each object, its handle, name, the keys asked and what
 the read computes, and says once, for the answer, what the objects left out.
 Who holds what points at an object (`held`) is one of those: send `held: true`
-to have it on each object, or `facts: true`, which reads the records the block
+to have it on each object, or `facts: true`, which reads the claims the block
 is made of. A read that names no keys carries `held` as it always did.
 ```
 
@@ -4176,8 +4176,8 @@ is made of. A read that names no keys carries `held` as it always did.
 
 ```text
 **The writes behind one key, oldest first** — name the key, and each
-object comes back carrying every write of it, with the record each one
-arrived in and that record's date.
+object comes back carrying every write of it, with the claim each one
+arrived in and that claim's date.
 
 A read is current truth: one value per key, the newest write. This is
 the other question the same data answers — every time the key was
@@ -4221,15 +4221,15 @@ you reach the far end — deliberately, rather than by surprise.
 #### `recall` — argument `/inputSchema.history_record`
 
 ```text
-**The writes behind one RECORD, oldest first** — name a record's address
+**The writes behind one CLAIM, oldest first** — name a claim's address
 `kind:slug#local-id`, and the object it is filed under comes back
 carrying every write of that claim: what it said, what it said
 underneath, who backed it and whether it stood, each time it was
 written.
 
 The other half of the same axis. `history` names a KEY and traces a
-value across every record that touched it; this names one CLAIM and
-traces the claim itself, which is how you read what a record said before
+value across every claim that touched it; this names one CLAIM and
+traces the claim itself, which is how you read what a claim said before
 somebody corrected it. Name one or the other, never both.
 
 Each write says **when it happened** and where it sits in the order.
@@ -4294,7 +4294,7 @@ names them, and `connected` is left out where nothing was reached.
 
 **Eliding is never silent.** The answer says once, in `narrowed`, what
 the objects left out: the keys they hold that were not brought
-(`left_out_keys`) and, where it is true, that their records, their `held`
+(`left_out_keys`) and, where it is true, that their claims, their `held`
 block and who backs each value are not here, each with the argument that
 returns it; asking again without `keys` reads them all. When a view
 supplied the keys, each object says so in `fields_left_out`, naming them:
@@ -4400,22 +4400,22 @@ part holds whatever fits.
 ```text
 **How many you have already read, when an answer stopped at the answer
 ceiling.** The answer names the `offset` that returns the next part;
-repeat the same call with it. A call that selects ONE object counts its
-facts (`facts: true` on a subject with more than fit), or a list's
+repeat the same call with it. A call selecting ONE object counts its
+claims (`facts: true` on a subject with more than fit), or a list's
 entries; a call that selects several, a kind or a walk, counts the
 objects. Defaults to 0.
 
-One subject with more facts than fit is read the same way, `offset` counting
-its facts, and a list with more entries than fit pages its entries the same
+One subject with more claims than fit is read the same way, `offset` counting
+them, and a list with more entries than fit pages its entries the same
 way, and a list read with `facts: true` counts its entries and then its
-records; an object that cannot fit even first in its part carries
+claims; an object that cannot fit even first in its part carries
 `facts_not_shown`, or for a list `entries_not_shown`, naming that subject to
-recall alone, which reads them in parts, and a single fact larger than the
+recall alone, which reads them in parts, and a single claim larger than the
 ceiling still comes back whole.
 
 **On a session named as the subject with `history`, `offset` counts the
 changes or wordings of its history already read, newest first.** A run
-holds no facts, so that call has one thing to read on through.
+has no claims, so that call has one thing to read on through.
 ```
 
 #### `recall` — argument `/inputSchema.order`
@@ -4522,7 +4522,7 @@ record's claim, who backs it, how sure anyone is and its day sends
 #### `recall` — argument `/inputSchema.records`
 
 ```text
-**Record addresses to read as they stand now**, `kind:slug#fN` each, on
+**Claim addresses to read as they stand now**, `kind:slug#fN` each, on
 any subjects, in one call. Each comes back with its current wording, its
 address and subject, provenance, standing, the day it was recorded and how
 many times it has been written, and none of the writes behind it:
@@ -4537,10 +4537,10 @@ reads on.
 
 ```text
 **Whether `facts` lists a thing's review mark.** Off by default: the mark
-is the one record defrag leaves on a thing it has reviewed, which is
+is the one claim defrag leaves on a thing it has reviewed, which is
 bookkeeping to every other reader. An object that has one says under
 `review_marks_left_out` how many the listing left out and how to read
-them. Send `true` to list it. `search` takes the same argument. A record
+them. Send `true` to list it. `search` takes the same argument. A claim
 asked for by `history_record` or `records` is served whole either way.
 
 **It also lists a bot's record of the release notes it was told**, which
@@ -4552,8 +4552,8 @@ jojobot keeps and a listing leaves out the same way, counted under
 
 ```text
 **What `where` is asked of**: `thing` (the default) is what each thing
-holds now, and `record` is what one record says, so every term must hold
-on the same record and the object arrives with the records that answered.
+holds now, and `record` is what one claim says, so every term must hold
+on the same claim and the object arrives with the claims that answered.
 Names neither scope for `fields`, which carry their own.
 ```
 
@@ -4568,27 +4568,27 @@ attributed, never journalled.
 #### `recall` — argument `/inputSchema.status`
 
 ```text
-**Which records `facts` lists: `active` or `archived`.** Left out, every
-record comes back whatever its status — going straight to a known thing
-is the direct door, and a retired record read that way is correct.
-`active` is the records that still stand; the answer says how many
+**Which claims `facts` lists: `active` or `archived`.** Left out, every
+claim comes back whatever its status — going straight to a known thing
+is the direct door, and a retired claim read that way is correct.
+`active` is the claims that still stand; the answer says how many
 retired ones it left out and which call returns them, so a narrowed read
 never passes for the whole of what a thing holds. `archived` is the
-other half. It narrows the records of the objects the call selected.
+other half. It narrows the claims of the objects the call selected.
 ```
 
 #### `recall` — argument `/inputSchema.stood_for`
 
 ```text
 **Serve a shape's sources alongside it**, on the same listing of
-`facts`. Off by default: a record marked with `stands_for` already
+`facts`. Off by default: a claim marked with `stands_for` already
 carries its sources' content in its own words, so the listing that
 also carries the shape leaves the named sources out and says how many
 and how to reach them. Ask for this when you need the sources
 themselves — their own wording, provenance or address — rather than
 the shape that already speaks for them.
 
-**Elision applies to the listing, never to a record asked for by
+**Elision applies to the listing, never to a claim asked for by
 name.** `history_record` on a source's own address still serves it
 whole, whatever this argument says.
 ```
@@ -4623,7 +4623,7 @@ old entry) reads `carried_from`, and the old entry reads `carried_to`; it
 stays as it was. It is the list's own read, so no `facts` are needed for it.
 
 **A named subject comes back** even when the filters below keep none of
-its records: naming a handle asks for that object, and a filter asks
+its claims: naming a handle asks for that object, and a filter asks
 which objects. **`overdue` and `unreviewed` also filter a named subject**.
 A handle naming nothing is blocked with nearest handles, never an empty answer.
 A missing `work:q-N` offers work holding number N first.
@@ -4767,7 +4767,7 @@ are no wildcards. Quote a value that holds spaces or operator characters.
 hold.
 
 **One `scope` covers the whole expression**: what each thing holds now
-(the default), or what one record says. A negation keeps only things that
+(the default), or what one claim says. A negation keeps only things that
 hold the key: `status != done` is the things holding some other status,
 and a thing with no status is not among them; `!(status = done)` is the
 complement and does keep it. A comparison needs a declaration: `<`, `<=`,
@@ -4961,21 +4961,21 @@ change nothing.
 #### `retract` — description
 
 ```text
-Take back a record — one way, never reversed, and a deliberate act rather than a flag on an edit.
+Take back a claim — one way, never reversed, and a deliberate act rather than a flag on an edit.
 ARCHIVE, RETRACT OR REWRITE — one rule, stated the same in update_fact, its status argument and retract.
 A claim that was true and has changed, or that was never true: archive it with update_fact (status: archived, the reason in details) and capture the replacement, naming the old claim in derived_from.
-A claim about a past EVENT that turned out never to have happened: retract it, which also leaves a dated record of the retraction.
+A claim about a past EVENT that turned out never to have happened: retract it, which also leaves a dated claim of the retraction.
 A mistyped or reworded claim: rewrite it.
 Archiving and retracting are one-way for a claim: nothing edits an archived claim, status included, so there is no un-archive (an archived ENTITY comes back with restore: true).
-Nothing is removed: the record keeps its address, its words and its place and is marked archived, and beside it lands a dated record of the retraction itself, naming what it takes back and the reason if you give one.
+Nothing is removed: the claim keeps its address, its words and its place and is marked archived, and beside it lands a dated claim of the retraction itself, naming what it takes back and the reason if you give one.
 The two read as one story.
 The receipt names the keys the thing lost under left_the_thing.
-recall returns claims of every status unless you ask it for one, so a retracted record is out of a default search, not out of a recall.
+recall returns claims of every status unless you ask it for one, so a retracted claim is out of a default search, not out of a recall.
 Nothing edits an archived claim, a status flip back included, so if you are unsure, capture what is so now instead.
 A refusal is an answer with status: blocked and nothing written.
 Retracting a retraction is refused: it is the last word on what it takes back.
-Retracting a record that is already archived is refused too, and says so, because the state you asked for is the state jojobot holds.
-An address that names no record is refused with the addresses that do exist.
+Retracting a claim that is already archived is refused too, and says so, because the state you asked for is the state jojobot holds.
+An address that names no claim is refused with the addresses that do exist.
 The receipt's `changed` lists changes, or is `nothing` or `not_read`.
 ```
 
@@ -5030,7 +5030,7 @@ The receipt's `changed` lists changes, or is `nothing` or `not_read`.
 #### `retract` — argument `/inputSchema.address`
 
 ```text
-The record's global address, `kind:slug#local-id` — exactly as `recall`
+The claim's global address, `kind:slug#local-id` — exactly as `recall`
 or a search hit returned it.
 ```
 
@@ -5038,7 +5038,7 @@ or a search hit returned it.
 
 ```text
 Why it is being taken back, in one line. Optional — worth giving: a
-record marked taken-back with no account of why is hard for a later
+claim marked taken-back with no account of why is hard for a later
 reader to tell from damage. Left out, the retraction says plainly that
 no reason was given rather than inventing one.
 ```
@@ -5046,11 +5046,11 @@ no reason was given rather than inventing one.
 #### `retract` — argument `/inputSchema.recorded_at`
 
 ```text
-**The day the record was taken back**, `YYYY-MM-DD`. Defaults to the day
+**The day the claim was taken back**, `YYYY-MM-DD`. Defaults to the day
 your run is in.
 
-A retraction leaves a record of its own, and this is the day THAT
-record was made. **The day an operator changed their mind is the fact a
+A retraction leaves a claim of its own, and this is the day THAT
+claim was made. **The day an operator changed their mind is the fact a
 later reader most wants about a retraction**, and it is not always the
 day the call is made — a session catching up on last week says so here.
 ```
@@ -5081,12 +5081,12 @@ attributed, never journalled.
 
 ```text
 The front door — use it first, and any time you do not already hold the exact handle or address.
-One ranked list over entities, facts, free prose AND the messages in bots' mailboxes at once (the operator's box is never searched).
+One ranked list over entities, claims, free prose AND messages in bots' mailboxes at once (the operator's box is never searched).
 `query` matches by stem, needing at least half its terms, rounded up.
 It is optional when a filter narrows: kind, status (unset: active claims, then archived ones ranked below them, retracted ones left out; `active` is current truth only; `archived` reads the archive, retracted claims too), provenance, standing (`open` asks which claims are still in doubt), subject, edge {shape, object}, answers_type or fits_type (one of the two, never both; prefer answers_type, which names each thing's gaps).
 A call with neither a query nor one of those filters is refused, and include_mail is not a filter.
 kind + edge walks typed edges.
-A fact carries its matching passage, its address (feed it to update_fact), and its parent (and a different subject when present); an entity or prose hit carries the entity's names; include_links adds relationships and references.
+A claim carries its matching passage, its address (feed it to update_fact), and its parent (and a different subject when present); an entity or prose hit carries the entity's names; include_links adds relationships and references.
 A message hit carries its box, state (new, read or processed), sender and the id read_message takes, plus a snippet; section hits come grouped with a document block.
 MAIL IS OPT-IN: pass include_mail: true to search messages too.
 Read the `mail` and `memory` fields of the answer: searched: false means nothing there was searched, not the same as nothing matching; a `note` says which case.
@@ -5524,7 +5524,7 @@ SEND WHAT YOU ARE WRITING, never a charter you just read back: some of what a re
 IT ANSWERS WITH A RECEIPT, NOT THE CHARTER: the bot it landed on, how many bytes were stored — compare it with what you sent and you learn the store trimmed it — and a digest of about 120 characters of it, so you can tell which it was.
 The receipt's `changed` lists what moved.
 A bot that does not exist comes back status: blocked with the nearest handles — add_entity first; nothing is created here.
-Rules are not written here either: a rule is a fact about the bot, so capture it.
+Rules are not written here either: a rule is a claim about the bot: capture it.
 Neither is a short self-description for the colleagues view: capture sets.one_liner on this bot instead — that is the key view:colleagues reads, and a bot nobody has written one for shows up there with nothing to say.
 Who the bot reports to goes the same way: capture sets.reports_to on this bot, holding its manager's handle, and the colleagues view shows whom each bot reports to.
 The bot itself does not write it, except a bot that heads a chart, which has reports and no manager above it, and places itself: otherwise a bot above it on the chart does, and a bot with no manager is adopted by the manager named or by a bot above that manager.
@@ -5630,7 +5630,7 @@ Booting starts or resumes that bot's session — there is no separate start verb
 A bot with a run to pick up gets a resume-or-new choice and no sid until it answers with `resume`: the name of the run (its `run`), `new`, or the wrap_code a wrap handed back.
 CALLED THIS BEFORE? Pass brief: true to skip the essay; calling without brief reads the essay.
 `claim` holds a named role for 45 minutes so two sessions never work one role at once; a run that holds it keeps it until it wraps or its lease runs out, or the operator's code takes it, abandoning an active holder and leaving a wrapped one wrapped (taken, refused, conflict or unavailable; a claim is refused while its role object is archived, and archive_entity restores it); every write, and read_mailbox and read_message, renews the lease unless the last renewal is less than 4 minutes 30 seconds old, and wrapping releases it.
-A boot writes the sweep, a missing box's repair, a key note and, when asked, a claim, a pick-up, a spent code or a wrap window.
+A boot writes the sweep, a missing box's repair, a key note and, when asked, a claim, a pick-up, a code's spend or wrong try or a wrap window.
 ```
 
 #### `start_here` — structure
@@ -6193,8 +6193,8 @@ wrote nothing spends no id.
 `defrag` may send it, and only `true`: jojobot stamps the thing with the
 moment, and it leaves the review queue (`recall` with `unreviewed`) until
 somebody else writes to it. Any other bot is refused. The mark is ONE
-standing record per thing, rewritten in place by every later mark, and it
-takes no slot under a record ceiling.
+standing claim per thing, rewritten in place by every later mark, and it
+takes no slot under a claim ceiling.
 
 **Several things at once**: send their handles joined by commas in
 `handle`. Each is marked as one handle would be, and the receipt's
@@ -6252,7 +6252,7 @@ Edit one addressed claim in place — fix the source, never an addendum.
 It changes `content`, `details`, `recorded_at` (the day the claim was MADE, never the day you call), `status`, `provenance`, `standing`, `fields`, `sets`, `stands_for` and the claim's edge.
 ARCHIVE, RETRACT OR REWRITE — one rule, stated the same in update_fact, its status argument and retract.
 A claim that was true and has changed, or that was never true: archive it with update_fact (status: archived, the reason in details) and capture the replacement, naming the old claim in derived_from.
-A claim about a past EVENT that turned out never to have happened: retract it, which also leaves a dated record of the retraction.
+A claim about a past EVENT that turned out never to have happened: retract it, which also leaves a dated claim of the retraction.
 A mistyped or reworded claim: rewrite it.
 Archiving and retracting are one-way for a claim: nothing edits an archived claim, status included, so there is no un-archive (an archived ENTITY comes back with restore: true).
 A rewrite destroys nothing — every earlier wording stays readable (recall with history_record: the address) — so a claim you disagree with is safe to correct, except testimony from an earlier session: TESTIMONY IS REWRITTEN IN PLACE ONLY BY THE SESSION THAT WROTE IT, and any other is archived and replaced, with derived_from naming the archived claim.
@@ -6628,7 +6628,7 @@ session).
 #### `update_fact` — argument `/inputSchema.address`
 
 ```text
-The fact's global address, `kind:slug#local-id` — exactly as `recall`
+The claim's global address, `kind:slug#local-id` — as `recall`
 returned it. **A claim cannot change subject:** to move one filed on the
 wrong thing, capture it on the right one, re-sending its dates, `fields`, `sets` and
 edge, with `derived_from` naming this claim, then archive this one.
@@ -6652,7 +6652,7 @@ with every chunk that carries it on. The blank lines in front of a section
 that now follows a different section are written (the moved one, the one
 after it and the one that closes the gap it left), and no section's
 words are.
-Refused, with nothing written, when this record is not a live section of a
+Refused, with nothing written, when this claim is not a live section of a
 document (an ordinary claim has no place to move), when it is a chunk that
 carries on the section before it (move that section), or when the target is
 not a live section of the same document. A section can be moved and edited
@@ -6686,9 +6686,9 @@ answering through a claim that now denies it. **A rewrite that stays
 positive — who returned it, where it moved to — is not this case: the
 edge still describes something true.** Clearing it anyway costs a
 real path: the walk through it stops answering, and the entity on the
-other end becomes unreachable from this record. **A PAST EVENT THAT
+other end becomes unreachable from this claim. **A PAST EVENT THAT
 TURNED OUT NEVER TO HAVE HAPPENED IS RETRACT'S CASE, NOT THIS ONE**:
-retracting marks the record rather than rewriting it, and there is no
+retracting marks the claim rather than rewriting it, and there is no
 un-retract.
 ```
 
@@ -6697,15 +6697,15 @@ un-retract.
 ```text
 **Fields to remove**, by key. Its own argument rather than an empty
 value in `fields`: an empty value is a value somebody wrote, and
-setting a key to nothing and taking the key off the record are two
+setting a key to nothing and taking the key off the claim are two
 different edits.
 
-**It takes the key off the thing as well as off the record**, whichever
+**It takes the key off the thing as well as off the claim**, whichever
 bag holds it, so this is the way to take a key off a thing. Send it to
-the active record that carries the key: `recall` the thing with
-`backing` true and the key names that record. A counter key names none,
-because its total has no single record behind it: `recall` with
-`history` set to the key lists the records that wrote it, oldest first,
+the active claim that carries the key: `recall` the thing with
+`backing` true and the key names that claim. A counter key names none,
+because its total has no single claim behind it: `recall` with
+`history` set to the key lists the claims that wrote it, oldest first,
 and `history_most` widens the list when its count says more exist.
 Clearing the key on one of them takes the whole total off the thing.
 
@@ -6743,7 +6743,7 @@ it are two different edits.
 #### `update_fact` — argument `/inputSchema.clear_stands_for`
 
 ```text
-**Take the mark off**, leaving an ordinary record that stands for
+**Take the mark off**, leaving an ordinary claim that stands for
 nothing. Its own flag, because leaving it alone and removing it are
 two different edits.
 ```
@@ -6826,7 +6826,7 @@ was put in, and the bytes before and after.
 
 ```text
 **Fields to set**, as key/value pairs. Each key named is written; a key
-the record already carries and this does not name is left alone, so an
+the claim already carries and this does not name is left alone, so an
 edit reaches one field without restating the rest.
 
 A field you set that equals what jojobot ships as its default today is
@@ -6856,7 +6856,7 @@ and without it.
 a different question from `recorded_at`, which is about the claim.
 
 **Learning it late is ordinary**: a claim written when nobody knew the
-day gains one here. Leaving it off keeps whatever the record says, like
+day gains one here. Leaving it off keeps whatever the claim says, like
 every other field this patch does not name.
 ```
 
@@ -6864,7 +6864,7 @@ every other field this patch does not name.
 
 ```text
 **The far end**, `YYYY-MM-DD`, when the thing happened is a stretch of
-days rather than one. Leaving it off keeps whatever the record says.
+days rather than one. Leaving it off keeps whatever the claim says.
 ```
 
 #### `update_fact` — argument `/inputSchema.keep`
@@ -6922,14 +6922,14 @@ never changes who backs the claim.
 
 ```text
 **The day this claim was MADE**, `YYYY-MM-DD` — the day it was said,
-decided or worked out. Left alone when omitted — the record keeps the
+decided or worked out. Left alone when omitted — it keeps the
 day of the claim it replaces, exactly as any field this patch does
 not name.
 
 **Give this when the correction itself was made on a different day
-than the one already on the record — never the day you happen to be
+than the one already on the claim — never the day you happen to be
 typing.** Rewriting content with no date given leaves the ORIGINAL day
-on the record, permanently: a correction made months later would
+on the claim, permanently: a correction made months later would
 otherwise read back as if it had been made on the original day
 forever.
 
@@ -6963,7 +6963,7 @@ wrote nothing spends no id.
 ```text
 **Fields to set on the thing this claim is about**, as key/value pairs,
 apart from `fields`, which are the claim's own. **Naming under `sets` a
-key the record holds as its own field MOVES it to the settings in this
+key the claim holds as its own field MOVES it to the settings in this
 call**, with the value you send, and the receipt says it moved. The other
 way is two calls: a setting named under `fields` is refused, so take it
 off with `clear_fields`, then write it under `fields`. A key that only
@@ -6984,7 +6984,7 @@ A date under `runs_out`, `decide_by` or `promised_by` in `sets` makes a thing fa
 **Items to add to a list key on the thing this claim is about**, as
 key/value pairs where the value is the items, separated by commas:
 `{depends_on: "work:gamma"}`. Accepted only for a key declared a list. The
-thing's current value is read inside this call, whichever record wrote it,
+thing's current value is read inside this call, whichever claim wrote it,
 and the items are appended to the end, in the order sent; an item it
 already holds is not added twice and every other item stays where it was.
 A handle that names nothing is refused with the nearest handles. The answer
@@ -7025,7 +7025,7 @@ Receipt: `success`, `id`, `address`, `derived`, `changed` and warnings; the writ
 ```text
 **The day after which this reading stops being good**, `YYYY-MM-DD`.
 
-It is a fact about jojobot's knowledge rather than about the world: a
+It is a claim about jojobot's knowledge, not the world: a
 pass that runs out on a date is a claim about the world and belongs in
 the content. Past the day a read SAYS SO and **nothing else happens**:
 no sweep, no reminder, nobody is coming to check it.
@@ -7051,13 +7051,13 @@ alone; the claim was theirs from the start.
 #### `update_fact` — argument `/inputSchema.stands_for`
 
 ```text
-**Mark this record as standing for the claims named here**, each as
+**Mark this claim as standing for the claims named here**, each as
 its address `kind:slug#local-id`. A synthesis, not a citation: the
 named claims stay exactly as they are — active, readable, untouched —
 and `recall` returns them with `stood_for: true`. A write
 replaces the whole set. Every named address must already exist;
-naming this record's own address, or the same address twice, is
-refused — and so is an empty set (clear the mark instead) or a record
+naming this claim's own address, or the same address twice, is
+refused — and so is an empty set (clear the mark instead) or a claim
 that already stands for others, because a shape cannot name a shape.
 ```
 
@@ -7069,14 +7069,14 @@ same in update_fact, its status argument and retract. A claim that was
 true and has changed, or that was never true: archive it with update_fact
 (status: archived, the reason in details) and capture the replacement,
 naming the old claim in derived_from. A claim about a past EVENT that turned
-out never to have happened: retract it, which also leaves a dated record of
+out never to have happened: retract it, which also leaves a dated claim of
 the retraction. A mistyped or reworded claim: rewrite it. Archiving and
 retracting are one-way for a claim: nothing edits an archived claim,
 status included, so there is no un-archive (an archived ENTITY comes back
 with restore: true). Rewriting `content` into its own denial ("the club
 does NOT meet on Tuesdays" replacing "the club meets on Tuesdays") leaves a
 sentence about what is not so where a claim about what is true belongs. A
-negative is still an ordinary fact when it is not correcting anything: "the guest
+negative stays an ordinary claim when it is not correcting anything: "the guest
 did not attend" stands on its own, written with `capture` like any other
 claim. The receipt of an archive names the keys the thing lost, under
 `left_the_thing`.

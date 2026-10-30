@@ -18,12 +18,12 @@ status_word_note: 'nonsense' is not one of the words this work holds: someday, n
 ### Memory refusal `InvalidFact`
 
 ```text
-reads: invalid fact: empty
+reads: bad claim: empty
 answer: {
   "attempted": "",
   "candidates": [],
   "fix_by": "change",
-  "how_to_proceed": "Nothing was written: invalid fact: empty. Nothing is missing from the store and nothing here needs the operator — the call itself is what jojobot cannot carry out. Send the same capture call again with that fixed.",
+  "how_to_proceed": "Nothing was written: bad claim: empty. Nothing is missing from the store and nothing here needs the operator — the call itself is what jojobot cannot carry out. Send the same capture call again with that fixed.",
   "refusal_code": "InvalidFact",
   "status": "blocked",
   "wrote": false
@@ -48,13 +48,13 @@ answer: {
 ### Memory refusal `WeekOfUsageWritten`
 
 ```text
-reads: 'usage:bart-2026-w41' is a week of usage, computed from the history of runs when it is read, so nothing is written to it and no such record is made.
+reads: 'usage:bart-2026-w41' is a week of usage, computed from the history of runs when it is read, so nothing is written to it and no such claim is made.
 Read it with recall: name the handle as the subject, or ask view: usage
 answer: {
   "attempted": "usage:bart-2026-w41",
   "candidates": [],
   "fix_by": "change",
-  "how_to_proceed": "Nothing was written: 'usage:bart-2026-w41' is a week of usage, computed from the history of runs when it is read, so nothing is written to it and no such record is made. Read it with recall: name the handle as the subject, or ask view: usage.",
+  "how_to_proceed": "Nothing was written: 'usage:bart-2026-w41' is a week of usage, computed from the history of runs when it is read, so nothing is written to it and no such claim is made. Read it with recall: name the handle as the subject, or ask view: usage.",
   "refusal_code": "WeekOfUsageWritten",
   "status": "blocked",
   "wrote": false
@@ -64,13 +64,13 @@ answer: {
 ### Memory refusal `InvalidAddress`
 
 ```text
-reads: invalid fact address 'x': expected kind:slug#local-id, e.g.
+reads: bad claim address 'x': expected kind:slug#local-id, e.g.
 person:alpha#f3
 answer: {
   "attempted": "",
   "candidates": [],
   "fix_by": "change",
-  "how_to_proceed": "Nothing was written: invalid fact address 'x': expected kind:slug#local-id, e.g. person:alpha#f3. Nothing is missing from the store and nothing here needs the operator — the call itself is what jojobot cannot carry out. Send the same capture call again with that fixed.",
+  "how_to_proceed": "Nothing was written: bad claim address 'x': expected kind:slug#local-id, e.g. person:alpha#f3. Nothing is missing from the store and nothing here needs the operator — the call itself is what jojobot cannot carry out. Send the same capture call again with that fixed.",
   "refusal_code": "InvalidAddress",
   "status": "blocked",
   "wrote": false
@@ -171,12 +171,12 @@ answer: {
 ### Memory refusal `UnknownFact`
 
 ```text
-reads: no fact at 'person:alpha#f9'; that entity has no facts yet
+reads: no claim at 'person:alpha#f9'; it has no claims yet
 answer: {
   "attempted": "person:alpha#f9",
   "candidates": [],
   "fix_by": "change",
-  "how_to_proceed": "Nothing was written. 'person:alpha#f9' addresses no fact jojobot holds, and this verb never creates one. That entity holds no facts at all yet, so there is nothing here to edit — capture one first. Recall the entity if none of them is what you meant — every fact comes back carrying the address that edits it.",
+  "how_to_proceed": "Nothing was written. 'person:alpha#f9' addresses no claim jojobot holds, and this verb creates none. That entity holds no claims yet, so there is nothing here to edit — capture one first. Recall the entity if none of them is what you meant — every claim comes back with the address that edits it.",
   "refusal_code": "UnknownFact",
   "status": "blocked",
   "wrote": false
@@ -206,7 +206,7 @@ answer: {
   "attempted": "person:alpha#f1",
   "candidates": [],
   "fix_by": "change",
-  "how_to_proceed": "'person:alpha#f1' is already archived — the record jojobot holds is the one you asked for. This call wrote nothing because there was nothing left to write, and a further attempt would say the same. Archiving is one-way: nothing takes a record back out of it. If that was itself a mistake, capture what is so now as a new record.",
+  "how_to_proceed": "'person:alpha#f1' is already archived — the claim jojobot holds is the one you asked for. This call wrote nothing because there was nothing left to write, and a further attempt would say the same. Archiving is one-way: nothing takes a claim back out of it. If that was itself a mistake, capture what is so now as a new claim.",
   "refusal_code": "AlreadyRetracted",
   "status": "blocked",
   "wrote": false
@@ -459,12 +459,12 @@ answer: {
 ### Memory refusal `ThingTooLarge`
 
 ```text
-reads: 'thing:gamma' would be 29000 characters as a read serves it before any record on it, and the most one answer can carry of it is 27000
+reads: 'thing:gamma' would be 29000 characters as a read serves it before any claim on it, and the most one answer can carry of it is 27000
 answer: {
   "attempted": "thing:gamma",
   "candidates": [],
   "fix_by": "change",
-  "how_to_proceed": "Nothing was written: 'thing:gamma' would be 29000 characters as a read serves it before any record on it, and the most one answer can carry of it is 27000. The thing's own name, aliases and keys are what is over (2000 characters), not the claim you sent, and a read could not serve any claim on it until they are smaller. Shrink them: shorten its name or aliases with update_entity, take keys off with update_fact and clear_fields, move detail to the thing it is about, or keep the long text on a document (put_document) behind a pointer claim on another thing. Then send capture again.",
+  "how_to_proceed": "Nothing was written: 'thing:gamma' would be 29000 characters as a read serves it before any claim on it, and the most one answer can carry of it is 27000. The thing's own name, aliases and keys are what is over (2000 characters), not the claim you sent, and a read could not serve any claim on it until they are smaller. Shrink them: shorten its name or aliases with update_entity, take keys off with update_fact and clear_fields, move detail to the thing it is about, or keep the long text on a document (put_document) behind a pointer claim on another thing. Then send capture again.",
   "over": 2000,
   "refusal_code": "ThingTooLarge",
   "room": 27000,
@@ -478,18 +478,18 @@ answer: {
 ### Memory refusal `ClaimTooLarge`
 
 ```text
-reads: this record would be 30000 characters as a read serves it, and the most one answer can carry of a record on 'thing:gamma' is 27000
+reads: this claim would be 30000 characters as a read serves it, and the most one answer can carry of a claim on 'thing:gamma' is 27000
 answer: {
   "attempted": "thing:gamma",
   "candidates": [],
   "fix_by": "change",
-  "how_to_proceed": "Nothing was written: this record would be 30000 characters as a read serves it, and the most one answer can carry of a record on 'thing:gamma' is 27000. Shorten it (3000 characters over); or split it into claims that each say one thing, which capture can write one after another; or keep the long text on a document (add_entity of kind document, then put_document) and write a pointer claim that names it.",
+  "how_to_proceed": "Nothing was written: this claim would be 30000 characters as a read serves it, and the most one answer can carry of a claim on 'thing:gamma' is 27000. Shorten it (3000 characters over); or split it into claims that each say one thing, which capture can write one after another; or keep the long text on a document (add_entity of kind document, then put_document) and write a pointer claim that names it.",
   "over": 3000,
   "refusal_code": "ClaimTooLarge",
   "room": 27000,
   "size": 30000,
   "status": "blocked",
-  "what_is_over": "the record",
+  "what_is_over": "the claim",
   "wrote": false
 }
 ```
@@ -510,7 +510,7 @@ answer: {
       "part": "charter"
     }
   ],
-  "how_to_proceed": "Nothing was written: this would leave the boot of 'bot:gamma' with 30000 characters it cannot cut, over the 28000 a boot may carry by 2000. The largest part of the floor is charter (20000 characters); floor_parts lists every part. A star is changed with update_fact on the rule's address and fields {starred: \"true\"} or {starred: \"false\"}; update_entity cannot, because starred stays on its claim. Unstar a rule on bot:gamma that way, shorten the rules that are starred or its charter with set_charter, or have a different identity lower rule_seats on bot:gamma — a bot cannot write rule_seats about itself. A rule that binds at one moment is better filed under a purpose that an index rule names with its moment (start_here skill: organizing) than carried in a seat, and a group of rules that all bind is better carried by one record that stands for the others: write it, mark it with stands_for naming them, keep the others unstarred, and read the boot back.",
+  "how_to_proceed": "Nothing was written: this would leave the boot of 'bot:gamma' with 30000 characters it cannot cut, over the 28000 a boot may carry by 2000. The largest part of the floor is charter (20000 characters); floor_parts lists every part. A star is changed with update_fact on the rule's address and fields {starred: \"true\"} or {starred: \"false\"}; update_entity cannot, because starred stays on its claim. Unstar a rule on bot:gamma that way, shorten the rules that are starred or its charter with set_charter, or have a different identity lower rule_seats on bot:gamma — a bot cannot write rule_seats about itself. A rule that binds at one moment is better filed under a purpose that an index rule names with its moment (start_here skill: organizing) than carried in a seat, and a group of rules that all bind is better carried by one claim that stands for the others: write it, mark it with stands_for naming them, keep the others unstarred, and read the boot back.",
   "over": 2000,
   "refusal_code": "BootTooHeavy",
   "status": "blocked",
@@ -556,7 +556,7 @@ answer: {
   "attempted": "bot:gamma",
   "candidates": [],
   "fix_by": "change",
-  "how_to_proceed": "Nothing was written. 'bot:gamma' carries rule_seats, and merging it into 'bot:delta', your own bot, would raise your own ceiling, which only a different identity may do. Ask a different identity to make this merge. Or take rule_seats off 'bot:gamma' first: update_fact the record that sets it with clear_fields, then merge again.",
+  "how_to_proceed": "Nothing was written. 'bot:gamma' carries rule_seats, and merging it into 'bot:delta', your own bot, would raise your own ceiling, which only a different identity may do. Ask a different identity to make this merge. Or take rule_seats off 'bot:gamma' first: update_fact the claim that sets it with clear_fields, then merge again.",
   "refusal_code": "MergeCarriesGuardedKeys",
   "status": "blocked",
   "wrote": false
@@ -566,11 +566,11 @@ answer: {
 ### Memory refusal `RoleFieldGuarded`
 
 ```text
-reads: 'holder' is the boot door's own field: claim the dev role there, not here
+reads: 'holder' is a role's lease field: claim the dev role at boot, not here
 answer: {
   "attempted": "holder",
   "fix_by": "change",
-  "how_to_proceed": "Nothing was written: 'holder' is the boot door's own field: claim the dev role there, not here. Claim the 'dev' role through start_here's own claim argument — that is the only door either of a role's own two fields opens through.",
+  "how_to_proceed": "Nothing was written: 'holder' is a role's lease field: claim the dev role at boot, not here. Claim the 'dev' role through start_here's own claim argument; only a claim, a renewal or a wrap writes either field.",
   "refusal_code": "RoleFieldGuarded",
   "status": "blocked",
   "wrote": false
@@ -584,7 +584,7 @@ reads: 'voucher:boot-as-patty' is a voucher: vouchers are issued, not written
 answer: {
   "attempted": "voucher:boot-as-patty",
   "fix_by": "change",
-  "how_to_proceed": "Nothing was written: 'voucher:boot-as-patty' is a voucher: vouchers are issued, not written. A voucher is a grant the engine issues for the operator's code; no record a caller writes is a grant. 'voucher:boot-as-patty' stays as it is, and nothing here creates, edits or takes one back. A session that needs one asks for a code with start_here's ask_for_code and boots with the code the operator types in.",
+  "how_to_proceed": "Nothing was written: 'voucher:boot-as-patty' is a voucher: vouchers are issued, not written. A voucher is a grant the engine issues for the operator's code; no claim a caller writes is a grant. 'voucher:boot-as-patty' stays as it is, and nothing here creates, edits or takes one back. A session that needs one asks for a code with start_here's ask_for_code and boots with the code the operator types in.",
   "refusal_code": "VoucherIssued",
   "status": "blocked",
   "wrote": false
@@ -598,7 +598,7 @@ reads: 'challenge:abcd' is a challenge: challenges are issued, not written
 answer: {
   "attempted": "challenge:abcd",
   "fix_by": "change",
-  "how_to_proceed": "Nothing was written: 'challenge:abcd' is a challenge: challenges are issued, not written. A challenge holds the hash of a code jojobot sent to the operator, and only the engine writes it. 'challenge:abcd' stays as it is; a boot asks for a new code with start_here's ask_for_code.",
+  "how_to_proceed": "Nothing was written: 'challenge:abcd' is a challenge: challenges are issued, not written. A challenge holds the hash of a code jojobot sent to the operator, and only the engine writes it. 'challenge:abcd' stays as it is; ask for a new code with start_here's ask_for_code.",
   "refusal_code": "ChallengeIssued",
   "status": "blocked",
   "wrote": false
@@ -612,7 +612,7 @@ reads: no code knows the right 'fly'
 answer: {
   "attempted": "fly",
   "fix_by": "change",
-  "how_to_proceed": "Nothing was written: no code knows the right 'fly'. A right grants only what code gives it, so a voucher for a word nothing implements is refused. The rights known here are: boot-as.",
+  "how_to_proceed": "Nothing was written: no code knows the right 'fly'. A right grants only what code gives it. The rights known here are: boot-as.",
   "refusal_code": "UnknownRight",
   "status": "blocked",
   "wrote": false
@@ -825,12 +825,12 @@ answer: {
 ### Memory refusal `SuppliedHandle`
 
 ```text
-reads: 'view:colleagues' is a record the build supplies: it exists, and there is no stored record under it to move
+reads: 'view:colleagues' is a thing the build supplies: it exists, and nothing is stored under it to move
 answer: {
   "attempted": "view:colleagues",
   "candidates": [],
   "fix_by": "change",
-  "how_to_proceed": "Nothing changed: 'view:colleagues' is a record the build supplies: it exists, and there is no stored record under it to move. Sending this again will not change the answer — 'view:colleagues' is part of the software rather than something stored that capture could move. Facts and settings written to this record with capture are kept on top of what the build ships; only renaming, archiving or merging the record itself is refused.",
+  "how_to_proceed": "Nothing changed: 'view:colleagues' is a thing the build supplies: it exists, and nothing is stored under it to move. Sending this again will not change the answer — 'view:colleagues' is part of the software rather than something stored that capture could move. Claims and settings written to this thing with capture stay on top of what the build ships; only renaming, archiving or merging the thing itself is refused.",
   "refusal_code": "SuppliedHandle",
   "status": "blocked",
   "wrote": false
@@ -1067,13 +1067,13 @@ answer: protocol error: the mailbox name 'gamma' already belongs to bot:gamma, s
 
 ```text
 reads: message '9' cannot be read: unreadable.
-jojobot will not act on a record it cannot parse, and no retry will change that — a person has to repair it.
+jojobot will not act on a message it cannot parse, and no retry will change that — a person must repair it.
 Treat whatever it carried as unhandled and say so
 answer: {
   "attempted": "9",
   "fix_by": "person",
   "how_to_proceed": "Nothing ran, and retrying will not help — this is not a missing message. jojobot can see 9 but cannot read it as a message, so no verb will act on it. Repairing it takes a person, and it is not something you can do from here: tell the operator. Until then, treat whatever it was carrying as unhandled and say so rather than reporting it delivered.",
-  "reason": "message 9 exists but cannot be read as a record. Something about how it is stored was changed by hand, and only a person can put it back.",
+  "reason": "message 9 exists but cannot be read as a message. How it is stored was changed by hand, and only a person can put it back.",
   "refusal_code": "Quarantined",
   "status": "blocked",
   "wrote": false
@@ -1204,7 +1204,7 @@ answer: {
 
 ```text
 reads: session 'zz99' is abandoned — closed, so it takes no entry, no amend and no focus change.
-Its chronology stands as the record of what happened.
+Its chronology is the account of what happened.
 A wrapped session is the last word; an abandoned one can be picked back up by resuming it
 answer: {
   "attempted": "a1b2",
@@ -1220,7 +1220,7 @@ answer: {
 
 ```text
 reads: session 'zz99' is abandoned — closed, so it takes no entry, no amend and no focus change.
-Its chronology stands as the record of what happened.
+Its chronology is the account of what happened.
 A wrapped session is the last word; an abandoned one can be picked back up by resuming it
 answer: {
   "attempted": "a1b2",
@@ -1236,7 +1236,7 @@ answer: {
 
 ```text
 reads: session 'zz99' is wrapped — closed, so it takes no entry, no amend and no focus change.
-Its chronology stands as the record of what happened.
+Its chronology is the account of what happened.
 A wrapped session is the last word; an abandoned one can be picked back up by resuming it
 answer: {
   "attempted": "a1b2",
