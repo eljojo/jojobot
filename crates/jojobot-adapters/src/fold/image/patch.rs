@@ -445,6 +445,10 @@ mod tests {
         let (few, _, _) = hub_capture(30, 3).await;
         let (many, counted, folded) = hub_capture(30, 30).await;
         assert!(
+            few > 0 && many > 0,
+            "no link read was counted, so the write ran off this thread"
+        );
+        assert!(
             many <= few,
             "reads grew with the names: {few} for 3 names, {many} for 30"
         );

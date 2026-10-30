@@ -272,19 +272,26 @@ pub fn fact_names_target(fact: &Fact, target: &EntityId) -> bool {
     fact.field_links.values().flatten().any(|id| id == target)
 }
 
+#[cfg(feature = "testing")]
 thread_local! {
     static LINK_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
+#[cfg(feature = "testing")]
 fn count_a_link_read() {
     LINK_READS.with(|reads| reads.set(reads.get() + 1));
 }
 
+#[cfg(not(feature = "testing"))]
+fn count_a_link_read() {}
+
 /// **How many times this thread has read a record's links**, through
-/// [`fact_names_target`] and [`names_in_fact`], the two ways a reader takes them.
-/// A test instrument: a case reads it before and after a write on one thread to
-/// hold the write's cost to a number of passes over the records, whichever reader
-/// the write used.
+/// [`fact_names_target`] and [`names_in_fact`]. A read of [`Fact::field_links`]
+/// directly is not counted. A test instrument behind the `testing` feature, so a
+/// production build carries no counter: a case reads it before and after a write
+/// on one thread to hold the write's cost to a number of passes over the records.
+/// A write run on another thread is not counted either.
+#[cfg(feature = "testing")]
 pub fn link_reads_on_this_thread() -> usize {
     LINK_READS.with(std::cell::Cell::get)
 }
