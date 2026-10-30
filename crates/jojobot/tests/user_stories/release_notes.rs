@@ -25,6 +25,7 @@ const SHIPPED_NOTES: &[&str] = &[
     "defrag-ships-a-charter",
     "edge-types-use-writable-tokens",
     "list-read-pages-and-counts-ticks",
+    "mail-visible-down-the-chart",
     "many-entries-or-ticks-in-one-call",
     "memory-write-receipts",
     "recall-narrows-records-and-pages",
@@ -117,8 +118,10 @@ async fn a_bot_holds_one_message_from_the_system_listing_what_shipped_and_who_to
     an_old_bot(&story, "moe", "Moe").await;
     an_old_bot(&story, "marge", "Marge").await;
     an_old_bot(&story, "bart", "Bart").await;
-    let marge_first = story.as_bot("bot:marge").await;
-    marge_first
+    story.as_bot("bot:marge").await;
+    story
+        .as_bot("bot:assistant")
+        .await
         .call(
             "capture",
             json!({

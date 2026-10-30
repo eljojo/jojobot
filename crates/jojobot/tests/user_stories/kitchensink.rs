@@ -305,11 +305,10 @@ async fn nothing_on_the_surface_goes_unexercised() {
     // `sender` says WHOSE outgoing mail to read, matched exactly against the
     // handle on each message. It has to name a bot that is NOT this one to
     // prove anything — omitting it already answers with your own — and reading
-    // another sender's is allowed, because where a message got to is not
-    // private to whoever wrote it.
+    // another sender's shows the mail that sits in a box the caller can see.
     let other = story.as_bot("bot:epsilon").await;
     other
-        .post("assistant", "Third", "One from another sender.")
+        .post("otto", "Third", "One from another sender.")
         .await;
     other
         .wrap("posted once, so there is somebody else's outbox")
