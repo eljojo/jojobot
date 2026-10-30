@@ -2975,18 +2975,22 @@ fn fold_invents_no_date(facts: &[Value]) -> Result<(), String> {
                 .into(),
         );
     }
+    // **The days the longboard gives**: every record's `recorded_at`, and the
+    // `happened_at` of the records that stand for none. A fold's `happened_at` is
+    // no evidence for itself and none for another fold, or two folds naming one
+    // day no repair gave would each pass on the other's word.
+    let mut known: std::collections::HashSet<&str> = facts
+        .iter()
+        .filter_map(|fact| fact["recorded_at"].as_str())
+        .collect();
+    known.extend(
+        facts
+            .iter()
+            .filter(|fact| !folds.contains(fact))
+            .filter_map(|fact| fact["happened_at"].as_str()),
+    );
     for fold in folds {
         let fold_address = fold["address"].as_str().unwrap_or_default();
-        let mut known: std::collections::HashSet<&str> = facts
-            .iter()
-            .filter_map(|fact| fact["recorded_at"].as_str())
-            .collect();
-        known.extend(
-            facts
-                .iter()
-                .filter(|fact| fact["address"] != fold_address)
-                .filter_map(|fact| fact["happened_at"].as_str()),
-        );
         if let Some(claimed) = fold["happened_at"].as_str()
             && !known.contains(claimed)
         {
