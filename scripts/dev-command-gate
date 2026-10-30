@@ -169,7 +169,7 @@ WRAPPERS = {
     "env": ({"-u", "-C", "-S", "--unset", "--chdir", "--split-string"}, 0),
     "command": (set(), 0),
     "exec": ({"-a"}, 0),
-    "time": (set(), 0),
+    "time": ({"-f", "-o", "--format", "--output"}, 0),
     "nohup": (set(), 0),
     "nice": ({"-n", "--adjustment"}, 0),
     "setsid": (set(), 0),
