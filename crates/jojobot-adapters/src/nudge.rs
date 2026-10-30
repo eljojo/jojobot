@@ -3,8 +3,9 @@
 //! State changes and not beside each caller that happens to post to the
 //! operator. A path added later cannot miss it.
 //!
-//! A post into a bot's box, a post the store blocked and a post that failed
-//! publish nothing, so they nudge nothing. When the box's owner cannot be read
+//! A post into a bot's box is published and is not a person's, so it nudges
+//! nothing. A post the store blocked and a post that failed publish the position
+//! and no post, so they nudge nothing either. When the box's owner cannot be read
 //! the push is nudged anyway: a wake with nothing to send costs a look at the
 //! outbox, and a missed wake leaves a code to expire unannounced.
 

@@ -38,7 +38,7 @@ pub(super) async fn set_mode(jojobot: &Jojobot, _sid: &str, bot: &str, value: &s
 }
 
 #[tokio::test]
-async fn search_lean_setting_uses_the_image_through_the_served_memory_wrappers() {
+async fn search_lean_setting_uses_the_fold_image_under_the_served_memory() {
     use jojobot_adapters::{counted::Counted, fold::Folded, search::IndexedMemory};
     use jojobot_domain::memory::mention::Mentioning;
     let mut jojobot = indexed(vec![hit(fact("damper result", None))]);

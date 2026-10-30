@@ -414,20 +414,19 @@ impl Refresh for IndexedMemory {
 /// A [`Mailboxes`] with the search projection behind it — the mail half's
 /// [`IndexedMemory`], and it exists for the same reason.
 ///
-/// Every verb delegates to the store, and every one that **changes** a message
-/// re-indexes it: posting makes it findable on the next call rather than after a
-/// restart, and a delivery or a retirement keeps the `state` on a search hit
-/// honest. A hit that says `new` for a message somebody drained an hour ago is
-/// worse than no hit, because a reader acts on it.
+/// It wraps no verb. It is a subscriber of the writer: after each write, the
+/// mail State publishes the messages the write wrote or changed, and the index
+/// reads them again. Posting makes a message findable on the next call rather
+/// than after a restart, and a delivery or a retirement keeps the `state` on a
+/// search hit honest. A hit that says `new` for a message somebody drained an
+/// hour ago is worse than no hit, because a reader acts on it.
 ///
 /// **The limit of that, stated rather than left to be discovered.** This is a
-/// boot-loaded projection updated by the verbs that pass through it, so a
-/// message that changes any other way keeps its indexed state until some verb
-/// touches it again: a person moving a card on the board by hand, and — inside
-/// jojobot — a message a delivery deliberately excluded, which by definition is
-/// one somebody else moved under it. Neither is a live view, and neither can be
-/// made one without polling the board. The state on a hit is what jojobot last
-/// saw, which is why a hit carries the id: `read_message` reads the store.
+/// boot-loaded projection updated from what the State publishes, so a message
+/// that changes any other way keeps its indexed state until a write publishes it
+/// again: a person moving a card on the board by hand is a second writer, which
+/// the design does not have. The state on a hit is what jojobot last saw, which
+/// is why a hit carries the id: `read_message` reads the State.
 #[derive(Clone)]
 pub struct IndexedMailboxes {
     writer: crate::writer::Writer,
@@ -451,12 +450,12 @@ impl IndexedMailboxes {
     /// Wrap a store, writing into the index the Memory half already uses. **One
     /// index, not two** — that is what makes one ranked list possible at all.
     ///
-    /// **A verb holds the index's mail order from the call that changes the store
-    /// to the end of its re-index and its publication; a board read holds it from
-    /// the count it captures to its publication.** So no index write is older than
-    /// a count published after it, and no board copy is older than a change that a
-    /// later count covers. The order is the index's, so two decorators over one
-    /// index share it. A search that finds the count current takes no part in it.
+    /// **A published change holds the index's mail order from its first re-read
+    /// to the count it publishes; a board read holds it from the count it
+    /// captures to its publication.** So no index write is older than a count
+    /// published after it, and no board copy is older than a change that a later
+    /// count covers. The order is the index's, so two decorators over one index
+    /// share it. A search that finds the count current takes no part in it.
     pub fn new(inner: Arc<dyn Mailboxes>, index: Arc<FullTextIndex>) -> Self {
         IndexedMailboxes {
             writer: index.owner(),
@@ -582,7 +581,7 @@ impl IndexedMailboxes {
     }
 
     /// **The one place the count of the board the index holds is published.**
-    /// The refresh, the rebuild and the four verbs that re-index their own change
+    /// The refresh, the rebuild and the re-read of a published change
     /// all end here, and each holds the index's mail order when it does. `epoch` is
     /// given by the readers of the whole board, which are the only ones that
     /// know the names they read under.
@@ -611,18 +610,17 @@ impl IndexedMailboxes {
                 == self.index.names_epoch()
     }
 
-    /// **End a verb that put its own change in the index.** Called with
-    /// the index's mail order held. The count moves to the port's only when the index
-    /// held the whole board before the verb and the verb is the only change the
-    /// port has counted since (`before` was read under the same hold). Any other
+    /// **End the re-read of a published change.** Called with
+    /// the index's mail order held. The count moves to the State's only when the index
+    /// held the whole board before the write and the write is the only change the
+    /// State has counted since (`before` was read under the same hold). Any other
     /// state leaves the count where it is, and the next refresh reads the board.
     ///
-    /// **A failure of the index is not the verb failing.** The board took the
-    /// change and read it back; what could not be done is putting it in a
-    /// projection. Failing the verb for that tells the caller nothing was written,
-    /// and a caller who obeys posts the message twice or never marks a delivery it
-    /// already holds. So the verb is answered as what it is, and the index is
-    /// marked behind, which makes mail search say so on every answer until a board
+    /// **A failure of the index is not the write failing.** The State took the
+    /// change; what could not be done is putting it in a projection. A subscriber
+    /// that failed its caller would tell it nothing was written, and a caller who
+    /// obeys posts the message twice or never marks a delivery it already holds.
+    /// So the write stands, and the index is marked behind, which makes mail search say so on every answer until a board
     /// read lands. The count stays where it is.
     fn settle(&self, before: Option<u64>, indexed: Result<(), MailboxError>) {
         if let Err(e) = indexed {
