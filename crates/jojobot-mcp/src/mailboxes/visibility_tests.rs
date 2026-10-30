@@ -235,6 +235,37 @@ async fn mail_visible_chart_changes_apply_to_search_and_read_by_id_on_the_next_c
     assert_eq!(open(&jojobot, &marge, id, false).await["state"], "new");
 }
 
+/// **An archived middle manager keeps the chain whole**: the bot above it still
+/// reads the box of the bot below it, in search and by id.
+#[tokio::test]
+async fn mail_visible_an_archived_middle_manager_keeps_the_chain_above_it_whole() {
+    let (jojobot, [homer, bart, lisa, _]) = chart().await;
+    let note = send(&jojobot, "lisa", "otto", "chartneedle").await;
+    let id = note["id"].as_str().unwrap();
+    jojobot
+        .archive_entity(Parameters(
+            crate::memory::archive_entity::ArchiveEntityArgs {
+                handle: "bot:bart".into(),
+                reason: "retired".into(),
+                restore: None,
+                sid: Some(homer.clone()),
+                request_id: None,
+            },
+        ))
+        .await
+        .expect("archive ok");
+    assert_eq!(
+        found_boxes(&find(&jojobot, Some(&homer), 0, 20).await),
+        BTreeSet::from(["lisa".into()])
+    );
+    assert_eq!(open(&jojobot, &homer, id, false).await["state"], "new");
+    assert!(found_boxes(&find(&jojobot, Some(&lisa), 0, 20).await).contains("lisa"));
+    assert_eq!(
+        found_boxes(&find(&jojobot, Some(&bart), 0, 20).await),
+        BTreeSet::from(["lisa".into()])
+    );
+}
+
 async fn sent(jojobot: &Jojobot, sid: &str, sender: &str, bodies: bool) -> serde_json::Value {
     json_of(
         &jojobot
