@@ -41,7 +41,9 @@ failed_sibling() {
         done
 }
 stopped_by=$(mktemp)
-env -u TOKEN "$@" &
+# Its own process group, so a stop reaches make, cargo and the test binaries below
+# the command and not only the command itself.
+setsid env -u TOKEN "$@" &
 child=$!
 if [ -n "${GITHUB_API_URL:-}" ] && [ -n "${GITHUB_RUN_ID:-}" ]; then
     (
@@ -49,7 +51,7 @@ if [ -n "${GITHUB_API_URL:-}" ] && [ -n "${GITHUB_RUN_ID:-}" ]; then
             name=$(failed_sibling)
             if [ -n "$name" ]; then
                 printf '%s\n' "$name" >"$stopped_by"
-                kill "$child" 2>/dev/null
+                kill -- "-$child" 2>/dev/null
                 break
             fi
         done
@@ -58,8 +60,8 @@ if [ -n "${GITHUB_API_URL:-}" ] && [ -n "${GITHUB_RUN_ID:-}" ]; then
 fi
 stop() { [ -z "${watcher:-}" ] || kill "$watcher" 2>/dev/null; rm -f "$stopped_by"; }
 trap stop EXIT
-trap 'stop; kill "$child" 2>/dev/null; exit 130' INT
-trap 'stop; kill "$child" 2>/dev/null; exit 143' TERM
+trap 'stop; kill -- "-$child" 2>/dev/null; exit 130' INT
+trap 'stop; kill -- "-$child" 2>/dev/null; exit 143' TERM
 wait "$child"
 code=$?
 if [ -s "$stopped_by" ]; then

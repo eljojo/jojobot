@@ -125,6 +125,29 @@ fn watcher_ignores_its_own_jobs_failure() {
     assert_eq!(code, 0, "a job stopped itself for its own failure");
 }
 
+/// **A stop reaches what the command started, not only the command.** The wrapped
+/// step is `make` under `nix develop`, so the process the watcher knows is far from
+/// the test binaries that hold the step's output open. Here the command starts a
+/// grandchild that sleeps well past the test and holds the output pipe; the job
+/// must end at the stop and not when the grandchild does. **Paired**: the stop
+/// itself is the first case above, with no grandchild.
+#[test]
+fn watcher_stops_the_grandchildren_of_the_command_too() {
+    let jobs = [
+        job(3209, 1, "report", "failure"),
+        job(3210, 1, "rooms", "running"),
+    ];
+    let began = std::time::Instant::now();
+    let (posts, _, stderr, code) = watched("group", &jobs, "sleep 40 & wait");
+    assert_eq!(posts, "");
+    assert_eq!(code, 75, "{stderr:?}");
+    assert!(
+        began.elapsed() < std::time::Duration::from_secs(20),
+        "the job lasted until its grandchild ended: {:?}",
+        began.elapsed()
+    );
+}
+
 #[test]
 fn watcher_dies_with_a_terminated_job() {
     // A sibling has failed, so a watcher left alive would cancel within a poll.
