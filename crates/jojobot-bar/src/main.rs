@@ -756,35 +756,8 @@ fn run_bundle(args: &[String]) -> std::io::Result<ExitCode> {
         }
     };
 
-    let mut lanes: Vec<(&str, Vec<&str>)> = vec![
-        ("check", vec!["test", "--workspace", "--no-run", "--locked"]),
-        (
-            "rooms",
-            ["test", "-p", "jojobot-exercise", "--features", "rooms"]
-                .into_iter()
-                .chain(rooms.iter().flat_map(|name| ["--test", *name]))
-                .chain(["--no-run", "--locked"])
-                .collect(),
-        ),
-        (
-            "year",
-            vec![
-                "test",
-                "-p",
-                "jojobot-exercise",
-                "--all-features",
-                "--test",
-                "year_room",
-                "--no-run",
-                "--locked",
-            ],
-        ),
-    ];
-    if rooms.is_empty() {
-        lanes.retain(|(lane, _)| *lane != "rooms");
-    }
     let mut exes: Vec<Exe> = Vec::new();
-    for (lane, lane_args) in lanes {
+    for (lane, lane_args) in bundle::lanes(&rooms) {
         let started = std::time::Instant::now();
         let (ok, listing) = run_phase(
             &log_path,

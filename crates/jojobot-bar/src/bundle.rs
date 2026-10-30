@@ -220,9 +220,62 @@ impl Manifest {
     }
 }
 
+/// **The cargo calls whose test binaries the bundle holds**, by lane. The rooms lane
+/// exists only when a room is named.
+pub fn lanes<'a>(rooms: &[&'a str]) -> Vec<(&'static str, Vec<&'a str>)> {
+    let mut lanes: Vec<(&'static str, Vec<&'a str>)> = vec![
+        (
+            "check",
+            vec![
+                "test",
+                "--workspace",
+                "--features=jojobot/room-harness",
+                "--no-run",
+                "--locked",
+            ],
+        ),
+        (
+            "year",
+            vec![
+                "test",
+                "-p",
+                "jojobot-exercise",
+                "--all-features",
+                "--test",
+                "year_room",
+                "--no-run",
+                "--locked",
+            ],
+        ),
+    ];
+    if !rooms.is_empty() {
+        let mut call = vec!["test", "-p", "jojobot-exercise", "--features", "rooms"];
+        call.extend(rooms.iter().flat_map(|name| ["--test", *name]));
+        call.extend(["--no-run", "--locked"]);
+        lanes.insert(1, ("rooms", call));
+    }
+    lanes
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **The check lane compiles the production guard's test with the room-harness
+    /// feature.** The bundle ships the binary built with it, and that test expects the
+    /// guard to find the harness exactly when its own build has the feature.
+    #[test]
+    fn the_check_lane_builds_the_room_harness_feature() {
+        let lanes = lanes(&[]);
+        let (_, check) = lanes
+            .iter()
+            .find(|(lane, _)| *lane == "check")
+            .expect("a check lane");
+        assert!(
+            check.contains(&"--features=jojobot/room-harness"),
+            "{check:?}"
+        );
+    }
 
     /// A verbatim `cargo test --workspace --no-run` capture on this workspace.
     const NO_RUN_LISTING: &str = include_str!("../tests/fixtures/no-run-listing.txt");
