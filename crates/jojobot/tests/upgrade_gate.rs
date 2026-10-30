@@ -401,6 +401,7 @@ async fn boots_on_a_restored_store(fixture_dir: &str, restored: Restored) {
     // the surface is itself attributed.
     let first = boot_current(&state_dir, store_port, &git_ref).await;
     first.stop().await;
+    assert_the_ledger_ends_whole(&state_dir, &git_ref).await;
     let after_first = dump_store(&state_dir).await;
     // The first boot reported the recording's handle; the passes are marked, so the
     // next boots report nothing.
@@ -765,6 +766,47 @@ async fn the_wait_for_the_store_lock_lasts_as_long_as_the_lock_is_held_and_no_lo
     let _ = std::fs::remove_dir_all(&empty);
 }
 
+/// **The lock the wait looks for is the lock a running store holds.** The case
+/// above holds a file it made itself, so it proves the wait loop and nothing about
+/// the store. Here a real store runs with a database of its own: the wait must
+/// find a `LOCK` file under its data directory, must still be waiting while the
+/// store runs, and must end once the store has stopped.
+#[tokio::test]
+async fn the_wait_for_the_store_lock_holds_while_a_real_store_runs_and_ends_when_it_stops() {
+    let dir = jojobot_adapters::testing::scratch_path("jojobot-lock-real");
+    std::fs::create_dir_all(&dir).expect("a data directory");
+    let mut store = Dolt::start(&dir, free_port())
+        .await
+        .expect("the store comes up");
+    sqlx::query("CREATE DATABASE lockwait")
+        .execute(store.pool())
+        .await
+        .expect("a database of its own");
+
+    let mut files = Vec::new();
+    store_lock_files(&dir, &mut files);
+    assert!(
+        !files.is_empty(),
+        "a running store keeps no LOCK file under {dir:?}, so the wait has nothing to watch"
+    );
+    let waiting = tokio::spawn({
+        let dir = dir.clone();
+        async move { wait_for_the_store_lock_to_release(&dir).await }
+    });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(
+        !waiting.is_finished(),
+        "the wait ended while the store was running"
+    );
+
+    store.stop().await;
+    tokio::time::timeout(Duration::from_secs(5), waiting)
+        .await
+        .expect("the wait ends once the store has stopped")
+        .expect("the wait did not fail");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// The files the store locks its data under `dir` with.
 fn store_lock_files(dir: &std::path::Path, found: &mut Vec<std::path::PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -1011,6 +1053,48 @@ async fn dump_store(state_dir: &std::path::Path) -> String {
         .expect("the dump is where dolt put it");
     let _ = std::fs::remove_file(database_dir.join("gate-compare.sql"));
     text
+}
+
+/// **After a boot the ledger holds every version the build ships and no migration
+/// is left begun.** The second boot's equal dump cannot say this: a store whose
+/// ledger stays short, or whose marker stays, is equal to itself after any number
+/// of boots. Read with the store's own tool, no server over it, as `dump_store`
+/// does.
+async fn assert_the_ledger_ends_whole(state_dir: &std::path::Path, git_ref: &str) {
+    let read = |table: &'static str| async move {
+        let out = tokio::process::Command::new("dolt")
+            .env("DOLT_ROOT_PATH", dolt_home_in(state_dir))
+            .args(["sql", "-r", "csv", "-q"])
+            .arg(format!("SELECT version FROM {table} ORDER BY version"))
+            .current_dir(state_dir.join("db").join("jojobot"))
+            .output()
+            .await
+            .expect("dolt sql runs");
+        assert!(
+            out.status.success(),
+            "dolt sql failed on {table}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .skip(1)
+            .map(str::to_string)
+            .collect::<Vec<String>>()
+    };
+    let ledger = read("schema_migration").await;
+    let missing: Vec<_> = jojobot_adapters::dolt::migrate::shipped_versions()
+        .into_iter()
+        .filter(|version| !ledger.iter().any(|seen| seen == version))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "the first boot over the store recorded at {git_ref} left these shipped migrations out of the ledger: {missing:?}"
+    );
+    let begun = read("schema_migration_begun").await;
+    assert!(
+        begun.is_empty(),
+        "the first boot over the store recorded at {git_ref} left migrations begun: {begun:?}"
+    );
 }
 
 /// **A lease on a role object survives a restart, and a renewal past the renewal
