@@ -60,6 +60,10 @@ struct Ran {
 }
 
 fn bar(dir: &Path, level: &str, red_job: &str) -> Ran {
+    bar_with_jobs(dir, level, red_job, "2")
+}
+
+fn bar_with_jobs(dir: &Path, level: &str, red_job: &str, jobs: &str) -> Ran {
     let began = Instant::now();
     let out = support::output_fenced(
         Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
@@ -68,7 +72,7 @@ fn bar(dir: &Path, level: &str, red_job: &str) -> Ran {
             .env("TMPDIR", dir)
             .env("CARGO", write_cargo(dir))
             .env("BAR_HISTORY_DIR", dir.join("history"))
-            .env("BAR_JOBS", "2")
+            .env("BAR_JOBS", jobs)
             .env("RED_JOB", red_job)
             .env("SLOW", "8"),
     )
@@ -126,5 +130,35 @@ fn the_report_level_stops_at_the_first_red_job_and_the_boundary_level_does_not()
         boundary.started.iter().any(|call| call.contains("gamma")),
         "the boundary level skipped a job: {:?}",
         boundary.started
+    );
+}
+
+/// **A doc-test job the report killed is not a failed doc-test.** Every job starts
+/// at once; the library job is red and the bar kills the rest, the doc-test job
+/// among them. The verdict names no doc-test failure for a job that never gave an
+/// answer. **Paired**: when the doc-test job is the red one, it is named.
+#[test]
+fn a_killed_doc_test_job_is_not_reported_as_failed_and_a_failing_one_is() {
+    let dir = scratch();
+    let killed = bar_with_jobs(&dir, "report", "--lib", "8");
+    assert!(!killed.success, "{}", killed.stdout);
+    assert!(
+        killed.stdout.contains("did not run"),
+        "the doc-test job was meant to be killed: {}",
+        killed.stdout
+    );
+    assert!(
+        !killed.stdout.contains("doc-tests: FAILED"),
+        "a killed job was called a failed doc-test: {}",
+        killed.stdout
+    );
+
+    let dir = scratch();
+    let failing = bar_with_jobs(&dir, "report", "--doc", "8");
+    assert!(!failing.success, "{}", failing.stdout);
+    assert!(
+        failing.stdout.contains("doc-tests: FAILED"),
+        "a failing doc test was not named: {}",
+        failing.stdout
     );
 }

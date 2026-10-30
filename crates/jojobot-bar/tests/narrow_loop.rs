@@ -132,3 +132,25 @@ fn targeted_dispatch_names_the_boundary_selection_before_running_it() {
         "{test}"
     );
 }
+
+/// **Every word of FILTER selects a runnable case, or the run is refused naming
+/// the word.** The listing joins the words, so one that is misspelled hides
+/// behind another that matches and the case it was meant for never runs.
+/// **Paired**: two words that both match, and two that overlap, run.
+#[test]
+fn a_misspelled_filter_beside_a_good_one_is_refused_by_name() {
+    let (code, stdout, argv, _) = run_narrow("misspelled", "alpha::first beta::sceond");
+    assert_eq!(code, Some(2), "{stdout}");
+    assert!(stdout.contains("beta::sceond"), "{stdout}");
+    assert!(
+        !argv
+            .lines()
+            .any(|call| call.starts_with("test ") && !call.contains("--list")),
+        "a refused selection ran tests: {argv}"
+    );
+
+    let (code, stdout, _, _) = run_narrow("both-good", "alpha::first beta::second");
+    assert_eq!(code, Some(0), "{stdout}");
+    let (code, stdout, _, _) = run_narrow("overlap", "alpha alpha::first");
+    assert_eq!(code, Some(0), "{stdout}");
+}

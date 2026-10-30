@@ -560,7 +560,16 @@ fn run_test_jobs(
             std::time::Duration::ZERO,
         ));
         all_ok &= ok || did_not_run;
-        walls.push((ok, took));
+        // A job killed or never started has no wall time of its own, and a zero
+        // reads as no answer to the doc-test line, which names failures only.
+        walls.push((
+            ok,
+            if did_not_run {
+                std::time::Duration::ZERO
+            } else {
+                took
+            },
+        ));
         writeln!(
             log,
             "\n$ cargo test {} --no-fail-fast --locked",
@@ -1562,6 +1571,8 @@ fn run_check_phases(known: &KnownReds, level: Level) -> std::io::Result<ExitCode
             }
             summary.phase_skipped("test");
             summary.phase_skipped("lint");
+            // The fast phase began the run's history; a run that ends here ends it.
+            finish_history(fast_history.as_ref());
             finish(&mut summary, &log_path);
             return Ok(ExitCode::FAILURE);
         }
@@ -1654,6 +1665,7 @@ fn run_check_phases(known: &KnownReds, level: Level) -> std::io::Result<ExitCode
     } else {
         // A listing that failed is a build that failed: the same text reads
         // as "did not compile", exactly as a failed plain run did.
+        finish_history(fast_history.as_ref());
         (false, listing)
     };
     let verdict = summarize_test_output(&text);
@@ -1903,6 +1915,32 @@ fn run_narrow(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
         // **The same exit code the old inline guard used** (rule: same
         // exit codes) — 2, not the generic failure code, so a caller
         // scripted against the old refusal still recognises it.
+        return Ok(ExitCode::from(2));
+    }
+    // **Every word of FILTER selects a case that will run**, not only their
+    // union: a misspelled word beside a good one matches nothing and is lost in
+    // the count above. Overlap between words stays allowed.
+    let unmatched: Vec<&str> = filters
+        .iter()
+        .copied()
+        .filter(|word| {
+            !runnable
+                .iter()
+                .filter(|name| !skipped.contains(name))
+                .any(|name| name.contains(word))
+        })
+        .collect();
+    if !unmatched.is_empty() {
+        summary.phase_failed(
+            "test",
+            &format!(
+                "FILTER word(s) {} selected no runnable test in {krate} — each word is a \
+                 substring of a test's full path",
+                unmatched.join(", ")
+            ),
+        );
+        summary.phase_skipped("lint");
+        finish(&mut summary, &log_path);
         return Ok(ExitCode::from(2));
     }
 

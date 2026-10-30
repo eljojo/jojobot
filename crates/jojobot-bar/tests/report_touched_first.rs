@@ -652,3 +652,65 @@ fn the_fallback_range_is_the_merge_base_with_origin_main_when_there_is_no_local_
         "{stdout}"
     );
 }
+
+/// **A fake `cargo` whose workspace build, or the listing of test binaries,
+/// fails after the library cases passed.** Everything else is [`write_cargo`].
+fn write_cargo_failing_after_the_fast_cases(dir: &Path, step: &str) -> PathBuf {
+    let green = write_cargo(dir);
+    let script = fs::read_to_string(&green).expect("read the green stub");
+    let broken = match step {
+        "build" => script.replace(
+            "case \"$1\" in\n  test)",
+            "[ \"$1\" = build ] && exit 1\ncase \"$1\" in\n  test)",
+        ),
+        _ => script.replace(
+            "  *\" --no-run \"*)\n",
+            "  *\" --no-run \"*)\n    exit 1 ;;\n  *\" --listing-never \"*)\n",
+        ),
+    };
+    assert_ne!(broken, script, "the stub was not changed for {step}");
+    support::write_executable(&green, &broken);
+    green
+}
+
+/// **The history of a report run that fails after its fast phase is finished.** A
+/// run with no end reads as killed. The build fails in one run and the listing in
+/// the other; each leaves a run header that says when it ended. **Paired**: a
+/// green run does the same, so the end is the run's and not a side effect of the
+/// failure.
+#[test]
+fn a_report_run_that_fails_after_the_fast_phase_finishes_its_history() {
+    for step in ["build", "listing", "green"] {
+        let dir = scratch();
+        let first = repository(&dir);
+        if step == "green" {
+            write_cargo(&dir);
+        } else {
+            write_cargo_failing_after_the_fast_cases(&dir, step);
+        }
+        let out = support::output_fenced(
+            Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
+                .arg("report")
+                .current_dir(&dir)
+                .env("TMPDIR", &dir)
+                .env("CARGO", dir.join("cargo"))
+                .env("BAR_HISTORY_DIR", dir.join("history"))
+                .env("BAR_JOBS", "1")
+                .env("BAR_PUSH_BASE", &first),
+        )
+        .expect("run bar");
+        let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+        assert_eq!(out.status.success(), step == "green", "{step}: {stdout}");
+        assert!(stdout.contains("fast: ok"), "{step}: {stdout}");
+        let runs: Vec<PathBuf> = fs::read_dir(dir.join("history"))
+            .expect("the history directory exists")
+            .map(|entry| entry.expect("an entry").path())
+            .collect();
+        assert_eq!(runs.len(), 1, "{step}: one run: {runs:?}");
+        let header = fs::read_to_string(runs[0].join("run.json")).expect("the header");
+        assert!(
+            header.contains("\"ended_at\":\""),
+            "{step}: the run was left open: {header}"
+        );
+    }
+}
