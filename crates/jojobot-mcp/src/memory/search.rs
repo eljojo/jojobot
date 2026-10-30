@@ -329,8 +329,7 @@ impl Jojobot {
                        the exact handle or address. One ranked list over entities, claims, \
                        free prose AND mail you sent or in your own box and every bot's box below you on \
                        the reports_to chain (other mail above or beside you and the operator's box \
-                       are excluded; your own mail in a box above yours comes without the \
-                       recipient's notes, flagged notes_withheld). `query` matches by stem, needing at least half its terms, rounded up. It is optional when a \
+                       are excluded). `query` matches by stem, needing at least half its terms, rounded up. It is optional when a \
                        filter narrows: kind, status (unset: active claims, then archived ones \
                        ranked below them, retracted ones left out; `active` is current truth \
                        only; `archived` reads the archive, retracted claims too), provenance, \
@@ -1880,7 +1879,11 @@ mod tests {
         assert_eq!(hit["state"], "processed", "an archive reads as one");
         assert_eq!(hit["sender"], "dev (implementer)");
         assert_eq!(hit["subject"], "the kiln slice");
-        assert_eq!(hit["notes"], "filed");
+        // This caller reads nothing inside the box, so the notes the recipient
+        // wrote are left out and the hit says so (rule 139: never up); the
+        // chart cases in mailboxes/visibility_tests show them to a reader inside.
+        assert!(hit.get("notes").is_none(), "{hit}");
+        assert_eq!(hit["notes_withheld"], true, "{hit}");
         assert!(hit["sent_at"].is_string());
         assert_eq!(hit["snippet"], "…the damper is still hand-cut…");
         assert!(
