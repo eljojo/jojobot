@@ -3835,12 +3835,20 @@ where
     M: super::Memory + ?Sized,
 {
     let facts = store.recall(&entity.id).await?;
-    let mut fields = store.fields(&entity.id).await?;
-    let scanned = match store.scan_entity(&entity.id).await {
-        Ok(scanned) => scanned,
+    // The scan carries the folded fields, so a readable scan costs no read of its
+    // own. A failed scan is the one case that asks the store for them: the answer
+    // keeps its fields and names the scan as unreadable.
+    let (scanned, mut fields) = match store.scan_entity(&entity.id).await {
+        Ok(scanned) => {
+            let fields = scanned
+                .as_ref()
+                .map(|doc| doc.fields.clone())
+                .unwrap_or_default();
+            (scanned, fields)
+        }
         Err(error) => {
             unreadable_scans.insert(entity.id.clone(), error);
-            None
+            (None, store.fields(&entity.id).await?)
         }
     };
     // **Asked of the store, never folded from the records above.** What a thing
