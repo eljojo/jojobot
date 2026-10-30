@@ -76,7 +76,7 @@ impl Jojobot {
                        nobody has picked it up · `read` = delivered, not yet finished with · \
                        `processed` = acted on) plus notes when the consumer recorded an \
                        outcome (left out, with `notes_withheld`, for mail in a box above \
-                       yours); a message a read or a post delivered carries `taken_by` \
+                       or beside yours); a message a read or a post delivered carries `taken_by` \
                        (`reading` = the owner opened the box or took that message by id · \
                        `posting` = it rode back with the answer to a post of the owner's \
                        own); absent says nothing was recorded, never that nobody looked, since a \

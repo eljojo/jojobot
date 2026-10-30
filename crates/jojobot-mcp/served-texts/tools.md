@@ -2070,7 +2070,7 @@ See the mail YOU have sent and where it got to — read-only, and it moves NOTHI
 Your own outbox is readable above or beside you too; naming another sender returns only messages in your own box or boxes below you along reports_to; the rest are counted as withheld, with no metadata, bodies or digests.
 A `to` that names no colleague comes back status: blocked with candidates, never an empty list, because an empty list would read as 'it never arrived'.
 Messages jojobot cannot read are reported separately under `unreadable`: it cannot tell who sent them, so one of yours could be there.
-Newest first, each with its state (`new` = nobody has picked it up · `read` = delivered, not yet finished with · `processed` = acted on) plus notes when the consumer recorded an outcome (left out, with `notes_withheld`, for mail in a box above yours); a message a read or a post delivered carries `taken_by` (`reading` = the owner opened the box or took that message by id · `posting` = it rode back with the answer to a post of the owner's own); absent says nothing was recorded, never that nobody looked, since a message processed straight from `new` and one delivered before the record existed have none.
+Newest first, each with its state (`new` = nobody has picked it up · `read` = delivered, not yet finished with · `processed` = acted on) plus notes when the consumer recorded an outcome (left out, with `notes_withheld`, for mail in a box above or beside yours); a message a read or a post delivered carries `taken_by` (`reading` = the owner opened the box or took that message by id · `posting` = it rode back with the answer to a post of the owner's own); absent says nothing was recorded, never that nobody looked, since a message processed straight from `new` and one delivered before the record existed have none.
 Permitted bodies are left out unless you ask for them, so each carries body_bytes and a digest of about 120 characters and says body_elided: true.
 MAIL TO THE OPERATOR is listed by id, time and subject only, even with include_bodies, because no bot reads the operator's box back.
 Twenty newest by default; an answer stops at the ceiling, never mid-message, and counts what it left out under not_shown with the `offset` that reads the next page.
@@ -3198,8 +3198,8 @@ With `true` the call takes NO delivery and moves nothing: the message is
 left in the state it is in, and the answer is its changes in the order
 they happened, each naming the run, when, the state it left, and the
 notes or reason it was given. Allowed exactly where reading the message
-is. The author of a message in a box above its own reads it without the
-recipient's notes and reasons, and `notes_withheld` says so. Without it a
+is. The author of a message in a box above or beside its own reads it
+without the recipient's notes and reasons, and `notes_withheld` says so. Without it a
 read of your own box takes delivery.
 ```
 

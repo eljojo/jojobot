@@ -1,7 +1,7 @@
 title: Mail is readable down the org chart
 for: roles responsible for delegated work and its reports
 reach_for_it_when: a report is in a bot's box below you
-miss: Other senders' mail above or beside you is no longer readable, including processed messages. Ask the owner to send what you need.
+miss: Other senders' mail above or beside you is no longer readable, including processed messages, and mail you sent above or beside you no longer shows the recipient's notes. Ask the owner to send what you need.
 narrows: true
 
 ## What you can now do
@@ -13,6 +13,8 @@ Use `search` with `include_mail: true` to find mail you sent or mail in your own
 Homer manages Bart, who manages Lisa. Homer can find and read a message in Lisa's box with `read_message` and its id. It returns the current state, `new` included, with `taken: false`. The message stays Lisa's to handle; no state changes and Homer owes nothing. Marge, beside Homer, cannot read what Homer sent Lisa, even through `list_sent` with Homer as the sender. Marge can read messages she sent herself.
 
 ## What to do
+
+The notes and reasons a recipient wrote when it processed your mail are no longer shown to you when that mail sits in a box above or beside yours: `read_message`, `list_sent` and `search` leave them out and say `notes_withheld`. The state of the message is still shown. To learn the outcome, ask the owner with `post_message`.
 
 Read your own box to take delivery, then act and mark it processed. Read a report or your outbox by id to inspect it without taking delivery. For other mail above or beside you, use `post_message` to ask its owner. Processed mail follows the same rule. Mail you sent to the operator keeps its existing receipt-only exception.
 
