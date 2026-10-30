@@ -285,6 +285,19 @@ fn ci_crate_mcp_change_keeps_workspace_scanners() {
     .unwrap();
     assert!(out.status.success(), "{out:?}");
     let jobs = calls(&dir);
+    // **A scoped run builds the harness feature too**: the selected package that
+    // declares it carries it on its test jobs, as the unscoped run does.
+    let own: Vec<_> = jobs
+        .iter()
+        .filter(|c| c.starts_with("test ") && c.contains(" -p jojobot-mcp "))
+        .collect();
+    assert!(!own.is_empty(), "no job of the selected package: {jobs:?}");
+    for job in own {
+        assert!(
+            job.contains("--features=jojobot-mcp/room-harness"),
+            "the selected package lacks the harness feature: {job}"
+        );
+    }
     for (owner, target) in [
         ("jojobot-domain", "fixture_roster"),
         ("jojobot-bar", "no_forgotten_guards"),
@@ -481,6 +494,40 @@ fn ci_crate_non_code_behaviour_paths_force_full_tests() {
         assert!(
             selected["reason"].as_str().unwrap().contains(path),
             "{path}: {selected}"
+        );
+    }
+}
+
+/// **A push whose paths force the full run still builds the harness feature.** The
+/// selection is on and chooses the workspace, so the jobs must carry the feature as
+/// the run without a selection does.
+#[test]
+fn ci_crate_a_forced_full_run_builds_the_harness_feature() {
+    let (dir, base) = selection_fixture();
+    fs::write(dir.join("flake.lock"), "changed\n").unwrap();
+    git(&dir, &["add", "flake.lock"]);
+    git(&dir, &["commit", "-q", "-m", "behaviour changed"]);
+    let out = support::output_fenced(
+        Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
+            .arg("report")
+            .current_dir(&dir)
+            .env("CARGO", dir.join("cargo"))
+            .env("BAR_HISTORY_DIR", dir.join("history"))
+            .env("BAR_SELECT_BY_CRATE", "1")
+            .env("BAR_SELECT_BASE", &base)
+            .env("BAR_JOBS", "1"),
+    )
+    .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let jobs: Vec<_> = calls(&dir)
+        .into_iter()
+        .filter(|c| c.starts_with("test ") && !c.starts_with("test -p ") && !c.contains("--no-run"))
+        .collect();
+    assert!(!jobs.is_empty(), "no test job ran");
+    for job in &jobs {
+        assert!(
+            job.contains("--workspace --features=jojobot/room-harness"),
+            "a full run lost the harness feature: {job}"
         );
     }
 }

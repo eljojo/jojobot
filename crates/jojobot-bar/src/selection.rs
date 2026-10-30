@@ -42,9 +42,17 @@ pub(super) fn current() -> Option<&'static Selection> {
                 packages
                     .iter()
                     .flat_map(|p| ["-p".to_string(), p.clone()])
+                    .chain(
+                        names("harness")
+                            .into_iter()
+                            .map(|p| format!("--features={p}/room-harness")),
+                    )
                     .collect()
             } else {
-                vec!["--workspace".to_string()]
+                vec![
+                    "--workspace".to_string(),
+                    "--features=jojobot/room-harness".to_string(),
+                ]
             };
             Some(Selection {
                 always_tests: value

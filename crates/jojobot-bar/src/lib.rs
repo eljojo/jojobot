@@ -254,10 +254,22 @@ fn package_of(source: &str) -> Option<String> {
 
 /// **The arguments `cargo test` gets for one job.** A job that names its own
 /// package (`-p <package> ...`) gets no scope: `--workspace` beside `-p` would
-/// select every package again.
+/// select every package again. It keeps the scope's harness feature for its own
+/// package, because a feature of a package the job does not select is refused.
 pub fn job_args(scope: &[&str], job: &[String]) -> Vec<String> {
     let own_package = job.first().is_some_and(|a| a == "-p");
-    let scope: &[&str] = if own_package { &[] } else { scope };
+    let own_feature = job
+        .get(1)
+        .map(|package| format!("--features={package}/room-harness"));
+    let scope: Vec<&str> = if own_package {
+        scope
+            .iter()
+            .copied()
+            .filter(|arg| own_feature.as_deref() == Some(*arg))
+            .collect()
+    } else {
+        scope.to_vec()
+    };
     scope
         .iter()
         .map(|a| a.to_string())

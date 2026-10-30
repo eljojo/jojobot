@@ -60,6 +60,9 @@ def select(paths, metadata, patterns, always):
                 tests=sorted({t["name"] for p in selected for t in p["targets"]
                               if "test" in t["kind"]}),
                 bins=any("bin" in t["kind"] for p in selected for t in p["targets"]),
+                # A selected package that declares the harness feature is built with it,
+                # as the unscoped run builds the workspace.
+                harness=sorted(p["name"] for p in selected if "room-harness" in p.get("features", {})),
                 allow_docs=False)
 
 
