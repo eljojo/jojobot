@@ -595,3 +595,6 @@ mod contract_receipt_notes;
 
 #[path = "user_stories/contract_token_saving.rs"]
 mod contract_token_saving;
+
+#[path = "user_stories/contract_served_text.rs"]
+mod contract_served_text;
