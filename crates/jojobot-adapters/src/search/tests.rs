@@ -268,8 +268,12 @@ async fn a_search_after_a_write_finds_it_without_scanning_the_store() {
     );
 }
 
-/// **A change the writes did not make is still found, by a scan.** A row staged
-/// past the writes stands for an edit made directly against the real tables.
+/// **A change the writes did not make is found, by a scan, while the fold holds
+/// no image.** A row staged past the writes stands for an edit made directly
+/// against the real tables. A second writer is not part of the design: once the
+/// fold holds an image, such an edit is seen when the fold reads the store again,
+/// and no search promises more. Without an image, the store's own change signal is
+/// all the index has, and it must not hide the edit.
 #[tokio::test]
 async fn a_change_made_past_the_writes_is_still_found_by_a_scan() {
     let (fake, store, retrieval) = an_index_over_the_fake_with_no_image().await;
@@ -5696,6 +5700,8 @@ use crate::log_capture::log_sink;
 
 mod derivation_after_rename;
 
+mod indeterminate_declarations;
+
 /// **A row whose subject names nothing is counted and said out loud.** This
 /// is the split-brain tell a hand edit leaves: the row stays reachable
 /// through its home doc, so nothing breaks and nothing looks wrong — which
@@ -9118,41 +9124,16 @@ async fn an_edge_filter_beats_a_prose_mention() {
     );
 }
 
-/// [`InMemoryMemory`] with a FIXED [`Memory::write_summary`], so a test
-/// can drive the ordinary skip-if-unchanged path on purpose.
-/// [`InMemoryMemory`] alone offers no such signal (`None`, the default,
-/// answers "no signal" and is scanned every time regardless of what
-/// changed) — this is what makes the cache worth clearing at all.
-struct FixedWriteSummary(Arc<InMemoryMemory>);
-
-#[jojobot_domain::forward(jojobot_domain::forward_memory, via = 0)]
-impl Memory for FixedWriteSummary {
-    /// **The one method this double exists for.** Fixed and never
-    /// derived from the store underneath, so nothing about a capture or
-    /// a declaration ever changes it — a caller relying on it alone can
-    /// never see a difference, which is the point.
-    async fn write_summary(&self) -> Result<Option<WriteSummary>, MemoryError> {
-        Ok(Some(WriteSummary {
-            entities: (1, None),
-            facts: (1, None),
-            entity_hash: None,
-            fact_hash: None,
-        }))
-    }
-}
-
-/// **A declaration changes what an already-scanned doc's fields
-/// answer, and `write_summary` never counts a declaration write.**
+/// **A declaration changes what an already-scanned doc's fields answer, and
+/// the fold counts it.**
 ///
 /// Two captures, no declaration in between: the scan's own fold is
-/// newest-write-wins, which `rescan`'s cache then serves as-is. Declare
-/// the key a counter and ask again with NOTHING else written — the
-/// store wears a FIXED `write_summary` (see [`FixedWriteSummary`]) so
-/// the ordinary skip-if-unchanged path genuinely fires: without
-/// the fold counting the declaration as a change, this would serve the same
-/// stale scan it served before.
+/// newest-write-wins, which `rescan`'s cache then serves as-is. Declare the key
+/// a counter and ask again with NOTHING else written. The fold holds an image,
+/// so its `write_summary` is the State's own change count, which a declaration
+/// moves; without that count the cache would serve the scan from before.
 #[tokio::test]
-async fn a_declaration_forces_a_real_rescan_even_when_write_summary_is_unchanged() {
+async fn a_declaration_the_fold_holds_forces_a_real_rescan() {
     let inner = Arc::new(InMemoryMemory::booted());
     let alpha = EntityId::person("person:alpha");
     inner
@@ -9180,7 +9161,7 @@ async fn a_declaration_forces_a_real_rescan_even_when_write_summary_is_unchanged
         .written()
         .expect("not blocked");
 
-    let indexed = IndexedMemory::new(Arc::new(FixedWriteSummary(inner))).expect("index opens");
+    let indexed = IndexedMemory::new(inner).expect("index opens");
     indexed.state().rebuild().await.expect("the fold loads");
     let scanned = indexed.rescan().await.expect("rescan ok");
     let doc = scanned
@@ -9204,9 +9185,8 @@ async fn a_declaration_forces_a_real_rescan_even_when_write_summary_is_unchanged
         .await
         .expect("declare ok");
 
-    // Nothing else was written since the first rescan, so `write_summary`
-    // reports exactly what it reported before — the signal declare_type
-    // does not touch.
+    // Nothing else was written since the first rescan, so only the fold's
+    // count of the declaration can tell the index to read again.
     let scanned = indexed.rescan().await.expect("rescan ok");
     let doc = scanned
         .iter()
@@ -9215,6 +9195,6 @@ async fn a_declaration_forces_a_real_rescan_even_when_write_summary_is_unchanged
     assert_eq!(
         doc.fields.get("laps"),
         Some(&"2".to_string()),
-        "declared a counter, the same two writes now sum to two, with write_summary unchanged"
+        "declared a counter, the same two writes now sum to two"
     );
 }
