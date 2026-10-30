@@ -171,6 +171,10 @@ pub(super) struct Image {
     /// are served at the moment of the fill. A rename or a merge reads the events
     /// again (see [`patch`]), so the handles are as current as the image.
     events: Vec<jojobot_domain::memory::MergeEvent>,
+    /// How many times a record's links were read, so a case can hold a write's
+    /// cost to a number of passes over the records.
+    #[cfg(test)]
+    link_reads: std::sync::atomic::AtomicUsize,
 }
 
 impl Image {
@@ -277,6 +281,8 @@ impl Image {
             built_on: HashMap::new(),
             held: Held::default(),
             events: Vec::new(),
+            #[cfg(test)]
+            link_reads: std::sync::atomic::AtomicUsize::new(0),
         };
         image.reindex();
         image.index_docs();
@@ -330,18 +336,18 @@ impl Image {
     /// (a merge's account of what it folded is one in the fake and none in the
     /// real store), so the store is asked for that name.
     pub fn names_to_ask(&self, doc: &Doc) -> Vec<String> {
-        self.names_touched_by(doc)
-            .into_iter()
-            .filter(|name| {
-                let target = EntityId(name.clone());
-                jojobot_domain::memory::validate_subject(&target).is_ok()
-                    && doc.scan.facts.iter().any(|fact| {
-                        fact.fields
-                            .contains_key(jojobot_domain::memory::capacity::ENGINE_RECORD)
-                            && jojobot_domain::memory::fact_names_target(fact, &target)
-                    })
-            })
-            .collect()
+        let mut names = std::collections::BTreeSet::new();
+        for fact in &doc.scan.facts {
+            if fact
+                .fields
+                .contains_key(jojobot_domain::memory::capacity::ENGINE_RECORD)
+            {
+                names.extend(self.linked_names(fact).into_iter().filter(|name| {
+                    jojobot_domain::memory::validate_subject(&EntityId(name.clone())).is_ok()
+                }));
+            }
+        }
+        names.into_iter().collect()
     }
 
     /// **What the store would answer for each name this thing's records point at,
@@ -362,36 +368,49 @@ impl Image {
                     && jojobot_domain::memory::validate_subject(&EntityId(name.clone())).is_ok()
             })
             .collect();
-        // Targets are read from stored marks. The image keeps each existing holder and adds one when this
-        // write sends a key linking to the target. Sending the same value again
-        // links; editing only another key does not. A declaration changes no list.
+        // Targets are read from stored marks, one pass over the records: each
+        // record is read once and filed under every name it links to, so a write
+        // costs the records and not the records times the names. The image keeps
+        // each existing holder and adds one when this write sends a key linking
+        // to the target. Sending the same value again links; editing only another
+        // key does not. A declaration changes no list.
+        let mut naming: HashMap<String, Vec<&Fact>> = HashMap::new();
+        for fact in &doc.scan.facts {
+            let linked: std::collections::BTreeSet<String> =
+                self.linked_names(fact).into_iter().collect();
+            for name in linked {
+                naming.entry(name).or_default().push(fact);
+            }
+        }
+        let sent: std::collections::HashSet<String> = doc
+            .scan
+            .facts
+            .iter()
+            .filter_map(|fact| {
+                let (_, keys) = wrote.iter().find(|(id, _)| *id == fact.id)?;
+                Some(
+                    keys.iter()
+                        .filter_map(|key| fact.field_links.get(key.trim()))
+                        .flatten()
+                        .map(|id| id.to_string())
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .flatten()
+            .collect();
         let patch = names
             .into_iter()
             .map(|name| {
-                let target = EntityId(name.clone());
-                let names_it =
-                    |fact: &Fact| jojobot_domain::memory::fact_names_target(fact, &target);
-                let sent_it = |fact: &Fact| {
-                    wrote.iter().any(|(id, keys)| {
-                        *id == fact.id
-                            && keys.iter().any(|key| {
-                                fact.field_links
-                                    .get(key.trim())
-                                    .is_some_and(|ids| ids.contains(&target))
-                            })
-                    })
-                };
                 let holder = self
                     .referring
                     .get(&name)
                     .is_some_and(|list| list.iter().any(|fact| fact.home == handle))
-                    || doc.scan.facts.iter().any(sent_it);
+                    || sent.contains(&name);
                 let holding: Vec<Fact> = match holder {
-                    true => doc
-                        .scan
-                        .facts
-                        .iter()
-                        .filter(|fact| names_it(fact))
+                    true => naming
+                        .remove(&name)
+                        .unwrap_or_default()
+                        .into_iter()
                         .cloned()
                         .collect(),
                     false => Vec::new(),
@@ -586,10 +605,24 @@ impl Image {
         let mut names = std::collections::BTreeSet::new();
         for doc in docs {
             for fact in &doc.scan.facts {
-                names.extend(jojobot_domain::memory::names_in_fact(fact));
+                names.extend(self.linked_names(fact));
             }
         }
         names.into_iter().collect()
+    }
+
+    /// Every name one record's links point at. The one place the image reads a
+    /// record's links, so a test counts the passes a write makes.
+    fn linked_names(&self, fact: &Fact) -> Vec<String> {
+        #[cfg(test)]
+        self.link_reads
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        jojobot_domain::memory::names_in_fact(fact)
+    }
+
+    #[cfg(test)]
+    pub(super) fn link_reads(&self) -> usize {
+        self.link_reads.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// The names to ask the store about after `doc` replaces what is held for

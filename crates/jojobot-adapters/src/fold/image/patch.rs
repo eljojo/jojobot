@@ -394,4 +394,76 @@ mod tests {
             );
         }
     }
+
+    /// A fold over targets and one hub whose `records` claims each name one of
+    /// `names` targets, and what one more claim on the hub costs.
+    async fn hub_capture(records: usize, names: usize) -> (usize, Arc<Counted>, Folded) {
+        let counted = Arc::new(Counted::new(Arc::new(InMemoryMemory::booted())));
+        let folded = Folded::new(counted.clone());
+        folded.rebuild().await.expect("the fold fills");
+        let hub = thing(9_999);
+        for id in (0..names).map(thing).chain([hub.clone()]) {
+            folded
+                .add_entity(NewEntity::new(id.clone(), id.to_string(), "user-named"))
+                .await
+                .expect("an entity is added")
+                .written()
+                .expect("not blocked");
+        }
+        let claim = |n: usize| {
+            let mut fact = NewFact::about(hub.clone(), format!("claim {n}"), date(2026, 9, 1));
+            fact.fields
+                .insert("owner".into(), thing(n % names).to_string());
+            fact
+        };
+        for n in 0..records {
+            folded
+                .capture(claim(n))
+                .await
+                .expect("a claim lands")
+                .written()
+                .expect("not blocked");
+        }
+        let before = folded
+            .held(|image| image.link_reads())
+            .expect("the image is held");
+        folded
+            .capture(claim(0))
+            .await
+            .expect("a claim lands")
+            .written()
+            .expect("not blocked");
+        let after = folded
+            .held(|image| image.link_reads())
+            .expect("the image is held");
+        (after - before, counted, folded)
+    }
+
+    /// **A claim write reads each record's links a fixed number of times, however
+    /// many names the records point at.** The same hub of 30 records over 3 names
+    /// and over 30 names costs the same reads, and both stay within a few passes
+    /// over the records. Paired with the patched list of the first target, which
+    /// must be the store's own answer, so that doing less work cannot pass.
+    #[tokio::test]
+    async fn a_claim_write_reads_the_records_links_as_often_for_many_names_as_for_few() {
+        let (few, _, _) = hub_capture(30, 3).await;
+        let (many, counted, folded) = hub_capture(30, 30).await;
+        assert!(
+            many <= few,
+            "reads grew with the names: {few} for 3 names, {many} for 30"
+        );
+        assert!(
+            many <= 4 * 31,
+            "more than a few passes over 31 records: {many}"
+        );
+        let target = thing(0);
+        let served = folded.referring_to(&target).await.expect("served");
+        assert_eq!(
+            served.len(),
+            2,
+            "the hub's two records naming the target: {served:?}"
+        );
+        let stored = counted.referring_to(&target).await.expect("stored");
+        assert_eq!(served, stored, "the patched list is not the store's answer");
+    }
 }
