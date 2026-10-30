@@ -2,9 +2,11 @@
 //! applied, once per write, to every subscriber (rule 676). A subscriber reads
 //! current content from the State and never wraps a store port.
 
+use std::panic::AssertUnwindSafe;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+use futures_util::FutureExt;
 use jojobot_domain::mailbox::{MailboxName, MessageId};
 use jojobot_domain::memory::{EntityId, WriteSummary};
 
@@ -65,8 +67,19 @@ impl Publication {
             return;
         }
         let subscribers = self.subscribers.lock().expect("subscriber lock").clone();
+        // A subscriber that panics must not take the change from the ones after
+        // it: each is told, and the first panic is raised once all have been.
+        let mut failed = None;
         for subscriber in subscribers {
-            subscriber.changed(&changes).await;
+            if let Err(panic) = AssertUnwindSafe(subscriber.changed(&changes))
+                .catch_unwind()
+                .await
+            {
+                failed.get_or_insert(panic);
+            }
+        }
+        if let Some(panic) = failed {
+            std::panic::resume_unwind(panic);
         }
     }
 }

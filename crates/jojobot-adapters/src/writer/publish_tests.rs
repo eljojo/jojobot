@@ -198,8 +198,8 @@ async fn a_subscriber_panic_fails_its_caller_after_the_commit_and_the_writer_ser
         .await;
     assert_eq!(
         *seen.0.lock().expect("batches"),
-        vec![vec![Change::MailPosition(2)]],
-        "the writer served the next write, and the panicking subscriber was told once"
+        vec![vec![Change::MailPosition(1)], vec![Change::MailPosition(2)]],
+        "a subscriber after the panicking one was told both writes, and the writer served the next write"
     );
 }
 
