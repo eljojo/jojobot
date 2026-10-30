@@ -175,6 +175,8 @@ reads its entries in order under `entries`. Its optional keys, set in
 `leave` for a queue, `back` for a rotation, read as `sink` when absent; an
 entry is ticked with `capture`, whose `tick` names the entry and its `act`) and
 `covers` (the one day, `2026-10-19`, or ISO week, `2026-W43`, a plan is for).
+To carry an open entry of a plan to the next plan, `capture` it there with
+`derived_from` set to the old entry's address.
 
 **A `document` holds long markdown text**: write it with `put_document`, read it
 with `read_document`. Its optional keys, set in `sets`, are `one_liner` (what it
