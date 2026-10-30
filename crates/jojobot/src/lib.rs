@@ -267,6 +267,10 @@ fn build_app_with(
                             state.memory.clone(),
                             state.sessions.clone(),
                         ),
+                        mail: jojobot_mcp::mailboxes::operator_rail::rail(
+                            state.memory.clone(),
+                            state.mailboxes.clone(),
+                        ),
                     }),
             )
             .route_layer(axum::middleware::from_fn_with_state(
@@ -287,6 +291,14 @@ fn build_app_with(
                         "/ui/mail/processed",
                         axum::routing::post(ui::mail::processed),
                     )
+                    .with_state(ui::mail::MailState {
+                        app: state.clone(),
+                        commands: jojobot_mcp::mailboxes::operator_rail::commands(
+                            state.memory.clone(),
+                            state.mailboxes.clone(),
+                            state.clock,
+                        ),
+                    })
                     .route_layer(axum::middleware::from_fn_with_state(
                         state.clone(),
                         ui::require_session,

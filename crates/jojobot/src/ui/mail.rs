@@ -27,16 +27,24 @@ use axum::{
 };
 use jojobot_domain::mailbox::{Mailbox, MessageId};
 use jojobot_domain::memory::EntityId;
+use jojobot_query_api::{MailHandle, OperatorMailCommands, Refused};
 use serde::Deserialize;
 
 use crate::AppState;
 use crate::ui::refuse;
-use jojobot_mcp::orientation::instance_zone::OperatorIs;
 
 /// What the page says in place of the box, and what both actions answer with,
 /// when the allowlist does not admit exactly one person.
 pub(crate) const WITHHELD: &str =
     "This instance admits more than one person, so the operator's private mail is not shown here.";
+
+/// **The state the two actions hold**: the session gate's state, and the one
+/// handle through which a page changes mail.
+#[derive(Clone)]
+pub struct MailState {
+    pub app: AppState,
+    pub commands: OperatorMailCommands,
+}
 
 /// **The box the operator owns, as the verbs resolve it**: one, none, several or
 /// unreadable are four answers, and a caller never picks one of several
@@ -54,8 +62,8 @@ pub(crate) enum OperatorsBox {
 }
 
 /// The box the operator owns.
-pub(crate) async fn operators_box(state: &AppState, operator: &EntityId) -> OperatorsBox {
-    let Ok(boxes) = state.mailboxes.list_mailboxes().await else {
+pub(crate) async fn operators_box(mail: &MailHandle, operator: &EntityId) -> OperatorsBox {
+    let Ok(boxes) = mail.boxes().await else {
         return OperatorsBox::Unreadable;
     };
     match jojobot_mcp::owned_box(&boxes, operator) {
@@ -85,154 +93,104 @@ pub struct Opened {
     id: String,
 }
 
-/// **Everything both actions need to be true before they touch a message**:
-/// the allowlist admits one person, the request came from this UI's own origin,
-/// the instance names an operator who has a box, and the message is in it.
-/// Returns the operator, whose page the action lands back on, or the refusal.
-async fn guard(
-    state: &AppState,
-    headers: &HeaderMap,
-    id: &MessageId,
-) -> Result<(EntityId, Mailbox), Response> {
+/// **What the page itself checks before it asks the command**: the allowlist
+/// admits one person and the request came from this UI's own origin. Who the
+/// operator is and whether the message is theirs is the command's to judge.
+fn gate(state: &AppState, headers: &HeaderMap) -> Option<Response> {
     let ui = state.ui.as_ref().expect("the action mounted without a UI");
     if !ui.admits_exactly_one_person() {
-        return Err(refuse(StatusCode::FORBIDDEN, WITHHELD));
+        return Some(refuse(StatusCode::FORBIDDEN, WITHHELD));
     }
     if !ui.same_origin(headers) {
-        return Err(refuse(
+        return Some(refuse(
             StatusCode::FORBIDDEN,
             "That request did not come from this page, so nothing was changed.",
         ));
     }
-    let operator = match jojobot_mcp::orientation::instance_zone::operator_of(&*state.memory).await
-    {
-        Ok(OperatorIs::Person(operator)) => operator,
-        Ok(OperatorIs::Nobody) => {
-            return Err(refuse(
-                StatusCode::NOT_FOUND,
-                "This instance has no operator, so there is no mailbox to finish mail in.",
-            ));
-        }
+    None
+}
+
+/// What a refused command answers with, in the sentences the verbs use.
+/// `failed` is what a write that failed says, which names the action.
+fn answer(refused: Refused, failed: &str) -> Response {
+    match refused {
+        Refused::NoOperator => refuse(
+            StatusCode::NOT_FOUND,
+            "This instance has no operator, so there is no mailbox to finish mail in.",
+        ),
         // **The MCP side's own sentence**, because the record names something that
         // is not a person and a bot's mail is not finished from here.
-        Ok(OperatorIs::NotAPerson(held)) => {
-            return Err(refuse(
-                StatusCode::NOT_FOUND,
-                &jojobot_mcp::orientation::instance_zone::operator_is_not_a_person(&held),
-            ));
-        }
-        Err(err) => {
+        Refused::NotAPerson(held) => refuse(
+            StatusCode::NOT_FOUND,
+            &jojobot_mcp::orientation::instance_zone::operator_is_not_a_person(&held),
+        ),
+        Refused::RecordUnreadable(err) => {
             tracing::warn!(error = %err, "the instance's record could not be read for an action");
-            return Err(refuse(
+            refuse(
                 StatusCode::BAD_GATEWAY,
                 "jojobot could not read the instance's record, so nothing was changed. Try again.",
-            ));
+            )
         }
-    };
-    let own_box = match operators_box(state, &operator).await {
-        OperatorsBox::The(held) => held,
-        OperatorsBox::None => {
-            return Err(refuse(
-                StatusCode::NOT_FOUND,
-                "The operator has no mailbox yet.",
-            ));
-        }
-        OperatorsBox::Several(names) => {
-            return Err(refuse(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &jojobot_mcp::orientation::instance_zone::operator_owns_several_boxes(&names),
-            ));
-        }
-        OperatorsBox::Unreadable => {
-            return Err(refuse(
-                StatusCode::BAD_GATEWAY,
-                "jojobot could not read the mail board, so nothing was changed. Try again.",
-            ));
-        }
-    };
-    let in_their_box = match state.mailboxes.message_by_id(id).await {
-        Ok(Some(message)) => message.mailbox == own_box.name,
-        Ok(None) => false,
-        Err(err) => {
+        Refused::NoBox => refuse(StatusCode::NOT_FOUND, "The operator has no mailbox yet."),
+        Refused::SeveralBoxes(names) => refuse(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &jojobot_mcp::orientation::instance_zone::operator_owns_several_boxes(&names),
+        ),
+        Refused::BoardUnreadable(err) => {
             tracing::warn!(error = %err, "the mail board could not be read for an action");
-            return Err(refuse(
+            refuse(
                 StatusCode::BAD_GATEWAY,
                 "jojobot could not read the mail board, so nothing was changed. Try again.",
-            ));
+            )
         }
-    };
-    if !in_their_box {
-        return Err(refuse(
+        Refused::NotTheirs => refuse(
             StatusCode::NOT_FOUND,
             "That message is not in the operator's mailbox, so nothing was changed.",
-        ));
+        ),
+        Refused::Failed(err) => {
+            tracing::warn!(error = %err, action = failed, "an operator mail action failed");
+            refuse(
+                StatusCode::BAD_GATEWAY,
+                &format!("jojobot could not {failed}. Nothing was changed. Try again."),
+            )
+        }
     }
-    Ok((operator, own_box))
 }
 
 /// `POST /ui/mail/open` — take delivery of ONE message in the operator's box
 /// (`new` to `read`), leave the rest of the box where it is, and land the
 /// operator back on their page.
 pub async fn open(
-    State(state): State<AppState>,
+    State(MailState { app, commands }): State<MailState>,
     headers: HeaderMap,
     Form(form): Form<Opened>,
 ) -> Response {
-    let id = MessageId(form.id);
-    let (operator, _) = match guard(&state, &headers, &id).await {
-        Ok(held) => held,
-        Err(refusal) => return refusal,
-    };
-    if let Err(err) = state
-        .mailboxes
-        .read_message(
-            &id,
-            // The operator is a person and has no run to name.
-            jojobot_domain::mailbox::Acting::unnamed(state.clock.now()),
-        )
-        .await
-    {
-        tracing::warn!(error = %err, "opening the operator's message failed");
-        return refuse(
-            StatusCode::BAD_GATEWAY,
-            "jojobot could not open that message. Nothing was changed. Try again.",
-        );
+    if let Some(refusal) = gate(&app, &headers) {
+        return refusal;
     }
-    Redirect::to(&format!("/{}/", operator.as_str())).into_response()
+    match commands.open(&MessageId(form.id)).await {
+        Ok(operator) => Redirect::to(&format!("/{}/", operator.as_str())).into_response(),
+        Err(refused) => answer(refused, "open that message"),
+    }
 }
 
 /// `POST /ui/mail/processed` — mark one message in the operator's box
 /// processed, with an optional note, and land the operator back on their page.
 pub async fn processed(
-    State(state): State<AppState>,
+    State(MailState { app, commands }): State<MailState>,
     headers: HeaderMap,
     Form(form): Form<Processed>,
 ) -> Response {
-    let id = MessageId(form.id);
-    let (operator, own_box) = match guard(&state, &headers, &id).await {
-        Ok(held) => held,
-        Err(refusal) => return refusal,
-    };
+    if let Some(refusal) = gate(&app, &headers) {
+        return refusal;
+    }
     let note = form
         .note
         .as_deref()
         .map(str::trim)
         .filter(|note| !note.is_empty());
-    if let Err(err) = state
-        .mailboxes
-        .mark_processed(
-            &id,
-            &own_box.name,
-            note,
-            jojobot_domain::mailbox::Acting::unnamed(state.clock.now()),
-        )
-        .await
-    {
-        tracing::warn!(error = %err, "marking the operator's message processed failed");
-        return refuse(
-            StatusCode::BAD_GATEWAY,
-            "jojobot could not mark that message processed. Nothing was changed. Try again.",
-        );
+    match commands.mark_processed(&MessageId(form.id), note).await {
+        Ok(operator) => Redirect::to(&format!("/{}/", operator.as_str())).into_response(),
+        Err(refused) => answer(refused, "mark that message processed"),
     }
-    Redirect::to(&format!("/{}/", operator.as_str())).into_response()
 }

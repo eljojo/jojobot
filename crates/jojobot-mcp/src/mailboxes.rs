@@ -21,6 +21,9 @@ pub mod list_sent;
 pub mod mark_processed;
 #[cfg(test)]
 mod operator_boxes_tests;
+pub mod operator_rail;
+#[cfg(test)]
+mod operator_rail_tests;
 #[cfg(test)]
 mod poll_gate_tests;
 pub mod post_message;

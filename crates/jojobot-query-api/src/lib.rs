@@ -2,6 +2,7 @@
 
 mod answer;
 mod list_ticks;
+mod mail;
 mod question;
 
 #[cfg(doctest)]
@@ -14,6 +15,7 @@ pub use answer::{
 pub use jojobot_domain::memory::graph::{GraphQuery, Include, Object, Selected, Selection};
 pub use jojobot_domain::memory::{EntityId, FieldAges, FieldBacking, MemoryError};
 pub use list_ticks::TickRead;
+pub use mail::{MailHandle, MailRail, OperatorIs, OperatorMail, OperatorMailCommands, Refused};
 pub use question::{Asks, Question, Readiness, parse_date};
 
 use std::sync::Arc;

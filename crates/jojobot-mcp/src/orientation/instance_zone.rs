@@ -150,17 +150,9 @@ pub fn operator_is_not_a_person(held: &EntityId) -> String {
 /// **What the instance's record makes of its operator.** The one reading of the
 /// record, public so the operator's window asks it what the verbs ask it
 /// (rule 598): the record names nobody, names something that is not a person, or
-/// names a person.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum OperatorIs {
-    /// The record or the key is absent.
-    Nobody,
-    /// The record holds a handle of a kind that is not a person, so there is no
-    /// operator yet; [`operator_is_not_a_person`] says so.
-    NotAPerson(EntityId),
-    /// The person the record names.
-    Person(EntityId),
-}
+/// names a person. Defined beside the window's read handle; [`operator_is_not_a_person`]
+/// says what a record naming something that is not a person means.
+pub use jojobot_query_api::OperatorIs;
 
 /// **The handle the instance's record holds as its operator, whatever its kind**,
 /// or `None` when the record or the key is absent. **A store that cannot be read

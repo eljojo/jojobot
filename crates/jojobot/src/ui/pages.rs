@@ -18,7 +18,7 @@ use jojobot_domain::memory::{
 };
 use jojobot_domain::text;
 use jojobot_mcp::memory::{left_out, view_run};
-use jojobot_mcp::orientation::instance_zone::{OperatorIs, operator_of};
+use jojobot_mcp::orientation::instance_zone::OperatorIs;
 
 use crate::AppState;
 use crate::ui::{encode_component, home, org, shell, tree, typed};
@@ -168,6 +168,7 @@ fn left_out_line(id: &str, left: usize, what: &str, where_read: &str) -> String 
 pub(crate) struct NodeState {
     pub app: AppState,
     pub queries: jojobot_query_api::QueryHandle,
+    pub mail: jojobot_query_api::MailHandle,
 }
 
 /// `/{path}` — one node: what sits below it, and the facts held there.
@@ -180,6 +181,7 @@ pub(crate) async fn node(
     State(NodeState {
         app: state,
         queries,
+        mail,
     }): State<NodeState>,
     Path(path): Path<String>,
     axum::extract::Query(asked): axum::extract::Query<NodeQuery>,
@@ -364,15 +366,15 @@ pub(crate) async fn node(
     // The records that are not entities hang off the one entity that owns
     // them, so they are reached by walking from a handle like everything else.
     if entity.kind == EntityKind::BOT {
-        generic.push_str(&mailbox_section(&state, &entity.id).await);
+        generic.push_str(&mailbox_section(&mail, &entity.id).await);
         generic.push_str(&sessions_section(&state, &entity.id).await);
     } // **The operator's own box is on the operator's own page and nowhere else.**
     // Opening the page moves no mail: the listing is a GET, and a prefetch of it
     // must not mark anything seen.
     if entity.kind == EntityKind::PERSON {
-        match operator_of(&*state.memory).await {
+        match mail.operator().await {
             Ok(OperatorIs::Person(operator)) if operator == entity.id => {
-                generic.push_str(&operators_mailbox_section(&state, &entity.id).await);
+                generic.push_str(&operators_mailbox_section(&state, &mail, &entity.id).await);
             }
             Ok(_) => {}
             // A person's page cannot tell whether the box is theirs when the
@@ -385,7 +387,7 @@ pub(crate) async fn node(
     // **The handle the record names as operator, when it is not a person**, says so
     // on its own page in the MCP side's words: no mail is finished from here.
     if entity.kind != EntityKind::PERSON
-        && let Ok(OperatorIs::NotAPerson(held)) = operator_of(&*state.memory).await
+        && let Ok(OperatorIs::NotAPerson(held)) = mail.operator().await
         && held == entity.id
     {
         generic.push_str(&format!(
@@ -523,8 +525,8 @@ async fn working_on_section(
 /// without changing it. The delivery verbs are not reachable from here and must
 /// not become so: a page that marked a message read would take it out of the
 /// waiting state its real consumer has never seen it in.
-async fn mailbox_section(state: &AppState, bot: &EntityId) -> String {
-    let boxes = match state.mailboxes.list_mailboxes().await {
+async fn mailbox_section(mail: &jojobot_query_api::MailHandle, bot: &EntityId) -> String {
+    let boxes = match mail.boxes().await {
         Ok(boxes) => boxes,
         Err(err) => return blind("Mailbox", "the mail rail", &err.to_string()),
     };
@@ -536,7 +538,7 @@ async fn mailbox_section(state: &AppState, bot: &EntityId) -> String {
         return "<h2>Mailbox</h2>\n<p>This bot owns no mailbox.</p>\n".to_string();
     }
 
-    let messages = match state.mailboxes.scan_messages().await {
+    let messages = match mail.messages().await {
         Ok(messages) => messages,
         Err(err) => return blind("Mailbox", "the mail rail", &err.to_string()),
     };
@@ -620,7 +622,11 @@ async fn mailbox_section(state: &AppState, bot: &EntityId) -> String {
 /// **Only while the allowlist admits exactly one person.** A session carries no
 /// subject, so with any other number of people admitted, anyone who logs in
 /// would read the operator's mail; the section says so instead.
-async fn operators_mailbox_section(state: &AppState, operator: &EntityId) -> String {
+async fn operators_mailbox_section(
+    state: &AppState,
+    mail: &jojobot_query_api::MailHandle,
+    operator: &EntityId,
+) -> String {
     if !state
         .ui
         .as_ref()
@@ -631,7 +637,7 @@ async fn operators_mailbox_section(state: &AppState, operator: &EntityId) -> Str
             escape(crate::ui::mail::WITHHELD)
         );
     }
-    let held = match crate::ui::mail::operators_box(state, operator).await {
+    let held = match crate::ui::mail::operators_box(mail, operator).await {
         crate::ui::mail::OperatorsBox::The(held) => held,
         crate::ui::mail::OperatorsBox::None => {
             return "<h2>Mailbox</h2>\n<p>Nobody has written to this person yet.</p>\n".to_string();
@@ -649,7 +655,7 @@ async fn operators_mailbox_section(state: &AppState, operator: &EntityId) -> Str
             return blind("Mailbox", "the mail rail", "the board could not be read");
         }
     };
-    let messages = match state.mailboxes.scan_messages().await {
+    let messages = match mail.messages().await {
         Ok(messages) => messages,
         Err(err) => return blind("Mailbox", "the mail rail", &err.to_string()),
     };
