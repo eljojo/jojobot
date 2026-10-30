@@ -7,6 +7,9 @@
 use jojobot_domain::memory::testing::{InMemoryMemory, contract};
 use jojobot_domain::memory::{EntityId, Memory, NewEntity, NewFact, Override};
 
+#[path = "link_rule_on/rendering.rs"]
+mod rendering;
+
 macro_rules! typed_kind_cases {
     ($($test:ident => $case:ident),+ $(,)?) => {$(
         #[tokio::test]

@@ -847,47 +847,33 @@ impl Mentioning {
         roster_for(&*self.beneath, texts).await
     }
 
-    /// **Every rename event, for the reference-typed field values
-    /// [`render_fact`](Self::render_fact) still resolves by hand**: those
-    /// store a plain handle rather than a badge, so a rename after one was
-    /// written leaves it stale in a way an edge or a ref no longer does
-    /// (rule 268).
-    async fn former(&self) -> Result<Vec<super::FormerHandle>, super::MemoryError> {
-        self.inner.former_handles().await
-    }
-
-    /// **What a reference-typed key is, for the one thing that reads it
-    /// going out**: a field value holding a plain handle is the same shape
-    /// an edge's object is, so it needs the same declarations `referenced_by`
-    /// already reads at write time to know which keys these are.
+    /// **What a key holds, for the one thing that reads it going out**: an
+    /// expression-typed field value is rendered as an expression, so the
+    /// renderer needs the declarations to know which keys these are.
     async fn declared(&self) -> Result<Vec<super::types::DeclaredType>, super::MemoryError> {
         self.inner.declared_types().await
     }
 
-    /// Rewrite a claim's text for a reader, and follow a reference-typed
-    /// field value to wherever what it names answers to now.
+    /// Rewrite a claim's text for a reader.
     ///
-    /// **An edge's object and a ref need no resolution here** (rule 268):
-    /// both stores now store the badge the object wears and serve the
-    /// current handle back on every read, so a fact handed to this
-    /// function already carries the right one. A reference-typed field is
-    /// the one case still a plain handle — `resolve_handle` is the same
-    /// fallback a stale one gets anywhere: a direct match first, a handle's
-    /// own history next, and a genuinely unknown one left as written rather
-    /// than guessed at.
+    /// **An edge's object, a ref and a field link need no resolution here**
+    /// (rules 268, 646): the store writes the badge the object wears and
+    /// serves the current handle back on every read, so a fact handed to this
+    /// function already carries the right one. Field text with no stored mark
+    /// is text, so a reference-typed key does not turn it into a link.
     fn render_fact(
         &self,
         fact: &mut super::Fact,
         known: &[Entity],
-        former: &[super::FormerHandle],
         declared: &[super::types::DeclaredType],
     ) {
         (fact.content, fact.details) =
             rendered_words(&fact.content, fact.details.as_deref(), known);
-        Self::render_fields(&mut fact.fields, known, former, declared);
+        Self::render_fields(&mut fact.fields, known, declared);
     }
 
-    /// **Resolve every reference-typed value in a field map.**
+    /// **Render the field values that are words or expressions.** Every other
+    /// value is returned as the store served it.
     ///
     /// Used by [`Self::render_fact`], over a fact's own fields. A thing's folded
     /// fields come from [`Memory::fields`](super::Memory::fields) already
@@ -895,7 +881,6 @@ impl Mentioning {
     fn render_fields(
         fields: &mut std::collections::BTreeMap<String, String>,
         known: &[Entity],
-        former: &[super::FormerHandle],
         declared: &[super::types::DeclaredType],
     ) {
         for (key, value) in fields.iter_mut() {
@@ -908,27 +893,7 @@ impl Mentioning {
             }
             if holds_an_expression(key, declared) {
                 *value = unbound_expression(value, known);
-                continue;
             }
-            let Some(field) = declared
-                .iter()
-                .filter_map(|d| d.field(key))
-                .find(|f| f.holds == super::types::ValueType::Reference)
-            else {
-                continue;
-            };
-            let resolved: Vec<String> = field
-                .items(value)
-                .into_iter()
-                .map(|item| {
-                    let id = EntityId(item.trim().to_string());
-                    match super::resolve_handle(&id, known, former) {
-                        Some(current) => current.id.to_string(),
-                        None => item.to_string(),
-                    }
-                })
-                .collect();
-            *value = resolved.join(", ");
         }
     }
 
@@ -937,10 +902,9 @@ impl Mentioning {
             return Ok(());
         }
         let known = self.known().await?;
-        let former = self.former().await?;
         let declared = self.declared().await?;
         for fact in facts {
-            self.render_fact(fact, &known, &former, &declared);
+            self.render_fact(fact, &known, &declared);
         }
         Ok(())
     }
@@ -950,12 +914,11 @@ impl Mentioning {
         &self,
         doc: &mut super::search::DocScan,
         known: &[Entity],
-        former: &[super::FormerHandle],
         declared: &[super::types::DeclaredType],
     ) {
         doc.prose = rendered(&doc.prose, known);
         for fact in &mut doc.facts {
-            self.render_fact(fact, known, former, declared);
+            self.render_fact(fact, known, declared);
         }
     }
 
@@ -1062,9 +1025,8 @@ impl super::Memory for Mentioning {
             AppOutcome::Landed(landed) => match *landed {
                 super::Guarded::Written((entity, mut stored)) => {
                     let known = self.known().await?;
-                    let former = self.former().await?;
                     let declared = self.declared().await?;
-                    self.render_fact(&mut stored, &known, &former, &declared);
+                    self.render_fact(&mut stored, &known, &declared);
                     AppOutcome::Landed(Box::new(super::Guarded::Written((entity, stored))))
                 }
                 blocked => AppOutcome::Landed(Box::new(blocked)),
@@ -1118,9 +1080,8 @@ impl super::Memory for Mentioning {
         Ok(match written {
             super::Guarded::Written((entity, mut stored)) => {
                 let known = self.known().await?;
-                let former = self.former().await?;
                 let declared = self.declared().await?;
-                self.render_fact(&mut stored, &known, &former, &declared);
+                self.render_fact(&mut stored, &known, &declared);
                 super::Guarded::Written((entity, stored))
             }
             blocked => blocked,
@@ -1175,9 +1136,8 @@ impl super::Memory for Mentioning {
         Ok(match written {
             super::Guarded::Written((entity, mut stored)) => {
                 let known = self.known().await?;
-                let former = self.former().await?;
                 let declared = self.declared().await?;
-                self.render_fact(&mut stored, &known, &former, &declared);
+                self.render_fact(&mut stored, &known, &declared);
                 super::Guarded::Written((entity, stored))
             }
             blocked => blocked,
@@ -1283,9 +1243,8 @@ impl super::Memory for Mentioning {
             .open();
         Ok(match written {
             super::Guarded::Written(mut stored) => {
-                let former = self.former().await?;
                 let declared = self.declared().await?;
-                self.render_fact(&mut stored, &known, &former, &declared);
+                self.render_fact(&mut stored, &known, &declared);
                 super::Guarded::Written(stored)
             }
             blocked => blocked,
@@ -1458,9 +1417,8 @@ impl super::Memory for Mentioning {
             .open();
         Ok(match written {
             super::Guarded::Written(mut stored) => {
-                let former = self.former().await?;
                 let declared = self.declared().await?;
-                self.render_fact(&mut stored, &known, &former, &declared);
+                self.render_fact(&mut stored, &known, &declared);
                 super::Guarded::Written(stored)
             }
             blocked => blocked,
@@ -1664,7 +1622,6 @@ impl super::Memory for Mentioning {
         if let Some(err) = Self::screen_or_unknown(&[reason.unwrap_or("")], &known) {
             return Err(err);
         }
-        let former = self.former().await?;
         let declared = self.declared().await?;
         let reason = reason
             .map(|r| resolved(r, &known))
@@ -1675,8 +1632,8 @@ impl super::Memory for Mentioning {
             .retract(address, reason.as_deref(), date, caller, session)
             .await?
             .open();
-        self.render_fact(&mut done.retracted, &known, &former, &declared);
-        self.render_fact(&mut done.record, &known, &former, &declared);
+        self.render_fact(&mut done.retracted, &known, &declared);
+        self.render_fact(&mut done.record, &known, &declared);
         Ok(done)
     }
     /// **A fold writes an account on the survivor**, which is a claim like any
@@ -1695,7 +1652,6 @@ impl super::Memory for Mentioning {
         if let Some(err) = Self::screen_or_unknown(&[reason.unwrap_or("")], &known) {
             return Err(err);
         }
-        let former = self.former().await?;
         let declared = self.declared().await?;
         let reason = reason
             .map(|r| resolved(r, &known))
@@ -1706,7 +1662,7 @@ impl super::Memory for Mentioning {
             .merge(folded, survivor, reason.as_deref(), date, caller, session)
             .await?
             .open();
-        self.render_fact(&mut done.record, &known, &former, &declared);
+        self.render_fact(&mut done.record, &known, &declared);
         Ok(done)
     }
     /// **A page is text, so it carries mentions too.** What comes back is the
@@ -1733,10 +1689,9 @@ impl super::Memory for Mentioning {
     async fn scan(&self) -> Result<Vec<super::search::DocScan>, super::MemoryError> {
         let mut scanned = self.inner.scan().await?.open();
         let known = self.known().await?;
-        let former = self.former().await?;
         let declared = self.declared().await?;
         for doc in &mut scanned {
-            self.render_scan(doc, &known, &former, &declared);
+            self.render_scan(doc, &known, &declared);
         }
         Ok(scanned)
     }
@@ -1774,9 +1729,8 @@ impl super::Memory for Mentioning {
             return Ok(Some(doc));
         }
         let known = self.known().await?;
-        let former = self.former().await?;
         let declared = self.declared().await?;
-        self.render_scan(&mut doc, &known, &former, &declared);
+        self.render_scan(&mut doc, &known, &declared);
         Ok(Some(doc))
     }
 

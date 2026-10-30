@@ -14,6 +14,9 @@ use jojobot_domain::memory::boot_reader::BootReader;
 use jojobot_domain::memory::testing::contract as memory;
 use jojobot_domain::memory::{EntityId, Memory, NewEntity, NewFact};
 
+#[path = "boot_reads_link_rule_dolt/rendering.rs"]
+mod rendering;
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn the_boot_reader_and_the_read_of_one_thing_agree_on_a_mixed_list() {
     let scratch = Scratch::new("boot-reads-link-rule");
