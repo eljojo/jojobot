@@ -12,7 +12,7 @@ use jojobot_domain::memory::{
     Standing, folded_fields, validate_subject,
 };
 
-pub(super) use super::mail_fixtures::asking_for_mail;
+pub(super) use super::mail_fixtures::{asking_everywhere, asking_for_mail};
 use super::*;
 
 /// The shared contract's search case (rule 234), asked of a stored row
@@ -8742,10 +8742,12 @@ async fn mail_in_a_persons_box_never_enters_the_index() {
     // would evict a message a verb wrongly indexed and hide the leak. So the
     // routes a verb writes are read straight from the index, before any
     // refresh; the boot load and the refresh are read through the port.
+    // Asked with a query that hides no box: the scope of `asking_for_mail`
+    // would hide the person's box whether or not the index held it.
     let served = |word: &'static str| {
         let port = &port;
         async move {
-            port.search(&asking_for_mail(word))
+            port.search(&asking_everywhere(word))
                 .await
                 .expect("search ok")
                 .len()
@@ -8755,7 +8757,7 @@ async fn mail_in_a_persons_box_never_enters_the_index() {
         let index = index.clone();
         async move {
             index
-                .search(&asking_for_mail(word))
+                .search(&asking_everywhere(word))
                 .expect("search ok")
                 .len()
         }
@@ -8863,7 +8865,7 @@ async fn a_persons_box_renamed_between_the_scan_and_the_listing_is_not_indexed()
         "the message in a box that stays public is served"
     );
     assert_eq!(
-        port.search(&asking_for_mail("zebra"))
+        port.search(&asking_everywhere("zebra"))
             .await
             .expect("search ok")
             .len(),
@@ -9139,7 +9141,7 @@ async fn a_rebuild_loads_the_board_and_a_blocked_post_indexes_nothing() {
     ));
     assert!(
         index
-            .search(&asking_for_mail("should not be indexed"))
+            .search(&asking_everywhere("should not be indexed"))
             .expect("search ok")
             .is_empty(),
         "a blocked post must leave nothing in the index either"
