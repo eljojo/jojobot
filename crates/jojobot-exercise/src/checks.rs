@@ -4281,8 +4281,10 @@ fn claim_number_of(address: &str) -> u64 {
 
 /// Whether a claim says a plus-one or a partner is coming.
 ///
-/// ⚠️ **One sentence at a time, and a sentence that denies one does not say
-/// it.** "No plus-one this time" names the plus-one and says the opposite.
+/// ⚠️ **One clause at a time, and a clause that denies one does not say
+/// it.** "No plus-one this time" names the plus-one and says the opposite. A
+/// denial in another clause of the sentence is about something else: "bringing a
+/// partner, no dietary needs" says a partner is coming.
 fn says_a_plus_one_is_coming(fact: &Value) -> bool {
     const DENIALS: [&str; 7] = [
         "no ", "not ", "n't", "without ", "never ", "none ", "nobody ",
@@ -4290,7 +4292,7 @@ fn says_a_plus_one_is_coming(fact: &Value) -> bool {
     ["content", "details"].iter().any(|key| {
         fact[*key].as_str().is_some_and(|said| {
             said.to_lowercase()
-                .split(['.', ';', '!', '?', '\n'])
+                .split(['.', ';', '!', '?', '\n', ','])
                 .any(|sentence| {
                     let sentence = format!("{sentence} ");
                     let names_one = sentence.contains("partner")

@@ -11,6 +11,8 @@ fn a_denied_plus_one_is_not_a_plus_one_coming() {
         "no plus-one this time",
         "she isn't bringing a partner",
         "coming without a plus one",
+        "coming alone, without a partner",
+        "no partner, no dietary needs",
     ] {
         assert!(
             !super::says_a_plus_one_is_coming(&json!({"content": said})),
@@ -25,6 +27,10 @@ fn a_denied_plus_one_is_not_a_plus_one_coming() {
         "Milhouse is bringing a plus-one",
         "No dietary needs. A partner is coming too",
         "her partner will come",
+        // A denial in another clause is about something else.
+        "Butters is bringing a partner, no dietary needs",
+        "a partner is coming, not driving",
+        "coming without a car, with a plus one",
     ] {
         assert!(
             super::says_a_plus_one_is_coming(&json!({"content": said})),
