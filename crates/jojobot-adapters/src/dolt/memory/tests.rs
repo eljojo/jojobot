@@ -3295,7 +3295,7 @@ async fn a_claims_history_serves_its_kept_marks_through_a_chain_of_merges() {
             &lisa,
             Some("filed twice again"),
             date(2026, 9, 3),
-            &merged.pointing,
+            &EntityId("bot:assistant".into()),
             Some("run-b"),
         )
         .await
