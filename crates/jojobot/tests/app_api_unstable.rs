@@ -372,3 +372,66 @@ async fn unstable_a_token_that_names_no_app_opens_nothing() {
     let (status, _) = call(&served, &mint_token(), "capture", json!({})).await;
     assert_eq!(status, 401);
 }
+
+/// The grant of an app that may create roles and works and set one key on them.
+fn creator() -> (AppPrincipal, String) {
+    enrolled(
+        "springfield-maker",
+        vec![op("add_entity", &["role", "work"], &["watch_state"])],
+    )
+}
+
+#[tokio::test]
+async fn unstable_a_creation_sets_a_granted_key_and_lands_with_the_apps_mark() {
+    let (app, token) = creator();
+    let served = serve(vec![app], Registry::shipped()).await;
+    let (status, view) = call(
+        &served,
+        &token,
+        "add_entity",
+        json!({"kind": "role", "handle": "delta", "name": "Delta", "source": "the maker",
+               "sets": {"watch_state": "ok"}}),
+    )
+    .await;
+    assert_eq!(status, 200, "{view}");
+    let fields = served
+        .memory
+        .fields(&EntityId("role:delta".into()))
+        .await
+        .expect("fields");
+    assert_eq!(fields.get("watch_state").map(String::as_str), Some("ok"));
+}
+
+#[tokio::test]
+async fn unstable_a_creation_with_a_key_outside_the_grant_or_one_no_app_may_set_is_refused() {
+    let (app, token) = creator();
+    let served = serve(vec![app], Registry::shipped()).await;
+    for (kind, handle, key) in [
+        ("role", "epsilon", "holder"),
+        ("role", "zeta", "agent"),
+        ("work", "eta", "status"),
+        ("work", "theta", "runs_out"),
+        ("work", "iota", "promised_by"),
+    ] {
+        let (status, refused) = call(
+            &served,
+            &token,
+            "add_entity",
+            json!({"kind": kind, "handle": handle, "name": "Fixture", "source": "the maker",
+                   "sets": {key: "2026-12-01"}}),
+        )
+        .await;
+        assert_eq!(status, 403, "{key}: {refused}");
+        assert!(
+            refused["error"].as_str().unwrap().contains(key),
+            "{refused}"
+        );
+        let made = served
+            .memory
+            .recall(&EntityId(format!("{kind}:{handle}")))
+            .await
+            .map(|f| !f.is_empty())
+            .unwrap_or(false);
+        assert!(!made, "{key}: nothing was made");
+    }
+}

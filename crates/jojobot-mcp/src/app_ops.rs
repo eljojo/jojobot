@@ -266,7 +266,9 @@ async fn add_entity(call: Call) -> Answer {
         name: "add_entity".into(),
         args_sent,
         kind,
-        keys: Vec::new(),
+        // **The keys a creation sets are judged as a capture's are**: the write
+        // function runs no licence check for an app.
+        keys: args.sets.iter().flatten().map(|(k, _)| k.clone()).collect(),
         to_operator: false,
     };
     if let Err(answer) = call.permit(&operation) {
