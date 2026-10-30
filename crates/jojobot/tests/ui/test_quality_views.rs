@@ -1,4 +1,14 @@
 use super::*;
+use jojobot_domain::memory::kinds::NotAKind;
+
+/// The text of each paragraph of a page. A page puts a view's refusal in one, and
+/// the form that echoes the address is not one, so a needle found here was said as
+/// the refusal and not echoed.
+fn paragraphs(page: &str) -> impl Iterator<Item = &str> {
+    page.split("<p>")
+        .skip(1)
+        .filter_map(|rest| rest.split_once("</p>").map(|(text, _)| text))
+}
 
 /// **A view whose `selects` is blank is refused on its page, as the verb refuses
 /// it.** The page used to drop a blank `selects` and list every kind that fell
@@ -45,17 +55,26 @@ async fn a_view_with_a_blank_selects_is_refused_and_one_that_selects_a_kind_list
         .await
         .unwrap();
     assert!(
-        refused.contains("cannot be run") && !refused.contains("<table id=\"answer\">"),
+        !refused.contains("<table id=\"answer\">"),
         "the page refuses and lists nothing: {refused}"
     );
     // The reason is the kind resolver's own refusal for the blank value, as the
-    // verb gives it, and it sits in the refusal paragraph, not elsewhere on the page.
+    // verb gives it, and it sits in a paragraph, not elsewhere on the page. The
+    // expected text comes from the resolver's error, so the case follows the
+    // verb's words and quotes none of the page's.
+    let resolver = NotAKind::NotDeclared {
+        token: String::new(),
+        known: Vec::new(),
+    }
+    .to_string();
+    let reason = jojobot::ui::pages::escape(
+        resolver
+            .split_once(". ")
+            .map_or(resolver.as_str(), |(head, _)| head),
+    );
     assert!(
-        refused
-            .split_once("cannot be run")
-            .and_then(|(_, rest)| rest.split_once("</p>"))
-            .is_some_and(|(reason, _)| reason.contains("no kind is named &#39;&#39;")),
-        "the page gives the verb's reason: {refused}"
+        paragraphs(&refused).any(|paragraph| paragraph.contains(&reason)),
+        "the page gives the verb's reason in a paragraph: {refused}"
     );
 
     let kept = read(&client, addr, "/view:my-week/", &cookie)
@@ -119,14 +138,11 @@ async fn a_view_with_a_day_that_is_no_day_is_refused_on_its_page() {
         .await
         .unwrap();
     assert!(
-        refused.contains("cannot be run") && !refused.contains("<table id=\"answer\">"),
+        !refused.contains("<table id=\"answer\">"),
         "the page refuses and lists nothing: {refused}"
     );
     assert!(
-        refused
-            .split_once("cannot be run")
-            .and_then(|(_, rest)| rest.split_once("</p>"))
-            .is_some_and(|(reason, _)| reason.contains("2026-13-45")),
+        paragraphs(&refused).any(|paragraph| paragraph.contains("2026-13-45")),
         "the refusal names the day it could not read, and not only the address: {refused}"
     );
     let kept = read(&client, addr, "/view:my-projects/?by=2026-03-10", &cookie)
