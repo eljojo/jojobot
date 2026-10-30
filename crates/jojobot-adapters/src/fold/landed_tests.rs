@@ -271,3 +271,95 @@ async fn a_kind_reclaimed_while_the_fold_cannot_reread_answers_landed_not_failed
         "the kind is gone from the store: {held:?}"
     );
 }
+
+/// Keeps every change the writer delivers.
+#[derive(Default)]
+struct Delivered(std::sync::Mutex<Vec<crate::writer::publish::Change>>);
+
+#[async_trait]
+impl crate::writer::publish::Subscriber for Delivered {
+    async fn changed(&self, changes: &[crate::writer::publish::Change]) {
+        self.0.lock().expect("delivered").extend_from_slice(changes);
+    }
+}
+
+/// **The things a write touched and whether a handle moved, as delivered after
+/// the write**; a publication that names no thing is left out. The fold's re-read fails in this double, so the image cannot
+/// follow and the publication is the only way a subscriber hears of the write.
+fn things_delivered(seen: &Delivered) -> Vec<(Vec<EntityId>, bool)> {
+    seen.0
+        .lock()
+        .expect("delivered")
+        .iter()
+        .filter_map(|change| match change {
+            crate::writer::publish::Change::Things {
+                touched,
+                names_changed,
+                ..
+            } if !touched.is_empty() => Some((touched.clone(), *names_changed)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// **A merge the image could not follow still tells the subscribers that a handle
+/// moved**, with both things it touched: other documents name the folded handle,
+/// so the index must read the corpus again and not only the two things.
+#[tokio::test]
+async fn a_merge_the_image_cannot_follow_publishes_both_things_and_a_moved_handle() {
+    let inner = Arc::new(InMemoryMemory::booted());
+    let folded = Folded::new(Arc::new(WritesThenFailsToReadFields(inner.clone())));
+    folded.rebuild().await.expect("an empty store fills");
+    let (survivor, gone) = (alpha(), EntityId::person("person:beta"));
+    seeded(&folded, &survivor, "Alpha").await;
+    seeded(&folded, &gone, "Beta").await;
+    let seen = Arc::new(Delivered::default());
+    folded.writer().subscribe(seen.clone());
+
+    let _ = folded
+        .merge(
+            &gone,
+            &survivor,
+            Some("the same"),
+            date(2026, 9, 11),
+            &EntityId("bot:sigma".into()),
+            None,
+        )
+        .await;
+
+    assert_eq!(
+        things_delivered(&seen),
+        vec![(vec![gone, survivor], true)],
+        "one publication, both ends, and a moved handle"
+    );
+}
+
+/// **A rename the image could not follow still tells the subscribers which two
+/// handles it touched and that a handle moved.**
+#[tokio::test]
+async fn a_rename_the_image_cannot_follow_publishes_both_handles_and_a_moved_handle() {
+    let inner = Arc::new(InMemoryMemory::booted());
+    let folded = Folded::new(Arc::new(WritesThenFailsToReadFields(inner.clone())));
+    folded.rebuild().await.expect("an empty store fills");
+    let (old, new) = (alpha(), EntityId::person("person:beta"));
+    seeded(&folded, &old, "Alpha").await;
+    let seen = Arc::new(Delivered::default());
+    folded.writer().subscribe(seen.clone());
+
+    let _ = folded
+        .rename_entity(
+            &old,
+            &new,
+            None,
+            date(2026, 9, 10),
+            jojobot_domain::memory::Override::none(),
+            None,
+        )
+        .await;
+
+    assert_eq!(
+        things_delivered(&seen),
+        vec![(vec![old, new], true)],
+        "one publication, both handles, and a moved handle"
+    );
+}

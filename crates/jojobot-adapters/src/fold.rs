@@ -957,7 +957,7 @@ impl Memory for Folded {
                 Err(source) => {
                     // The index re-reads both things itself when the image could
                     // not follow the merge.
-                    self.publish_things(vec![folded.clone(), survivor.clone()], false);
+                    self.publish_things(vec![folded.clone(), survivor.clone()], true);
                     Err(fold_behind(Landed::Merge(Box::new(done)), source))
                 }
             }
