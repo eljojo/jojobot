@@ -18,6 +18,24 @@ pub struct VisibleBoxes {
     pub above: BTreeSet<MailboxName>,
 }
 
+/// **The readable mail as a scope a store can ask for by box**, so its cost
+/// follows the boxes and not the messages. [`VisibleBoxes::message`] stays the
+/// one rule; [`VisibleBoxes::mail_scope`] is its answer for every message at
+/// once, and a case holds the two equal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MailScope {
+    /// Every message except those in these boxes, which a caller sees only as
+    /// receipts (a grader).
+    EveryBoxBut(BTreeSet<MailboxName>),
+    /// Mail in `read`, whoever wrote it, and mail the caller wrote in
+    /// `author_boxes`.
+    Boxes {
+        read: BTreeSet<MailboxName>,
+        author: Option<String>,
+        author_boxes: BTreeSet<MailboxName>,
+    },
+}
+
 /// What one message may expose to the caller.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MessageVisibility {
@@ -36,6 +54,19 @@ impl VisibleBoxes {
     /// what tells that read from the others: the recipient's notes are not for it.
     pub fn reads_inside(&self, mailbox: &MailboxName) -> bool {
         self.reads_every_bot_box || self.allowed.contains(mailbox)
+    }
+
+    /// The readable mail as boxes: what [`message`](Self::message) answers
+    /// `Readable` to, for every message at once.
+    pub fn mail_scope(&self) -> MailScope {
+        if self.reads_every_bot_box {
+            return MailScope::EveryBoxBut(self.private_boxes.clone());
+        }
+        MailScope::Boxes {
+            read: self.allowed.clone(),
+            author: self.caller.as_ref().map(|caller| caller.to_string()),
+            author_boxes: self.bot_boxes.clone(),
+        }
     }
 
     /// One predicate for every read, from the message's box and sender.
@@ -147,6 +178,62 @@ mod tests {
             owner: EntityId(format!("{kind}:{owner}")),
             counts: Default::default(),
             quarantined: Vec::new(),
+        }
+    }
+
+    /// **The scope is the rule asked once for all mail.** For every caller of a
+    /// chart, a grader and a caller with none, a message is readable under
+    /// [`VisibleBoxes::message`] exactly when its box and sender fall inside
+    /// [`VisibleBoxes::mail_scope`].
+    #[test]
+    fn the_mail_scope_admits_exactly_what_the_message_rule_calls_readable() {
+        let chart = BTreeMap::from([
+            (EntityId("bot:beta".into()), "bot:alpha".to_string()),
+            (EntityId("bot:gamma".into()), "bot:beta".to_string()),
+        ]);
+        let board = [
+            box_of("bot", "alpha"),
+            box_of("bot", "beta"),
+            box_of("bot", "gamma"),
+            box_of("bot", "delta"),
+            box_of("person", "milhouse"),
+        ];
+        let callers = ["bot:alpha", "bot:beta", "bot:gamma", "bot:delta"];
+        let mut seen: Vec<VisibleBoxes> = callers
+            .iter()
+            .map(|caller| visible_boxes(Some(&EntityId((*caller).into())), &chart, &board))
+            .collect();
+        seen.push(visible_boxes(None, &chart, &board));
+        seen.push(every_bot_box(&board));
+        let in_scope = |scope: &MailScope, mailbox: &MailboxName, sender: &str| match scope {
+            MailScope::EveryBoxBut(but) => !but.contains(mailbox),
+            MailScope::Boxes {
+                read,
+                author,
+                author_boxes,
+            } => {
+                read.contains(mailbox)
+                    || (author.as_deref() == Some(sender) && author_boxes.contains(mailbox))
+            }
+        };
+        for visible in &seen {
+            let scope = visible.mail_scope();
+            for name in ["alpha", "beta", "gamma", "delta", "milhouse", "stranger"] {
+                for sender in [
+                    "bot:alpha",
+                    "bot:beta",
+                    "bot:gamma",
+                    "bot:delta",
+                    "bot:homer",
+                ] {
+                    let mailbox = MailboxName(name.into());
+                    assert_eq!(
+                        visible.message(&mailbox, Some(sender)) == MessageVisibility::Readable,
+                        in_scope(&scope, &mailbox, sender),
+                        "{name} from {sender} under {visible:?}"
+                    );
+                }
+            }
         }
     }
 

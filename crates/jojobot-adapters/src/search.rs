@@ -37,7 +37,7 @@ use tantivy::schema::{FAST, Field, IndexRecordOption, STORED, STRING, Schema, Va
 use tantivy::{Index, IndexReader, IndexWriter, TantivyDocument, Term, doc};
 
 use jiff::civil::Date;
-use jojobot_domain::mailbox::visibility::MessageVisibility;
+use jojobot_domain::mailbox::visibility::MailScope;
 use jojobot_domain::mailbox::{MailboxError, Mailboxes, Message};
 use std::collections::{BTreeMap, HashSet};
 
@@ -146,6 +146,10 @@ struct Fields {
     /// from different tables and share no namespace, so one field would make
     /// them capable of evicting each other.
     message_id: Field,
+    /// A message's box and sender, each as one exact term: a search asks for
+    /// mail by box and by author, so its query follows the boxes it names.
+    mail_box: Field,
+    mail_sender: Field,
     /// The entity kind this document is filed under.
     kind: Field,
     /// A fact's subject handle.
@@ -233,6 +237,8 @@ impl Fields {
             ),
             doc_id: b.add_text_field("doc_id", STRING),
             message_id: b.add_text_field("message_id", STRING),
+            mail_box: b.add_text_field("mail_box", STRING),
+            mail_sender: b.add_text_field("mail_sender", STRING),
             kind: b.add_text_field("kind", STRING),
             subject: b.add_text_field("subject", STRING),
             status: b.add_text_field("status", STRING),
@@ -1088,6 +1094,8 @@ impl FullTextIndex {
                     message.mailbox,
                 ),
                 f.message_id => message.id.as_str(),
+                f.mail_box => message.mailbox.as_str(),
+                f.mail_sender => message.sender.as_str(),
                 f.payload => payload_json(&Payload::Message { message: message.clone() })?,
             ))
             .map_err(store_err)?;
@@ -1874,6 +1882,58 @@ impl FullTextIndex {
         (Occur::Must, Box::new(BooleanQuery::new(keys)))
     }
 
+    /// **The messages a caller reads, asked for by box and by author**, from the
+    /// domain's one rule ([`VisibleBoxes::mail_scope`]). The terms number the
+    /// boxes, not the messages; this decides nothing about who reads what.
+    /// `None` when the caller reads no mail at all.
+    fn mail_clause(&self, query: &SearchQuery) -> Option<Box<dyn Query>> {
+        let f = &self.fields;
+        let term = |field: Field, value: &str| -> Box<dyn Query> {
+            Box::new(TermQuery::new(
+                Term::from_field_text(field, value),
+                IndexRecordOption::Basic,
+            ))
+        };
+        let mut clauses = vec![self.must_term(f.class, CLASS_MESSAGE)];
+        match query.mail_visibility.mail_scope() {
+            MailScope::EveryBoxBut(receipts_only) => {
+                clauses.extend(
+                    receipts_only
+                        .iter()
+                        .map(|name| (Occur::MustNot, term(f.mail_box, name.as_str()))),
+                );
+            }
+            MailScope::Boxes {
+                read,
+                author,
+                author_boxes,
+            } => {
+                let mut admitted: Vec<(Occur, Box<dyn Query>)> = read
+                    .iter()
+                    .map(|name| (Occur::Should, term(f.mail_box, name.as_str())))
+                    .collect();
+                if let Some(author) = author.filter(|_| !author_boxes.is_empty()) {
+                    let boxes = author_boxes
+                        .iter()
+                        .map(|name| (Occur::Should, term(f.mail_box, name.as_str())))
+                        .collect();
+                    admitted.push((
+                        Occur::Should,
+                        Box::new(BooleanQuery::new(vec![
+                            (Occur::Must, term(f.mail_sender, &author)),
+                            (Occur::Must, Box::new(BooleanQuery::new(boxes))),
+                        ])),
+                    ));
+                }
+                if admitted.is_empty() {
+                    return None;
+                }
+                clauses.push((Occur::Must, Box::new(BooleanQuery::new(admitted))));
+            }
+        }
+        Some(Box::new(BooleanQuery::new(clauses)))
+    }
+
     /// The clauses that select **entities, prose and messages**. Run as a second
     /// query rather than folded into the first: a fact-only filter (a status, an
     /// edge) would otherwise exclude every non-fact hit as a side effect of the
@@ -1894,37 +1954,10 @@ impl FullTextIndex {
                 (Occur::Should, q)
             })
             .collect();
-        if query.include_mail {
-            let messages: Vec<(Occur, Box<dyn Query>)> = self
-                .messages
-                .read()
-                .expect("mail mirror poisoned")
-                .iter()
-                .filter(|message| {
-                    query
-                        .mail_visibility
-                        .message(&message.mailbox, Some(&message.sender))
-                        == MessageVisibility::Readable
-                })
-                .map(|message| {
-                    (
-                        Occur::Should,
-                        Box::new(TermQuery::new(
-                            Term::from_field_text(f.message_id, message.id.as_str()),
-                            IndexRecordOption::Basic,
-                        )) as Box<dyn Query>,
-                    )
-                })
-                .collect();
-            if !messages.is_empty() {
-                classes.push((
-                    Occur::Should,
-                    Box::new(BooleanQuery::new(vec![
-                        self.must_term(f.class, CLASS_MESSAGE),
-                        (Occur::Must, Box::new(BooleanQuery::new(messages))),
-                    ])),
-                ));
-            }
+        if query.include_mail
+            && let Some(messages) = self.mail_clause(query)
+        {
+            classes.push((Occur::Should, messages));
         }
         // **Sessions come in only for a caller that says who it is, and only
         // that caller's own.** The owner term is MUST *inside* this class's
@@ -2504,5 +2537,7 @@ impl SearchViaPort for Arc<IndexedMemory> {
 mod mail_fixtures;
 #[cfg(test)]
 mod reload_tests;
+#[cfg(test)]
+mod scope_tests;
 #[cfg(test)]
 mod tests;
