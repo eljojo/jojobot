@@ -305,7 +305,7 @@ pub(crate) async fn node(
     generic.push_str(&fields_section(
         &held, &ages, &backing, &facts, &entity.id, &canonical,
     ));
-    generic.push_str(&around_section(&state, entity, &by_id).await);
+    generic.push_str(&around_section(&queries, entity, &by_id).await);
     if working_on_unknown {
         generic.push_str(
             "<p id=\"working-on-unknown\">What this bot is working on is unknown: the \
@@ -341,7 +341,7 @@ pub(crate) async fn node(
             &view_section(&state, &entity.id, &held, &facts, &by_id, &asked.inputs).await,
         );
     }
-    generic.push_str(&history_section(&state, &entity.id, asked.history.as_deref()).await);
+    generic.push_str(&history_section(&queries, &entity.id, asked.history.as_deref()).await);
 
     generic.push_str("<h2>Below here</h2>\n");
     if children.is_empty() {
@@ -1035,7 +1035,7 @@ const AROUND_SHOWN: usize = 6;
 /// and with no asker. A link whose every claim was taken back says so beside the
 /// name instead of vanishing.
 async fn around_section(
-    state: &AppState,
+    queries: &jojobot_query_api::QueryHandle,
     entity: &Entity,
     by_id: &HashMap<&EntityId, &Entity>,
 ) -> String {
@@ -1056,17 +1056,33 @@ async fn around_section(
         ("points at", graph::Direction::Out),
         ("pointed at by", graph::Direction::In),
     ] {
-        let mut query = graph::GraphQuery::subject(entity.id.clone());
-        query.follow = Some(graph::Follow {
-            direction: Some(direction),
-            ..graph::Follow::hop()
-        });
-        let reached = match graph::walk(state.memory.as_ref(), &[], &query).await {
-            Ok(selected) => selected
+        let question = jojobot_query_api::Question::new(
+            graph::Selection {
+                subject: Some(entity.id.clone()),
+                ..Default::default()
+            },
+            graph::Include {
+                facts: false,
+                prose: false,
+                stood_for: false,
+                status: None,
+            },
+            Some(graph::Follow {
+                direction: Some(direction),
+                ..graph::Follow::hop()
+            }),
+            None,
+        );
+        let reached = match queries.ask(question).await {
+            Ok(answer) => answer
+                .selected
                 .subject_object(&entity.id)
                 .map(|object| object.connected)
                 .unwrap_or_default(),
-            Err(err) => {
+            Err(
+                jojobot_query_api::Failed::Selection(err)
+                | jojobot_query_api::Failed::Readiness(err),
+            ) => {
                 return blind("Around", "what is around this", &err.to_string());
             }
         };
@@ -1632,17 +1648,44 @@ fn cannot_run(why: &str) -> String {
 /// **Nothing here writes.** It is a read of the same substrate the fold comes
 /// from, so looking at the operator's own page cannot move a message, mark
 /// anything read, or start a session.
-async fn history_section(state: &AppState, entity: &EntityId, key: Option<&str>) -> String {
+async fn history_section(
+    queries: &jojobot_query_api::QueryHandle,
+    entity: &EntityId,
+    key: Option<&str>,
+) -> String {
     let key = match key.map(str::trim) {
         None | Some("") => return String::new(),
         Some(key) => key,
     };
-    let writes = match state.memory.history(entity, key).await {
-        Ok(writes) => writes,
-        Err(err) => {
-            return blind_history(key, &err.to_string());
-        }
+    let question = jojobot_query_api::Question::new(
+        graph::Selection {
+            subject: Some(entity.clone()),
+            ..Default::default()
+        },
+        graph::Include {
+            facts: false,
+            prose: false,
+            stood_for: false,
+            status: None,
+        },
+        None,
+        Some(graph::History::of(key)),
+    );
+    let answer = match queries.ask(question).await {
+        Ok(answer) => answer,
+        Err(
+            jojobot_query_api::Failed::Selection(err) | jojobot_query_api::Failed::Readiness(err),
+        ) => return blind_history(key, &err.to_string()),
     };
+    let Some(history) = answer
+        .selected
+        .subject_object(entity)
+        .and_then(|object| object.history)
+    else {
+        return blind_history(key, "the answer held no history for this thing");
+    };
+    let left = history.elided();
+    let writes = history.writes;
     if writes.is_empty() {
         return format!(
             "<h2>Writes of {}</h2>\n<p>Nothing has been written under this key.</p>\n",
@@ -1673,6 +1716,17 @@ async fn history_section(state: &AppState, entity: &EntityId, key: Option<&str>)
         ));
     }
     out.push_str("</table>\n");
+    if left > 0 {
+        out.push_str(&left_out_line(
+            "history-left-out",
+            left,
+            "earlier writes are",
+            &format!(
+                "`recall` with history on {} reads every write.",
+                escape(key)
+            ),
+        ));
+    }
     out
 }
 
