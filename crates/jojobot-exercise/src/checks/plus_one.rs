@@ -13,6 +13,10 @@ fn a_denied_plus_one_is_not_a_plus_one_coming() {
         "coming without a plus one",
         "coming alone, without a partner",
         "no partner, no dietary needs",
+        "never bringing a partner",
+        "none of them is bringing a plus-one",
+        "nobody is bringing a partner",
+        "not bringing a partner",
     ] {
         assert!(
             !super::says_a_plus_one_is_coming(&json!({"content": said})),
@@ -31,6 +35,8 @@ fn a_denied_plus_one_is_not_a_plus_one_coming() {
         "Butters is bringing a partner, no dietary needs",
         "a partner is coming, not driving",
         "coming without a car, with a plus one",
+        "I know her partner will come",
+        "Nothing is wrong, a plus-one is coming",
     ] {
         assert!(
             super::says_a_plus_one_is_coming(&json!({"content": said})),

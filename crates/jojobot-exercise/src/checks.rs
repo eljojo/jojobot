@@ -4286,19 +4286,20 @@ fn claim_number_of(address: &str) -> u64 {
 /// denial in another clause of the sentence is about something else: "bringing a
 /// partner, no dietary needs" says a partner is coming.
 fn says_a_plus_one_is_coming(fact: &Value) -> bool {
-    const DENIALS: [&str; 7] = [
-        "no ", "not ", "n't", "without ", "never ", "none ", "nobody ",
-    ];
+    const DENIALS: [&str; 6] = ["no", "not", "without", "never", "none", "nobody"];
     ["content", "details"].iter().any(|key| {
         fact[*key].as_str().is_some_and(|said| {
             said.to_lowercase()
                 .split(['.', ';', '!', '?', '\n', ','])
                 .any(|sentence| {
-                    let sentence = format!("{sentence} ");
                     let names_one = sentence.contains("partner")
                         || sentence.contains("plus-one")
                         || sentence.contains("plus one");
-                    names_one && !DENIALS.iter().any(|denial| sentence.contains(denial))
+                    // Whole words, so "know" is not a "no".
+                    let denied = sentence
+                        .split(|c: char| !c.is_alphanumeric() && c != '\'')
+                        .any(|word| DENIALS.contains(&word) || word.ends_with("n't"));
+                    names_one && !denied
                 })
         })
     })
