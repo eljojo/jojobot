@@ -13,7 +13,7 @@ use std::collections::BTreeSet;
 async fn chart() -> (Jojobot, [String; 4]) {
     let index = Arc::new(FullTextIndex::open().expect("index opens"));
     let boxes = Arc::new(InMemoryMailboxes::knowing_any_owner());
-    let indexed = Arc::new(IndexedMailboxes::new(boxes, index.clone()));
+    let indexed = Arc::new(IndexedMailboxes::new(boxes.clone(), index.clone()));
     let retrieval = Arc::new(Retrieval::new(
         index,
         vec![indexed.clone() as Arc<dyn Refresh>],
@@ -21,7 +21,7 @@ async fn chart() -> (Jojobot, [String; 4]) {
     let jojobot = Jojobot::new(
         Arc::new(InMemoryMemory::booted()),
         retrieval,
-        indexed,
+        boxes,
         Arc::new(InMemorySessions::new()),
         Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
         seeded_registry(),

@@ -16,14 +16,12 @@ async fn room() -> Jojobot {
         .expect("indexed memory"),
     );
     let index = memory.index();
-    let mail = Arc::new(IndexedMailboxes::new(
-        Arc::new(InMemoryMailboxes::knowing_any_owner()),
-        index.clone(),
-    ));
+    let boxes = Arc::new(InMemoryMailboxes::knowing_any_owner());
+    let mail = Arc::new(IndexedMailboxes::new(boxes.clone(), index.clone()));
     let handler = Jojobot::new(
-        memory.clone(),
-        Arc::new(Retrieval::new(index, vec![memory, mail.clone()])),
-        mail,
+        memory.memory(),
+        Arc::new(Retrieval::new(index, vec![memory, mail])),
+        boxes,
         Arc::new(InMemorySessions::new()),
         Arc::new(InMemoryTeachings::new()),
         Arc::new(sid::SessionRegistry::new()),

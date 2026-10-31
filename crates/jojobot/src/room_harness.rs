@@ -121,7 +121,7 @@ mod tests {
         );
         let index = memory.index();
         jojobot_mcp::Jojobot::new(
-            memory.clone(),
+            memory.memory(),
             Arc::new(jojobot_adapters::search::Retrieval::new(
                 index,
                 vec![memory],

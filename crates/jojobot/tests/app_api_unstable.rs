@@ -106,7 +106,7 @@ async fn serve_over(
     let indexed = Arc::new(IndexedMemory::new(store).expect("the search index opens"));
     let search = Arc::new(Retrieval::new(indexed.index(), vec![indexed.clone()]));
     let sessions = Arc::new(jojobot_domain::session::testing::InMemorySessions::new());
-    let memory: Arc<dyn Memory> = indexed.clone();
+    let memory: Arc<dyn Memory> = indexed.memory();
     let mailboxes: Arc<dyn jojobot_domain::mailbox::Mailboxes> =
         Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner());
     let state = AppState {
@@ -123,7 +123,6 @@ async fn serve_over(
         registry: Arc::new(jojobot_mcp::sid::SessionRegistry::new()),
         ui: None,
         clock: jojobot_domain::clock::Clock::default(),
-        push: None,
         quiet_after: None,
         apps: Apps::new(apps),
         metrics: None,
