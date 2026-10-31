@@ -367,10 +367,14 @@ impl DoltBootReader {
     ) -> Result<HashMap<String, Vec<KeyWrite>>, MemoryError> {
         let mut query = sqlx::QueryBuilder::<MySql>::new(
             "SELECT w.entity, w.`key`, w.ordinal, w.value, w.fact_id, w.write_class, \
-                    w.written_at, f.status, f.provenance, f.standing, f.details, f.app_stamp
-             FROM field_write w
-             JOIN fact f ON f.entity = w.entity AND f.id = w.fact_id",
+                    w.written_at, f.status, f.provenance, f.standing, f.details, f.app_stamp, ",
         );
+        query.push(super::write_origin::ORIGIN_COLUMNS);
+        query.push(
+            " FROM field_write w
+             JOIN fact f ON f.entity = w.entity AND f.id = w.fact_id ",
+        );
+        query.push(super::write_origin::ORIGIN_JOINS);
         if let Some(keys) = keys {
             if keys.is_empty() {
                 query.push(" WHERE 1 = 0");
@@ -655,13 +659,21 @@ impl BootReader for DoltBootReader {
     ) -> Result<HashMap<EntityId, KeyTrails>, MemoryError> {
         let mut tx = self.memory.pool.begin().await.map_err(store)?;
         let context = Context::load(&mut tx, things).await?;
-        let writes = sqlx::query(
-            "SELECT entity, `key`, ordinal, value, fact_id, write_class, written_at \
-             FROM field_write ORDER BY entity, ordinal",
-        )
+        let writes = sqlx::query(AssertSqlSafe(format!(
+            "SELECT w.entity, w.`key`, w.ordinal, w.value, w.fact_id, w.write_class, \
+                    w.written_at, {} \
+             FROM field_write w {} ORDER BY w.entity, w.ordinal",
+            super::write_origin::ORIGIN_COLUMNS,
+            super::write_origin::ORIGIN_JOINS,
+        )))
         .fetch_all(&mut *tx)
         .await
         .map_err(store)?;
+        let mut origins = Vec::new();
+        for row in &writes {
+            origins.extend(super::write_origin::origin_of(row)?);
+        }
+        let handles = self.memory.writer_handles(&mut tx, origins.iter()).await?;
         // The newest write of each claim: the claim as it stands.
         let claims = sqlx::query(AssertSqlSafe(format!(
             "SELECT {FACT_WRITE_COLUMNS} FROM fact_write w \
@@ -690,6 +702,7 @@ impl BootReader for DoltBootReader {
                         .map_err(store)?,
                     &entity,
                 ),
+                origin: super::write_origin::origin_of(row)?,
             });
         }
         let mut standing: HashMap<String, Vec<&sqlx::mysql::MySqlRow>> = HashMap::new();
@@ -735,7 +748,7 @@ impl BootReader for DoltBootReader {
                 }
             }
             if whole {
-                answered.insert(thing.clone(), trails_from(rows, &facts));
+                answered.insert(thing.clone(), trails_from(rows, &facts, &handles));
             }
         }
         Ok(answered)
@@ -1121,7 +1134,11 @@ impl BootReader for DoltBootReader {
 /// keeps its writes with their moments, and a record's key is kept off the thing
 /// when its newest write of that key, unless a later one took the key off, was made
 /// under a class that does not reach it.
-pub(super) fn trails_from(rows: &[RawWrite], facts: &[Fact]) -> KeyTrails {
+pub(super) fn trails_from(
+    rows: &[RawWrite],
+    facts: &[Fact],
+    handles: &HashMap<EntityId, EntityId>,
+) -> KeyTrails {
     let by_id: std::collections::HashMap<&FactId, &Fact> =
         facts.iter().map(|f| (&f.id, f)).collect();
     let mut trails = jojobot_domain::memory::KeyTrails::default();
@@ -1164,7 +1181,13 @@ pub(super) fn trails_from(rows: &[RawWrite], facts: &[Fact]) -> KeyTrails {
             .history
             .entry(key)
             .or_default()
-            .push(super::field_write_of(fact, value, row.written_at));
+            .push(super::field_write_of(
+                fact,
+                value,
+                row.written_at,
+                row.origin.clone(),
+                handles,
+            ));
     }
     for ((fact, key), class) in held {
         if !jojobot_domain::memory::reaches_the_thing(class) {

@@ -1570,6 +1570,31 @@ impl InMemoryMemory {
         self.first_write(home, id).1
     }
 
+    /// **What the newest write of a claim kept**, the claim stored at `at`: the
+    /// row the real store's `field_write` pointer names for the keys of a write
+    /// made just after it.
+    fn newest_claim_write_origin(
+        &self,
+        at: &FactAddress,
+    ) -> Option<super::super::write_origin::WriteOrigin> {
+        let writes = self.claim_writes.lock().expect("fake mutex poisoned");
+        let newest = writes
+            .iter()
+            .filter(|(held, id, _)| *held == at.home && *id == at.local)
+            .max_by_key(|(_, _, write)| write.ordinal)
+            .map(|(_, _, write)| write)?;
+        let run_bot = newest.session.as_deref().and_then(|run| {
+            let bots = self.run_bots.as_ref()?;
+            bots.bot_of_run(run)
+        });
+        Some(super::super::write_origin::WriteOrigin {
+            bot: newest.bot.clone(),
+            run: newest.session.clone(),
+            run_bot,
+            app_stamp: newest.app_stamp.clone(),
+        })
+    }
+
     /// **Append what a write said about a record's keys**, each taking the next
     /// ordinal for its own (thing, key) — never for the record.
     ///
@@ -1594,6 +1619,9 @@ impl InMemoryMemory {
         // another. The review stamp rides such a write and reads as reviewed only
         // if it is not earlier than the keys beside it.
         let moment = self.clock().now();
+        // **The claim write this act just appended**, which carries every key of
+        // the act: the newest write of the claim under the key it is stored at.
+        let origin = self.newest_claim_write_origin(&at);
         for (key, value) in wrote {
             let links = value
                 .as_deref()
@@ -1621,6 +1649,7 @@ impl InMemoryMemory {
                     class,
                     written_at: Some(moment),
                     links,
+                    origin: origin.clone(),
                 });
         }
     }
@@ -1974,8 +2003,14 @@ impl InMemoryMemory {
                 let carried = facts
                     .iter()
                     .find(|f| f.home == w.entity && f.id == w.fact)?;
+                let by = super::super::write_origin::written_by(
+                    w.origin.clone(),
+                    carried.app_stamp.as_ref(),
+                );
                 Some(super::super::KeyWrite {
-                    recorded_by: carried.app_stamp.clone(),
+                    recorded_by: by.recorded_by,
+                    writer: by.writer,
+                    run: by.run,
                     key: w.key.clone(),
                     ordinal: w.ordinal,
                     value: w.value.clone(),
@@ -2031,6 +2066,10 @@ struct StoredWrite {
     /// **The things this write pointed at, under the types declared when it was
     /// made**: the rows the real store's link table draws for it, kept for good.
     links: Vec<String>,
+    /// **What the claim write that carried this key write kept**: the real
+    /// store's pointer from `field_write` to its `fact_write` row, read at the
+    /// append. `None` is a write with no claim write behind it.
+    origin: Option<super::super::write_origin::WriteOrigin>,
 }
 
 #[async_trait::async_trait]
@@ -3736,9 +3775,22 @@ impl Memory for InMemoryMemory {
                 let carried = facts
                     .iter()
                     .find(|f| f.home == write.entity && f.id == write.fact)?;
+                let by = super::super::write_origin::written_by(
+                    write.origin.clone(),
+                    carried.app_stamp.as_ref(),
+                );
                 Some(FieldWrite {
                     written_at: write.written_at,
-                    recorded_by: carried.app_stamp.clone(),
+                    recorded_by: by.recorded_by,
+                    // **Served under the handle the bot answers to now**, as a
+                    // claim's history serves its writer.
+                    writer: by.writer.map(|writer| match writer {
+                        crate::actor::Actor::Bot(bot) => {
+                            crate::actor::Actor::Bot(self.writer_handle(&bot))
+                        }
+                        other => other,
+                    }),
+                    run: by.run,
                     value: write.value.clone(),
                     fact: FactAddress::new(resolved.id.clone(), carried.id.clone()),
                     recorded_at: carried.recorded_at,

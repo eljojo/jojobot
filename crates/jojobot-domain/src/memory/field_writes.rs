@@ -88,4 +88,10 @@ pub struct FieldWrite {
     /// **The app that wrote that record**, if one did — see
     /// [`KeyWrite::recorded_by`].
     pub recorded_by: Option<crate::app::AppStamp>,
+    /// **Who made this write**, read off the claim write that carried it. `None`
+    /// for a write an older build appended: see [`KeyWrite::writer`].
+    pub writer: Option<crate::actor::Actor>,
+    /// **The run that made this write**, which is not the claim's first run once
+    /// the claim was edited. `None` as `writer` is.
+    pub run: Option<String>,
 }

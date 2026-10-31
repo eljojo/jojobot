@@ -679,3 +679,63 @@ async fn the_owed_pass_marks_every_object_it_was_asked_of_whether_or_not_it_keep
     );
     assert_eq!(pass.excluded, 3);
 }
+
+/// **A key's history names the writer and the run of each write.** A capture
+/// from a booted bot names both. The write that names neither is the storage
+/// contract's case, `a_keys_history_names_the_writer_and_run_of_each_write`.
+#[tokio::test]
+async fn the_history_of_a_key_names_the_writer_and_the_run() {
+    let jojobot = handler();
+    make_bot(&jojobot, "otto").await;
+    let acting = sid_of(&json_of(
+        &jojobot
+            .start_here(Parameters(OrientArgs {
+                request_id: None,
+                compacted: None,
+                claim: None,
+                bot: Some("otto".into()),
+                today: Some("2026-03-15".into()),
+                resume: Some("new".into()),
+                brief: Some(true),
+                timezone: None,
+                skill: None,
+                section: None,
+                sid: None,
+                ask_for_code: None,
+                challenge: None,
+                code: None,
+                offer_code: None,
+            }))
+            .await
+            .expect("the boot call is ok"),
+    ))
+    .expect("a boot that states a day hands back a handle");
+    capture_ok(
+        &jojobot,
+        CaptureArgs {
+            sets: Some(
+                [("donuts_eaten".to_string(), "1".to_string())]
+                    .into_iter()
+                    .collect(),
+            ),
+            sid: Some(acting),
+            ..capture_args("alpha", "ate one")
+        },
+    )
+    .await;
+
+    let asked = recall_json(
+        &jojobot,
+        RecallArgs {
+            history: Some("donuts_eaten".into()),
+            ..of("alpha")
+        },
+    )
+    .await;
+    let writes = &asked["objects"][0]["history"]["writes"];
+    assert_eq!(writes[0]["writer"], "bot:otto", "{asked}");
+    assert!(
+        writes[0]["run"].as_str().is_some_and(|run| !run.is_empty()),
+        "the booted capture names its run: {asked}"
+    );
+}

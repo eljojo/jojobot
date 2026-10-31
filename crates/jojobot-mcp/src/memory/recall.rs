@@ -1183,6 +1183,14 @@ fn history_json(history: &graph::KeyHistory) -> serde_json::Value {
             if let Some(stamp) = &write.recorded_by {
                 rendered["recorded_by"] = super::wire::recorded_by_json(stamp);
             }
+            // **Who made this write and in which run**, as a claim's history names
+            // them. Absent for a write an older build appended.
+            if let Some(writer) = write.writer.as_ref().and_then(|writer| writer.sender()) {
+                rendered["writer"] = writer.into();
+            }
+            if let Some(run) = &write.run {
+                rendered["run"] = run.as_str().into();
+            }
             if let Some(fields) = rendered.as_object_mut() {
                 match &write.value {
                     Some(value) => fields.insert("value".into(), value.as_str().into()),

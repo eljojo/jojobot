@@ -42,6 +42,28 @@ impl DoltMemory {
             .is_some_and(|(key, _)| key == *against))
     }
 
+    /// **The handle each bot named by these writes answers to now**, read once
+    /// for a whole history so that serving a write costs no query.
+    pub(super) async fn writer_handles<'a>(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        origins: impl Iterator<Item = &'a jojobot_domain::memory::write_origin::WriteOrigin>,
+    ) -> Result<std::collections::HashMap<EntityId, EntityId>, MemoryError> {
+        let mut named = std::collections::HashMap::new();
+        for origin in origins {
+            for recorded in [origin.bot.as_ref(), origin.run_bot.as_ref()]
+                .into_iter()
+                .flatten()
+            {
+                if !named.contains_key(recorded) {
+                    let handle = self.writer_handle(tx, recorded).await?;
+                    named.insert(recorded.clone(), handle);
+                }
+            }
+        }
+        Ok(named)
+    }
+
     /// **The handle a recorded writer answers to now**, whether the row holds the id
     /// or a handle. A bot folded into another answers as the survivor, the way
     /// every other pointer does: a fold moves no row, so the write still holds

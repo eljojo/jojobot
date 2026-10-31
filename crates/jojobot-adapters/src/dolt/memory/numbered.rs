@@ -24,10 +24,22 @@ pub(super) fn field_write_of(
     fact: &Fact,
     value: Option<String>,
     written_at: Option<jiff::Timestamp>,
+    origin: Option<jojobot_domain::memory::write_origin::WriteOrigin>,
+    handles: &std::collections::HashMap<EntityId, EntityId>,
 ) -> FieldWrite {
+    let by = jojobot_domain::memory::write_origin::written_by(origin, fact.app_stamp.as_ref());
     FieldWrite {
         written_at,
-        recorded_by: fact.app_stamp.clone(),
+        recorded_by: by.recorded_by,
+        // **Served under the handle the bot answers to now**, as a claim's
+        // history serves its writer.
+        writer: by.writer.map(|writer| match writer {
+            jojobot_domain::actor::Actor::Bot(bot) => {
+                jojobot_domain::actor::Actor::Bot(handles.get(&bot).cloned().unwrap_or(bot))
+            }
+            other => other,
+        }),
+        run: by.run,
         value,
         fact: fact.address(),
         recorded_at: fact.recorded_at,
@@ -146,10 +158,13 @@ impl DoltMemory {
             let marks = vec!["?"; chunk.len()].join(", ");
             let sql = format!(
                 "SELECT w.entity, w.`key`, w.ordinal, w.value, w.fact_id, w.write_class, w.written_at,
-                        f.status, f.provenance, f.standing, f.details, f.app_stamp
+                        f.status, f.provenance, f.standing, f.details, f.app_stamp, {}
                  FROM field_write w
                  JOIN fact f ON f.entity = w.entity AND f.id = w.fact_id
-                 WHERE w.entity IN ({marks})"
+                 {}
+                 WHERE w.entity IN ({marks})",
+                super::write_origin::ORIGIN_COLUMNS,
+                super::write_origin::ORIGIN_JOINS,
             );
             let mut query = sqlx::query(AssertSqlSafe(sql.as_str()));
             for name in chunk {
@@ -206,10 +221,13 @@ impl DoltMemory {
             let marks = vec!["?"; chunk.len()].join(", ");
             let sql = format!(
                 "SELECT w.entity, w.`key`, w.ordinal, w.value, w.fact_id, w.write_class, w.written_at,
-                        f.status, f.provenance, f.standing, f.details, f.app_stamp
+                        f.status, f.provenance, f.standing, f.details, f.app_stamp, {}
                  FROM field_write w
                  JOIN fact f ON f.entity = w.entity AND f.id = w.fact_id
-                 WHERE w.`key` = ? AND w.entity IN ({marks})"
+                 {}
+                 WHERE w.`key` = ? AND w.entity IN ({marks})",
+                super::write_origin::ORIGIN_COLUMNS,
+                super::write_origin::ORIGIN_JOINS,
             );
             let mut query = sqlx::query(AssertSqlSafe(sql.as_str())).bind(key);
             for name in chunk {

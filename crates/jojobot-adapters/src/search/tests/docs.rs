@@ -25,6 +25,8 @@ pub(super) fn scan(doc_id: &str, entity: Option<Entity>, prose: &str, facts: Vec
             *ordinal += 1;
             writes.push(KeyWrite {
                 recorded_by: None,
+                writer: None,
+                run: None,
                 key: key.clone(),
                 ordinal: *ordinal,
                 value: Some(value.clone()),

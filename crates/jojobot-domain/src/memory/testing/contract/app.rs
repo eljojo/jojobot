@@ -311,5 +311,6 @@ pub async fn run_all_app<M: Memory>(store: &M) {
     an_app_mark_is_kept_and_a_bot_naming_the_app_has_none(store).await;
     an_app_claim_is_not_rewritten_in_place(store).await;
     a_folded_values_backing_tells_the_app_from_a_bot(store).await;
+    super::key_writer::a_keys_history_names_the_writer_and_run_of_each_write(store).await;
     an_app_event_lands_once_and_a_retry_writes_nothing(store).await;
 }

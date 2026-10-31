@@ -506,6 +506,69 @@ async fn a_key_held_by_an_unstamped_write_has_no_age() {
     store.stop().await;
 }
 
+/// 🚨 **A write with no pointer to a claim write names no writer and no run.**
+/// Writes appended before `field_write.fact_write_ordinal` existed carry NULL
+/// there and always will. The claim's newest write holds a run, and a read that
+/// fell back to it would name a run that did not set the value. The value is
+/// unchanged, and the positive beside it: the same write, pointed, names its run.
+#[tokio::test]
+async fn a_key_write_with_no_pointer_names_no_run() {
+    let scratch = Scratch::new("unpointed-key");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("unpointed")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    let memory = DoltMemory::open(pool.clone());
+    jojobot_domain::memory::kinds::seed(&memory)
+        .await
+        .expect("the kinds are seeded");
+
+    let subject = EntityId::person("person:milhouse");
+    memory
+        .add_entity(NewEntity::new(
+            subject.clone(),
+            "Milhouse",
+            "contract-fixture",
+        ))
+        .await
+        .expect("add_entity ok")
+        .written()
+        .expect("the guard waves it through");
+    memory
+        .capture(jojobot_domain::memory::testing::contract::state(NewFact {
+            fields: [("colour".to_string(), "red".to_string())]
+                .into_iter()
+                .collect(),
+            session: Some("run-alpha".to_string()),
+            ..NewFact::about(subject.clone(), "painted", date(2026, 10, 7))
+        }))
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("the guard waves it through");
+    let pointed = memory.history(&subject, "colour").await.expect("history");
+    assert_eq!(
+        pointed[0].run.as_deref(),
+        Some("run-alpha"),
+        "the positive: a pointed write names its run: {pointed:?}"
+    );
+
+    sqlx::query("UPDATE field_write SET fact_write_ordinal = NULL")
+        .execute(&pool)
+        .await
+        .expect("the pointers are taken off");
+    let unpointed = memory.history(&subject, "colour").await.expect("history");
+    assert_eq!(unpointed[0].value.as_deref(), Some("red"), "{unpointed:?}");
+    assert_eq!(unpointed[0].writer, None, "{unpointed:?}");
+    assert_eq!(unpointed[0].run, None, "{unpointed:?}");
+
+    store.stop().await;
+}
+
 /// **A field write as a merge orders it**: its key, its place in its own thing's
 /// history, the claim that carried it and the moment the store stamped it.
 #[derive(Debug, Clone, PartialEq, Eq)]

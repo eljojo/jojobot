@@ -880,6 +880,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../../migrations/0117_run_call_code_key_add.sql"),
         leaves: Leaves::Index("run_call_count", "PRIMARY"),
     },
+    Migration {
+        version: "0118_field_write_fact_write_ordinal",
+        sql: include_str!("../../migrations/0118_field_write_fact_write_ordinal.sql"),
+        leaves: Leaves::Column("field_write", "fact_write_ordinal"),
+    },
 ];
 
 /// The table recording what has run. Created by hand rather than by a

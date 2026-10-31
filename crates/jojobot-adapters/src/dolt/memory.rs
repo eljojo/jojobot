@@ -2223,7 +2223,7 @@ impl DoltMemory {
             None,
         )
         .await?;
-        Self::write_fact(
+        let claim_write = Self::write_fact(
             tx,
             &stored,
             &self.clock,
@@ -2256,6 +2256,7 @@ impl DoltMemory {
             lowered_writes,
             &self.clock,
             &classes,
+            claim_write,
         )
         .await?;
         // **Served under the handle, stored under the key** — resolved
@@ -2603,10 +2604,12 @@ impl DoltMemory {
         for key in std::iter::once(entity.as_str().to_string())
             .chain(steps.iter().map(|step| step.folded.clone()))
         {
-            let rows = sqlx::query(
-                "SELECT `key`, ordinal, value, fact_id, write_class, written_at FROM field_write
-                 WHERE entity = ? ORDER BY ordinal",
-            )
+            let rows = sqlx::query(AssertSqlSafe(format!(
+                "SELECT w.`key`, w.ordinal, w.value, w.fact_id, w.write_class, w.written_at,
+                            {} FROM field_write w {} WHERE w.entity = ? ORDER BY w.ordinal",
+                write_origin::ORIGIN_COLUMNS,
+                write_origin::ORIGIN_JOINS,
+            )))
             .bind(&key)
             .fetch_all(&mut **tx)
             .await
@@ -2626,6 +2629,7 @@ impl DoltMemory {
                             .map_err(store)?,
                         &key,
                     ),
+                    origin: write_origin::origin_of(row)?,
                 });
             }
             held.insert(key, writes);
@@ -2647,20 +2651,29 @@ impl DoltMemory {
         if !jojobot_domain::memory::reaches_the_thing(class) {
             return Ok(None);
         }
+        // **The app mark off the joined record**, read as the claim's own
+        // column is: NULL is a record no app wrote, and a cell that is not
+        // what was written is damage.
+        let claim_mark: Option<jojobot_domain::app::AppStamp> = match row
+            .try_get::<Option<String>, _>("app_stamp")
+            .map_err(store)?
+        {
+            None => None,
+            Some(cell) => Some(
+                serde_json::from_str(&cell)
+                    .map_err(|_| unreadable("its app mark cannot be read"))?,
+            ),
+        };
+        // **Writer, run and receipt off the one claim write the key write
+        // points at**, so the three cannot disagree.
+        let by = jojobot_domain::memory::write_origin::written_by(
+            write_origin::origin_of(row)?,
+            claim_mark.as_ref(),
+        );
         Ok(Some(KeyWrite {
-            // **The app mark off the joined record**, read as the claim's own
-            // column is: NULL is a record no app wrote, and a cell that is not
-            // what was written is damage.
-            recorded_by: match row
-                .try_get::<Option<String>, _>("app_stamp")
-                .map_err(store)?
-            {
-                None => None,
-                Some(cell) => Some(
-                    serde_json::from_str(&cell)
-                        .map_err(|_| unreadable("its app mark cannot be read"))?,
-                ),
-            },
+            recorded_by: by.recorded_by,
+            writer: by.writer,
+            run: by.run,
             key: row.try_get("key").map_err(store)?,
             ordinal: row.try_get::<i64, _>("ordinal").map_err(store)? as u64,
             value: row.try_get("value").map_err(store)?,
@@ -2704,13 +2717,16 @@ impl DoltMemory {
         tx: &mut Transaction<'_, MySql>,
         entity: &EntityId,
     ) -> Result<Vec<KeyWrite>, MemoryError> {
-        let rows = sqlx::query(
+        let rows = sqlx::query(AssertSqlSafe(format!(
             "SELECT w.`key`, w.ordinal, w.value, w.fact_id, w.write_class, w.written_at,
-                     f.status, f.provenance, f.standing, f.details, f.app_stamp
+                     f.status, f.provenance, f.standing, f.details, f.app_stamp, {}
              FROM field_write w
              JOIN fact f ON f.entity = w.entity AND f.id = w.fact_id
+             {}
              WHERE w.entity = ?",
-        )
+            write_origin::ORIGIN_COLUMNS,
+            write_origin::ORIGIN_JOINS,
+        )))
         .bind(entity.as_str())
         .fetch_all(&mut **tx)
         .await
@@ -3184,6 +3200,7 @@ impl DoltMemory {
         wrote: Vec<(String, Option<String>)>,
         clock: &Clock,
         classes: &std::collections::BTreeMap<String, jojobot_domain::memory::WriteClass>,
+        claim_write: i64,
     ) -> Result<(), MemoryError> {
         // **The link rows ride the write that made them**, in its transaction, so
         // a write and the question of who points at its targets never disagree.
@@ -3207,8 +3224,9 @@ impl DoltMemory {
                 .copied()
                 .unwrap_or(jojobot_domain::memory::WriteClass::Own);
             sqlx::query(
-                "INSERT INTO field_write (entity, `key`, ordinal, value, fact_id, written_at, write_class)
-                 VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO field_write (entity, `key`, ordinal, value, fact_id, written_at, write_class,
+                                         fact_write_ordinal)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(entity.as_str())
             .bind(&key)
@@ -3217,6 +3235,9 @@ impl DoltMemory {
             .bind(fact.as_str())
             .bind(&moment)
             .bind(class.as_token())
+            // **The write of the claim that carried this key**, appended in the
+            // same act: the one row that says who wrote the value and in which run.
+            .bind(claim_write)
             .execute(&mut **tx)
             .await
             .map_err(store)?;
@@ -3284,7 +3305,7 @@ impl DoltMemory {
         clock: &Clock,
         session: Option<&str>,
         bot: Option<&EntityId>,
-    ) -> Result<(), MemoryError> {
+    ) -> Result<i64, MemoryError> {
         sqlx::query(
             "REPLACE INTO fact (entity, id, content, details, provenance, standing, status,
                                 recorded_at, happened_at, happened_through, edge_shape,
@@ -3362,8 +3383,7 @@ impl DoltMemory {
             .await
             .map_err(store)?;
         }
-        Self::append_fact_write(tx, fact, clock, session, bot).await?;
-        Ok(())
+        Self::append_fact_write(tx, fact, clock, session, bot).await
     }
 
     /// **Keep this write of the claim, beside the row it just rewrote.**
@@ -3390,7 +3410,7 @@ impl DoltMemory {
         clock: &Clock,
         session: Option<&str>,
         bot: Option<&EntityId>,
-    ) -> Result<(), MemoryError> {
+    ) -> Result<i64, MemoryError> {
         let ordinal = ordinal::next(
             tx,
             "fact_write",
@@ -3444,7 +3464,7 @@ impl DoltMemory {
         .execute(&mut **tx)
         .await
         .map_err(store)?;
-        Ok(())
+        Ok(ordinal)
     }
 
     /// **Each named claim's own last write moment, inside the ongoing
@@ -3670,6 +3690,8 @@ struct RawWrite {
     fact: String,
     class: jojobot_domain::memory::WriteClass,
     written_at: Option<jiff::Timestamp>,
+    /// The claim write that carried this key write, `None` when it has no pointer.
+    origin: Option<jojobot_domain::memory::write_origin::WriteOrigin>,
 }
 
 impl ServedWrite for RawWrite {
@@ -5258,9 +5280,12 @@ impl Memory for DoltMemory {
         rows.sort_by_key(|write| write.ordinal);
         Self::forward_raw_values(&mut tx, &mut rows).await?;
         let facts = self.facts_of(&mut tx, &storage_key).await?;
+        let handles = self
+            .writer_handles(&mut tx, rows.iter().filter_map(|row| row.origin.as_ref()))
+            .await?;
         commit_native(tx).await.map_err(store)?;
 
-        Ok(trails_from(&rows, &facts))
+        Ok(trails_from(&rows, &facts, &handles))
     }
 
     async fn history(&self, entity: &EntityId, key: &str) -> Result<Vec<FieldWrite>, MemoryError> {
@@ -5286,6 +5311,9 @@ impl Memory for DoltMemory {
         // The record a write arrived in says when it happened and what became
         // of it, so the claims are read alongside.
         let facts = self.facts_of(&mut tx, &storage_key).await?;
+        let handles = self
+            .writer_handles(&mut tx, rows.iter().filter_map(|row| row.origin.as_ref()))
+            .await?;
         commit_native(tx).await.map_err(store)?;
 
         let mut history = Vec::with_capacity(rows.len());
@@ -5299,7 +5327,13 @@ impl Memory for DoltMemory {
             let Some(fact) = facts.iter().find(|f| f.id == carried) else {
                 continue;
             };
-            history.push(field_write_of(fact, row.value.clone(), row.written_at));
+            history.push(field_write_of(
+                fact,
+                row.value.clone(),
+                row.written_at,
+                row.origin.clone(),
+                &handles,
+            ));
         }
         Ok(history)
     }
@@ -5795,7 +5829,7 @@ impl Memory for DoltMemory {
             }
         }
         let on_disk = self.as_stored(&mut tx, &fact).await?;
-        Self::write_fact(
+        let claim_write = Self::write_fact(
             &mut tx,
             &on_disk,
             &self.clock,
@@ -5819,6 +5853,7 @@ impl Memory for DoltMemory {
             lowered_writes,
             &self.clock,
             &classes,
+            claim_write,
         )
         .await?;
         // Read back from the substrate rather than from what the patch
@@ -6036,7 +6071,7 @@ impl Memory for DoltMemory {
             stale_after: None,
             receipt: None,
         };
-        Self::write_fact(&mut tx, &record, &self.clock, session, None).await?;
+        let claim_write = Self::write_fact(&mut tx, &record, &self.clock, session, None).await?;
         Self::append_writes(
             &mut tx,
             &record.home,
@@ -6044,6 +6079,7 @@ impl Memory for DoltMemory {
             written_keys(&record),
             &self.clock,
             &Default::default(),
+            claim_write,
         )
         .await?;
 
@@ -6090,7 +6126,8 @@ impl Memory for DoltMemory {
                     .await?;
                 let on_disk = self.as_stored(&mut tx, &record).await?;
                 let classes = self.held_classes(&mut tx, &folded_key, &tick.fact).await?;
-                Self::write_fact(&mut tx, &on_disk, &self.clock, session, None).await?;
+                let claim_write =
+                    Self::write_fact(&mut tx, &on_disk, &self.clock, session, None).await?;
                 Self::append_writes(
                     &mut tx,
                     &on_disk.home,
@@ -6101,6 +6138,7 @@ impl Memory for DoltMemory {
                     )],
                     &self.clock,
                     &classes,
+                    claim_write,
                 )
                 .await?;
             }
@@ -6130,7 +6168,8 @@ impl Memory for DoltMemory {
                         Some(head),
                     ));
                 }
-                Self::write_fact(&mut tx, &on_disk, &self.clock, session, None).await?;
+                let claim_write =
+                    Self::write_fact(&mut tx, &on_disk, &self.clock, session, None).await?;
                 Self::append_writes(
                     &mut tx,
                     &on_disk.home,
@@ -6138,6 +6177,7 @@ impl Memory for DoltMemory {
                     wrote,
                     &self.clock,
                     &classes,
+                    claim_write,
                 )
                 .await?;
             }
@@ -6362,7 +6402,7 @@ impl Memory for DoltMemory {
         }
         let retracted_on_disk = self.as_stored(&mut tx, &retracted).await?;
         Self::write_fact(&mut tx, &retracted_on_disk, &self.clock, session, None).await?;
-        Self::write_fact(&mut tx, &record, &self.clock, session, None).await?;
+        let claim_write = Self::write_fact(&mut tx, &record, &self.clock, session, None).await?;
         // The account is a record like any other, and the key naming what it
         // takes back is a write of its own. The record being taken back writes
         // no key: what changed there is its status.
@@ -6373,6 +6413,7 @@ impl Memory for DoltMemory {
             written_keys(&record),
             &self.clock,
             &Default::default(),
+            claim_write,
         )
         .await?;
         // **Served under the handle, stored under the key.**
@@ -7678,6 +7719,7 @@ use jojobot_domain::memory::merge::{Side, interleave};
 #[cfg(test)]
 mod tests;
 mod walks;
+mod write_origin;
 mod write_result;
 mod writer;
 

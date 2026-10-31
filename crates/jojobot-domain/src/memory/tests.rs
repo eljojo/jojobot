@@ -1208,6 +1208,8 @@ fn resolve_handle_follows_a_rename_and_a_never_existed_handle_still_misses() {
 fn wrote(key: &str, ordinal: u64, value: Option<&str>) -> KeyWrite {
     KeyWrite {
         recorded_by: None,
+        writer: None,
+        run: None,
         provenance: Provenance::Inference,
         standing: Standing::Open,
         note: None,
@@ -1425,6 +1427,8 @@ fn a_folded_backing_carries_the_app_that_recorded_the_value() {
     };
     let by_app = KeyWrite {
         recorded_by: Some(stamp.clone()),
+        writer: None,
+        run: None,
         ..wrote("host", 1, Some("host-alpha"))
     };
     let by_bot = wrote("unit", 1, Some("web"));
@@ -1980,6 +1984,12 @@ async fn fake_satisfies_the_receipt_contract() {
 #[tokio::test]
 async fn fake_satisfies_the_app_contract() {
     contract::run_all_app(&InMemoryMemory::booted()).await;
+}
+
+#[tokio::test]
+async fn fake_names_the_writer_and_run_of_each_key_write() {
+    contract::a_keys_history_names_the_writer_and_run_of_each_write(&InMemoryMemory::booted())
+        .await;
 }
 
 /// **The mention contract against the fake**, over the layer that resolves

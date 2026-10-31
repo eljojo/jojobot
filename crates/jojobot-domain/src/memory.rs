@@ -66,6 +66,7 @@ pub mod types;
 pub mod unmapped;
 pub mod view_inputs;
 pub mod words;
+pub mod write_origin;
 
 pub use links::*;
 
@@ -3784,6 +3785,8 @@ pub fn stood_after(
             standing: edited.standing,
             note: edited.details.clone(),
             recorded_by: edited.app_stamp.clone(),
+            writer: None,
+            run: None,
             // A write that has not happened has no moment, and the guard that
             // reads this judges values, not ages.
             written_at: None,
@@ -3830,6 +3833,8 @@ pub fn stood_after_capture(
             status: captured.status,
             note: captured.details.clone(),
             recorded_by: captured.app_stamp.clone(),
+            writer: None,
+            run: None,
             provenance: captured.provenance,
             standing: captured.standing,
             written_at: None,
@@ -4626,6 +4631,11 @@ pub struct KeyWrite {
     pub note: Option<String>,
     /// **The app that wrote the record that carried it**, when one did.
     pub recorded_by: Option<crate::app::AppStamp>,
+    /// **Who made this write**, read off the claim write that carried it
+    /// ([`write_origin::written_by`]). `None` for a write an older build appended.
+    pub writer: Option<crate::actor::Actor>,
+    /// **The run that made this write**, and not the claim's first run.
+    pub run: Option<String>,
     /// **When the store took this write in.** Stamped by the store at the
     /// append, never by a caller, and the one moment no caller can set or
     /// backdate: what the fold reads to say how old a held value is.

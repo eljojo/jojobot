@@ -1,0 +1,16 @@
+-- Which write of its claim carried each write of a key.
+--
+-- `fact_write` keeps the run (0065), the bot (0109) and the app mark (0106) of
+-- each write of a claim, and `field_write` kept only the claim. A claim that is
+-- edited has several writes, so a join on the claim alone names the run of its
+-- first or newest write, which is the wrong run for every other value the claim
+-- set. A key write now points at the write of the claim that carried it, and one
+-- row answers who wrote the value and in which run.
+--
+-- **Nullable and nothing backfilled.** A write an older build appended has no
+-- pointer, and nothing says which write of its claim it was. Such a write reads
+-- with no writer and no run, and never with the claim's first or newest write,
+-- which is the wrong reading 0068 refused for the moment of a write.
+--
+-- One statement with one clause, for the reason 0091 is.
+ALTER TABLE field_write ADD COLUMN fact_write_ordinal BIGINT NULL;
