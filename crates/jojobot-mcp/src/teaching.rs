@@ -334,6 +334,7 @@ pub(crate) fn is_a_whole_read(args: &crate::memory::RecallArgs) -> bool {
         && args.answers_type.is_none()
         && args.overdue.is_none()
         && args.unreviewed.is_none()
+        && args.roots.is_none()
         && args.near.is_none()
         && args.follow.is_none()
         && args.built_on.is_none()

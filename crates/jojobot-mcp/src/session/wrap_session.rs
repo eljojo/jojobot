@@ -1573,6 +1573,7 @@ mod tests {
             &jojobot
                 .recall(Parameters(RecallArgs {
                     unreviewed: None,
+                    roots: None,
                     details: None,
                     view: None,
                     inputs: None,

@@ -761,6 +761,11 @@ pub struct RecallArgs {
     /// Send `true`; the shipped view `unreviewed` asks the same.
     #[serde(default)]
     pub(crate) unreviewed: Option<bool>,
+    /// **Only the roots**: the things with no parent, or filed under a handle
+    /// nothing standing answers to. It names what to recall, and combines with
+    /// `kind`. Send `true`; the index of the web UI asks the same.
+    #[serde(default)]
+    pub(crate) roots: Option<bool>,
     /// **What else was recorded around a day.** See [`NearArgs`].
     #[serde(default)]
     pub(crate) near: Option<NearArgs>,
@@ -1596,6 +1601,7 @@ impl Jojobot {
                     })
                 }),
                 unreviewed: args.unreviewed.or(asked.unreviewed.then_some(true)),
+                roots: args.roots,
                 answers_type: args.answers_type.or(asked.answers_type),
                 keys: args.keys.or(asked.keys),
                 follow: args.follow.or_else(|| {
@@ -2656,7 +2662,7 @@ impl Jojobot {
                        parent, answers_type, fields (a key and the value it holds), where (one \
                        line over keys, status != done && owner = bot:gamma) or view (a question worked out, asked by name; \
                        start with one if it fits). A call that narrows nothing is refused: name one of subject, \
-                       kind, parent, answers_type, fields, where, view, unreviewed or near, or a \
+                       kind, parent, roots (the things under nothing standing), answers_type, fields, where, view, unreviewed or near, or a \
                        claim's address (history_record, built_on). WHAT OF EACH: every object comes back as \
                        its FIELDS, what the thing HOLDS: every write on it folded, the newest \
                        write of each key winning (a snoozed rhythm also carries \
@@ -4908,6 +4914,7 @@ fn selection_beside_records(args: &RecallArgs, addresses: &[String]) -> Option<&
         values_most,
         overdue,
         unreviewed,
+        roots,
         near,
         follow,
         view,
@@ -4941,6 +4948,7 @@ fn selection_beside_records(args: &RecallArgs, addresses: &[String]) -> Option<&
         ("follow", follow.is_some()),
         ("overdue", overdue.is_some()),
         ("unreviewed", unreviewed.is_some()),
+        ("roots", roots.is_some()),
         ("near", near.is_some()),
         ("history", history.is_some()),
         ("history_record", history_record.is_some()),

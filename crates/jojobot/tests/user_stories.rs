@@ -391,6 +391,9 @@ mod ready;
 /// A recall that leaves prose out says so once.
 #[path = "user_stories/recall_elisions.rs"]
 mod recall_elisions;
+/// The assistant asks recall for the roots of the tree.
+#[path = "user_stories/recall_roots.rs"]
+mod recall_roots;
 #[path = "user_stories/receipts.rs"]
 mod receipts;
 #[path = "user_stories/refusal_words.rs"]

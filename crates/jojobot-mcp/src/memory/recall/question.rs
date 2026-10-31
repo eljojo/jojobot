@@ -472,6 +472,7 @@ impl Jojobot {
                 owed: view_overdue,
                 ready: readiness_asked.is_some(),
                 unreviewed: args.unreviewed == Some(true),
+                roots: args.roots == Some(true),
             },
             include,
             follow,

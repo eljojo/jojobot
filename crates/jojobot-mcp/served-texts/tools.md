@@ -2329,7 +2329,7 @@ The graph query: say the shape you want and get that shape back.
 Use it for a handle, a kind, a type or a key and its value; search is for words.
 THREE AXES COMBINE INTO ONE QUESTION.
 WHICH OBJECTS: subject (one handle or `<collection>/<N>`; a named handle that names nothing is blocked with the nearest), kind, parent, answers_type, fields (a key and the value it holds), where (one line over keys, status != done && owner = bot:gamma) or view (a question worked out, asked by name; start with one if it fits).
-A call that narrows nothing is refused: name one of subject, kind, parent, answers_type, fields, where, view, unreviewed or near, or a claim's address (history_record, built_on).
+A call that narrows nothing is refused: name one of subject, kind, parent, roots (the things under nothing standing), answers_type, fields, where, view, unreviewed or near, or a claim's address (history_record, built_on).
 WHAT OF EACH: every object comes back as its FIELDS, what the thing HOLDS: every write on it folded, the newest write of each key winning (a snoozed rhythm also carries `snooze` {until, in_force}).
 facts, prose, charter, history, history_record, values, backing, stood_for and review_marks ask for more, each off by default, each saying what it left out; `keys` asks for less, list blocks too, and `record_keys` for less of each fact record (`records_narrowed` names what it hid; `fields_left_out` does for a view's shows_keys).
 A merged thing carries `foldedNames` and can carry `claims_left_out`: claims under a thing merged into it that it cannot serve, each with a reason and an address that history_record reads with no subject (records reads several).
@@ -2376,6 +2376,7 @@ Empty answers name what they searched.
 {"/inputSchema/properties/record_keys":{"default":null,"items":{"type":"string"},"type":["array","null"]}}
 {"/inputSchema/properties/records":{"default":null,"items":{"type":"string"},"type":["array","null"]}}
 {"/inputSchema/properties/review_marks":{"default":null,"type":["boolean","null"]}}
+{"/inputSchema/properties/roots":{"default":null,"type":["boolean","null"]}}
 {"/inputSchema/properties/scope":{"default":null,"type":["string","null"]}}
 {"/inputSchema/properties/sid":{"default":null,"type":["string","null"]}}
 {"/inputSchema/properties/status":{"default":null,"type":["string","null"]}}
@@ -3239,6 +3240,14 @@ asked for by `history_record` or `records` is served whole either way.
 **It also lists a bot's record of the release notes it was told**, which
 jojobot keeps and a listing leaves out the same way, counted under
 `release_notes_record_left_out`.
+```
+
+#### `recall` — argument `/inputSchema.roots`
+
+```text
+**Only the roots**: the things with no parent, or filed under a handle
+nothing standing answers to. It names what to recall, and combines with
+`kind`. Send `true`; the index of the web UI asks the same.
 ```
 
 #### `recall` — argument `/inputSchema.scope`

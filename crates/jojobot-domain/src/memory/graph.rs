@@ -302,6 +302,11 @@ pub struct Selection {
     /// is a kind and a parent. One level, never a subtree, for the reason
     /// `list_entities`' own parent argument is.
     pub parent: Option<EntityId>,
+    /// **Only the roots**: things with no parent, or filed under a handle
+    /// nothing standing answers to. A property of the object itself, like its
+    /// kind and parent, so it combines with `kind`. The index's unreachable
+    /// list asks the same question: nobody's child is a root.
+    pub roots: bool,
     /// **Objects that answer this type**, matched structurally over the keys
     /// their records carry — never over what anybody declared them to be.
     ///
@@ -401,6 +406,8 @@ pub enum Narrowing {
     Kind,
     /// The direct children of a thing.
     Parent,
+    /// The things that sit under nothing standing.
+    Roots,
     /// What has fallen due, whatever kinds owe something.
     Overdue,
     /// What can be started, or the whole plan: readiness asked of the work.
@@ -418,10 +425,11 @@ pub enum Narrowing {
 
 impl Narrowing {
     /// Every way a recall can narrow.
-    pub const ALL: [Narrowing; 9] = [
+    pub const ALL: [Narrowing; 10] = [
         Narrowing::Subject,
         Narrowing::Kind,
         Narrowing::Parent,
+        Narrowing::Roots,
         Narrowing::Overdue,
         Narrowing::Readiness,
         Narrowing::Unreviewed,
@@ -442,7 +450,7 @@ impl Narrowing {
             Narrowing::Unreviewed => Some("asks: unreviewed"),
             Narrowing::AnswersType => Some("answers_type"),
             Narrowing::Filter => Some("where"),
-            Narrowing::Subject | Narrowing::Near => None,
+            Narrowing::Subject | Narrowing::Roots | Narrowing::Near => None,
         }
     }
 
@@ -463,7 +471,7 @@ impl Narrowing {
             Narrowing::Unreviewed => fields.get("asks").map(String::as_str) == Some("unreviewed"),
             Narrowing::AnswersType => held("answers_type"),
             Narrowing::Filter => held("where"),
-            Narrowing::Subject | Narrowing::Near => false,
+            Narrowing::Subject | Narrowing::Roots | Narrowing::Near => false,
         }
     }
 
@@ -504,6 +512,7 @@ impl Selection {
             Narrowing::Subject => self.subject.is_some(),
             Narrowing::Kind => self.kind.is_some(),
             Narrowing::Parent => self.parent.is_some(),
+            Narrowing::Roots => self.roots,
             Narrowing::Overdue => self.owed,
             Narrowing::Readiness => self.ready,
             Narrowing::Unreviewed => self.unreviewed,
@@ -2511,11 +2520,7 @@ impl<'a> Ctx<'a> {
     /// **Every filter `admits_ignoring_archived` asks except the kind's licence**,
     /// so the objects a licence left out can be counted over the same question.
     fn admits_if_licensed(&self, entity: &Entity, select: &Selection) -> bool {
-        select.kind.is_none_or(|k| entity.kind == k)
-            && select
-                .parent
-                .as_ref()
-                .is_none_or(|p| entity.parent.as_ref() == Some(p))
+        self.matches_kind_and_parent(entity, select)
             // **An owned object is its owner's alone.** Objects declaring no
             // owner are the whole store as it stands, and they answer everyone.
             && self.readable_by(&entity.id, select)
@@ -2571,6 +2576,18 @@ impl<'a> Ctx<'a> {
                 .parent
                 .as_ref()
                 .is_none_or(|p| entity.parent.as_ref() == Some(p))
+            && (!select.roots || self.is_root(entity))
+    }
+
+    /// **Does this entity sit under nothing standing?** It names no parent, or
+    /// names one that no entity answers to or that is archived or folded away.
+    fn is_root(&self, entity: &Entity) -> bool {
+        entity.parent.as_ref().is_none_or(|parent| {
+            !self
+                .entities
+                .get(parent)
+                .is_some_and(|found| found.browsable())
+        })
     }
 
     /// **The objects the walk left out at a hop that the count above did not
@@ -3389,11 +3406,12 @@ where
     // answer holds, and every count it gives (archived, folded, another
     // identity's), is taken over entities of the kind selected. A subject is
     // resolved and screened against everything that exists, and a walk reaches
-    // any kind, so those two ask for the whole listing. Sessions are joined
+    // any kind, so those two ask for the whole listing, and so does a roots
+    // question, which looks each parent up whatever its kind. Sessions are joined
     // below whatever was listed, and a kind filter drops the ones that are not
     // wanted.
     let listed = match (&query.select.subject, &query.follow) {
-        (None, None) => query.select.kind,
+        (None, None) if !query.select.roots => query.select.kind,
         _ => None,
     };
     let mut entities = store.list_entities(listed).await?;

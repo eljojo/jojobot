@@ -3,6 +3,7 @@ use crate::memory::{Boot, FactId, FactStatus, Memory, NewEntity, Provenance, Sta
 
 mod ask;
 mod fixtures;
+mod roots;
 mod store_reads;
 use ask::*;
 use fixtures::*;
@@ -304,6 +305,13 @@ fn a_selection_narrowed_in_any_one_way_asks_a_question() {
             "parent",
             Selection {
                 parent: Some(EntityId("project:atlas".into())),
+                ..Selection::default()
+            },
+        ),
+        (
+            "roots",
+            Selection {
+                roots: true,
                 ..Selection::default()
             },
         ),
