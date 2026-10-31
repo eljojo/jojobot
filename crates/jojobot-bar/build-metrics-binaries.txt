@@ -35,6 +35,7 @@ test-branch_prune
 test-build_metrics
 test-bundle_run
 test-carried
+test-changes_cursor
 test-changes_dolt
 test-check_report
 test-checks
