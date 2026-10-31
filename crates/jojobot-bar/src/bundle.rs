@@ -277,6 +277,37 @@ mod tests {
         );
     }
 
+    /// **The rooms lane exists only when a room is named, and sits between the
+    /// check and year lanes.** A bundle with no room holds three lanes less one;
+    /// a named room adds its lane at index 1 with one `--test` for each name,
+    /// before the flags that stop the build short of running.
+    #[test]
+    fn the_rooms_lane_exists_only_when_a_room_is_named_and_sits_second() {
+        let names = |rooms: &[&str]| -> Vec<&'static str> {
+            lanes(rooms).iter().map(|(lane, _)| *lane).collect()
+        };
+        assert_eq!(names(&[]), ["check", "year"]);
+        assert_eq!(names(&["alpha", "beta"]), ["check", "rooms", "year"]);
+
+        let lanes = lanes(&["alpha", "beta"]);
+        assert_eq!(
+            lanes[1].1,
+            [
+                "test",
+                "-p",
+                "jojobot-exercise",
+                "--features",
+                "rooms",
+                "--test",
+                "alpha",
+                "--test",
+                "beta",
+                "--no-run",
+                "--locked",
+            ]
+        );
+    }
+
     /// A verbatim `cargo test --workspace --no-run` capture on this workspace.
     const NO_RUN_LISTING: &str = include_str!("../tests/fixtures/no-run-listing.txt");
 
