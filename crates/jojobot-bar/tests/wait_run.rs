@@ -57,7 +57,7 @@ fn code_proof_accepts_exact_pr_and_dispatch_with_only_release_jobs_skipped() {
             let (code, out, err) = wait(&standing, &[GREEN_SHA, "--code-proof"]);
             assert_eq!(code, 0, "{out}{err}");
             assert!(
-                out.contains("#997") && out.contains(GREEN_SHA) && out.contains("/runs/995"),
+                out.contains("#995") && out.contains(GREEN_SHA) && out.contains("/runs/995"),
                 "{out}"
             );
             assert_eq!(standing.asked_for("/actions/runs?"), 1);
@@ -182,7 +182,7 @@ fn code_proof_uses_an_older_green_run_and_leaves_the_checkout_clean() {
         .unwrap();
     assert!(out.status.success(), "{out:?}");
     let text = String::from_utf8_lossy(&out.stdout);
-    assert!(text.contains("#997") && !text.contains("#1001"), "{text}");
+    assert!(text.contains("#995") && !text.contains("#999"), "{text}");
     assert!(git(&["status", "--porcelain", "--untracked-files=all"]).is_empty());
     std::fs::remove_dir_all(dir).unwrap();
 }
@@ -437,7 +437,7 @@ fn a_green_branch_run_prints_its_verdict_block_and_exits_zero() {
     let (code, out, err) = wait(&forge, &["dev9-2374r-work"]);
     assert_eq!(code, 0, "{out}\n{err}");
     for printed in [
-        "run #225",
+        "run #223",
         "dev9-2374r-work",
         GREEN_SHA,
         "verdict: GREEN",
@@ -454,7 +454,7 @@ fn a_green_branch_run_prints_its_verdict_block_and_exits_zero() {
         );
     }
     assert!(
-        out.contains("#219"),
+        out.contains("#217"),
         "the other run of the commit is named, not used: {out}"
     );
 }
@@ -467,8 +467,8 @@ fn a_branch_finds_its_own_run_when_a_newer_run_of_its_commit_succeeded() {
     let forge = stand(two_runs_of_one_commit());
     let (code, out, err) = wait(&forge, &["dev9-2374-work"]);
     assert_eq!(code, 1, "{out}\n{err}");
-    assert!(out.contains("run #219"), "{out}");
-    assert!(out.contains("also on this commit: #225"), "{out}");
+    assert!(out.contains("run #217"), "{out}");
+    assert!(out.contains("also on this commit: #223"), "{out}");
 }
 
 /// **A commit names the newest run it has, and says there are others.** Its exit
@@ -478,7 +478,7 @@ fn a_commit_names_its_newest_run_and_says_what_else_holds_it() {
     let forge = stand(two_runs_of_one_commit());
     let (code, out, err) = wait(&forge, &[GREEN_SHA]);
     assert_eq!(code, 0, "{out}\n{err}");
-    assert!(out.contains("run #225"), "{out}");
+    assert!(out.contains("run #223"), "{out}");
     assert!(
         out.contains("dev9-2374-work"),
         "the other ref is named: {out}"
@@ -505,7 +505,7 @@ fn full_dispatch_can_be_read_by_sha_beside_a_newer_targeted_run() {
     let (code, out, err) = wait(&forge, &[GREEN_SHA, "--workflow", "pull-request.yml"]);
     assert_eq!(code, 1, "{out}{err}");
     assert!(
-        out.starts_with("run #225 ") && out.contains(GREEN_SHA),
+        out.starts_with("run #223 ") && out.contains(GREEN_SHA),
         "{out}"
     );
 }
@@ -519,7 +519,7 @@ fn a_red_run_exits_one_and_names_the_failed_test() {
         let (code, out, err) = wait(&forge, &[target]);
         assert_eq!(code, 1, "{target}: {out}\n{err}");
         for printed in [
-            "run #227",
+            "run #225",
             "dev9-2403-work",
             RED_SHA,
             "verdict: RED",
@@ -560,6 +560,85 @@ fn a_run_that_is_still_going_is_waited_for() {
     );
 }
 
+/// **Every place the tool names a run gives its run number first and the forge's
+/// database id after it, each labelled.** The forge keeps two numbers for a run:
+/// the run's number in the repository, which ends the page address, and a database
+/// id that is not it. A line copies the first into `ci_run`. The fixture runs here
+/// have ids two above their numbers, as the forge's own do not coincide either.
+/// The five places: the pending line, the final line, the other runs of the same
+/// commit, the superseder, and the code proof.
+#[test]
+fn a_run_is_named_by_its_run_number_with_the_forge_id_after_it() {
+    let still = stand(Forge {
+        running_for: 2,
+        ..two_runs_of_one_commit()
+    });
+    let (code, out, err) = wait(&still, &["dev9-2374r-work"]);
+    assert_eq!(code, 0, "{out}\n{err}");
+    assert!(
+        err.contains("run #223 (forge id 225) is running"),
+        "the pending line names the number and the id: {err}"
+    );
+    assert!(
+        out.starts_with("run #223 (forge id 225) "),
+        "the final line: {out}"
+    );
+    assert!(
+        out.contains("also on this commit: #217 (forge id 219) "),
+        "the other runs of the commit: {out}"
+    );
+    assert!(
+        !out.contains("run #225"),
+        "the database id is never called the run number: {out}"
+    );
+
+    let log = "2026-10-31T04:00:00.0Z started\n".to_string();
+    let replaced = stand(Forge {
+        runs: vec![
+            (pull_request_run(240, 105, RED_SHA, "running"), log.clone()),
+            (pull_request_run(238, 105, GREEN_SHA, "cancelled"), log),
+        ],
+        ..Default::default()
+    });
+    let (code, out, err) = wait(&replaced, &[GREEN_SHA]);
+    assert_eq!(code, 6, "{out}\n{err}");
+    assert!(
+        out.contains(&format!(
+            "superseded by run #238 (forge id 240) on {RED_SHA}"
+        )),
+        "{out}"
+    );
+
+    let proof = stand(code_forge());
+    let (code, out, err) = wait(&proof, &[GREEN_SHA, "--code-proof"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("code proof: run #995 (forge id 997) "),
+        "{out}"
+    );
+}
+
+/// **A run record with no run number is named by its forge id alone, and says
+/// so.** The tool never fills the run number with the database id. **Paired**
+/// with the case above, where the record carries the number.
+#[test]
+fn a_record_without_a_run_number_is_never_given_the_forge_id_as_one() {
+    let mut record = run(231, "dev9-2999-work", GREEN_SHA, "success");
+    record.as_object_mut().unwrap().remove("index_in_repo");
+    let forge = stand(Forge {
+        runs: vec![(record, fixture("wait-run-green-job.txt"))],
+        branches: vec![("dev9-2999-work", GREEN_SHA)],
+        ..Default::default()
+    });
+    let (code, out, err) = wait(&forge, &["dev9-2999-work"]);
+    assert_eq!(code, 0, "{out}\n{err}");
+    assert!(
+        out.starts_with("run (forge id 231; the record carries no run number) "),
+        "{out}"
+    );
+    assert!(!out.contains("run #"), "{out}");
+}
+
 /// **A cancelled run exits two**, and says its log holds no verdict.
 #[test]
 fn a_cancelled_run_exits_two() {
@@ -574,7 +653,7 @@ fn a_cancelled_run_exits_two() {
     let (code, out, err) = wait(&forge, &["dev4-2413-work"]);
     assert_eq!(code, 2, "{out}\n{err}");
     assert!(
-        out.contains("run #230") && out.contains("cancelled"),
+        out.contains("run #228") && out.contains("cancelled"),
         "{out}"
     );
     assert!(out.contains("no verdict block"), "{out}");
@@ -613,7 +692,9 @@ fn a_cancelled_run_a_newer_push_superseded_names_it_and_exits_six() {
     let (code, out, err) = wait(&forge, &[GREEN_SHA]);
     assert_eq!(code, 6, "{out}\n{err}");
     assert!(
-        out.contains(&format!("superseded by run #240 on {RED_SHA}")),
+        out.contains(&format!(
+            "superseded by run #238 (forge id 240) on {RED_SHA}"
+        )),
         "{out}"
     );
 
@@ -1229,7 +1310,7 @@ fn on_a_runner_the_api_root_is_built_from_the_runner_context() {
     .expect("the tool runs");
     let said = String::from_utf8_lossy(&ran.stderr);
     assert_eq!(ran.status.code(), Some(0), "{said}");
-    assert!(String::from_utf8_lossy(&ran.stdout).contains("run #225"));
+    assert!(String::from_utf8_lossy(&ran.stdout).contains("run #223"));
 }
 
 /// **A root that is set wins over the runner's context.**
@@ -1250,7 +1331,7 @@ fn a_set_api_root_wins_over_the_runner_context() {
     .expect("the tool runs");
     let said = String::from_utf8_lossy(&ran.stderr);
     assert_eq!(ran.status.code(), Some(0), "{said}");
-    assert!(String::from_utf8_lossy(&ran.stdout).contains("run #225"));
+    assert!(String::from_utf8_lossy(&ran.stdout).contains("run #223"));
 }
 
 fn scratch(tag: &str) -> PathBuf {

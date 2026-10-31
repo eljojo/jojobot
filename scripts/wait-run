@@ -27,9 +27,14 @@ phase and the names that FAILED, and nothing else of the log.
   commit (another branch pushed the same hash) is named, not used.
 
 With --workflow, it reads that workflow's run even when a newer targeted run
-holds the same SHA. It matches on the commit and the ref the forge reports. It never reads a number
-out of a run's URL: the URL carries the run's index in the repository, which is
-not the run's number.
+holds the same SHA. It matches on the commit and the ref the forge reports.
+
+A run has two numbers on the forge, and the tool prints both, each labelled. The RUN NUMBER is
+the run's index in the repository (`index_in_repo` in the run record): it ends the run's page
+address, and it is the number a line writes into `ci_run`. The FORGE ID is the database id
+(`id`): the forge tools that read a run by id take it, and the tool keeps sorting and comparing
+runs by it. A run is named `run #NUMBER (forge id ID)`. It never reads a number out of a URL:
+the record carries the run number.
 
 Exit code: 0 the run succeeded (every job green), 1 it failed and a job's block
 says RED, or it failed and nothing else is known, 2 it was cancelled or skipped
@@ -102,6 +107,16 @@ def runs_of(**params):
     return json.loads(fetch("/actions/runs", {"limit": PAGE, **params}))["workflow_runs"]
 
 
+def named(run, word="run "):
+    """**A run, named by its run number first and its forge id after it.** The run number is
+    the run's index in the repository, from the record's own field. A record without one is
+    named by its forge id alone, and says so, so a line never copies a database id as a number."""
+    number = run.get("index_in_repo")
+    if number is None:
+        return f"{word}(forge id {run['id']}; the record carries no run number)"
+    return f"{word}#{number} (forge id {run['id']})"
+
+
 def code_proof(sha):
     """Read once: only a completed code predecessor licenses the docs fast path."""
     required = {"static", "build", "check", "rooms", "year"}
@@ -122,7 +137,7 @@ def code_proof(sha):
                     or (j["name"] in optional and j["status"] == "skipped")
                     for j in jobs
                 ):
-                    print(f"code proof: run #{run['id']} {run['html_url']} on {sha}")
+                    print(f"code proof: {named(run)} {run['html_url']} on {sha}")
                     return 0
         except Exception as err:
             print(f"code proof: forge read failed ({err})", file=sys.stderr)
@@ -291,7 +306,7 @@ def main():
             run, others = found
             if seen != (run["id"], run["status"]):
                 seen = (run["id"], run["status"])
-                print(f"run #{run['id']} is {run['status']}", file=sys.stderr)
+                print(f"{named(run)} is {run['status']}", file=sys.stderr)
             if run["status"] in FINAL:
                 break
         if time.monotonic() >= deadline:
@@ -299,12 +314,12 @@ def main():
             stop(3, f"no run of {what}" + (f" on {ref}" if ref else "") + " ended in time")
         time.sleep(args.interval)
 
-    print(f"run #{run['id']}  ref {run['prettyref']}  sha {run['commit_sha']}  {run['status']}")
+    print(f"{named(run)}  ref {run['prettyref']}  sha {run['commit_sha']}  {run['status']}")
     print(run["html_url"])
     if others:
         print(
             "also on this commit: "
-            + ", ".join(f"#{r['id']} {r['prettyref']} ({r['status']})" for r in others)
+            + ", ".join(f"{named(r, '')} {r['prettyref']} ({r['status']})" for r in others)
         )
     print()
     red, died = report(run)
@@ -325,7 +340,7 @@ def main():
             newer = None
             print(f"the forge did not say what replaced it ({err})", file=sys.stderr)
         if newer:
-            print(f"superseded by run #{newer['id']} on {newer['commit_sha']}  {newer['html_url']}")
+            print(f"superseded by {named(newer)} on {newer['commit_sha']}  {newer['html_url']}")
             code = 6
         else:
             print("cancelled; no newer run found")
