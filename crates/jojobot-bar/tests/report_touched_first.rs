@@ -498,6 +498,54 @@ fn ci_crate_non_code_behaviour_paths_force_full_tests() {
     }
 }
 
+/// **A report run builds the workspace once and the room harness binary once,
+/// in that order, before it runs a test.** The harness build comes second
+/// because the ordinary build can replace the profile's binary with the default
+/// one. A second build of either kind is an hour of CI spent twice.
+#[test]
+fn a_report_run_builds_the_workspace_once_and_then_the_harness_binary_once() {
+    let (dir, base) = selection_fixture();
+    fs::write(dir.join("flake.lock"), "changed\n").unwrap();
+    git(&dir, &["add", "flake.lock"]);
+    git(&dir, &["commit", "-q", "-m", "behaviour changed"]);
+    let out = support::output_fenced(
+        Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
+            .arg("report")
+            .current_dir(&dir)
+            .env("CARGO", dir.join("cargo"))
+            .env("BAR_HISTORY_DIR", dir.join("history"))
+            .env("BAR_SELECT_BY_CRATE", "1")
+            .env("BAR_SELECT_BASE", &base)
+            .env("BAR_JOBS", "1"),
+    )
+    .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let seen = calls(&dir);
+    let at = |wanted: &str| -> Vec<usize> {
+        seen.iter()
+            .enumerate()
+            .filter(|(_, call)| call.as_str() == wanted)
+            .map(|(at, _)| at)
+            .collect()
+    };
+    let plain = at("build --workspace --locked");
+    let harness = at("build --workspace --locked --features=jojobot/room-harness");
+    assert_eq!(plain.len(), 1, "the workspace is built once: {seen:?}");
+    assert_eq!(harness.len(), 1, "the harness is built once: {seen:?}");
+    assert!(
+        plain[0] < harness[0],
+        "the harness binary has to be built after the plain build: {seen:?}"
+    );
+    let first_job = seen
+        .iter()
+        .position(|call| call.starts_with("test --workspace") && !call.contains("--no-run"))
+        .expect("a workspace test job ran");
+    assert!(
+        harness[0] < first_job,
+        "a test job ran before the harness binary was built: {seen:?}"
+    );
+}
+
 /// **A push whose paths force the full run still builds the harness feature.** The
 /// selection is on and chooses the workspace, so the jobs must carry the feature as
 /// the run without a selection does.
