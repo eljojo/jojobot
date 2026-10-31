@@ -59,6 +59,10 @@ pub(crate) struct Note {
 /// fails for it.
 pub(crate) const SHIPPED: &[(&str, &str)] = &[
     (
+        "watchbot-wakes-idle-lines",
+        include_str!("../release-notes/deploy-9.3.1.3/watchbot-wakes-idle-lines.md"),
+    ),
+    (
         "edge-types-use-writable-tokens",
         include_str!("../release-notes/deploy-9.3.1/edge-types-use-writable-tokens.md"),
     ),
