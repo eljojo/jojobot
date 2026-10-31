@@ -3203,6 +3203,9 @@ impl Jojobot {
             )) + 1
                 + held_floor
         };
+        let board_requested = view_named
+            .as_deref()
+            .is_some_and(|name| view_handle(name).as_str() == "view:board");
         let window = (as_of.is_none()
             && args.values.is_none()
             && !args.backing.unwrap_or(false)
@@ -3220,7 +3223,7 @@ impl Jojobot {
         // blocked, and the ready work behind them never reaches the answer; the
         // window is applied after the narrowing, over what is ready.
         let (walk_window, deferred_window) =
-            if readiness_asked.is_some() || args.unreviewed == Some(true) {
+            if readiness_asked.is_some() || args.unreviewed == Some(true) || board_requested {
                 (None, window)
             } else {
                 (window, None)
@@ -3434,31 +3437,26 @@ impl Jojobot {
             readiness = Some(pass.verdicts);
             ready_left_out = Some(pass.left_out);
         }
-        let (skipped, left_over) = match &deferred_window {
-            Some(window) => {
-                // **Restored only if the question had one**: a window deferred for
-                // another narrowing (the review queue) has no verdicts to align,
-                // and an empty list put back would be indexed per object.
-                let asked_readiness = readiness.is_some();
-                let mut verdicts = readiness.take().unwrap_or_default();
-                let outside = view_run::cut_to_window(&mut found, &mut [&mut verdicts], window);
-                if asked_readiness {
-                    readiness = Some(verdicts);
-                }
-                outside
-            }
-            None => (walked_past, walked_left),
-        };
-        let board = if view_named
-            .as_deref()
-            .is_some_and(|name| view_handle(name).as_str() == "view:board")
-        {
+        // The board's totals and vocabulary describe the whole selection, before its page is cut.
+        let board = if board_requested {
             match view_run::board_of(&*self.memory, query.select.parent.as_ref(), &found).await {
                 Ok(board) => Some(board),
                 Err(error) => return memory_declined("recall", error),
             }
         } else {
             None
+        };
+        let (skipped, left_over) = match &deferred_window {
+            Some(window) => {
+                // A board or review queue has no readiness vector to align with its window.
+                match readiness.as_mut() {
+                    Some(verdicts) => view_run::cut_to_window(&mut found, &mut [verdicts], window),
+                    None => {
+                        view_run::cut_to_window::<view_run::Verdict>(&mut found, &mut [], window)
+                    }
+                }
+            }
+            None => (walked_past, walked_left),
         };
         // **The context a reader did not ask for, and the whole point of the
         // card.** A session that pulls a thing is told who holds what that
