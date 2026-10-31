@@ -38,35 +38,20 @@ pub async fn board(
     state: &AppState,
     queries: &jojobot_query_api::QueryHandle,
     project: &Entity,
-    held: &BTreeMap<String, String>,
+    _held: &BTreeMap<String, String>,
     by_id: &HashMap<&EntityId, &Entity>,
 ) -> String {
     let inputs = BTreeMap::from([("project".to_string(), project.id.to_string())]);
-    let answer = match pages::answer_named_view_with(state, BOARD_VIEW, &inputs).await {
+    let answer = match pages::answer_named_view_with(state, queries, BOARD_VIEW, &inputs).await {
         Ok(answer) => answer,
         Err(page) => return page,
     };
-    // **A record of the operator's words that cannot be read is said**, never an
-    // instance that mapped none: a board drawn without them puts work in the
-    // wrong columns and counts none of it done (rule 130).
-    let instance = match pages::instance_fields(queries).await {
-        Ok(instance) => instance,
-        Err(err) => {
-            return pages::blind("Board", "the operator's status words", &err.to_string());
-        }
-    };
-    let mut words = kinds::accepted_words(&instance, Some(held));
-    for object in &answer.found {
-        let word = object
-            .fields
-            .get(kinds::STATUS)
-            .cloned()
-            .unwrap_or_default();
-        if !words.contains(&word) {
-            words.push(word);
-        }
-    }
-    let mut done = 0;
+    let board = answer
+        .board
+        .as_ref()
+        .expect("the board view carries its status metadata");
+    let words = &board.status_words;
+    let done = board.done;
     let columns: String = words
         .iter()
         .map(|word| {
@@ -77,14 +62,7 @@ pub async fn board(
                     object.fields.get(kinds::STATUS).map_or("", String::as_str) == word
                 })
                 .map(|object| {
-                    let finished = kinds::is_finished(
-                        object.entity.kind.as_token(),
-                        &object.fields,
-                        &instance,
-                    );
-                    if finished {
-                        done += 1;
-                    }
+                    let finished = board.finished.contains(&object.entity.id);
                     let mut card = format!(
                         "<div class=\"card{}\">{}",
                         if finished { " done" } else { "" },

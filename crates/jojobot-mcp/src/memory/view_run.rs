@@ -24,6 +24,9 @@ use jojobot_domain::memory::graph;
 use jojobot_domain::memory::search::DocScan;
 use jojobot_domain::memory::{EntityId, EntityKind, Memory, MemoryError};
 
+mod named;
+pub(crate) use named::{Binding, bind_view, board_of};
+
 use super::list_ticks::TickRead;
 use super::ready;
 pub use jojobot_query_api::{
@@ -65,6 +68,31 @@ pub fn handle(
                     },
                     ticks: Vec::new(),
                     runs,
+                    view: None,
+                });
+            }
+            let mut view = match question.view.take() {
+                Some(request) => {
+                    let prepared = named::prepare(&*self.memory, request).await?;
+                    question = prepared.0;
+                    Some(prepared.1)
+                }
+                None => None,
+            };
+            if let Some(meta) = view.as_ref()
+                && !matches!(meta.outcome, jojobot_query_api::ViewOutcome::Answered)
+            {
+                return Ok(Answered {
+                    view,
+                    runs,
+                    selected: Default::default(),
+                    backing: Default::default(),
+                    stale_working_on: Default::default(),
+                    narrowed: Narrowed {
+                        owed: None,
+                        ready: None,
+                    },
+                    ticks: Vec::new(),
                 });
             }
             let stale =
@@ -76,7 +104,13 @@ pub fn handle(
             let instance = if question.asks.overdue.is_some() {
                 crate::orientation::instance_zone::instance_fields_of(&*self.memory)
                     .await
-                    .map_err(Failed::Selection)?
+                    .map_err(|error| {
+                        if view.is_some() {
+                            Failed::Preparation("the operator's status words", error)
+                        } else {
+                            Failed::Selection(error)
+                        }
+                    })?
             } else {
                 BTreeMap::new()
             };
@@ -91,6 +125,26 @@ pub fn handle(
                 },
             )
             .await?;
+            if let Some(meta) = view.as_mut()
+                && named::is_board(&question)
+            {
+                match board_of(
+                    &*self.memory,
+                    question.query.select.parent.as_ref(),
+                    &read.selected.objects,
+                )
+                .await
+                {
+                    Ok(board) => meta.board = Some(board),
+                    Err(error) => {
+                        meta.outcome = jojobot_query_api::ViewOutcome::Unreadable(
+                            "the operator's status words",
+                            error,
+                        )
+                    }
+                }
+            }
+            read.view = view;
             read.stale_working_on = super::working_on::stale_in(&read.selected.objects, &stale);
             read.runs = runs;
             for object in &mut read.selected.objects {
@@ -259,6 +313,7 @@ pub async fn answer(
         BTreeMap::new()
     };
     Ok(Answered {
+        view: None,
         backing,
         stale_working_on: Default::default(),
         selected,

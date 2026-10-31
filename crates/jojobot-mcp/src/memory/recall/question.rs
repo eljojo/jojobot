@@ -581,6 +581,7 @@ impl Jojobot {
 
         let named = query.select.subject.clone();
         let question = view_run::Question {
+            view: None,
             query,
             asks: view_run::Asks {
                 backing: args.backing.unwrap_or(false),

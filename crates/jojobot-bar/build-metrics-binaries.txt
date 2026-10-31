@@ -183,6 +183,7 @@ test-ui_operator_mail
 test-ui_past_runs_date
 test-ui_read_path
 test-ui_read_path_typed
+test-ui_view_query
 test-unit_kill_mode
 test-unseeded
 test-unseeded_boot_order

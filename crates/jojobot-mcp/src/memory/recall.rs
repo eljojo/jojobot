@@ -1503,18 +1503,11 @@ impl Jojobot {
                 )));
             }
         };
-        let known = self
-            .memory
-            .list_entities(None)
+        let binding = view_run::Binding::read(&*self.memory)
             .await
-            .map_err(ViewStop::Outage)?;
-        let former = self
-            .memory
-            .former_handles()
-            .await
-            .map_err(ViewStop::Outage)?;
+            .map_err(|(_, error)| ViewStop::Outage(error))?;
         let (asked, view_parent) =
-            match asked.filled(handle.as_str(), &given, &known, &former, today) {
+            match view_run::bind_view(asked, &handle, &given, &binding, today) {
                 Ok(filled) => filled,
                 Err(refused) => {
                     return Err(ViewStop::said(blocked_body(
@@ -2724,6 +2717,7 @@ impl Jojobot {
             Err(refused) => return Ok(refused),
         };
         let view_run::Question {
+            view: _,
             mut query,
             asks: question_asks,
             runs: _,
@@ -3455,6 +3449,17 @@ impl Jojobot {
             }
             None => (walked_past, walked_left),
         };
+        let board = if view_named
+            .as_deref()
+            .is_some_and(|name| view_handle(name).as_str() == "view:board")
+        {
+            match view_run::board_of(&*self.memory, query.select.parent.as_ref(), &found).await {
+                Ok(board) => Some(board),
+                Err(error) => return memory_declined("recall", error),
+            }
+        } else {
+            None
+        };
         // **The context a reader did not ask for, and the whole point of the
         // card.** A session that pulls a thing is told who holds what that
         // gets them in, ranked, without knowing there was anything to ask.
@@ -4004,6 +4009,9 @@ impl Jojobot {
                         details_asked,
                         record_keys,
                     );
+                    if let Some(board) = &board {
+                        rendered["finished"] = board.finished.contains(&o.entity.id).into();
+                    }
                     if let Some(next) = numbering_views.get(&o.entity.id) {
                         rendered["next_number"] = (*next).into();
                     }
@@ -4292,6 +4300,9 @@ impl Jojobot {
                 })
                 .collect::<Vec<_>>(),
         });
+        if let Some(board) = board {
+            body["board"] = serde_json::to_value(board).expect("board metadata serializes");
+        }
         if !hidden_working_on.is_empty() && wants_key(narrowing, "working_on") {
             body["working_on_note"] = super::working_on::hidden_note(&hidden_working_on).into();
         }

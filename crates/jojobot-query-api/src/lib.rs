@@ -12,13 +12,14 @@ mod runs;
 mod read_path_boundary;
 
 pub use answer::{
-    Answered, Backing, Failed, LeftOut, Narrowed, OwedPass, ReadyPass, TickCell, Verdict,
+    Answered, Backing, Board, Failed, LeftOut, Narrowed, OwedPass, ReadyPass, TickCell, Verdict,
+    ViewAnswer, ViewOutcome,
 };
 pub use jojobot_domain::memory::graph::{GraphQuery, Include, Object, Selected, Selection};
 pub use jojobot_domain::memory::{EntityId, FieldAges, FieldBacking, MemoryError};
 pub use list_ticks::TickRead;
 pub use mail::{MailHandle, MailRail, OperatorIs, OperatorMail, OperatorMailCommands, Refused};
-pub use question::{Asks, Question, Readiness, parse_date};
+pub use question::{Asks, Question, Readiness, ViewRequest, parse_date};
 pub use recalled::{RecalledObject, RecalledView};
 pub use runs::{Runs, RunsAsk, RunsFailed, may_read_runs};
 

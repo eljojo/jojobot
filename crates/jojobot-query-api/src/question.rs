@@ -36,6 +36,7 @@ pub struct Readiness {
 /// **A question, ready to be answered**: a query for the graph and its
 /// narrowings.
 pub struct Question {
+    pub view: Option<ViewRequest>,
     /// What the graph is asked. A caller may adjust it before the walk, as the
     /// verb does when an address or an index narrows the selection.
     pub query: graph::GraphQuery,
@@ -74,6 +75,7 @@ impl Question {
         history: Option<graph::History>,
     ) -> Question {
         Question {
+            view: None,
             query: graph::GraphQuery {
                 select,
                 include,
@@ -84,6 +86,21 @@ impl Question {
             asks: Asks::default(),
             runs: None,
         }
+    }
+
+    /// A stored question whose inputs are resolved by the shared read owner.
+    pub fn named_view(
+        view: EntityId,
+        inputs: std::collections::BTreeMap<String, String>,
+        clock: jojobot_domain::clock::Clock,
+    ) -> Self {
+        let mut question = Self::about(view.clone(), None, None);
+        question.view = Some(ViewRequest {
+            view,
+            inputs,
+            clock,
+        });
+        question
     }
 
     /// **One thing asked about, with nothing of it read but the walk or the
@@ -180,6 +197,12 @@ impl Question {
         }
         Ok(question)
     }
+}
+
+pub struct ViewRequest {
+    pub view: EntityId,
+    pub inputs: std::collections::BTreeMap<String, String>,
+    pub clock: jojobot_domain::clock::Clock,
 }
 
 /// Parse the optional day once for the prepared question and its callers.

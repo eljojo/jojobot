@@ -9,12 +9,9 @@ use axum::{
     response::{IntoResponse, Redirect, Response},
 };
 
-use jojobot_domain::attention;
-use jojobot_domain::memory::types::DeclaredType;
 use jojobot_domain::memory::view_inputs;
 use jojobot_domain::memory::{
-    Entity, EntityId, EntityKind, Fact, FieldAges, FieldBacking, MemoryError, graph, kinds,
-    mention, readiness,
+    Entity, EntityId, EntityKind, Fact, FieldAges, FieldBacking, graph, kinds, mention, readiness,
 };
 use jojobot_domain::text;
 use jojobot_mcp::memory::{left_out, view_run};
@@ -251,7 +248,8 @@ pub(crate) async fn node(
         Ok(answer) => answer,
         Err(
             jojobot_query_api::Failed::Selection(error)
-            | jojobot_query_api::Failed::Readiness(error),
+            | jojobot_query_api::Failed::Readiness(error)
+            | jojobot_query_api::Failed::Preparation(_, error),
         ) => return unreadable(error),
     };
     let working_on_unknown = answer.stale_working_on.contains(&entity.id);
@@ -361,9 +359,7 @@ pub(crate) async fn node(
     // definition rather than over it: a reader has to see which question they
     // asked before they read what it came back with.
     if entity.kind == EntityKind::VIEW {
-        generic.push_str(
-            &view_section(&state, &entity.id, &held, &facts, &by_id, &asked.inputs).await,
-        );
+        generic.push_str(&view_section(&state, &queries, &entity.id, &by_id, &asked.inputs).await);
     }
     generic.push_str(&history_section(&queries, &entity.id, asked.history.as_deref()).await);
 
@@ -824,7 +820,8 @@ async fn sessions_section(queries: &jojobot_query_api::QueryHandle, bot: &Entity
         }
         Err(
             jojobot_query_api::Failed::Selection(error)
-            | jojobot_query_api::Failed::Readiness(error),
+            | jojobot_query_api::Failed::Readiness(error)
+            | jojobot_query_api::Failed::Preparation(_, error),
         ) => return blind("Runs", "the session records", &error.to_string()),
     };
     let runs = read.summaries;
@@ -1119,7 +1116,8 @@ async fn around_section(
             }
             Err(
                 jojobot_query_api::Failed::Selection(err)
-                | jojobot_query_api::Failed::Readiness(err),
+                | jojobot_query_api::Failed::Readiness(err)
+                | jojobot_query_api::Failed::Preparation(_, err),
             ) => {
                 return blind("Around", "what is around this", &err.to_string());
             }
@@ -1203,226 +1201,78 @@ fn how_known(facts: &[Fact], backing: &BTreeMap<String, FieldBacking>, key: &str
 /// **A caller with no identity**, so the answer reaches everything unowned and
 /// nothing owned. There is no session behind a browser, and the access rule is
 /// the absence of an argument rather than a check on one.
-pub(crate) async fn answer_view(
+pub(crate) async fn answer_named_view_with(
     state: &AppState,
-    view: &EntityId,
-    held: &BTreeMap<String, String>,
-    facts: &[Fact],
+    queries: &jojobot_query_api::QueryHandle,
+    handle: &str,
     sent: &BTreeMap<String, String>,
 ) -> Result<Answered, String> {
-    let asked = graph::asked_by_view(held, facts);
-    // **The kind a view selects, when it names one.** A view may narrow in other
-    // ways (a parent, a type, an overdue or readiness ask, a filter), so a view
-    // without `selects` is not refused here: whether it narrows anything is asked
-    // once the view is filled, of the same selection the verb asks it of.
-    // **A blank `selects` is not an absent one**: the verb refuses it, so the page
-    // hands it to the same resolver instead of dropping it.
-    let selects = asked.selects.as_deref().map(str::trim);
-    let kind = match selects {
-        Some(selects) => match kinds::resolve(selects) {
-            Ok(kind) => Some(kind),
-            // **The resolver's own answer**, which already names the value and the
-            // kinds this instance holds. A sentence of this page's own beside it
-            // would be a second account of one refusal.
-            Err(why) => return Err(cannot_run(&escape(&why.to_string()))),
-        },
-        None => None,
-    };
-    // **Readiness is a question about work, and only work answers it** — the
-    // refusal the verb gives a view that asks it of another kind.
-    if asked.ready.is_some() && kind.is_some_and(|kind| kind != EntityKind::WORK) {
-        return Err(cannot_run(
-            "it asks what is ready, which only work answers.",
-        ));
-    }
-    // **The server's own day, in the instance's zone.** A browser states no
-    // timezone, so the page takes the frame every unzoned read takes: the zone
-    // the instance's record holds, and UTC only when it holds none.
-    let frame = jojobot_mcp::orientation::instance_zone::unzoned_frame(&*state.memory).await;
-    let today = state.clock.today_in(&frame);
-    // **The inputs the view declares are a form**, one field to an input, typed
-    // as the input is, and prefilled from the URL. **The view is filled where the
-    // verb fills it** ([`graph::Asked::filled`]), so a value means the same thing
-    // here and there, and a refusal is the verb's own words with the form still
-    // on the page. A field submitted empty is an input left out.
-    let declared = match view_inputs::parse(asked.inputs.as_deref().unwrap_or("")) {
-        Ok(declared) => declared,
-        Err(refused) => return Err(cannot_run(&escape(&refused.words))),
-    };
-    let known = match state.memory.list_entities(None).await {
-        Ok(known) => known,
-        Err(err) => {
-            return Err(blind(
-                "What this view answers",
-                "the things it names",
-                &err.to_string(),
-            ));
-        }
-    };
-    let form = inputs_form(&declared, sent, &known);
-    // **Only the keys the view declares are read from the URL.** A link carries
-    // other keys (a tracking parameter), and a page that refused them would turn
-    // every such link into an error.
-    let given: BTreeMap<String, String> = sent
-        .iter()
-        .filter(|(name, _)| declared.iter().any(|input| &input.name == *name))
-        .filter(|(_, value)| !value.trim().is_empty())
-        .map(|(name, value)| (name.clone(), value.clone()))
-        .collect();
-    let former = former_or_blind(state.memory.former_handles().await)?;
-    // **A first visit to a view that needs a value asks for it and runs
-    // nothing.** What needs a value is the verb's own answer, asked of the same
-    // function: an input that is not optional and carries a default needs none,
-    // because the verb fills it in.
-    if given.is_empty()
-        && view_inputs::bind(view.as_str(), &declared, &given, &known, &former, today).is_err()
-    {
-        return Err(format!(
-            "<h2>What this view answers</h2>\n{form}<p>Fill in the inputs above to ask this \
-             view.</p>\n"
-        ));
-    }
-    let (asked, parent) = match asked.filled(view.as_str(), &given, &known, &former, today) {
-        Ok(filled) => filled,
-        Err(refused) => {
-            return Err(format!(
-                "<h2>What this view answers</h2>\n{form}<p>This view cannot be run: {}</p>\n",
-                escape(&refused.words)
-            ));
-        }
-    };
-    // **The type the view names is looked up as the verb looks it up, after the
-    // view is filled because an input may name it**, and a name nobody declared
-    // is a view that cannot be run, with the form still on the page. **An empty
-    // value is a stored value and not a removed key**: the verb resolves it as a
-    // name and finds none, so the page does too, and does not list the whole
-    // kind.
-    let answers_type = match asked.answers_type.as_deref() {
-        None => None,
-        Some(wanted) => match state.memory.declared_types().await {
-            Ok(known) => match DeclaredType::named(&known, wanted) {
-                Some(declared) => Some(declared.clone()),
-                None => {
-                    let why = match wanted.trim() {
-                        "" => "its <code>answers_type</code> is empty, which names no type."
-                            .to_string(),
-                        name => format!(
-                            "it asks for things that answer the type <code>{}</code>, and no \
-                             type is called that.",
-                            escape(name)
-                        ),
-                    };
-                    return Err(format!(
-                        "<h2>What this view answers</h2>\n{form}<p>This view cannot be run: \
-                         {why}</p>\n"
-                    ));
-                }
-            },
-            Err(err) => {
-                return Err(blind(
-                    "What this view answers",
-                    "the declared types",
-                    &err.to_string(),
-                ));
+    let mut answer = queries
+        .ask(
+            &jojobot_domain::actor::Actor::Operator,
+            jojobot_query_api::Question::named_view(
+                EntityId(handle.into()),
+                sent.clone(),
+                state.clock,
+            ),
+        )
+        .await
+        .map_err(|error| match error {
+            view_run::Failed::Preparation("the former handles", error) => {
+                former_or_blind(Err(error)).expect_err("the read failed")
             }
-        },
-    };
-    // **The question is built and answered where the verb builds and answers
-    // it** (rules 444 and 473), so a key the view holds means the same thing on
-    // both. The objects are listed and nothing of each is asked for: a view's
-    // `shows` says what of each one comes back on a READ, and a directory
-    // listing lists.
-    let question =
-        match view_run::Question::of_view(view, &asked, kind, answers_type, parent, today) {
-            Ok(question) => question,
-            // **The verb's own refusal, in the verb's own words**, with the form still
-            // on the page: a key written `$name` narrows only when its input is sent.
-            Err(MemoryError::ViewNarrowsNothing { view }) => {
-                return Err(format!(
-                    "<h2>What this view answers</h2>\n{form}<p>This view cannot be run: {}</p>\n",
-                    escape(&view_run::narrows_nothing_words(&view))
-                ));
+            view_run::Failed::Preparation(part, error) => {
+                blind("What this view answers", part, &error.to_string())
             }
-            Err(why) => return Err(cannot_run(&escape(&why.to_string()))),
-        };
-    // **The words the operator mapped**, so a status that means `done` here
-    // finishes a thing exactly as it does in the verbs. Read only for a view
-    // that asks what is owed.
-    let carriers = attention::shipped();
-    let carriers: Vec<&dyn attention::Carrier> =
-        carriers.iter().map(std::convert::AsRef::as_ref).collect();
-    let instance = match question.asks.overdue {
-        Some(_) => {
-            match jojobot_mcp::orientation::instance_zone::instance_fields_of(&*state.memory).await
-            {
-                Ok(instance) => instance,
-                // **A record that cannot be read is said**, never an instance that
-                // mapped no words (rule 130).
-                Err(err) => {
-                    return Err(blind(
-                        "What this view answers",
-                        "the operator's status words",
-                        &err.to_string(),
-                    ));
-                }
-            }
-        }
-        None => BTreeMap::new(),
-    };
-    let context = view_run::Context {
-        carriers: &carriers,
-        instance: &instance,
-    };
-    // **A bot's `working_on` is left out of the walk for a bot whose session is
-    // gone**, as a `recall` leaves it out, so a view that selects on it answers
-    // the same here.
-    let mut question = question;
-    question.query.masked = jojobot_mcp::memory::working_on::masked_working_on(
-        &jojobot_mcp::memory::working_on::stale_working_on_bots(&*state.memory, &*state.sessions)
-            .await,
-    );
-    let (found, omitted, ticks) = match view_run::answer(&*state.memory, &question, &context).await
-    {
-        Ok(answered) => {
-            if let Some(error) = graph::unreadable_scan(&answered.selected)
-                .or_else(|| graph::unreadable_revisions(&answered.selected))
-            {
-                return Err(blind(
-                    "What this view answers",
-                    "the records it selects",
-                    &error.to_string(),
-                ));
-            }
-            (
-                answered.selected.objects,
-                left_out_lines(
-                    &answered.narrowed,
-                    question.asks.ready.as_ref().map(|asked| asked.ask),
-                ),
-                answered.ticks,
-            )
-        }
-        Err(view_run::Failed::Selection(err)) => {
-            return Err(blind(
+            view_run::Failed::Selection(error) => blind(
                 "What this view answers",
                 "the records it selects",
-                &err.to_string(),
-            ));
-        }
-        Err(view_run::Failed::Readiness(err)) => {
-            return Err(blind(
+                &error.to_string(),
+            ),
+            view_run::Failed::Readiness(error) => blind(
                 "What this view answers",
                 "the work it depends on",
-                &err.to_string(),
+                &error.to_string(),
+            ),
+        })?;
+    let meta = answer.view.take().expect("a named view has view metadata");
+    let form = inputs_form(&meta.inputs, sent, &meta.choices);
+    match meta.outcome {
+        jojobot_query_api::ViewOutcome::NeedsInputs => {
+            return Err(format!(
+                "<h2>What this view answers</h2>\n{form}<p>Fill in the inputs above to ask this view.</p>\n"
             ));
         }
-    };
+        jojobot_query_api::ViewOutcome::Refused(words) => {
+            if form.is_empty() {
+                return Err(cannot_run(&escape(&words)));
+            }
+            return Err(format!(
+                "<h2>What this view answers</h2>\n{form}<p>This view cannot be run: {}</p>\n",
+                escape(&words)
+            ));
+        }
+        jojobot_query_api::ViewOutcome::Unreadable(part, error) => {
+            return Err(blind("What this view answers", part, &error.to_string()));
+        }
+        jojobot_query_api::ViewOutcome::Answered => {}
+    }
+    if let Some(error) = graph::unreadable_scan(&answer.selected)
+        .or_else(|| graph::unreadable_revisions(&answer.selected))
+    {
+        return Err(blind(
+            "What this view answers",
+            "the records it selects",
+            &error.to_string(),
+        ));
+    }
     Ok(Answered {
         form,
-        found,
-        omitted,
-        shown: asked.keys.unwrap_or_default(),
-        ticks,
+        found: answer.selected.objects,
+        omitted: left_out_lines(&answer.narrowed, meta.ready),
+        shown: meta.shown,
+        ticks: answer.ticks,
+        board: meta.board,
     })
 }
 
@@ -1430,32 +1280,14 @@ pub(crate) async fn answer_view(
 /// it: its definition is read from the view's own record and the answer is the
 /// one `recall` of the view gives. The page text of why not when it cannot run.
 pub(crate) async fn answer_named_view(state: &AppState, handle: &str) -> Result<Answered, String> {
-    answer_named_view_with(state, handle, &BTreeMap::new()).await
-}
-
-/// **The same, with inputs**, each under the name the view declares it by.
-pub(crate) async fn answer_named_view_with(
-    state: &AppState,
-    handle: &str,
-    inputs: &BTreeMap<String, String>,
-) -> Result<Answered, String> {
-    let view = EntityId(handle.to_string());
-    let held = state
-        .memory
-        .fields(&view)
-        .await
-        .map_err(|err| blind("This page", handle, &err.to_string()))?;
-    let facts = state
-        .memory
-        .recall(&view)
-        .await
-        .map_err(|err| blind("This page", handle, &err.to_string()))?;
-    answer_view(state, &view, &held, &facts, inputs).await
+    let queries = view_run::handle(state.memory.clone(), state.sessions.clone());
+    answer_named_view_with(state, &queries, handle, &BTreeMap::new()).await
 }
 
 /// **A view, run**: what it found, and what the page around the answer needs.
 /// The page of a view renders it as a table; the org chart folds it into a tree.
 pub(crate) struct Answered {
+    pub(crate) board: Option<jojobot_query_api::Board>,
     form: String,
     /// The objects the view selected, each with the keys the view shows.
     pub(crate) found: Vec<graph::Object>,
@@ -1469,13 +1301,12 @@ pub(crate) struct Answered {
 /// **The page of a view**: its answer, or the words saying why it has none.
 async fn view_section(
     state: &AppState,
+    queries: &jojobot_query_api::QueryHandle,
     view: &EntityId,
-    held: &BTreeMap<String, String>,
-    facts: &[Fact],
     by_id: &HashMap<&EntityId, &Entity>,
     sent: &BTreeMap<String, String>,
 ) -> String {
-    match answer_view(state, view, held, facts, sent).await {
+    match answer_named_view_with(state, queries, view.as_str(), sent).await {
         Ok(answer) => answer_table(&answer, by_id),
         Err(page) => page,
     }
@@ -1483,6 +1314,7 @@ async fn view_section(
 
 fn answer_table(answer: &Answered, by_id: &HashMap<&EntityId, &Entity>) -> String {
     let Answered {
+        board: _,
         form,
         found,
         omitted,
@@ -1703,7 +1535,9 @@ async fn history_section(
     {
         Ok(answer) => answer,
         Err(
-            jojobot_query_api::Failed::Selection(err) | jojobot_query_api::Failed::Readiness(err),
+            jojobot_query_api::Failed::Selection(err)
+            | jojobot_query_api::Failed::Readiness(err)
+            | jojobot_query_api::Failed::Preparation(_, err),
         ) => return blind_history(key, &err.to_string()),
     };
     let Some(history) = answer
@@ -1951,7 +1785,6 @@ pub fn not_found() -> Response {
 pub(crate) async fn instance_fields(
     queries: &jojobot_query_api::QueryHandle,
 ) -> Result<BTreeMap<String, String>, jojobot_domain::memory::MemoryError> {
-    use jojobot_domain::memory::MemoryError;
     let record = EntityId(jojobot_domain::memory::INSTANCE_RECORD.to_string());
     let question = jojobot_query_api::Question::new(
         graph::Selection {
@@ -1982,11 +1815,17 @@ pub(crate) async fn instance_fields(
                 .unwrap_or_default()),
         },
         Err(
-            jojobot_query_api::Failed::Selection(MemoryError::UnknownEntity { .. })
-            | jojobot_query_api::Failed::Readiness(MemoryError::UnknownEntity { .. }),
+            jojobot_query_api::Failed::Selection(
+                jojobot_domain::memory::MemoryError::UnknownEntity { .. },
+            )
+            | jojobot_query_api::Failed::Readiness(
+                jojobot_domain::memory::MemoryError::UnknownEntity { .. },
+            ),
         ) => Ok(BTreeMap::new()),
         Err(
-            jojobot_query_api::Failed::Selection(err) | jojobot_query_api::Failed::Readiness(err),
+            jojobot_query_api::Failed::Selection(err)
+            | jojobot_query_api::Failed::Readiness(err)
+            | jojobot_query_api::Failed::Preparation(_, err),
         ) => Err(err),
     }
 }
@@ -2160,6 +1999,7 @@ mod tests {
             .collect();
         let table = super::answer_table(
             &super::Answered {
+                board: None,
                 form: String::new(),
                 found: walked.clone(),
                 omitted: String::new(),

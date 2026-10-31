@@ -29,6 +29,7 @@ pub struct Narrowed {
 /// **Where a question failed**, because a caller says different things about a
 /// selection it could not read and a dependency it could not read.
 pub enum Failed {
+    Preparation(&'static str, MemoryError),
     /// The walk over the records the question selects.
     Selection(MemoryError),
     /// The read of the work a ready question depends on.
@@ -37,6 +38,7 @@ pub enum Failed {
 
 /// **A question, answered**: the selection and then its narrowings.
 pub struct Answered {
+    pub view: Option<ViewAnswer>,
     /// The backing requested for each returned object.
     pub backing: BTreeMap<EntityId, Result<Backing, MemoryError>>,
     /// Bots whose stored focus is no longer a live declaration.
@@ -53,6 +55,30 @@ pub struct Answered {
     /// **The runs the question asked for**, read for the asker. `None` when it
     /// asked for none.
     pub runs: Option<Result<crate::Runs, crate::RunsFailed>>,
+}
+
+pub struct ViewAnswer {
+    pub inputs: Vec<jojobot_domain::memory::view_inputs::InputDecl>,
+    pub choices: Vec<jojobot_domain::memory::Entity>,
+    pub shown: Vec<String>,
+    pub ready: Option<jojobot_domain::memory::readiness::Ask>,
+    pub outcome: ViewOutcome,
+    pub board: Option<Board>,
+}
+
+pub enum ViewOutcome {
+    Answered,
+    NeedsInputs,
+    Refused(String),
+    Unreadable(&'static str, MemoryError),
+}
+
+#[derive(serde::Serialize)]
+pub struct Board {
+    pub status_words: Vec<String>,
+    #[serde(skip)]
+    pub finished: std::collections::BTreeSet<EntityId>,
+    pub done: usize,
 }
 
 /// **What the tick read of one object came to.** A list whose records could not

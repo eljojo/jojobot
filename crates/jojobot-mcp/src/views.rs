@@ -161,7 +161,7 @@ pub fn provisions() -> Vec<Provision> {
                 ("selects", "work"),
                 (
                     "one_liner",
-                    "The work under one project, ordered by status.",
+                    "The work under one project, ordered by status, with its status words, finished flags and done count.",
                 ),
                 ("inputs", "project: kind project"),
                 ("parent", "$project"),

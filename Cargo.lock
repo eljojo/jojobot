@@ -1688,6 +1688,7 @@ dependencies = [
  "async-trait",
  "jiff",
  "jojobot-domain",
+ "serde",
  "serde_json",
 ]
 
