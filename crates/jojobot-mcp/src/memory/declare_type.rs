@@ -164,7 +164,8 @@ pub struct DeclareTypeArgs {
     #[schemars(skip)]
     pub(crate) must: Option<String>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
-    /// every call — it is what tells jojobot which bot is asking.
+    /// every call — it is what tells jojobot which bot is asking, and a
+    /// declaration is made by a run, so a call with none is refused.
     #[serde(default)]
     pub(crate) sid: Option<String>,
     /// **A name of your choosing for this write**, up to 128 bytes.
@@ -245,23 +246,16 @@ impl Jojobot {
         &self,
         Parameters(mut args): Parameters<DeclareTypeArgs>,
     ) -> Result<CallToolResult, McpError> {
-        // Resolved before the write runs — see [`Jojobot::attributable`]. This
-        // verb publishes a `sid` and says it is what tells jojobot who is
-        // asking, so a handle that addresses nothing is refused rather than
-        // dropped.
-        if let Err(refused) = self.attributable_for_write(args.sid.as_deref()).await {
-            return Ok(refused);
-        }
-        // Good by the check above, so a carried handle resolves; a call that
-        // carried none is declared by no run.
-        let caller = self.caller(args.sid.as_deref()).ok().flatten();
+        // **A declaration always has a run behind it**, the rule every other
+        // memory write keeps: a call with no `sid`, a handle that addresses
+        // nothing and a wrapped run are all refused before anything is written.
+        let caller = match self.identified_for_write(args.sid.as_deref()).await {
+            Ok(caller) => caller,
+            Err(refused) => return Ok(refused),
+        };
         let sid = args.sid.take();
         match self
-            .declare_type_write(
-                caller.as_ref().map(|caller| &caller.bot),
-                args,
-                caller.as_ref().map(|caller| caller.sid.as_str()),
-            )
+            .declare_type_write(Some(&caller.bot), args, Some(caller.sid.as_str()))
             .await?
         {
             Ok(body) => {
@@ -638,29 +632,46 @@ mod tests {
         }
     }
 
-    /// **The store is told which run sent a declaration.** A call carrying a
-    /// session is declared by that run's public name, never by the key it sent;
-    /// a call carrying none is declared by no run.
+    /// **A declaration always has a run behind it.** A call carrying a session
+    /// is declared by that run's public name, never by the key it sent. A call
+    /// carrying none is refused through the gate every identity-required write
+    /// uses, naming `start_here` as the way to get one, and writes nothing.
+    /// **Paired in one case**: the same declaration with a live session lands,
+    /// and the refused one left no second write behind it.
     #[tokio::test]
-    async fn a_declaration_reaches_the_store_with_the_run_that_sent_it() {
+    async fn a_declaration_without_a_session_is_refused_and_one_with_a_session_lands() {
         let memory = Arc::new(InMemoryMemory::seeded());
         let jojobot = handler_over(memory.clone());
         writing_as(&jojobot);
+
+        let mut anonymous = declare_args("recipe", &["flavor"]);
+        anonymous.sid = None;
+        let refused = jojobot
+            .declare_type(Parameters(anonymous))
+            .await
+            .expect("declare answers");
+        let body = blocked(&refused);
+        assert_eq!(body["refusal_code"], "SessionUnbound", "{body}");
+        assert!(
+            body["how_to_proceed"]
+                .as_str()
+                .is_some_and(|words| words.contains("start_here")),
+            "the refusal names the way to get a session: {body}"
+        );
+        assert_eq!(
+            memory.type_write_sessions("recipe"),
+            Vec::<Option<String>>::new(),
+            "a refused declaration writes nothing"
+        );
 
         jojobot
             .declare_type(Parameters(declare_args("recipe", &["flavor"])))
             .await
             .expect("declare ok");
-        let mut anonymous = declare_args("recipe", &["flavor", "glaze"]);
-        anonymous.sid = None;
-        jojobot
-            .declare_type(Parameters(anonymous))
-            .await
-            .expect("declare ok");
-
         assert_eq!(
             memory.type_write_sessions("recipe"),
-            vec![Some(TEST_RUN.to_string()), None]
+            vec![Some(TEST_RUN.to_string())],
+            "the same declaration with a session lands, declared by that run"
         );
     }
 

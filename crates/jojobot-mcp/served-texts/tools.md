@@ -1761,7 +1761,8 @@ wrote nothing spends no id.
 
 ```text
 **Your session id**, exactly as the boot door returned it. Pass it on
-every call — it is what tells jojobot which bot is asking.
+every call — it is what tells jojobot which bot is asking, and a
+declaration is made by a run, so a call with none is refused.
 ```
 
 ### Tool `journal`
