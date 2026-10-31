@@ -93,6 +93,29 @@ async fn a_missing_numbered_mention_in_a_collection_holding_no_number_is_screene
         .unwrap()
         .written()
         .expect("the collection numbers");
+    // A name one character from the missing handle, so the ordinary screen has
+    // something to answer with.
+    let near = EntityId("topic:contract-ordinances-empty-7".into());
+    let new_near = NewEntity::new(near.clone(), "Empty ordinances seven", "contract-fixture");
+    // The collection is a prefix of the near name, so the guard refuses it once;
+    // setup insists with the token the refusal minted.
+    let Guarded::Blocked {
+        attempted,
+        candidates,
+    } = store.add_entity(new_near.clone()).await.unwrap()
+    else {
+        panic!("the near name must meet the collection it begins with");
+    };
+    store
+        .add_entity(NewEntity {
+            override_token: Some(guard::override_token(&attempted, &candidates)),
+            override_reason: Some("a fixture the ordinary screen is asked about".into()),
+            ..new_near
+        })
+        .await
+        .unwrap()
+        .written()
+        .expect("the near name is added");
     let refused = store
         .capture(NewFact::about(
             collection.clone(),
@@ -110,6 +133,10 @@ async fn a_missing_numbered_mention_in_a_collection_holding_no_number_is_screene
     };
     assert_eq!(attempted, numbered::numbered(&collection, 7));
     let screen = guard::screen(&attempted, &[], &bare.list_entities(None).await.unwrap());
+    assert!(
+        screen.iter().any(|candidate| candidate.handle == near),
+        "the fixture must give the ordinary screen something to answer: {screen:?}"
+    );
     assert_eq!(
         candidates, screen,
         "an empty collection falls back to the ordinary screen"

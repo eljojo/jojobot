@@ -1663,6 +1663,7 @@ pub const ORDINANCES: &[&str] = &[
     "decision:contract-ordinance-missed-leaves",
     "decision:contract-ordinance-missed-fireworks",
     "topic:contract-ordinances-empty",
+    "topic:contract-ordinances-empty-7",
     "topic:contract-ordinances-renamed",
     "topic:contract-ordinances-renamed-now",
     "decision:contract-ordinance-renamed-curfew",
