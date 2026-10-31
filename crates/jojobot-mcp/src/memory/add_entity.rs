@@ -1733,6 +1733,60 @@ mod tests {
             "bot:sigma"
         );
     }
+    /// **A bot in the chart but beside the named manager creates nothing under
+    /// it.** Omega and bart both report to the assistant, so bart is neither the
+    /// manager named nor above it. Paired in one read with omega, who names itself
+    /// and lands the same bot, so a rule that refused every creation would not pass.
+    #[tokio::test]
+    async fn a_bot_beside_the_named_manager_creates_nothing_under_it() {
+        let jojobot = handler();
+        for bot in ["bot:omega", "bot:bart", "bot:assistant"] {
+            ensure(&jojobot, bot).await;
+        }
+        let assistant = as_bot(&jojobot, "assistant");
+        for bot in ["bot:omega", "bot:bart"] {
+            capture_as(
+                &jojobot,
+                &assistant,
+                CaptureArgs {
+                    sets: Some([("reports_to".into(), "bot:assistant".into())].into()),
+                    ..capture_args(bot, "reports to the assistant")
+                },
+            )
+            .await;
+        }
+        let placing = |sid: String| AddEntityArgs {
+            sid: Some(sid),
+            sets: Some([("reports_to".to_string(), "bot:omega".to_string())].into()),
+            ..add_args("bot", "sigma", "Sigma")
+        };
+
+        let refused = blocked(
+            &jojobot
+                .add_entity(Parameters(placing(as_bot(&jojobot, "bart"))))
+                .await
+                .expect("a refusal is an answer, not a failure"),
+        );
+        assert_eq!(refused["wrote"], false, "{refused}");
+        assert!(
+            refused["how_to_proceed"]
+                .as_str()
+                .is_some_and(|how| how.contains("bot:omega")),
+            "the refusal names the manager that may place it: {refused}"
+        );
+
+        let landed = json_of(
+            &jojobot
+                .add_entity(Parameters(placing(as_bot(&jojobot, "omega"))))
+                .await
+                .expect("add ok"),
+        );
+        assert_ne!(landed["status"], "blocked", "{landed}");
+        assert_eq!(
+            fields_of(&jojobot, "bot:sigma").await["reports_to"],
+            "bot:omega"
+        );
+    }
     /// 🚨 **A creation at a handle a renamed thing used to wear is judged as the
     /// NEW thing it makes.** A rename frees the old handle, and a new bot may
     /// take it. The licence check resolves a subject to the handle it answers to
