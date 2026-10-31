@@ -589,6 +589,7 @@ impl Jojobot {
                 ready: readiness_asked.map(|ask| view_run::Readiness { ask, named }),
                 unreviewed: args.unreviewed == Some(true),
             },
+            runs: None,
         };
         Ok(Ok(Prepared {
             args,

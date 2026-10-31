@@ -44,7 +44,29 @@ pub fn handle(
     }
     #[async_trait::async_trait]
     impl jojobot_query_api::Answerer for Reader {
-        async fn ask(&self, mut question: Question) -> Result<Answered, Failed> {
+        async fn ask(
+            &self,
+            asker: &jojobot_domain::actor::Actor,
+            mut question: Question,
+        ) -> Result<Answered, Failed> {
+            let runs = match &question.runs {
+                Some(ask) => Some(read_runs(&*self.sessions, asker, ask).await),
+                None => None,
+            };
+            // **A question about runs and nothing else walks nothing.**
+            if runs.is_some() && question.query.select.narrows_nothing() {
+                return Ok(Answered {
+                    backing: BTreeMap::new(),
+                    stale_working_on: Default::default(),
+                    selected: graph::Selected::default(),
+                    narrowed: Narrowed {
+                        owed: None,
+                        ready: None,
+                    },
+                    ticks: Vec::new(),
+                    runs,
+                });
+            }
             let stale =
                 super::working_on::stale_working_on_bots(&*self.memory, &*self.sessions).await;
             question
@@ -70,6 +92,7 @@ pub fn handle(
             )
             .await?;
             read.stale_working_on = super::working_on::stale_in(&read.selected.objects, &stale);
+            read.runs = runs;
             for object in &mut read.selected.objects {
                 object
                     .fields
@@ -241,7 +264,76 @@ pub async fn answer(
         selected,
         narrowed,
         ticks,
+        runs: None,
     })
+}
+
+/// **The runs a question asks for, as the asker may read them** (rule 444): the
+/// one read of the session port that `recall` of kind session, `list_runs` and
+/// the page of a bot all make, so none keeps a scoping of its own.
+///
+/// **A read: it begins nothing, closes nothing and sweeps nothing.** The
+/// summaries are one line a run, and a run is read whole only when its
+/// chronology is asked for, so a bot with a long history costs a line a run and
+/// the chronologies of the newest few. They come in the one order of runs,
+/// newest first, as the port returns them.
+pub async fn read_runs(
+    sessions: &dyn jojobot_domain::session::Sessions,
+    asker: &jojobot_domain::actor::Actor,
+    ask: &jojobot_query_api::RunsAsk,
+) -> Result<jojobot_query_api::Runs, jojobot_query_api::RunsFailed> {
+    use jojobot_query_api::RunsFailed::{NotYours, Unreadable};
+    let mut read = jojobot_query_api::Runs::default();
+    if ask.counts {
+        read.counts = sessions.run_counts().await.map_err(Unreadable)?;
+    }
+    let Some(bot) = ask.bot.as_ref() else {
+        return Ok(read);
+    };
+    if !jojobot_query_api::may_read_runs(asker, bot) {
+        return Err(NotYours);
+    }
+    read.summaries = sessions.summaries_of(bot).await.map_err(Unreadable)?;
+    if ask.served {
+        read.served = sessions.served_days().await.map_err(Unreadable)?;
+        // The port keeps every run's days; the answer holds only the runs it returns.
+        read.served
+            .retain(|day| read.summaries.iter().any(|run| run.id == day.run));
+    }
+    if ask.calls {
+        let names: Vec<String> = read
+            .summaries
+            .iter()
+            .map(|run| run.run_name().to_string())
+            .collect();
+        read.calls = sessions.run_calls(Some(&names)).await.map_err(Unreadable)?;
+    }
+    for summary in read
+        .summaries
+        .iter()
+        .filter(|run| run.entry_count > 0)
+        .take(ask.chronologies)
+    {
+        read.chronologies.push(
+            sessions
+                .read_session(&summary.id)
+                .await
+                .map_err(Unreadable)?,
+        );
+    }
+    Ok(read)
+}
+
+/// **The summary of the one run a call names, whoever's it is**, for the walk to
+/// refuse when it is another bot's. It is not part of [`read_runs`]: that answer
+/// holds only the runs its asker may read, and this one is handed to the walk
+/// alone, never to a renderer.
+pub async fn named_run(
+    sessions: &dyn jojobot_domain::session::Sessions,
+    named: &jojobot_domain::session::SessionId,
+) -> Result<Option<jojobot_domain::session::SessionSummary>, jojobot_domain::session::SessionError>
+{
+    sessions.summary_of(named).await
 }
 
 /// **What an object owes, asked of its kind too**: a finished work item or

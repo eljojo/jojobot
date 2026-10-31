@@ -244,7 +244,10 @@ pub(crate) async fn node(
             most: typed::HISTORY_SHOWN,
         });
     }
-    let mut answer = match queries.ask(question).await {
+    let mut answer = match queries
+        .ask(&jojobot_domain::actor::Actor::Operator, question)
+        .await
+    {
         Ok(answer) => answer,
         Err(
             jojobot_query_api::Failed::Selection(error)
@@ -388,7 +391,7 @@ pub(crate) async fn node(
     // them, so they are reached by walking from a handle like everything else.
     if entity.kind == EntityKind::BOT {
         generic.push_str(&mailbox_section(&mail, &entity.id).await);
-        generic.push_str(&sessions_section(&state, &entity.id).await);
+        generic.push_str(&sessions_section(&queries, &entity.id).await);
     } // **The operator's own box is on the operator's own page and nowhere else.**
     // Opening the page moves no mail: the listing is a GET, and a prefetch of it
     // must not mark anything seen.
@@ -792,22 +795,42 @@ fn run_row(run: &jojobot_domain::session::SessionSummary) -> String {
 ///
 /// `sessions_of` is a read: it begins nothing, closes nothing and sweeps
 /// nothing. Booting is what starts a run, and this page is not a boot.
-async fn sessions_section(state: &AppState, bot: &EntityId) -> String {
-    // **The summaries are the table, and a run is read whole only when its
-    // chronology is written out**, so a bot with a long history costs a line a
+async fn sessions_section(queries: &jojobot_query_api::QueryHandle, bot: &EntityId) -> String {
+    // **The runs are read through the shared boundary, as the operator**: the
+    // summaries are the table, newest first, and a run is read whole only when
+    // its chronology is written out, so a bot with a long history costs a line a
     // run and the chronologies of the newest few.
-    let mut runs = match state.sessions.summaries_of(bot).await {
-        Ok(runs) => runs,
-        Err(err) => return blind("Runs", "the session records", &err.to_string()),
+    let asked = jojobot_query_api::Question::of_runs(jojobot_query_api::RunsAsk {
+        bot: Some(bot.clone()),
+        chronologies: RUNS_SHOWN,
+        ..Default::default()
+    });
+    let read = match queries
+        .ask(&jojobot_domain::actor::Actor::Operator, asked)
+        .await
+        .map(|answered| answered.runs)
+    {
+        Ok(Some(Ok(read))) => read,
+        Ok(None) => return blind("Runs", "the session records", "the read gave no runs"),
+        Ok(Some(Err(jojobot_query_api::RunsFailed::Unreadable(err)))) => {
+            return blind("Runs", "the session records", &err.to_string());
+        }
+        Ok(Some(Err(jojobot_query_api::RunsFailed::NotYours))) => {
+            return blind(
+                "Runs",
+                "the session records",
+                "the operator may not read them",
+            );
+        }
+        Err(
+            jojobot_query_api::Failed::Selection(error)
+            | jojobot_query_api::Failed::Readiness(error),
+        ) => return blind("Runs", "the session records", &error.to_string()),
     };
+    let runs = read.summaries;
     if runs.is_empty() {
         return "<h2>Runs</h2>\n<p>This bot has never run.</p>\n".to_string();
     }
-    runs.sort_by(|a, b| {
-        b.started_at
-            .cmp(&a.started_at)
-            .then_with(|| b.id.as_str().cmp(a.id.as_str()))
-    });
 
     let mut out = String::from(
         "<h2>Runs</h2>\n<table id=\"sessions\">\n\
@@ -822,15 +845,7 @@ async fn sessions_section(state: &AppState, bot: &EntityId) -> String {
     // The chronology is the record of the run, so it is on the page rather
     // than a click away. A beat jojobot wrote is marked apart from one the
     // session wrote, because they are different kinds of evidence.
-    for summary in runs
-        .iter()
-        .filter(|run| run.entry_count > 0)
-        .take(RUNS_SHOWN)
-    {
-        let run = match state.sessions.read_session(&summary.id).await {
-            Ok(run) => run,
-            Err(err) => return blind("Runs", "the session records", &err.to_string()),
-        };
+    for run in &read.chronologies {
         out.push_str(&format!(
             "<h3>Chronology of {}</h3>\n<table>\n<tr><th>When</th><th>Beat</th><th>Entry</th></tr>\n",
             escape(run.sid.as_ref().map_or("", |sid| sid.as_str())),
@@ -1085,7 +1100,10 @@ async fn around_section(
             }),
             None,
         );
-        let reached = match queries.ask(question).await {
+        let reached = match queries
+            .ask(&jojobot_domain::actor::Actor::Operator, question)
+            .await
+        {
             // **A scan that cannot be read is a section that says so**, as the walk
             // the page used to run refused it; the shared answer keeps it in the
             // selection, so the renderer asks.
@@ -1679,7 +1697,10 @@ async fn history_section(
     };
     let question =
         jojobot_query_api::Question::about(entity.clone(), None, Some(graph::History::of(key)));
-    let answer = match queries.ask(question).await {
+    let answer = match queries
+        .ask(&jojobot_domain::actor::Actor::Operator, question)
+        .await
+    {
         Ok(answer) => answer,
         Err(
             jojobot_query_api::Failed::Selection(err) | jojobot_query_api::Failed::Readiness(err),
@@ -1946,7 +1967,10 @@ pub(crate) async fn instance_fields(
         None,
         None,
     );
-    match queries.ask(question).await {
+    match queries
+        .ask(&jojobot_domain::actor::Actor::Operator, question)
+        .await
+    {
         // **A record whose scan failed is unreadable, never an instance that
         // mapped nothing** (rule 130): the walk keeps the failure beside the answer.
         Ok(answer) => match graph::unreadable_scan(&answer.selected) {

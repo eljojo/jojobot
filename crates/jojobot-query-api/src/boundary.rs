@@ -1,9 +1,10 @@
 //! A consumer can submit the shared question through the handle.
 //!
 //! ```
+//! use jojobot_domain::actor::Actor;
 //! use jojobot_query_api::{QueryHandle, Question};
 //! fn ask(handle: &QueryHandle, question: Question) {
-//!     drop(handle.ask(question));
+//!     drop(handle.ask(&Actor::Operator, question));
 //! }
 //! ```
 //!

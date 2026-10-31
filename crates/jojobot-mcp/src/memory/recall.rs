@@ -2726,6 +2726,7 @@ impl Jojobot {
         let view_run::Question {
             mut query,
             asks: question_asks,
+            runs: _,
         } = question;
         let include = query.include;
         let record_keys = args.record_keys.as_deref();
@@ -3018,21 +3019,49 @@ impl Jojobot {
         let mut runs_counted_not_shown = 0usize;
         let session_docs: Vec<jojobot_domain::memory::search::DocScan> = if wants_sessions {
             let read = async {
-                let counts = if browses_runs {
-                    self.sessions.run_counts().await?
-                } else {
-                    Default::default()
+                // **The caller's own runs, and the one a subject names, are read
+                // by the shared reader, which says who may read them** (rule 444).
+                // The days a run was served on ride only on a read of ONE run, so
+                // a browse of every run does not grow with each day of each of
+                // them, and the calls of a run ride the same way, with the verbs.
+                let subject_named = query.select.subject.is_some();
+                let ask = jojobot_query_api::RunsAsk {
+                    bot: caller.as_ref().map(|caller| caller.bot.clone()),
+                    counts: browses_runs,
+                    served: subject_named,
+                    calls: subject_named,
+                    chronologies: 0,
                 };
+                let asker = caller.as_ref().map_or(
+                    jojobot_domain::actor::Actor::System("recall without a run".into()),
+                    |caller| jojobot_domain::actor::Actor::Bot(caller.bot.clone()),
+                );
+                let read = match view_run::read_runs(self.sessions.as_ref(), &asker, &ask).await {
+                    Ok(read) => read,
+                    Err(jojobot_query_api::RunsFailed::Unreadable(e)) => return Err(e),
+                    // A bot asking for its own runs is never refused them.
+                    Err(jojobot_query_api::RunsFailed::NotYours) => Default::default(),
+                };
+                let jojobot_query_api::Runs {
+                    summaries: runs,
+                    counts,
+                    served,
+                    calls: called,
+                    ..
+                } = read;
                 let Some(caller) = caller.as_ref() else {
                     return Ok((Vec::new(), counts.values().sum::<usize>()));
                 };
-                let mut runs = self.sessions.summaries_of(&caller.bot).await?;
+                // **A run the subject names may be another bot's**, and the walk
+                // refuses it as theirs, so its summary joins what the walk is fed.
+                let mut runs = runs;
                 if let Some(subject) = query.select.subject.as_ref()
                     && subject.kind() == Some(EntityKind::SESSION)
                 {
                     let named = jojobot_domain::session::SessionId(subject.slug().to_string());
                     if !runs.iter().any(|run| run.id == named)
-                        && let Some(run) = self.sessions.summary_of(&named).await?
+                        && let Some(run) =
+                            view_run::named_run(self.sessions.as_ref(), &named).await?
                     {
                         runs.push(run);
                     }
@@ -3049,22 +3078,6 @@ impl Jojobot {
                     .filter(|(bot, _)| **bot != caller.bot && answers_parent(bot))
                     .map(|(_, n)| *n)
                     .sum();
-                // **The days a run was served on ride only on a read of ONE
-                // run**, so a browse of every run does not grow with each day of
-                // each of them.
-                let served = if query.select.subject.is_some() {
-                    self.sessions.served_days().await?
-                } else {
-                    Vec::new()
-                };
-                // **The calls of a run ride the same way**, with the verbs.
-                let called = if query.select.subject.is_some() {
-                    let names: Vec<String> =
-                        runs.iter().map(|run| run.run_name().to_string()).collect();
-                    self.sessions.run_calls(Some(&names)).await?
-                } else {
-                    Vec::new()
-                };
                 let docs = runs
                     .iter()
                     .map(|run| {

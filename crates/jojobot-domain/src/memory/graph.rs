@@ -1833,7 +1833,7 @@ impl History {
 /// The count is here rather than left to the caller because only the query
 /// knows it: by the time a list of objects reaches anybody, what was filtered
 /// out is indistinguishable from what was never there.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Selected {
     /// The objects the caller may read, in handle order, or in the order the
     /// selection asked for.

@@ -50,6 +50,9 @@ pub struct Answered {
     /// and nothing for any other. The same function builds both
     /// ([`TickRead::of`], rule 498).
     pub ticks: Vec<TickCell>,
+    /// **The runs the question asked for**, read for the asker. `None` when it
+    /// asked for none.
+    pub runs: Option<Result<crate::Runs, crate::RunsFailed>>,
 }
 
 /// **What the tick read of one object came to.** A list whose records could not

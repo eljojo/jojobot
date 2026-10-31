@@ -5,6 +5,7 @@ mod list_ticks;
 mod mail;
 mod question;
 mod recalled;
+mod runs;
 
 #[cfg(doctest)]
 #[path = "boundary.rs"]
@@ -19,14 +20,20 @@ pub use list_ticks::TickRead;
 pub use mail::{MailHandle, MailRail, OperatorIs, OperatorMail, OperatorMailCommands, Refused};
 pub use question::{Asks, Question, Readiness, parse_date};
 pub use recalled::{RecalledObject, RecalledView};
+pub use runs::{Runs, RunsAsk, RunsFailed, may_read_runs};
 
 use std::sync::Arc;
 
-/// The implementation is supplied by the composition root. It exposes one read
-/// and no way to retrieve the implementation or its dependencies.
+use jojobot_domain::actor::Actor;
+
+/// The implementation is supplied by the composition root. It exposes the
+/// question, and no way to retrieve the implementation or its dependencies.
 #[async_trait::async_trait]
 pub trait Answerer: Send + Sync {
-    async fn ask(&self, question: Question) -> Result<Answered, Failed>;
+    /// **A question, answered for the one asking** (rule 444). The asker comes
+    /// beside every question and is never defaulted, so a read with no asker
+    /// cannot exist.
+    async fn ask(&self, asker: &Actor, question: Question) -> Result<Answered, Failed>;
 }
 
 #[derive(Clone)]
@@ -39,7 +46,7 @@ impl From<Arc<dyn Answerer>> for QueryHandle {
 }
 
 impl QueryHandle {
-    pub async fn ask(&self, question: Question) -> Result<Answered, Failed> {
-        self.0.ask(question).await
+    pub async fn ask(&self, asker: &Actor, question: Question) -> Result<Answered, Failed> {
+        self.0.ask(asker, question).await
     }
 }

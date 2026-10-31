@@ -1,5 +1,6 @@
 //! The prepared question shared by the verbs and their other renderers.
 
+use crate::RunsAsk;
 use jojobot_domain::memory::types::DeclaredType;
 use jojobot_domain::memory::{EntityId, EntityKind, MemoryError, graph, readiness};
 
@@ -40,9 +41,30 @@ pub struct Question {
     pub query: graph::GraphQuery,
     /// What is kept of the objects the query finds.
     pub asks: Asks,
+    /// **The runs the question also asks for**, read for the asker and scoped by
+    /// it. A question that asks for runs and narrows nothing else walks nothing.
+    pub runs: Option<RunsAsk>,
 }
 
 impl Question {
+    /// **A question about runs and nothing else.** The graph is not walked.
+    pub fn of_runs(ask: RunsAsk) -> Question {
+        Question {
+            runs: Some(ask),
+            ..Question::new(
+                graph::Selection::default(),
+                graph::Include {
+                    facts: false,
+                    prose: false,
+                    stood_for: false,
+                    status: None,
+                },
+                None,
+                None,
+            )
+        }
+    }
+
     /// **The one place a selection becomes a query.** No narrowing is asked: a
     /// caller adds `overdue` and `ready` to the question it gets back.
     pub fn new(
@@ -60,6 +82,7 @@ impl Question {
                 masked: Default::default(),
             },
             asks: Asks::default(),
+            runs: None,
         }
     }
 

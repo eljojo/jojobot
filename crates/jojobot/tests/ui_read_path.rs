@@ -111,7 +111,7 @@ async fn node_read_path_keeps_unreadable_parts_in_the_shared_answer_and_each_ren
     for failed in 0..8 {
         memory.failed.store(failed, Ordering::SeqCst);
         let shared = queries
-            .ask(question())
+            .ask(&jojobot_domain::actor::Actor::Operator, question())
             .await
             .unwrap_or_else(|_| panic!("the shared answer keeps unreadability in row {failed}"));
         let scan_unreadable = shared
@@ -306,7 +306,7 @@ async fn node_read_path_backing_follows_rewrites_omits_sum_winners_and_keeps_cle
     let board = seeded_board_over(memory.clone()).await;
     let queries = jojobot_mcp::memory::view_run::handle(memory.clone(), board.sessions.clone());
     let read = queries
-        .ask(question())
+        .ask(&jojobot_domain::actor::Actor::Operator, question())
         .await
         .unwrap_or_else(|_| panic!("the read succeeds"));
     assert_eq!(
@@ -339,7 +339,7 @@ async fn node_read_path_backing_follows_rewrites_omits_sum_winners_and_keeps_cle
         .await
         .unwrap();
     let read = queries
-        .ask(question())
+        .ask(&jojobot_domain::actor::Actor::Operator, question())
         .await
         .unwrap_or_else(|_| panic!("the read succeeds"));
     assert_eq!(
@@ -530,4 +530,207 @@ async fn node_around_says_so_when_the_scan_cannot_be_read() {
         );
     }
     ct.cancel();
+}
+
+/// A run of `bot` that began `n` minutes after the epoch, with `beats` beats.
+async fn begin_run(
+    sessions: &jojobot_domain::session::testing::InMemorySessions,
+    bot: &str,
+    n: i64,
+    beats: usize,
+) {
+    use jojobot_domain::session::{NewEntry, NewSession, Sessions, Sid};
+    let at = |minute: i64| jiff::Timestamp::from_second(1_700_000_000 + minute * 60).unwrap();
+    let run = sessions
+        .begin(NewSession {
+            timezone: None,
+            bot: EntityId(bot.into()),
+            sid: Sid(format!("r{n:03}")),
+            focus: format!("focus-{n:02}"),
+            started_at: at(n),
+            started_on: None,
+            id: None,
+            key_hash: None,
+        })
+        .await
+        .expect("the run begins");
+    for beat in 0..beats {
+        sessions
+            .append(
+                &run.id,
+                NewEntry::manual(format!("beat-{n:02}-{beat}"), at(n), None),
+            )
+            .await
+            .expect("the beat is recorded");
+    }
+}
+
+/// **Runs asked of the shared boundary** as the asker, the way the page asks.
+async fn runs_asked(
+    queries: &jojobot_query_api::QueryHandle,
+    asker: &jojobot_domain::actor::Actor,
+    bot: &EntityId,
+    chronologies: usize,
+) -> Result<jojobot_query_api::Runs, jojobot_query_api::RunsFailed> {
+    let asked = jojobot_query_api::Question::of_runs(jojobot_query_api::RunsAsk {
+        bot: Some(bot.clone()),
+        chronologies,
+        ..Default::default()
+    });
+    queries
+        .ask(asker, asked)
+        .await
+        .unwrap_or_else(|_| panic!("a runs question walks nothing and cannot fail there"))
+        .runs
+        .expect("the answer carries the runs asked for")
+}
+
+/// **The operator reads a bot's runs through the shared boundary: every run,
+/// newest first, and the chronologies of the newest few that wrote any.** A run
+/// with no beat is in the list and has no chronology, so the count of
+/// chronologies is of runs with beats and not of runs.
+#[tokio::test]
+async fn the_operator_reads_a_bots_runs_newest_first_with_the_chronologies_of_the_newest_few() {
+    use jojobot_domain::actor::Actor;
+    let board = support::ui_board::seeded_board().await;
+    for n in 1..=5 {
+        begin_run(&board.sessions, "bot:lambda", n, 2).await;
+    }
+    // The newest run wrote nothing: it is in the table and has no chronology.
+    begin_run(&board.sessions, "bot:lambda", 6, 0).await;
+    let queries =
+        jojobot_mcp::memory::view_run::handle(board.memory.clone(), board.sessions.clone());
+
+    let read = runs_asked(
+        &queries,
+        &Actor::Operator,
+        &EntityId("bot:lambda".into()),
+        2,
+    )
+    .await
+    .expect("the operator reads a bot's runs");
+    let focuses: Vec<&str> = read
+        .summaries
+        .iter()
+        .map(|run| run.focus.as_str())
+        .collect();
+    assert_eq!(
+        focuses,
+        [
+            "focus-06", "focus-05", "focus-04", "focus-03", "focus-02", "focus-01"
+        ],
+        "every run, newest first"
+    );
+    let written: Vec<String> = read
+        .chronologies
+        .iter()
+        .map(|run| run.entries[0].text.clone())
+        .collect();
+    assert_eq!(
+        written,
+        ["beat-05-0", "beat-04-0"],
+        "the chronologies of the two newest runs that wrote a beat, and none for the empty one"
+    );
+}
+
+/// **A bot reads its own runs and no other bot's, and an app reads none.** Beside
+/// the refusals the same asker reads what it may, so a refusal is not an
+/// empty read.
+#[tokio::test]
+async fn a_bot_reads_its_own_runs_not_another_bots_and_an_app_reads_none() {
+    use jojobot_domain::actor::Actor;
+    use jojobot_query_api::RunsFailed;
+    let board = support::ui_board::seeded_board().await;
+    begin_run(&board.sessions, "bot:lambda", 1, 1).await;
+    begin_run(&board.sessions, "bot:omega", 2, 1).await;
+    let queries =
+        jojobot_mcp::memory::view_run::handle(board.memory.clone(), board.sessions.clone());
+    let lambda = EntityId("bot:lambda".into());
+
+    let own = runs_asked(&queries, &Actor::Bot(lambda.clone()), &lambda, 5)
+        .await
+        .expect("a bot reads its own runs");
+    assert_eq!(own.summaries.len(), 1);
+
+    let other = runs_asked(
+        &queries,
+        &Actor::Bot(EntityId("bot:omega".into())),
+        &lambda,
+        5,
+    )
+    .await;
+    assert!(
+        matches!(other, Err(RunsFailed::NotYours)),
+        "another bot's runs are not a bot's to read: {other:?}"
+    );
+    let app = runs_asked(
+        &queries,
+        &Actor::App(jojobot_domain::app::AppId::parse("springfield-watch").unwrap()),
+        &lambda,
+        5,
+    )
+    .await;
+    assert!(
+        matches!(app, Err(RunsFailed::NotYours)),
+        "an app reads no run: {app:?}"
+    );
+}
+
+/// **A read that names no bot reads no run and still counts them, and what a bot
+/// is served is the days of the runs it is given, not of every bot.** The counts
+/// are what a browse is told it was not shown.
+#[tokio::test]
+async fn a_read_with_no_bot_counts_and_the_served_days_are_those_of_the_runs_returned() {
+    use jojobot_domain::actor::Actor;
+    use jojobot_domain::session::Sessions;
+    let board = support::ui_board::seeded_board().await;
+    begin_run(&board.sessions, "bot:lambda", 1, 1).await;
+    begin_run(&board.sessions, "bot:omega", 2, 1).await;
+    let queries =
+        jojobot_mcp::memory::view_run::handle(board.memory.clone(), board.sessions.clone());
+    let lambda = EntityId("bot:lambda".into());
+    let day = jiff::civil::date(2026, 9, 2);
+    for bot in ["bot:lambda", "bot:omega"] {
+        let run = board
+            .sessions
+            .summaries_of(&EntityId(bot.into()))
+            .await
+            .expect("the runs are read")
+            .remove(0);
+        board.sessions.add_served(&run.id, 100, day).await.unwrap();
+    }
+
+    let asked = |bot: Option<EntityId>| {
+        jojobot_query_api::Question::of_runs(jojobot_query_api::RunsAsk {
+            bot,
+            counts: true,
+            served: true,
+            ..Default::default()
+        })
+    };
+    let counted = queries
+        .ask(&Actor::System("probe".into()), asked(None))
+        .await
+        .unwrap_or_else(|_| panic!("a runs question cannot fail in the walk"))
+        .runs
+        .expect("the answer carries the runs")
+        .unwrap_or_else(|_| panic!("a read that names no bot is not refused"));
+    assert!(counted.summaries.is_empty(), "no bot named, no run read");
+    assert_eq!(counted.counts.get(&lambda), Some(&1));
+    assert_eq!(counted.counts.get(&EntityId("bot:omega".into())), Some(&1));
+
+    let own = queries
+        .ask(&Actor::Bot(lambda.clone()), asked(Some(lambda.clone())))
+        .await
+        .unwrap_or_else(|_| panic!("a runs question cannot fail in the walk"))
+        .runs
+        .expect("the answer carries the runs")
+        .unwrap_or_else(|_| panic!("a bot reads its own runs"));
+    let ids: Vec<_> = own.summaries.iter().map(|run| &run.id).collect();
+    assert_eq!(ids.len(), 1, "only the bot's own run");
+    assert_eq!(
+        own.served.iter().map(|held| &held.run).collect::<Vec<_>>(),
+        ids,
+        "the days served are those of the run returned, not of another bot's"
+    );
 }

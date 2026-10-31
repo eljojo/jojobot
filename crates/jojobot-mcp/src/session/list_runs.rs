@@ -94,11 +94,22 @@ impl Jojobot {
         // materializes a run lazily on its first write. A caller asking
         // what it has run is not the caller starting one, and is not the
         // caller paying for the text of every beat either.
-        let runs = self
-            .sessions
-            .summaries_of(&caller.bot)
-            .await
-            .map_err(session_error)?;
+        // Read by the shared reader, which says who may read a bot's runs (rule 444).
+        let runs = match crate::memory::view_run::read_runs(
+            self.sessions.as_ref(),
+            &jojobot_domain::actor::Actor::Bot(caller.bot.clone()),
+            &jojobot_query_api::RunsAsk {
+                bot: Some(caller.bot.clone()),
+                ..Default::default()
+            },
+        )
+        .await
+        {
+            Ok(read) => read.summaries,
+            Err(jojobot_query_api::RunsFailed::Unreadable(e)) => return Err(session_error(e)),
+            // A bot asking for its own runs is never refused them.
+            Err(jojobot_query_api::RunsFailed::NotYours) => Vec::new(),
+        };
         // Already newest-start-first off the port; the cut below keeps that
         // order rather than re-deriving it. `limit` is the size of a page and
         // `offset` is how many runs the caller has already read, so a page is
