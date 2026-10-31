@@ -287,10 +287,7 @@ async fn recall(call: Call) -> Answer {
                 // and is refused so, naming no near handle: a nearest list would name
                 // things the app may not read.
                 jojobot_domain::memory::MemoryError::UnknownEntity { attempted, .. } => {
-                    Answer::Refused(serde_json::json!({
-                        "status": "blocked",
-                        "unknown_entity": attempted,
-                    }))
+                    Answer::Refused(serde_json::json!({ "unknown_entity": attempted }))
                 }
                 other => unavailable(other),
             };
