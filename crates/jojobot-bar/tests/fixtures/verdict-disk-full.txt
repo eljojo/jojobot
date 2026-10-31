@@ -25,7 +25,7 @@ error: test failed, to rerun pass `-p jojobot-domain --test fixture_roster`
 error: 1 target failed:
     `-p jojobot-domain --test fixture_roster`
     Finished `test` profile [optimized + debuginfo] target(s) in 0.15s
-     Running tests/report_touched_first.rs (/var/lib/gitea-runner/cloudy1/cargo-target/debug/deps/report_touched_first-16a05d1cf51839a2)
+     Running tests/report_touched_first.rs (/var/lib/gitea-runner/alpha/cargo-target/debug/deps/report_touched_first-16a05d1cf51839a2)
 
 running 4 tests
 test the_fallback_range_is_the_merge_base_with_origin_main_when_there_is_no_local_main ... FAILED <0.605s>
