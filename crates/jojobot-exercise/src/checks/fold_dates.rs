@@ -43,6 +43,16 @@ fn a_later_fold_with_an_invented_day_is_not_hidden_behind_the_first() {
     ));
     assert!(super::fold_invents_no_date(&first_invents).is_err());
 
+    first_invents.push(fold(
+        "thing:longboard#f4",
+        "2026-08-30",
+        "the pile since 2026-09-14",
+    ));
+    assert!(
+        super::fold_invents_no_date(&first_invents).is_err(),
+        "an honest last fold hid an invented first one"
+    );
+
     assert!(
         super::fold_invents_no_date(&pile()).is_err(),
         "no fold at all held"
