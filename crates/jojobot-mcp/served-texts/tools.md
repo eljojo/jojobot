@@ -4019,7 +4019,8 @@ that holds some of the keys is kept and found here, with what it lacks named.
 
 ```text
 **Where each folded value came from**, and who backs it: the claim whose
-write won the key, its provenance and its standing.
+write won the key, its provenance and its standing, and `written_at`, the
+instant that claim was written.
 
 **Off by default because it is a second read of each object**, and most
 reads want the value rather than its pedigree. Ask for it when you are

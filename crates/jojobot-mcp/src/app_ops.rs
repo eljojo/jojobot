@@ -223,8 +223,10 @@ pub struct PostedView {
 }
 
 /// **What `recall` takes from an app**: a subject, a kind, a `where`, key filters,
-/// the keys to keep and a page size. A view, a walk, a window of days, a charter
-/// or a run is not one of them, and a call that sends one is refused naming it.
+/// the keys to keep, a page size, `backing` (which claim holds each value, and
+/// when it was written) and the view `ready` on work. Another view, a walk, a
+/// window of days, a charter or a run is not one of them, and a call that sends
+/// one is refused naming it.
 #[derive(Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RecallInput {
@@ -240,6 +242,10 @@ struct RecallInput {
     _keys: Option<Vec<String>>,
     #[serde(default, rename = "limit")]
     _limit: Option<u32>,
+    #[serde(default, rename = "view")]
+    _view: Option<String>,
+    #[serde(default, rename = "backing")]
+    _backing: Option<bool>,
 }
 
 /// The most objects one app read returns when the call names no limit, and the most it may name.
@@ -265,6 +271,16 @@ async fn recall(call: Call) -> Answer {
         Ok(args) => args,
         Err(answer) => return answer,
     };
+    // **The one view an app may ask is `ready`**, on work: the shelf a program
+    // that nudges a stopped line reads. Any other is refused naming it.
+    if let Some(view) = &args.view
+        && view.trim().trim_start_matches("view:") != "ready"
+    {
+        return Answer::Invalid(format!(
+            "an app may ask the view `ready` only, not `{}`",
+            view.trim()
+        ));
+    }
     let limit = args
         .limit
         .map_or(RECALL_DEFAULT_LIMIT, |limit| limit as usize)
@@ -293,9 +309,10 @@ async fn recall(call: Call) -> Answer {
             };
         }
     };
-    Answer::Done(
-        jojobot_query_api::RecalledView::of(answered, only_keys.as_deref(), limit).to_json(),
-    )
+    match jojobot_query_api::RecalledView::of(answered, only_keys.as_deref(), limit) {
+        Ok(view) => Answer::Done(view.to_json()),
+        Err(e) => unavailable(e),
+    }
 }
 
 async fn capture(call: Call) -> Answer {

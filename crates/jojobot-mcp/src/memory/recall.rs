@@ -656,7 +656,8 @@ pub struct RecallArgs {
     #[schemars(range(min = 1))]
     pub(crate) limit: Option<u32>,
     /// **Where each folded value came from**, and who backs it: the claim whose
-    /// write won the key, its provenance and its standing.
+    /// write won the key, its provenance and its standing, and `written_at`, the
+    /// instant that claim was written.
     ///
     /// **Off by default because it is a second read of each object**, and most
     /// reads want the value rather than its pedigree. Ask for it when you are
@@ -4206,6 +4207,12 @@ impl Jojobot {
                                 // bot said so" in the value's own backing.
                                 if let Some(stamp) = &from.recorded_by {
                                     entry["recorded_by"] = super::wire::recorded_by_json(stamp);
+                                }
+                                // **When the write holding this value was taken in**,
+                                // so an age is read off the claim and never from
+                                // a second key somebody has to keep beside it.
+                                if let Some(at) = o.ages.as_ref().and_then(|a| a.keys.get(key)) {
+                                    entry["written_at"] = serde_json::json!(at.to_string());
                                 }
                                 kept.insert(key.clone(), entry);
                                 // **Absent when the record carries none**,

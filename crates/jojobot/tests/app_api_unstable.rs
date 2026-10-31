@@ -68,7 +68,13 @@ struct Served {
 async fn serve(apps: Vec<AppPrincipal>, registry: Registry) -> Served {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    let store = Arc::new(InMemoryMemory::booted());
+    // **The views the build ships are served by the store, as in the binary**, so
+    // an app that asks the view `ready` meets the one a bot meets.
+    let supplied = jojobot_mcp::provisions();
+    let store = Arc::new(jojobot_adapters::provisioned::Provisioned::new(
+        InMemoryMemory::booted().knowing(supplied.clone()),
+        supplied,
+    ));
     let indexed = Arc::new(IndexedMemory::new(store).expect("the search index opens"));
     let search = Arc::new(Retrieval::new(indexed.index(), vec![indexed.clone()]));
     let sessions = Arc::new(jojobot_domain::session::testing::InMemorySessions::new());
@@ -520,7 +526,7 @@ async fn unstable_a_recall_outside_the_grant_is_refused_naming_it() {
 async fn unstable_a_recall_argument_outside_the_input_is_refused_naming_it() {
     let (app, token) = reader();
     let served = serve(vec![app], Registry::shipped()).await;
-    for argument in ["view", "follow", "charter", "history"] {
+    for argument in ["follow", "charter", "history"] {
         let (status, refused) = call(
             &served,
             &token,
@@ -582,4 +588,96 @@ async fn unstable_a_recall_never_returns_a_run_and_still_reads_a_card_beside_it(
             "{body}: an object came back with a run asked for: {runs}"
         );
     }
+}
+
+/// A key set on a work item in a claim of its own, after the status.
+async fn set_key(served: &Served, handle: &str, key: &str, value: &str) {
+    let mut fact = NewFact::about(
+        EntityId(handle.into()),
+        "a later write",
+        jiff::civil::Date::constant(2026, 3, 6),
+    );
+    fact.fields.insert(key.to_string(), value.to_string());
+    fact.sets.insert(key.to_string());
+    served.memory.capture(fact).await.expect("the key lands");
+}
+
+/// **An app asks the ready view on work and gets the queued card that waits on
+/// nothing, and not the one that waits on it.** Both halves in one read, so the
+/// negative cannot pass on an empty answer.
+#[tokio::test]
+async fn unstable_the_ready_view_lists_the_unblocked_queued_card_and_not_the_blocked_one() {
+    let (app, token) = reader();
+    let served = serve(vec![app], Registry::shipped()).await;
+    work_with_status(&served, "work:omega", "Mow the lawn", "queued").await;
+    work_with_status(&served, "work:sigma", "Paint the fence", "queued").await;
+    set_key(&served, "work:sigma", "depends_on", "work:omega").await;
+
+    let (status, ready) = call(
+        &served,
+        &token,
+        "recall",
+        json!({"view": "ready", "where": "status = queued"}),
+    )
+    .await;
+    assert_eq!(status, 200, "{ready}");
+    let handles: Vec<&str> = ready["objects"]
+        .as_array()
+        .expect("objects")
+        .iter()
+        .filter_map(|o| o["handle"].as_str())
+        .collect();
+    assert!(handles.contains(&"work:omega"), "{ready}");
+    assert!(
+        !handles.contains(&"work:sigma"),
+        "the blocked card came back: {ready}"
+    );
+}
+
+/// **Any other view is refused, naming the one an app may ask.**
+#[tokio::test]
+async fn unstable_a_view_other_than_ready_is_refused_naming_ready() {
+    let (app, token) = reader();
+    let served = serve(vec![app], Registry::shipped()).await;
+    let (status, refused) = call(&served, &token, "recall", json!({"view": "colleagues"})).await;
+    assert_eq!(status, 422, "{refused}");
+    assert!(refused.to_string().contains("ready"), "{refused}");
+}
+
+/// **Backing names when the claim that set a key was written.** The status is
+/// written first and another key after it: the instant under `status` is the
+/// status claim's own, earlier than the other key's, and never the object's
+/// newest write.
+#[tokio::test]
+async fn unstable_backing_names_the_instant_of_the_claim_that_set_the_key() {
+    let (app, token) = reader();
+    let served = serve(vec![app], Registry::shipped()).await;
+    work_with_status(&served, "work:omega", "Mow the lawn", "waiting").await;
+    tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+    set_key(&served, "work:omega", "waiting_on", "person:homer").await;
+
+    let (status, read) = call(
+        &served,
+        &token,
+        "recall",
+        json!({"subject": "work:omega", "backing": true}),
+    )
+    .await;
+    assert_eq!(status, 200, "{read}");
+    let backing = &read["objects"][0]["fields_backing"];
+    let at = |key: &str| -> jiff::Timestamp {
+        backing[key]["written_at"]
+            .as_str()
+            .unwrap_or_else(|| panic!("no instant under {key}: {read}"))
+            .parse()
+            .expect("an instant")
+    };
+    assert!(
+        backing["status"]["claim"].is_string(),
+        "the claim is named beside its instant: {read}"
+    );
+    assert!(
+        at("status") < at("waiting_on"),
+        "the status instant is the status claim's, not the newest write's: {read}"
+    );
 }
