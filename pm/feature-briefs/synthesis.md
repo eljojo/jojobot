@@ -48,7 +48,7 @@
 
 🚨 **Folding many records into one is exactly where a detail gets invented, or a nuance quietly dropped, and then read back as settled truth.**
 
-**A contradiction is caught by CO-PRESENCE: two records disagree about one thing and whoever reads it sees both.** ⭐ **Because the pile stays where it is, on the same page, about the same thing, co-presence survives.** **A settled claim that contradicts a loose shape is still sitting under it.**
+**A contradiction is caught by CO-PRESENCE: two records disagree about one thing and whoever reads them sees both.** ⭐ **Because the pile stays where it is, about the same thing, co-presence is always one call away.** **A listing serves the shape and leaves its records out, saying how many and naming the argument that lists them beside it (`stood_for`); a record asked for by its own address comes back whole.** **A settled claim that contradicts a loose shape is still sitting under it, and a reader who checks the shape reads both.**
 
 ⛔️ **And the count is computed, never written.** **A shape cannot claim to stand for records it does not, and cannot quietly stand for more than it says.** ⭐ **Leaving something out is never silent here, and a shape is the largest omission the system can perform.**
 
@@ -76,7 +76,7 @@
 
 ## What it is not
 
-⛔️ **Not deletion, not archiving, and not a retention policy.** Nothing is removed, hidden, or expires.
+⛔️ **Not deletion, not archiving, and not a retention policy.** Nothing is removed or expires, and nothing is left out of a read without its count and the call that returns it.
 
 ⛔️ **Not a move.** Nothing is relocated onto anything.
 

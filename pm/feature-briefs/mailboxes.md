@@ -24,7 +24,7 @@
 
 `new` → `read` → `processed`.
 
-* **Reading is taking delivery.** A read moves messages out of `new` and they become yours to finish, so no caller sees a body without owing it. **Counting is the separate, free question:** a caller may ask what is waiting and take delivery of none of it, which is what makes checking a box cheaper than deciding whether to check.
+* **Reading your own box is taking delivery.** A read moves messages out of `new` and they become yours to finish, so no owner sees a body in its own box without owing it. **Counting is the separate, free question:** a caller may ask what is waiting and take delivery of none of it, which is what makes checking a box cheaper than deciding whether to check.
 * `**read**` **is not** `**processed**`**.** Reading takes delivery; processing means you acted.
 * `**processed**` **is terminal — an archive, never a deletion.** Nothing on the surface deletes.
 
@@ -33,6 +33,10 @@
 **A message jojobot cannot read is reported apart, never dropped.** A box that quietly omits what it cannot parse hands back a count that is a lie, and being countable is the one property a mailbox cannot do without.
 
 ⚠️ **The asymmetry worth knowing:** the contract pulls hard against marking something processed too early and not at all against marking it too late. So `read` is the state that looks handled while owing everything. The surface does not let that stand: the stance that processing means you acted is kept, and what stops is making late closing free and closing at the right moment costly.
+
+## Who reads which box
+
+**A bot reads its own box and every box below it on the org chart, the whole chain down,** because a manager answers for its reports' work. **A read down the chart takes nothing:** by search or by id it moves no message and owes nothing, and the box stays the report's to work. **No bot reads a box above or beside it**, except the messages it sent there itself; of those it sees the state and not the notes the recipient wrote when it processed them, and the answer says the notes were withheld. A listing that reaches boxes the caller may not read counts what it left out, so it never passes for the whole. **One function over the chart decides all of it**, so a change of who reports to whom applies at the next read, and the line can be redrawn in one place.
 
 ## Closing mail costs what reading it does
 

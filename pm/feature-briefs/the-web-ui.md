@@ -20,7 +20,7 @@
 
 **A thing's page shows the fold first: one value per key, what the thing is now.** Beside each value: who wrote it, when, and whether it was said, read or worked out, because a value without its provenance cannot be checked. **A key opens to the writes behind it**, oldest first.
 
-**A page states how the thing stands against its kind.** It names the declared keys the thing holds and the ones it lacks. 🚨 **A key held badly is not a key held:** when a value does not hold what its key declared, the page says so and names the key, and a thing with one wrong value never reads as complete. The operator cannot work this out from anywhere else.
+**A page does not judge the thing against declared types.** No question the bots ask runs every type's matcher over one thing, and a page that worked out a verdict the bots cannot ask for would stop being a check on what they see.
 
 **Around the thing**: its parent, its children, what points at it and what it points at, within the answer budget.
 

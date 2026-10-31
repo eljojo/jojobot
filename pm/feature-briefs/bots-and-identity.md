@@ -2,7 +2,7 @@
 
 > **jojobot** · kind: feature-brief · boot: on-demand
 
-**A bot is an entity, and bots are colleagues in an organisation.** A public directory, private mailboxes, work status carried on a board, and no impersonation ever.
+**A bot is an entity, and bots are colleagues in an organisation.** A public directory, mail readable down the org chart and never up or sideways, work status carried on a board, and no impersonation ever.
 
 The metaphor does real work: it says which things about a colleague you may look up and which you may not, without anybody having to enumerate them.
 
@@ -18,7 +18,7 @@ The metaphor does real work: it says which things about a colleague you may look
 
 **A colleague can read another bot's charter whole**, without booting as it and without a session being created. It is the one thing a directory exists to be looked up.
 
-**Private state stays private**: mail, sessions and journal are not what that opens.
+**Private state stays private**: sessions and journal are not what that opens, and mail opens only down the chart, because a manager answers for its reports' work (*Mailboxes — how one bot reaches another*).
 
 **Booting as another bot is forbidden outright, and the engine enforces it:** booting as a bot needs a voucher for that bot, or for the assistant at the root the operator's own code, by the chain of trust. A session that needs something it cannot reach says so and stops.
 

@@ -41,7 +41,7 @@
 
 ## What a bot may reach
 
-**Search is a bot's Spotlight.** It covers two populations at once. **What is the bot's own:** its own past sessions, its own journal, and its mailbox when the caller asks for mail — mail is off unless requested, because most searches are not about mail and a box would otherwise crowd out the answer. **What is shared:** the objects any bot may see, because they belong to the operator.
+**Search is a bot's Spotlight.** It covers two populations at once. **What is the bot's own:** its own past sessions, its own journal, and, when the caller asks for mail, its own box and the boxes below it on the org chart (*Mailboxes — how one bot reaches another*) — mail is off unless requested, because most searches are not about mail and a box would otherwise crowd out the answer. **What is shared:** the objects any bot may see, because they belong to the operator.
 
 **A bot reads only its own past sessions.** Owner scoping is what makes sessions safe to index. It keeps another bot's work private without costing a bot access to its own.
 
@@ -63,7 +63,7 @@ A graph gets asked all of the following. A query that stops short of any of it s
 * **Absence** — what has no counterpart. A person who appears everywhere and has no card. A thing whose date is not in the future. A category nothing is filed under. **A personal graph gets asked this constantly, and it is the hardest thing to express**, because every filter says which records to keep and no record is there to keep.
 * **Aggregates** — counting, summing, grouping, and comparing two results. A filter returns a list. Some questions want a number.
 * **Full text over prose**, including journals and past sessions.
-* **Field-level visibility on one record.** A colleague's charter is public. Their mail is not.
+* **Field-level visibility on one record.** A colleague's charter is public. Its mail is readable only from above it on the chart.
 
 ⚠️ **An absence answer names the population it searched.** *Nothing among these* is an answer a reader can act on. *There is none* is a claim no query can support. **An under-scoped filter that reports its empty result as a finding is the fabrication failure arriving through a read.** That is the one direction nobody watches.
 
