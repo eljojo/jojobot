@@ -246,29 +246,6 @@ struct RecallInput {
 const RECALL_DEFAULT_LIMIT: usize = 50;
 const RECALL_MOST: usize = 200;
 
-/// **What `recall` served**: the objects the app may read, each as its handle,
-/// name, kind and folded fields.
-#[derive(Debug, Serialize)]
-pub struct RecalledView {
-    /// The objects, in the order the selection gave them.
-    pub objects: Vec<RecalledObject>,
-    /// How many objects the page left out.
-    pub left_out: usize,
-}
-
-/// **One object of a read.**
-#[derive(Debug, Serialize)]
-pub struct RecalledObject {
-    /// The handle.
-    pub handle: String,
-    /// The name.
-    pub name: String,
-    /// The kind's token.
-    pub kind: String,
-    /// What the object holds now, one value for each key.
-    pub fields: std::collections::BTreeMap<String, String>,
-}
-
 /// **`recall` for an app**: the verb's own question, prepared with no asker, so the
 /// app reads what nobody owns and never a run, a usage record or a bot's own
 /// thing. The grant is yes or no.
@@ -319,29 +296,9 @@ async fn recall(call: Call) -> Answer {
             };
         }
     };
-    let held = answered.selected.objects.len();
-    let objects = answered
-        .selected
-        .objects
-        .into_iter()
-        .take(limit)
-        .map(|object| {
-            let mut fields = object.fields;
-            if let Some(keep) = &only_keys {
-                fields.retain(|key, _| keep.contains(key));
-            }
-            RecalledObject {
-                handle: object.entity.id.to_string(),
-                name: object.entity.name,
-                kind: object.entity.kind.as_token().to_string(),
-                fields,
-            }
-        })
-        .collect::<Vec<_>>();
-    done(&RecalledView {
-        left_out: held - objects.len(),
-        objects,
-    })
+    Answer::Done(
+        jojobot_query_api::RecalledView::of(answered, only_keys.as_deref(), limit).to_json(),
+    )
 }
 
 async fn capture(call: Call) -> Answer {

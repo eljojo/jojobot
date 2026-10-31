@@ -4,6 +4,7 @@ mod answer;
 mod list_ticks;
 mod mail;
 mod question;
+mod recalled;
 
 #[cfg(doctest)]
 #[path = "boundary.rs"]
@@ -17,6 +18,7 @@ pub use jojobot_domain::memory::{EntityId, FieldAges, FieldBacking, MemoryError}
 pub use list_ticks::TickRead;
 pub use mail::{MailHandle, MailRail, OperatorIs, OperatorMail, OperatorMailCommands, Refused};
 pub use question::{Asks, Question, Readiness, parse_date};
+pub use recalled::{RecalledObject, RecalledView};
 
 use std::sync::Arc;
 
