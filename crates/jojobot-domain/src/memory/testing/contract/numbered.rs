@@ -1398,6 +1398,7 @@ pub async fn run_all_numbered<M: Memory>(store: &M) {
     a_member_is_named_by_its_number_and_the_collection_says_the_next(store).await;
     a_number_is_held_by_one_member_and_a_bad_value_is_refused(store).await;
     the_whole_subtree_is_the_scope_and_a_thing_outside_is_not(store).await;
+    super::numbered_blank::an_edit_that_sets_a_blank_number_is_refused_like_a_capture(store).await;
     a_number_nobody_holds_is_unknown_and_offers_the_numbers_held(store).await;
     a_numbered_handle_is_never_given_to_a_new_thing(store).await;
     a_collection_is_founded_only_over_members_that_already_keep_its_promise(store).await;

@@ -532,6 +532,17 @@ impl Change {
         }
     }
 
+    /// **What an edit of a record changes**: the subject as it will stand, and the
+    /// keys the edit set blank. The fold reads such a value as unset, so without
+    /// the keys a blank number set on a member that held none would not be seen.
+    pub fn of_update(
+        subject: &EntityId,
+        after: &BTreeMap<String, String>,
+        patch: &super::FactPatch,
+    ) -> Change {
+        Change::of_capture(subject, after, &patch.fields)
+    }
+
     /// **Whether a thing the change leaves in place holds a `numbers_by`**, so a
     /// store that numbers nothing yet still has to ask.
     pub fn sets_numbering(&self) -> bool {

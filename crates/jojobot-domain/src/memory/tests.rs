@@ -1915,6 +1915,12 @@ async fn fake_scopes_a_number_to_the_whole_numbered_subtree_and_no_further() {
 }
 
 #[tokio::test]
+async fn fake_refuses_a_blank_number_in_an_edit_as_in_a_capture() {
+    contract::an_edit_that_sets_a_blank_number_is_refused_like_a_capture(&InMemoryMemory::booted())
+        .await;
+}
+
+#[tokio::test]
 async fn fake_leaves_a_next_number_above_the_highest_a_member_can_hold() {
     contract::the_highest_number_a_member_can_hold_still_leaves_a_next(&InMemoryMemory::booted())
         .await;

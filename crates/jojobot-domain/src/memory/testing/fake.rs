@@ -4096,10 +4096,7 @@ impl Memory for InMemoryMemory {
             )?;
         }
         self.guards_numbering(
-            &super::super::numbered::Change {
-                holds: vec![(handle.clone(), after.clone())],
-                ..Default::default()
-            },
+            &super::super::numbered::Change::of_update(&handle, &after, &patch),
             None,
             &self.known(),
             &facts,

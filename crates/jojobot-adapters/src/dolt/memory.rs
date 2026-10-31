@@ -5690,10 +5690,7 @@ impl Memory for DoltMemory {
         }
         self.guard_numbering(
             &mut tx,
-            &jojobot_domain::memory::numbered::Change {
-                holds: vec![(handle.clone(), served_after.clone())],
-                ..Default::default()
-            },
+            &jojobot_domain::memory::numbered::Change::of_update(&handle, &served_after, &patch),
             None,
         )
         .await?;
