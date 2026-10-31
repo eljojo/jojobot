@@ -29,6 +29,19 @@ async fn answered(pool: &sqlx::MySqlPool) -> i64 {
     count.parse().expect("a count")
 }
 
+/// **Open every connection the pool may hold, then give them back.** The server's
+/// counter includes the statements a connection runs when it is opened, and the
+/// read goes through the pool in parallel, so how many connections it opens
+/// during the count depends on timing. With the pool full beforehand the read
+/// opens none, and the count follows the read alone.
+async fn fill_the_pool(pool: &sqlx::MySqlPool) {
+    let mut held = Vec::new();
+    for _ in 0..pool.options().get_max_connections() {
+        held.push(pool.acquire().await.expect("a connection"));
+    }
+    drop(held);
+}
+
 /// **A database of `things` things with `claims` claims each, and the statements
 /// one full read of it sends.** Every claim carries fields and a connection edge
 /// to one of two things, so the read has pointers to resolve.
@@ -71,6 +84,7 @@ async fn statements_of_a_full_read(store: &Dolt, name: &str, things: usize, clai
         }
     }
     let folded = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
+    fill_the_pool(&pool).await;
     let before = answered(&pool).await;
     folded.rebuild().await.expect("the image fills");
     let after = answered(&pool).await;
@@ -114,5 +128,32 @@ async fn the_full_read_sends_statements_by_thing_and_not_by_claim() {
         many_claims <= 2 * half_the_things + 20,
         "twice the things sent {many_claims} statements against {half_the_things}"
     );
+    store.stop().await;
+}
+
+/// **The premise the count above rests on.** A connection the pool opens runs
+/// statements the server counts, and a pool that is already full opens none. If
+/// the first stopped being true the warm-up would be needless; if the second
+/// did, the count would move with timing again.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_connection_the_pool_opens_is_counted_and_a_full_pool_opens_none() {
+    let scratch = Scratch::new("fold-read-connections");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store.database("connections").await.expect("a database");
+
+    let before = answered(&pool).await;
+    fill_the_pool(&pool).await;
+    let opened = answered(&pool).await - before - 1;
+    assert!(
+        opened >= 3,
+        "the three connections the pool opened were not counted: {opened}"
+    );
+
+    let before = answered(&pool).await;
+    fill_the_pool(&pool).await;
+    let again = answered(&pool).await - before - 1;
+    assert_eq!(again, 0, "a full pool opened a connection: {again}");
     store.stop().await;
 }
