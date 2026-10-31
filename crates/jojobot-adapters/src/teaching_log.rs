@@ -14,7 +14,11 @@ use jojobot_domain::log::{Append, BatchId, LogError, LogStore, Position, SealedB
 use jojobot_domain::session::Sid;
 use jojobot_domain::teaching::events::{RunId, State, TeachingEvent};
 use jojobot_domain::teaching::{TeachingError, Teachings};
+use std::collections::BTreeSet;
 use tokio::sync::Mutex;
+
+use crate::dolt_log::{Companion, DoltLog};
+use crate::fold::teachings::{held_after_contact, held_after_forget};
 
 pub mod codec;
 
@@ -35,6 +39,93 @@ pub struct Mark {
 struct Held {
     state: State,
     head: Position,
+    shadow: Option<Shadow>,
+}
+
+/// A log that commits legacy-row statements with its batches.
+#[async_trait::async_trait]
+pub trait CompanionLog: LogStore {
+    async fn append_with(
+        &self,
+        head: Position,
+        batch: &SealedBatch,
+        companions: Vec<Companion>,
+    ) -> Result<Append, LogError>;
+}
+
+#[async_trait::async_trait]
+impl CompanionLog for DoltLog {
+    async fn append_with(
+        &self,
+        head: Position,
+        batch: &SealedBatch,
+        companions: Vec<Companion>,
+    ) -> Result<Append, LogError> {
+        DoltLog::append_with(self, head, batch, companions).await
+    }
+}
+
+/// What the shadow has counted: reads compared against the old held set, and
+/// the ones that differed.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ShadowCounts {
+    pub comparisons: u64,
+    pub disagreements: u64,
+}
+
+/// The old path beside the log: its held set, run through the old transition
+/// code, and the legacy rows its statements keep current in the batch's own
+/// transaction.
+struct Shadow {
+    log: Arc<dyn CompanionLog>,
+    legacy: BTreeSet<(Sid, String)>,
+    counts: ShadowCounts,
+}
+
+impl Shadow {
+    fn compare(&mut self, sid: &Sid, domain: &str, log_holds: bool) {
+        self.counts.comparisons += 1;
+        let legacy_holds = self.legacy.contains(&(sid.clone(), domain.to_string()));
+        if legacy_holds != log_holds {
+            self.counts.disagreements += 1;
+            tracing::error!(
+                run = sid.as_str(),
+                domain,
+                log_holds,
+                legacy_holds,
+                "teaching shadow: the log and the old held set disagree (the log is served)"
+            );
+        }
+    }
+
+    fn statement(event: &TeachingEvent) -> Companion {
+        match event {
+            TeachingEvent::Recorded {
+                run,
+                domain,
+                taught_at,
+            } => Companion {
+                sql: "INSERT INTO session_teaching (sid, domain, taught_at) VALUES (?, ?, ?)"
+                    .into(),
+                binds: vec![run.0.clone(), domain.clone(), taught_at.to_string()],
+            },
+            TeachingEvent::Cleared { run } => Companion {
+                sql: "DELETE FROM session_teaching WHERE sid = ?".into(),
+                binds: vec![run.0.clone()],
+            },
+        }
+    }
+
+    fn follow(&mut self, event: &TeachingEvent) {
+        match event {
+            TeachingEvent::Recorded { run, domain, .. } => {
+                held_after_contact(&mut self.legacy, (Sid(run.0.clone()), domain.clone()))
+            }
+            TeachingEvent::Cleared { run } => {
+                held_after_forget(&mut self.legacy, &Sid(run.0.clone()))
+            }
+        }
+    }
 }
 
 /// The teaching ledger, answered from the log.
@@ -69,8 +160,52 @@ impl LoggedTeachings {
             held: Arc::new(Mutex::new(Held {
                 state: State::default(),
                 head: Position::default(),
+                shadow: None,
             })),
         };
+        this.fill(marks).await?;
+        Ok(this)
+    }
+
+    /// **Open with the old path as a shadow.** Every batch carries the legacy
+    /// row statements, and `marks` seed the old held set. The counts say how
+    /// often the two answered and how often they differed.
+    pub async fn open_shadowed<L: CompanionLog + 'static>(
+        log: Arc<L>,
+        marks: &[Mark],
+    ) -> Result<Self, TeachingError> {
+        let this = Self {
+            log: log.clone(),
+            held: Arc::new(Mutex::new(Held {
+                state: State::default(),
+                head: Position::default(),
+                shadow: Some(Shadow {
+                    log,
+                    legacy: marks
+                        .iter()
+                        .map(|m| (m.sid.clone(), m.domain.clone()))
+                        .collect(),
+                    counts: ShadowCounts::default(),
+                }),
+            })),
+        };
+        this.fill(marks).await?;
+        Ok(this)
+    }
+
+    /// What the shadow has counted; zero when there is none.
+    pub async fn shadow_counts(&self) -> ShadowCounts {
+        self.held
+            .lock()
+            .await
+            .shadow
+            .as_ref()
+            .map(|s| s.counts)
+            .unwrap_or_default()
+    }
+
+    async fn fill(&self, marks: &[Mark]) -> Result<(), TeachingError> {
+        let this = self;
         {
             let mut held = this.held.lock().await;
             this.catch_up(&mut held).await?;
@@ -90,10 +225,10 @@ impl LoggedTeachings {
                         taught_at: mark.taught_at,
                     })
                     .collect();
-                this.commit(&mut held, events, at).await?;
+                this.commit(&mut held, events, at, false).await?;
             }
         }
-        Ok(this)
+        Ok(())
     }
 
     /// Apply every committed batch after the held head. A tail whose commit is
@@ -124,6 +259,7 @@ impl LoggedTeachings {
         held: &mut Held,
         events: Vec<TeachingEvent>,
         at: Timestamp,
+        with_rows: bool,
     ) -> Result<(), TeachingError> {
         let members: Vec<Vec<u8>> = events.iter().map(codec::encode).collect();
         let identity = jojobot_domain::request::digest_of(&format!(
@@ -143,10 +279,21 @@ impl LoggedTeachings {
             members,
         )
         .map_err(refused)?;
-        match self.log.append(held.head, &batch).await.map_err(refused)? {
+        // The import's rows already exist, so only a live write carries them.
+        let appended = match held.shadow.as_ref().filter(|_| with_rows) {
+            Some(shadow) => {
+                let companions = events.iter().map(Shadow::statement).collect();
+                shadow.log.append_with(held.head, &batch, companions).await
+            }
+            None => self.log.append(held.head, &batch).await,
+        };
+        match appended.map_err(refused)? {
             Append::Committed(range) => {
                 for event in &events {
                     held.state.apply(event);
+                    if let Some(shadow) = held.shadow.as_mut() {
+                        shadow.follow(event);
+                    }
                 }
                 held.head = range.last;
                 Ok(())
@@ -173,8 +320,11 @@ impl Teachings for LoggedTeachings {
             .state
             .first_contact(&run(sid), domain, at)
             .map_err(|refusal| TeachingError::Refused(refusal.to_string()))?;
+        if let Some(shadow) = held.shadow.as_mut() {
+            shadow.compare(sid, domain, !prepared.answer);
+        }
         if !prepared.events.is_empty() {
-            self.commit(&mut held, prepared.events, at).await?;
+            self.commit(&mut held, prepared.events, at, true).await?;
         }
         Ok(prepared.answer)
     }
@@ -196,7 +346,7 @@ impl Teachings for LoggedTeachings {
                 .last()
                 .map(|(_, _, at)| *at)
                 .unwrap_or_default();
-            self.commit(&mut held, prepared.events, at).await?;
+            self.commit(&mut held, prepared.events, at, true).await?;
         }
         Ok(())
     }

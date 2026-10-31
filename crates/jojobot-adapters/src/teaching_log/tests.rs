@@ -1,5 +1,5 @@
 use jojobot_domain::log::testing::{Fault, FaultLog, InMemoryLog};
-use jojobot_domain::log::{LogStore, Position};
+use jojobot_domain::log::{LogStore, Position, ValidatedSnapshot};
 use jojobot_domain::teaching::events::{RunId, TeachingEvent};
 use jojobot_domain::teaching::{DOMAIN_WIDTH, TeachingError};
 
@@ -245,4 +245,125 @@ async fn an_unresolved_append_is_not_answered_and_blocks_the_next_write() {
             .unwrap(),
         "the commit that landed is read back from the log, so the mark is already held"
     );
+}
+
+/// A log that keeps the legacy rows as the Dolt log does: each batch's
+/// statements apply with it, and a row inserted twice is refused, as the
+/// table's key refuses it.
+#[derive(Clone, Default)]
+struct RowLog {
+    log: InMemoryLog,
+    rows: Arc<std::sync::Mutex<std::collections::BTreeMap<(String, String), String>>>,
+}
+
+#[async_trait::async_trait]
+impl LogStore for RowLog {
+    async fn append(&self, head: Position, batch: &SealedBatch) -> Result<Append, LogError> {
+        self.log.append(head, batch).await
+    }
+    async fn read_from(
+        &self,
+        position: Position,
+        bound: usize,
+    ) -> Result<Vec<SealedBatch>, LogError> {
+        self.log.read_from(position, bound).await
+    }
+    async fn load_snapshot(&self) -> Result<Option<ValidatedSnapshot>, LogError> {
+        self.log.load_snapshot().await
+    }
+    async fn store_snapshot(&self, snapshot: &ValidatedSnapshot) -> Result<(), LogError> {
+        self.log.store_snapshot(snapshot).await
+    }
+}
+
+#[async_trait::async_trait]
+impl CompanionLog for RowLog {
+    async fn append_with(
+        &self,
+        head: Position,
+        batch: &SealedBatch,
+        companions: Vec<Companion>,
+    ) -> Result<Append, LogError> {
+        let mut staged = self.rows.lock().unwrap().clone();
+        for companion in &companions {
+            if companion.sql.starts_with("INSERT") {
+                let key = (companion.binds[0].clone(), companion.binds[1].clone());
+                if staged.insert(key, companion.binds[2].clone()).is_some() {
+                    return Ok(Append::DefinitelyNotCommitted);
+                }
+            } else {
+                staged.retain(|(sid, _), _| *sid != companion.binds[0]);
+            }
+        }
+        let appended = self.log.append(head, batch).await?;
+        if matches!(appended, Append::Committed(_)) {
+            *self.rows.lock().unwrap() = staged;
+        }
+        Ok(appended)
+    }
+}
+
+fn row_keys(log: &RowLog) -> Vec<(String, String)> {
+    log.rows.lock().unwrap().keys().cloned().collect()
+}
+
+/// **The legacy rows follow every write in the batch's own commit**, the import
+/// adds none, and the shadow compares each contact and finds no disagreement.
+#[tokio::test]
+async fn the_shadow_keeps_the_rows_and_agrees() {
+    let log = RowLog::default();
+    log.rows.lock().unwrap().insert(
+        ("homer".to_string(), "claims".to_string()),
+        at(3).to_string(),
+    );
+    let teachings =
+        LoggedTeachings::open_shadowed(Arc::new(log.clone()), &[mark("homer", "claims", 3)])
+            .await
+            .unwrap();
+    let homer = vec![("homer".to_string(), "claims".to_string())];
+    assert_eq!(row_keys(&log), homer);
+    assert!(
+        !teachings
+            .first_contact(&sid("homer"), "claims", at(4))
+            .await
+            .unwrap()
+    );
+    assert!(
+        teachings
+            .first_contact(&sid("marge"), "mail", at(5))
+            .await
+            .unwrap()
+    );
+    assert!(
+        teachings
+            .first_contact(&sid("marge"), "claims", at(6))
+            .await
+            .unwrap()
+    );
+    assert_eq!(row_keys(&log).len(), 3);
+    teachings.forget(&sid("marge")).await.unwrap();
+    assert_eq!(row_keys(&log), homer);
+    let counts = teachings.shadow_counts().await;
+    assert_eq!(counts.comparisons, 3);
+    assert_eq!(counts.disagreements, 0);
+}
+
+/// **A deliberately divergent old set is detected**, with nonzero comparisons.
+#[tokio::test]
+async fn a_divergent_old_set_is_counted() {
+    let log = RowLog::default();
+    LoggedTeachings::open(Arc::new(log.clone()), &[mark("bart", "mail", 1)])
+        .await
+        .unwrap();
+    let teachings =
+        LoggedTeachings::open_shadowed(Arc::new(log.clone()), &[mark("homer", "claims", 3)])
+            .await
+            .unwrap();
+    teachings
+        .first_contact(&sid("homer"), "claims", at(4))
+        .await
+        .ok();
+    let counts = teachings.shadow_counts().await;
+    assert_eq!(counts.comparisons, 1);
+    assert_eq!(counts.disagreements, 1);
 }

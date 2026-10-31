@@ -27,6 +27,17 @@ use crate::writer::{Writer, owned};
 
 type Ledger = BTreeSet<(Sid, String)>;
 
+/// The held set after a contact landed. The teaching shadow runs this same
+/// transition, so the two paths cannot drift in how they hold a pair.
+pub(crate) fn held_after_contact(taught: &mut Ledger, pair: (Sid, String)) {
+    taught.insert(pair);
+}
+
+/// The held set after a forget landed.
+pub(crate) fn held_after_forget(taught: &mut Ledger, sid: &Sid) {
+    taught.retain(|(held, _)| held != sid);
+}
+
 /// TEMPORARY(9.3.3) the teaching ledger's RAM copy and its refill from the
 /// store. The projection of `jojobot_domain::teaching::events::State` replaces
 /// it, and it goes at 9.3.3.
@@ -182,10 +193,8 @@ impl Teachings for FoldedTeachings {
                 return Ok(false);
             }
             let first = self.inner.first_contact(sid, domain, at).await?;
-            self.follow("first_contact", |taught| {
-                taught.insert(pair);
-            })
-            .await;
+            self.follow("first_contact", |taught| held_after_contact(taught, pair))
+                .await;
             Ok(first)
         })
         .await
@@ -205,7 +214,7 @@ impl Teachings for FoldedTeachings {
         owned!(self, this, [sid = sid.clone()], this.forget(&sid).await);
         self.scoped(async {
             self.inner.forget(sid).await?;
-            self.follow("forget", |taught| taught.retain(|(held, _)| held != sid))
+            self.follow("forget", |taught| held_after_forget(taught, sid))
                 .await;
             Ok(())
         })
