@@ -1135,13 +1135,27 @@ async fn a_note_on_a_dock_linked_by_reference_reddens_only_the_theta_selection_l
 /// is not one, so a lock that sends none leaves the count where it was.
 #[tokio::test]
 async fn a_lock_reads_the_handles_it_names_through_the_grader_and_sends_no_mcp_request() {
-    let (room, surface, _sid) = furnished().await;
+    let (room, surface, sid) = furnished().await;
+    file_the_ticket_deadline(
+        &surface,
+        &sid,
+        "event:wagstaff-fair",
+        json!({"runs_out": "2026-10-10"}),
+    )
+    .await;
     let lock = lock_named(FAIR_DEADLINE_FRAGMENT);
     let sent = || jojobot_exercise::timing::server_time(&room.server_log()).requests;
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     let before = sent();
     let outcome = held(&surface, &lock).await;
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    // The lock holds only when its read found the day the sitting filed, so the
+    // count below is a count taken over a read that happened.
+    assert!(
+        outcome.held,
+        "the lock did not read the filed day: {}",
+        outcome.saying
+    );
     assert_eq!(
         sent(),
         before,
