@@ -58,6 +58,10 @@ const OPENS_ON_THE_WALL_CLOCK: &[(&str, &str)] = &[
         "day_claimed.rs",
         "its boundaries are built by hand; the room is a prop it never asks",
     ),
+    (
+        "changes_cursor.rs",
+        "asserts on which handles a read reports as created, matches no date",
+    ),
     ("isolate.rs", "its needles are marker words, no dates"),
     ("seen_question.rs", "its needles are handles, no dates"),
     (
