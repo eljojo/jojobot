@@ -66,6 +66,7 @@ async fn a_failed_refusal_count_read_keeps_the_sitting_already_run() {
              echo launched >> '{launches}'\n\
              i=0\n\
              while [ ! -s '{pidfile}' ] && [ \"$i\" -lt 100 ]; do sleep 0.1; i=$((i+1)); done\n\
+             sleep 0.5\n\
              kill -9 \"$(cat '{pidfile}')\"\n\
              echo 'the first sitting said this'\n",
             launches = launches.display(),
@@ -79,13 +80,18 @@ async fn a_failed_refusal_count_read_keeps_the_sitting_already_run() {
     let watcher = tokio::spawn(async move {
         loop {
             // The jojobot server is the parent of the store, and this process is
-            // the server's parent.
-            let found = room_servers()
+            // the server's parent. **The newest one**, kept up to date: opening a
+            // room can start a template server first, and the room the run reads
+            // is the one started after it.
+            let newest = room_servers()
                 .into_iter()
-                .find(|room| parent_of(room.parent) == Some(me));
-            if let Some(room) = found {
-                std::fs::write(&watch, room.parent.to_string()).expect("the pid is written");
-                return;
+                .filter(|room| parent_of(room.parent) == Some(me))
+                .map(|room| room.parent)
+                .max();
+            if let Some(server) = newest {
+                let staged = watch.with_extension("staged");
+                std::fs::write(&staged, server.to_string()).expect("the pid is staged");
+                std::fs::rename(&staged, &watch).expect("the pid is written");
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
