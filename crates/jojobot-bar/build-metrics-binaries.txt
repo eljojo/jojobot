@@ -33,6 +33,7 @@ test-boot_store_refuses_when_the_store_cannot_come_up
 test-boot_store_survives_a_downstream_read_failure
 test-branch_prune
 test-build_metrics
+test-bundle_run
 test-carried
 test-changes_dolt
 test-check_report
