@@ -108,6 +108,21 @@ pub struct OwedPass {
     pub by_days: BTreeMap<EntityId, Option<i64>>,
     /// Why each kept object that cannot say when it falls due cannot.
     pub unreadable_because: BTreeMap<EntityId, attention::Unreadable>,
+    /// **Every object the pass was asked of, dropped ones included**, with the
+    /// day it falls due and how far that is from the day measured from, worked
+    /// out before any object is dropped. Read off the same `Due` the order and
+    /// `by_days` come from, so the day and the lateness cannot disagree.
+    pub marks: BTreeMap<EntityId, DueMark>,
+}
+
+/// **What the owed pass reads of one object's due day.**
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DueMark {
+    /// When it falls due, or why it has no day to say.
+    pub due: attention::Due,
+    /// Days past its day on the date measured from (below zero: days ahead);
+    /// `None` when it has no day.
+    pub days_overdue: Option<i64>,
 }
 
 /// **Why the owed pass left an object out.** An object is in exactly one.

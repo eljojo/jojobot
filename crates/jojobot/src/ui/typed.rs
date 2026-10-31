@@ -179,9 +179,8 @@ pub fn work(
 }
 
 /// **A rhythm as a loop**: how often it comes round, when it was last checked in,
-/// when it falls due next, and how late it is. The due day is the one the domain
-/// computes from the loop's keys ([`attention::owed`]), and today is the day in
-/// the instance's zone.
+/// when it falls due next, and how late it is. The due day is the query API's mark,
+/// the one `recall` serves a bot, and today is the day in the instance's zone.
 pub async fn rhythm(
     state: &AppState,
     queries: &jojobot_query_api::QueryHandle,
@@ -194,24 +193,35 @@ pub async fn rhythm(
         &pages::instance_fields(queries).await.unwrap_or_default(),
     );
     let today = state.clock.today_in(&frame);
-    let carriers = attention::shipped();
-    let carriers: Vec<&dyn attention::Carrier> =
-        carriers.iter().map(std::convert::AsRef::as_ref).collect();
-    let (next, late) = match attention::owed(&carriers, held) {
-        attention::Due::On(day) => (
+    // **The due day is the owed pass's mark**, the one `recall` and the due view
+    // work their order and lateness from, kept for a loop the pass drops as
+    // not yet due.
+    let mut asked = jojobot_query_api::Question::about(rhythm.id.clone(), None, None);
+    asked.asks.overdue = Some(today);
+    let owed = queries
+        .ask(&jojobot_domain::actor::Actor::Operator, asked)
+        .await
+        .ok()
+        .and_then(|answered| answered.narrowed.owed);
+    let marked = owed
+        .as_ref()
+        .and_then(|pass| pass.marks.get(&rhythm.id).copied());
+    let (next, late) = match marked.map(|mark| (mark.due, mark.days_overdue)) {
+        Some((attention::Due::On(day), overdue)) => (
             format!("next due {day}"),
-            attention::Due::On(day)
-                .days_overdue(today)
+            overdue
                 .filter(|days| *days > 0)
                 .map(|days| format!("{days} days overdue (fell due {day})")),
         ),
-        attention::Due::NotYetOpened => ("not checked in yet".to_string(), None),
-        attention::Due::Unreadable => (
+        Some((attention::Due::NotYetOpened, _)) => ("not checked in yet".to_string(), None),
+        Some((attention::Due::Never, _)) => ("nothing falls due".to_string(), None),
+        // A mark that cannot say, or an answer that could not be read, is said so.
+        Some((attention::Due::Unreadable, _)) | None => (
             "next due cannot be worked out from its keys".to_string(),
             None,
         ),
-        attention::Due::Never => ("nothing falls due".to_string(), None),
     };
+    let is_late = late.is_some();
     let mut rows = format!(
         "<dt>cadence</dt><dd>{}</dd><dt>last check-in</dt><dd>{}</dd><dd>{}</dd>",
         attention::cadence_in_words(held).map_or("—".to_string(), |said| pages::escape(&said)),
@@ -223,16 +233,11 @@ pub async fn rhythm(
     }
     shell::boxed_as(
         "rhythm",
-        late_is_live(&rows),
+        is_late,
         &pages::escape(&rhythm.name),
         "",
         &format!("<dl class=\"kv\">{rows}</dl>"),
     )
-}
-
-/// A loop that is late is the page's live box (vermilion).
-fn late_is_live(rows: &str) -> bool {
-    rows.contains("class=\"late\"")
 }
 
 /// **A thread's or a topic's standing decisions**, each a link to the decision with the latest

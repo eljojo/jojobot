@@ -12,8 +12,8 @@ mod runs;
 mod read_path_boundary;
 
 pub use answer::{
-    Answered, Backing, Board, Failed, LeftOut, Narrowed, OwedPass, ReadyPass, TickCell, Verdict,
-    ViewAnswer, ViewOutcome,
+    Answered, Backing, Board, DueMark, Failed, LeftOut, Narrowed, OwedPass, ReadyPass, TickCell,
+    Verdict, ViewAnswer, ViewOutcome,
 };
 pub use jojobot_domain::memory::graph::{GraphQuery, Include, Object, Selected, Selection};
 pub use jojobot_domain::memory::{EntityId, FieldAges, FieldBacking, MemoryError};

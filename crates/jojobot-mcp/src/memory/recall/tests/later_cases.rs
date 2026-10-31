@@ -554,3 +554,128 @@ async fn the_plan_beside_unreviewed_serves_each_piece_its_own_readiness() {
         "{answered}"
     );
 }
+
+/// A loop with only the keys given, made under a thing.
+async fn a_loop_holding(jojobot: &Jojobot, handle: &str, keys: &[(&str, &str)]) {
+    ensure(jojobot, "thing:kettle").await;
+    jojobot
+        .add_entity(Parameters(AddEntityArgs {
+            parent: Some("thing:kettle".into()),
+            ..add_args("rhythm", handle, handle)
+        }))
+        .await
+        .expect("add ok");
+    if keys.is_empty() {
+        return;
+    }
+    capture_ok(
+        jojobot,
+        CaptureArgs {
+            sets: Some(
+                keys.iter()
+                    .map(|(key, value)| (key.to_string(), value.to_string()))
+                    .collect(),
+            ),
+            ..capture_args(&format!("rhythm:{handle}"), "the loop, set up")
+        },
+    )
+    .await;
+}
+
+/// **The owed pass marks every object it was asked of, the ones it drops too.**
+/// One loop per way a due day reads, asked as of 2026-08-10: late, due that day,
+/// a day ahead (dropped, still marked), a cadence never checked in, no schedule
+/// at all, and a schedule half written. The kept ones are the owed ones; the marks
+/// are all six.
+#[tokio::test]
+async fn the_owed_pass_marks_every_object_it_was_asked_of_whether_or_not_it_keeps_it() {
+    use crate::memory::view_run::{self, DueMark};
+    use jojobot_domain::attention;
+
+    let memory = Arc::new(InMemoryMemory::booted());
+    let jojobot = handler_over(memory.clone());
+    a_rhythm(&jojobot, "alpha", "7", "2026-08-01").await;
+    a_rhythm(&jojobot, "omega", "7", "2026-08-03").await;
+    a_rhythm(&jojobot, "sigma", "90", "2026-08-01").await;
+    a_loop_holding(
+        &jojobot,
+        "kappa",
+        &[("cadence_days", "7"), ("advances_from", "due_date")],
+    )
+    .await;
+    a_loop_holding(&jojobot, "theta", &[]).await;
+    // A schedule half written: no verb writes it now, so it goes past the guard.
+    a_loop_holding(&jojobot, "lambda", &[]).await;
+    memory.fields_past_the_guard(
+        &EntityId("rhythm:lambda".into()),
+        &[("advances_from", "due_date")],
+    );
+
+    let question = view_run::Question::new(
+        jojobot_domain::memory::graph::Selection {
+            kind: Some(EntityKind::RHYTHM),
+            ..Default::default()
+        },
+        jojobot_domain::memory::graph::Include::default(),
+        None,
+        None,
+    );
+    let mut selected = view_run::select(memory.as_ref(), &[], &question.query, None)
+        .await
+        .unwrap_or_else(|_| panic!("the rhythms are selected"));
+    let carriers = attention::shipped();
+    let carriers: Vec<&dyn attention::Carrier> =
+        carriers.iter().map(std::convert::AsRef::as_ref).collect();
+    let day = "2026-08-10".parse().expect("a day");
+    let pass = view_run::keep_owed(
+        &mut selected.objects,
+        &carriers,
+        &std::collections::BTreeMap::new(),
+        day,
+        day,
+    );
+
+    let mark = |handle: &str| -> DueMark {
+        *pass
+            .marks
+            .get(&EntityId(format!("rhythm:{handle}")))
+            .unwrap_or_else(|| panic!("rhythm:{handle} has a mark"))
+    };
+    let on = |day: &str| attention::Due::On(day.parse().expect("a day"));
+    assert_eq!(
+        pass.marks.len(),
+        6,
+        "every object is marked: {:?}",
+        pass.marks
+    );
+    assert_eq!(
+        (mark("alpha").due, mark("alpha").days_overdue),
+        (on("2026-08-08"), Some(2))
+    );
+    assert_eq!(
+        (mark("omega").due, mark("omega").days_overdue),
+        (on("2026-08-10"), Some(0))
+    );
+    assert_eq!(
+        (mark("sigma").due, mark("sigma").days_overdue),
+        (on("2026-10-30"), Some(-81)),
+        "a loop not yet due is dropped from the found and still marked"
+    );
+    assert_eq!(mark("kappa").due, attention::Due::NotYetOpened);
+    assert_eq!(mark("theta").due, attention::Due::Never);
+    assert_eq!(mark("lambda").due, attention::Due::Unreadable);
+    assert_eq!(mark("lambda").days_overdue, None);
+
+    let mut kept: Vec<_> = selected
+        .objects
+        .iter()
+        .map(|object| object.entity.id.0.clone())
+        .collect();
+    kept.sort();
+    assert_eq!(
+        kept,
+        ["rhythm:alpha", "rhythm:lambda", "rhythm:omega"],
+        "what the pass keeps is unchanged by the marks"
+    );
+    assert_eq!(pass.excluded, 3);
+}

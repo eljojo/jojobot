@@ -30,8 +30,8 @@ pub(crate) use named::{Binding, bind_view, board_of};
 use super::list_ticks::TickRead;
 use super::ready;
 pub use jojobot_query_api::{
-    Answered, Asks, Failed, LeftOut, Narrowed, OwedPass, Question, Readiness, ReadyPass, TickCell,
-    Verdict,
+    Answered, Asks, DueMark, Failed, LeftOut, Narrowed, OwedPass, Question, Readiness, ReadyPass,
+    TickCell, Verdict,
 };
 
 /// Build the read facade from the two read dependencies, without the MCP
@@ -459,6 +459,16 @@ pub fn keep_owed(
     measured_from: jiff::civil::Date,
 ) -> OwedPass {
     let before = found.len();
+    // **Marked before anything is dropped**, so a loop that is not yet due still
+    // says when it will be.
+    let marks = found
+        .iter()
+        .map(|object| {
+            let due = owed_by(carriers, object, instance);
+            let days_overdue = due.days_overdue(measured_from);
+            (object.entity.id.clone(), DueMark { due, days_overdue })
+        })
+        .collect();
     let mut excluded_because: BTreeMap<LeftOut, BTreeMap<String, usize>> = BTreeMap::new();
     found.retain(|object| {
         let owed = owed_by(carriers, object, instance).owed_on(as_of);
@@ -499,6 +509,7 @@ pub fn keep_owed(
         excluded_because,
         by_days,
         unreadable_because,
+        marks,
     }
 }
 
