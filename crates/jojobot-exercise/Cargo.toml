@@ -119,6 +119,10 @@ name = "globex_lock"
 required-features = ["rooms"]
 
 [[test]]
+name = "grader_refusal_run"
+required-features = ["rooms"]
+
+[[test]]
 name = "handover_room"
 required-features = ["rooms"]
 
