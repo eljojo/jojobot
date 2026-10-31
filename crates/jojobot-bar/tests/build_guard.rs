@@ -330,3 +330,60 @@ fn make_dev_and_make_narrow_run_through_the_guard() {
         );
     }
 }
+
+/// Run `inner` as the build under the guard and the metrics wrapper, the way
+/// the Makefile chains them. A stub `curl` takes the samples, so the local push
+/// needs no network; `metrics_on` sets the opt-in URL and unset leaves it out.
+fn metered(root: &Path, own: &Path, inner: &str, metrics_on: bool) -> Output {
+    support::write_executable(&root.join("curl"), "#!/bin/sh\ncat > /dev/null\n");
+    let metrics = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/build-metrics");
+    let opt_in = if metrics_on {
+        "export JOJOBOT_DEV_METRICS_URL=http://metrics.invalid/import"
+    } else {
+        "unset JOJOBOT_DEV_METRICS_URL"
+    };
+    let command = format!(
+        "cd {root} && PATH={root}:$PATH && export PATH && {opt_in} && \
+         exec python3 {metrics} run narrow -- sh -c '{inner}'",
+        root = root.display(),
+        metrics = metrics.display(),
+    );
+    guard(root, own, "own", &command)
+}
+
+/// **A build killed by a signal leaves the marker whether or not build metrics
+/// are on.** The metrics wrapper reports the child's end as it was, so the guard,
+/// which alone decides that a build was interrupted, sees the signal. The same
+/// kill with metrics unset is the control, and a build that fails by itself
+/// beside it removes the marker, so a marker that stays is not a marker that
+/// never goes.
+#[test]
+fn a_killed_build_leaves_the_marker_with_build_metrics_on_and_off() {
+    for metrics_on in [true, false] {
+        let root = scratch(if metrics_on {
+            "metered-kill"
+        } else {
+            "bare-kill"
+        });
+        let own = root.join("own");
+        unit(&own, "touched");
+        let out = metered(&root, &own, "kill -9 $$", metrics_on);
+        assert_eq!(out.status.code(), Some(137), "{}", said(&out));
+        assert!(
+            own.join(".build-guard.json").exists(),
+            "the marker was dropped with metrics_on={metrics_on}"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    let root = scratch("metered-fail");
+    let own = root.join("own");
+    unit(&own, "touched");
+    let out = metered(&root, &own, "exit 1", true);
+    assert_eq!(out.status.code(), Some(1), "{}", said(&out));
+    assert!(
+        !own.join(".build-guard.json").exists(),
+        "a build that failed by itself kept the marker"
+    );
+    let _ = fs::remove_dir_all(root);
+}

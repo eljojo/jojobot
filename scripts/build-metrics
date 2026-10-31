@@ -32,6 +32,7 @@ from datetime import datetime
 import math
 import os
 from pathlib import Path
+import signal
 import socket
 import subprocess
 import sys
@@ -226,7 +227,15 @@ def local(target, command):
                           "runner": socket.gethostname(), "samples": samples}))
     except (OSError, ValueError, KeyError):
         print("build metrics: samples unavailable; build verdict kept", file=sys.stderr)
-    return result.returncode if result.returncode >= 0 else 128 - result.returncode
+    if result.returncode < 0:
+        # A signal ended the command. Die of the same signal, so the caller (the
+        # build guard) sees an interrupted build and not a normal exit code.
+        try:
+            signal.signal(-result.returncode, signal.SIG_DFL)
+        except (OSError, ValueError):
+            pass  # SIGKILL and SIGSTOP take no handler, so there is none to reset
+        os.kill(os.getpid(), -result.returncode)
+    return result.returncode
 
 
 def main(args):
