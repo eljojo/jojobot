@@ -228,3 +228,62 @@ async fn dolt_log_contract_native_dropped_commit_reply_recovers_exactly_once() {
     proxy.abort();
     server.stop().await;
 }
+
+fn companion_row(sid: &str) -> Companion {
+    Companion {
+        sql: "INSERT INTO session_teaching (sid, domain, taught_at) VALUES (?, ?, ?)".into(),
+        binds: vec![sid.into(), "claims".into(), "2026-01-01T00:00:00Z".into()],
+    }
+}
+
+/// **A companion statement commits with its batch.** The row and the batch are
+/// both there after one append.
+#[tokio::test]
+async fn a_companion_row_commits_with_its_batch() {
+    let (_scratch, mut server, pool, log) = fixture().await;
+    let next = batch("companion", 0, &[b"a"]);
+    assert_eq!(
+        log.append_with(Position(0), &next, vec![companion_row("homer")])
+            .await
+            .unwrap(),
+        Append::Committed(next.range())
+    );
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM session_teaching WHERE sid = 'homer'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(rows, 1);
+    assert_eq!(log.read_from(Position(0), 10).await.unwrap(), [next]);
+    drop(log);
+    server.stop().await;
+}
+
+/// **A companion the server refuses leaves neither the row nor the batch**, and
+/// the log takes the next append at the same head.
+#[tokio::test]
+async fn a_refused_companion_leaves_no_batch() {
+    let (_scratch, mut server, pool, log) = fixture().await;
+    let next = batch("refused", 0, &[b"a"]);
+    let broken = Companion {
+        sql: "INSERT INTO no_such_table (x) VALUES (?)".into(),
+        binds: vec!["1".into()],
+    };
+    assert_eq!(
+        log.append_with(Position(0), &next, vec![companion_row("marge"), broken])
+            .await
+            .unwrap(),
+        Append::DefinitelyNotCommitted
+    );
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM session_teaching WHERE sid = 'marge'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(rows, 0);
+    assert!(log.read_from(Position(0), 10).await.unwrap().is_empty());
+    assert_eq!(
+        log.append(Position(0), &next).await.unwrap(),
+        Append::Committed(next.range())
+    );
+    drop(log);
+    server.stop().await;
+}

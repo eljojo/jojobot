@@ -164,7 +164,12 @@ impl DoltLog {
         Ok(())
     }
 
-    async fn append_owned(&self, head: Position, batch: SealedBatch) -> Result<Append, LogError> {
+    async fn append_owned(
+        &self,
+        head: Position,
+        batch: SealedBatch,
+        companions: Vec<Companion>,
+    ) -> Result<Append, LogError> {
         let mut session = self.0.session.lock().await;
         if self.ready(&mut session).await.is_err() {
             return Ok(Append::Indeterminate);
@@ -219,6 +224,27 @@ impl DoltLog {
         if result.is_err() {
             return Ok(Append::Indeterminate);
         }
+        for companion in &companions {
+            let mut statement = sqlx::query(AssertSqlSafe(companion.sql.clone()));
+            for bind in &companion.binds {
+                statement = statement.bind(bind.clone());
+            }
+            match within(statement.execute(&mut *connection)).await {
+                Ok(_) => {}
+                Err(LogError::Indeterminate) => return Ok(Append::Indeterminate),
+                Err(_) => {
+                    // The server answered with a refusal, so the transaction is
+                    // still open on this connection and rolls back whole.
+                    return match sqlx::raw_sql("ROLLBACK").execute(&mut *connection).await {
+                        Ok(_) => {
+                            session.uncertain = false;
+                            Ok(Append::DefinitelyNotCommitted)
+                        }
+                        Err(_) => Ok(Append::Indeterminate),
+                    };
+                }
+            }
+        }
         #[cfg(any(test, feature = "testing"))]
         if matches!(fault, Some(Fault::BetweenMembers)) {
             sqlx::raw_sql("ROLLBACK")
@@ -248,6 +274,35 @@ impl DoltLog {
     }
 }
 
+/// One statement that commits in the same transaction as an event batch. Its
+/// binds are text.
+#[derive(Clone, Debug)]
+pub struct Companion {
+    pub sql: String,
+    pub binds: Vec<String>,
+}
+
+impl DoltLog {
+    /// **Append a batch and the companion statements as one transaction**, on
+    /// the same lock-holding connection and under the same fence as
+    /// [`LogStore::append`]. A companion the server refuses rolls the whole
+    /// transaction back and answers `DefinitelyNotCommitted`. The legacy rows of
+    /// a family that has not left the old path use this, so the rows and the
+    /// events never disagree.
+    pub async fn append_with(
+        &self,
+        head: Position,
+        batch: &SealedBatch,
+        companions: Vec<Companion>,
+    ) -> Result<Append, LogError> {
+        let log = self.clone();
+        let batch = batch.clone();
+        tokio::spawn(async move { log.append_owned(head, batch, companions).await })
+            .await
+            .map_err(failed)?
+    }
+}
+
 #[async_trait::async_trait]
 impl LogStore for DoltLog {
     async fn append(&self, head: Position, batch: &SealedBatch) -> Result<Append, LogError> {
@@ -259,7 +314,7 @@ impl LogStore for DoltLog {
             Some(Fault::CancelledAcknowledgement)
         );
         // The owner outlives a caller that stops awaiting its acknowledgement.
-        let result = tokio::spawn(async move { log.append_owned(head, batch).await })
+        let result = tokio::spawn(async move { log.append_owned(head, batch, Vec::new()).await })
             .await
             .map_err(failed)?;
         #[cfg(any(test, feature = "testing"))]
