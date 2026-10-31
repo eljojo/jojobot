@@ -389,6 +389,72 @@ fn reporting_to(manager: &str) -> BTreeMap<String, String> {
     [(REPORTS_TO.to_string(), manager.to_string())].into()
 }
 
+/// **A NEW bot is placed by the manager it names or a bot above that one, and
+/// an existing bot with no manager only by the assistant.** The same lineage
+/// answers differently when the write creates the bot: creating grants no
+/// mailbox, adopting does. Paired in one read, so a rule that refused every
+/// creation, or one that let anybody adopt, would not pass.
+#[test]
+fn a_creation_is_placed_by_the_manager_it_names_and_an_adoption_only_by_the_assistant() {
+    let new_bot = handle("bot:alpha");
+    let creating = Lineage {
+        creating: true,
+        ..lineage(&[], Some("bot:omega"), &["bot:beta"])
+    };
+    for placer in ["bot:omega", "bot:beta"] {
+        assert!(
+            refuses_unlicensed_write(
+                &new_bot,
+                &handle(placer),
+                &reporting_to("bot:omega"),
+                Some(&creating)
+            )
+            .is_none(),
+            "{placer} may create the bot under omega"
+        );
+    }
+    let refused = refuses_unlicensed_write(
+        &new_bot,
+        &handle("bot:gamma"),
+        &reporting_to("bot:omega"),
+        Some(&creating),
+    )
+    .expect("a bot outside the named manager's line creates nothing under it");
+    assert!(
+        matches!(
+            &refused,
+            MemoryError::KeyNotYours { allowed, key, .. }
+                if allowed == &vec!["bot:omega".to_string(), "bot:beta".to_string()]
+                    && key == REPORTS_TO
+        ),
+        "{refused:?}"
+    );
+
+    let adopting = lineage(&[], Some("bot:omega"), &["bot:beta"]);
+    for placer in ["bot:omega", "bot:beta"] {
+        assert!(
+            refuses_unlicensed_write(
+                &new_bot,
+                &handle(placer),
+                &reporting_to("bot:omega"),
+                Some(&adopting)
+            )
+            .is_some(),
+            "{placer} may not adopt an existing bot with no manager"
+        );
+    }
+    assert!(
+        refuses_unlicensed_write(
+            &new_bot,
+            &handle("bot:assistant"),
+            &reporting_to("bot:omega"),
+            Some(&adopting)
+        )
+        .is_none(),
+        "the assistant adopts it"
+    );
+}
+
 /// **A bot cannot be put under one of its own reports, whoever asks.** The
 /// assistant is at the top of the chain and has no manager, so naming a bot
 /// below it as its manager would invert the chart. Written before the rule,
