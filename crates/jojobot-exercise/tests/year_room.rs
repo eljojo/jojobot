@@ -518,7 +518,7 @@ async fn january_loop(s: &Script<'_>) {
         json!({"subject": "rhythm:bearings-check", "content": "look at the skateboard bearings every ninety days",
                "provenance": "testimony",
                "sets": {"name": "Bearings check", "cadence_days": "90",
-                          "advances_from": "due_date"}}),
+                          "advances_from": "check_in_date"}}),
     )
     .await;
 }
@@ -1676,32 +1676,6 @@ async fn later_december_writes_a_fuller_sentence(s: &Script<'_>) {
     .await;
 }
 
-/// **December, done properly: a note on the loop that has gone quiet.**
-///
-/// The sitting is asked to look back — an enumeration this room's own text
-/// says no lock can reach. What it CAN reach is the one part of the answer
-/// that is jojobot's own arithmetic rather than the sitting's memory: the
-/// bearings loop, ninety days from June, is overdue by now. A session that
-/// finds that loop and records today against it has noticed; this is that
-/// write, on the loop's own handle — which the harness knows and the
-/// occupant does not, exactly as January's own furniture does.
-async fn december(s: &Script<'_>) {
-    s.did(
-        "capture",
-        json!({"subject": "rhythm:bearings-check",
-               "content": "gone quiet — overdue since roughly mid September",
-               "provenance": "inference", "recorded_at": "2026-12-13",
-               // **Grounded in the claim that makes it arithmetic rather than
-               // a guess**: the cadence January declared. That claim is
-               // always this subject's first record — nothing else can write
-               // to a loop before the sitting that creates it — so the
-               // address is stable across every valid playthrough without
-               // being looked up.
-               "derived_from": "rhythm:bearings-check#f1"}),
-    )
-    .await;
-}
-
 /// **A December that corrects a claim nobody raised — and this is LEGITIMATE.**
 ///
 /// A sitting may notice a mistake and correct it. The claim was written by an
@@ -1815,7 +1789,9 @@ impl Sitting {
             Sitting::LateOctober => late_october(s).await,
             Sitting::ReadThis => {}
             Sitting::LateNovember => late_november(s).await,
-            Sitting::December => december(s).await,
+            // December asks for a look back and records nothing: the loop is not
+            // owed, so there is no overdue note to write.
+            Sitting::December => {}
             Sitting::LateDecemberLock => later_december_the_lock(s).await,
             Sitting::LateDecemberWords => later_december_the_longboard_and_the_words(s, true).await,
             Sitting::LateDecemberTotals => later_december_the_totals(s).await,
@@ -2120,24 +2096,30 @@ const OCTOBER: [usize; 2] = [22, 23];
 const LATE_OCTOBER: [usize; 4] = [24, 25, 26, 27];
 const LATE_NOVEMBER: [usize; 2] = [28, 29];
 
-/// **December's three locks** — the loop that has gone quiet by now, and
+/// **December's one lock** — where the bearings loop stands on the day, and
 /// nothing else: the rest of that sitting is still unasserted, by the
 /// room's own design.
-const DECEMBER: [usize; 3] = [30, 31, 32];
+const DECEMBER: [usize; 1] = [30];
 
 /// **The sixteen locks of later December, addressed by what each is about**
 /// (the order the names below follow) and not by where the document writes
 /// them. Three entries carry them, grouped by the entry that asks: the lock and
-/// the council's question at 33 to 37, the longboard and the words at 38 to 46,
-/// the distance and what is owed at 47 and 48.
+/// the council's question at 31 to 35, the longboard and the words at 36 to 44,
+/// the distance and what is owed at 45 and 46.
 const LATE_DECEMBER: [usize; 16] = [
-    35, 36, 38, 39, 40, 33, 41, 42, 47, 37, 43, 44, 45, 34, 48, 46,
+    33, 34, 36, 37, 38, 31, 39, 40, 45, 35, 41, 42, 43, 32, 46, 44,
 ];
 
-const LOCKS: usize = 49;
+const LOCKS: usize = 47;
 
 /// **The sittings a person reads**, which assert nothing and must not.
 const READ_THESE: [&str; 1] = ["Phase 12"];
+
+/// **A sitting marked to be read that a lock still asserts over.** The mark drops
+/// the generated assertion that some record carries the sitting's day, which
+/// December cannot meet because nothing is owed that day; the lock on the loop's
+/// next due day stays.
+const READ_BUT_LOCKED: [&str; 1] = ["Phase 14"];
 
 // The locks the cases name one at a time.
 const BOX_OPENED: usize = JANUARY[0];
@@ -2159,9 +2141,7 @@ const LATE_OCTOBER_INVENTS_NOBODY: usize = LATE_OCTOBER[2];
 const INSPECTION_RENAMED: usize = LATE_OCTOBER[3];
 const TURNS_ARE_DERIVATIONS: usize = LATE_NOVEMBER[0];
 const LATE_NOVEMBER_TURN: usize = LATE_NOVEMBER[1];
-const OVERDUE_NOTE: usize = DECEMBER[0];
-const LINEAGE_NAMED: usize = DECEMBER[1];
-const WALK_BACK: usize = DECEMBER[2];
+const BEARINGS_LOOP_STANDS: usize = DECEMBER[0];
 const WAS_WORDING: usize = LATE_DECEMBER[0];
 const TRACE_AGREES: usize = LATE_DECEMBER[1];
 const FOLD_APPEARS: usize = LATE_DECEMBER[2];
@@ -2421,9 +2401,19 @@ fn the_sittings_a_person_reads_are_marked_and_every_other_one_is_locked() {
         .collect();
     assert_eq!(
         read_this.len(),
-        READ_THESE.len(),
+        READ_THESE.len() + READ_BUT_LOCKED.len(),
         "the sittings marked to be read are {read_this:?}",
     );
+    for key in READ_BUT_LOCKED {
+        assert!(
+            read_this.iter().any(|name| name.starts_with(key)),
+            "{key} is not marked to be read: {read_this:?}",
+        );
+        assert!(
+            !unasserted.iter().any(|name| name.starts_with(key)),
+            "{key} no longer has a lock over it: {unasserted:?}",
+        );
+    }
     for key in READ_THESE {
         assert!(
             read_this.iter().any(|name| name.starts_with(key)),
@@ -2689,8 +2679,8 @@ async fn every_assertion_a_run_makes_holds_once_the_year_is_worked() {
     // comes out, so asserting it first masks the assertion underneath — the
     // case stops before saying which sitting failed and why.
     assert_eq!(
-        asked, 16,
-        "the year generates one assertion per dated sitting, less the one a person reads — and \
+        asked, 15,
+        "the year generates one assertion per dated sitting, less the two a person reads — and \
          this asked about {asked}",
     );
 }
@@ -2735,91 +2725,113 @@ async fn the_march_window_says_whether_that_sitting_recorded_anything() {
     .await;
 }
 
-/// 🚨 **December's lock, discriminated.**
+/// 🚨 **December's lock, discriminated against a November that never happened.**
 ///
-/// Reads the finished board rather than a window either side of the sitting,
-/// unlike March's: nothing after December ever touches the bearings loop again,
-/// so there is no later sitting whose work could be mistaken for December's
-/// own. Its positive is `every_lock_holds_once_the_year_is_worked`.
+/// Reads the finished board rather than a window either side of the sitting:
+/// nothing after December touches the bearings loop again. Without November's
+/// service the loop is owed in December, so the lock fails on the first day it
+/// asks about. `every_lock_holds_once_the_year_is_worked` is this lock's positive.
 #[tokio::test]
-async fn decembers_lock_fails_when_the_sitting_never_notices_the_overdue_loop() {
+async fn decembers_lock_fails_when_novembers_service_was_never_recorded() {
     expect(
-        Year::worked().without(&[Sitting::December]),
+        Year::worked().without(&[Sitting::LateNovember]),
         Asks {
-            red: &[OVERDUE_NOTE],
+            red: &[BEARINGS_LOOP_STANDS],
             ..Default::default()
         },
     )
     .await;
 }
 
-/// 🚨 **December's lineage locks, discriminated against a MISSING pointer.**
+/// 🚨 **December's lock, discriminated against a loop done again after November.**
 ///
-/// Built directly rather than through [`Year::work`]: neither new lock
-/// is window-scoped, so nothing here needs the full year's boundaries — only
-/// a loop that exists and an overdue note that does or does not name what it
-/// rests on. **The plain overdue-note lock is the control**: it holds on a note
-/// that does carry the day.
+/// The year is worked as meant, and then the loop is checked in once more on
+/// 12 December. Its next due day moves to 12 March, so it is not owed on
+/// 20 February and the lock fails on that day. Built on the worked year so the
+/// one wrong act is the only difference.
 #[tokio::test]
-async fn decembers_lineage_locks_fail_when_nothing_names_a_source() {
+async fn decembers_lock_fails_when_the_loop_was_done_again_after_november() {
     let (_room, surface) = furnished(Furnish::Cached).await;
-    january_loop(&sitting(&surface, "2026-01-12").await).await;
-    sitting(&surface, "2026-12-13")
+    let boundaries = worked_the_year(&surface).await;
+    // A later day than the worked year's last sitting (26 December), so that
+    // sitting has gone quiet in this run's frame when this one boots. The check-in
+    // below names its own day, so the boot day does not move the date it records.
+    sitting(&surface, "2027-01-05")
         .await
         .did(
             "capture",
-            json!({"subject": "rhythm:bearings-check", "content": "gone quiet",
-                   "provenance": "inference", "recorded_at": "2026-12-13"}),
+            json!({"subject": "rhythm:bearings-check", "content": "did the bearings again",
+                   "provenance": "testimony", "check_in": "ran", "recorded_at": "2026-12-12"}),
         )
         .await;
     check(
-        &judged_now(&surface).await,
+        &judge_all(&surface, &boundaries).await,
         &Asks {
-            red: &[LINEAGE_NAMED, WALK_BACK],
-            held: &[OVERDUE_NOTE],
+            red: &[BEARINGS_LOOP_STANDS],
             ..Default::default()
         },
     );
 }
 
-/// 🚨 **December's read-back lock, discriminated against a WRONG pointer.**
+/// 🚨 **December's lock, discriminated against a loop that falls due a day early.**
 ///
-/// The write-side lock only asks THAT a source is named; a note pointing at
-/// the wrong claim still names one, so it stays green here — which is the
-/// point. Only the walk-back lock can tell a present pointer from a correct
-/// one, because only it actually follows the pointer rather than checking
-/// that a value sits beside the key.
+/// The year is worked without November's service, and the loop is checked in on
+/// 21 November instead. Its next due day is 19 February, so it is owed on the
+/// day the lock asks about last but one, and only that day separates this year
+/// from the worked one: 13 December and 20 February read the same in both.
 #[tokio::test]
-async fn decembers_walk_back_lock_fails_when_the_pointer_is_wrong() {
+async fn decembers_lock_fails_when_the_loop_falls_due_a_day_early() {
     let (_room, surface) = furnished(Furnish::Cached).await;
-    let jan = sitting(&surface, "2026-01-12").await;
-    january_loop(&jan).await;
-    // A second, unrelated record on the same subject — the wrong address the
-    // December note will name, real rather than invented, so a refusal on a
-    // dangling pointer cannot be mistaken for this case.
-    jan.did(
-        "capture",
-        json!({"subject": "rhythm:bearings-check", "content": "an unrelated later note",
-               "provenance": "testimony"}),
-    )
-    .await;
-    let elsewhere = address_of(&surface, "rhythm:bearings-check", "an unrelated later note").await;
-    sitting(&surface, "2026-12-13")
+    let boundaries = Year::worked()
+        .without(&[Sitting::LateNovember])
+        .work(&surface)
+        .await;
+    sitting(&surface, "2027-01-05")
         .await
         .did(
             "capture",
-            json!({"subject": "rhythm:bearings-check", "content": "gone quiet",
-                   "provenance": "inference", "recorded_at": "2026-12-13",
-                   "derived_from": elsewhere}),
+            json!({"subject": "rhythm:bearings-check", "content": "did the bearings in November",
+                   "provenance": "testimony", "check_in": "ran", "recorded_at": "2026-11-21"}),
         )
         .await;
     check(
-        &judged_now(&surface).await,
+        &judge_all(&surface, &boundaries).await,
         &Asks {
-            red: &[WALK_BACK],
-            held: &[LINEAGE_NAMED],
+            red: &[BEARINGS_LOOP_STANDS],
             ..Default::default()
         },
+    );
+}
+
+/// 🚨 **December's lock reads through the grader and sends no MCP request.** The
+/// server counts an MCP request as it ends and the grader's route is not one, so
+/// a lock that reads through the tool dispatcher moves the count. **The lock must
+/// hold on the worked year**, so the count is taken over a read that found the
+/// loop and the three dates, not over a lock that read nothing.
+#[tokio::test]
+async fn decembers_lock_reads_through_the_grader_and_sends_no_mcp_request() {
+    let (room, surface) = furnished(Furnish::Cached).await;
+    let boundaries = worked_the_year(&surface).await;
+    let checks = expectations::for_playbook(expectations::YEAR_ROOM).expect("the year asserts");
+    let seen = Observed {
+        room: &surface,
+        boundaries: &boundaries,
+    };
+    let sent = || jojobot_exercise::timing::server_time(&room.server_log()).requests;
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    let before = sent();
+    let outcome = checks[BEARINGS_LOOP_STANDS].check(&seen).await;
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    assert!(
+        outcome.held,
+        "December's lock did not hold on the worked year: {}",
+        outcome.saying
+    );
+    assert_eq!(
+        sent(),
+        before,
+        "December's lock sent an MCP request while it read the room: {}",
+        outcome.saying,
     );
 }
 
@@ -3493,7 +3505,7 @@ async fn the_cached_year_reads_the_same_as_a_live_furnish() {
     // furnish actually wrote, which is what this test is proving matches.
     async fn opening_message_snippet(surface: &Surface, label: &str) -> (Value, Value) {
         let found = surface
-            .call(
+            .read(
                 "search",
                 json!({"query": "invoiced, paid, or waived", "include_mail": true}),
             )
