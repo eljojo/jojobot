@@ -7,6 +7,7 @@ mod mail;
 mod question;
 mod recalled;
 mod runs;
+mod search;
 
 #[cfg(doctest)]
 #[path = "boundary.rs"]
@@ -24,6 +25,7 @@ pub use mail::{MailHandle, MailRail, OperatorIs, OperatorMail, OperatorMailComma
 pub use question::{Asks, Question, Readiness, ViewRequest, parse_date};
 pub use recalled::{RecalledObject, RecalledView};
 pub use runs::{Runs, RunsAsk, RunsFailed, may_read_runs};
+pub use search::{SearchQuestion, Searched};
 
 use std::sync::Arc;
 
@@ -37,6 +39,14 @@ pub trait Answerer: Send + Sync {
     /// beside every question and is never defaulted, so a read with no asker
     /// cannot exist.
     async fn ask(&self, asker: &Actor, question: Question) -> Result<Answered, Failed>;
+
+    /// **A search by words, answered for the one asking**: the search verb's own
+    /// prepared query, so a bot and a page ask the index one way.
+    async fn search(
+        &self,
+        asker: &Actor,
+        question: SearchQuestion,
+    ) -> Result<Searched, MemoryError>;
 }
 
 #[derive(Clone)]
@@ -51,5 +61,13 @@ impl From<Arc<dyn Answerer>> for QueryHandle {
 impl QueryHandle {
     pub async fn ask(&self, asker: &Actor, question: Question) -> Result<Answered, Failed> {
         self.0.ask(asker, question).await
+    }
+
+    pub async fn search(
+        &self,
+        asker: &Actor,
+        question: SearchQuestion,
+    ) -> Result<Searched, MemoryError> {
+        self.0.search(asker, question).await
     }
 }

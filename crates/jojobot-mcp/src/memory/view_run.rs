@@ -39,10 +39,12 @@ pub use jojobot_query_api::{
 pub fn handle(
     memory: std::sync::Arc<dyn Memory>,
     sessions: std::sync::Arc<dyn jojobot_domain::session::Sessions>,
+    search: std::sync::Arc<dyn jojobot_domain::memory::search::Search>,
 ) -> jojobot_query_api::QueryHandle {
     struct Reader {
         memory: std::sync::Arc<dyn Memory>,
         sessions: std::sync::Arc<dyn jojobot_domain::session::Sessions>,
+        search: std::sync::Arc<dyn jojobot_domain::memory::search::Search>,
         carriers: Vec<Box<dyn attention::Carrier>>,
     }
     #[async_trait::async_trait]
@@ -155,10 +157,40 @@ pub fn handle(
             }
             Ok(read)
         }
+
+        async fn search(
+            &self,
+            asker: &jojobot_domain::actor::Actor,
+            question: jojobot_query_api::SearchQuestion,
+        ) -> Result<jojobot_query_api::Searched, MemoryError> {
+            let args = super::search::SearchArgs {
+                query: Some(question.words),
+                ..Default::default()
+            };
+            let query = super::search::prepared_query(
+                &args,
+                asker.bot().cloned(),
+                Default::default(),
+                None,
+                None,
+            )
+            .map_err(|refused| MemoryError::InvalidQuery(refused.message.to_string()))?;
+            query.validate()?;
+            let hits = self.search.search(&query).await?;
+            // What this search could not see, read after the search: the refresh it
+            // took is what the coverage describes.
+            let unseen = super::search::unseen_by(&query, &*self.search, hits.len());
+            Ok(jojobot_query_api::Searched {
+                hits,
+                index_note: unseen.index,
+                matching_note: unseen.matching,
+            })
+        }
     }
     jojobot_query_api::QueryHandle::from(std::sync::Arc::new(Reader {
         memory,
         sessions,
+        search,
         carriers: attention::shipped(),
     }) as std::sync::Arc<dyn jojobot_query_api::Answerer>)
 }

@@ -85,8 +85,9 @@ async fn view_read_path_invalid_default_substitution_is_refused_with_its_form() 
     )
     .await;
     let queries = jojobot_mcp::memory::view_run::handle(
-        memory,
+        memory.clone(),
         Arc::new(jojobot_domain::session::testing::InMemorySessions::default()),
+        support::ui_board::search_over(memory),
     );
     let answer = queries
         .ask(
@@ -135,6 +136,7 @@ async fn fixture() -> (Arc<dyn Memory>, jojobot_query_api::QueryHandle) {
     let queries = jojobot_mcp::memory::view_run::handle(
         memory.clone(),
         Arc::new(jojobot_domain::session::testing::InMemorySessions::default()),
+        support::ui_board::search_over(memory.clone()),
     );
     (memory, queries)
 }

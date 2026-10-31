@@ -102,7 +102,11 @@ async fn node_read_path_keeps_unreadable_parts_in_the_shared_answer_and_each_ren
         .await
         .unwrap();
     let board = seeded_board_over(memory.clone()).await;
-    let queries = jojobot_mcp::memory::view_run::handle(memory.clone(), board.sessions.clone());
+    let queries = jojobot_mcp::memory::view_run::handle(
+        memory.clone(),
+        board.sessions.clone(),
+        support::ui_board::search_over(memory.clone()),
+    );
     let idp = support::TestIdp::new();
     let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
     let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
@@ -304,7 +308,11 @@ async fn node_read_path_backing_follows_rewrites_omits_sum_winners_and_keeps_cle
         );
     }
     let board = seeded_board_over(memory.clone()).await;
-    let queries = jojobot_mcp::memory::view_run::handle(memory.clone(), board.sessions.clone());
+    let queries = jojobot_mcp::memory::view_run::handle(
+        memory.clone(),
+        board.sessions.clone(),
+        support::ui_board::search_over(memory.clone()),
+    );
     let read = queries
         .ask(&jojobot_domain::actor::Actor::Operator, question())
         .await
@@ -598,8 +606,11 @@ async fn the_operator_reads_a_bots_runs_newest_first_with_the_chronologies_of_th
     }
     // The newest run wrote nothing: it is in the table and has no chronology.
     begin_run(&board.sessions, "bot:lambda", 6, 0).await;
-    let queries =
-        jojobot_mcp::memory::view_run::handle(board.memory.clone(), board.sessions.clone());
+    let queries = jojobot_mcp::memory::view_run::handle(
+        board.memory.clone(),
+        board.sessions.clone(),
+        support::ui_board::search_over(board.memory.clone()),
+    );
 
     let read = runs_asked(
         &queries,
@@ -643,8 +654,11 @@ async fn a_bot_reads_its_own_runs_not_another_bots_and_an_app_reads_none() {
     let board = support::ui_board::seeded_board().await;
     begin_run(&board.sessions, "bot:lambda", 1, 1).await;
     begin_run(&board.sessions, "bot:omega", 2, 1).await;
-    let queries =
-        jojobot_mcp::memory::view_run::handle(board.memory.clone(), board.sessions.clone());
+    let queries = jojobot_mcp::memory::view_run::handle(
+        board.memory.clone(),
+        board.sessions.clone(),
+        support::ui_board::search_over(board.memory.clone()),
+    );
     let lambda = EntityId("bot:lambda".into());
 
     let own = runs_asked(&queries, &Actor::Bot(lambda.clone()), &lambda, 5)
@@ -686,8 +700,11 @@ async fn a_read_with_no_bot_counts_and_the_served_days_are_those_of_the_runs_ret
     let board = support::ui_board::seeded_board().await;
     begin_run(&board.sessions, "bot:lambda", 1, 1).await;
     begin_run(&board.sessions, "bot:omega", 2, 1).await;
-    let queries =
-        jojobot_mcp::memory::view_run::handle(board.memory.clone(), board.sessions.clone());
+    let queries = jojobot_mcp::memory::view_run::handle(
+        board.memory.clone(),
+        board.sessions.clone(),
+        support::ui_board::search_over(board.memory.clone()),
+    );
     let lambda = EntityId("bot:lambda".into());
     let day = jiff::civil::date(2026, 9, 2);
     for bot in ["bot:lambda", "bot:omega"] {

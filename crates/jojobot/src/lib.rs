@@ -274,16 +274,17 @@ fn build_app_with(
         Router::new()
             .route("/", get(ui::pages::index))
             .route(ui::org::PATH, get(ui::org::chart))
-            .route(ui::search::PATH, get(ui::search::results))
             .route("/ui/kind/{kind}/", get(ui::home::kind_page))
             .merge(
                 Router::new()
+                    .route(ui::search::PATH, get(ui::search::results))
                     .route("/{*path}", get(ui::pages::node))
                     .with_state(ui::pages::NodeState {
                         app: state.clone(),
                         queries: jojobot_mcp::memory::view_run::handle(
                             state.memory.clone(),
                             state.sessions.clone(),
+                            state.search.clone(),
                         ),
                         mail: jojobot_mcp::mailboxes::operator_rail::rail(
                             state.memory.clone(),

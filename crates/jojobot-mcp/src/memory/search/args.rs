@@ -13,7 +13,7 @@ pub struct EdgeFilterArgs {
 }
 
 /// Arguments to `search`.
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Default, serde::Deserialize, schemars::JsonSchema)]
 pub struct SearchArgs {
     /// Free text over entity handles/names, fact claims and details, and an
     /// entity's prose. **Words are matched by stem, and a record needs at least

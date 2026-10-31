@@ -406,16 +406,6 @@ impl Jojobot {
                 Err(refused) => return Ok(refused),
             },
         };
-        let edge = args
-            .edge
-            .as_ref()
-            .map(|e| -> Result<EdgeFilter, McpError> {
-                Ok(EdgeFilter {
-                    shape: e.shape.as_deref().map(parse_shape_filter).transpose()?,
-                    object: EntityId(e.object.trim().to_string()),
-                })
-            })
-            .transpose()?;
         // **Kept for the answer.** The declaration moves into the query, and an
         // empty answer under it has to be able to say what the type is.
         let asked_answers = declared.clone();
@@ -425,40 +415,13 @@ impl Jojobot {
         } else {
             Default::default()
         };
-        let query = SearchQuery {
+        let query = prepared_query(
+            &args,
+            asking.as_ref().map(|caller| caller.bot.clone()),
             mail_visibility,
-            answers_type: declared,
-            fits_type: fits,
-            // The search verb offers no way to ask what a thing holds; only a
-            // recall that filters on a key asks the index that.
-            holding: Vec::new(),
-            asked_by: asking.as_ref().map(|c| c.bot.clone()),
-            text: args.query,
-            kind: args.kind.as_deref().map(parse_kind).transpose()?,
-            status: args.status.as_deref().map(parse_status).transpose()?,
-            provenance: args
-                .provenance
-                .as_deref()
-                .map(parse_one_provenance)
-                .transpose()?,
-            standing: args.standing.as_deref().map(parse_standing).transpose()?,
-            subject: args.subject.as_deref().map(EntityId::person),
-            edge,
-            include_mail: args.include_mail.unwrap_or(false),
-            include_history: args.include_history.unwrap_or(false),
-            include_review_marks: args.review_marks.unwrap_or(false),
-            // **The index is asked for everything up to the end of the page.** A
-            // page that starts at `offset` and holds `limit` needs the best
-            // `offset + limit` from the ranking; the first `offset` of them are
-            // skipped below. A limit of nothing is passed on as nothing, so the
-            // query's own check refuses it.
-            limit: match args.limit.map_or(DEFAULT_LIMIT, |l| l as usize) {
-                0 => 0,
-                page => args.offset.map_or(0, |o| o as usize) + page,
-            },
-            rank_clock: parse_rank_clock(args.clock.as_deref())?,
-            rank_clock_chosen: args.clock.as_deref().is_some_and(|s| !s.trim().is_empty()),
-        };
+            declared,
+            fits,
+        )?;
         // Checked here as well as in the index: a malformed query is the caller's
         // mistake, and it should read as one no matter which adapter is behind us.
         // A query that narrows nothing, or narrows itself into a contradiction,
@@ -993,6 +956,63 @@ pub fn unseen_by(query: &search::SearchQuery, index: &dyn search::Search, hits: 
             .as_str()
             .map(str::to_string),
     }
+}
+
+/// **The query a `search` call asks the index**, built from the call's arguments
+/// and the parts that need a store to resolve (the asker, mail visibility, the
+/// named types). The verb and the query handle's `search` both build it here, so
+/// a bot and the operator's page ask one question the same way.
+pub(crate) fn prepared_query(
+    args: &SearchArgs,
+    asked_by: Option<EntityId>,
+    mail_visibility: jojobot_domain::mailbox::visibility::VisibleBoxes,
+    answers_type: Option<jojobot_domain::memory::types::DeclaredType>,
+    fits_type: Option<jojobot_domain::memory::types::DeclaredType>,
+) -> Result<search::SearchQuery, McpError> {
+    let edge = args
+        .edge
+        .as_ref()
+        .map(|e| -> Result<EdgeFilter, McpError> {
+            Ok(EdgeFilter {
+                shape: e.shape.as_deref().map(parse_shape_filter).transpose()?,
+                object: EntityId(e.object.trim().to_string()),
+            })
+        })
+        .transpose()?;
+    Ok(SearchQuery {
+        mail_visibility,
+        answers_type,
+        fits_type,
+        // The search verb offers no way to ask what a thing holds; only a
+        // recall that filters on a key asks the index that.
+        holding: Vec::new(),
+        asked_by,
+        text: args.query.clone(),
+        kind: args.kind.as_deref().map(parse_kind).transpose()?,
+        status: args.status.as_deref().map(parse_status).transpose()?,
+        provenance: args
+            .provenance
+            .as_deref()
+            .map(parse_one_provenance)
+            .transpose()?,
+        standing: args.standing.as_deref().map(parse_standing).transpose()?,
+        subject: args.subject.as_deref().map(EntityId::person),
+        edge,
+        include_mail: args.include_mail.unwrap_or(false),
+        include_history: args.include_history.unwrap_or(false),
+        include_review_marks: args.review_marks.unwrap_or(false),
+        // **The index is asked for everything up to the end of the page.** A
+        // page that starts at `offset` and holds `limit` needs the best
+        // `offset + limit` from the ranking; the first `offset` of them are
+        // skipped below. A limit of nothing is passed on as nothing, so the
+        // query's own check refuses it.
+        limit: match args.limit.map_or(DEFAULT_LIMIT, |l| l as usize) {
+            0 => 0,
+            page => args.offset.map_or(0, |o| o as usize) + page,
+        },
+        rank_clock: parse_rank_clock(args.clock.as_deref())?,
+        rank_clock_chosen: args.clock.as_deref().is_some_and(|s| !s.trim().is_empty()),
+    })
 }
 
 pub(crate) fn matching_note(query: &search::SearchQuery, with_note: bool) -> serde_json::Value {

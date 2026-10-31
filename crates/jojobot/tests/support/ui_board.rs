@@ -374,6 +374,12 @@ pub async fn seeded_board_over(memory: Arc<dyn Memory>) -> Board {
     }
 }
 
+/// A real search over the store, for a test that builds the query handle itself.
+pub fn search_over(memory: Arc<dyn Memory>) -> Arc<dyn Search> {
+    let indexed = Arc::new(IndexedMemory::new(memory).expect("the search index opens"));
+    Arc::new(Retrieval::new(indexed.index(), vec![indexed.clone()]))
+}
+
 pub async fn seeded_board() -> Board {
     seeded_board_over(seeded_memory().await).await
 }

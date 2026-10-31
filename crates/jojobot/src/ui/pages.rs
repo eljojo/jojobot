@@ -1328,7 +1328,11 @@ pub(crate) async fn answer_named_view_with(
 /// it: its definition is read from the view's own record and the answer is the
 /// one `recall` of the view gives. The page text of why not when it cannot run.
 pub(crate) async fn answer_named_view(state: &AppState, handle: &str) -> Result<Answered, String> {
-    let queries = view_run::handle(state.memory.clone(), state.sessions.clone());
+    let queries = view_run::handle(
+        state.memory.clone(),
+        state.sessions.clone(),
+        state.search.clone(),
+    );
     answer_named_view_with(state, &queries, handle, &BTreeMap::new()).await
 }
 
