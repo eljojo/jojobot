@@ -91,6 +91,7 @@ test-formatting
 test-furnace_lock
 test-globex_lock
 test-graceful_shutdown
+test-grader_refusal_run
 test-handover_room
 test-history_written
 test-isolate
