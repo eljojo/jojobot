@@ -17,7 +17,19 @@ pub fn rank(
     clock_chosen: bool,
 ) -> Rank {
     let chosen_day = if clock_chosen { day } else { 0 };
-    (priority, at(positions), chosen_day, text, day)
+    (priority, at(positions), chosen_day, tied(text), day)
+}
+
+/// **Scores within a float's rounding of each other are one score**, so the recency
+/// that follows breaks the tie. The index scores identical documents slightly apart
+/// once its statistics move, and a raw comparison would let that noise outrank the day.
+/// Four significant digits keep every real gap in score.
+fn tied(text: f32) -> f32 {
+    if !text.is_finite() || text == 0.0 {
+        return text;
+    }
+    let step = 10f32.powi(text.abs().log10().floor() as i32 - 3);
+    (text / step).round() * step
 }
 
 /// The caller's recency clock, encoded in calendar order; zero is no claim date.
@@ -95,5 +107,31 @@ pub fn at(positions: &[(usize, u64)]) -> Relevance {
     Relevance {
         terms,
         span: Reverse(span),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// **Two facts with the same words tie on text, and the day decides.** The index
+    /// scores identical documents a float's rounding apart once its statistics move,
+    /// so the key must not let that difference outrank the day. Paired with a real
+    /// gap in score, which still decides before the day does.
+    #[test]
+    fn scores_a_float_rounding_apart_tie_and_the_day_decides() {
+        let newer = rank(CURRENT, &[], 28.9981, 120_260_315, false);
+        let older = rank(CURRENT, &[], 28.998_102, 120_260_105, false);
+        assert_eq!(
+            compare(&newer, &older),
+            std::cmp::Ordering::Greater,
+            "the later day must come first when the text scores tie: {newer:?} {older:?}"
+        );
+        let stronger = rank(CURRENT, &[], 29.5, 120_260_105, false);
+        assert_eq!(
+            compare(&stronger, &newer),
+            std::cmp::Ordering::Greater,
+            "a real gap in text score still decides before the day"
+        );
     }
 }
