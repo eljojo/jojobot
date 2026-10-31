@@ -8,6 +8,7 @@
 
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use jojobot::app_api::Apps;
 use jojobot::{AppState, build_app_operating};
@@ -65,14 +66,41 @@ struct Served {
     _stop: CancellationToken,
 }
 
+/// **A store whose age read fails once told to**, every other read the fake's.
+struct AgesFail {
+    inner: InMemoryMemory,
+    failing: Arc<AtomicBool>,
+}
+
+#[jojobot_domain::forward(jojobot_domain::forward_memory, via = inner)]
+impl Memory for AgesFail {
+    async fn field_ages(&self, entity: &EntityId) -> Result<FieldAges, MemoryError> {
+        if self.failing.load(Ordering::SeqCst) {
+            return Err(MemoryError::Store("ages unavailable".into()));
+        }
+        self.inner.field_ages(entity).await
+    }
+}
+
 async fn serve(apps: Vec<AppPrincipal>, registry: Registry) -> Served {
+    serve_over(apps, registry, Arc::new(AtomicBool::new(false))).await
+}
+
+async fn serve_over(
+    apps: Vec<AppPrincipal>,
+    registry: Registry,
+    ages_failing: Arc<AtomicBool>,
+) -> Served {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     // **The views the build ships are served by the store, as in the binary**, so
     // an app that asks the view `ready` meets the one a bot meets.
     let supplied = jojobot_mcp::provisions();
     let store = Arc::new(jojobot_adapters::provisioned::Provisioned::new(
-        InMemoryMemory::booted().knowing(supplied.clone()),
+        AgesFail {
+            inner: InMemoryMemory::booted().knowing(supplied.clone()),
+            failing: ages_failing,
+        },
         supplied,
     ));
     let indexed = Arc::new(IndexedMemory::new(store).expect("the search index opens"));
@@ -680,4 +708,29 @@ async fn unstable_backing_names_the_instant_of_the_claim_that_set_the_key() {
         at("status") < at("waiting_on"),
         "the status instant is the status claim's, not the newest write's: {read}"
     );
+}
+
+/// **A backing whose instants cannot be read is not served as a backing without
+/// them.** The same read answers with the instant while the store reads ages, so
+/// the failure cannot pass for a card that has none; once the age read fails the
+/// call is unavailable and names no entry.
+#[tokio::test]
+async fn unstable_backing_is_unavailable_when_the_age_read_fails() {
+    let (app, token) = reader();
+    let failing = Arc::new(AtomicBool::new(false));
+    let served = serve_over(vec![app], Registry::shipped(), failing.clone()).await;
+    work_with_status(&served, "work:omega", "Mow the lawn", "waiting").await;
+    let ask = json!({"subject": "work:omega", "backing": true});
+
+    let (status, read) = call(&served, &token, "recall", ask.clone()).await;
+    assert_eq!(status, 200, "{read}");
+    assert!(
+        read["objects"][0]["fields_backing"]["status"]["written_at"].is_string(),
+        "the instant is served while ages are readable: {read}"
+    );
+
+    failing.store(true, Ordering::SeqCst);
+    let (status, down) = call(&served, &token, "recall", ask).await;
+    assert_eq!(status, 503, "{down}");
+    assert!(down.get("objects").is_none(), "{down}");
 }

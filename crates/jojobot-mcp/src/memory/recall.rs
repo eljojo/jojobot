@@ -3451,7 +3451,18 @@ impl Jojobot {
             let mut values = view_run::backing_of(&*self.memory, &found, &query.masked).await;
             for object in &found {
                 match values.remove(&object.entity.id).transpose() {
-                    Ok(value) => backing.push(value),
+                    Ok(value) => {
+                        // **An age that cannot be read declines the call**, as
+                        // an unreadable backing does: the entry's `written_at`
+                        // is read below, where a failure would pass for a write
+                        // with no moment.
+                        for key in value.iter().flat_map(|backed| backed.keys()) {
+                            if let Err(error) = graph::key_written_at(object, key) {
+                                return memory_declined("recall", error);
+                            }
+                        }
+                        backing.push(value)
+                    }
                     Err(error) => return memory_declined("recall", error),
                 }
             }
@@ -4211,7 +4222,7 @@ impl Jojobot {
                                 // **When the write holding this value was taken in**,
                                 // so an age is read off the claim and never from
                                 // a second key somebody has to keep beside it.
-                                if let Some(at) = o.ages.as_ref().and_then(|a| a.keys.get(key)) {
+                                if let Some(at) = graph::key_written_at(o, key).ok().flatten() {
                                     entry["written_at"] = serde_json::json!(at.to_string());
                                 }
                                 kept.insert(key.clone(), entry);

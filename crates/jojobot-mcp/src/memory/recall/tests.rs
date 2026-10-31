@@ -11955,3 +11955,61 @@ async fn a_walk_leaves_out_a_dependency_a_whole_value_replaced() {
 }
 
 mod later_cases;
+
+/// A store whose age read fails, while every other port method forwards to the
+/// in-memory store.
+struct AgesUnreadable(Arc<InMemoryMemory>);
+
+#[jojobot_domain::forward(jojobot_domain::forward_memory, via = 0)]
+impl Memory for AgesUnreadable {
+    async fn field_ages(&self, entity: &EntityId) -> Result<FieldAges, MemoryError> {
+        let _ = entity;
+        Err(MemoryError::Store("ages unavailable".into()))
+    }
+}
+
+/// **A backing whose instants cannot be read is a declined read, never an entry
+/// without `written_at`.** The healthy store serves the instant of the claim that
+/// set the key; the store whose age read fails declines the same call.
+#[tokio::test]
+async fn a_backing_over_a_store_that_cannot_read_ages_declines_instead_of_dropping_the_instant() {
+    let memory = shared_memory();
+    let healthy = handler_on(memory.clone(), Arc::new(SpySearch::default()));
+    let sid = writing_as(&healthy);
+    capture_ok(
+        &healthy,
+        CaptureArgs {
+            sid: Some(sid.clone()),
+            sets: Some([("rent".to_string(), "900".to_string())].into()),
+            ..capture_args("person:alpha", "the rent")
+        },
+    )
+    .await;
+    let ask = || RecallArgs {
+        sid: Some(sid.clone()),
+        backing: Some(true),
+        facts: None,
+        ..of("person:alpha")
+    };
+
+    let read = healthy.recall(Parameters(ask())).await.expect("it answers");
+    assert!(
+        json_of(&read)["objects"][0]["fields_backing"]["rent"]["written_at"].is_string(),
+        "the instant is served while ages are readable: {read:?}"
+    );
+
+    let blind = Jojobot::new(
+        Arc::new(AgesUnreadable(memory)),
+        Arc::new(SpySearch::default()),
+        Arc::new(InMemoryMailboxes::knowing_any_owner()),
+        Arc::new(InMemorySessions::new()),
+        Arc::new(InMemoryTeachings::new()),
+        seeded_registry(),
+    );
+    writing_as(&blind);
+    let declined = blind.recall(Parameters(ask())).await;
+    assert!(
+        declined.is_err() || json_of(declined.as_ref().unwrap()).get("objects").is_none(),
+        "the read served an entry without its instant: {declined:?}"
+    );
+}

@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 
-use jojobot_domain::memory::MemoryError;
+use jojobot_domain::memory::{MemoryError, graph};
 use serde_json::{Value, json};
 
 use crate::Answered;
@@ -51,25 +51,23 @@ impl RecalledView {
         for object in answered.selected.objects.into_iter().take(limit) {
             let backing = match backed.remove(&object.entity.id) {
                 None => None,
-                Some(read) => Some(
-                    read?
-                        .into_iter()
-                        .filter(|(key, _)| kept(key))
-                        .map(|(key, from)| {
-                            let mut entry = json!({
-                                "claim": from.fact.as_str(),
-                                "provenance": from.provenance.as_token(),
-                                "standing": from.standing.as_token(),
-                            });
-                            // **The instant of the write that holds this value**,
-                            // not the object's newest write.
-                            if let Some(at) = object.ages.as_ref().and_then(|a| a.keys.get(&key)) {
-                                entry["written_at"] = json!(at.to_string());
-                            }
-                            (key, entry)
-                        })
-                        .collect(),
-                ),
+                Some(read) => {
+                    let mut entries = BTreeMap::new();
+                    for (key, from) in read?.into_iter().filter(|(key, _)| kept(key)) {
+                        let mut entry = json!({
+                            "claim": from.fact.as_str(),
+                            "provenance": from.provenance.as_token(),
+                            "standing": from.standing.as_token(),
+                        });
+                        // **The instant of the write that holds this value**,
+                        // not the object's newest write.
+                        if let Some(at) = graph::key_written_at(&object, &key)? {
+                            entry["written_at"] = json!(at.to_string());
+                        }
+                        entries.insert(key, entry);
+                    }
+                    Some(entries)
+                }
             };
             let mut fields = object.fields;
             fields.retain(|key, _| kept(key));

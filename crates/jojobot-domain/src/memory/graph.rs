@@ -3211,6 +3211,16 @@ pub fn unreadable_revisions(selected: &Selected) -> Option<MemoryError> {
     in_objects(&selected.objects)
 }
 
+/// **The instant of the write that holds a key's value**, for a backing entry.
+/// An age read that failed is an error, never `None`: `None` says the write
+/// carries no moment, and a caller ages a record from it (rule 130).
+pub fn key_written_at(object: &Object, key: &str) -> Result<Option<jiff::Timestamp>, MemoryError> {
+    match (&object.ages_unreadable, &object.ages) {
+        (Some(error), _) => Err(error.clone()),
+        (None, ages) => Ok(ages.as_ref().and_then(|ages| ages.keys.get(key).copied())),
+    }
+}
+
 /// **The part of a browse a caller will actually serve.**
 ///
 /// `offset` objects of the selection stand before it and are not read. The
