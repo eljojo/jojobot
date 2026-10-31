@@ -16,6 +16,7 @@ use jojobot_domain::app::operations::OperationSpec;
 use jojobot_domain::app::{AppPrincipal, AppSpec, hash_token, mint_token};
 use jojobot_domain::memory::testing::InMemoryMemory;
 use jojobot_domain::memory::{EntityId, Memory, NewEntity, NewFact, Provenance};
+use jojobot_domain::session::Sessions;
 use jojobot_mcp::app_ops::{Answer, Entry, Registry};
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
@@ -60,6 +61,7 @@ struct Served {
     addr: SocketAddr,
     memory: Arc<dyn Memory>,
     mailboxes: Arc<dyn jojobot_domain::mailbox::Mailboxes>,
+    sessions: Arc<jojobot_domain::session::testing::InMemorySessions>,
     _stop: CancellationToken,
 }
 
@@ -69,6 +71,7 @@ async fn serve(apps: Vec<AppPrincipal>, registry: Registry) -> Served {
     let store = Arc::new(InMemoryMemory::booted());
     let indexed = Arc::new(IndexedMemory::new(store).expect("the search index opens"));
     let search = Arc::new(Retrieval::new(indexed.index(), vec![indexed.clone()]));
+    let sessions = Arc::new(jojobot_domain::session::testing::InMemorySessions::new());
     let memory: Arc<dyn Memory> = indexed.clone();
     let mailboxes: Arc<dyn jojobot_domain::mailbox::Mailboxes> =
         Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner());
@@ -80,7 +83,7 @@ async fn serve(apps: Vec<AppPrincipal>, registry: Registry) -> Served {
         memory: memory.clone(),
         search,
         mailboxes: mailboxes.clone(),
-        sessions: Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),
+        sessions: sessions.clone(),
         teachings: Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
         requests: None,
         registry: Arc::new(jojobot_mcp::sid::SessionRegistry::new()),
@@ -147,6 +150,7 @@ async fn serve(apps: Vec<AppPrincipal>, registry: Registry) -> Served {
         addr,
         memory,
         mailboxes,
+        sessions,
         _stop: ct,
     }
 }
@@ -528,6 +532,54 @@ async fn unstable_a_recall_argument_outside_the_input_is_refused_naming_it() {
         assert!(
             refused.to_string().contains(argument),
             "the refusal does not name {argument}: {refused}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn unstable_a_recall_never_returns_a_run_and_still_reads_a_card_beside_it() {
+    let (app, token) = reader();
+    let served = serve(vec![app], Registry::shipped()).await;
+    work_with_status(&served, "work:omega", "Mow the lawn", "now").await;
+    let run = served
+        .sessions
+        .begin(jojobot_domain::session::NewSession {
+            bot: EntityId("bot:assistant".into()),
+            sid: jojobot_domain::session::Sid("rd01".into()),
+            focus: "mowing".into(),
+            started_at: jiff::Timestamp::now(),
+            timezone: None,
+            started_on: None,
+            id: None,
+            key_hash: None,
+        })
+        .await
+        .expect("a run is seeded");
+
+    // The positive, in the same case: an unowned card reads, so an empty answer
+    // below is not an app that reads nothing.
+    let (status, card) = call(&served, &token, "recall", json!({"subject": "work:omega"})).await;
+    assert_eq!(status, 200, "{card}");
+    assert_eq!(card["objects"][0]["handle"], "work:omega", "{card}");
+
+    for body in [
+        json!({"kind": "session"}),
+        json!({"subject": format!("session:{}", run.id.as_str())}),
+    ] {
+        let (status, runs) = call(&served, &token, "recall", body.clone()).await;
+        assert!(
+            status == 200 || status == 409,
+            "{body}: neither an answer nor a refusal by the verb: {status} {runs}"
+        );
+        assert!(
+            !runs.to_string().contains("mowing"),
+            "{body}: a run came back to an app: {runs}"
+        );
+        assert!(
+            runs["objects"]
+                .as_array()
+                .is_none_or(|objects| objects.is_empty()),
+            "{body}: an object came back with a run asked for: {runs}"
         );
     }
 }

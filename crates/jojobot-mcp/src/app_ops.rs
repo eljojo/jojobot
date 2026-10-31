@@ -306,6 +306,15 @@ async fn recall(call: Call) -> Answer {
         ) => {
             return match why {
                 jojobot_domain::memory::MemoryError::InvalidQuery(words) => Answer::Invalid(words),
+                // **A handle the app cannot read is as good as a handle nothing wears**,
+                // and is refused so, naming no near handle: a nearest list would name
+                // things the app may not read.
+                jojobot_domain::memory::MemoryError::UnknownEntity { attempted, .. } => {
+                    Answer::Refused(serde_json::json!({
+                        "status": "blocked",
+                        "unknown_entity": attempted,
+                    }))
+                }
                 other => unavailable(other),
             };
         }
