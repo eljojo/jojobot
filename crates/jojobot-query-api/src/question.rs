@@ -63,6 +63,30 @@ impl Question {
         }
     }
 
+    /// **One thing asked about, with nothing of it read but the walk or the
+    /// history named.** A caller names the subject and the follow or the history
+    /// it wants; the facts, the prose and the standing come back off.
+    pub fn about(
+        subject: EntityId,
+        follow: Option<graph::Follow>,
+        history: Option<graph::History>,
+    ) -> Question {
+        Question::new(
+            graph::Selection {
+                subject: Some(subject),
+                ..graph::Selection::default()
+            },
+            graph::Include {
+                facts: false,
+                prose: false,
+                stood_for: false,
+                status: None,
+            },
+            follow,
+            history,
+        )
+    }
+
     /// **A stored view read as a question, with nothing beside it.** The kind
     /// is the one `selects` resolved to, and `answers_type` is the declaration
     /// its name resolved to; both are the caller's to look up, because the
@@ -144,4 +168,32 @@ pub fn parse_date(raw: Option<&str>) -> Result<Option<jiff::civil::Date>, String
         .parse()
         .map(Some)
         .map_err(|error| format!("date must be YYYY-MM-DD, got '{named}': {error}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// **A subject question selects the one thing and reads nothing of it but the
+    /// follow or the history the caller names.**
+    #[test]
+    fn a_subject_question_selects_the_subject_and_includes_nothing() {
+        let subject = EntityId("topic:widgets".into());
+        let rows = [
+            (None, None),
+            (Some(graph::Follow::hop()), None),
+            (None, Some(graph::History::of("gate_count"))),
+        ];
+        for (follow, history) in rows {
+            let (has_follow, has_history) = (follow.is_some(), history.is_some());
+            let query = Question::about(subject.clone(), follow, history).query;
+            assert_eq!(query.select.subject.as_ref(), Some(&subject));
+            assert!(query.select.kind.is_none());
+            let include = query.include;
+            assert!(!include.facts && !include.prose && !include.stood_for);
+            assert!(include.status.is_none());
+            assert_eq!(query.follow.is_some(), has_follow);
+            assert_eq!(query.history.is_some(), has_history);
+        }
+    }
 }

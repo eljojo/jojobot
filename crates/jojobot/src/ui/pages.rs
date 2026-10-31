@@ -1056,17 +1056,8 @@ async fn around_section(
         ("points at", graph::Direction::Out),
         ("pointed at by", graph::Direction::In),
     ] {
-        let question = jojobot_query_api::Question::new(
-            graph::Selection {
-                subject: Some(entity.id.clone()),
-                ..Default::default()
-            },
-            graph::Include {
-                facts: false,
-                prose: false,
-                stood_for: false,
-                status: None,
-            },
+        let question = jojobot_query_api::Question::about(
+            entity.id.clone(),
             Some(graph::Follow {
                 direction: Some(direction),
                 ..graph::Follow::hop()
@@ -1074,11 +1065,19 @@ async fn around_section(
             None,
         );
         let reached = match queries.ask(question).await {
-            Ok(answer) => answer
-                .selected
-                .subject_object(&entity.id)
-                .map(|object| object.connected)
-                .unwrap_or_default(),
+            // **A scan that cannot be read is a section that says so**, as the walk
+            // the page used to run refused it; the shared answer keeps it in the
+            // selection, so the renderer asks.
+            Ok(answer) => {
+                if let Some(err) = graph::unreadable_scan(&answer.selected) {
+                    return blind("Around", "what is around this", &err.to_string());
+                }
+                answer
+                    .selected
+                    .subject_object(&entity.id)
+                    .map(|object| object.connected)
+                    .unwrap_or_default()
+            }
             Err(
                 jojobot_query_api::Failed::Selection(err)
                 | jojobot_query_api::Failed::Readiness(err),
@@ -1657,20 +1656,8 @@ async fn history_section(
         None | Some("") => return String::new(),
         Some(key) => key,
     };
-    let question = jojobot_query_api::Question::new(
-        graph::Selection {
-            subject: Some(entity.clone()),
-            ..Default::default()
-        },
-        graph::Include {
-            facts: false,
-            prose: false,
-            stood_for: false,
-            status: None,
-        },
-        None,
-        Some(graph::History::of(key)),
-    );
+    let question =
+        jojobot_query_api::Question::about(entity.clone(), None, Some(graph::History::of(key)));
     let answer = match queries.ask(question).await {
         Ok(answer) => answer,
         Err(

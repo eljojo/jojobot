@@ -489,3 +489,45 @@ async fn node_key_history_shows_a_clear_as_a_clear() {
     assert!(table.contains("<em>taken off</em>"), "{table}");
     ct.cancel();
 }
+
+/// **A scan that cannot be read is said in the Around section, never drawn as a
+/// cell with fewer neighbours.** Both halves in one test through the real route:
+/// the readable scan shows the neighbour the stall points at, and the failing
+/// scan shows the unreadable section and no neighbour table.
+#[tokio::test]
+async fn node_around_says_so_when_the_scan_cannot_be_read() {
+    use support::ui_board::{seeded_board_over, seeded_memory, spawn_jojobot_over};
+    let memory = Arc::new(UnreadableParts {
+        inner: seeded_memory().await,
+        failed: AtomicU8::new(0),
+        history_reads: AtomicUsize::new(0),
+    });
+    let board = seeded_board_over(memory.clone()).await;
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+    for failed in [0, 2] {
+        memory.failed.store(failed, Ordering::SeqCst);
+        let page = read(&client, addr, "/person:alpha/topic:widgets/", &cookie).await;
+        assert_eq!(page.status().as_u16(), 200, "row {failed}");
+        let body = page.text().await.unwrap();
+        // The town is linked from the facts as well, so only the Around table counts.
+        let around = body
+            .split_once("id=\"around\"")
+            .and_then(|(_, rest)| rest.split_once("</table>"))
+            .map_or("", |(table, _)| table);
+        assert_eq!(
+            around.contains("href=\"/place:shelbyville/\""),
+            failed == 0,
+            "the neighbour shows in Around only when the scan reads, row {failed}: {body}"
+        );
+        assert_eq!(
+            body.contains("id=\"unreadable-what-is-around-this\""),
+            failed != 0,
+            "row {failed}: {body}"
+        );
+    }
+    ct.cancel();
+}
