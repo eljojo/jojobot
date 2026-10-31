@@ -3023,8 +3023,13 @@ fn the_supplied_record_refusal_does_not_speak_of_rows() {
         attempted: "view:loops".into(),
     }
     .to_string();
+    // "thing" as a whole word: "nothing", which the same refusal says, must not
+    // satisfy it.
     assert!(
-        moved.contains("view:loops") && moved.contains("thing"),
+        moved.contains("view:loops")
+            && moved
+                .split(|c: char| !c.is_alphanumeric())
+                .any(|word| word == "thing"),
         "the rename refusal does not name the thing: {moved}"
     );
     assert!(

@@ -202,9 +202,13 @@ fn mail_visible_search_description_names_the_chart_rule() {
         .description
         .as_deref()
         .unwrap();
-    for term in ["reports_to", "below", "own"] {
-        assert!(description.contains(term), "missing {term}: {description}");
-    }
+    // The chart is named by the key it is made of. Ordinary words ("below",
+    // "own") would match "known" and "owner" and stay after the rule's sentence
+    // was deleted.
+    assert!(
+        description.contains("reports_to"),
+        "the description names the chart: {description}"
+    );
 }
 
 #[tokio::test]
@@ -313,7 +317,14 @@ async fn mail_visible_an_upward_author_read_leaves_out_the_recipients_notes() {
     for bodies in [false, true] {
         let listed = sent(&jojobot, &lisa, "bot:lisa", bodies).await;
         let text = listed.to_string();
-        assert!(text.contains("chartneedle") || !bodies, "{listed}");
+        // The listing holds the message in both passes; its body only when asked.
+        assert_eq!(listed["messages"][0]["id"], id, "{listed}");
+        let body = &listed["messages"][0]["body"];
+        if bodies {
+            assert_eq!(body, "chartneedle", "{listed}");
+        } else {
+            assert!(body.is_null(), "{listed}");
+        }
         assert!(!text.contains("recipient only"), "{listed}");
         assert!(text.contains("notes_withheld"), "{listed}");
     }

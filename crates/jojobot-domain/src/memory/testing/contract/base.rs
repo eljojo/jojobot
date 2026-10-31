@@ -2571,10 +2571,11 @@ pub async fn the_chart_is_judged_against_the_chain_read_inside_the_write<M: Memo
         .await
         .expect_err("a stranger cannot place an orphan under mid");
     refused_for("stranger", &err);
-    store
+    let err = store
         .update_fact(&adopted.address(), to(&mid), &mid)
         .await
         .expect_err("mid cannot adopt the orphan by naming itself");
+    refused_for("mid", &err);
     store
         .update_fact(&adopted.address(), to(&mid), &head)
         .await
