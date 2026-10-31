@@ -1,7 +1,8 @@
-//! **An outside controller does its three jobs through the app API.** Under the
-//! name of an app that holds a token and three grants, it reads the working card
-//! by status, records what it saw on a role under a key it was granted, and pages
-//! the operator. Each step is asserted by what came back, and the writes by what a
+//! **An outside controller does its jobs through the app API.** Under the name
+//! of an app that holds a token and three grants, it reads the working card by
+//! status, records what it saw on a role under a key it was granted, pages the
+//! operator, and reads the ready shelf and when a waiting card's status was
+//! written. Each step is asserted by what came back, and the writes by what a
 //! colleague reads afterwards through the tools a bot uses.
 
 use jojobot_domain::app::operations::OperationSpec;
@@ -20,7 +21,8 @@ fn grant(operation: &str, kinds: &[&str], keys: &[&str]) -> OperationSpec {
 }
 
 #[tokio::test]
-async fn a_controller_reads_a_working_card_records_what_it_saw_and_pages_the_operator() {
+async fn a_controller_reads_a_working_card_records_what_it_saw_pages_the_operator_and_reads_the_shelf()
+ {
     let (story, token) = Story::begin_serving_an_app(
         "bot:marge",
         APP,
@@ -115,6 +117,65 @@ async fn a_controller_reads_a_working_card_records_what_it_saw_and_pages_the_ope
     assert_eq!(status, 200, "{page}");
     assert!(page["id"].is_string(), "the page has an id: {page}");
     assert_eq!(page["mailbox"], "person-homer", "{page}");
+
+    // ── 4. it reads the shelf, and when a waiting card's status was written ─
+    for (card, name) in [
+        ("work:lambda", "Rake the leaves"),
+        ("work:delta", "Bag the leaves"),
+        ("work:theta", "Hang the shutters"),
+    ] {
+        s.add(card, name).await;
+    }
+    for (card, status, depends_on) in [
+        ("work:lambda", "queued", None),
+        ("work:delta", "queued", Some("work:lambda")),
+        ("work:theta", "waiting", None),
+    ] {
+        let mut sets = json!({"status": status});
+        if let Some(dependency) = depends_on {
+            sets["depends_on"] = json!(dependency);
+        }
+        s.call(
+            "capture",
+            json!({"subject": card, "content": "where it stands",
+                   "provenance": "testimony", "sets": sets}),
+        )
+        .await;
+    }
+    let (status, shelf) = story
+        .app_calls(
+            &token,
+            "recall",
+            json!({"view": "ready", "where": "status = queued"}),
+        )
+        .await;
+    assert_eq!(status, 200, "{shelf}");
+    let ready: Vec<&str> = shelf["objects"]
+        .as_array()
+        .expect("objects")
+        .iter()
+        .filter_map(|object| object["handle"].as_str())
+        .collect();
+    assert_eq!(
+        ready,
+        ["work:lambda"],
+        "the card that waits on nothing is on the shelf and the one behind it is not: {shelf}"
+    );
+    let (status, waiting) = story
+        .app_calls(
+            &token,
+            "recall",
+            json!({"subject": "work:theta", "backing": true}),
+        )
+        .await;
+    assert_eq!(status, 200, "{waiting}");
+    let written_at = &waiting["objects"][0]["fields_backing"]["status"]["written_at"];
+    assert!(
+        written_at
+            .as_str()
+            .is_some_and(|at| at.parse::<jiff::Timestamp>().is_ok()),
+        "the waiting card says when its status was written: {waiting}"
+    );
     story.finish().await;
 }
 
