@@ -3037,6 +3037,38 @@ async fn decembers_lock_fails_when_the_loop_falls_due_a_day_early() {
     );
 }
 
+/// 🚨 **December's lock reads through the grader and sends no MCP request.** The
+/// server counts an MCP request as it ends and the grader's route is not one, so
+/// a lock that reads through the tool dispatcher moves the count. **The lock must
+/// hold on the worked year**, so the count is taken over a read that found the
+/// loop and the three dates, not over a lock that read nothing.
+#[tokio::test]
+async fn decembers_lock_reads_through_the_grader_and_sends_no_mcp_request() {
+    let (room, surface) = furnished().await;
+    let boundaries = worked_the_year(&surface).await;
+    let checks = expectations::for_playbook(expectations::YEAR_ROOM).expect("the year asserts");
+    let seen = Observed {
+        room: &surface,
+        boundaries: &boundaries,
+    };
+    let sent = || jojobot_exercise::timing::server_time(&room.server_log()).requests;
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    let before = sent();
+    let outcome = checks[DECEMBER[0]].check(&seen).await;
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    assert!(
+        outcome.held,
+        "December's lock did not hold on the worked year: {}",
+        outcome.saying
+    );
+    assert_eq!(
+        sent(),
+        before,
+        "December's lock sent an MCP request while it read the room: {}",
+        outcome.saying,
+    );
+}
+
 /// 🚨 **The inspection's own hedge, discriminated.**
 ///
 /// The negative omits `standing` entirely rather than naming a wrong value:

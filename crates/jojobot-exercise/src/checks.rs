@@ -3160,7 +3160,7 @@ async fn the_bearings_loop_is_not_owed_in_december_and_falls_due_on_the_twentiet
 ) -> Result<(), String> {
     let found = seen
         .room
-        .call(
+        .read(
             "recall",
             json!({"kind": "rhythm", "fields": [{"key": "cadence_days", "value": "90"}]}),
         )
@@ -3186,7 +3186,7 @@ async fn the_bearings_loop_is_not_owed_in_december_and_falls_due_on_the_twentiet
     ] {
         let read = seen
             .room
-            .call(
+            .read(
                 "recall",
                 json!({"kind": "rhythm", "overdue": {"as_of": day}}),
             )
