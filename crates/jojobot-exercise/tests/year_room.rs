@@ -3009,6 +3009,34 @@ async fn decembers_lock_fails_when_the_loop_was_done_again_after_november() {
     );
 }
 
+/// 🚨 **December's lock, discriminated against a loop that falls due a day early.**
+///
+/// The year is worked without November's service, and the loop is checked in on
+/// 21 November instead. Its next due day is 19 February, so it is owed on the
+/// day the lock asks about last but one, and only that day separates this year
+/// from the worked one: 13 December and 20 February read the same in both.
+#[tokio::test]
+async fn decembers_lock_fails_when_the_loop_falls_due_a_day_early() {
+    let without: Vec<usize> = WORKED.iter().copied().filter(|&at| at != 12).collect();
+    let (_room, surface) = furnished().await;
+    let boundaries = work_the_year(&surface, &room_document(), &without, &[]).await;
+    let dec = sitting(&surface, "2027-01-05").await;
+    did(
+        &surface,
+        &dec,
+        "capture",
+        json!({"subject": "rhythm:bearings-check", "content": "did the bearings in November",
+               "provenance": "testimony", "check_in": "ran", "recorded_at": "2026-11-21"}),
+    )
+    .await;
+    let outcomes = judge_all(&surface, &boundaries).await;
+    assert!(
+        !outcomes[DECEMBER[0]].held,
+        "a loop done on 21 November is owed on 19 February, yet December's lock held: {}",
+        saying(&outcomes),
+    );
+}
+
 /// 🚨 **The inspection's own hedge, discriminated.**
 ///
 /// The negative omits `standing` entirely rather than naming a wrong value:
