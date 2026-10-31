@@ -146,6 +146,22 @@ async fn node_read_path_keeps_unreadable_parts_in_the_shared_answer_and_each_ren
             let body = page.text().await.unwrap();
             assert_eq!(body.contains("<pre>alpha</pre>"), failed & 2 == 0);
         }
+        // **The view page is a reader too.** A scan that cannot be read is said on
+        // the page in its own section, never drawn as an empty answer. Revisions are
+        // read only for the facts a question asks, which this view does not.
+        let listing = read(&client, addr, "/view:bare-listing/", &cookie).await;
+        assert_eq!(listing.status().as_u16(), 200, "view page in row {failed}");
+        let listing_body = listing.text().await.unwrap();
+        assert_eq!(
+            listing_body.contains("id=\"unreadable-the-records-it-selects\""),
+            failed & 2 != 0,
+            "view page, row {failed}: {listing_body}"
+        );
+        assert_eq!(
+            listing_body.contains("topic:widgets"),
+            failed & 2 == 0,
+            "the view's answer lists the topic only when its records read, row {failed}"
+        );
         for view in [None, Some("bare-listing")] {
             let recall = recall_body(addr, failed & 6 != 0, view).await;
             if failed & 6 != 0 {
