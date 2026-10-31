@@ -80,11 +80,15 @@ async fn bare_line(
         .written()
         .expect("the handle lands");
     let key = badge_of(pool, home.as_str()).await;
+    // The bare name is the bot's own, so two items on two bots differ in the
+    // target the check reports and a wrong item's row cannot pass for the right one.
+    let bare = bot.as_str().split_once(':').expect("a handle").1;
     for sql in [
-        "UPDATE field_write SET value = 'beta' WHERE entity = ? AND `key` = 'line'",
-        "UPDATE field_link SET target = 'beta' WHERE entity = ? AND `key` = 'line'",
+        "UPDATE field_write SET value = ? WHERE entity = ? AND `key` = 'line'",
+        "UPDATE field_link SET target = ? WHERE entity = ? AND `key` = 'line'",
     ] {
         sqlx::query(sql)
+            .bind(bare)
             .bind(&key)
             .execute(pool)
             .await
@@ -113,7 +117,7 @@ fn correcting_to(bot: &EntityId) -> FactPatch {
 }
 
 /// **A served correction ends the report, a value left on its write does not.**
-/// Two work items hold the bare name beta. One is corrected with update_fact; the
+/// Two work items hold a bare name each, beta and gamma. The beta one is corrected with update_fact; the
 /// other is not. The check names only the one that was not. The old write and its
 /// link row of the corrected item are still stored: nothing was deleted.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -121,7 +125,8 @@ async fn a_dangling_link_a_served_edit_replaced_is_history_and_one_left_is_damag
     let (_scratch, _server, pool, memory) = a_store("check-current-edit").await;
     let bot = thing(&memory, "bot:beta", "Beta").await;
     let corrected = bare_line(&memory, &pool, ("work:alpha-queue", "Alpha queue"), &bot).await;
-    let left = bare_line(&memory, &pool, ("work:beta-queue", "Beta queue"), &bot).await;
+    let other = thing(&memory, "bot:gamma", "Gamma").await;
+    let left = bare_line(&memory, &pool, ("work:beta-queue", "Beta queue"), &other).await;
     assert_eq!(dangling(&pool).await.0, 2, "both rows are damage first");
 
     memory
@@ -138,7 +143,7 @@ async fn a_dangling_link_a_served_edit_replaced_is_history_and_one_left_is_damag
     let (rows, ids) = dangling(&pool).await;
     assert_eq!(
         (rows, ids),
-        (1, vec!["field_link.target: beta".to_string()]),
+        (1, vec!["field_link.target: gamma".to_string()]),
         "the replaced row is history; the row on the current write is damage"
     );
     let home_key = badge_of(&pool, corrected.subject.as_str()).await;
@@ -173,7 +178,8 @@ async fn a_clear_replaces_a_dangling_link_and_a_new_claim_does_not() {
     let (_scratch, _server, pool, memory) = a_store("check-current-clear").await;
     let bot = thing(&memory, "bot:beta", "Beta").await;
     let cleared = bare_line(&memory, &pool, ("work:alpha-queue", "Alpha queue"), &bot).await;
-    let restated = bare_line(&memory, &pool, ("work:beta-queue", "Beta queue"), &bot).await;
+    let other = thing(&memory, "bot:gamma", "Gamma").await;
+    let restated = bare_line(&memory, &pool, ("work:beta-queue", "Beta queue"), &other).await;
     assert_eq!(dangling(&pool).await.0, 2);
 
     memory
@@ -206,7 +212,7 @@ async fn a_clear_replaces_a_dangling_link_and_a_new_claim_does_not() {
     let (rows, ids) = dangling(&pool).await;
     assert_eq!(
         (rows, ids),
-        (1, vec!["field_link.target: beta".to_string()]),
+        (1, vec!["field_link.target: gamma".to_string()]),
         "the cleared row is history; a new claim leaves the old record's row damage"
     );
 }
