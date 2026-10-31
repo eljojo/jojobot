@@ -193,6 +193,76 @@ async fn a_thing_serves_a_saved_expression_with_the_handles_it_names() {
     );
 }
 
+/// **The folded fields a scan carries read the same as the fields door.** A
+/// view's `where` takes them from the scan, so a saved expression must come
+/// back with the handles it names there too, or the walk selects on a binding.
+/// Paired with the inner store's own scan, which does hold the binding, so the
+/// case cannot pass on a build that never bound anything.
+#[tokio::test]
+async fn a_scan_serves_a_saved_expression_with_the_handles_it_names() {
+    use crate::memory::types::{DeclaredType, Field, ValueType};
+    use crate::memory::{Memory, NewEntity, NewFact};
+    let inner = std::sync::Arc::new(crate::memory::testing::InMemoryMemory::booted());
+    let store = Mentioning::new(inner.clone());
+    store
+        .declare_type(
+            DeclaredType::new("saved", vec![Field::new("line", ValueType::Expression)]),
+            None,
+        )
+        .await
+        .expect("a declaration the store keeps");
+    let holder = EntityId("thing:delta".into());
+    let named = EntityId("thing:gamma".into());
+    for (id, name) in [(&holder, "Delta"), (&named, "Gamma")] {
+        store
+            .add_entity(NewEntity::new(id.clone(), name, "test"))
+            .await
+            .expect("add ok")
+            .written()
+            .expect("nothing collides");
+    }
+    let fields: std::collections::BTreeMap<String, String> = [
+        ("line".to_string(), "owner = thing:gamma".to_string()),
+        ("note".to_string(), "thing:gamma at home".to_string()),
+    ]
+    .into_iter()
+    .collect();
+    store
+        .capture(NewFact {
+            sets: fields.keys().cloned().collect(),
+            fields,
+            ..NewFact::about(
+                holder.clone(),
+                "keeps a line",
+                jiff::civil::date(2026, 8, 1),
+            )
+        })
+        .await
+        .expect("a line that names a thing that exists is stored")
+        .written()
+        .expect("nothing blocks it");
+    let stored = inner
+        .scan_entity(&holder)
+        .await
+        .expect("the stored scan")
+        .expect("the holder has a scan");
+    assert_ne!(
+        stored.fields["line"], "owner = thing:gamma",
+        "the store holds the binding, or this proves nothing: {:?}",
+        stored.fields
+    );
+    let served = store
+        .scan_entity(&holder)
+        .await
+        .expect("the served scan")
+        .expect("the holder has a scan");
+    assert_eq!(served.fields["line"], "owner = thing:gamma");
+    assert_eq!(
+        served.fields["note"], "thing:gamma at home",
+        "a key that holds plain text is served as written"
+    );
+}
+
 /// **What is not a handle that exists is not bound, and what cannot be
 /// bound is refused.** A time is not a handle; a handle of a record the build
 /// supplies wears no badge; a handle naming nothing is refused with the
