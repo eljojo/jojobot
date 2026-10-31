@@ -103,6 +103,14 @@ impl Writer {
         self.0.contended.notified().await;
     }
 
+    /// A probe that does not keep the owner alive: it says whether some writer
+    /// clone, and so the queue, still exists.
+    #[cfg(test)]
+    pub(crate) fn alive_probe(&self) -> impl Fn() -> bool + use<> {
+        let weak = Arc::downgrade(&self.0);
+        move || weak.strong_count() > 0
+    }
+
     #[cfg(test)]
     pub(crate) fn has_native_connection(&self) -> bool {
         self.0.sql.get().is_some()
@@ -111,6 +119,13 @@ impl Writer {
     /// Read every change this writer publishes, after the State holds it.
     pub fn subscribe(&self, subscriber: Arc<dyn publish::Subscriber>) {
         self.0.publication.subscribe(subscriber);
+    }
+
+    /// Read every change this writer publishes, for as long as the caller keeps
+    /// the subscriber alive. Use it for a subscriber that holds this writer,
+    /// which the publication must not own.
+    pub fn subscribe_borrowed(&self, subscriber: Weak<dyn publish::Subscriber>) {
+        self.0.publication.subscribe_borrowed(subscriber);
     }
 
     /// Record a change the State just applied. The writer delivers it once,

@@ -538,3 +538,66 @@ async fn writer_recovery_an_ambiguous_mail_commit_uses_the_same_native_rail_relo
     );
     server.stop().await;
 }
+
+/// **Dropping a served index releases the native write fence.** A writer that
+/// took the fence holds it until its connection closes. The index is subscribed
+/// to that writer, so a subscription that owned the writer back kept the
+/// connection open after every owner had gone, and a fresh writer in the same
+/// process could not write.
+#[tokio::test]
+async fn writer_recovery_a_dropped_index_frees_the_native_fence_for_a_fresh_writer() {
+    use crate::{dolt::memory::DoltMemory, fold::Folded};
+    use jojobot_domain::memory::testing::contract::state;
+    use jojobot_domain::memory::{EntityId, Memory, NewEntity, NewFact};
+
+    jojobot_domain::memory::kinds::load_shipped();
+    let scratch = Scratch::new("writer-fence-drop");
+    let mut server = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("native store");
+    let pool = migrated_database(&server, "fence_drop")
+        .await
+        .expect("schema");
+    let native = Arc::new(DoltMemory::open(pool));
+    jojobot_domain::memory::kinds::seed(&*native)
+        .await
+        .expect("kinds");
+    let date = jiff::civil::date(2026, 9, 1);
+    let id = EntityId("topic:alpha".into());
+
+    let first = crate::writer::Writer::default();
+    let image = Arc::new(Folded::new(native.clone()).with_writer(first.clone()));
+    image.rebuild().await.expect("published rail");
+    let indexed = crate::search::IndexedMemory::with_writer(image, first.clone())
+        .expect("the production search decorator");
+    indexed
+        .add_entity(NewEntity::new(id.clone(), "alpha", "fence"))
+        .await
+        .expect("entity")
+        .written()
+        .expect("lands");
+    assert!(
+        first.has_native_connection(),
+        "the first writer took the fence"
+    );
+    drop(indexed);
+    drop(first);
+
+    let second = crate::writer::Writer::default();
+    let fresh = Folded::new(native.clone()).with_writer(second);
+    fresh.rebuild().await.expect("published rail");
+    let mut taken = false;
+    for _ in 0..20 {
+        let landed = fresh
+            .capture(state(NewFact::about(id.clone(), "alpha, again", date)))
+            .await
+            .map(|guarded| guarded.written().is_some());
+        if landed.unwrap_or(false) {
+            taken = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+    assert!(taken, "the fresh writer never took the fence");
+    server.stop().await;
+}

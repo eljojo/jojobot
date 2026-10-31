@@ -2549,4 +2549,6 @@ mod reload_tests;
 #[cfg(test)]
 mod scope_tests;
 #[cfg(test)]
+mod subscription_tests;
+#[cfg(test)]
 mod tests;

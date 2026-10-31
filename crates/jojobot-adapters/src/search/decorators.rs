@@ -20,6 +20,9 @@ pub struct IndexedMemory {
     /// [`Memory::write_summary`] on every call so an unchanged store can be
     /// answered from here instead of paying for [`Memory::scan`] again.
     last_scan: Arc<RwLock<Option<CachedMemoryScan>>>,
+    /// **The one owner of the copy of this index that the writer delivers to.**
+    /// Shared by every clone, so the copy is dropped with the last of them.
+    delivery: Arc<std::sync::OnceLock<Arc<IndexedMemory>>>,
     /// The fold a fixture put in front of its store.
     #[cfg(any(test, feature = "testing"))]
     state: Option<Arc<crate::fold::Folded>>,
@@ -71,10 +74,20 @@ impl IndexedMemory {
             writer: writer.clone(),
             inner,
             last_scan: Arc::new(RwLock::new(None)),
+            delivery: Arc::new(std::sync::OnceLock::new()),
             #[cfg(any(test, feature = "testing"))]
             state: None,
         };
-        writer.subscribe(Arc::new(indexed.clone()));
+        // **The subscriber holds the writer, so the writer must not hold it.**
+        // The publication gets a weak handle; every clone of the index shares the
+        // one owner of the subscriber, so it lives exactly as long as they do.
+        // The subscriber's own `delivery` is empty: it owns nothing of itself.
+        let subscriber = Arc::new(IndexedMemory {
+            delivery: Arc::new(std::sync::OnceLock::new()),
+            ..indexed.clone()
+        });
+        writer.subscribe_borrowed(Arc::downgrade(&subscriber) as _);
+        let _ = indexed.delivery.set(subscriber);
         Ok(indexed)
     }
 

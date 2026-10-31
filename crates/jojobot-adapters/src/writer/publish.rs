@@ -3,7 +3,7 @@
 //! current content from the State and never wraps a store port.
 
 use std::panic::AssertUnwindSafe;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 
 use async_trait::async_trait;
 use futures_util::FutureExt;
@@ -42,9 +42,17 @@ pub trait Subscriber: Send + Sync {
     async fn changed(&self, changes: &[Change]);
 }
 
+/// How the publication holds a subscriber. A subscriber that holds the writer
+/// itself is held weakly, so the publication is not the owner that closes the
+/// cycle back to the writer.
+enum Held {
+    Owned(Arc<dyn Subscriber>),
+    Borrowed(Weak<dyn Subscriber>),
+}
+
 #[derive(Default)]
 pub(super) struct Publication {
-    subscribers: Mutex<Vec<Arc<dyn Subscriber>>>,
+    subscribers: Mutex<Vec<Held>>,
     pending: Mutex<Vec<Change>>,
 }
 
@@ -53,7 +61,16 @@ impl Publication {
         self.subscribers
             .lock()
             .expect("subscriber lock")
-            .push(subscriber);
+            .push(Held::Owned(subscriber));
+    }
+
+    /// Deliver to a subscriber some other owner keeps alive. The delivery ends
+    /// with that owner: a subscriber that is gone is dropped from the list.
+    pub(super) fn subscribe_borrowed(&self, subscriber: Weak<dyn Subscriber>) {
+        self.subscribers
+            .lock()
+            .expect("subscriber lock")
+            .push(Held::Borrowed(subscriber));
     }
 
     pub(super) fn record(&self, change: Change) {
@@ -66,7 +83,19 @@ impl Publication {
         if changes.is_empty() {
             return;
         }
-        let subscribers = self.subscribers.lock().expect("subscriber lock").clone();
+        let subscribers: Vec<Arc<dyn Subscriber>> = {
+            let mut held = self.subscribers.lock().expect("subscriber lock");
+            held.retain(|held| match held {
+                Held::Owned(_) => true,
+                Held::Borrowed(weak) => weak.strong_count() > 0,
+            });
+            held.iter()
+                .filter_map(|held| match held {
+                    Held::Owned(subscriber) => Some(subscriber.clone()),
+                    Held::Borrowed(weak) => weak.upgrade(),
+                })
+                .collect()
+        };
         // A subscriber that panics must not take the change from the ones after
         // it: each is told, and the first panic is raised once all have been.
         let mut failed = None;
