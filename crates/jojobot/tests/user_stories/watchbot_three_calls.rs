@@ -117,3 +117,44 @@ async fn a_controller_reads_a_working_card_records_what_it_saw_and_pages_the_ope
     assert_eq!(page["mailbox"], "person-homer", "{page}");
     story.finish().await;
 }
+
+/// **A controller reads what a bot is working on only while the session that
+/// declared it is live.** The bot declares it in a live session and the app reads
+/// it; the same session wraps and the app no longer does, though the bot is still
+/// there to read. The paired read in the first half is what makes the second an
+/// absence of a value and not of a reader.
+#[tokio::test]
+async fn a_controller_reads_working_on_only_while_the_declaring_session_is_live() {
+    let (story, token) =
+        Story::begin_serving_an_app("bot:otto", APP, vec![grant("recall", &[], &[])]).await;
+    let otto = story.session().await;
+    otto.add("work:omega", "Mow the lawn").await;
+    otto.call(
+        "journal",
+        json!({"entry": "picked up the mowing", "working_on": "work:omega"}),
+    )
+    .await;
+
+    let (status, live) = story
+        .app_calls(&token, "recall", json!({"subject": "bot:otto"}))
+        .await;
+    assert_eq!(status, 200, "{live}");
+    assert_eq!(live["objects"][0]["handle"], "bot:otto", "{live}");
+    assert_eq!(
+        live["objects"][0]["fields"]["working_on"], "work:omega",
+        "the app reads the focus while its session is live: {live}"
+    );
+
+    otto.wrap("put the mowing down").await;
+
+    let (status, gone) = story
+        .app_calls(&token, "recall", json!({"subject": "bot:otto"}))
+        .await;
+    assert_eq!(status, 200, "{gone}");
+    assert_eq!(gone["objects"][0]["handle"], "bot:otto", "{gone}");
+    assert!(
+        gone["objects"][0]["fields"].get("working_on").is_none(),
+        "the session is gone, so the app does not read its focus: {gone}"
+    );
+    story.finish().await;
+}
