@@ -816,6 +816,50 @@ mod tests {
         );
     }
 
+    /// **Damage in a box the caller cannot see is not listed.** A sibling's
+    /// quarantined message names the sibling's box and its ids, and the chart
+    /// rule keeps both from a bot beside it. **Paired**: the caller's own damaged
+    /// box is listed in the same read.
+    #[tokio::test]
+    async fn list_sent_lists_no_damage_in_a_box_the_caller_cannot_see() {
+        let boxes = Arc::new(InMemoryMailboxes::knowing_any_owner());
+        let jojobot = with_mailboxes(boxes.clone());
+        make_box(&jojobot, "pm").await;
+        make_box(&jojobot, "marge").await;
+        for (name, id) in [("pm", "4212"), ("marge", "4213")] {
+            boxes.quarantine_by_damage(
+                &MailboxName(name.into()),
+                &MessageId(id.into()),
+                "its row on the page cannot be read — a state or a sender has been edited past parsing",
+            );
+        }
+
+        let body = json_of(
+            &jojobot
+                .list_sent(Parameters(ListSentArgs {
+                    limit: None,
+                    offset: None,
+                    sender: None,
+                    to: None,
+                    include_bodies: None,
+                    sid: Some(as_bot(&jojobot, "pm")),
+                }))
+                .await
+                .expect("list_sent ok"),
+        );
+        let listed: Vec<&str> = body["unreadable"]
+            .as_array()
+            .expect("unreadable is a list")
+            .iter()
+            .filter_map(|entry| entry["mailbox"].as_str())
+            .collect();
+        assert!(listed.contains(&"pm"), "the caller's own damage: {body}");
+        assert!(
+            !listed.contains(&"marge"),
+            "a box beside the caller is not named: {body}"
+        );
+    }
+
     /// Ids are minted as decimal counters, so ordering them as text puts `9`
     /// after `10`. Both other sort sites in this subsystem compare them as
     /// numbers on purpose; this one did not.
