@@ -21,6 +21,7 @@ pub mod owners;
 pub mod provisioned;
 pub mod provisioned_boot;
 pub mod search;
+pub mod teaching_log;
 pub mod writer;
 
 // The port helper the suites share lives behind this feature, exactly as the
