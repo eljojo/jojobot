@@ -601,7 +601,7 @@ impl DoltMemory {
     /// pass is marked finished only after the commit. A second run finds no link
     /// on a forwarding row, so it is idempotent as well. A forwarding row whose
     /// survivor was folded in turn is followed to the end of the chain. The link
-    /// table is read, so this runs after [`migrate_field_links`](Self::migrate_field_links)
+    /// table is read, so this runs after [`migrate_field_links_marked`](Self::migrate_field_links_marked)
     /// has made it agree with the writes.
     pub async fn migrate_forwarded_links(&self) -> Result<ForwardedLinkReport, MemoryError> {
         let mut report = ForwardedLinkReport::default();
