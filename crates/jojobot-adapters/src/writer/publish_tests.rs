@@ -61,7 +61,7 @@ async fn a_mail_write_is_delivered_once_with_its_messages_before_its_position() 
     let writer = Writer::default();
     let boxes = FoldedMailboxes::new(Arc::new(store)).with_writer(writer.clone());
     let seen = Arc::new(Batches::default());
-    writer.subscribe(seen.clone());
+    writer.subscribe_borrowed(Arc::downgrade(&seen) as _);
 
     boxes
         .post_message(a_post("epsilon"))
@@ -113,7 +113,7 @@ async fn a_mail_write_is_delivered_once_with_its_messages_before_its_position() 
 async fn a_write_whose_caller_stopped_waiting_is_still_published() {
     let writer = Writer::default();
     let seen = Arc::new(Batches::default());
-    writer.subscribe(seen.clone());
+    writer.subscribe_borrowed(Arc::downgrade(&seen) as _);
     let reached = Arc::new(Notify::new());
     let gate = Arc::new(Notify::new());
 
@@ -169,8 +169,8 @@ async fn a_subscriber_panic_fails_its_caller_after_the_commit_and_the_writer_ser
     let writer = Writer::default();
     let panicking = Arc::new(Panicking(AtomicBool::new(true)));
     let seen = Arc::new(Batches::default());
-    writer.subscribe(panicking);
-    writer.subscribe(seen.clone());
+    writer.subscribe_borrowed(Arc::downgrade(&panicking) as _);
+    writer.subscribe_borrowed(Arc::downgrade(&seen) as _);
     let committed = Arc::new(AtomicBool::new(false));
 
     let failed = tokio::spawn({
@@ -209,7 +209,7 @@ async fn a_subscriber_panic_fails_its_caller_after_the_commit_and_the_writer_ser
 async fn a_change_recorded_by_a_job_that_panicked_rides_out_with_the_next_delivery() {
     let writer = Writer::default();
     let seen = Arc::new(Batches::default());
-    writer.subscribe(seen.clone());
+    writer.subscribe_borrowed(Arc::downgrade(&seen) as _);
 
     let inner = writer.clone();
     let failed = tokio::spawn({

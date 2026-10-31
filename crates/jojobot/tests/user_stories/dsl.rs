@@ -60,6 +60,9 @@ pub struct Story {
     /// **The task that pushes the operator's mail**, when this server was set
     /// up to push. Kept so a story can stop it, as stopping the process would.
     runner: Option<Arc<jojobot::push::Runner>>,
+    /// **The reader of posts that wakes that task.** The writer holds it weakly,
+    /// so the story keeps it for as long as the server runs.
+    _nudge: Option<Arc<jojobot_adapters::nudge::NudgeOnPost>>,
     /// **The search index this server answers from**, so a story can make the
     /// next write to it fail, as a disk that fills does.
     index: Arc<jojobot_adapters::search::FullTextIndex>,
@@ -1026,13 +1029,9 @@ impl Story {
                 policy,
             ))
         });
-        if let Some(runner) = runner.clone() {
-            jojobot_adapters::nudge::NudgeOnPost::subscribe(
-                &folded.writer(),
-                boxes.clone(),
-                runner,
-            );
-        }
+        let nudge = runner.clone().map(|runner| {
+            jojobot_adapters::nudge::NudgeOnPost::subscribe(&folded.writer(), boxes.clone(), runner)
+        });
         let state = AppState {
             apps,
             metrics: None,
@@ -1081,6 +1080,7 @@ impl Story {
             memory_fold,
             memory_index,
             runner,
+            _nudge: nudge,
             index,
         }
     }

@@ -289,7 +289,7 @@ pub fn assemble_ports(
         mail_mentioned.clone(),
         indexed.index(),
     ));
-    indexed.writer().subscribe(mail_index.clone());
+    mail_index.subscribe();
     // **A bot's own runs, indexed for search alone.** `sessions` above stays
     // the mention-resolving port directly, and this wrapped copy is only a
     // source `Retrieval` reads from — and a caller's own `rebuild` target.

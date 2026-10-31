@@ -20,6 +20,6 @@ pub(super) fn subscribed(
     index: Arc<FullTextIndex>,
 ) -> Arc<IndexedMailboxes> {
     let mail = Arc::new(IndexedMailboxes::new(read_from, index.clone()));
-    index.owner().subscribe(mail.clone());
+    mail.subscribe();
     mail
 }

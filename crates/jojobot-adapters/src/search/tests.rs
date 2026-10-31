@@ -7326,7 +7326,7 @@ async fn rebuilding_either_half_leaves_the_other_alone() {
 async fn a_posted_message_is_findable_at_once_and_its_state_follows_it() {
     jojobot_domain::memory::kinds::load_shipped();
     let index = Arc::new(FullTextIndex::open().expect("index opens"));
-    let (store, _) = mail_over(Arc::new(InMemoryMailboxes::new()), index.clone());
+    let (store, _subscribed) = mail_over(Arc::new(InMemoryMailboxes::new()), index.clone());
     mail_contract::create(&*store, "pm").await;
 
     let posted = mail_contract::post(&*store, "pm", "dev", "the damper is still hand-cut", 0).await;
@@ -7374,6 +7374,7 @@ async fn a_board_whose_index_fails_the_next_commit() -> (
     Arc<FullTextIndex>,
     Arc<FoldedMailboxes>,
     jojobot_domain::mailbox::Message,
+    Arc<IndexedMailboxes>,
 ) {
     jojobot_domain::memory::kinds::load_shipped();
     let board = Arc::new(InMemoryMailboxes::new());
@@ -7387,12 +7388,14 @@ async fn a_board_whose_index_fails_the_next_commit() -> (
         Coverage::Loaded,
         "the index holds the board before the fault, so Stale below is the fault's"
     );
-    (board, index, mail, posted)
+    // The writer holds the mail index weakly, so the case keeps it to be heard.
+    (board, index, mail, posted, ix)
 }
 
 #[tokio::test]
 async fn a_message_posted_while_the_index_fails_answers_landed_and_marks_the_index_behind() {
-    let (board, index, mail, _first) = a_board_whose_index_fails_the_next_commit().await;
+    let (board, index, mail, _first, _subscribed) =
+        a_board_whose_index_fails_the_next_commit().await;
     index.fail_next_commit();
     let posted = mail
         .post_message(jojobot_domain::mailbox::NewMessage {
@@ -7421,7 +7424,8 @@ async fn a_message_posted_while_the_index_fails_answers_landed_and_marks_the_ind
 
 #[tokio::test]
 async fn a_box_read_while_the_index_fails_answers_delivered_and_marks_the_index_behind() {
-    let (board, index, mail, posted) = a_board_whose_index_fails_the_next_commit().await;
+    let (board, index, mail, posted, _subscribed) =
+        a_board_whose_index_fails_the_next_commit().await;
     index.fail_next_commit();
     let delivery = mail
         .read_mailbox(
@@ -7445,7 +7449,8 @@ async fn a_box_read_while_the_index_fails_answers_delivered_and_marks_the_index_
 
 #[tokio::test]
 async fn a_message_read_while_the_index_fails_answers_delivered_and_marks_the_index_behind() {
-    let (board, index, mail, posted) = a_board_whose_index_fails_the_next_commit().await;
+    let (board, index, mail, posted, _subscribed) =
+        a_board_whose_index_fails_the_next_commit().await;
     index.fail_next_commit();
     mail.read_message(
         &posted.id,
@@ -7460,7 +7465,8 @@ async fn a_message_read_while_the_index_fails_answers_delivered_and_marks_the_in
 
 #[tokio::test]
 async fn a_message_processed_while_the_index_fails_answers_done_and_marks_the_index_behind() {
-    let (board, index, mail, posted) = a_board_whose_index_fails_the_next_commit().await;
+    let (board, index, mail, posted, _subscribed) =
+        a_board_whose_index_fails_the_next_commit().await;
     index.fail_next_commit();
     mail.mark_processed(
         &posted.id,

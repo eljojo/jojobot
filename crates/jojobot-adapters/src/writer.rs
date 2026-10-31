@@ -116,14 +116,10 @@ impl Writer {
         self.0.sql.get().is_some()
     }
 
-    /// Read every change this writer publishes, after the State holds it.
-    pub fn subscribe(&self, subscriber: Arc<dyn publish::Subscriber>) {
-        self.0.publication.subscribe(subscriber);
-    }
-
-    /// Read every change this writer publishes, for as long as the caller keeps
-    /// the subscriber alive. Use it for a subscriber that holds this writer,
-    /// which the publication must not own.
+    /// Read every change this writer publishes, after the State holds it, for as
+    /// long as the caller keeps the subscriber alive. **The publication never
+    /// owns a subscriber:** one that holds this writer would close a cycle back
+    /// to it, and the instance could not release its writer.
     pub fn subscribe_borrowed(&self, subscriber: Weak<dyn publish::Subscriber>) {
         self.0.publication.subscribe_borrowed(subscriber);
     }

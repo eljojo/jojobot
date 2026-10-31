@@ -458,6 +458,9 @@ pub struct IndexedMailboxes {
     /// handle a thing wears now, so a rename changes the text the index should
     /// hold without a single write to mail.
     board_seen_epoch: Arc<std::sync::atomic::AtomicU64>,
+    /// **The one strong owner of the subscriber** that the writer's publication
+    /// holds weakly, shared by every clone. Empty until `subscribe`.
+    delivery: Arc<std::sync::OnceLock<Arc<IndexedMailboxes>>>,
 }
 
 /// The value of [`IndexedMailboxes::board_seen_at`] before a board read landed.
@@ -480,7 +483,26 @@ impl IndexedMailboxes {
             index,
             board_seen_at: Arc::new(std::sync::atomic::AtomicU64::new(NOT_SEEN)),
             board_seen_epoch: Arc::new(std::sync::atomic::AtomicU64::new(NOT_SEEN)),
+            delivery: Arc::new(std::sync::OnceLock::new()),
         }
+    }
+
+    /// Read every change the writer publishes, from now on. **The subscriber
+    /// holds the writer, so the writer must not hold it:** the publication gets
+    /// a weak handle and every clone of this index shares the one owner, which
+    /// lives exactly as long as they do. The subscriber's own `delivery` is
+    /// empty: it owns nothing of itself. A second call changes nothing.
+    pub fn subscribe(&self) {
+        if self.delivery.get().is_some() {
+            return;
+        }
+        let subscriber = Arc::new(IndexedMailboxes {
+            delivery: Arc::new(std::sync::OnceLock::new()),
+            ..self.clone()
+        });
+        self.writer
+            .subscribe_borrowed(Arc::downgrade(&subscriber) as _);
+        let _ = self.delivery.set(subscriber);
     }
 
     /// Load the mail half from a full board read — the boot path. Returns how

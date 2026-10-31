@@ -25,8 +25,19 @@ pub struct NudgeOnPost {
 
 impl NudgeOnPost {
     /// Read `writer`'s posts, and tell `push` about each one into a person's box.
-    pub fn subscribe(writer: &Writer, mailboxes: Arc<dyn Mailboxes>, push: Arc<dyn Nudge>) {
-        writer.subscribe(Arc::new(NudgeOnPost { mailboxes, push }));
+    ///
+    /// **The `mailboxes` hold the writer, so the writer must not hold the
+    /// nudge:** the publication gets a weak handle and the caller owns the
+    /// returned nudge. Posts are read for as long as the caller keeps it.
+    #[must_use = "the nudge reads posts only while its owner is kept"]
+    pub fn subscribe(
+        writer: &Writer,
+        mailboxes: Arc<dyn Mailboxes>,
+        push: Arc<dyn Nudge>,
+    ) -> Arc<NudgeOnPost> {
+        let nudge = Arc::new(NudgeOnPost { mailboxes, push });
+        writer.subscribe_borrowed(Arc::downgrade(&nudge) as _);
+        nudge
     }
 
     async fn is_a_persons(&self, name: &MailboxName) -> bool {
@@ -106,7 +117,7 @@ mod tests {
         let writer = Writer::default();
         let boxes = Arc::new(FoldedMailboxes::new(Arc::new(store)).with_writer(writer.clone()));
         let nudges = Arc::new(Counted::default());
-        NudgeOnPost::subscribe(&writer, boxes.clone(), nudges.clone());
+        let _nudge = NudgeOnPost::subscribe(&writer, boxes.clone(), nudges.clone());
 
         let landed = boxes
             .post_message(new("person-ned-flanders"))

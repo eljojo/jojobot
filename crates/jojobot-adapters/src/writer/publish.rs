@@ -42,35 +42,23 @@ pub trait Subscriber: Send + Sync {
     async fn changed(&self, changes: &[Change]);
 }
 
-/// How the publication holds a subscriber. A subscriber that holds the writer
-/// itself is held weakly, so the publication is not the owner that closes the
-/// cycle back to the writer.
-enum Held {
-    Owned(Arc<dyn Subscriber>),
-    Borrowed(Weak<dyn Subscriber>),
-}
-
+/// The publication holds every subscriber weakly. A subscriber holds the writer
+/// itself, so the publication must not be the owner that closes the cycle back
+/// to the writer.
 #[derive(Default)]
 pub(super) struct Publication {
-    subscribers: Mutex<Vec<Held>>,
+    subscribers: Mutex<Vec<Weak<dyn Subscriber>>>,
     pending: Mutex<Vec<Change>>,
 }
 
 impl Publication {
-    pub(super) fn subscribe(&self, subscriber: Arc<dyn Subscriber>) {
-        self.subscribers
-            .lock()
-            .expect("subscriber lock")
-            .push(Held::Owned(subscriber));
-    }
-
     /// Deliver to a subscriber some other owner keeps alive. The delivery ends
     /// with that owner: a subscriber that is gone is dropped from the list.
     pub(super) fn subscribe_borrowed(&self, subscriber: Weak<dyn Subscriber>) {
         self.subscribers
             .lock()
             .expect("subscriber lock")
-            .push(Held::Borrowed(subscriber));
+            .push(subscriber);
     }
 
     pub(super) fn record(&self, change: Change) {
@@ -85,16 +73,8 @@ impl Publication {
         }
         let subscribers: Vec<Arc<dyn Subscriber>> = {
             let mut held = self.subscribers.lock().expect("subscriber lock");
-            held.retain(|held| match held {
-                Held::Owned(_) => true,
-                Held::Borrowed(weak) => weak.strong_count() > 0,
-            });
-            held.iter()
-                .filter_map(|held| match held {
-                    Held::Owned(subscriber) => Some(subscriber.clone()),
-                    Held::Borrowed(weak) => weak.upgrade(),
-                })
-                .collect()
+            held.retain(|weak| weak.strong_count() > 0);
+            held.iter().filter_map(Weak::upgrade).collect()
         };
         // A subscriber that panics must not take the change from the ones after
         // it: each is told, and the first panic is raised once all have been.

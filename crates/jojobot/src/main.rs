@@ -158,14 +158,15 @@ async fn main() -> anyhow::Result<()> {
         }
     };
     // **Every post into a person's box wakes the push**, whichever path posted:
-    // the writer publishes each post once.
-    if let Some(runner) = runner.clone() {
+    // the writer publishes each post once. The writer holds the nudge weakly, so
+    // this binding is its owner for the life of the process.
+    let _nudge = runner.clone().map(|runner| {
         jojobot_adapters::nudge::NudgeOnPost::subscribe(
             &booted.writer,
             booted.mailboxes.clone(),
             runner,
-        );
-    }
+        )
+    });
 
     let metadata_url = format!(
         "{}/.well-known/oauth-protected-resource",

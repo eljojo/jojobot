@@ -314,7 +314,9 @@ async fn a_merge_the_image_cannot_follow_publishes_both_things_and_a_moved_handl
     seeded(&folded, &survivor, "Alpha").await;
     seeded(&folded, &gone, "Beta").await;
     let seen = Arc::new(Delivered::default());
-    folded.writer().subscribe(seen.clone());
+    folded
+        .writer()
+        .subscribe_borrowed(Arc::downgrade(&seen) as _);
 
     let _ = folded
         .merge(
@@ -344,7 +346,9 @@ async fn a_rename_the_image_cannot_follow_publishes_both_handles_and_a_moved_han
     let (old, new) = (alpha(), EntityId::person("person:beta"));
     seeded(&folded, &old, "Alpha").await;
     let seen = Arc::new(Delivered::default());
-    folded.writer().subscribe(seen.clone());
+    folded
+        .writer()
+        .subscribe_borrowed(Arc::downgrade(&seen) as _);
 
     let _ = folded
         .rename_entity(
