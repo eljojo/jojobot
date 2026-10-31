@@ -32,10 +32,13 @@ out of a run's URL: the URL carries the run's index in the repository, which is
 not the run's number.
 
 Exit code: 0 the run succeeded (every job green), 1 it failed and a job's block
-says RED, or it failed and nothing else is known, 2 it was cancelled or skipped,
+says RED, or it failed and nothing else is known, 2 it was cancelled or skipped
+(a cancelled run that no newer run replaced says "cancelled; no newer run found"),
 3 no run ended before the timeout, 4 the branch or commit names nothing, 5 it
 failed, no job is RED and at least one job died on the runner: that is a run to
-send again, not a test to fix.
+send again, not a test to fix, 6 it was cancelled and a newer run of the same
+workflow on the same ref exists: a newer push superseded it, the tool names that
+run and its commit, and the verdict to read is the newer run.
 
 It reads and nothing else: the actions API of the repository answers a read with
 no credential, so none is asked for, read or stored. WAIT_RUN_API names the
@@ -204,6 +207,19 @@ def classify(text):
     return "none", None
 
 
+def superseder(run):
+    """**The newest run of the same workflow on the same ref that started after this one**,
+    or None. A pull request run has the pull request for its ref and a push run has its
+    branch, so a newer push to either replaces the run: the workflow cancels the older one."""
+    newer = [
+        r for r in runs_of()
+        if r["id"] > run["id"]
+        and r.get("prettyref") == run.get("prettyref")
+        and r.get("workflow_id") == run.get("workflow_id")
+    ]
+    return max(newer, key=lambda r: r["id"], default=None)
+
+
 def report(run):
     """Print every job of the run with its status and how its log ended. Returns whether any
     job is red and whether any job died on the runner."""
@@ -293,12 +309,26 @@ def main():
     print()
     red, died = report(run)
     code = FINAL[run["status"]]
-    # **A red block is red whatever the run's status**: the sibling watcher cancels a
-    # run when one job goes red, so the run of a red job reads `cancelled`.
+    # **A red block is red whatever the run's status**: a run can read `cancelled` with a
+    # red job in it, and the block is what to believe.
     if red:
         code = 1
     if code == 1 and died and not red:
         code = 5
+    # **A cancelled run is read for what cancelled it.** A red job fails its siblings and
+    # does not cancel the run, so a cancelled run with no red block was replaced by a newer
+    # push to its ref or stopped by a person.
+    if code == 2 and run["status"] == "cancelled":
+        try:
+            newer = superseder(run)
+        except (urllib.error.URLError, TimeoutError, OSError, Gone) as err:
+            newer = None
+            print(f"the forge did not say what replaced it ({err})", file=sys.stderr)
+        if newer:
+            print(f"superseded by run #{newer['id']} on {newer['commit_sha']}  {newer['html_url']}")
+            code = 6
+        else:
+            print("cancelled; no newer run found")
     sys.exit(code)
 
 

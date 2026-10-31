@@ -580,6 +580,110 @@ fn a_cancelled_run_exits_two() {
     assert!(out.contains("no verdict block"), "{out}");
 }
 
+/// A pull request run, in the shape the forge lists it: the ref reads `#N`.
+fn pull_request_run(id: u64, number: u64, sha: &str, status: &str) -> Value {
+    let mut run = run(id, &format!("#{number}"), sha, status);
+    run["workflow_id"] = json!("pull-request.yml");
+    run["event"] = json!("pull_request");
+    run["trigger_event"] = json!("pull_request");
+    run
+}
+
+/// **A cancelled run that a newer push to its pull request superseded says so,
+/// and exits six.** The newest such run is named with its commit. Without this a
+/// line cannot tell a superseded run from a red trunk. **Paired**: a newer run on
+/// another pull request does not supersede it, and a cancelled run with no newer
+/// run on its ref exits two and says none was found.
+#[test]
+fn a_cancelled_run_a_newer_push_superseded_names_it_and_exits_six() {
+    let log = "2026-10-31T04:00:00.0Z started\n";
+    let forge = stand(Forge {
+        runs: vec![
+            (
+                pull_request_run(240, 105, RED_SHA, "running"),
+                log.to_string(),
+            ),
+            (
+                pull_request_run(238, 105, GREEN_SHA, "cancelled"),
+                log.to_string(),
+            ),
+        ],
+        ..Default::default()
+    });
+    let (code, out, err) = wait(&forge, &[GREEN_SHA]);
+    assert_eq!(code, 6, "{out}\n{err}");
+    assert!(
+        out.contains(&format!("superseded by run #240 on {RED_SHA}")),
+        "{out}"
+    );
+
+    let other = stand(Forge {
+        runs: vec![
+            (
+                pull_request_run(241, 106, RED_SHA, "running"),
+                log.to_string(),
+            ),
+            (
+                pull_request_run(238, 105, GREEN_SHA, "cancelled"),
+                log.to_string(),
+            ),
+        ],
+        ..Default::default()
+    });
+    let (code, out, err) = wait(&other, &[GREEN_SHA]);
+    assert_eq!(code, 2, "{out}\n{err}");
+    assert!(
+        out.contains("cancelled; no newer run found"),
+        "a run on another pull request was named as the superseder: {out}"
+    );
+    assert!(!out.contains("superseded by"), "{out}");
+}
+
+/// **A skipped run is not superseded.** It exits two like a cancelled one, but
+/// nothing cancelled it, so a newer run on its ref does not name a superseder.
+#[test]
+fn a_skipped_run_with_a_newer_run_on_its_ref_is_not_called_superseded() {
+    let forge = stand(Forge {
+        runs: vec![
+            (
+                pull_request_run(240, 105, RED_SHA, "running"),
+                String::new(),
+            ),
+            (
+                pull_request_run(238, 105, GREEN_SHA, "skipped"),
+                String::new(),
+            ),
+        ],
+        ..Default::default()
+    });
+    let (code, out, err) = wait(&forge, &[GREEN_SHA]);
+    assert_eq!(code, 2, "{out}\n{err}");
+    assert!(!out.contains("superseded by"), "{out}");
+}
+
+/// **A red job wins over a newer run.** The verdict block says red, and the run
+/// exits one, whether or not a newer push exists.
+#[test]
+fn a_red_job_in_a_superseded_run_still_exits_one() {
+    let forge = stand(Forge {
+        runs: vec![
+            (
+                pull_request_run(240, 105, GREEN_SHA, "running"),
+                String::new(),
+            ),
+            (
+                pull_request_run(238, 105, RED_SHA, "cancelled"),
+                fixture("wait-run-rooms-red-job.txt"),
+            ),
+        ],
+        ..Default::default()
+    });
+    let (code, out, err) = wait(&forge, &[RED_SHA]);
+    assert_eq!(code, 1, "{out}\n{err}");
+    assert!(out.contains("verdict: RED"), "{out}");
+    assert!(!out.contains("superseded by"), "{out}");
+}
+
 /// **A commit with no run in time exits three**, saying what it waited for.
 #[test]
 fn a_commit_with_no_run_in_time_exits_three() {
