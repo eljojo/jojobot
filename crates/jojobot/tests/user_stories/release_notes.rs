@@ -33,6 +33,7 @@ const SHIPPED_NOTES: &[&str] = &[
     "rhythm-on-the-calendar",
     "search-matching-passages",
     "trip-is-a-kind",
+    "watchbot-wakes-idle-lines",
 ];
 
 /// The ids the last line of a message names, in the order it names them.
