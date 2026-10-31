@@ -490,6 +490,10 @@ mod timezones;
 /// A claim reads its settings and its own labels apart; one call moves a label.
 #[path = "user_stories/two_bags.rs"]
 mod two_bags;
+/// An outside controller reads a working card, records what it saw on a role and
+/// pages the operator, as itself, through the app API's unstable tier.
+#[path = "user_stories/watchbot_three_calls.rs"]
+mod watchbot_three_calls;
 #[path = "user_stories/working_on.rs"]
 mod working_on;
 /// A piece of work's page names the bots working on it, rolled up to its project.

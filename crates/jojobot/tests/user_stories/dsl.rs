@@ -33,6 +33,8 @@ mod leases;
 use bags::bags;
 #[path = "dsl/receipt_dates.rs"]
 mod receipt_dates;
+#[path = "dsl/serving_apps.rs"]
+mod serving_apps;
 
 type Client = RunningService<rmcp::RoleClient, ClientInfo>;
 
