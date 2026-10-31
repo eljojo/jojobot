@@ -1,6 +1,7 @@
 //! Scenario furniture uses the same decisions and writes as the MCP handlers.
 
 use super::*;
+use jojobot_domain::actor::Attribution;
 use jojobot_domain::session::{NewEntry, NewSession, SessionState};
 
 #[derive(serde::Deserialize)]
@@ -94,7 +95,13 @@ impl Harness {
                     let near = args["declared_near"].as_str().map(str::to_string);
                     let added = accepted(
                         self.handler
-                            .add_entity_write(&actor, decode(args)?, day, None, near.as_deref())
+                            .add_entity_write(
+                                Attribution::bot(&actor),
+                                decode(args)?,
+                                day,
+                                None,
+                                near.as_deref(),
+                            )
                             .await
                             .map_err(err)?,
                     )?;
@@ -108,7 +115,7 @@ impl Harness {
                     accepted(
                         self.handler
                             .capture_write(
-                                &actor,
+                                Attribution::bot(&actor),
                                 decode(args)?,
                                 day,
                                 None,

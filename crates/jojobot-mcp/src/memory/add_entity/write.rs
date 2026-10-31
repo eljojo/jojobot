@@ -1,7 +1,7 @@
 //! Creation decisions shared by the MCP handler and room furniture.
 
 use super::*;
-use jojobot_domain::actor::Actor;
+use jojobot_domain::actor::{Actor, Attribution};
 
 pub(crate) struct Added {
     pub(super) entity: Entity,
@@ -36,12 +36,13 @@ impl Added {
 impl Jojobot {
     pub(crate) async fn add_entity_write(
         &self,
-        actor: &Actor,
+        by: Attribution<'_>,
         args: AddEntityArgs,
         day: jiff::civil::Date,
         by_session: Option<&str>,
         declared_near: Option<&str>,
     ) -> Result<Result<Added, CallToolResult>, McpError> {
+        let actor = by.actor;
         // **The operator and the system create nothing here yet**, so the write
         // fails closed rather than file a thing under no actor.
         if matches!(actor, Actor::Operator | Actor::System) {
@@ -324,7 +325,7 @@ impl Jojobot {
                     session: by_session.map(str::to_string),
                     // Scenario furniture has no run from which to read its author.
                     written_by_bot: by_session.is_none().then(|| actor.bot().cloned()).flatten(),
-                    app_stamp: actor.app_stamp().cloned(),
+                    app_stamp: by.app_stamp.cloned(),
                     // **A bot is born with the record of the notes it was told**, as a
                     // record of the engine's own beside the caller's claim, in the
                     // same act (rule 130).
@@ -418,7 +419,7 @@ impl Jojobot {
             retry.override_reason = Some(format!(
                 "The scenario declares {creating} and {near} to be distinct things."
             ));
-            return Box::pin(self.add_entity_write(actor, retry, day, by_session, None)).await;
+            return Box::pin(self.add_entity_write(by, retry, day, by_session, None)).await;
         }
         let refused = match added {
             Guarded::Written(entity) => {

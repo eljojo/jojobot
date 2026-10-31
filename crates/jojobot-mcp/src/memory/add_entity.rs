@@ -389,7 +389,9 @@ impl Jojobot {
             dropped_keys,
         } = match self
             .add_entity_write(
-                &jojobot_domain::actor::Actor::Bot(caller.bot.clone()),
+                jojobot_domain::actor::Attribution::bot(&jojobot_domain::actor::Actor::Bot(
+                    caller.bot.clone(),
+                )),
                 writing_args,
                 day,
                 Some(caller.sid.as_str()),

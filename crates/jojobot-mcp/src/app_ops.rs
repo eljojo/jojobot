@@ -16,7 +16,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use jojobot_domain::actor::Actor;
+use jojobot_domain::actor::{Actor, Attribution};
 use jojobot_domain::app::operations::{Operation, permit};
 use jojobot_domain::app::{AppError, AppPrincipal, AppStamp};
 use jojobot_domain::memory::EntityId;
@@ -40,7 +40,14 @@ pub struct Call {
 
 impl Call {
     fn actor(&self) -> Actor {
-        Actor::App(self.stamp.clone())
+        Actor::App(self.app.id.clone())
+    }
+
+    fn attribution<'a>(&'a self, actor: &'a Actor) -> Attribution<'a> {
+        Attribution {
+            actor,
+            app_stamp: Some(&self.stamp),
+        }
     }
 
     /// The names of the arguments the caller sent with a value.
@@ -238,9 +245,10 @@ async fn capture(call: Call) -> Answer {
         return answer;
     }
     let day = handler.instance_today().await;
+    let actor = call.actor();
     match handler
         .capture_write(
-            &call.actor(),
+            call.attribution(&actor),
             args,
             day,
             None,
@@ -275,9 +283,10 @@ async fn add_entity(call: Call) -> Answer {
         return answer;
     }
     let day = call.handler.instance_today().await;
+    let actor = call.actor();
     match call
         .handler
-        .add_entity_write(&call.actor(), args, day, None, None)
+        .add_entity_write(call.attribution(&actor), args, day, None, None)
         .await
     {
         Ok(Ok(added)) => done(&added.view()),

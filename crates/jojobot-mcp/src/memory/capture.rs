@@ -7,7 +7,7 @@
 
 use std::collections::BTreeMap;
 
-use jojobot_domain::actor::Actor;
+use jojobot_domain::actor::{Actor, Attribution};
 use jojobot_domain::attention;
 use jojobot_domain::memory::graph;
 
@@ -870,7 +870,7 @@ impl Jojobot {
             _placing,
         } = match self
             .capture_write(
-                &Actor::Bot(caller.bot.clone()),
+                Attribution::bot(&Actor::Bot(caller.bot.clone())),
                 writing_args,
                 day,
                 Some(caller.sid.as_str()),
@@ -1064,13 +1064,14 @@ impl Jojobot {
     /// session accounting belongs to the handler that resolved them.
     pub(crate) async fn capture_write(
         &self,
-        actor: &Actor,
+        by: Attribution<'_>,
         args: CaptureArgs,
         day: jiff::civil::Date,
         by_session: Option<&str>,
         mode: &Mode,
         working_on: Option<&crate::caller::Caller>,
     ) -> Result<Result<Captured, CallToolResult>, McpError> {
+        let actor = by.actor;
         // **The operator and the system write nothing here yet**, so the write
         // fails closed rather than file a claim under no actor.
         if matches!(actor, Actor::Operator | Actor::System) {
@@ -1519,7 +1520,7 @@ impl Jojobot {
             .filter(|_| opened_the_loop)
             .cloned();
         let mut new = NewFact {
-            app_stamp: actor.app_stamp().cloned(),
+            app_stamp: by.app_stamp.cloned(),
             subject,
             content: args.content,
             details: args.details,
