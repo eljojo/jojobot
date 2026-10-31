@@ -203,8 +203,10 @@ async fn a_threads_decisions_come_with_the_pages_one_answer() {
     // **The page adds no read of its own.** The answer's passes read the claims of
     // each of the thread's three decisions (two standing, one replaced) three
     // times; the old page code added one read per standing decision to that.
-    // The number is the answer's, so it moves when a pass is added.
-    assert_eq!(memory.reads.load(Ordering::SeqCst), 3 * 3);
+    // The children listing is a question of the graph too, and its walk scans
+    // each child once more. The number is the answers', so it moves when a pass
+    // is added.
+    assert_eq!(memory.reads.load(Ordering::SeqCst), 3 * 3 + 3);
     ct.cancel();
 }
 

@@ -1,5 +1,6 @@
 //! The read-only boundary shared by the verbs and their other renderers.
 
+mod ancestry;
 mod answer;
 mod list_ticks;
 mod mail;
@@ -11,6 +12,7 @@ mod runs;
 #[path = "boundary.rs"]
 mod read_path_boundary;
 
+pub use ancestry::ancestry;
 pub use answer::{
     Answered, Backing, Board, DueMark, Failed, LeftOut, Narrowed, OwedPass, ReadyPass, TickCell,
     Verdict, ViewAnswer, ViewOutcome,

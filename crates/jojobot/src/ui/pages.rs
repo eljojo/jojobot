@@ -201,7 +201,31 @@ pub(crate) async fn node(
         return not_found();
     };
 
-    let canonical = tree::canonical_path(entity, &by_id);
+    // **The ancestry and the children are asked of the graph**, one subject
+    // question for each parent up and one question for the direct children, and
+    // are never worked out of the listing above.
+    let canonical = match jojobot_query_api::ancestry(
+        &queries,
+        &jojobot_domain::actor::Actor::Operator,
+        &entity.id,
+        entity.parent.as_ref(),
+    )
+    .await
+    {
+        Ok(chain) => format!(
+            "/{}/",
+            chain
+                .iter()
+                .map(EntityId::as_str)
+                .collect::<Vec<_>>()
+                .join("/")
+        ),
+        Err(
+            jojobot_query_api::Failed::Selection(error)
+            | jojobot_query_api::Failed::Readiness(error)
+            | jojobot_query_api::Failed::Preparation(_, error),
+        ) => return unreadable(error),
+    };
     if canonical.trim_matches('/') != path.trim_matches('/') {
         // **The question goes with the browser**: a history key or a view's
         // inputs would otherwise be dropped by the redirect.
@@ -212,10 +236,34 @@ pub(crate) async fn node(
         return Redirect::to(&to).into_response();
     }
 
-    let mut children: Vec<&Entity> = entities
-        .iter()
-        .filter(|candidate| candidate.parent.as_ref() == Some(&entity.id) && candidate.browsable())
-        .collect();
+    let below = match queries
+        .ask(
+            &jojobot_domain::actor::Actor::Operator,
+            jojobot_query_api::Question::new(
+                graph::Selection {
+                    parent: Some(entity.id.clone()),
+                    ..Default::default()
+                },
+                graph::Include {
+                    facts: false,
+                    prose: false,
+                    stood_for: false,
+                    status: None,
+                },
+                None,
+                None,
+            ),
+        )
+        .await
+    {
+        Ok(answer) => answer.selected.objects,
+        Err(
+            jojobot_query_api::Failed::Selection(error)
+            | jojobot_query_api::Failed::Readiness(error)
+            | jojobot_query_api::Failed::Preparation(_, error),
+        ) => return unreadable(error),
+    };
+    let mut children: Vec<&Entity> = below.iter().map(|object| &object.entity).collect();
     children.sort_by(|a, b| a.id.cmp(&b.id));
 
     let mut question = jojobot_query_api::Question::new(
