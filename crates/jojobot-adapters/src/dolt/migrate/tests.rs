@@ -497,12 +497,24 @@ async fn an_interrupted_create_index_is_recognized_by_the_index_being_there() {
         .await
         .expect("the marker lands");
 
-    let applied = apply(&pool, INDEXED)
+    let ran = account_of_apply(&pool, INDEXED)
         .await
         .expect("the start completes the schema");
     assert!(
-        applied.is_empty(),
-        "an interrupted index that had landed is recorded, not re-issued: {applied:?}"
+        ran.applied.is_empty(),
+        "an interrupted index that had landed is recorded, not re-issued: {ran:?}"
+    );
+    // **The path is asserted, not inferred from an empty list.** An empty list
+    // is also what a start returns when it passes the version over because its
+    // read of the ledger still held it, and that reads green until the ledger
+    // is read again. The account says which of the two this start did.
+    assert!(
+        ran.recorded_after_interruption
+            .iter()
+            .any(|v| v == "t0004_pet_owner_index"),
+        "the start did not take the recovery path for the index; it read done {:?} and begun {:?}: {ran:?}",
+        ran.read_done,
+        ran.read_begun,
     );
     let recorded: Vec<String> = sqlx::query_scalar("SELECT version FROM schema_migration")
         .fetch_all(&pool)
@@ -510,7 +522,7 @@ async fn an_interrupted_create_index_is_recognized_by_the_index_being_there() {
         .expect("the ledger is readable");
     assert!(
         recorded.iter().any(|v| v == "t0004_pet_owner_index"),
-        "…and the ledger says so, so the next start asks nothing: {recorded:?}"
+        "…and the ledger says so, so the next start asks nothing: {recorded:?} after {ran:?}"
     );
 
     store.stop().await;

@@ -1041,6 +1041,32 @@ async fn leave_interrupted_in(
 /// test can reach a new shape only by calling [`Leaves::reached`] directly,
 /// which proves the question and not that the runner asks it.
 async fn apply(pool: &MySqlPool, migrations: &[Migration]) -> Result<Vec<String>, MigrateError> {
+    Ok(account_of_apply(pool, migrations).await?.applied)
+}
+
+/// **What one run of the runner read and what it did with each version.** The
+/// runner's choice per migration was invisible: a start that skipped a version
+/// because the ledger already held it, and a start that recorded it after
+/// finding its change standing, both return an empty list of applied versions.
+/// A case that has to tell them apart reads this instead of recomputing the rule.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct Run {
+    /// The versions this run issued.
+    applied: Vec<String>,
+    /// The ledger, as the run read it before it decided anything.
+    read_done: Vec<String>,
+    /// The begun markers, as the run read them.
+    read_begun: Vec<String>,
+    /// Versions the ledger already held, so the run passed them over.
+    held: Vec<String>,
+    /// Versions an earlier start began, whose change stood, and the run recorded.
+    recorded_after_interruption: Vec<String>,
+    /// Versions never begun, whose change stood, and the run recorded unissued.
+    recorded_unissued: Vec<String>,
+}
+
+/// The runner, with the account of what it did.
+async fn account_of_apply(pool: &MySqlPool, migrations: &[Migration]) -> Result<Run, MigrateError> {
     fail_as(sqlx::raw_sql(LEDGER).execute(pool).await, "the ledger")?;
     fail_as(sqlx::raw_sql(BEGUN).execute(pool).await, "the ledger")?;
 
@@ -1057,10 +1083,15 @@ async fn apply(pool: &MySqlPool, migrations: &[Migration]) -> Result<Vec<String>
         "the ledger",
     )?;
 
-    let mut applied = Vec::new();
+    let mut ran = Run {
+        read_done: done.clone(),
+        read_begun: begun.clone(),
+        ..Run::default()
+    };
     for migration in migrations {
         let version = migration.version;
         if done.iter().any(|seen| seen == version) {
+            ran.held.push(version.to_string());
             continue;
         }
         let interrupted = begun.iter().any(|seen| seen == version);
@@ -1075,6 +1106,7 @@ async fn apply(pool: &MySqlPool, migrations: &[Migration]) -> Result<Vec<String>
                 "an interrupted migration had landed, and the start recorded it"
             );
             record(pool, version).await?;
+            ran.recorded_after_interruption.push(version.to_string());
             continue;
         }
 
@@ -1092,6 +1124,7 @@ async fn apply(pool: &MySqlPool, migrations: &[Migration]) -> Result<Vec<String>
                 "the change already stood, and the start recorded it without issuing it"
             );
             record(pool, version).await?;
+            ran.recorded_unissued.push(version.to_string());
             continue;
         }
 
@@ -1108,12 +1141,12 @@ async fn apply(pool: &MySqlPool, migrations: &[Migration]) -> Result<Vec<String>
             return Err(failure(version, refused));
         }
         record(pool, version).await?;
-        applied.push(version.to_string());
+        ran.applied.push(version.to_string());
     }
-    if !applied.is_empty() {
-        tracing::info!(applied = ?applied, "the store's schema moved");
+    if !ran.applied.is_empty() {
+        tracing::info!(applied = ?ran.applied, "the store's schema moved");
     }
-    Ok(applied)
+    Ok(ran)
 }
 
 /// Whether the schema holds this table.
