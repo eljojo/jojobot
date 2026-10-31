@@ -602,4 +602,26 @@ mod tests {
             "a 404 must abort, never look like room state"
         );
     }
+
+    /// **The catch takes a failed observation and nothing else.** A failed read
+    /// comes back as its message, so a run can end as incomplete; any other panic
+    /// goes on, so a real assertion that fails inside a lock is never turned into
+    /// an incomplete run.
+    #[tokio::test]
+    async fn the_catch_takes_a_failed_observation_and_lets_every_other_panic_go_on() {
+        let caught =
+            catching(async { require_observation(Err(anyhow::anyhow!("a harness read failed"))) })
+                .await
+                .expect_err("a failed observation is caught");
+        assert!(caught.starts_with(OBSERVATION_FAILED), "{caught}");
+        assert_eq!(
+            catching(async { 7 }).await,
+            Ok(7),
+            "a future that does not panic comes back as its value"
+        );
+        let other = tokio::spawn(async { catching(async { panic!("an assertion failed") }).await })
+            .await
+            .expect_err("another panic is not caught");
+        assert!(other.is_panic(), "{other:?}");
+    }
 }
