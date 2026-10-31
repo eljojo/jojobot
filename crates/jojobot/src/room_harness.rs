@@ -150,13 +150,20 @@ mod tests {
         let read = json!({"operation":"read", "verb":"ping", "arguments":{}});
         for token in [None, Some(String::new()), Some("beta".into())] {
             let app = route(Harness::new(handler.clone()), token);
-            for sent in [None, Some("alpha")] {
+            // An empty header is sent too: it must not open an empty configured token.
+            for sent in [None, Some(""), Some("alpha")] {
                 assert_eq!(
                     call(app.clone(), sent, read.clone()).await.status(),
                     StatusCode::UNAUTHORIZED
                 );
             }
         }
+        // The positive: a configured token opens for the header that matches it.
+        let open = route(Harness::new(handler.clone()), Some("beta".into()));
+        assert_eq!(
+            call(open, Some("beta"), read).await.status(),
+            StatusCode::OK
+        );
     }
 
     #[tokio::test]

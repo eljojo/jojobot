@@ -222,6 +222,9 @@ async fn room_harness_seed_keeps_the_scenario_author_and_opens_no_harness_run() 
         .message_history(&mail[0].id)
         .await
         .expect("mail history");
+    // A message nobody has handled has no events yet, so the check below is empty
+    // by nature; what holds the seeded message to no run is its own record.
+    assert!(mail[0].posted_by_session.is_none(), "{:?}", mail[0]);
     assert!(events.iter().all(|event| event.by_session.is_none()));
     assert!(
         handler
@@ -418,6 +421,7 @@ async fn room_harness_creation_keeps_the_served_first_claim_writer() {
 #[tokio::test]
 async fn room_harness_resume_choices_match_a_boot_on_its_stated_day_without_writing() {
     use jojobot_domain::session::{NewSession, SessionState, Sid};
+    let mut offered = Vec::new();
     for today in [None, Some("2026-06-02"), Some("2026-06-04")] {
         let handler = room().await.on_clock(jojobot_domain::clock::Clock::stating(
             "2026-06-03".parse().unwrap(),
@@ -478,6 +482,77 @@ async fn room_harness_resume_choices_match_a_boot_on_its_stated_day_without_writ
         assert_eq!(
             observed["session"]["choices"], boot["session"]["choices"],
             "today={today:?}"
+        );
+        offered.push(boot["session"]["choices"].clone());
+    }
+    // The stated day moves what is offered, and something is offered: two
+    // empty lists, or the same list for every day, would pass the equality above.
+    assert!(
+        offered
+            .iter()
+            .all(|choices| !choices.as_array().unwrap().is_empty()),
+        "{offered:?}"
+    );
+    assert!(
+        offered.windows(2).any(|pair| pair[0] != pair[1]),
+        "the stated day changed nothing: {offered:?}"
+    );
+}
+
+/// **A grader has no session and writes nothing.** A read that carries a `sid`
+/// is turned back, and so is every verb that is not a room observation, the
+/// write verbs among them; none of the refusals changes the room. **Paired
+/// with the observations a grader may make**, which answer, so a route that
+/// refused everything would not pass.
+#[tokio::test]
+async fn room_harness_refuses_a_session_and_every_verb_that_is_not_an_observation() {
+    let handler = room().await;
+    let grader = Harness::new(handler.clone());
+    let things = || async {
+        handler
+            .memory
+            .list_entities(None)
+            .await
+            .expect("things")
+            .len()
+    };
+    let before = things().await;
+    for (verb, arguments) in [
+        (
+            "recall",
+            json!({"subject": "bot:assistant", "sid": "sk-abc"}),
+        ),
+        ("ping", json!({"sid": "sk-abc"})),
+        (
+            "set_charter",
+            json!({"bot": "bot:assistant", "prose": "a charter"}),
+        ),
+        (
+            "capture",
+            json!({"subject": "bot:assistant", "content": "a claim"}),
+        ),
+        (
+            "add_entity",
+            json!({"kind": "thing", "handle": "thing:kettle", "name": "Kettle"}),
+        ),
+        ("journal", json!({"entry": "a beat"})),
+        ("post_message", json!({"to": "assistant", "body": "a note"})),
+    ] {
+        assert!(
+            grader.read(verb, arguments).await.is_err(),
+            "{verb} was served to a grader"
+        );
+    }
+    assert_eq!(things().await, before, "a refused read changed the room");
+    for (verb, arguments) in [
+        ("ping", json!({})),
+        ("recall", json!({"subject": "bot:assistant"})),
+        ("list_entities", json!({})),
+        ("search", json!({"query": "assistant"})),
+    ] {
+        assert!(
+            grader.read(verb, arguments).await.is_ok(),
+            "{verb} is a room observation and was refused"
         );
     }
 }
