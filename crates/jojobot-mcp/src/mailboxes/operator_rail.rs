@@ -7,7 +7,9 @@
 
 use std::sync::Arc;
 
+use jojobot_domain::actor::Actor;
 use jojobot_domain::clock::Clock;
+use jojobot_domain::mailbox::visibility::{MessageVisibility, VisibleBoxes, visible_boxes};
 use jojobot_domain::mailbox::{Acting, Mailbox, MailboxError, Mailboxes, Message, MessageId};
 use jojobot_domain::memory::{EntityId, Memory, MemoryError};
 use jojobot_query_api::{
@@ -27,12 +29,50 @@ impl MailRail for Rail {
         operator_of(&*self.memory).await
     }
 
-    async fn boxes(&self) -> Result<Vec<Mailbox>, MailboxError> {
-        self.mailboxes.list_mailboxes().await
+    async fn boxes(&self, asker: &Actor) -> Result<Vec<Mailbox>, MailboxError> {
+        let board = self.mailboxes.list_mailboxes().await?;
+        if matches!(asker, Actor::Operator) {
+            return Ok(board);
+        }
+        let visible = self.visible_to(asker, &board).await?;
+        Ok(board
+            .into_iter()
+            .filter(|held| visible.message(&held.name, None) == MessageVisibility::Readable)
+            .collect())
     }
 
-    async fn messages(&self) -> Result<Vec<Message>, MailboxError> {
-        self.mailboxes.scan_messages().await
+    async fn messages(&self, asker: &Actor) -> Result<Vec<Message>, MailboxError> {
+        if matches!(asker, Actor::Operator) {
+            return self.mailboxes.scan_messages().await;
+        }
+        let board = self.mailboxes.list_mailboxes().await?;
+        let visible = self.visible_to(asker, &board).await?;
+        Ok(self
+            .mailboxes
+            .scan_messages()
+            .await?
+            .into_iter()
+            .filter(|message| {
+                visible.message(&message.mailbox, Some(&message.sender))
+                    == MessageVisibility::Readable
+            })
+            .collect())
+    }
+}
+
+impl Rail {
+    /// **What this asker may read**, by the one rule search and read-by-id use.
+    /// The operator reads the whole rail and does not come here; an actor that
+    /// is no bot has no place on the chart and reads nothing.
+    async fn visible_to(
+        &self,
+        asker: &Actor,
+        board: &[Mailbox],
+    ) -> Result<VisibleBoxes, MailboxError> {
+        let chart = super::visibility::reports_to_chart(&*self.memory)
+            .await
+            .map_err(|err| MailboxError::Store(err.to_string()))?;
+        Ok(visible_boxes(asker.bot(), &chart, board))
     }
 }
 

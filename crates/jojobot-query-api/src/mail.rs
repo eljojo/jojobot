@@ -7,6 +7,7 @@
 
 use std::sync::Arc;
 
+use jojobot_domain::actor::Actor;
 use jojobot_domain::mailbox::{Mailbox, MailboxError, Message, MessageId};
 use jojobot_domain::memory::{EntityId, MemoryError};
 
@@ -29,10 +30,10 @@ pub enum OperatorIs {
 pub trait MailRail: Send + Sync {
     /// Who the instance's record names as operator.
     async fn operator(&self) -> Result<OperatorIs, MemoryError>;
-    /// Every box, with its counts and its quarantined messages.
-    async fn boxes(&self) -> Result<Vec<Mailbox>, MailboxError>;
-    /// Every message, in every state.
-    async fn messages(&self) -> Result<Vec<Message>, MailboxError>;
+    /// The boxes the asker may read, with their counts and quarantined messages.
+    async fn boxes(&self, asker: &Actor) -> Result<Vec<Mailbox>, MailboxError>;
+    /// The messages the asker may read, in every state.
+    async fn messages(&self, asker: &Actor) -> Result<Vec<Message>, MailboxError>;
 }
 
 /// The handle a page holds for the mail rail.
@@ -50,12 +51,12 @@ impl MailHandle {
         self.0.operator().await
     }
 
-    pub async fn boxes(&self) -> Result<Vec<Mailbox>, MailboxError> {
-        self.0.boxes().await
+    pub async fn boxes(&self, asker: &Actor) -> Result<Vec<Mailbox>, MailboxError> {
+        self.0.boxes(asker).await
     }
 
-    pub async fn messages(&self) -> Result<Vec<Message>, MailboxError> {
-        self.0.messages().await
+    pub async fn messages(&self, asker: &Actor) -> Result<Vec<Message>, MailboxError> {
+        self.0.messages(asker).await
     }
 }
 

@@ -33,23 +33,23 @@ impl Jojobot {
         let Some(caller) = caller else {
             return Ok(visible_boxes(None, &BTreeMap::new(), board));
         };
-        let mut chart = BTreeMap::new();
-        for bot in self
-            .memory
-            .list_entities(Some(EntityKind::BOT))
+        let chart = reports_to_chart(&*self.memory)
             .await
-            .map_err(memory_error)?
-        {
-            if let Some(manager) = self
-                .memory
-                .fields(&bot.id)
-                .await
-                .map_err(memory_error)?
-                .get(REPORTS_TO)
-            {
-                chart.insert(bot.id, manager.clone());
-            }
-        }
+            .map_err(memory_error)?;
         Ok(visible_boxes(Some(caller), &chart, board))
     }
+}
+
+/// **The current folded `reports_to` of every bot**, which the one visibility
+/// rule reads on every call. No cached permission decides mail visibility.
+pub(crate) async fn reports_to_chart(
+    memory: &dyn Memory,
+) -> Result<BTreeMap<EntityId, String>, MemoryError> {
+    let mut chart = BTreeMap::new();
+    for bot in memory.list_entities(Some(EntityKind::BOT)).await? {
+        if let Some(manager) = memory.fields(&bot.id).await?.get(REPORTS_TO) {
+            chart.insert(bot.id, manager.clone());
+        }
+    }
+    Ok(chart)
 }

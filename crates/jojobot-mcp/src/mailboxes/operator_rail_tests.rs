@@ -5,6 +5,7 @@
 
 use super::operator_rail::{commands, rail};
 use super::testing::*;
+use jojobot_domain::actor::Actor;
 use jojobot_domain::mailbox::{MessageId, MessageState};
 use jojobot_domain::memory::EntityId;
 use jojobot_query_api::{OperatorIs, Refused};
@@ -153,7 +154,7 @@ async fn reading_the_rail_moves_no_message() {
         OperatorIs::Person(EntityId("person:milhouse".into()))
     );
     let owners: Vec<String> = read
-        .boxes()
+        .boxes(&Actor::Operator)
         .await
         .expect("boxes")
         .into_iter()
@@ -166,7 +167,7 @@ async fn reading_the_rail_moves_no_message() {
         );
     }
     let ids: Vec<String> = read
-        .messages()
+        .messages(&Actor::Operator)
         .await
         .expect("messages")
         .into_iter()
@@ -193,4 +194,88 @@ async fn a_second_box_for_a_person(jojobot: &crate::Jojobot, person: &str, name:
         )
         .await
         .expect("a second box is written straight to the store");
+}
+
+/// **The rail answers a bot what rule 139 lets it read, and the operator
+/// everything.** Epsilon has gamma below it on the chart; delta is beside it and
+/// the assistant is unrelated. Each negative sits in the same read as its
+/// positive: epsilon's box and gamma's box come back, delta's and the assistant's
+/// do not, and the mail in them follows the same rule through the one check.
+#[tokio::test]
+async fn the_rail_answers_a_bot_only_what_the_chart_lets_it_read_and_the_operator_all() {
+    let jojobot = mailbox_handler();
+    let assistant = owning(&jojobot, "assistant").await;
+    for bot in ["epsilon", "gamma", "delta"] {
+        owning(&jojobot, bot).await;
+    }
+    crate::memory::testing::capture_as(
+        &jojobot,
+        &assistant,
+        crate::memory::capture::CaptureArgs {
+            sets: Some([("reports_to".into(), "bot:epsilon".into())].into()),
+            ..crate::memory::testing::capture_args("bot:gamma", "who manages this bot")
+        },
+    )
+    .await;
+    name_the_operator(&jojobot, "milhouse").await;
+    let mut sent = std::collections::BTreeMap::new();
+    for (name, to, from) in [
+        ("own", "epsilon", "delta"),
+        ("below", "gamma", "delta"),
+        ("beside", "delta", "gamma"),
+        ("authored_beside", "delta", "epsilon"),
+        ("unrelated", "assistant", "delta"),
+        ("operators", "person:milhouse", "delta"),
+    ] {
+        let message = send(&jojobot, to, from, name).await;
+        sent.insert(name, message["id"].as_str().expect("an id").to_string());
+    }
+    let read = rail(jojobot.memory.clone(), jojobot.mailboxes.clone());
+    let epsilon = Actor::Bot(EntityId("bot:epsilon".into()));
+
+    let owners: Vec<String> = read
+        .boxes(&epsilon)
+        .await
+        .expect("boxes")
+        .into_iter()
+        .map(|held| held.owner.as_str().to_string())
+        .collect();
+    assert_eq!(owners.len(), 2, "{owners:?}");
+    for owner in ["bot:epsilon", "bot:gamma"] {
+        assert!(owners.iter().any(|held| held == owner), "{owners:?}");
+    }
+    let readable: Vec<String> = read
+        .messages(&epsilon)
+        .await
+        .expect("messages")
+        .into_iter()
+        .map(|message| message.id.as_str().to_string())
+        .collect();
+    for name in ["own", "below", "authored_beside"] {
+        assert!(
+            readable.contains(&sent[name]),
+            "{name} is not read: {readable:?}"
+        );
+    }
+    for name in ["beside", "unrelated", "operators"] {
+        assert!(
+            !readable.contains(&sent[name]),
+            "{name} was read: {readable:?}"
+        );
+    }
+
+    let everything = read.messages(&Actor::Operator).await.expect("messages");
+    for name in sent.keys() {
+        assert!(
+            everything
+                .iter()
+                .any(|message| message.id.as_str() == sent[name]),
+            "the operator does not read {name}"
+        );
+    }
+    assert_eq!(
+        read.boxes(&Actor::Operator).await.expect("boxes").len(),
+        5,
+        "the operator reads every box"
+    );
 }

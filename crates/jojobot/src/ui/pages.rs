@@ -546,7 +546,7 @@ async fn working_on_section(
 /// not become so: a page that marked a message read would take it out of the
 /// waiting state its real consumer has never seen it in.
 async fn mailbox_section(mail: &jojobot_query_api::MailHandle, bot: &EntityId) -> String {
-    let boxes = match mail.boxes().await {
+    let boxes = match mail.boxes(&jojobot_domain::actor::Actor::Operator).await {
         Ok(boxes) => boxes,
         Err(err) => return blind("Mailbox", "the mail rail", &err.to_string()),
     };
@@ -558,7 +558,7 @@ async fn mailbox_section(mail: &jojobot_query_api::MailHandle, bot: &EntityId) -
         return "<h2>Mailbox</h2>\n<p>This bot owns no mailbox.</p>\n".to_string();
     }
 
-    let messages = match mail.messages().await {
+    let messages = match mail.messages(&jojobot_domain::actor::Actor::Operator).await {
         Ok(messages) => messages,
         Err(err) => return blind("Mailbox", "the mail rail", &err.to_string()),
     };
@@ -675,7 +675,7 @@ async fn operators_mailbox_section(
             return blind("Mailbox", "the mail rail", "the board could not be read");
         }
     };
-    let messages = match mail.messages().await {
+    let messages = match mail.messages(&jojobot_domain::actor::Actor::Operator).await {
         Ok(messages) => messages,
         Err(err) => return blind("Mailbox", "the mail rail", &err.to_string()),
     };

@@ -63,7 +63,7 @@ pub(crate) enum OperatorsBox {
 
 /// The box the operator owns.
 pub(crate) async fn operators_box(mail: &MailHandle, operator: &EntityId) -> OperatorsBox {
-    let Ok(boxes) = mail.boxes().await else {
+    let Ok(boxes) = mail.boxes(&jojobot_domain::actor::Actor::Operator).await else {
         return OperatorsBox::Unreadable;
     };
     match jojobot_mcp::owned_box(&boxes, operator) {
