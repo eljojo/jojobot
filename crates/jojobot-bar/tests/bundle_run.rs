@@ -60,6 +60,7 @@ fn bundle(tag: &str, harness_fails: bool) -> (Option<i32>, String, Vec<String>) 
         .arg("bundle")
         .current_dir(&dir)
         .env("TMPDIR", &dir)
+        .env("BAR_HISTORY_DIR", dir.join("history"))
         .env("CARGO", dir.join("cargo"))
         .stdout(fs::File::create(dir.join("stdout")).unwrap());
     let status = support::fenced_spawn(&mut command)
