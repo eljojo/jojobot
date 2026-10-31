@@ -55,6 +55,15 @@ pulldown-cmark = { version = "0.13.4", default-features = false, features = ["ht
 # field the code names and never a value a caller sends.
 prometheus-client = "0.25"
 
+# **Two lock cases that need a server built with the room harness.** The check
+# lane compiles the workspace with `jojobot/room-harness`, so it runs them against
+# the server the bar builds; the flake's production test build passes no feature
+# and does not compile the file, so it never asks a harness route of a server
+# that has none.
+[[test]]
+name = "lock_query_harness"
+required-features = ["room-harness"]
+
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
 # A case on the slow-call warning moves the clock instead of waiting a minute.
