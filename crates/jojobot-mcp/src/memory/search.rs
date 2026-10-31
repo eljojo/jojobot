@@ -1873,7 +1873,7 @@ mod tests {
                 mailbox: MailboxName("pm".into()),
                 body: "The kiln rebuild landed; the damper is still hand-cut.".into(),
                 subject: Some("the kiln slice".into()),
-                sender: "dev (implementer)".into(),
+                sender: "bot:gamma".into(),
                 sent_at: jiff::Timestamp::from_second(1_780_000_000).expect("a fixed instant"),
                 state: mailbox::MessageState::Processed,
                 notes: Some("filed".into()),
@@ -1887,11 +1887,15 @@ mod tests {
             snippet: "…the damper is still hand-cut…".into(),
         }]));
 
+        let jojobot = handler_with(spy.clone());
+        let sid = crate::mailboxes::testing::owning(&jojobot, "gamma").await;
+        crate::mailboxes::testing::owning(&jojobot, "pm").await;
         let body = json_of(
-            &handler_with(spy)
+            &jojobot
                 .search(Parameters(SearchArgs {
                     query: Some("damper".into()),
                     include_mail: Some(true),
+                    sid: Some(sid),
                     ..search_args()
                 }))
                 .await
@@ -1903,9 +1907,23 @@ mod tests {
             "a caller must not have to guess from the shape"
         );
         assert_eq!(hit["id"], "42", "the id read_message takes");
+        let query = spy.query();
+        assert_eq!(query.asked_by, Some(EntityId("bot:gamma".into())));
+        assert_eq!(
+            query
+                .mail_visibility
+                .message(&MailboxName("pm".into()), Some("bot:gamma")),
+            mailbox::visibility::MessageVisibility::Readable,
+            "the real visibility rule must serve this author's hit",
+        );
+        assert!(
+            !query
+                .mail_visibility
+                .reads_inside(&MailboxName("pm".into()))
+        );
         assert_eq!(hit["mailbox"], "pm");
         assert_eq!(hit["state"], "processed", "an archive reads as one");
-        assert_eq!(hit["sender"], "dev (implementer)");
+        assert_eq!(hit["sender"], "bot:gamma");
         assert_eq!(hit["subject"], "the kiln slice");
         // This caller reads nothing inside the box, so the notes the recipient
         // wrote are left out and the hit says so (rule 139: never up); the
