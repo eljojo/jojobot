@@ -11,9 +11,10 @@
 
 use crate::app::{AppId, AppStamp};
 use crate::memory::EntityId;
+use serde::{Deserialize, Serialize};
 
 /// **Who a write is attributed to.**
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Actor {
     /// A bot, as its writer is filed (`authorship::stored_writer`).
     Bot(EntityId),
@@ -22,8 +23,9 @@ pub enum Actor {
     App(AppId),
     /// The operator. No write function takes it yet.
     Operator,
-    /// A named action of jojobot itself. No write function takes it yet.
-    System,
+    /// A named action of jojobot itself, by its name. No write function takes it
+    /// yet.
+    System(String),
 }
 
 /// **Who a write is attributed to, and the mark the call adds.** The mark is
@@ -69,7 +71,7 @@ impl Actor {
         match self {
             Actor::Bot(bot) => Some(bot.as_str().to_string()),
             Actor::App(app) => Some(format!("app/{app}")),
-            Actor::Operator | Actor::System => None,
+            Actor::Operator | Actor::System(_) => None,
         }
     }
 }
@@ -105,6 +107,15 @@ mod tests {
     #[test]
     fn the_operator_and_the_system_send_no_message_yet() {
         assert_eq!(Actor::Operator.sender(), None);
-        assert_eq!(Actor::System.sender(), None);
+        assert_eq!(Actor::System("sweep".into()).sender(), None);
+    }
+
+    #[test]
+    fn an_app_actor_read_back_from_a_log_is_held_to_the_rule_a_name_is_made_with() {
+        let app = Actor::App(app_id());
+        let wire = serde_json::to_string(&app).unwrap();
+        assert_eq!(serde_json::from_str::<Actor>(&wire).unwrap(), app);
+        let forged = wire.replace("springfield-ci", "Springfield CI");
+        assert!(serde_json::from_str::<Actor>(&forged).is_err());
     }
 }

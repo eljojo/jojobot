@@ -27,20 +27,12 @@ identity!(
     RequestId
 );
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub enum Actor {
-    Bot(ObjectId),
-    App(ObjectId),
-    Operator,
-    System(String),
-}
-
 /// The family chooses P and its encoding before sealing; a backend decodes neither.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Event<P> {
     pub event_kind: String,
     pub meaning_version: u32,
-    pub actor: Option<Actor>,
+    pub actor: Option<crate::actor::Actor>,
     pub run: Option<RunId>,
     pub session_card: Option<SessionCardId>,
     pub request: Option<RequestId>,

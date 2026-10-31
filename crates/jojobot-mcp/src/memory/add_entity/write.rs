@@ -45,7 +45,7 @@ impl Jojobot {
         let actor = by.actor;
         // **The operator and the system create nothing here yet**, so the write
         // fails closed rather than file a thing under no actor.
-        if matches!(actor, Actor::Operator | Actor::System) {
+        if matches!(actor, Actor::Operator | Actor::System(_)) {
             return memory_declined(
                 "add_entity",
                 MemoryError::InvalidFact("this actor does not create things yet".into()),

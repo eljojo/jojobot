@@ -208,6 +208,55 @@ pub async fn snapshot_blob_round_trips(log: &impl LogStore) {
     assert_eq!(log.read_from(Position(0), 10).await.unwrap(), [next]);
 }
 
+/// **An event keeps the actor it was appended with.** The log keeps the bytes of a
+/// member, so the actor must survive the encoding a family gives the event.
+#[cfg(test)]
+pub async fn an_events_actor_reads_back_as_it_was_appended(log: &impl LogStore) {
+    use crate::actor::Actor;
+    let actors = [
+        Actor::Bot(crate::memory::EntityId("bot:lambda".into())),
+        Actor::App(crate::app::AppId::parse("springfield-watch").unwrap()),
+        Actor::Operator,
+        Actor::System("sweep".into()),
+    ];
+    let encoded: Vec<Vec<u8>> = actors
+        .iter()
+        .map(|actor| {
+            serde_json::to_vec(&Event {
+                event_kind: "probe".into(),
+                meaning_version: 1,
+                actor: Some(actor.clone()),
+                run: None,
+                session_card: None,
+                request: None,
+                part: None,
+                occurred_at: None,
+                written_at: None,
+                imported_source_time: None,
+                payload: serde_json::Value::Null,
+            })
+            .unwrap()
+        })
+        .collect();
+    let members: Vec<&[u8]> = encoded.iter().map(Vec::as_slice).collect();
+    let sealed = batch("alpha", 0, &members);
+    assert_eq!(
+        log.append(Position(0), &sealed).await.unwrap(),
+        Append::Committed(sealed.range())
+    );
+    let read = log.read_from(Position(0), 10).await.unwrap();
+    let read_back: Vec<Option<Actor>> = read
+        .iter()
+        .flat_map(SealedBatch::members)
+        .map(|member| {
+            serde_json::from_slice::<Event<serde_json::Value>>(member)
+                .unwrap()
+                .actor
+        })
+        .collect();
+    assert_eq!(read_back, actors.map(Some));
+}
+
 #[cfg(test)]
 mod log_store_contract {
     use super::*;
@@ -227,6 +276,7 @@ mod log_store_contract {
         a_fenced_abort_leaves_the_same_head,
         restart_excludes_a_late_predecessor,
         cancelling_an_acknowledgement_does_not_cancel_the_commit,
-        snapshot_blob_round_trips
+        snapshot_blob_round_trips,
+        an_events_actor_reads_back_as_it_was_appended
     );
 }

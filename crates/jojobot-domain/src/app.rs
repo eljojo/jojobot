@@ -58,8 +58,24 @@ pub const MAX_APP_ID: usize = 32;
 /// **The name the operator gives an app.** Lowercase letters, digits and
 /// hyphens, starting with a letter, so it is safe in a log line, a file name
 /// and a `read_from` value.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(into = "String", try_from = "String")]
 pub struct AppId(String);
+
+impl From<AppId> for String {
+    fn from(id: AppId) -> String {
+        id.0
+    }
+}
+
+/// A name read back from a log is held to the rule a name is made with.
+impl TryFrom<String> for AppId {
+    type Error = AppError;
+
+    fn try_from(raw: String) -> Result<Self, AppError> {
+        AppId::parse(&raw)
+    }
+}
 
 impl AppId {
     /// Accept a name or say why not.

@@ -1087,7 +1087,7 @@ impl Jojobot {
         let actor = by.actor;
         // **The operator and the system write nothing here yet**, so the write
         // fails closed rather than file a claim under no actor.
-        if matches!(actor, Actor::Operator | Actor::System) {
+        if matches!(actor, Actor::Operator | Actor::System(_)) {
             return memory_declined(
                 "capture",
                 MemoryError::InvalidFact("this actor does not write claims yet".into()),
