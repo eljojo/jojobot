@@ -8,6 +8,10 @@ use std::process::Command;
 mod support;
 
 fn run_narrow(tag: &str, filter: &str) -> (Option<i32>, String, String, String) {
+    run_narrow_of(tag, "jojobot-bar", filter)
+}
+
+fn run_narrow_of(tag: &str, krate: &str, filter: &str) -> (Option<i32>, String, String, String) {
     let dir = std::env::temp_dir().join(jojobot_bar::scratch::name(&format!(
         "jojobot-bar-test-{tag}"
     )));
@@ -55,7 +59,7 @@ esac
     );
     let mut command = Command::new(env!("CARGO_BIN_EXE_jojobot-bar"));
     command
-        .args(["narrow", "--crate", "jojobot-bar", "--filter", filter])
+        .args(["narrow", "--crate", krate, "--filter", filter])
         .current_dir(&dir)
         .env("TMPDIR", &dir)
         .env("CARGO", &cargo)
@@ -153,4 +157,28 @@ fn a_misspelled_filter_beside_a_good_one_is_refused_by_name() {
     assert_eq!(code, Some(0), "{stdout}");
     let (code, stdout, _, _) = run_narrow("overlap", "alpha alpha::first");
     assert_eq!(code, Some(0), "{stdout}");
+}
+
+/// **A narrow run of the exercise crate builds the binary its rooms spawn, with
+/// the grader route; a narrow run of any other crate does not.** A room spawns
+/// the server, and a build without the feature answers its grader calls with
+/// 404. **Paired**: building it for every crate would pass the first half, and
+/// never building it would pass the second.
+#[test]
+fn a_narrow_run_builds_the_room_harness_binary_only_for_the_exercise_crate() {
+    const HARNESS_BUILD: &str = "build --workspace --locked --features=jojobot/room-harness";
+    let (code, stdout, argv, _) = run_narrow_of("harness-exercise", "jojobot-exercise", "alpha");
+    assert_eq!(code, Some(0), "{stdout}");
+    assert_eq!(
+        argv.lines().filter(|call| *call == HARNESS_BUILD).count(),
+        1,
+        "the exercise crate's narrow run builds the harness binary once: {argv}"
+    );
+
+    let (code, stdout, argv, _) = run_narrow_of("harness-other", "jojobot-bar", "alpha");
+    assert_eq!(code, Some(0), "{stdout}");
+    assert!(
+        !argv.lines().any(|call| call == HARNESS_BUILD),
+        "a narrow run of another crate built the harness binary: {argv}"
+    );
 }
