@@ -83,6 +83,10 @@ name = "bike_room"
 required-features = ["rooms"]
 
 [[test]]
+name = "changes_cursor"
+required-features = ["rooms"]
+
+[[test]]
 name = "checks"
 required-features = ["rooms"]
 
