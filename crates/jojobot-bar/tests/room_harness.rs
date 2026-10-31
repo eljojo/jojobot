@@ -65,3 +65,50 @@ fn the_declared_production_features_exclude_the_room_harness() {
         }
     }
 }
+
+/// **The scope of an unscoped test run names exactly the packages that declare
+/// the room-harness feature.** A package left out loses the feature on its own
+/// library job; a package named that lacks it makes cargo refuse the job.
+#[test]
+fn the_harness_scope_names_the_packages_that_declare_the_feature() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let result = Command::new("cargo")
+        .current_dir(&root)
+        .args([
+            "metadata",
+            "--offline",
+            "--locked",
+            "--no-deps",
+            "--format-version",
+            "1",
+        ])
+        .output()
+        .expect("cargo metadata runs without building");
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let metadata: serde_json::Value =
+        serde_json::from_slice(&result.stdout).expect("metadata JSON");
+    let mut declared: Vec<String> = metadata["packages"]
+        .as_array()
+        .expect("packages")
+        .iter()
+        .filter(|package| package["features"].get("room-harness").is_some())
+        .map(|package| {
+            format!(
+                "--features={}/room-harness",
+                package["name"].as_str().unwrap()
+            )
+        })
+        .collect();
+    declared.sort();
+    let mut named: Vec<String> = jojobot_bar::HARNESS_SCOPE
+        .iter()
+        .filter(|arg| arg.starts_with("--features="))
+        .map(|arg| arg.to_string())
+        .collect();
+    named.sort();
+    assert_eq!(named, declared);
+}

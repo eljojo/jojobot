@@ -1612,10 +1612,7 @@ fn run_check_phases(known: &KnownReds, level: Level) -> std::io::Result<ExitCode
         let (ok, text, walls, not_run) = run_test_jobs(
             &log_path,
             &cargo,
-            &selection.map_or_else(
-                || vec!["--workspace", "--features=jojobot/room-harness"],
-                |s| s.scope(),
-            ),
+            &selection.map_or_else(|| jojobot_bar::HARNESS_SCOPE.to_vec(), |s| s.scope()),
             &jobs,
             limit,
             history.as_ref(),

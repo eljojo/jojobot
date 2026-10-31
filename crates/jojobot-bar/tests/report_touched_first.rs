@@ -113,7 +113,7 @@ fn jobs_run(dir: &Path, level: &str, push_base: Option<&str>) -> (Vec<String>, S
         .filter(|call| call.starts_with("test ") && !call.contains("--no-run"))
         .map(|call| {
             call.trim_start_matches("test ")
-                .replace("--workspace --features=jojobot/room-harness ", "")
+                .replace(&format!("{} ", jojobot_bar::HARNESS_SCOPE.join(" ")), "")
                 .replace(" --no-fail-fast --locked", "")
                 .replace(" -- -Zunstable-options --report-time", "")
         })
@@ -526,7 +526,7 @@ fn ci_crate_a_forced_full_run_builds_the_harness_feature() {
     assert!(!jobs.is_empty(), "no test job ran");
     for job in &jobs {
         assert!(
-            job.contains("--workspace --features=jojobot/room-harness"),
+            job.contains(&jojobot_bar::HARNESS_SCOPE.join(" ")),
             "a full run lost the harness feature: {job}"
         );
     }

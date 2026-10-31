@@ -229,12 +229,13 @@ fn the_jobs_run_side_by_side() {
 #[test]
 fn the_log_carries_every_jobs_output_in_listing_order() {
     let ran = run_check(&[]);
+    let scope = jojobot_bar::HARNESS_SCOPE.join(" ");
     let positions: Vec<usize> = [
-        "-p jojobot-domain --lib",
-        "--workspace --features=jojobot/room-harness --test alpha",
-        "--workspace --features=jojobot/room-harness --test beta",
-        "--workspace --features=jojobot/room-harness --test gamma",
-        "--workspace --features=jojobot/room-harness --doc",
+        "--features=jojobot-domain/room-harness -p jojobot-domain --lib".to_string(),
+        format!("{scope} --test alpha"),
+        format!("{scope} --test beta"),
+        format!("{scope} --test gamma"),
+        format!("{scope} --doc"),
     ]
     .iter()
     .map(|job| {

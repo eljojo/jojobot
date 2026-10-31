@@ -252,6 +252,20 @@ fn package_of(source: &str) -> Option<String> {
     (!name.is_empty()).then(|| name.replace('_', "-"))
 }
 
+/// **The scope of an unscoped test run that builds the room harness.** The
+/// workspace feature `jojobot/room-harness` reaches every package that carries the
+/// feature, but a job that names its own package (`-p P`) is allowed only a
+/// feature of P itself, so the scope names each carrier's own feature as well. A
+/// package that does not declare the feature must not be named, because cargo
+/// refuses a feature a package does not have. `tests/room_harness.rs` holds this
+/// list to the workspace's own declarations.
+pub const HARNESS_SCOPE: [&str; 4] = [
+    "--workspace",
+    "--features=jojobot/room-harness",
+    "--features=jojobot-mcp/room-harness",
+    "--features=jojobot-domain/room-harness",
+];
+
 /// **The arguments `cargo test` gets for one job.** A job that names its own
 /// package (`-p <package> ...`) gets no scope: `--workspace` beside `-p` would
 /// select every package again. It keeps the scope's harness feature for its own
@@ -680,6 +694,42 @@ mod tests {
                 "--test",
                 "server"
             ]
+        );
+    }
+
+    /// **An unscoped run keeps the room-harness feature on the library job of each
+    /// package that carries it**, and gives a package that does not carry it
+    /// nothing, because cargo refuses a feature the package lacks. A job that names
+    /// no package keeps the whole scope.
+    #[test]
+    fn an_unscoped_run_keeps_the_harness_feature_on_each_carriers_own_job() {
+        let job =
+            |package: &str| -> Vec<String> { ["-p", package, "--lib"].map(String::from).to_vec() };
+        for carrier in ["jojobot-mcp", "jojobot-domain"] {
+            assert_eq!(
+                job_args(&HARNESS_SCOPE, &job(carrier)),
+                [
+                    format!("--features={carrier}/room-harness"),
+                    "-p".to_string(),
+                    carrier.to_string(),
+                    "--lib".to_string(),
+                ],
+                "{carrier} lost its harness feature"
+            );
+        }
+        assert_eq!(
+            job_args(&HARNESS_SCOPE, &job("jojobot-adapters")),
+            job("jojobot-adapters"),
+            "a package without the feature was given one"
+        );
+        let file: Vec<String> = ["--test", "server"].map(String::from).to_vec();
+        assert_eq!(
+            job_args(&HARNESS_SCOPE, &file),
+            HARNESS_SCOPE
+                .iter()
+                .map(|a| a.to_string())
+                .chain(file.clone())
+                .collect::<Vec<_>>()
         );
     }
 

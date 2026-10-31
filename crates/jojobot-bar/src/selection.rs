@@ -49,10 +49,7 @@ pub(super) fn current() -> Option<&'static Selection> {
                     )
                     .collect()
             } else {
-                vec![
-                    "--workspace".to_string(),
-                    "--features=jojobot/room-harness".to_string(),
-                ]
+                jojobot_bar::HARNESS_SCOPE.map(String::from).to_vec()
             };
             Some(Selection {
                 always_tests: value
