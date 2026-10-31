@@ -28,6 +28,19 @@ pub(super) struct Prepared {
 }
 
 impl Jojobot {
+    /// **The question an app's recall asks**, prepared by the function the verb runs
+    /// with no asker, so the app reads what nobody owns and no second builder
+    /// exists. Answers the question and the keys the call narrowed to.
+    pub(crate) async fn app_recall_question(
+        &self,
+        args: RecallArgs,
+    ) -> Result<Result<(view_run::Question, Option<Vec<String>>), CallToolResult>, McpError> {
+        Ok(self
+            .prepare_recall_question(args, None)
+            .await?
+            .map(|prepared| (prepared.question, prepared.only_keys)))
+    }
+
     pub(super) async fn prepare_recall_question(
         &self,
         args: RecallArgs,

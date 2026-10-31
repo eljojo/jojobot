@@ -158,9 +158,10 @@ pub struct Registry {
 }
 
 impl Registry {
-    /// The operations extracted so far: the four writes.
+    /// The operations extracted so far: the four writes and the one read.
     pub fn shipped() -> Self {
         Registry::default()
+            .with(Entry::new("recall", recall))
             .with(Entry::new("capture", capture))
             .with(Entry::new("add_entity", add_entity))
             .with(Entry::new("post_message", post_message))
@@ -219,6 +220,119 @@ pub struct PostedView {
     pub mailbox: String,
     /// When it was sent.
     pub sent_at: String,
+}
+
+/// **What `recall` takes from an app**: a subject, a kind, a `where`, key filters,
+/// the keys to keep and a page size. A view, a walk, a window of days, a charter
+/// or a run is not one of them, and a call that sends one is refused naming it.
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RecallInput {
+    #[serde(default, rename = "subject")]
+    _subject: Option<String>,
+    #[serde(default, rename = "kind")]
+    _kind: Option<String>,
+    #[serde(default, rename = "where")]
+    _expression: Option<String>,
+    #[serde(default, rename = "fields")]
+    _fields: Option<Value>,
+    #[serde(default, rename = "keys")]
+    _keys: Option<Vec<String>>,
+    #[serde(default, rename = "limit")]
+    _limit: Option<u32>,
+}
+
+/// The most objects one app read returns when the call names no limit, and the most it may name.
+const RECALL_DEFAULT_LIMIT: usize = 50;
+const RECALL_MOST: usize = 200;
+
+/// **What `recall` served**: the objects the app may read, each as its handle,
+/// name, kind and folded fields.
+#[derive(Debug, Serialize)]
+pub struct RecalledView {
+    /// The objects, in the order the selection gave them.
+    pub objects: Vec<RecalledObject>,
+    /// How many objects the page left out.
+    pub left_out: usize,
+}
+
+/// **One object of a read.**
+#[derive(Debug, Serialize)]
+pub struct RecalledObject {
+    /// The handle.
+    pub handle: String,
+    /// The name.
+    pub name: String,
+    /// The kind's token.
+    pub kind: String,
+    /// What the object holds now, one value for each key.
+    pub fields: std::collections::BTreeMap<String, String>,
+}
+
+/// **`recall` for an app**: the verb's own question, prepared with no asker, so the
+/// app reads what nobody owns and never a run, a usage record or a bot's own
+/// thing. The grant is yes or no.
+async fn recall(call: Call) -> Answer {
+    let operation = Operation {
+        name: "recall".into(),
+        args_sent: call.args_sent(),
+        ..Operation::default()
+    };
+    if let Err(answer) = call.permit(&operation) {
+        return answer;
+    }
+    if let Err(answer) = call.input::<RecallInput>() {
+        return answer;
+    }
+    let args: crate::memory::recall::RecallArgs = match call.input() {
+        Ok(args) => args,
+        Err(answer) => return answer,
+    };
+    let limit = args
+        .limit
+        .map_or(RECALL_DEFAULT_LIMIT, |limit| limit as usize)
+        .clamp(1, RECALL_MOST);
+    let handler = &call.handler;
+    let (question, only_keys) = match handler.app_recall_question(args).await {
+        Ok(Ok(prepared)) => prepared,
+        Ok(Err(refused)) => return refusal(&refused),
+        Err(e) => return unavailable(e),
+    };
+    let queries = crate::memory::view_run::handle(handler.memory.clone(), handler.sessions.clone());
+    let answered = match queries.ask(question).await {
+        Ok(answered) => answered,
+        Err(
+            jojobot_query_api::Failed::Selection(why) | jojobot_query_api::Failed::Readiness(why),
+        ) => {
+            return match why {
+                jojobot_domain::memory::MemoryError::InvalidQuery(words) => Answer::Invalid(words),
+                other => unavailable(other),
+            };
+        }
+    };
+    let held = answered.selected.objects.len();
+    let objects = answered
+        .selected
+        .objects
+        .into_iter()
+        .take(limit)
+        .map(|object| {
+            let mut fields = object.fields;
+            if let Some(keep) = &only_keys {
+                fields.retain(|key, _| keep.contains(key));
+            }
+            RecalledObject {
+                handle: object.entity.id.to_string(),
+                name: object.entity.name,
+                kind: object.entity.kind.as_token().to_string(),
+                fields,
+            }
+        })
+        .collect::<Vec<_>>();
+    done(&RecalledView {
+        left_out: held - objects.len(),
+        objects,
+    })
 }
 
 async fn capture(call: Call) -> Answer {

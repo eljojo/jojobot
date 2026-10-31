@@ -435,3 +435,99 @@ async fn unstable_a_creation_with_a_key_outside_the_grant_or_one_no_app_may_set_
         assert!(!made, "{key}: nothing was made");
     }
 }
+
+/// An app granted `recall` and nothing else.
+fn reader() -> (AppPrincipal, String) {
+    enrolled("springfield-reader", vec![op("recall", &[], &[])])
+}
+
+/// A work item with a status the reader can ask for.
+async fn work_with_status(served: &Served, handle: &str, name: &str, status: &str) {
+    served
+        .memory
+        .add_entity(NewEntity::new(EntityId(handle.into()), name, "fixture"))
+        .await
+        .expect("add")
+        .written()
+        .expect("not blocked");
+    let mut fact = NewFact::about(
+        EntityId(handle.into()),
+        "where it stands",
+        jiff::civil::Date::constant(2026, 3, 5),
+    );
+    fact.fields.insert("status".to_string(), status.to_string());
+    fact.sets.insert("status".to_string());
+    served.memory.capture(fact).await.expect("status lands");
+}
+
+#[tokio::test]
+async fn unstable_a_granted_recall_reads_a_card_by_handle_and_by_status() {
+    let (app, token) = reader();
+    let served = serve(vec![app], Registry::shipped()).await;
+    work_with_status(&served, "work:omega", "Mow the lawn", "now").await;
+    work_with_status(&served, "work:sigma", "Paint the fence", "next").await;
+
+    let (status, by_handle) =
+        call(&served, &token, "recall", json!({"subject": "work:omega"})).await;
+    assert_eq!(status, 200, "{by_handle}");
+    assert_eq!(
+        by_handle["objects"][0]["handle"], "work:omega",
+        "{by_handle}"
+    );
+    assert_eq!(
+        by_handle["objects"][0]["fields"]["status"], "now",
+        "the card's fields come back: {by_handle}"
+    );
+
+    let (status, by_status) = call(
+        &served,
+        &token,
+        "recall",
+        json!({"kind": "work", "where": "status = now"}),
+    )
+    .await;
+    assert_eq!(status, 200, "{by_status}");
+    let handles: Vec<&str> = by_status["objects"]
+        .as_array()
+        .expect("objects")
+        .iter()
+        .filter_map(|o| o["handle"].as_str())
+        .collect();
+    assert!(handles.contains(&"work:omega"), "{by_status}");
+    assert!(
+        !handles.contains(&"work:sigma"),
+        "a card at another status came back: {by_status}"
+    );
+}
+
+#[tokio::test]
+async fn unstable_a_recall_outside_the_grant_is_refused_naming_it() {
+    let (app, token) = watcher();
+    let served = serve(vec![app], Registry::shipped()).await;
+    let (status, refused) = call(&served, &token, "recall", json!({"subject": "work:beta"})).await;
+    assert_eq!(status, 403, "{refused}");
+    assert!(
+        refused["error"].as_str().unwrap().contains("recall"),
+        "{refused}"
+    );
+}
+
+#[tokio::test]
+async fn unstable_a_recall_argument_outside_the_input_is_refused_naming_it() {
+    let (app, token) = reader();
+    let served = serve(vec![app], Registry::shipped()).await;
+    for argument in ["view", "follow", "charter", "history"] {
+        let (status, refused) = call(
+            &served,
+            &token,
+            "recall",
+            json!({"subject": "work:beta", argument: "x"}),
+        )
+        .await;
+        assert_eq!(status, 422, "{argument}: {refused}");
+        assert!(
+            refused.to_string().contains(argument),
+            "the refusal does not name {argument}: {refused}"
+        );
+    }
+}
