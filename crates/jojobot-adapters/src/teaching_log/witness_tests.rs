@@ -66,9 +66,57 @@ fn recording_proxy(listener: tokio::net::TcpListener, upstream: u16, seen: Seen)
     });
 }
 
+/// **The options of every connection made through the proxy.** The proxy records
+/// the text of a query or a preparation and not an execution by statement id, so a
+/// statement the client cached would run again unseen. With no statement cache
+/// every run of a statement is prepared again, and the proxy sees its text.
+fn through_proxy(direct: &sqlx::MySqlPool, port: u16) -> sqlx::mysql::MySqlConnectOptions {
+    (*direct.connect_options())
+        .clone()
+        .port(port)
+        .statement_cache_capacity(0)
+}
+
 fn reads_old_rows(statement: &str) -> bool {
     let lower = statement.to_ascii_lowercase();
     lower.contains("session_teaching") && lower.contains("select")
+}
+
+/// **The witness sees a statement that runs a second time on the same connection.**
+/// A SELECT is run, the record is cleared, and the same SELECT runs again on the
+/// same connection. Were the statement cached, the second run would send a
+/// statement id and no text, and the witness would miss a repeated boot read.
+#[tokio::test]
+async fn the_witness_sees_a_repeated_select_on_one_connection() {
+    let scratch = Scratch::new("teaching-witness-calibration");
+    let mut server = Dolt::start(&scratch.0, free_port()).await.unwrap();
+    let direct = migrated_database(&server, "alpha").await.unwrap();
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let seen: Seen = Arc::default();
+    recording_proxy(listener, direct.connect_options().get_port(), seen.clone());
+    let through = MySqlPoolOptions::new()
+        .max_connections(1)
+        .connect_lazy_with(through_proxy(&direct, port));
+
+    let select = "SELECT sid FROM session_teaching WHERE domain = ?";
+    for _ in 0..2 {
+        seen.lock().unwrap().clear();
+        sqlx::query(select)
+            .bind("claims")
+            .fetch_all(&through)
+            .await
+            .unwrap();
+        let statements = seen.lock().unwrap().clone();
+        assert!(
+            statements.iter().any(|s| reads_old_rows(s)),
+            "a run of the SELECT was not seen: {statements:?}"
+        );
+    }
+    drop(through);
+    server.stop().await;
 }
 
 #[tokio::test]
@@ -88,8 +136,7 @@ async fn no_legacy_teaching_read_is_made_after_boot() {
     let port = listener.local_addr().unwrap().port();
     let seen: Seen = Arc::default();
     recording_proxy(listener, direct.connect_options().get_port(), seen.clone());
-    let through =
-        MySqlPoolOptions::new().connect_lazy_with((*direct.connect_options()).clone().port(port));
+    let through = MySqlPoolOptions::new().connect_lazy_with(through_proxy(&direct, port));
 
     let log = Arc::new(DoltLog::open(through.clone()).await.unwrap());
     let marks = DoltTeachings::open(through).marks().await.unwrap();
