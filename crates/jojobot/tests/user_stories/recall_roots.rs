@@ -12,6 +12,7 @@ use super::dsl::Story;
 const BOARD: &str = "project:atlas";
 const CARD: &str = "work:sigma";
 const CHILD_CARD: &str = "work:tau";
+const LOOSE_CARD: &str = "work:upsilon";
 
 fn ids(answer: &Value) -> Vec<String> {
     answer["objects"]
@@ -27,6 +28,7 @@ async fn the_roots_are_the_things_under_nothing_standing() {
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
     s.add(BOARD, "Roots story board").await;
+    s.add(LOOSE_CARD, "Roots story loose card").await;
     for (handle, parent) in [(CARD, BOARD), (CHILD_CARD, CARD)] {
         let (kind, slug) = handle.split_once(':').expect("a handle");
         s.call(
@@ -45,11 +47,16 @@ async fn the_roots_are_the_things_under_nothing_standing() {
         "a child of a standing thing is not a root: {found:?}"
     );
 
-    // Roots narrows beside a kind: no work item here sits under nothing.
+    // Roots narrows beside a kind: the work item under nothing is there, and the
+    // work item under the board is not, in the same read.
     let work = s
         .call("recall", json!({"roots": true, "kind": "work"}))
         .await
         .json();
+    assert!(
+        ids(&work).contains(&LOOSE_CARD.to_string()),
+        "a kind keeps the roots of its own kind: {work}"
+    );
     assert!(
         !ids(&work).contains(&CARD.to_string()),
         "a kind narrows the roots further: {work}"
@@ -66,4 +73,5 @@ async fn the_roots_are_the_things_under_nothing_standing() {
     assert!(after.contains(&CARD.to_string()), "{after:?}");
     assert!(!after.contains(&BOARD.to_string()), "{after:?}");
     assert!(!after.contains(&CHILD_CARD.to_string()), "{after:?}");
+    story.finish().await;
 }
