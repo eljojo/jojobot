@@ -216,6 +216,22 @@ async fn a_bot_over_the_ceiling_by_the_warning_can_still_file_its_rules() {
         growing["status"], "blocked",
         "a write that grows a rule landed over the ceiling: {growing}"
     );
+    // **The refusal is the floor's**, which names the floor and its parts; a claim
+    // too big to read back is refused as blocked too, without them.
+    assert!(
+        growing.get("floor_parts").is_some(),
+        "the refusal is not the boot floor's: {growing}"
+    );
+    // A purpose is a label: a long one is growth like any other.
+    let long = update(crate::memory::update_fact::UpdateFactArgs {
+        fields: Some([("purpose".to_string(), "x".repeat(400))].into()),
+        ..update_args(&address_of("a second rule that names no purpose"))
+    })
+    .await;
+    assert!(
+        long.get("floor_parts").is_some(),
+        "a long purpose was taken for a filing: {long}"
+    );
     let filing = update(crate::memory::update_fact::UpdateFactArgs {
         fields: Some([("purpose".to_string(), "boot".to_string())].into()),
         ..update_args(&address_of("a second rule that names no purpose"))
@@ -224,5 +240,13 @@ async fn a_bot_over_the_ceiling_by_the_warning_can_still_file_its_rules() {
     assert_ne!(
         filing["status"], "blocked",
         "the filing the warning asks for was refused: {filing}"
+    );
+    let filed = jojobot.memory.recall(&bot).await.expect("the bot's claims");
+    assert!(
+        filed.iter().any(|fact| {
+            fact.content == "a second rule that names no purpose"
+                && fact.fields.get("purpose").map(String::as_str) == Some("boot")
+        }),
+        "the purpose landed: {filed:?}"
     );
 }

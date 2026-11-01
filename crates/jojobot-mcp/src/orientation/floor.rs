@@ -17,6 +17,10 @@ use crate::orientation::instance_zone::{ZoneFrom, zone_answer};
 use crate::orientation::orient::{InstanceLines, elide_rule_details, entity_summary, floor_len};
 use jojobot_domain::memory::{FactStatus, RULE_SEATS, rule_seats_of, rules_in_force};
 
+/// The longest purpose, in characters, that a filing may give a rule while the
+/// bot's boot is over the ceiling. A purpose names an area in a few words.
+const PURPOSE_FILING_MAX: usize = 80;
+
 mod fold;
 mod rename;
 
@@ -718,6 +722,10 @@ impl Jojobot {
 
     /// **Whether an edit changes nothing of a rule but giving it a purpose** it
     /// did not name before.
+    ///
+    /// **The purpose is a short label.** The exemption exists for the label the
+    /// warning asks for, so a purpose over [`PURPOSE_FILING_MAX`] characters is an
+    /// ordinary growth and is judged by the floor as one.
     fn only_files(before: &Fact, after: &Fact) -> bool {
         let mut without = after.fields.clone();
         without.remove("purpose");
@@ -725,6 +733,10 @@ impl Jojobot {
         earlier.remove("purpose");
         jojobot_domain::memory::seats::is_unfiled(before)
             && !jojobot_domain::memory::seats::is_unfiled(after)
+            && after
+                .fields
+                .get("purpose")
+                .is_some_and(|purpose| purpose.chars().count() <= PURPOSE_FILING_MAX)
             && earlier == without
             && before.content == after.content
             && before.details == after.details
