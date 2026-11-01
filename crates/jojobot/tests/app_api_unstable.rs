@@ -354,6 +354,17 @@ async fn unstable_an_app_posts_to_the_operators_box_from_itself_and_to_no_other(
     assert_eq!(message.sender_mail_waiting_at_send, None);
     assert_eq!(message.posted_by_session, None);
 
+    // **A box that exists**, so the refusal below can only be the grant: to a
+    // name no box answers to, the verb refuses first and the guard is never met.
+    served
+        .mailboxes
+        .create_mailbox(
+            &jojobot_domain::mailbox::MailboxName("alpha".into()),
+            &EntityId("bot:alpha".into()),
+            None,
+        )
+        .await
+        .expect("a box for the bot");
     let (status, refused) = call(
         &served,
         &token,
@@ -361,7 +372,11 @@ async fn unstable_an_app_posts_to_the_operators_box_from_itself_and_to_no_other(
         json!({"to": "bot:alpha", "body": "Hello."}),
     )
     .await;
-    assert!(status == 403 || status == 409, "{status} {refused}");
+    assert_eq!(status, 403, "{refused}");
+    assert!(
+        refused["error"].as_str().unwrap().contains("operator"),
+        "{refused}"
+    );
 }
 
 #[tokio::test]
@@ -802,4 +817,111 @@ async fn unstable_backing_is_unavailable_when_the_age_read_fails() {
     let (status, down) = call(&served, &token, "recall", ask).await;
     assert_eq!(status, 503, "{down}");
     assert!(down.get("objects").is_none(), "{down}");
+}
+
+/// **A page cut is served and counted, and a key narrowing keeps only the keys
+/// named.** Three cards at one status are read three ways: with no limit (all
+/// three, nothing left out), with `limit` 2 (two, and the one left out counted)
+/// and with `keys` naming one key of a card that holds two. **Each refusal to
+/// show is read beside what it hides**: the unlimited read names the card the
+/// page leaves out, and the whole read of the card names the key the narrowing
+/// drops.
+#[tokio::test]
+async fn unstable_a_recall_page_cut_is_counted_and_a_key_narrowing_keeps_only_those_keys() {
+    let (app, token) = reader();
+    let served = serve(vec![app], Registry::shipped()).await;
+    work_with_status(&served, "work:omega", "Mow the lawn", "now").await;
+    work_with_status(&served, "work:sigma", "Paint the fence", "now").await;
+    work_with_status(&served, "work:tau", "Rake the leaves", "now").await;
+    set_key(&served, "work:omega", "waiting_on", "person:homer").await;
+    let ask = json!({"kind": "work", "where": "status = now"});
+
+    let (status, whole) = call(&served, &token, "recall", ask.clone()).await;
+    assert_eq!(status, 200, "{whole}");
+    assert_eq!(whole["objects"].as_array().expect("objects").len(), 3);
+    assert_eq!(whole["left_out"], 0, "{whole}");
+
+    let (status, page) = call(
+        &served,
+        &token,
+        "recall",
+        json!({"kind": "work", "where": "status = now", "limit": 2}),
+    )
+    .await;
+    assert_eq!(status, 200, "{page}");
+    assert_eq!(page["objects"].as_array().expect("objects").len(), 2);
+    assert_eq!(page["left_out"], 1, "{page}");
+
+    let (status, full) = call(&served, &token, "recall", json!({"subject": "work:omega"})).await;
+    assert_eq!(status, 200, "{full}");
+    assert!(
+        full["objects"][0]["fields"].get("waiting_on").is_some(),
+        "the card holds the key the narrowing will drop: {full}"
+    );
+    let (status, narrowed) = call(
+        &served,
+        &token,
+        "recall",
+        json!({"subject": "work:omega", "keys": ["status"]}),
+    )
+    .await;
+    assert_eq!(status, 200, "{narrowed}");
+    let kept: Vec<&str> = narrowed["objects"][0]["fields"]
+        .as_object()
+        .expect("fields")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(kept, ["status"], "{narrowed}");
+}
+
+/// **A capture is judged by the kind the store holds, not the spelling the call
+/// sent.** A role is retyped to a thread, which the app's grant does not cover; the
+/// old spelling still answers to it. Paired: before the retype the same call lands
+/// on the role, so the refusal below is the retype and nothing else.
+#[tokio::test]
+async fn unstable_a_capture_is_judged_by_the_kind_the_store_holds_and_not_the_spelling_sent() {
+    let (app, token) = watcher();
+    let served = serve(vec![app], Registry::shipped()).await;
+    let body = json!({"subject": "role:alpha", "content": "Seen at the gate."});
+
+    let (status, landed) = call(&served, &token, "capture", body.clone()).await;
+    assert_eq!(status, 200, "{landed}");
+
+    served
+        .memory
+        .rename_entity(
+            &EntityId("role:alpha".into()),
+            &EntityId("thread:alpha".into()),
+            None,
+            jiff::civil::Date::constant(2026, 3, 7),
+            jojobot_domain::memory::Override::none(),
+            None,
+        )
+        .await
+        .expect("the retype lands")
+        .written()
+        .expect("the retype is not blocked");
+
+    let (status, refused) = call(
+        &served,
+        &token,
+        "capture",
+        json!({"subject": "role:alpha", "content": "Seen again."}),
+    )
+    .await;
+    assert_eq!(status, 403, "{refused}");
+    assert!(
+        refused["error"].as_str().unwrap().contains("thread"),
+        "{refused}"
+    );
+    let facts = served
+        .memory
+        .recall(&EntityId("thread:alpha".into()))
+        .await
+        .expect("recall");
+    assert!(
+        facts.iter().all(|f| f.content != "Seen again."),
+        "nothing was written under the old spelling"
+    );
 }
