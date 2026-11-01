@@ -205,11 +205,17 @@ pub async fn rhythm(
     // not yet due.
     let mut asked = jojobot_query_api::Question::about(rhythm.id.clone(), None, None);
     asked.asks.overdue = Some(today);
-    let owed = queries
+    let owed = match queries
         .ask(&jojobot_domain::actor::Actor::Operator, asked)
         .await
-        .ok()
-        .and_then(|answered| answered.narrowed.owed);
+    {
+        Ok(answered) => answered.narrowed.owed,
+        Err(
+            jojobot_query_api::Failed::Selection(error)
+            | jojobot_query_api::Failed::Readiness(error)
+            | jojobot_query_api::Failed::Preparation(_, error),
+        ) => return pages::blind("Due day", "the due day", &error.to_string()),
+    };
     let marked = owed
         .as_ref()
         .and_then(|pass| pass.marks.get(&rhythm.id).copied())
@@ -233,7 +239,7 @@ fn rhythm_box(
         ),
         Some((attention::Due::NotYetOpened, _)) => ("not checked in yet".to_string(), None),
         Some((attention::Due::Never, _)) => ("nothing falls due".to_string(), None),
-        // A mark that cannot say, or an answer that could not be read, is said so.
+        // A missing or unreadable due mark describes the schedule's keys.
         Some((attention::Due::Unreadable, _)) | None => (
             "next due cannot be worked out from its keys".to_string(),
             None,

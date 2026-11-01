@@ -455,3 +455,58 @@ async fn an_unreadable_ancestry_refuses_the_org_chart_in_plain_words() {
     );
     ct.cancel();
 }
+
+/// A failed due-day read is marked on the rhythm page; the same readable
+/// schedule still yields its computed day before and after the fault.
+#[tokio::test]
+async fn a_rhythms_failed_due_read_is_a_blind_section() {
+    let memory = Arc::new(jojobot_adapters::counted::Counted::new(
+        seeded_memory().await,
+    ));
+    let rhythm = EntityId("rhythm:descale".into());
+    let mut new = NewEntity::new(rhythm.clone(), "Descale the machine", "the fixture roster");
+    new.parent = Some(EntityId("person:alpha".into()));
+    memory.add_entity(new).await.unwrap();
+    memory
+        .capture(set_on(NewFact {
+            fields: [
+                ("cadence_days".to_string(), "7".to_string()),
+                ("advances_from".to_string(), "due_date".to_string()),
+                ("counts_from".to_string(), "2026-03-01".to_string()),
+            ]
+            .into(),
+            ..NewFact::about(
+                rhythm,
+                "the loop was set up",
+                jiff::civil::Date::constant(2026, 3, 5),
+            )
+        }))
+        .await
+        .unwrap();
+    let board = seeded_board_over(memory.clone()).await;
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct, _) = support::ui_board::spawn_jojobot_on(
+        endpoints,
+        &[READER],
+        &idp,
+        board,
+        jiff::civil::Date::constant(2026, 3, 10),
+    )
+    .await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+    for failed in [false, true, false] {
+        memory.fail_fields_of(failed.then_some("topic:instance"));
+        let page = read(&client, addr, "/person:alpha/rhythm:descale/", &cookie).await;
+        assert_eq!(page.status(), reqwest::StatusCode::OK);
+        let body = page.text().await.unwrap();
+        assert_eq!(
+            body.contains("id=\"unreadable-the-due-day\""),
+            failed,
+            "the due-day section must distinguish an unreadable answer: {body}"
+        );
+        assert_eq!(body.contains("2026-03-08"), !failed, "{body}");
+    }
+    ct.cancel();
+}
