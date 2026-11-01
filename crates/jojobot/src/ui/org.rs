@@ -294,4 +294,39 @@ mod tests {
         // A loop has no root, and still every bot is on the chart.
         assert_eq!(forest(&loop_).len(), 2);
     }
+
+    /// **Each bot sits one line deeper than the bot it reports to, a child follows
+    /// its own manager, and a bot nobody reports to or through is a root.** Two
+    /// lines of reports and a lone bot, so a chart that put every bot at one depth,
+    /// or a child after another manager, fails here.
+    #[test]
+    fn the_forest_puts_each_bot_under_its_manager_and_a_lone_bot_at_the_root() {
+        let _booted = jojobot_domain::memory::testing::InMemoryMemory::booted();
+        let all = [
+            bot("bot:rho", None),
+            bot("bot:psi", Some("bot:rho")),
+            bot("bot:upsilon", Some("bot:psi")),
+            bot("bot:smithers", None),
+            bot("bot:nelson", Some("bot:smithers")),
+            bot("bot:moe", None),
+        ];
+        let placed: Vec<(usize, String)> = forest(&all)
+            .into_iter()
+            .map(|(depth, colleague)| (depth, colleague.entity.id.to_string()))
+            .collect();
+        let at = |handle: &str| placed.iter().position(|(_, seen)| seen == handle).unwrap();
+        let depth = |handle: &str| placed[at(handle)].0;
+        assert_eq!(depth("bot:rho"), 0, "{placed:?}");
+        assert_eq!(depth("bot:psi"), 1, "{placed:?}");
+        assert_eq!(depth("bot:upsilon"), 2, "{placed:?}");
+        assert_eq!(depth("bot:smithers"), 0, "{placed:?}");
+        assert_eq!(depth("bot:nelson"), 1, "{placed:?}");
+        assert_eq!(depth("bot:moe"), 0, "{placed:?}");
+        assert!(at("bot:psi") < at("bot:upsilon"), "{placed:?}");
+        assert_eq!(
+            at("bot:nelson"),
+            at("bot:smithers") + 1,
+            "a child follows its own manager: {placed:?}"
+        );
+    }
 }
