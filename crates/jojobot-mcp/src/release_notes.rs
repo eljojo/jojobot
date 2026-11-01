@@ -71,6 +71,10 @@ pub(crate) const SHIPPED: &[(&str, &str)] = &[
         include_str!("../release-notes/deploy-9.3.2/key-history-names-writer-and-run.md"),
     ),
     (
+        "recall-names-an-unreadable-thing",
+        include_str!("../release-notes/deploy-9.3.2/recall-names-an-unreadable-thing.md"),
+    ),
+    (
         "watchbot-wakes-idle-lines",
         include_str!("../release-notes/deploy-9.3.1.3/watchbot-wakes-idle-lines.md"),
     ),

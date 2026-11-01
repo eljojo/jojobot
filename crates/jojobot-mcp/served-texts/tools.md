@@ -2338,6 +2338,7 @@ WHAT OF EACH: every object comes back as its FIELDS, what the thing HOLDS: every
 facts, prose, charter, history, history_record, values, backing, stood_for and review_marks ask for more, each off by default, each saying what it left out; `keys` asks for less, list blocks too, and `record_keys` for less of each fact record (`records_narrowed` names what it hid; `fields_left_out` does for a view's shows_keys).
 A merged thing carries `foldedNames` and can carry `claims_left_out`: claims under a thing merged into it that it cannot serve, each with a reason and an address that history_record reads with no subject (records reads several).
 An app's claim carries a server-set `recorded_by` {app, grant, received_at}, not the describing key; archive and re-capture it, never rewrite it.
+A read of several things serves the readable ones and names any it could not read under `unreadable`, each with the reason and `fix_by: person`; the rest of the answer is complete without them.
 WHICH EDGES: follow {shape or relation, direction, depth, keeping, fits_type}, and the answer nests.
 Unlike search, recall returns claims of EVERY status unless you pass `status`.
 Your own past runs are kind session.

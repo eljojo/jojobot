@@ -4774,6 +4774,24 @@ fn an_unscoped_follow_names_mention_and_ref_on_the_verbs_own_description() {
     );
 }
 
+/// **recall's served description names the `unreadable` key an answer can
+/// carry**, with `fix_by`, so a bot that reads no refusal as "this is everything"
+/// learns an answer may leave a damaged thing out. The key is the wire's own
+/// (`unreadable_things_json`), so the needle is an identifier.
+#[test]
+fn recalls_description_names_the_unreadable_key_and_its_fix_by() {
+    let tools = Jojobot::tool_router().list_all();
+    let recall = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "recall")
+        .expect("recall is a tool");
+    let described = recall.description.as_deref().unwrap_or_default();
+    assert!(
+        described.contains("`unreadable`") && described.contains("fix_by"),
+        "recall's description does not name the unreadable key: {described}"
+    );
+}
+
 /// **An unscoped `follow` reaches an edge, a mention and a ref at once,
 /// each labelled apart from the others** — proven over the production
 /// stack (`mention::Mentioning` in front of memory), because a bare
