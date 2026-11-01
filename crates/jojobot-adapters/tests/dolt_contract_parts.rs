@@ -226,9 +226,13 @@ async fn indexed_contract_part(part: usize) {
         let indexed = Arc::new(
             IndexedMemory::new(Arc::new(DoltMemory::open(pool))).expect("the search index opens"),
         );
+        // The fold holds its image and no half refreshes before an answer, so a
+        // part reads what the writer's delivery left in the index.
+        indexed.state().rebuild().await.expect("the fold loads");
+        indexed.rebuild().await.expect("the boot scan reads");
         memory::run_part_searchable(
             &*indexed.state(),
-            &Retrieval::new(indexed.index(), vec![indexed.clone()]),
+            &Retrieval::new(indexed.index(), vec![]),
             part,
             memory::PARTS,
         )

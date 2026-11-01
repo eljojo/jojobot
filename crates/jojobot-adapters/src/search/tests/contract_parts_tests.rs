@@ -11,9 +11,15 @@ use crate::search::{IndexedMemory, Retrieval};
 async fn fake_searchable_contract_part(part: usize) {
     let store =
         Arc::new(IndexedMemory::new(Arc::new(InMemoryMemory::booted())).expect("index opens"));
+    // **The fold holds its image and no half refreshes before an answer**, so
+    // each part reads what the writer's delivery left in the index. A fold with
+    // no image, read through a refreshing half, finds every write by a scan and
+    // stays green with the writer-to-index subscription removed.
+    store.state().rebuild().await.expect("the fold loads");
+    store.rebuild().await.expect("the boot scan reads");
     let ran = contract::run_part_searchable(
         &*store.state(),
-        &Retrieval::new(store.index(), vec![store.clone()]),
+        &Retrieval::new(store.index(), vec![]),
         part,
         contract::PARTS,
     )
