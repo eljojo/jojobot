@@ -11086,12 +11086,13 @@ async fn a_plan_that_cannot_be_worked_out_is_an_error_not_a_missing_plan() {
         .expect_err("a plan that cannot be worked out is an error");
 }
 
-/// **A plan whose owed work cannot be scanned is an error, not a shorter plan**
-/// (rule 130). The shared walk keeps a failed scan beside the answer instead of
-/// failing; the plan reads the same objects and must refuse it, exactly as it did
-/// when the walk failed itself. **Paired**: the healthy handler names the work.
+/// **A plan whose owed work includes a thing that cannot be scanned names it and
+/// plans the rest** (rule 130). The shared walk keeps a failed scan beside the
+/// answer; the plan takes the unreadable thing out, names it under `unreadable`
+/// with the mark a recall serves, and plans every readable thing. **Paired**: the
+/// healthy handler names both.
 #[tokio::test]
-async fn a_plan_whose_owed_work_cannot_be_scanned_is_an_error_not_a_shorter_plan() {
+async fn a_plan_whose_owed_work_cannot_be_scanned_names_it_and_plans_the_rest() {
     let (healthy, blind) =
         crate::memory::testing::shipped_healthy_and_down(Down::ScanOf("work:gamma"));
     let _ = writing_as(&healthy);
@@ -11099,27 +11100,35 @@ async fn a_plan_whose_owed_work_cannot_be_scanned_is_an_error_not_a_shorter_plan
         .add_entity(Parameters(add_args("project", "project:atlas", "Atlas")))
         .await
         .expect("add ok");
-    healthy
-        .add_entity(Parameters(AddEntityArgs {
-            sets: Some(std::collections::BTreeMap::from([
-                ("status".to_string(), "next".to_string()),
-                ("runs_out".to_string(), "2026-10-20".to_string()),
-            ])),
-            parent: Some("project:atlas".into()),
-            ..add_args("work", "gamma", "gamma")
-        }))
-        .await
-        .expect("add ok");
+    for slug in ["alpha", "gamma"] {
+        healthy
+            .add_entity(Parameters(AddEntityArgs {
+                sets: Some(std::collections::BTreeMap::from([
+                    ("status".to_string(), "next".to_string()),
+                    ("runs_out".to_string(), "2026-10-20".to_string()),
+                ])),
+                parent: Some("project:atlas".into()),
+                ..add_args("work", slug, slug)
+            }))
+            .await
+            .expect("add ok");
+    }
     let day = jiff::civil::date(2026, 10, 20);
     let plan = healthy
         .plan_of_period("2026-10-20", day, day)
         .await
         .expect("the healthy handler works the plan out");
     assert!(plan.to_string().contains("work:gamma"), "{plan}");
-    blind
+    assert!(plan.get("unreadable").is_none(), "{plan}");
+    let served = blind
         .plan_of_period("2026-10-20", day, day)
         .await
-        .expect_err("a plan over work that cannot be scanned is an error");
+        .expect("a plan over work that cannot be scanned is still served");
+    let text = served["due"].to_string();
+    assert!(text.contains("work:alpha"), "{served}");
+    assert!(!text.contains("work:gamma"), "{served}");
+    assert_eq!(served["unreadable"][0]["handle"], "work:gamma", "{served}");
+    assert_eq!(served["unreadable"][0]["fix_by"], "person", "{served}");
 }
 
 /// **An instance that maps `shipped` to done and `doing` to now**, written

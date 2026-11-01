@@ -42,14 +42,12 @@ impl Jojobot {
             None,
             None,
         );
-        let selected = view_run::select(self.memory.as_ref(), &[], &question.query, None).await?;
-        // The walk keeps an unreadable scan or history beside its answer; a plan
-        // built from a partial read would name less than it owes.
-        if let Some(error) =
-            graph::unreadable_scan(&selected).or_else(|| graph::unreadable_revisions(&selected))
-        {
-            return Err(error);
-        }
+        let mut selected =
+            view_run::select(self.memory.as_ref(), &[], &question.query, None).await?;
+        // The walk keeps an unreadable scan or history beside its answer. A thing
+        // that cannot be read cannot be planned: it is named beside the plan, as
+        // a recall names it, and every readable thing is planned (rule 130).
+        let unreadable = graph::take_unreadable(&mut selected.objects, &selected.unreadable_scans);
         let mut found = selected.objects;
         let instance = self.instance_fields().await?;
         let carriers = self.carriers();
@@ -124,6 +122,9 @@ impl Jojobot {
                     "how_to_read": "recall the due view, or the ready view, to read all of it",
                 });
             }
+        }
+        if !unreadable.is_empty() {
+            plan["unreadable"] = super::recall::unreadable_things_json(&unreadable);
         }
         Ok(plan)
     }

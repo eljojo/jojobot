@@ -799,3 +799,48 @@ async fn a_recall_over_a_kind_serves_the_readable_things_and_names_the_unreadabl
         "{served}"
     );
 }
+
+/// **The ready view serves every readable piece of work when one cannot be read,
+/// and names the unreadable one**, as a recall over a kind does (rule 130).
+#[tokio::test]
+async fn the_ready_and_plan_views_serve_the_readable_work_and_name_the_unreadable_one() {
+    let (healthy, blind) =
+        crate::memory::testing::shipped_healthy_and_down(Down::ScanOf("work:gamma"));
+    let _ = writing_as(&healthy);
+    for slug in ["alpha", "gamma", "delta"] {
+        healthy
+            .add_entity(Parameters(AddEntityArgs {
+                sets: Some(std::collections::BTreeMap::from([(
+                    "status".to_string(),
+                    "next".to_string(),
+                )])),
+                ..add_args("work", slug, slug)
+            }))
+            .await
+            .expect("add ok");
+    }
+    for view in ["ready", "plan"] {
+        let args = || RecallArgs {
+            view: Some(view.into()),
+            ..of_nothing()
+        };
+        let whole = recall_json(&healthy, args()).await;
+        assert_eq!(whole["count"], 3, "{view}: {whole}");
+        let served = recall_json(&blind, args()).await;
+        let mut readable = handles(&served);
+        readable.sort();
+        assert_eq!(
+            readable,
+            vec!["work:alpha".to_string(), "work:delta".to_string()],
+            "{view}: {served}"
+        );
+        assert_eq!(
+            served["unreadable"][0]["handle"], "work:gamma",
+            "{view}: {served}"
+        );
+        assert_eq!(
+            served["unreadable"][0]["fix_by"], "person",
+            "{view}: {served}"
+        );
+    }
+}
