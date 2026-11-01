@@ -837,6 +837,30 @@ async fn unstable_backing_is_unavailable_when_the_age_read_fails() {
     let (status, down) = call(&served, &token, "recall", ask).await;
     assert_eq!(status, 503, "{down}");
     assert!(down.get("objects").is_none(), "{down}");
+    // **Through the route, a read the store could not take is told to send it again**:
+    // the answer comes from the route, not from the helper that words it.
+    let said = down["error"].as_str().expect("an error text");
+    assert!(said.contains("same call again"), "{said}");
+    assert!(!said.contains("landed"), "{said}");
+}
+
+/// **A write the store could not take, through the route, says it may have
+/// landed.** Apps cannot name an attempt yet, so a resend of a write that landed
+/// makes a second one. The pair of the recall case above: the same 503, the other
+/// advice.
+#[tokio::test]
+async fn unstable_a_write_the_store_could_not_take_says_it_may_have_landed() {
+    let (app, token) = enrolled("springfield-writer", vec![op("flaky_write", &[], &[])]);
+    let registry = Registry::shipped().with(Entry::new("flaky_write", |_| async move {
+        Answer::Unavailable("the store dropped the commit".to_string())
+    }));
+    let served = serve(vec![app], registry).await;
+
+    let (status, down) = call(&served, &token, "flaky_write", json!({})).await;
+    assert_eq!(status, 503, "{down}");
+    let said = down["error"].as_str().expect("an error text");
+    assert!(said.contains("landed"), "{said}");
+    assert!(!said.contains("same call again"), "{said}");
 }
 
 /// **A page cut is served and counted, and a key narrowing keeps only the keys
