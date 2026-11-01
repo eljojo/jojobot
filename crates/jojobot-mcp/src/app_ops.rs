@@ -310,9 +310,32 @@ async fn recall(call: Call) -> Answer {
         }
     };
     match jojobot_query_api::RecalledView::of(answered, only_keys.as_deref(), limit) {
-        Ok(view) => Answer::Done(view.to_json()),
+        Ok(view) => Answer::Done(served_with_verdicts(&view)),
         Err(e) => unavailable(e),
     }
+}
+
+/// **The view as served, with each card's verdict when the call asked what is
+/// ready.** The same functions the verb uses write the verdict and the left-out
+/// count (rule 498), so a named card that is blocked says `ready: false` and
+/// what stops it, and the list says how many cards it left out.
+fn served_with_verdicts(view: &jojobot_query_api::RecalledView) -> serde_json::Value {
+    let mut body = view.to_json();
+    for (served, object) in body["objects"]
+        .as_array_mut()
+        .into_iter()
+        .flatten()
+        .zip(&view.objects)
+    {
+        if let Some(verdict) = &object.verdict {
+            crate::memory::ready::render(served, verdict);
+        }
+    }
+    if let Some(marker) = crate::memory::left_out::ready_left_out(view.ready_left_out, None) {
+        body["ready_left_out"] = marker;
+    }
+    crate::memory::ready::fit_under_ceiling(&mut body);
+    body
 }
 
 async fn capture(call: Call) -> Answer {

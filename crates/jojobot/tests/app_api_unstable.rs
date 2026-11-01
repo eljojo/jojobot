@@ -662,6 +662,75 @@ async fn unstable_the_ready_view_lists_the_unblocked_queued_card_and_not_the_blo
     );
 }
 
+/// **Every card of a ready answer carries its verdict, and a card the call
+/// named that is blocked says so.** Naming the blocked card brings it back, so
+/// the answer must not read as a card to start: it comes back `ready: false`
+/// with what stops it, and the unblocked card beside it comes back `ready: true`.
+#[tokio::test]
+async fn unstable_a_named_blocked_card_comes_back_not_ready_with_its_blockers() {
+    let (app, token) = reader();
+    let served = serve(vec![app], Registry::shipped()).await;
+    work_with_status(&served, "work:omega", "Mow the lawn", "queued").await;
+    work_with_status(&served, "work:sigma", "Paint the fence", "queued").await;
+    set_key(&served, "work:sigma", "depends_on", "work:omega").await;
+
+    let (status, blocked) = call(
+        &served,
+        &token,
+        "recall",
+        json!({"view": "ready", "subject": "work:sigma"}),
+    )
+    .await;
+    assert_eq!(status, 200, "{blocked}");
+    let sigma = &blocked["objects"][0];
+    assert_eq!(sigma["handle"], "work:sigma", "{blocked}");
+    assert_eq!(sigma["ready"], false, "the named blocked card: {blocked}");
+    assert_eq!(
+        sigma["blocked_by"][0]["handle"], "work:omega",
+        "the blocker is named: {blocked}"
+    );
+
+    let (status, unblocked) = call(
+        &served,
+        &token,
+        "recall",
+        json!({"view": "ready", "subject": "work:omega"}),
+    )
+    .await;
+    assert_eq!(status, 200, "{unblocked}");
+    assert_eq!(
+        unblocked["objects"][0]["handle"], "work:omega",
+        "{unblocked}"
+    );
+    assert_eq!(unblocked["objects"][0]["ready"], true, "{unblocked}");
+}
+
+/// **A ready list says how many cards the ready question left out.** The blocked
+/// card is not listed, and the count is the only way an app learns it exists.
+#[tokio::test]
+async fn unstable_a_ready_list_serves_how_many_cards_the_question_left_out() {
+    let (app, token) = reader();
+    let served = serve(vec![app], Registry::shipped()).await;
+    work_with_status(&served, "work:omega", "Mow the lawn", "queued").await;
+    work_with_status(&served, "work:sigma", "Paint the fence", "queued").await;
+    set_key(&served, "work:sigma", "depends_on", "work:omega").await;
+
+    let (status, ready) = call(
+        &served,
+        &token,
+        "recall",
+        json!({"view": "ready", "where": "status = queued"}),
+    )
+    .await;
+    assert_eq!(status, 200, "{ready}");
+    assert_eq!(ready["objects"][0]["handle"], "work:omega", "{ready}");
+    assert_eq!(ready["objects"][0]["ready"], true, "{ready}");
+    assert_eq!(
+        ready["ready_left_out"]["count"], 1,
+        "the blocked card is counted: {ready}"
+    );
+}
+
 /// **Any other view is refused, naming the one an app may ask.**
 #[tokio::test]
 async fn unstable_a_view_other_than_ready_is_refused_naming_ready() {

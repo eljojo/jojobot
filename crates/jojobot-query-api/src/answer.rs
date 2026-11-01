@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 pub type Backing = BTreeMap<String, jojobot_domain::memory::FieldBacking>;
 
 /// **The verdict on one piece of work.**
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Verdict {
     /// Whether the work can be started: the readiness tree's answer, and
     /// nothing else decides it.

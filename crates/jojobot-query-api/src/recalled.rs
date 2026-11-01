@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use jojobot_domain::memory::{MemoryError, graph};
 use serde_json::{Value, json};
 
-use crate::Answered;
+use crate::{Answered, Verdict};
 
 /// **One object of an app's read.**
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,6 +22,10 @@ pub struct RecalledObject {
     /// **Which claim holds each value and when it was written**, for the keys
     /// kept, when the call asked for backing. `None` when it did not.
     pub backing: Option<BTreeMap<String, Value>>,
+    /// **Whether the object can be started, and what stops it**, when the call
+    /// asked what is ready. `None` when it did not. A call that names one card
+    /// gets it back whatever the verdict, so this is what tells the two apart.
+    pub verdict: Option<Verdict>,
 }
 
 /// **What an app's read served.**
@@ -31,6 +35,9 @@ pub struct RecalledView {
     pub objects: Vec<RecalledObject>,
     /// How many objects the page left out.
     pub left_out: usize,
+    /// How many pieces of work the ready question left out: the ones that are
+    /// not ready, which the list does not carry. Zero when the call did not ask.
+    pub ready_left_out: usize,
 }
 
 impl RecalledView {
@@ -46,6 +53,11 @@ impl RecalledView {
     ) -> Result<RecalledView, MemoryError> {
         let held = answered.selected.objects.len();
         let mut backed = answered.backing;
+        // The verdicts are aligned with the objects the question kept.
+        let (mut verdicts, ready_left_out) = match answered.narrowed.ready {
+            Some(pass) => (pass.verdicts.into_iter(), pass.left_out),
+            None => (Vec::new().into_iter(), 0),
+        };
         let kept = |key: &String| only_keys.is_none_or(|keep| keep.contains(key));
         let mut objects = Vec::new();
         for object in answered.selected.objects.into_iter().take(limit) {
@@ -71,17 +83,20 @@ impl RecalledView {
             };
             let mut fields = object.fields;
             fields.retain(|key, _| kept(key));
+            let verdict = verdicts.next();
             objects.push(RecalledObject {
                 handle: object.entity.id.to_string(),
                 name: object.entity.name,
                 kind: object.entity.kind.as_token().to_string(),
                 fields,
                 backing,
+                verdict,
             });
         }
         Ok(RecalledView {
             left_out: held - objects.len(),
             objects,
+            ready_left_out,
         })
     }
 
