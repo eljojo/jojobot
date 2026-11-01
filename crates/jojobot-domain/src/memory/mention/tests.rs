@@ -665,6 +665,28 @@ fn followable_finds_nothing_inside_code() {
     assert_eq!(followable("@person:milhouse").len(), 1);
 }
 
+/// **A fence that opens on a claim's content holds the details too.** The
+/// content is the fence line and the details hold the code and the closing
+/// fence, so the handle in the details is code and draws no link. **Paired**:
+/// a handle in the details of a claim with no fence is a link, placed in the
+/// details' own text.
+#[test]
+fn followable_words_reads_a_fence_across_content_and_details() {
+    let _booted = crate::memory::testing::InMemoryMemory::booted();
+    let fenced = followable_words("```text", Some("run @person:milhouse here\n```"));
+    assert!(fenced.0.is_empty() && fenced.1.is_empty(), "{fenced:?}");
+
+    let open = followable_words("saw @person:alpha", Some("and @person:milhouse"));
+    assert_eq!(open.0.len(), 1, "{open:?}");
+    let details = "and @person:milhouse";
+    assert_eq!(open.1.len(), 1, "{open:?}");
+    assert_eq!(
+        &details[open.1[0].0.clone()],
+        "@person:milhouse",
+        "the span is placed in the details' own text"
+    );
+}
+
 /// **An unclosed fence or span is not code.** A stray fence that turned the
 /// rest of the text into code would drop every link after it without a
 /// word, so it is read as the words it is and a handle after it is still a
