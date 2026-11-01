@@ -443,6 +443,31 @@
               test ${builtins.toJSON (named.RUST_LOG == "debug")} = true
               touch $out
             '';
+          # The unit uses the memory cap's default and an instance's override.
+          memoryModule =
+            let
+              evaluate =
+                extra:
+                (nixpkgs.lib.nixosSystem {
+                  inherit system;
+                  modules = [
+                    self.nixosModules.default
+                    {
+                      boot.isContainer = true;
+                      system.stateVersion = "26.05";
+                      services.jojobot = {
+                        enable = true;
+                        package = jojobot;
+                        doltPackage = dolt;
+                      }
+                      // extra;
+                    }
+                  ];
+                }).config.systemd.services.jojobot.serviceConfig.MemoryMax;
+            in
+            assert evaluate { } == "4G";
+            assert evaluate { memoryMax = "6G"; } == "6G";
+            pkgs.runCommand "jojobot-memory-module" { } "touch $out";
         };
 
         devShells.default = pkgs.mkShell {

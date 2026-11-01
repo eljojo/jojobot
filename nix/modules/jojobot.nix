@@ -136,6 +136,12 @@ in
       '';
     };
 
+    memoryMax = mkOption {
+      type = types.str;
+      default = "4G";
+      description = "Memory limit for the unit's cgroup, shared by jojobot and the Dolt server it starts.";
+    };
+
     environmentFile = mkOption {
       type = types.nullOr types.path;
       default = null;
@@ -414,7 +420,7 @@ in
         # The store's server is a child process with a working set of its
         # own, and it is a Go program rather than a thread. Both ceilings are
         # jojobot's plus the server's, not jojobot's alone.
-        MemoryMax = "1G";
+        MemoryMax = cfg.memoryMax;
         TasksMax = 256;
       };
     };
