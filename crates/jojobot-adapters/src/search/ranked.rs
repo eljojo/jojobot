@@ -203,6 +203,10 @@ impl FullTextIndex {
         // Match TopDocs' ascending DocAddress tie so a larger continuation page
         // extends the same ranking. The reader reloads only when the index changes.
         ranked.sort_by(|a, b| relevance::compare(&b.0, &a.0).then_with(|| a.1.cmp(&b.1)));
+        // **Scores within the tolerance of each other are served by the day.** The key
+        // holds the raw score, which the collector cuts the page by; the tie is
+        // settled here on the page that was cut.
+        relevance::settle_ties(&mut ranked, |hit| &hit.0, |a, b| a.1.cmp(&b.1));
 
         // **How each thing answers, written onto the hit.** The selecting was
         // done by the clause in `other_clauses`, over the whole corpus; this
