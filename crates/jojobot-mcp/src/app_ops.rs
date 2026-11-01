@@ -110,6 +110,18 @@ fn unavailable(error: impl std::fmt::Display) -> Answer {
     Answer::Unavailable(error.to_string())
 }
 
+/// **What a verb's protocol error means to an app.** A verb that parses its input
+/// answers a caller's mistake as invalid params, and that is the caller's to fix:
+/// a 422 that says what was wrong. Any other error is the store's, and the same
+/// call can be sent again.
+fn mistaken(error: rmcp::model::ErrorData) -> Answer {
+    if error.code == rmcp::model::ErrorCode::INVALID_PARAMS {
+        Answer::Invalid(error.message.to_string())
+    } else {
+        unavailable(error)
+    }
+}
+
 fn done(view: &impl Serialize) -> Answer {
     match serde_json::to_value(view) {
         Ok(view) => Answer::Done(view),
@@ -289,7 +301,7 @@ async fn recall(call: Call) -> Answer {
     let (question, only_keys) = match handler.app_recall_question(args).await {
         Ok(Ok(prepared)) => prepared,
         Ok(Err(refused)) => return refusal(&refused),
-        Err(e) => return unavailable(e),
+        Err(e) => return mistaken(e),
     };
     let queries = crate::memory::view_run::handle(handler.memory.clone(), handler.sessions.clone());
     let answered = match queries.ask(question).await {
@@ -376,7 +388,7 @@ async fn capture(call: Call) -> Answer {
     {
         Ok(Ok(captured)) => done(&captured.view()),
         Ok(Err(refused)) => refusal(&refused),
-        Err(e) => unavailable(e),
+        Err(e) => mistaken(e),
     }
 }
 
@@ -408,7 +420,7 @@ async fn add_entity(call: Call) -> Answer {
     {
         Ok(Ok(added)) => done(&added.view()),
         Ok(Err(refused)) => refusal(&refused),
-        Err(e) => unavailable(e),
+        Err(e) => mistaken(e),
     }
 }
 
@@ -422,7 +434,7 @@ async fn post_message(call: Call) -> Answer {
     let recipient = match handler.message_recipient(&args).await {
         Ok(Ok(recipient)) => recipient,
         Ok(Err(refused)) => return refusal(&refused),
-        Err(e) => return unavailable(e),
+        Err(e) => return mistaken(e),
     };
     let operation = Operation {
         name: "post_message".into(),
@@ -437,7 +449,7 @@ async fn post_message(call: Call) -> Answer {
     let destination = match handler.message_destination(&recipient).await {
         Ok(Ok(destination)) => destination,
         Ok(Err(refused)) => return refusal(&refused),
-        Err(e) => return unavailable(e),
+        Err(e) => return mistaken(e),
     };
     match handler
         .post_message_write(
@@ -455,7 +467,7 @@ async fn post_message(call: Call) -> Answer {
             sent_at: message.sent_at.to_string(),
         }),
         Ok(Err(refused)) => refusal(&refused),
-        Err(e) => unavailable(e),
+        Err(e) => mistaken(e),
     }
 }
 
@@ -481,5 +493,26 @@ impl Jojobot {
     async fn instance_today(&self) -> jiff::civil::Date {
         let frame = crate::orientation::instance_zone::unzoned_frame(&*self.memory).await;
         self.clock().today_in(&frame)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rmcp::model::ErrorData;
+
+    /// **A verb's protocol error is the caller's only when it says invalid params.**
+    /// Both halves in one read: invalid params is a 422 with the message, and any
+    /// other error is the store's and can be sent again.
+    #[test]
+    fn a_protocol_error_is_the_callers_only_when_it_is_invalid_params() {
+        match mistaken(ErrorData::invalid_params("date must be YYYY-MM-DD", None)) {
+            Answer::Invalid(why) => assert!(why.contains("YYYY-MM-DD"), "{why}"),
+            other => panic!("a caller's mistake was answered {other:?}"),
+        }
+        match mistaken(ErrorData::internal_error("the store is down", None)) {
+            Answer::Unavailable(_) => {}
+            other => panic!("a store failure was answered {other:?}"),
+        }
     }
 }

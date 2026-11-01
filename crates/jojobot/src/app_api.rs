@@ -327,8 +327,21 @@ pub async fn unstable_operation(
             tracing::warn!(app = %app_id, operation, error = %why, "app call not taken");
             answer(
                 StatusCode::SERVICE_UNAVAILABLE,
-                json!({ "error": "the store could not take the call; send the same call again" }),
+                json!({ "error": unavailable_text(&operation) }),
             )
+        }
+    }
+}
+
+/// **What an app is told when the store could not take its call.** A read can be
+/// sent again. A write may have landed before the store failed, so the app is
+/// told to read first: a resend of a landed write is a duplicate.
+fn unavailable_text(operation: &str) -> &'static str {
+    match operation {
+        "recall" => "the store could not take the call; send the same call again",
+        _ => {
+            "the store could not take the call, and the write may have landed; read to see \
+             whether it did before sending it again"
         }
     }
 }
@@ -368,6 +381,23 @@ pub fn token_report() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **An unavailable store never tells an app to resend a write blind.** A write
+    /// that was taken may have landed before the store failed, so the answer says
+    /// to read and see before sending it again; a read keeps the plain advice.
+    #[test]
+    fn an_unavailable_write_may_have_landed_and_an_unavailable_read_may_be_resent() {
+        let read = unavailable_text("recall");
+        assert!(read.contains("send the same call again"), "{read}");
+        for write in ["capture", "add_entity", "post_message", "set_charter"] {
+            let text = unavailable_text(write);
+            assert!(text.contains("may have landed"), "{write}: {text}");
+            assert!(
+                !text.contains("send the same call again"),
+                "{write}: {text}"
+            );
+        }
+    }
 
     /// The server refuses to start on a grant of an operation the registry does
     /// not serve, and names the operations it does.

@@ -1007,3 +1007,50 @@ async fn unstable_a_creation_that_sets_nothing_is_refused_and_one_that_sets_a_ke
         "the thing carries the app's mark: {claims:?}"
     );
 }
+
+/// **A caller's mistake is a 422 that says what was wrong, never a 503 that asks
+/// for the same call again.** One case per verb that parses its input: a bad day
+/// on a capture, a kind that is no kind on a recall, and a handle that spells a
+/// different kind than the one sent on a creation. The paired positive: the same
+/// capture with a good day lands.
+#[tokio::test]
+async fn unstable_a_callers_mistake_is_unprocessable_and_names_the_mistake() {
+    let (app, token) = enrolled(
+        "springfield-maker",
+        vec![
+            op("capture", &["role"], &["watch_state"]),
+            op("add_entity", &["role"], &[]),
+            op("recall", &[], &[]),
+        ],
+    );
+    let served = serve(vec![app], Registry::shipped()).await;
+
+    let (status, landed) = call(
+        &served,
+        &token,
+        "capture",
+        json!({"subject": "role:alpha", "content": "Seen.", "recorded_at": "2026-03-05"}),
+    )
+    .await;
+    assert_eq!(status, 200, "{landed}");
+    for (operation, body, named) in [
+        (
+            "capture",
+            json!({"subject": "role:alpha", "content": "Seen.", "recorded_at": "yesterday"}),
+            "yesterday",
+        ),
+        ("recall", json!({"kind": "bogus"}), "bogus"),
+        (
+            "add_entity",
+            json!({"kind": "role", "handle": "thing:omega", "name": "Omega", "source": "the maker"}),
+            "omega",
+        ),
+    ] {
+        let (status, refused) = call(&served, &token, operation, body).await;
+        assert_eq!(status, 422, "{operation}: {refused}");
+        assert!(
+            refused.to_string().contains(named),
+            "{operation} does not name {named}: {refused}"
+        );
+    }
+}
