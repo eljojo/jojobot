@@ -149,6 +149,13 @@ async fn node_read_path_keeps_unreadable_parts_in_the_shared_answer_and_each_ren
         if failed & 1 == 0 {
             let body = page.text().await.unwrap();
             assert_eq!(body.contains("<pre>alpha</pre>"), failed & 2 == 0);
+            // **The prose that could not be read is said so**, never left out as if
+            // the thing had none.
+            assert_eq!(
+                body.contains("id=\"unreadable-the-prose-of-this-thing\""),
+                failed & 2 != 0,
+                "the prose is marked unreadable exactly when its scan failed, row {failed}"
+            );
         }
         // **The view page is a reader too.** A scan that cannot be read is said on
         // the page in its own section, never drawn as an empty answer. Revisions are

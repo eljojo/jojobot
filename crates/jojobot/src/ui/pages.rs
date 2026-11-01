@@ -386,6 +386,13 @@ pub(crate) async fn node(
         Ok(backing) => (backing.unwrap_or_default(), None),
         Err(error) => (Default::default(), Some(error.to_string())),
     };
+    // **A scan of the thing itself that failed leaves its prose unknown**, which is
+    // not the same as none: the page marks the part it could not read.
+    let prose_unreadable = answer
+        .selected
+        .unreadable_scans
+        .get(&entity.id)
+        .map(|error| error.to_string());
     let Some(object) = answer.selected.subject_object(&entity.id) else {
         return not_found();
     };
@@ -513,7 +520,9 @@ pub(crate) async fn node(
 
     generic.push_str(&facts_table(&facts, &by_id, working_on_unknown));
 
-    if !prose.trim().is_empty() {
+    if let Some(error) = &prose_unreadable {
+        generic.push_str(&blind("Prose", "the prose of this thing", error));
+    } else if !prose.trim().is_empty() {
         generic.push_str(&format!(
             "<h2>Prose</h2>\n<pre>{}</pre>\n",
             linkify(&prose, &by_id)
