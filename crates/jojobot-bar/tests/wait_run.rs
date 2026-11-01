@@ -182,7 +182,12 @@ fn code_proof_uses_an_older_green_run_and_leaves_the_checkout_clean() {
         .unwrap();
     assert!(out.status.success(), "{out:?}");
     let text = String::from_utf8_lossy(&out.stdout);
-    assert!(text.contains("#995") && !text.contains("#999"), "{text}");
+    // The forge id rides beside the number, so a pick of the newer cancelled run
+    // (number 999, forge id 1001) cannot print the older run's number.
+    assert!(
+        text.contains("#995 (forge id 997)") && !text.contains("forge id 1001"),
+        "{text}"
+    );
     assert!(git(&["status", "--porcelain", "--untracked-files=all"]).is_empty());
     std::fs::remove_dir_all(dir).unwrap();
 }
@@ -238,6 +243,9 @@ struct Forge {
     /// Jobs beyond the first of a run: the run's id, the job's name and
     /// status, and its log.
     more_jobs: Vec<(u64, &'static str, &'static str, String)>,
+    /// The forge answers 500 to the list that names no head: the read that looks
+    /// for a newer run on the same ref.
+    fails_the_unfiltered_list: bool,
 }
 
 struct Standing {
@@ -316,6 +324,9 @@ fn answer(forge: &Forge, path: &str, lists: usize) -> (u16, String) {
         };
     }
     if rest.starts_with("/actions/runs?") {
+        if forge.fails_the_unfiltered_list && query("head_sha").is_none() {
+            return (500, "the forge is down".to_string());
+        }
         // A second page is always empty: nothing here holds more than a page.
         let on_page = query("page").is_none_or(|page| page == "1");
         let listed: Vec<Value> = forge
@@ -718,6 +729,103 @@ fn a_cancelled_run_a_newer_push_superseded_names_it_and_exits_six() {
         "a run on another pull request was named as the superseder: {out}"
     );
     assert!(!out.contains("superseded by"), "{out}");
+}
+
+/// **Each clause of the superseder is held by a case of its own.** A newer run
+/// of ANOTHER workflow on the same ref, and an OLDER run of the same workflow,
+/// do not supersede; of two newer runs the newest is named, whatever order the
+/// forge lists them in. Every refusal is read beside the positive: the newest
+/// run is named in the last case, so the first two cannot pass on a tool that
+/// names nobody.
+#[test]
+fn only_a_newer_run_of_the_same_workflow_on_the_same_ref_supersedes_and_the_newest_is_named() {
+    let log = "2026-10-31T04:00:00.0Z started\n";
+    let mut other_workflow = pull_request_run(240, 105, RED_SHA, "running");
+    other_workflow["workflow_id"] = json!("release.yml");
+    let different_workflow = stand(Forge {
+        runs: vec![
+            (other_workflow, log.to_string()),
+            (
+                pull_request_run(238, 105, GREEN_SHA, "cancelled"),
+                log.to_string(),
+            ),
+        ],
+        ..Default::default()
+    });
+    let (code, out, err) = wait(&different_workflow, &[GREEN_SHA]);
+    assert_eq!(code, 2, "{out}\n{err}");
+    assert!(out.contains("cancelled; no newer run found"), "{out}");
+
+    let older = stand(Forge {
+        runs: vec![
+            (
+                pull_request_run(238, 105, GREEN_SHA, "cancelled"),
+                log.to_string(),
+            ),
+            (
+                pull_request_run(230, 105, RED_SHA, "success"),
+                log.to_string(),
+            ),
+        ],
+        ..Default::default()
+    });
+    let (code, out, err) = wait(&older, &[GREEN_SHA]);
+    assert_eq!(code, 2, "{out}\n{err}");
+    assert!(out.contains("cancelled; no newer run found"), "{out}");
+
+    // The older of the two newer runs is listed first, so a tool that takes the
+    // first match names 239.
+    let two_newer = stand(Forge {
+        runs: vec![
+            (
+                pull_request_run(239, 105, RED_SHA, "running"),
+                log.to_string(),
+            ),
+            (
+                pull_request_run(240, 105, RED_SHA, "running"),
+                log.to_string(),
+            ),
+            (
+                pull_request_run(238, 105, GREEN_SHA, "cancelled"),
+                log.to_string(),
+            ),
+        ],
+        ..Default::default()
+    });
+    let (code, out, err) = wait(&two_newer, &[GREEN_SHA]);
+    assert_eq!(code, 6, "{out}\n{err}");
+    assert!(
+        out.contains("superseded by run #238 (forge id 240)"),
+        "{out}"
+    );
+}
+
+/// **A read of the forge that failed does not say that no newer run was found.**
+/// The failure is not an absence: the line says the forge did not answer, and the
+/// exit stays two. **Paired** with the case above, where the same list answers
+/// and the absence is said.
+#[test]
+fn a_failed_read_for_a_newer_run_says_it_failed_and_not_that_none_was_found() {
+    let log = "2026-10-31T04:00:00.0Z started\n";
+    let forge = stand(Forge {
+        runs: vec![
+            (
+                pull_request_run(240, 105, RED_SHA, "running"),
+                log.to_string(),
+            ),
+            (
+                pull_request_run(238, 105, GREEN_SHA, "cancelled"),
+                log.to_string(),
+            ),
+        ],
+        fails_the_unfiltered_list: true,
+        ..Default::default()
+    });
+    let (code, out, err) = wait(&forge, &[GREEN_SHA]);
+    assert_eq!(code, 2, "{out}\n{err}");
+    assert!(err.contains("did not say what replaced it"), "{err}");
+    assert!(out.contains("did not say whether a newer run"), "{out}");
+    assert!(!out.contains("no newer run found"), "{out}");
 }
 
 /// **A skipped run is not superseded.** It exits two like a cancelled one, but

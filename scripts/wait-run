@@ -334,14 +334,19 @@ def main():
     # does not cancel the run, so a cancelled run with no red block was replaced by a newer
     # push to its ref or stopped by a person.
     if code == 2 and run["status"] == "cancelled":
+        newer = None
+        unread = False
         try:
             newer = superseder(run)
         except (urllib.error.URLError, TimeoutError, OSError, Gone) as err:
-            newer = None
+            unread = True
             print(f"the forge did not say what replaced it ({err})", file=sys.stderr)
         if newer:
             print(f"superseded by {named(newer)} on {newer['commit_sha']}  {newer['html_url']}")
             code = 6
+        elif unread:
+            # A failed read established nothing, so it must not read as "none found".
+            print("cancelled; the forge did not say whether a newer run replaced it")
         else:
             print("cancelled; no newer run found")
     sys.exit(code)
