@@ -1024,7 +1024,7 @@ async fn resolve_stale_pointer_columns_reads_the_captured_rows() {
         .fetch_all(&pool)
         .await
         .unwrap();
-        assert_eq!(after, [badge.clone()], "{table}.{column}");
+        assert_eq!(after, std::slice::from_ref(&badge), "{table}.{column}");
     }
     assert_eq!(memory.resolve_stale_pointer_columns().await.unwrap(), 0);
     server.stop().await;
