@@ -123,7 +123,7 @@ where
             });
         }
     }
-    Ctx::of(&scanned, declarations).check_expression_keys(query)
+    Ctx::of(&scanned, declarations, None).check_expression_keys(query)
 }
 
 impl Ctx<'_> {

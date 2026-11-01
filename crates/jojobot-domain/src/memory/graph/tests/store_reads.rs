@@ -401,3 +401,44 @@ async fn an_ordered_window_is_served_from_the_head_of_the_order_and_never_past_i
     assert_eq!(all.objects.len(), 60);
     same_as_full(&all, 0);
 }
+
+/// 🚨 **A roots question over candidates the caller decided still asks whether
+/// the parent stands, whether or not the parent is a candidate.** The index chose
+/// the children of a standing parent that is not itself among the candidates:
+/// those children are not roots, and the thing with no parent beside them is.
+/// Paired in one answer so an empty answer cannot pass.
+#[tokio::test]
+async fn a_roots_question_over_decided_candidates_finds_a_parent_outside_them() {
+    let store = crate::memory::testing::InMemoryMemory::booted();
+    store.past_the_guard(entity("project:atlas", "Atlas"));
+    for (handle, parent) in [("work:beta", Some("project:atlas")), ("work:gamma", None)] {
+        store.past_the_guard(Entity {
+            parent: parent.map(|p| EntityId(p.into())),
+            ..entity(handle, handle)
+        });
+    }
+    let query = selecting(Selection {
+        roots: true,
+        candidates: Some(vec![
+            EntityId("work:beta".into()),
+            EntityId("work:gamma".into()),
+        ]),
+        candidates_exact: true,
+        ..Selection::default()
+    });
+    let cost = |_: &Object| 100usize;
+    let window = Window {
+        offset: 0,
+        budget: 10_000,
+        size_of: &cost,
+    };
+
+    let found = walk_in_window(&store, &[], &query, Some(window))
+        .await
+        .expect("roots select");
+    assert_eq!(
+        handles(&found.objects),
+        vec!["work:gamma"],
+        "the child of a standing parent outside the candidates is not a root"
+    );
+}

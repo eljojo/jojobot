@@ -1942,21 +1942,26 @@ pub fn resolve(
     declarations: &[types::DeclaredType],
     query: &GraphQuery,
 ) -> Result<Selected, MemoryError> {
-    resolve_keys(scanned, declarations, query, true)
+    resolve_keys(scanned, declarations, query, true, None)
 }
 
 /// [`resolve`], with the check of the keys an expression names left to the
 /// caller when `keys` is false: a scan that holds only the candidates cannot say
 /// which keys the selection holds, and [`key_check`] says it before the scan.
+///
+/// `standing` is every standing entity of the store when the scan holds fewer
+/// than all of them (candidates, shells), so a roots question can tell a parent
+/// that stands from one that does not even when the parent is not in the scan.
 fn resolve_keys(
     scanned: &[DocScan],
     declarations: &[types::DeclaredType],
     query: &GraphQuery,
     keys: bool,
+    standing: Option<&HashSet<EntityId>>,
 ) -> Result<Selected, MemoryError> {
     query.validate()?;
     check_declared(query, declarations)?;
-    let ctx = Ctx::of(scanned, declarations);
+    let ctx = Ctx::of(scanned, declarations, standing);
     if keys {
         ctx.check_expression_keys(query)?;
     }
@@ -2288,10 +2293,18 @@ struct Ctx<'a> {
     all: Vec<&'a Fact>,
     /// What has been declared, which is what makes a key a relation.
     declarations: &'a [types::DeclaredType],
+    /// **Every standing entity, when the scan holds only some of them.** A roots
+    /// question asks whether a parent stands, and a parent outside the candidates
+    /// is not in `entities`. `None` means the scan is the whole population.
+    standing: Option<&'a HashSet<EntityId>>,
 }
 
 impl<'a> Ctx<'a> {
-    fn of(scanned: &'a [DocScan], declarations: &'a [types::DeclaredType]) -> Self {
+    fn of(
+        scanned: &'a [DocScan],
+        declarations: &'a [types::DeclaredType],
+        standing: Option<&'a HashSet<EntityId>>,
+    ) -> Self {
         let mut entities = BTreeMap::new();
         let mut owners: BTreeMap<&EntityId, &EntityId> = BTreeMap::new();
         let mut prose = BTreeMap::new();
@@ -2404,6 +2417,7 @@ impl<'a> Ctx<'a> {
             field_by,
             all,
             declarations,
+            standing,
         }
     }
 
@@ -2582,12 +2596,16 @@ impl<'a> Ctx<'a> {
     /// **Does this entity sit under nothing standing?** It names no parent, or
     /// names one that no entity answers to or that is archived or folded away.
     fn is_root(&self, entity: &Entity) -> bool {
-        entity.parent.as_ref().is_none_or(|parent| {
-            !self
-                .entities
-                .get(parent)
-                .is_some_and(|found| found.browsable())
-        })
+        entity
+            .parent
+            .as_ref()
+            .is_none_or(|parent| match self.standing {
+                Some(standing) => !standing.contains(parent),
+                None => !self
+                    .entities
+                    .get(parent)
+                    .is_some_and(|found| found.browsable()),
+            })
     }
 
     /// **The objects the walk left out at a hop that the count above did not
@@ -3447,6 +3465,15 @@ where
     // filter has to see it to select it — both read `entities`, below.
     entities.extend(sessions.iter().filter_map(|doc| doc.entity.clone()));
     let select = &query.select;
+    // **Who stands, for a roots question over a scan that holds fewer.**
+    let standing_parents: Option<HashSet<EntityId>> = query.select.roots.then(|| {
+        entities
+            .iter()
+            .filter(|entity| entity.browsable())
+            .map(|entity| entity.id.clone())
+            .collect()
+    });
+    let standing = standing_parents.as_ref();
     // **Three tiers (decision log 272): a current handle answers directly, a
     // handle the subject used to wear resolves to what it is called now, and
     // only a handle nothing has ever answered to is a near-miss screen.** A
@@ -3571,9 +3598,15 @@ where
                 for entity in masked_candidates {
                     let doc = read_doc(store, entity, false, &query.masked, &mut unreadable_scans)
                         .await?;
-                    if resolve_keys(std::slice::from_ref(&doc), &declarations, query, keys_here)?
-                        .objects
-                        .is_empty()
+                    if resolve_keys(
+                        std::slice::from_ref(&doc),
+                        &declarations,
+                        query,
+                        keys_here,
+                        standing,
+                    )?
+                    .objects
+                    .is_empty()
                     {
                         chosen.remove(&entity.id);
                     }
@@ -3625,9 +3658,9 @@ where
                     asked.select.answers_type = None;
                     asked
                 };
-                resolve_keys(&shells, &declarations, &shell_question, keys_here)?
+                resolve_keys(&shells, &declarations, &shell_question, keys_here, standing)?
             } else {
-                resolve_keys(&shells, &declarations, query, keys_here)?
+                resolve_keys(&shells, &declarations, query, keys_here, standing)?
             };
             // **What the browse left out is counted by reading it.** The candidates
             // are the things the index found, and it finds none that is archived or
@@ -3645,7 +3678,8 @@ where
                     );
                 }
                 if !left_out.is_empty() {
-                    let counted = resolve_keys(&left_out, &declarations, query, keys_here)?;
+                    let counted =
+                        resolve_keys(&left_out, &declarations, query, keys_here, standing)?;
                     selected.archived_excluded = counted.archived_excluded;
                     selected.merged_excluded = counted.merged_excluded;
                 }
@@ -3682,11 +3716,15 @@ where
                     &mut unreadable_scans,
                 )
                 .await?;
-                let Some(mut object) =
-                    resolve_keys(std::slice::from_ref(&doc), &declarations, query, keys_here)?
-                        .objects
-                        .pop()
-                else {
+                let Some(mut object) = resolve_keys(
+                    std::slice::from_ref(&doc),
+                    &declarations,
+                    query,
+                    keys_here,
+                    standing,
+                )?
+                .objects
+                .pop() else {
                     pre_read.insert(shell.entity.id.clone(), PreRead { doc, filled: None });
                     continue;
                 };
@@ -3814,7 +3852,7 @@ where
             });
         }
     }
-    let mut found = resolve_keys(&scanned, &declarations, query, keys_here)?;
+    let mut found = resolve_keys(&scanned, &declarations, query, keys_here, standing)?;
     // **The history is read after the shape is decided**, once per object in
     // the answer: the walk cannot know which objects it will return, and a read
     // of every entity's writes would pay for the ones nobody asked about.
