@@ -11465,6 +11465,51 @@ async fn a_walk_leaves_out_a_dependency_a_whole_value_replaced() {
     walks_agree_with_ready(&jojobot).await;
 }
 
+/// **A thing's review mark is left out of its listed records, and the answer says
+/// how many it left out.** The mark is the one record defrag leaves on a thing it
+/// has read; it holds no content a reader chose to keep. **Paired**: the
+/// ordinary record is listed in the same read, and asking for the marks lists them
+/// and leaves no count.
+#[tokio::test]
+async fn a_review_mark_is_left_out_of_the_records_unless_asked_for() {
+    let jojobot = handler();
+    ensure(&jojobot, "person:bart").await;
+    let about = EntityId("person:bart".into());
+    let day = jiff::civil::date(2026, 3, 10);
+    jojobot
+        .memory
+        .capture(NewFact::about(about.clone(), "keeps bees", day))
+        .await
+        .expect("the ordinary record is written");
+    let mut mark = NewFact::about(about, "Perused whole by the tidier.", day);
+    mark.fields = [(
+        jojobot_domain::memory::review::REVIEW_MARK.to_string(),
+        "2026-03-10".to_string(),
+    )]
+    .into_iter()
+    .collect();
+    jojobot
+        .memory
+        .capture(mark)
+        .await
+        .expect("the mark is written");
+
+    let ask = |marks: Option<bool>| RecallArgs {
+        subject: Some("person:bart".into()),
+        facts: Some(true),
+        review_marks: marks,
+        ..of_nothing()
+    };
+    let without = recall_json(&jojobot, ask(None)).await.to_string();
+    assert!(without.contains("keeps bees"), "{without}");
+    assert!(!without.contains("Perused"), "{without}");
+    assert!(without.contains("review_marks_left_out"), "{without}");
+
+    let with = recall_json(&jojobot, ask(Some(true))).await.to_string();
+    assert!(with.contains("Perused"), "{with}");
+    assert!(!with.contains("review_marks_left_out"), "{with}");
+}
+
 mod later_cases;
 
 /// A store whose age read fails, while every other port method forwards to the
