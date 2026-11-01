@@ -251,57 +251,46 @@ pub struct Declaration {
     pub live: bool,
 }
 
-/// **Every declaration by `bots` that points at a thing in `of`**, live or past,
-/// oldest first for each bot, and whether the history of any bot could not be
-/// read whole (then what is returned is what could be).
+/// **One bot's side of the declarations question**: every write of its
+/// `working_on`, oldest first, and what it is working on NOW (the value the gate
+/// shows, and `None` when the gate shows none).
+pub struct BotWrites<'a> {
+    pub bot: &'a EntityId,
+    pub writes: &'a [jojobot_domain::memory::FieldWrite],
+    pub live_on: Option<&'a str>,
+}
+
+/// **Every declaration by these bots that points at a thing in `of`**, live or
+/// past, oldest first for each bot.
 ///
-/// Whether a declaration is live is [`working_on_of`]'s answer and nothing else
-/// (rule 498): the bot's newest declaration is live when that gate shows it.
-/// Nothing here looks at a session's state.
-pub async fn declarations_on(
-    memory: &dyn Memory,
+/// Whether a declaration is live is the gate's answer and nothing else (rule
+/// 498): the caller passes the value [`working_on_of`] shows, and the bot's
+/// newest write is live when it points at that value. Nothing here looks at a
+/// session's state. The run of a write is read through the session port, and a
+/// run no card answers to leaves it empty.
+pub async fn declarations_from(
     sessions: &dyn Sessions,
-    bots: &[EntityId],
+    known: &[jojobot_domain::memory::Entity],
+    bots: &[BotWrites<'_>],
     of: &BTreeSet<EntityId>,
-) -> (Vec<Declaration>, bool) {
+) -> Vec<Declaration> {
     let mut found = Vec::new();
-    let mut incomplete = false;
-    // **A write of a key that names a thing is kept as that thing's permanent id**,
-    // behind the mark that says it is a link, so a stored value is turned back
-    // into the handle the thing wears now.
-    let known = match memory.list_entities(None).await {
-        Ok(known) => known,
-        Err(_) => return (found, true),
-    };
-    for bot in bots {
-        let Ok(Some(record)) = working_on_record_of(memory, bot).await else {
-            continue;
-        };
-        let (Ok(values), Ok(chain)) = (
-            memory.history(bot, WORKING_ON).await,
-            memory.claim_history(&record).await,
-        ) else {
-            incomplete = true;
-            continue;
-        };
-        // Every write of this record sets or clears the key, so the two
-        // histories run side by side; when they do not, the pairing is not known
-        // and nothing is claimed from it.
-        if values.len() != chain.len() {
-            incomplete = true;
-            continue;
-        }
-        let live_on = match working_on_of(memory, sessions, bot).await {
-            Ok(WorkingOn::Live(value)) => Some(value),
-            _ => None,
-        };
-        let newest = values.len().saturating_sub(1);
-        for (at, (write, claim)) in values.iter().zip(&chain).enumerate() {
+    for BotWrites {
+        bot,
+        writes,
+        live_on,
+    } in bots
+    {
+        let newest = writes.len().saturating_sub(1);
+        for (at, write) in writes.iter().enumerate() {
+            // **A write of a key that names a thing is kept as that thing's
+            // permanent id**, behind the mark that says it is a link, so a stored
+            // value is turned back into the handle the thing wears now.
             let Some(on) = write.value.as_deref().map(|stored| {
                 let badge = stored
                     .strip_prefix(jojobot_domain::memory::mention::MARK)
                     .unwrap_or(stored);
-                jojobot_domain::memory::entity_wearing(badge, &known)
+                jojobot_domain::memory::entity_wearing(badge, known)
                     .map_or_else(|| EntityId(stored.to_string()), |thing| thing.id.clone())
             }) else {
                 continue;
@@ -309,7 +298,7 @@ pub async fn declarations_on(
             if !of.contains(&on) {
                 continue;
             }
-            let run = match &claim.session {
+            let run = match &write.run {
                 Some(id) => match sessions.run_named(id).await {
                     Ok(Some(summary)) => summary.sid.map(|sid| sid.as_str().to_string()),
                     _ => None,
@@ -317,15 +306,15 @@ pub async fn declarations_on(
                 None => None,
             };
             found.push(Declaration {
-                bot: bot.clone(),
-                live: at == newest && live_on.as_deref() == Some(on.as_str()),
+                bot: (*bot).clone(),
+                live: at == newest && *live_on == Some(on.as_str()),
                 on,
                 run,
-                at: claim.written_at,
+                at: write.written_at,
             });
         }
     }
-    (found, incomplete)
+    found
 }
 
 /// **The bots whose stored `working_on` is not shown**, for any surface that
@@ -453,16 +442,81 @@ mod tests {
             .await
             .expect("the declaration is written");
 
-        let (found, incomplete) = declarations_on(
-            &memory,
+        let writes = memory
+            .history(&bot, WORKING_ON)
+            .await
+            .expect("the history reads");
+        let known = memory.list_entities(None).await.expect("the index reads");
+
+        let found = declarations_from(
             &sessions,
-            std::slice::from_ref(&bot),
+            &known,
+            &[BotWrites {
+                bot: &bot,
+                writes: &writes,
+                live_on: None,
+            }],
             &BTreeSet::from([work.clone()]),
         )
         .await;
 
-        assert!(!incomplete, "the history reads whole");
         assert_eq!(found.len(), 1, "{found:?}");
         assert_eq!(found[0].run.as_deref(), Some("s001"), "{found:?}");
+    }
+
+    /// **A declaration whose run no session card answers to is still listed**, with
+    /// no run name and not live. The run is read through the session port, and a
+    /// port that finds no card leaves the cell empty; it never serves the stored
+    /// string in its place.
+    #[tokio::test]
+    async fn a_declaration_whose_run_has_no_card_is_listed_with_no_run() {
+        let memory = InMemoryMemory::booted();
+        let bot = EntityId("bot:otto".to_string());
+        let work = EntityId("work:sigma".to_string());
+        for (handle, name) in [("bot:otto", "Otto"), ("work:sigma", "Sigma")] {
+            memory
+                .add_entity(jojobot_domain::memory::NewEntity::new(
+                    EntityId(handle.to_string()),
+                    name,
+                    "the fixture roster",
+                ))
+                .await
+                .expect("the entity is written")
+                .written()
+                .expect("nothing collides with it");
+        }
+        let mut declared = NewFact::about(bot.clone(), RECORD, jiff::civil::date(2026, 3, 1));
+        declared.fields = [(WORKING_ON.to_string(), work.as_str().to_string())].into();
+        declared.sets = [WORKING_ON.to_string()].into();
+        declared.session = Some("run-without-a-card".to_string());
+        memory
+            .capture(declared)
+            .await
+            .expect("the declaration is written");
+        let writes = memory
+            .history(&bot, WORKING_ON)
+            .await
+            .expect("the history reads");
+        let known = memory.list_entities(None).await.expect("the index reads");
+
+        let found = declarations_from(
+            &InMemorySessions::default(),
+            &known,
+            &[BotWrites {
+                bot: &bot,
+                writes: &writes,
+                live_on: Some(work.as_str()),
+            }],
+            &BTreeSet::from([work.clone()]),
+        )
+        .await;
+
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!((&found[0].bot, &found[0].on), (&bot, &work));
+        assert_eq!(found[0].run, None, "no card, so no run name");
+        assert!(
+            found[0].live,
+            "liveness is the gate's answer, whatever the card"
+        );
     }
 }

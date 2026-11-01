@@ -570,6 +570,71 @@ pub(crate) async fn node(
     ))
 }
 
+/// **The declarations of these bots that point at a thing in `of`**, each bot's
+/// `working_on` history asked of the query handle, and whether any bot's could
+/// not be read whole (then what is returned is what could be). What a bot is
+/// working on now is the value the handle serves on the bot: the gate masks a
+/// stale one, so a field that is there is live.
+async fn declarations_through(
+    state: &AppState,
+    queries: &jojobot_query_api::QueryHandle,
+    known: &[Entity],
+    bots: &[EntityId],
+    of: &std::collections::BTreeSet<EntityId>,
+) -> (Vec<jojobot_mcp::memory::working_on::Declaration>, bool) {
+    use jojobot_domain::memory::graph::{History, Trace};
+    use jojobot_domain::memory::kinds::WORKING_ON;
+    use jojobot_mcp::memory::working_on::{BotWrites, declarations_from};
+
+    let mut read = Vec::new();
+    let mut incomplete = false;
+    for bot in bots {
+        let asked = jojobot_query_api::Question::about(
+            bot.clone(),
+            None,
+            Some(History {
+                of: Trace::Key(WORKING_ON.to_string()),
+                most: usize::MAX,
+            }),
+        );
+        let answered = match queries
+            .ask(&jojobot_domain::actor::Actor::Operator, asked)
+            .await
+        {
+            Ok(answered) => answered,
+            Err(_) => {
+                incomplete = true;
+                continue;
+            }
+        };
+        let Some(object) = answered
+            .selected
+            .objects
+            .into_iter()
+            .find(|object| object.entity.id == *bot)
+        else {
+            continue;
+        };
+        let writes = object
+            .history
+            .map(|history| history.writes)
+            .unwrap_or_default();
+        read.push((bot, writes, object.fields.get(WORKING_ON).cloned()));
+    }
+    let bots: Vec<BotWrites<'_>> = read
+        .iter()
+        .map(|(bot, writes, live_on)| BotWrites {
+            bot,
+            writes,
+            live_on: live_on.as_deref(),
+        })
+        .collect();
+    (
+        declarations_from(&*state.sessions, known, &bots, of).await,
+        incomplete,
+    )
+}
+
 /// **Who is working on this piece of work now, and who has been**, for a piece
 /// of work or a project. A bot is on it when its live `working_on` points at it or
 /// at anything under it; the runs that declared it and have ended are listed
@@ -583,8 +648,6 @@ async fn working_on_section(
     entities: &[Entity],
     by_id: &HashMap<&EntityId, &Entity>,
 ) -> String {
-    use jojobot_mcp::memory::working_on::declarations_on;
-
     // The piece of work itself and everything under it, at any depth.
     let mut under: std::collections::BTreeSet<EntityId> =
         std::collections::BTreeSet::from([entity.id.clone()]);
@@ -609,7 +672,7 @@ async fn working_on_section(
         .map(|e| e.id.clone())
         .collect();
     let (declarations, incomplete) =
-        declarations_on(&*state.memory, &*state.sessions, &bots, &under).await;
+        declarations_through(state, queries, entities, &bots, &under).await;
 
     let day_of = home::day_of_in_the_instance_zone(state, queries).await;
     let link = |id: &EntityId| match by_id.get(id) {
