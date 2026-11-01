@@ -63,6 +63,12 @@ pub(crate) const SHIPPED: &[(&str, &str)] = &[
         include_str!("../release-notes/deploy-9.3.1.3/watchbot-wakes-idle-lines.md"),
     ),
     (
+        "declare-type-session-and-sibling-creation",
+        include_str!(
+            "../release-notes/deploy-9.3.1.3/declare-type-session-and-sibling-creation.md"
+        ),
+    ),
+    (
         "edge-types-use-writable-tokens",
         include_str!("../release-notes/deploy-9.3.1/edge-types-use-writable-tokens.md"),
     ),

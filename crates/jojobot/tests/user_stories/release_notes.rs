@@ -22,6 +22,7 @@ use super::dsl::{Session, Story};
 const SHIPPED_NOTES: &[&str] = &[
     "a-field-value-naming-a-handle-is-a-link",
     "closing-mail-costs-what-reading-costs",
+    "declare-type-session-and-sibling-creation",
     "defrag-ships-a-charter",
     "edge-types-use-writable-tokens",
     "list-read-pages-and-counts-ticks",
@@ -961,9 +962,10 @@ async fn a_bot_that_uses_none_of_the_features_reads_the_problem_each_note_solves
         "each one says something: {reach:?}"
     );
 
-    // A note that cuts an existing call leads. Three carry `narrows: true`, so the case
+    // A note that cuts an existing call leads. Four carry `narrows: true`, so the case
     // names them and asks that the first note named is one of them.
-    const CUT_A_CALL: [&str; 3] = [
+    const CUT_A_CALL: [&str; 4] = [
+        "declare-type-session-and-sibling-creation",
         "list-read-pages-and-counts-ticks",
         "memory-write-receipts",
         "search-matching-passages",
