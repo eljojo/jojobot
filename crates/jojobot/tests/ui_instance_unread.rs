@@ -12,8 +12,8 @@ use jojobot_adapters::counted::Counted;
 
 mod support;
 use support::ui_board::{
-    CLIENT_ID, READER, open_in_the_ui, seeded_board_over, seeded_memory, spawn_jojobot_over,
-    with_an_operators_mail,
+    CLIENT_ID, OPERATOR_SUBJECT, READER, open_in_the_ui, read, seeded_board_over, seeded_memory,
+    spawn_jojobot_over, with_an_operators_mail,
 };
 use support::{browser, log_in, spawn_idp};
 
@@ -47,5 +47,38 @@ async fn an_unreadable_instance_record_is_not_an_instance_with_no_operator() {
     let mail = with_an_operators_mail(&board).await;
     let opened = open_in_the_ui(addr, &cookie, mail.to_the_operator.as_str(), Some(&origin)).await;
     assert!(opened.status().is_redirection(), "{}", opened.status());
+    ct.cancel();
+}
+
+/// **The page says the record could not be read, and shows no operator's box**,
+/// where a healthy page shows the box and says nothing of the record.
+#[tokio::test]
+async fn an_unreadable_instance_record_is_said_on_the_operators_page_and_shows_no_box() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let counted = Arc::new(Counted::new(seeded_memory().await));
+    let board = seeded_board_over(counted.clone()).await;
+    with_an_operators_mail(&board).await;
+    let (addr, ct, _board) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+    let words = "id=\"unreadable-the-instance-s-record\"";
+
+    let page = read(&client, addr, "/person:lisa/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    assert!(page.contains(OPERATOR_SUBJECT), "{page}");
+    assert!(!page.contains(words), "{page}");
+
+    counted.fail_fields_of(Some("topic:instance"));
+    let page = read(&client, addr, "/person:lisa/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    assert!(page.contains(words), "{page}");
+    assert!(!page.contains(OPERATOR_SUBJECT), "{page}");
     ct.cancel();
 }
