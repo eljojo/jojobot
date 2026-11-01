@@ -4033,26 +4033,27 @@ pub fn guard_fit_resolved(
     // "what is waiting" would answer differently from one board to the next.
     // Checked when the list is set, like every other key a kind declares. **The
     // instance's own list is not held to it**: it ADDS words beside the shipped
-    // five and need not repeat them.
+    // five and need not repeat them. **An empty list is not held to it**: it names
+    // no column, so the board uses its default columns, as the deployed release
+    // read a blank. Rule 751 keeps the key holding the empty list; the PM ruled
+    // that the guard yields to it here, on the card for this bug.
     if kind == EntityKind::PROJECT.as_token()
         && let Some(value) = after.get(kinds::COLUMNS)
         && before.get(kinds::COLUMNS) != Some(value)
-    {
-        let listed = kinds::columns_of(after).unwrap_or_default();
-        if kinds::WORK_STATUSES
+        && let Some(listed) = kinds::columns_of(after)
+        && kinds::WORK_STATUSES
             .iter()
             .any(|shipped| !listed.iter().any(|column| column == shipped))
-        {
-            return Err(MemoryError::BreaksType {
-                name: kind.to_string(),
-                key: kinds::COLUMNS.to_string(),
-                wanted: format!(
-                    "a list holding every one of {}",
-                    kinds::WORK_STATUSES.join(", ")
-                ),
-                value: value.clone(),
-            });
-        }
+    {
+        return Err(MemoryError::BreaksType {
+            name: kind.to_string(),
+            key: kinds::COLUMNS.to_string(),
+            wanted: format!(
+                "a list holding every one of {}",
+                kinds::WORK_STATUSES.join(", ")
+            ),
+            value: value.clone(),
+        });
     }
     // **A shipped status word cannot be given another meaning, and a word is
     // mapped only to a shipped one.** The instance maps its own words with

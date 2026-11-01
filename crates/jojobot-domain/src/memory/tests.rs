@@ -2053,6 +2053,14 @@ async fn fake_keeps_an_emptied_list_key_and_takes_a_blank_single_valued_key_off(
         .await;
 }
 
+#[tokio::test]
+async fn fake_reads_an_empty_columns_list_as_the_default_and_refuses_a_short_one() {
+    contract::an_empty_columns_list_is_the_default_and_a_short_one_is_refused(
+        &InMemoryMemory::booted(),
+    )
+    .await;
+}
+
 /// **The mention contract against the fake**, over the layer that resolves
 /// and renders and over the same store read bare.
 ///
