@@ -1101,3 +1101,113 @@ fn a_review_that_carries_a_wrong_key_fails_on_that_key() {
     assert_eq!(failed.len(), 1, "{out}");
     assert!(failed[0].contains("BASE"), "{out}");
 }
+
+/// A scoped review report: the coverage block opens with the lens's inventory, the
+/// command that lists the files of its scope.
+fn scoped(files: &Files, inventory: &str, lines: &[String]) -> String {
+    let mut block = vec![format!("INVENTORY: {inventory}")];
+    block.extend(lines.iter().cloned());
+    review(files, &block)
+}
+
+/// **A lens that read every file of its own scope passes, and the files of the
+/// range outside its scope are not demanded.** The inventory is a git command the
+/// report names; `docs/three md.txt` is in the range and outside the scope.
+#[test]
+fn a_scoped_review_that_read_its_whole_scope_passes() {
+    let files = files_repository();
+    let inventory = format!(
+        "git diff --name-only {}..{} -- src",
+        files.repo.base, files.repo.head
+    );
+    let lines = vec![read_by(CHANGED[0]), read_by(CHANGED[1])];
+    let (code, out, err) = check_review(&files, &scoped(&files, &inventory, &lines));
+    assert_eq!(code, 0, "{out}\n{err}");
+    assert!(
+        out.lines()
+            .any(|l| l.starts_with("pass COVERAGE") && l.contains("scope")),
+        "{out}"
+    );
+}
+
+/// **One file of the scope with no line fails, naming it**, and so does one marked
+/// UNREAD: the scoped gate is as strict inside the scope as the whole-range gate.
+#[test]
+fn a_scoped_review_fails_naming_a_scope_file_it_did_not_read() {
+    let files = files_repository();
+    let inventory = format!(
+        "git diff --name-only {}..{} -- src",
+        files.repo.base, files.repo.head
+    );
+    let (code, out, _) = check_review(&files, &scoped(&files, &inventory, &[read_by(CHANGED[0])]));
+    assert_eq!(code, 1, "{out}");
+    let failed = failures(&out);
+    assert_eq!(failed.len(), 1, "{out}");
+    assert!(failed[0].contains(CHANGED[1]), "{out}");
+
+    let unread = vec![
+        read_by(CHANGED[0]),
+        format!("{} UNREAD ran out of time", CHANGED[1]),
+    ];
+    let (code, out, _) = check_review(&files, &scoped(&files, &inventory, &unread));
+    assert_eq!(code, 1, "{out}");
+    assert!(failures(&out)[0].contains(CHANGED[1]), "{out}");
+}
+
+/// **An inventory that names a file outside the range fails, naming it.** The file
+/// is staged and not committed, so `git ls-files` lists it and the range does not.
+#[test]
+fn a_scoped_review_whose_inventory_leaves_the_range_fails_naming_the_file() {
+    let files = files_repository();
+    std::fs::write(files.repo.dir.join("src/staged.rs"), "staged\n").expect("a file");
+    git(&files.repo.dir, &["add", "src/staged.rs"]);
+    let mut lines: Vec<String> = CHANGED.iter().map(|path| read_by(path)).collect();
+    lines.push(read_by("src/staged.rs"));
+    let (code, out, _) = check_review(&files, &scoped(&files, "git ls-files -- src", &lines));
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        failures(&out)
+            .iter()
+            .any(|l| l.contains("src/staged.rs") && l.contains("INVENTORY")),
+        "{out}"
+    );
+}
+
+/// **An inventory is a read-only git listing and nothing else**, and one that
+/// lists nothing proves nothing: each is refused, so a report cannot name a command
+/// to run or an empty scope to pass.
+#[test]
+fn an_inventory_that_is_not_a_git_listing_or_lists_nothing_is_refused() {
+    let files = files_repository();
+    let all: Vec<String> = CHANGED.iter().map(|path| read_by(path)).collect();
+    for inventory in [
+        "touch ran-by-the-report".to_string(),
+        "git push forgejo main".to_string(),
+        format!(
+            "git diff --name-only {}..{} -- nothing/here",
+            files.repo.base, files.repo.head
+        ),
+    ] {
+        let (code, out, _) = check_review(&files, &scoped(&files, &inventory, &all));
+        assert_eq!(code, 1, "{inventory}: {out}");
+        assert!(
+            failures(&out).iter().any(|l| l.contains("INVENTORY")),
+            "{inventory}: {out}"
+        );
+    }
+    assert!(
+        !files.repo.dir.join("ran-by-the-report").exists(),
+        "the report's command ran"
+    );
+}
+
+/// **With no inventory the whole-range gate stands**: a block that reads two of the
+/// three changed files fails naming the third.
+#[test]
+fn a_review_with_no_inventory_still_demands_the_whole_range() {
+    let files = files_repository();
+    let lines = vec![read_by(CHANGED[0]), read_by(CHANGED[1])];
+    let (code, out, _) = check_review(&files, &review(&files, &lines));
+    assert_eq!(code, 1, "{out}");
+    assert!(failures(&out)[0].contains(CHANGED[2]), "{out}");
+}

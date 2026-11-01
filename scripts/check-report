@@ -44,7 +44,15 @@ The block ends at its first blank line. The tool lists the range's own files wit
 `git diff --name-only BASE..H` in the current checkout (it fetches nothing) and
 fails, naming each path, when a changed file has no line, a line says UNREAD, a
 line names no reader, a line names a file outside the range, or a line is neither
-form. A report with a REVIEW line and no COVERAGE block fails. In review mode the
+form. A report with a REVIEW line and no COVERAGE block fails.
+
+**A scoped lens.** A lens whose scope is part of the range opens its COVERAGE block
+with a line `INVENTORY: <git command>`, one or more, each a read-only listing
+(`git diff`, `git ls-files` or `git ls-tree`, run without a shell). The files they
+print are the lens's scope: each must be a file of the range and each must be marked
+read, and the range's other files are not demanded. An inventory that is not such a
+listing, fails, lists nothing or names a file outside the range fails, naming it.
+With no INVENTORY line the whole range is owed, as above. In review mode the
 four keys above are checked when the header holds them and are not demanded: a
 review is identified by its range. A report with no REVIEW line is checked as before.
 
@@ -72,6 +80,7 @@ import importlib.util
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import urllib.error
@@ -285,6 +294,9 @@ def review_says(spec, text):
     if block is None:
         fail("COVERAGE: the report has no COVERAGE: block")
         return printed, ok
+    scope, block = scope_of(block, changed, spec, fail)
+    if scope is None:
+        return printed, ok
     claimed = {}
     for line in block:
         entry = re.fullmatch(r"(.+?) (read-by|UNREAD)(?: (.*))?", line)
@@ -300,15 +312,75 @@ def review_says(spec, text):
             fail(f"COVERAGE: {path} names no reader")
         elif claimed.get(path) is None:
             claimed[path] = rest
-    for path in changed:
+    required = changed if scope == [] else scope
+    for path in required:
         if path not in claimed and not any(
             line.startswith(path + " ") for line in block
         ):
-            fail(f"COVERAGE: {path} changed in {spec} and has no line")
-    read = sum(1 for path in changed if path in claimed)
-    if ok:
+            fail(
+                f"COVERAGE: {path} changed in {spec} and has no line"
+                if scope == []
+                else f"COVERAGE: {path} is in the lens's INVENTORY and has no line"
+            )
+    read = sum(1 for path in required if path in claimed)
+    if ok and scope == []:
         printed.append(f"pass COVERAGE: all {read} changed files are marked read")
+    elif ok:
+        printed.append(
+            f"pass COVERAGE: all {read} files of the lens's scope are marked read"
+            f" ({len(changed)} files in the range)"
+        )
     return printed, ok
+
+
+# The git listings an INVENTORY line may name. Each only lists paths.
+INVENTORY_VERBS = ("diff", "ls-files", "ls-tree")
+
+
+def scope_of(block, changed, spec, fail):
+    """**The files a scoped lens owes, and the block without its INVENTORY lines.**
+
+    A block with no `INVENTORY: <git command>` line owes the whole range, and the
+    scope is []. Each INVENTORY line names a read-only git listing, run in the
+    current checkout without a shell; the scope is the union of what they print.
+    Returns (None, block) when an inventory is refused: it is not a git listing,
+    it fails, it lists nothing, or it lists a file outside the range."""
+    prefix = "INVENTORY:"
+    commands = [line[len(prefix):].strip() for line in block if line.startswith(prefix)]
+    rest = [line for line in block if not line.startswith(prefix)]
+    if not commands:
+        return [], rest
+    scope = []
+    refused = False
+    for command in commands:
+        try:
+            words = shlex.split(command)
+        except ValueError as err:
+            fail(f"INVENTORY: `{command}` cannot be read: {err}")
+            refused = True
+            continue
+        if len(words) < 2 or words[0] != "git" or words[1] not in INVENTORY_VERBS:
+            fail(
+                f"INVENTORY: `{command}` is not a git listing"
+                f" (git {' | '.join(INVENTORY_VERBS)})"
+            )
+            refused = True
+            continue
+        ran = subprocess.run(words, capture_output=True, text=True)
+        listed = [path for path in re.split(r"[\0\n]", ran.stdout) if path]
+        if ran.returncode != 0:
+            fail(f"INVENTORY: `{command}` failed: {ran.stderr.strip()}")
+            refused = True
+        elif not listed:
+            fail(f"INVENTORY: `{command}` lists no file, so it proves no scope")
+            refused = True
+        for path in listed:
+            if path not in changed:
+                fail(f"INVENTORY: {path} is not a file of {spec}")
+                refused = True
+            elif path not in scope:
+                scope.append(path)
+    return (None if refused else scope), rest
 
 
 def json_head(wr, branch):
