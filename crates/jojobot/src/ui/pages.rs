@@ -338,9 +338,11 @@ pub(crate) async fn node(
         .drain(..)
         .partition(|object| object.standing_for.as_ref() == Some(&entity.id));
     answer.selected.objects = rest;
-    let backing = match answer.backing.remove(&entity.id).transpose() {
-        Ok(backing) => backing.unwrap_or_default(),
-        Err(error) => return unreadable(error),
+    // **Backing that cannot be read costs the page its sources and nothing
+    // else**: the fields are drawn without them and a section says so.
+    let (backing, backing_unreadable) = match answer.backing.remove(&entity.id).transpose() {
+        Ok(backing) => (backing.unwrap_or_default(), None),
+        Err(error) => (Default::default(), Some(error.to_string())),
     };
     let Some(object) = answer.selected.subject_object(&entity.id) else {
         return not_found();
@@ -410,6 +412,13 @@ pub(crate) async fn node(
     generic.push_str(&fields_section(
         &held, &ages, &backing, &facts, &entity.id, &canonical,
     ));
+    if let Some(error) = &backing_unreadable {
+        generic.push_str(&blind(
+            "Where the fields come from",
+            "where the fields come from",
+            error,
+        ));
+    }
     generic.push_str(&around_section(&queries, entity, &by_id).await);
     if working_on_unknown {
         generic.push_str(

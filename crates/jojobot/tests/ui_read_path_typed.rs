@@ -108,6 +108,51 @@ async fn a_works_status_history_comes_with_the_pages_one_answer() {
     ct.cancel();
 }
 
+/// A store that cannot work out which claim backs each field of one thing.
+struct FailingBacking {
+    inner: Arc<dyn Memory>,
+}
+
+#[jojobot_domain::forward(jojobot_domain::forward_memory, via = inner)]
+impl Memory for FailingBacking {
+    async fn backing(
+        &self,
+        entity: &EntityId,
+    ) -> Result<std::collections::BTreeMap<String, jojobot_domain::memory::FieldBacking>, MemoryError>
+    {
+        if entity.as_str() == "topic:widgets" {
+            return Err(MemoryError::Store("backing unavailable".into()));
+        }
+        self.inner.backing(entity).await
+    }
+}
+
+/// **A node page whose fields' backing cannot be read is still drawn.** The
+/// fields stand on the page and the section says which part it could not read,
+/// instead of the whole page being refused.
+#[tokio::test]
+async fn an_unreadable_backing_marks_its_section_and_leaves_the_page() {
+    let memory = Arc::new(FailingBacking {
+        inner: seeded_memory().await,
+    });
+    let board = seeded_board_over(memory.clone()).await;
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct, _) =
+        support::ui_board::spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+    let page = read(&client, addr, "/person:alpha/topic:widgets/", &cookie).await;
+    assert_eq!(page.status().as_u16(), 200);
+    let body = page.text().await.unwrap();
+    assert!(
+        body.contains("id=\"unreadable-where-the-fields-come-from\""),
+        "the lost part is marked: {body}"
+    );
+    assert!(body.contains("pitch"), "the fields are still drawn: {body}");
+    ct.cancel();
+}
+
 /// A store that counts the reads of a decision's claims.
 struct CountingDecisionReads {
     inner: Arc<dyn Memory>,
