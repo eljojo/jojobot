@@ -236,7 +236,6 @@ pub async fn snapshot_blob_round_trips(log: &impl LogStore) {
 
 /// **An event keeps the actor it was appended with.** The log keeps the bytes of a
 /// member, so the actor must survive the encoding a family gives the event.
-#[cfg(test)]
 pub async fn an_events_actor_reads_back_as_it_was_appended(log: &impl LogStore) {
     use crate::actor::Actor;
     let actors = [

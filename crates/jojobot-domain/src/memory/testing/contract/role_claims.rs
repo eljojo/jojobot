@@ -1059,6 +1059,7 @@ pub async fn many_renewals_leave_the_lease_moment_at_one_write<M: Memory>(store:
         store,
         computed(NewFact {
             fields: role_fields("delta", t0),
+            session: Some("delta".into()),
             ..NewFact::about(seat.role.clone(), "delta claims the role", date(2026, 7, 1))
         }),
     )
@@ -1097,6 +1098,7 @@ pub async fn many_renewals_leave_the_lease_moment_at_one_write<M: Memory>(store:
         1,
         "twenty renewals must leave the lease moment at the claim's one write: {moment:?}"
     );
+    assert_eq!(moment[0].run.as_deref(), Some("delta"));
     let holder = store
         .history(&seat.role, crate::session::ROLE_HOLDER)
         .await
@@ -1129,6 +1131,7 @@ pub async fn many_renewals_leave_the_lease_moment_at_one_write<M: Memory>(store:
     let rival = |at| {
         computed_patch(FactPatch {
             fields: role_fields("epsilon", at),
+            session: Some("epsilon".into()),
             ..FactPatch::default()
         })
     };
@@ -1148,6 +1151,12 @@ pub async fn many_renewals_leave_the_lease_moment_at_one_write<M: Memory>(store:
         matches!(taken, Ok(Guarded::Written(_))),
         "a lease that lapsed without a renewal is takeable: {taken:?}"
     );
+    let history = store
+        .history(&seat.role, crate::session::ROLE_CLAIMED_AT)
+        .await
+        .unwrap();
+    assert_eq!(history.len(), 2);
+    assert_eq!(history[1].run.as_deref(), Some("epsilon"));
 }
 
 /// **A renewal restamps the moment it overwrites.** The renewal replaces the

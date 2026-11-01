@@ -22,9 +22,7 @@ macro_rules! deaths_beyond_the_last_release {
     };
 }
 
-// No migration is beyond today's deployed ledger, but the next pair's entire
-// interruption/boot path must still be type-checked on this head.
-#[allow(dead_code)]
+// Each named pair restores the deployed fixture and interrupts its new migration.
 async fn a_death_inside_one_migration(version: &str, how: Interruption) {
     use jojobot_adapters::dolt::migrate::{leave_interrupted, shipped_versions};
     assert!(

@@ -22,6 +22,8 @@ jojobot-forward = { path = "../jojobot-forward" }
 # nothing about a fronted service crosses with it.
 getrandom = { workspace = true }
 serde = { workspace = true }
+# The shared log contract encodes event envelopes only with the testing feature.
+serde_json = { workspace = true, optional = true }
 # sha2: a run's key is stored as its SHA-256 and never as itself, and the hash
 # is a pure function of the key, so it lives beside the key's shape rules.
 sha2 = "0.10"
@@ -39,7 +41,7 @@ tokio = { workspace = true }
 # they compile for tests (here and in downstream crates) but NEVER ship in a
 # production binary.
 [features]
-testing = []
+testing = ["dep:serde_json"]
 room-harness = []
 
 [dev-dependencies]

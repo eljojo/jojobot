@@ -31,6 +31,7 @@ mod dolt_log_contract {
         a_fenced_abort_leaves_the_same_head,
         restart_excludes_a_late_predecessor,
         cancelling_an_acknowledgement_does_not_cancel_the_commit,
-        snapshot_blob_round_trips
+        snapshot_blob_round_trips,
+        an_events_actor_reads_back_as_it_was_appended
     );
 }

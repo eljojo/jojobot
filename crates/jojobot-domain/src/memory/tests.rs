@@ -2045,7 +2045,9 @@ async fn fake_satisfies_the_app_contract() {
 
 #[tokio::test]
 async fn fake_names_the_writer_and_run_of_each_key_write() {
-    contract::a_keys_history_names_the_writer_and_run_of_each_write(&InMemoryMemory::booted())
+    let sessions = std::sync::Arc::new(crate::session::testing::InMemorySessions::new());
+    let memory = InMemoryMemory::booted().with_run_bots(sessions.clone());
+    contract::a_keys_history_names_the_writer_and_run_with_sessions(&memory, sessions.as_ref())
         .await;
 }
 
@@ -3292,13 +3294,4 @@ fn a_blank_number_on_a_numbered_member_is_refused_not_unset() {
             "{rule}"
         );
     }
-}
-
-/// **A blank day on a promise is refused like a clear**, against the fake.
-#[tokio::test]
-async fn a_blank_day_on_a_promise_is_refused_against_the_fake() {
-    contract::blank_required::a_blank_day_on_a_promise_is_refused_like_a_clear(
-        &InMemoryMemory::booted(),
-    )
-    .await;
 }

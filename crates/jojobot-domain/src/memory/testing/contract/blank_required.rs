@@ -1,8 +1,7 @@
 //! **A blank written to a key the kind requires is refused, as taking the key
 //! off is.** A blank means unset, so it may not do what a clear may not.
 //!
-//! The case is run by one test of the fake, not listed with the contract, so the
-//! contract's file keeps its size.
+//! The shared contract runs this refusal against both stores.
 
 use super::support::{add, capture, ensure, other_caller, state, state_patch};
 use super::*;
@@ -45,12 +44,19 @@ pub async fn a_blank_day_on_a_promise_is_refused_like_a_clear<M: Memory>(store: 
             ..Default::default()
         })
     };
+    let before = store.recall(&dated.home).await.unwrap();
+    let history = store.history(&dated.home, "promised_by").await.unwrap();
     let day_blanked = store
         .update_fact(&dated.address(), blank("promised_by"), &other_caller())
         .await;
     assert!(
         matches!(day_blanked, Err(MemoryError::BreaksFit { .. })),
         "a promise that holds its day may not lose it to a blank: {day_blanked:?}",
+    );
+    assert_eq!(store.recall(&dated.home).await.unwrap(), before);
+    assert_eq!(
+        store.history(&dated.home, "promised_by").await.unwrap(),
+        history
     );
     store
         .update_fact(&dated.address(), blank("note"), &other_caller())

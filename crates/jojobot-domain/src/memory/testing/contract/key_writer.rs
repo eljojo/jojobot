@@ -8,6 +8,7 @@ use super::support::{capture, edit, ensure};
 use super::*;
 use crate::actor::Actor;
 use crate::app::{AppId, AppStamp};
+use crate::session::{NewSession, Sessions, Sid};
 use std::collections::BTreeMap;
 
 fn stamp() -> AppStamp {
@@ -28,6 +29,35 @@ fn staged(value: &str) -> BTreeMap<String, String> {
 /// middle write is the one a join on the claim alone gets wrong: it would name
 /// alpha, the run of the claim's first write.
 pub async fn a_keys_history_names_the_writer_and_run_of_each_write<M: Memory>(store: &M) {
+    key_history(store, None).await;
+}
+
+/// The same history with real session rows resolving the edit's writer.
+pub async fn a_keys_history_names_the_writer_and_run_with_sessions<M: Memory>(
+    store: &M,
+    sessions: &impl Sessions,
+) {
+    let bot = EntityId("bot:contract-key-writer".into());
+    ensure(store, &bot).await;
+    for run in ["kwyj", "boba"] {
+        sessions
+            .begin(NewSession {
+                bot: bot.clone(),
+                sid: Sid(run.into()),
+                focus: "writing keys".into(),
+                started_at: crate::session::testing::contract::epoch(),
+                timezone: None,
+                started_on: None,
+                id: None,
+                key_hash: None,
+            })
+            .await
+            .expect("a real session row names the writer");
+    }
+    key_history(store, Some(Actor::Bot(bot))).await;
+}
+
+async fn key_history<M: Memory>(store: &M, edit_writer: Option<Actor>) {
     let thing = EntityId("thing:contract-stage-edict".into());
     let bot = EntityId("bot:contract-key-writer".into());
     ensure(store, &thing).await;
@@ -37,7 +67,7 @@ pub async fn a_keys_history_names_the_writer_and_run_of_each_write<M: Memory>(st
         NewFact {
             fields: staged("draft"),
             sets: ["stage".to_string()].into(),
-            session: Some("run-alpha".to_string()),
+            session: Some("kwyj".to_string()),
             written_by_bot: Some(bot.clone()),
             ..NewFact::about(thing.clone(), "the stage of the edict", date(2026, 10, 1))
         },
@@ -49,7 +79,7 @@ pub async fn a_keys_history_names_the_writer_and_run_of_each_write<M: Memory>(st
         FactPatch {
             fields: staged("final"),
             sets: ["stage".to_string()].into(),
-            session: Some("run-beta".to_string()),
+            session: Some("boba".to_string()),
             ..FactPatch::default()
         },
     )
@@ -78,14 +108,8 @@ pub async fn a_keys_history_names_the_writer_and_run_of_each_write<M: Memory>(st
     assert_eq!(
         seen,
         vec![
-            (
-                Some("draft"),
-                Some(Actor::Bot(bot.clone())),
-                Some("run-alpha")
-            ),
-            // The bot of an edit is the bot behind its run; no run row answers
-            // to this one, so it names a run and no writer.
-            (Some("final"), None, Some("run-beta")),
+            (Some("draft"), Some(Actor::Bot(bot.clone())), Some("kwyj")),
+            (Some("final"), edit_writer, Some("boba")),
             (Some("deployed"), Some(app), None),
         ],
         "each write names the run that set its value"

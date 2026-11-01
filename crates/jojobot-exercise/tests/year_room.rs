@@ -3476,6 +3476,26 @@ async fn the_years_turns_are_checked_in_rather_than_set_by_hand() {
     );
 }
 
+/// A cached furnish reads the same, so only the call site can pin this route.
+#[test]
+fn the_canary_test_still_furnishes_live_rather_than_borrowing_the_cache() {
+    let source =
+        std::fs::read_to_string(expectations::room_document("tests/year_room.rs")).unwrap();
+    let start = source
+        .find("async fn the_years_turns_are_checked_in_rather_than_set_by_hand")
+        .unwrap();
+    let body = &source[start..];
+    let body = &body[..body.find("\n}\n").unwrap()];
+    assert!(
+        body.contains("furnished(Furnish::Live)"),
+        "the canary must furnish live"
+    );
+    assert!(
+        !body.contains("filed_year_seed"),
+        "the canary must not borrow its cache"
+    );
+}
+
 /// **The cached year reads the same as a live furnish, on what a sitting can
 /// actually find** — the proof that [`filed_year_seed`] is not quietly
 /// thinner than what [`furnished_live`] gives every sitting. Checked on an

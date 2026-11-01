@@ -19583,6 +19583,7 @@ macro_rules! all_cases {
         $m!(an_unnamed_parent_is_refused_and_provisions_nothing($store));
         $m!(nothing_may_be_its_own_parent($store));
         $m!(prose_is_replaced_whole_and_reads_back($store));
+        $m!(a_blank_day_on_a_promise_is_refused_like_a_clear($store));
         $m!(add_entity_reads_back($store));
         $m!(list_entities_filters_by_kind($store));
         $m!(update_entity_edits_metadata_in_place($store));

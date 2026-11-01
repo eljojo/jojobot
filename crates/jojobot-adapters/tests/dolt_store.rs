@@ -69,6 +69,20 @@ async fn badge_of(pool: &sqlx::MySqlPool, handle: &str) -> String {
         .expect("a created entity is given a badge")
 }
 
+#[tokio::test]
+async fn dolt_names_the_writer_and_run_of_each_key_write() {
+    let scratch = Scratch::new("key-origin");
+    let mut server = Dolt::start(&scratch.0, free_port()).await.unwrap();
+    let pool = migrated_database(&server, "keyorigin").await.unwrap();
+    booted(&pool).await;
+    memory::a_keys_history_names_the_writer_and_run_with_sessions(
+        &DoltMemory::open(pool.clone()),
+        &DoltSessions::open(pool),
+    )
+    .await;
+    server.stop().await;
+}
+
 /// **The contract's cases, each against a store of its own.**
 ///
 /// `fresh` is synchronous and opening a store is not, so the stores are opened
@@ -961,6 +975,59 @@ async fn resolve_stale_pointer_columns_rewrites_every_stale_value() {
     );
 
     store.stop().await;
+}
+
+/// The small synthetic capture preserves the bytes an older build emitted.
+#[tokio::test]
+async fn resolve_stale_pointer_columns_reads_the_captured_rows() {
+    let scratch = Scratch::new("captured-pointers");
+    let mut server = Dolt::start(&scratch.0, free_port()).await.unwrap();
+    let pool = migrated_database(&server, "capturedpointers")
+        .await
+        .unwrap();
+    booted(&pool).await;
+    for statement in include_str!("fixtures/a334e84_pre_batch.sql")
+        .lines()
+        .filter(|line| line.starts_with("INSERT"))
+    {
+        sqlx::raw_sql(statement)
+            .execute(&pool)
+            .await
+            .expect("the captured row loads");
+    }
+    let memory = DoltMemory::open(pool.clone());
+    let columns = [
+        ("fact", "edge_object"),
+        ("fact_write", "edge_object"),
+        ("fact_event_ref", "entity"),
+        ("entity", "parent"),
+    ];
+    for (table, column) in columns {
+        let before: Vec<String> = sqlx::query_scalar(&format!(
+            "SELECT DISTINCT {column} FROM {table} WHERE {column} IS NOT NULL"
+        ))
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            before,
+            ["thing:pointer-migration-object"],
+            "{table}.{column}"
+        );
+    }
+    assert_eq!(memory.resolve_stale_pointer_columns().await.unwrap(), 4);
+    let badge = badge_of(&pool, "thing:pointer-migration-object").await;
+    for (table, column) in columns {
+        let after: Vec<String> = sqlx::query_scalar(&format!(
+            "SELECT DISTINCT {column} FROM {table} WHERE {column} IS NOT NULL"
+        ))
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(after, [badge.clone()], "{table}.{column}");
+    }
+    assert_eq!(memory.resolve_stale_pointer_columns().await.unwrap(), 0);
+    server.stop().await;
 }
 
 /// 🚨 **The pointer migration refuses to guess.** A stored value that
@@ -7495,6 +7562,39 @@ async fn dolt_orders_a_fold_by_moments_and_leaves_an_unreadable_moment_alone() {
         "a fold made before the rename is served with the survivor, though its text sorts after"
     );
 
+    // The newest fold write is after the rename; an older write is before it.
+    let newest: i64 = sqlx::query_scalar("SELECT MAX(ordinal) FROM entity_write WHERE entity = ?")
+        .bind(folded.as_str())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE entity_write SET written_at = ? WHERE entity = ? AND ordinal = ?")
+        .bind("2026-09-05T00:00:00.3Z")
+        .bind(folded.as_str())
+        .bind(newest)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let moments: Vec<String> =
+        sqlx::query_scalar("SELECT written_at FROM entity_write WHERE entity = ?")
+            .bind(folded.as_str())
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert!(
+        moments.iter().any(|at| at == "2026-09-05T00:00:00Z"),
+        "{moments:?}"
+    );
+    assert!(
+        moments.iter().any(|at| at == "2026-09-05T00:00:00.3Z"),
+        "{moments:?}"
+    );
+    assert_eq!(
+        parent_of_child().await.as_ref(),
+        Some(&heir_handle("before", "kept")),
+        "the newest fold write means the new wearer of the freed handle"
+    );
+
     stamp_writes(&pool, &moved, "not a moment").await;
     assert_eq!(
         parent_of_child().await.as_ref(),
@@ -7673,6 +7773,25 @@ async fn dolt_reports_the_forwarding_rows_it_cannot_place_once() {
     let one_moment = "2026-09-05T00:00:00Z";
     stamp_writes(&pool, &tied_old, one_moment).await;
     stamp_writes(&pool, &tied_moved, one_moment).await;
+
+    let first = memory
+        .migrate_forwarded_links()
+        .await
+        .expect("the pass runs");
+    assert_eq!(
+        (first.skipped.len(), first.reported),
+        (1, true),
+        "{first:?}"
+    );
+    let repeated = memory
+        .migrate_forwarded_links()
+        .await
+        .expect("the pass repeats");
+    assert_eq!(
+        (repeated.skipped.len(), repeated.reported),
+        (1, false),
+        "{repeated:?}"
+    );
 
     // **A second row it cannot place is a different set**, so it is told about.
     let stray = EntityId("thing:contract-lagged-stray".into());

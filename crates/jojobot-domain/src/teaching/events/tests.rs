@@ -112,33 +112,43 @@ impl Draw {
 /// **Applying a prepared batch equals replaying the same events from the same
 /// prefix**, over generated sequences of contacts and clears across several runs
 /// and domains, with duplicates, clears of runs with no marks and reteaching.
-/// At every step the state held equals the state replayed from the whole log.
-#[test]
-fn applying_a_prepared_batch_equals_replaying_it() {
+/// At every step the state also agrees with the existing independent fake.
+#[tokio::test]
+async fn applying_a_prepared_batch_equals_replaying_it() {
+    use crate::session::Sid;
+    use crate::teaching::{Teachings, testing::InMemoryTeachings};
     let runs = ["homer", "marge", "bart"].map(run);
     let domains = ["claims", "mail", "rooms"];
     for seed in 0..40 {
         let mut draw = Draw(seed);
         let mut state = State::default();
+        let fake = InMemoryTeachings::new();
         let mut log: Vec<TeachingEvent> = Vec::new();
         for step in 0..60 {
             let who = &runs[draw.next(3) as usize];
-            let prefix = state.clone();
-            let before = log.len();
+            let sid = Sid(who.0.clone());
             if draw.next(4) == 0 {
+                fake.forget(&sid).await.unwrap();
                 let prepared = state.forget(who);
                 commit(&mut state, &mut log, prepared);
             } else {
                 let domain = domains[draw.next(3) as usize];
                 let prepared = state.first_contact(who, domain, at(step)).unwrap();
+                assert_eq!(
+                    prepared.answer,
+                    fake.first_contact(&sid, domain, at(step)).await.unwrap()
+                );
                 commit(&mut state, &mut log, prepared);
             }
-            let batch = &log[before..];
-            let mut replayed_batch = prefix;
-            for event in batch {
-                replayed_batch.apply(event);
-            }
-            assert_eq!(state, replayed_batch, "seed {seed} step {step}");
+            let active: Vec<_> = state
+                .taught()
+                .map(|(run, domain)| (Sid(run.0.clone()), domain.clone()))
+                .collect();
+            assert_eq!(
+                active,
+                fake.taught().await.unwrap().unwrap(),
+                "seed {seed} step {step}"
+            );
             assert_eq!(state, State::replay(&log), "seed {seed} step {step}");
         }
     }
