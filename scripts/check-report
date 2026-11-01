@@ -48,6 +48,16 @@ form. A report with a REVIEW line and no COVERAGE block fails. In review mode th
 four keys above are checked when the header holds them and are not demanded: a
 review is identified by its range. A report with no REVIEW line is checked as before.
 
+**The card's done line.** With `--card`, a card whose `falsify` holds a clause
+`done when it prints [under|over|at most|at least|exactly] N` has a done line. The
+command is the text before the first ` prints `. It runs through `bash -o pipefail -c` in the
+current checkout, so `HEAD` is the head being landed, and its output must be one
+whole number that meets the comparison. DONE fails, naming the number, when it does
+not. DONE also fails as unrunnable when the clause names no comparison and number,
+or the command fails or prints no number. Words after the number are not checked.
+A card with no `done when` clause has no done line: DONE passes and says so. A
+review report runs no DONE.
+
 The forge is read the way scripts/wait-run reads it, with its lookup and its
 WAIT_RUN_API; no credential is asked for. With no API root the tool exits 4.
 
@@ -147,6 +157,45 @@ def with_card(header, card):
             if value is not None:
                 filled[key] = value
     return filled
+
+
+DONE_CLAUSE = re.compile(r"\bdone when\b(.*)", re.S)
+DONE_PRINTS = re.compile(r"it prints (?:(under|over|at most|at least|exactly) )?(\d+)\b")
+DONE_COMPARES = {
+    "under": lambda got, want: got < want,
+    "over": lambda got, want: got > want,
+    "at most": lambda got, want: got <= want,
+    "at least": lambda got, want: got >= want,
+    "exactly": lambda got, want: got == want,
+    None: lambda got, want: got == want,
+}
+
+
+def done_says(falsify):
+    """Whether the checkout meets the done line in a card's FALSIFY, and the reason.
+    None when the FALSIFY states no done line."""
+    clause = DONE_CLAUSE.search(falsify)
+    if clause is None:
+        return None
+    wanted = DONE_PRINTS.match(clause.group(1).strip())
+    command = falsify[: clause.start()].split(" prints ", 1)[0].strip()
+    if wanted is None or not command:
+        return False, "unrunnable: the done line names no command and `it prints [comparison] N`"
+    comparison, number = wanted.group(1), int(wanted.group(2))
+    try:
+        ran = subprocess.run(["bash", "-o", "pipefail", "-c", command], capture_output=True, text=True, timeout=120)
+    except subprocess.TimeoutExpired:
+        return False, f"unrunnable: `{command}` ran past 120 seconds"
+    if ran.returncode != 0:
+        return False, f"unrunnable: `{command}` exited {ran.returncode}: {ran.stderr.strip()}"
+    printed = ran.stdout.strip()
+    if not re.fullmatch(r"\d+", printed):
+        return False, f"unrunnable: `{command}` printed {printed!r}, not one whole number"
+    words = f"{comparison + ' ' if comparison else ''}{number}"
+    return (
+        DONE_COMPARES[comparison](int(printed), number),
+        f"`{command}` printed {printed}; done when it prints {words}",
+    )
 
 
 def merge_base_says(base, commit):
@@ -264,9 +313,12 @@ def main():
     text = sys.stdin.read()
     header = header_of(text)
     review = header.get("REVIEW")
+    card_falsify = None
     if args and not review:
         with open(args[1]) as handle:
-            header = with_card(header, json.load(handle))
+            card = json.load(handle)
+        header = with_card(header, card)
+        card_falsify = card_value(card, ("falsify",)) or ""
     if not wr.API and not (review and not any(key in header for key in KEYS)):
         print("WAIT_RUN_API is not set: set it to the repository's API root", file=sys.stderr)
         sys.exit(4)
@@ -340,6 +392,9 @@ def main():
             f"{shape} goes stale when the code moves: falsify by name, with git grep for "
             "the function, string or key",
         )
+    if card_falsify is not None:
+        done = done_says(card_falsify)
+        results["DONE"] = done if done is not None else (True, "the card names no done line")
     if re.fullmatch(r"(?i)none\W*", header.get("RETIRES", "")):
         results["RETIRES"] = (False, "none needs its reason")
     if re.search(r"^net lines by area since \S+", text, re.M) and re.search(r"total; source plus tests", text):
@@ -366,6 +421,10 @@ def main():
             lacking = [o for o in wanting.get(key, ()) if o not in header]
             print(f"FAIL {key}: cannot be checked, {', '.join(lacking) or 'a check it needs'} missing")
             ok = False
+    if "DONE" in results:
+        good, words = results["DONE"]
+        print(f"{'pass' if good else 'FAIL'} DONE: {words}")
+        ok = ok and good
     if review:
         printed, review_ok = review_says(review, text)
         for line in printed:

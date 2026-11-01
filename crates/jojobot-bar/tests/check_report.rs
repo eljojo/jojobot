@@ -657,6 +657,103 @@ fn a_card_adds_no_key_to_a_review_report() {
     assert!(failures(&out).is_empty(), "{out}");
 }
 
+/// The card with `falsify` set to `falsify`.
+fn card_falsifying(falsify: &str) -> Value {
+    let mut held = card();
+    held["falsify"] = json!(falsify);
+    held
+}
+
+/// DONE's line in an answer.
+fn done_line(out: &str) -> &str {
+    out.lines()
+        .find(|l| l.contains("DONE"))
+        .unwrap_or_else(|| panic!("no DONE line: {out}"))
+}
+
+/// **A card whose FALSIFY states a done line is checked against the checkout it
+/// runs in.** The command runs, its number meets the comparison or it does not,
+/// and a miss exits 1 with the number the command printed. The scratch repository
+/// holds two commits, so `git rev-list --count HEAD` prints 2.
+#[test]
+fn a_done_line_the_head_meets_passes_and_one_it_misses_fails_with_the_number() {
+    let repo = repository();
+    let api = stand(green(&repo));
+    let text = report(&as_pairs(&facts_only(&repo)));
+    for (clause, met) in [
+        ("under 3", true),
+        ("under 2", false),
+        ("over 1", true),
+        ("over 2", false),
+        ("at most 2", true),
+        ("at most 1", false),
+        ("at least 2", true),
+        ("at least 3", false),
+        ("exactly 2", true),
+        ("exactly 3", false),
+    ] {
+        let falsify = format!(
+            "git rev-list --count HEAD prints 9 on main abc1234; done when it prints {clause}"
+        );
+        let (code, out, err) = check_card(&repo, &api, &text, Some(&card_falsifying(&falsify)));
+        let line = done_line(&out);
+        if met {
+            assert_eq!(code, 0, "{clause}: {out}\n{err}");
+            assert!(line.starts_with("pass"), "{clause}: {line}");
+        } else {
+            assert_eq!(code, 1, "{clause}: {out}");
+            assert!(
+                line.starts_with("FAIL") && line.contains("printed 2") && line.contains(clause),
+                "{clause}: {line}"
+            );
+        }
+    }
+}
+
+/// **A done line the machine cannot run is refused as unrunnable, naming why.** A
+/// clause with no comparison, a command that fails and a command that prints no
+/// number each fail. The failing command is the shape a card carries, read in a
+/// checkout that does not hold the file.
+#[test]
+fn a_done_line_the_machine_cannot_run_fails_as_unrunnable() {
+    let repo = repository();
+    let api = stand(green(&repo));
+    let text = report(&as_pairs(&facts_only(&repo)));
+    for falsify in [
+        "git rev-list --count HEAD prints 9; done when the design names each home",
+        "git show HEAD:crates/jojobot/tests/ui.rs | wc -l prints 7799 on main 0a9e888d4; done when it prints under 5000 and the design names each region's home",
+        "git log -1 --format=%s prints a subject; done when it prints under 5",
+    ] {
+        let (code, out, _) = check_card(&repo, &api, &text, Some(&card_falsifying(falsify)));
+        assert_eq!(code, 1, "{falsify}: {out}");
+        let line = done_line(&out);
+        assert!(
+            line.starts_with("FAIL") && line.contains("unrunnable"),
+            "{falsify}: {line}"
+        );
+    }
+}
+
+/// **A card whose FALSIFY states no done line has nothing to run, and says so.**
+/// A header with no card, and a review report beside a card, hold no DONE line.
+#[test]
+fn a_card_with_no_done_line_passes_and_says_none_is_named() {
+    let repo = repository();
+    let api = stand(green(&repo));
+    let text = report(&as_pairs(&facts_only(&repo)));
+    let (code, out, err) = check_card(&repo, &api, &text, Some(&card()));
+    assert_eq!(code, 0, "{out}\n{err}");
+    let line = done_line(&out);
+    assert!(
+        line.starts_with("pass") && line.contains("no done line"),
+        "{line}"
+    );
+    let full = report(&as_pairs(&header(&repo)));
+    let (code, out, err) = check(&repo, &api, &full);
+    assert_eq!(code, 0, "{out}\n{err}");
+    assert!(!out.contains("DONE"), "{out}");
+}
+
 /// **A report with no net table fails NET, and a RETIRES of `none` with no reason
 /// fails RETIRES.**
 #[test]
