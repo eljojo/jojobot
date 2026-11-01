@@ -3238,6 +3238,33 @@ pub fn key_written_at(object: &Object, key: &str) -> Result<Option<jiff::Timesta
     }
 }
 
+/// **Take out of an answer the things whose records could not be read**, and say
+/// which they were and why, so a reader serves the rest and names the damage
+/// instead of failing whole. A thing is unreadable when its document scan failed
+/// or the revisions counted on it could not be read. Reached objects are taken
+/// out too, wherever they sit in the walk.
+pub fn take_unreadable(
+    objects: &mut Vec<Object>,
+    scans: &BTreeMap<EntityId, MemoryError>,
+) -> Vec<(EntityId, MemoryError)> {
+    fn why(object: &Object, scans: &BTreeMap<EntityId, MemoryError>) -> Option<MemoryError> {
+        scans
+            .get(&object.entity.id)
+            .cloned()
+            .or_else(|| object.revisions_unreadable.clone())
+    }
+    let mut named = Vec::new();
+    objects.retain_mut(|object| {
+        if let Some(error) = why(object, scans) {
+            named.push((object.entity.id.clone(), error));
+            return false;
+        }
+        named.extend(take_unreadable(&mut object.connected, scans));
+        true
+    });
+    named
+}
+
 /// **The part of a browse a caller will actually serve.**
 ///
 /// `offset` objects of the selection stand before it and are not read. The

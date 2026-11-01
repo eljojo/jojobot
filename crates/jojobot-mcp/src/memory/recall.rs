@@ -1227,6 +1227,24 @@ fn history_json(history: &graph::KeyHistory) -> serde_json::Value {
     body
 }
 
+/// **The things a read could not read, each named with why**, in the shape
+/// `list_runs` names a run it could not read: `unreadable` holds the reason and
+/// `fix_by: person`, because stored damage is repaired by a person and no call a
+/// session makes mends it.
+fn unreadable_things_json(unreadable: &[(EntityId, MemoryError)]) -> serde_json::Value {
+    unreadable
+        .iter()
+        .map(|(handle, why)| {
+            serde_json::json!({
+                "handle": handle.as_str(),
+                "unreadable": why.to_string(),
+                "fix_by": crate::answer::FixBy::Person.as_token(),
+            })
+        })
+        .collect::<Vec<_>>()
+        .into()
+}
+
 /// **One run's history on the wire.** A field comes back as the changes it went
 /// through, oldest first, each with its place in the run's order, what kind of
 /// change it was, when the store made the record and what was kept of it. A
@@ -3282,7 +3300,7 @@ impl Jojobot {
         }
         let graph::Selected {
             objects: mut found,
-            unreadable_scans: _,
+            unreadable_scans,
             ordered,
             unlicensed,
             withheld,
@@ -3296,16 +3314,13 @@ impl Jojobot {
             left_over: walked_left,
         } = match view_run::select(self.memory.as_ref(), &projected_docs, &query, walk_window).await
         {
-            Ok(answer) => {
-                if let Some(error) =
-                    graph::unreadable_scan(&answer).or_else(|| graph::unreadable_revisions(&answer))
-                {
-                    return self.recall_declined(through_view(error)).await;
-                }
-                answer
-            }
+            Ok(answer) => answer,
             Err(e) => return self.recall_declined(through_view(e)).await,
         };
+        // **A thing whose records cannot be read is named, never the end of the
+        // answer** (rule 130): one damaged record must not blind a reader to every
+        // other thing the question selected, nor to which one is broken.
+        let unreadable = graph::take_unreadable(&mut found, &unreadable_scans);
         // The runs the walk was not shown, counted with the ones it withheld, on a
         // browse of runs and never when a subject is named.
         let withheld = if browses_runs {
@@ -4315,6 +4330,9 @@ impl Jojobot {
                 })
                 .collect::<Vec<_>>(),
         });
+        if !unreadable.is_empty() {
+            body["unreadable"] = unreadable_things_json(&unreadable);
+        }
         if let Some(board) = board {
             body["board"] = serde_json::to_value(board).expect("board metadata serializes");
         }

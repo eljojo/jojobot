@@ -739,3 +739,62 @@ async fn the_history_of_a_key_names_the_writer_and_the_run() {
         "the booted capture names its run: {asked}"
     );
 }
+
+/// **A recall over a kind serves every readable thing when one thing's document
+/// cannot be read, and names the unreadable one** (rule 130). One damaged record
+/// must not blind a bot to the rest, nor to which one is broken. The handler that
+/// cannot scan `work:gamma` and the healthy one share a store, so the healthy
+/// answer names all three and the other answers the two it can read whole.
+#[tokio::test]
+async fn a_recall_over_a_kind_serves_the_readable_things_and_names_the_unreadable_one() {
+    let (healthy, blind) =
+        crate::memory::testing::shipped_healthy_and_down(Down::ScanOf("work:gamma"));
+    let _ = writing_as(&healthy);
+    for (slug, status) in [("alpha", "next"), ("gamma", "next"), ("delta", "now")] {
+        healthy
+            .add_entity(Parameters(AddEntityArgs {
+                sets: Some(std::collections::BTreeMap::from([(
+                    "status".to_string(),
+                    status.to_string(),
+                )])),
+                ..add_args("work", slug, slug)
+            }))
+            .await
+            .expect("add ok");
+    }
+    let args = || RecallArgs {
+        kind: Some("work".into()),
+        ..of_nothing()
+    };
+
+    let whole = recall_json(&healthy, args()).await;
+    assert_eq!(whole["count"], 3, "{whole}");
+    assert!(whole.get("unreadable").is_none(), "{whole}");
+
+    let served = recall_json(&blind, args()).await;
+    let mut readable = handles(&served);
+    readable.sort();
+    assert_eq!(
+        readable,
+        vec!["work:alpha".to_string(), "work:delta".to_string()],
+        "{served}"
+    );
+    assert_eq!(served["count"], 2, "{served}");
+    assert_eq!(
+        listed_object(&served, "work:alpha")["fields"]["status"],
+        "next",
+        "{served}"
+    );
+    let unreadable = served["unreadable"]
+        .as_array()
+        .expect("the damage is named");
+    assert_eq!(unreadable.len(), 1, "{served}");
+    assert_eq!(unreadable[0]["handle"], "work:gamma", "{served}");
+    assert_eq!(unreadable[0]["fix_by"], "person", "{served}");
+    assert!(
+        unreadable[0]["unreadable"]
+            .as_str()
+            .is_some_and(|why| !why.is_empty()),
+        "{served}"
+    );
+}
