@@ -73,7 +73,8 @@ impl Jojobot {
                        'it never arrived'. Messages jojobot cannot read are reported \
                        separately under `unreadable`: it cannot tell who sent them, so one of \
                        yours could be there. Damage in boxes you cannot see is only counted, \
-                       under `unreadable_elsewhere`, with no box, id or sender.Newest first, each with its state (`new` = \
+                       under `unreadable_elsewhere`, with no box, id or sender. \
+                       Newest first, each with its state (`new` = \
                        nobody has picked it up · `read` = delivered, not yet finished with · \
                        `processed` = acted on) plus notes when the consumer recorded an \
                        outcome (left out, with `notes_withheld`, for mail in a box above \
