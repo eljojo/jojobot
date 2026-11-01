@@ -796,6 +796,27 @@ async fn clearing_a_snoozed_calendar_loop_names_the_anchor_and_the_snooze() {
                "check_in": "snoozed", "sets": {"snoozed_until": "2026-02-10"}}),
     )
     .await;
+    // The check-ins wrote newer values of the basis, so it is cleared on the claim
+    // that backs it; the setup claim holds the rest.
+    let read = s
+        .call(
+            "recall",
+            json!({"subject": "rhythm:boiler-service", "backing": true}),
+        )
+        .await
+        .json();
+    let basis = format!(
+        "rhythm:boiler-service#{}",
+        read["objects"][0]["fields_backing"]["counts_from"]["claim"]
+            .as_str()
+            .expect("a claim backs the basis")
+    );
+    assert_ne!(basis, setup, "a check-in's schedule backs the basis");
+    s.call(
+        "update_fact",
+        json!({"address": basis, "clear_fields": ["counts_from"]}),
+    )
+    .await;
     let snoozed = s
         .call(
             "update_fact",
