@@ -17,28 +17,48 @@ use serde_json::{Value, json};
 use super::box_as;
 use super::dsl::{Session, Story};
 
-/// **The notes this build ships**, by id. A note added to a `release-notes/deploy-N/` folder is
-/// added here, and a story that finds one missing or sent twice fails.
-const SHIPPED_NOTES: &[&str] = &[
-    "a-field-value-naming-a-handle-is-a-link",
-    "blank-value-takes-the-key-off",
-    "boot-names-rules-off-the-tree",
-    "closing-mail-costs-what-reading-costs",
-    "declare-type-needs-a-session",
-    "defrag-ships-a-charter",
-    "edge-types-use-writable-tokens",
-    "key-history-names-writer-and-run",
-    "list-read-pages-and-counts-ticks",
-    "mail-visible-down-the-chart",
-    "many-entries-or-ticks-in-one-call",
-    "memory-write-receipts",
-    "recall-narrows-records-and-pages",
-    "release-notes",
-    "rhythm-on-the-calendar",
-    "search-matching-passages",
-    "trip-is-a-kind",
-    "watchbot-wakes-idle-lines",
-];
+/// **A note on disk**: the folder of the deploy it ships with, its id (the file's
+/// name) and whether it says an existing call can now return less.
+struct NoteOnDisk {
+    folder: String,
+    id: String,
+    narrows: bool,
+}
+
+/// **The notes this build ships, read from the folders the build reads them
+/// from**, sorted by id. The story holds no list of its own: a note added to a
+/// `release-notes/deploy-N/` folder is shipped, and the stories ask whether it
+/// reached each bot.
+fn notes_on_disk() -> Vec<NoteOnDisk> {
+    let root =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../jojobot-mcp/release-notes");
+    let mut notes = Vec::new();
+    for folder in std::fs::read_dir(&root).expect("the release-notes folder reads") {
+        let folder = folder.expect("a folder entry").path();
+        for file in std::fs::read_dir(&folder).expect("a deploy folder reads") {
+            let file = file.expect("a file entry").path();
+            let text = std::fs::read_to_string(&file).expect("a note reads");
+            notes.push(NoteOnDisk {
+                folder: folder
+                    .file_name()
+                    .expect("a folder name")
+                    .to_string_lossy()
+                    .into(),
+                id: file
+                    .file_stem()
+                    .expect("a file name")
+                    .to_string_lossy()
+                    .into(),
+                narrows: text
+                    .lines()
+                    .take_while(|line| !line.trim().is_empty())
+                    .any(|line| line.trim() == "narrows: true"),
+            });
+        }
+    }
+    notes.sort_by(|a, b| a.id.cmp(&b.id));
+    notes
+}
 
 /// The ids the last line of a message names, in the order it names them.
 fn ids_named(body: &str) -> Vec<String> {
@@ -64,8 +84,7 @@ fn holds_every_shipped_note_once(who: &str, body: &str) {
         named.len(),
         "a note is named twice in {who}'s message: {body}"
     );
-    let mut shipped: Vec<String> = SHIPPED_NOTES.iter().map(|id| id.to_string()).collect();
-    shipped.sort();
+    let shipped = shipped_note_ids();
     assert_eq!(
         sorted, shipped,
         "{who}'s message names the notes this build ships: {body}"
@@ -279,10 +298,10 @@ async fn a_quarantined_note_is_told_and_never_sent_again() {
     again.finish().await;
 }
 
-/// **The ids of every note this build ships**, from the list this file keeps: the
-/// told set is compared to it and not to a constant the code under test reads.
+/// **The ids of every note this build ships**, from the folders on disk: the told
+/// set is compared to them and not to a constant the code under test reads.
 fn shipped_note_ids() -> Vec<String> {
-    SHIPPED_NOTES.iter().map(|id| id.to_string()).collect()
+    notes_on_disk().into_iter().map(|note| note.id).collect()
 }
 
 /// The ids a bot's ledger holds, read the way a caller reads them.
@@ -401,14 +420,12 @@ async fn a_note_shipped_after_a_bot_was_made_reaches_it_at_the_next_start_alone(
 async fn a_bot_told_deploy_nines_notes_is_sent_the_point_release_notes_alone() {
     use jojobot_domain::memory::review::is_release_notes_record;
     use jojobot_domain::memory::{EntityId, FactPatch};
-    const DEPLOY_NINE: [&str; 6] = [
-        "defrag-ships-a-charter",
-        "list-read-pages-and-counts-ticks",
-        "many-entries-or-ticks-in-one-call",
-        "release-notes",
-        "rhythm-on-the-calendar",
-        "trip-is-a-kind",
-    ];
+    // The notes the build shipped as deploy 9: the folder of that deploy.
+    let deploy_nine: Vec<String> = notes_on_disk()
+        .into_iter()
+        .filter(|note| note.folder == "deploy-9")
+        .map(|note| note.id)
+        .collect();
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
     s.add("bot:delta", "Delta").await;
@@ -426,7 +443,7 @@ async fn a_bot_told_deploy_nines_notes_is_sent_the_point_release_notes_alone() {
         .update_fact(
             &ledger.address(),
             FactPatch {
-                fields: [("release_notes_told".to_string(), DEPLOY_NINE.join(", "))].into(),
+                fields: [("release_notes_told".to_string(), deploy_nine.join(", "))].into(),
                 sets: ["release_notes_told".to_string()].into(),
                 ..Default::default()
             },
@@ -450,7 +467,7 @@ async fn a_bot_told_deploy_nines_notes_is_sent_the_point_release_notes_alone() {
     sent.sort();
     let mut owed: Vec<String> = shipped_note_ids()
         .into_iter()
-        .filter(|id| !DEPLOY_NINE.contains(&id.as_str()))
+        .filter(|id| !deploy_nine.contains(id))
         .collect();
     owed.sort();
     assert!(!owed.is_empty(), "the point release ships notes: {owed:?}");
@@ -968,16 +985,18 @@ async fn a_bot_that_uses_none_of_the_features_reads_the_problem_each_note_solves
     // A note that cuts an existing call leads, in the order the build lists its notes, newest
     // first. The case names the narrowing notes that can come first and asks that the first
     // note named is one of them.
-    const CUT_A_CALL: [&str; 5] = [
-        "declare-type-needs-a-session",
-        "blank-value-takes-the-key-off",
-        "list-read-pages-and-counts-ticks",
-        "memory-write-receipts",
-        "search-matching-passages",
-    ];
+    let cut_a_call: Vec<String> = notes_on_disk()
+        .into_iter()
+        .filter(|note| note.narrows)
+        .map(|note| note.id)
+        .collect();
+    assert!(
+        !cut_a_call.is_empty(),
+        "the build ships a note that cuts a call"
+    );
     let first = ids_named(body).into_iter().next().expect("a first note");
     assert!(
-        CUT_A_CALL.contains(&first.as_str()),
+        cut_a_call.contains(&first),
         "a note that cuts a call comes first: {body}"
     );
 }
