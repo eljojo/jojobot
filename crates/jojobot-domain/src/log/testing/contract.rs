@@ -76,6 +76,32 @@ pub async fn stale_heads_never_append(log: &impl LogStore) {
     assert_eq!(log.read_from(Position(0), 10).await.unwrap(), [first]);
 }
 
+/// **A request whose argument and sealed header agree, and name a head ahead of the
+/// store's, never appends.** `stale_heads_never_append` ends on a request whose
+/// argument disagrees with its header, which the argument/header guard stops before
+/// the stored head is read. Here both say 2 while the store holds 1, so only the
+/// stored-head comparison can refuse it.
+pub async fn a_head_ahead_of_storage_never_appends(log: &impl LogStore) {
+    let first = batch("alpha", 0, &[b"a"]);
+    assert_eq!(
+        log.append(Position(0), &first).await.unwrap(),
+        Append::Committed(first.range())
+    );
+    assert_eq!(
+        log.append(Position(2), &batch("gamma", 2, &[b"c"])).await,
+        Err(LogError::Conflict)
+    );
+    assert_eq!(
+        log.read_from(Position(0), 10).await.unwrap().as_slice(),
+        std::slice::from_ref(&first)
+    );
+    let next = batch("delta", 1, &[b"d"]);
+    assert_eq!(
+        log.append(Position(1), &next).await.unwrap(),
+        Append::Committed(next.range())
+    );
+}
+
 pub async fn partial_batch_is_invisible(log: &impl FaultLog) {
     log.inject(Fault::BetweenMembers).await;
     let next = batch("alpha", 0, &[b"null", b"", b"[]"]);
@@ -270,6 +296,7 @@ mod log_store_contract {
         ordered_complete_batches,
         retries_keep_identity_and_bytes,
         stale_heads_never_append,
+        a_head_ahead_of_storage_never_appends,
         partial_batch_is_invisible,
         lost_acknowledgement_is_recovered_once,
         absence_without_a_terminal_fence_is_uncertain,

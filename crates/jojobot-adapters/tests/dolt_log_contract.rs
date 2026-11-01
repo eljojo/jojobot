@@ -24,6 +24,7 @@ mod dolt_log_contract {
         ordered_complete_batches,
         retries_keep_identity_and_bytes,
         stale_heads_never_append,
+        a_head_ahead_of_storage_never_appends,
         partial_batch_is_invisible,
         lost_acknowledgement_is_recovered_once,
         absence_without_a_terminal_fence_is_uncertain,
