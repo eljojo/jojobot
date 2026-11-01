@@ -39,7 +39,7 @@ pub async fn a_keys_history_names_the_writer_and_run_with_sessions<M: Memory>(
 ) {
     let bot = EntityId("bot:contract-key-writer".into());
     ensure(store, &bot).await;
-    for run in ["kwyj", "boba"] {
+    for run in ["kwyj", "cnf1"] {
         sessions
             .begin(NewSession {
                 bot: bot.clone(),
@@ -79,7 +79,7 @@ async fn key_history<M: Memory>(store: &M, edit_writer: Option<Actor>) {
         FactPatch {
             fields: staged("final"),
             sets: ["stage".to_string()].into(),
-            session: Some("boba".to_string()),
+            session: Some("cnf1".to_string()),
             ..FactPatch::default()
         },
     )
@@ -109,7 +109,7 @@ async fn key_history<M: Memory>(store: &M, edit_writer: Option<Actor>) {
         seen,
         vec![
             (Some("draft"), Some(Actor::Bot(bot.clone())), Some("kwyj")),
-            (Some("final"), edit_writer, Some("boba")),
+            (Some("final"), edit_writer, Some("cnf1")),
             (Some("deployed"), Some(app), None),
         ],
         "each write names the run that set its value"
