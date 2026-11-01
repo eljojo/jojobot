@@ -328,6 +328,10 @@ in
       ++ mapAttrsToList (name: app: {
         assertion = app.thread != null || app.operations != [ ];
         message = "services.jojobot.apps.${name}: an app is granted nothing; set `thread` and `writableKeys`, or `operations`.";
+      }) cfg.apps
+      ++ mapAttrsToList (name: app: {
+        assertion = app.thread == null || app.writableKeys != [ ];
+        message = "services.jojobot.apps.${name}: a `thread` grant names no keys; set `writableKeys` to the keys the app may send, or remove `thread`.";
       }) cfg.apps;
 
     systemd.services.jojobot = {

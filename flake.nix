@@ -328,6 +328,50 @@
               touch $out
             '';
 
+          # **A thread grant with no writable keys is refused at evaluation**, naming
+          # the app, rather than at boot with the domain's "names no keys". Paired
+          # with the case above, where the same app with keys fails no assertion.
+          appsThreadWithoutKeys =
+            let
+              failedFor =
+                writableKeys:
+                let
+                  evaluated = nixpkgs.lib.nixosSystem {
+                    inherit system;
+                    modules = [
+                      self.nixosModules.default
+                      {
+                        boot.isContainer = true;
+                        system.stateVersion = "26.05";
+                        services.jojobot = {
+                          enable = true;
+                          allowNoAuth = true;
+                          package = jojobot;
+                          doltPackage = dolt;
+                          apps.springfield-ci = {
+                            thread = "thread:deploys-alpha";
+                            inherit writableKeys;
+                            tokenHashFile = "/run/agenix/springfield-ci-token-hash";
+                          };
+                        };
+                      }
+                    ];
+                  };
+                in
+                builtins.filter (
+                  a: !a.assertion && nixpkgs.lib.hasPrefix "services.jojobot.apps." a.message
+                ) evaluated.config.assertions;
+              withoutKeys = failedFor [ ];
+              withKeys = failedFor [ "commit" ];
+            in
+            pkgs.runCommand "jojobot-apps-thread-without-keys" { } ''
+              set -eu
+              test ${builtins.toJSON (builtins.length withoutKeys == 1)} = true
+              test ${builtins.toJSON (nixpkgs.lib.hasInfix "springfield-ci" (builtins.head withoutKeys).message)} = true
+              test ${builtins.toJSON (withKeys == [ ])} = true
+              touch $out
+            '';
+
           # **The module evaluates with the metrics listener on**, and the unit
           # names its address beside the main one, on a port of its own. With
           # it off, the unit names no metrics address at all.
