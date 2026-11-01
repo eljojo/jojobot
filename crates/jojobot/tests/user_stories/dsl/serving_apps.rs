@@ -20,8 +20,13 @@ impl Story {
         let bare = bot
             .strip_prefix("bot:")
             .expect("a bot handle carries its kind prefix");
-        // **A grant names kinds, and a kind is known once the shipped ones are loaded.**
-        jojobot_domain::memory::kinds::load_shipped();
+        // **The principal is made after the memory has booted, as the binary makes
+        // it**: a grant names kinds, and a kind is known once the store has loaded
+        // them. The fake loads the shipped ones when it boots. The kind set is one
+        // table for the whole test process, so a story cannot hold it empty to pin
+        // that order; `tests/app_grant_kinds_start.rs` starts the real binary and
+        // does.
+        let memory = InMemoryMemory::booted();
         let token = jojobot_domain::app::mint_token();
         let spec = jojobot_domain::app::AppSpec {
             name: app.to_string(),
@@ -39,7 +44,7 @@ impl Story {
         .expect("the app's grant is one the server can hold");
         let story = Self::spawn_serving(
             bare,
-            Self::wired(InMemoryMemory::booted()),
+            Self::wired(memory),
             Arc::new(InMemoryMailboxes::knowing_any_owner()),
             Arc::new(InMemorySessions::new()),
             Timing {
