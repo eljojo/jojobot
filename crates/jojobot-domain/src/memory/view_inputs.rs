@@ -631,6 +631,29 @@ mod tests {
         assert_eq!(none.get("by"), Some(None));
     }
 
+    /// **An input that is not optional but carries a default is not demanded**:
+    /// a call that sends nothing binds the default, and a value sent wins.
+    /// **Paired**: the same input with no default is still demanded.
+    #[test]
+    fn a_required_input_with_a_default_is_not_demanded() {
+        let with = decls("type: text = marked");
+        let bound = bind("view:due", &with, &given(&[]), &[], &[], TODAY).expect("binds");
+        let text = |bound: &Bound| bound.get("type").expect("declared").map(|v| v.text.clone());
+        assert_eq!(text(&bound).as_deref(), Some("marked"));
+        let sent = bind(
+            "view:due",
+            &with,
+            &given(&[("type", "other")]),
+            &[],
+            &[],
+            TODAY,
+        )
+        .expect("binds");
+        assert_eq!(text(&sent).as_deref(), Some("other"));
+        let without = decls("type: text");
+        bind("view:due", &without, &given(&[]), &[], &[], TODAY).expect_err("demanded");
+    }
+
     /// **A default that is not a value of the input's type is refused when the
     /// view is declared**, naming the input and the default. **Paired** with the
     /// case above: the same lists, with a default that reads.
