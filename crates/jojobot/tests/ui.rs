@@ -5232,35 +5232,28 @@ async fn a_typed_page_keeps_the_generic_sections_behind_one_closed_fold() {
     assert!(!person.contains("Everything held"), "{person}");
 }
 
-/// The atlas project with an owner the operator said, a budget somebody worked
-/// out, twelve dated claims and a child that is not work.
-async fn memory_with_a_described_project() -> Arc<dyn Memory> {
+/// **A project's page carries what it is, what happened lately and what sits in
+/// it.** The wiring only: the three boxes are on the page of a project that holds
+/// an owner, a claim and a thing. What each box shows is `project_rest`'s own rule
+/// (src/ui/typed.rs), checked beside it.
+#[tokio::test]
+async fn a_projects_page_carries_what_it_is_what_happened_lately_and_what_sits_in_it() {
     let memory = memory_with_a_board().await;
-    for (key, value, provenance) in [
-        ("owner", "person:alpha", Provenance::Testimony),
-        ("budget", "40k", Provenance::Inference),
-    ] {
-        let mut fact = set_on(NewFact {
-            fields: [(key.to_string(), value.to_string())].into_iter().collect(),
-            ..NewFact::about(
-                EntityId("project:atlas".into()),
-                format!("the {key} of the atlas"),
-                Date::constant(2026, 3, 6),
-            )
-        });
-        fact.provenance = provenance;
-        memory.capture(fact).await.expect("the key is written");
-    }
-    for day in 1..=12 {
-        memory
-            .capture(NewFact::about(
-                EntityId("project:atlas".into()),
-                format!("Claim number {day:02}"),
-                Date::constant(2026, 4, day),
-            ))
-            .await
-            .expect("the claim is written");
-    }
+    set_fields(
+        &*memory,
+        "project:atlas",
+        "the owner of the atlas",
+        &[("owner", "person:alpha")],
+    )
+    .await;
+    memory
+        .capture(NewFact::about(
+            EntityId("project:atlas".into()),
+            "Claim number 01",
+            Date::constant(2026, 4, 1),
+        ))
+        .await
+        .expect("the claim is written");
     let mut bench = NewEntity::new(
         EntityId("thing:omega".into()),
         "The tool bench",
@@ -5273,72 +5266,19 @@ async fn memory_with_a_described_project() -> Arc<dyn Memory> {
         .expect("the bench is written")
         .written()
         .expect("nothing on this board collides with it");
-    memory
-}
+    let body = page_over(seeded_board_over(memory).await, "/project:atlas/").await;
 
-/// **A project says what it is, what happened lately and what sits in it.** About
-/// shows what the project holds, with who wrote each value behind a ▸; recent
-/// shows the newest ten claims and counts the older ones; contents lists
-/// everything under it, work included, with its kind. Paired: the board's own
-/// bookkeeping key is not a value of the project, and the eleventh newest claim
-/// is counted and not shown.
-#[tokio::test]
-async fn a_projects_page_says_what_it_is_what_happened_lately_and_what_sits_in_it() {
-    let body = page_over(
-        seeded_board_over(memory_with_a_described_project().await).await,
-        "/project:atlas/",
-    )
-    .await;
-
-    let about = element(&body, "about", "section");
-    assert!(about.contains("href=\"/person:alpha/\""), "{about}");
-    assert!(about.contains("40k"), "{about}");
     assert!(
-        !about.contains("considering"),
-        "the board's columns are not a value: {about}"
-    );
-    let (shown, behind) = about
-        .split_once("<details>")
-        .unwrap_or_else(|| panic!("who wrote each value is behind a fold: {about}"));
-    assert!(!shown.contains("testimony"), "{shown}");
-    let owner = behind
-        .split("<dt>owner</dt>")
-        .nth(1)
-        .expect("the owner's writer");
-    assert!(owner.starts_with("<dd>testimony"), "{behind}");
-    let budget = behind
-        .split("<dt>budget</dt>")
-        .nth(1)
-        .expect("the budget's writer");
-    assert!(budget.starts_with("<dd>inference"), "{behind}");
-
-    let recent = element(&body, "recent", "section");
-    assert!(
-        recent.contains("Claim number 12") && recent.contains("Claim number 03"),
-        "{recent}"
+        element(&body, "about", "section").contains("href=\"/person:alpha/\""),
+        "{body}"
     );
     assert!(
-        !recent.contains("Claim number 02"),
-        "the eleventh newest is not shown: {recent}"
+        element(&body, "recent", "section").contains("Claim number 01"),
+        "{body}"
     );
     assert!(
-        recent.contains("5 older"),
-        "and the older ones are counted: {recent}"
-    );
-    assert!(
-        place(recent, "Claim number 12") < place(recent, "Claim number 11"),
-        "newest first: {recent}"
-    );
-
-    let contents = element(&body, "contents", "section");
-    assert!(
-        contents.contains("href=\"/project:atlas/thing:omega/\"")
-            && contents.contains("href=\"/project:atlas/work:tau/\""),
-        "everything under it, work included: {contents}"
-    );
-    assert!(
-        contents.contains(">thing<") && contents.contains(">work<"),
-        "with its kind: {contents}"
+        element(&body, "contents", "section").contains("href=\"/project:atlas/thing:omega/\""),
+        "{body}"
     );
 }
 

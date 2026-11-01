@@ -430,3 +430,6 @@ pub fn project_rest(
 pub fn claims(facts: &[Fact], by_id: &HashMap<&EntityId, &Entity>) -> String {
     claim_list("claims", "claims", facts, by_id)
 }
+
+#[cfg(test)]
+mod project_rest_tests;
