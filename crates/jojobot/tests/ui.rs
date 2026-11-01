@@ -2461,22 +2461,13 @@ async fn memory_with_views() -> Arc<dyn Memory> {
         "the operator",
     )
     .await;
-    memory
-        .capture(set_on(NewFact {
-            fields: [
-                ("selects".to_string(), "rhythm".to_string()),
-                ("asks".to_string(), "overdue".to_string()),
-            ]
-            .into_iter()
-            .collect(),
-            ..NewFact::about(
-                EntityId("view:my-week".into()),
-                "what has gone quiet",
-                Date::constant(2026, 3, 5),
-            )
-        }))
-        .await
-        .expect("the question is written");
+    set_fields(
+        &*memory,
+        "view:my-week",
+        "what has gone quiet",
+        &[("selects", "rhythm"), ("asks", "overdue")],
+    )
+    .await;
     // A question whose selection finds a loop that is not due, so its answer is
     // empty and the page has something to say about why.
     put_entity(
@@ -2486,23 +2477,17 @@ async fn memory_with_views() -> Arc<dyn Memory> {
         "the operator",
     )
     .await;
-    memory
-        .capture(set_on(NewFact {
-            fields: [
-                ("selects".to_string(), "rhythm".to_string()),
-                ("asks".to_string(), "overdue".to_string()),
-                ("where".to_string(), "counts_from = 2400-01-06".to_string()),
-            ]
-            .into_iter()
-            .collect(),
-            ..NewFact::about(
-                EntityId("view:nothing-owed".into()),
-                "the loops counted from a far day",
-                Date::constant(2026, 3, 5),
-            )
-        }))
-        .await
-        .expect("the question is written");
+    set_fields(
+        &*memory,
+        "view:nothing-owed",
+        "the loops counted from a far day",
+        &[
+            ("selects", "rhythm"),
+            ("asks", "overdue"),
+            ("where", "counts_from = 2400-01-06"),
+        ],
+    )
+    .await;
     put_entity(
         &*memory,
         EntityId("view:matches-nothing".into()),
@@ -2510,19 +2495,13 @@ async fn memory_with_views() -> Arc<dyn Memory> {
         "the operator",
     )
     .await;
-    memory
-        .capture(set_on(NewFact {
-            fields: [("selects".to_string(), "pet".to_string())]
-                .into_iter()
-                .collect(),
-            ..NewFact::about(
-                EntityId("view:matches-nothing".into()),
-                "which pets are here",
-                Date::constant(2026, 3, 5),
-            )
-        }))
-        .await
-        .expect("the question is written");
+    set_fields(
+        &*memory,
+        "view:matches-nothing",
+        "which pets are here",
+        &[("selects", "pet")],
+    )
+    .await;
     put_entity(
         &*memory,
         EntityId("view:names-no-kind".into()),
@@ -2530,19 +2509,13 @@ async fn memory_with_views() -> Arc<dyn Memory> {
         "the operator",
     )
     .await;
-    memory
-        .capture(set_on(NewFact {
-            fields: [("selects".to_string(), "sandwich".to_string())]
-                .into_iter()
-                .collect(),
-            ..NewFact::about(
-                EntityId("view:names-no-kind".into()),
-                "which sandwiches are here",
-                Date::constant(2026, 3, 5),
-            )
-        }))
-        .await
-        .expect("the question is written");
+    set_fields(
+        &*memory,
+        "view:names-no-kind",
+        "which sandwiches are here",
+        &[("selects", "sandwich")],
+    )
+    .await;
     put_entity(
         &*memory,
         EntityId("view:my-people".into()),
@@ -2561,35 +2534,20 @@ async fn memory_with_views() -> Arc<dyn Memory> {
         "the operator",
     )
     .await;
-    memory
-        .capture(set_on(NewFact {
-            fields: [("selects".to_string(), "rhythm".to_string())]
-                .into_iter()
-                .collect(),
-            ..NewFact::about(
-                EntityId("view:the-old-loop".into()),
-                "which loop is the old one",
-                Date::constant(2026, 3, 5),
-            )
-        }))
-        .await
-        .expect("the question is written");
-    memory
-        .capture(set_on(NewFact {
-            fields: [
-                ("key".to_string(), "counts_from".to_string()),
-                ("value".to_string(), "2020-01-06".to_string()),
-            ]
-            .into_iter()
-            .collect(),
-            ..NewFact::about(
-                EntityId("view:the-old-loop".into()),
-                "filters to counts_from 2020-01-06",
-                Date::constant(2026, 3, 5),
-            )
-        }))
-        .await
-        .expect("the filter record is written");
+    set_fields(
+        &*memory,
+        "view:the-old-loop",
+        "which loop is the old one",
+        &[("selects", "rhythm")],
+    )
+    .await;
+    set_fields(
+        &*memory,
+        "view:the-old-loop",
+        "filters to counts_from 2020-01-06",
+        &[("key", "counts_from"), ("value", "2020-01-06")],
+    )
+    .await;
 
     // The rhythm kind says `counts_from` holds a date, which is what licenses
     // an ordering on it. The fake store declares no kind's keys on its own.
@@ -2612,23 +2570,17 @@ async fn memory_with_views() -> Arc<dyn Memory> {
         "the operator",
     )
     .await;
-    memory
-        .capture(set_on(NewFact {
-            fields: [
-                ("selects".to_string(), "rhythm".to_string()),
-                ("where".to_string(), "counts_from > 2021-01-01".to_string()),
-                ("order".to_string(), "counts_from descending".to_string()),
-            ]
-            .into_iter()
-            .collect(),
-            ..NewFact::about(
-                EntityId("view:latest-first".into()),
-                "the loops counted from after 2021, latest first",
-                Date::constant(2026, 3, 5),
-            )
-        }))
-        .await
-        .expect("the expression is written");
+    set_fields(
+        &*memory,
+        "view:latest-first",
+        "the loops counted from after 2021, latest first",
+        &[
+            ("selects", "rhythm"),
+            ("where", "counts_from > 2021-01-01"),
+            ("order", "counts_from descending"),
+        ],
+    )
+    .await;
 
     // **Work in three conditions, for the ready view**: one that can start, one
     // that is finished, and one that waits on work that is not. The fourth is
@@ -2675,19 +2627,13 @@ async fn memory_with_views() -> Arc<dyn Memory> {
         )
         .await;
     }
-    memory
-        .capture(set_on(NewFact {
-            fields: [("reports_to".to_string(), "bot:lisa".to_string())]
-                .into_iter()
-                .collect(),
-            ..NewFact::about(
-                EntityId("bot:marge".into()),
-                "who marge reports to",
-                Date::constant(2026, 3, 5),
-            )
-        }))
-        .await
-        .expect("the reporting line is written");
+    set_fields(
+        &*memory,
+        "bot:marge",
+        "who marge reports to",
+        &[("reports_to", "bot:lisa")],
+    )
+    .await;
 
     memory
 }
@@ -2726,6 +2672,21 @@ async fn put_entity(memory: &dyn Memory, id: EntityId, name: &str, source: &str)
         .unwrap_or_else(|error| panic!("{id:?} is written: {error:?}"))
         .written()
         .unwrap_or_else(|| panic!("nothing on this board collides with {id:?}"));
+}
+
+/// **Set keys on a thing through one claim**, written on the suite's fixed day as a
+/// setting, so the keys reach the thing and not only the claim.
+async fn set_fields(memory: &dyn Memory, handle: &str, content: &str, keys: &[(&str, &str)]) {
+    memory
+        .capture(set_on(NewFact {
+            fields: keys
+                .iter()
+                .map(|(key, value)| (key.to_string(), value.to_string()))
+                .collect(),
+            ..NewFact::about(EntityId(handle.into()), content, Date::constant(2026, 3, 5))
+        }))
+        .await
+        .unwrap_or_else(|error| panic!("{content:?} on {handle} is written: {error:?}"));
 }
 
 /// **[`signed_in`] over a board the case built.**
@@ -3515,23 +3476,17 @@ async fn a_views_page_asks_for_the_type_its_input_names() {
         "the operator",
     )
     .await;
-    memory
-        .capture(set_on(NewFact {
-            fields: [
-                ("selects".to_string(), "rhythm".to_string()),
-                ("inputs".to_string(), "type: text".to_string()),
-                ("answers_type".to_string(), "$type".to_string()),
-            ]
-            .into_iter()
-            .collect(),
-            ..NewFact::about(
-                EntityId("view:my-things-of".into()),
-                "the loops that answer a type",
-                Date::constant(2026, 3, 5),
-            )
-        }))
-        .await
-        .expect("the question is written");
+    set_fields(
+        &*memory,
+        "view:my-things-of",
+        "the loops that answer a type",
+        &[
+            ("selects", "rhythm"),
+            ("inputs", "type: text"),
+            ("answers_type", "$type"),
+        ],
+    )
+    .await;
     let board = seeded_board_over(memory).await;
     let (addr, ct, client, cookie) = signed_in_over(board).await;
     let page = |path: String| {
@@ -3697,22 +3652,13 @@ async fn a_views_page_runs_a_required_input_that_carries_a_default() {
 async fn a_ready_view_over_something_that_is_not_work_cannot_be_run() {
     // The half-written view the board already holds, given a question.
     let memory = memory_with_views().await;
-    memory
-        .capture(set_on(NewFact {
-            fields: [
-                ("selects".to_string(), "person".to_string()),
-                ("asks".to_string(), "ready".to_string()),
-            ]
-            .into_iter()
-            .collect(),
-            ..NewFact::about(
-                EntityId("view:my-people".into()),
-                "who is ready",
-                Date::constant(2026, 3, 5),
-            )
-        }))
-        .await
-        .expect("the question is written");
+    set_fields(
+        &*memory,
+        "view:my-people",
+        "who is ready",
+        &[("selects", "person"), ("asks", "ready")],
+    )
+    .await;
     let board = seeded_board_over(memory).await;
     let (addr, ct, client, cookie) = signed_in_over(board).await;
 
@@ -6430,19 +6376,7 @@ async fn a_page_that_maps_status_words_says_when_the_instance_record_cannot_be_r
         .expect("the work is written")
         .written()
         .expect("nothing on this board collides with it");
-    inner
-        .capture(set_on(NewFact {
-            fields: [("status".to_string(), "next".to_string())]
-                .into_iter()
-                .collect(),
-            ..NewFact::about(
-                EntityId("work:omega".into()),
-                "to do",
-                Date::constant(2026, 3, 5),
-            )
-        }))
-        .await
-        .expect("the status is written");
+    set_fields(&*inner, "work:omega", "to do", &[("status", "next")]).await;
     let counted = Arc::new(jojobot_adapters::counted::Counted::new(inner));
 
     let board = seeded_board_over(counted.clone()).await;
