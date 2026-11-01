@@ -91,8 +91,20 @@ async fn a_works_status_history_comes_with_the_pages_one_answer() {
     assert!(now < next, "newest first: {list}");
 
     memory.failing.store(true, Ordering::SeqCst);
-    let refused = read(&client, addr, "/work:omicron/", &cookie).await;
-    assert_eq!(refused.status().as_u16(), 502);
+    // **One unreadable part never refuses the page.** The box still draws what it
+    // read, and the writes it could not read are marked unreadable rather than
+    // drawn as no writes.
+    let partial = read(&client, addr, "/work:omicron/", &cookie).await;
+    assert_eq!(partial.status().as_u16(), 200);
+    let body = partial.text().await.unwrap();
+    assert!(
+        body.contains("id=\"unreadable-the-writes-behind-the-status\""),
+        "the unreadable writes are marked: {body}"
+    );
+    assert!(
+        body.contains("Raise the frame") && !body.contains("id=\"status-history\""),
+        "the rest of the box is drawn and no empty history stands in for the lost one: {body}"
+    );
     ct.cancel();
 }
 

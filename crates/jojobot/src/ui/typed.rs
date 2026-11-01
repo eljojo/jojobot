@@ -146,23 +146,30 @@ pub fn work(
     work: &Entity,
     held: &BTreeMap<String, String>,
     by_id: &HashMap<&EntityId, &Entity>,
-    history: &[jojobot_domain::memory::FieldWrite],
+    history: Result<&[jojobot_domain::memory::FieldWrite], &str>,
 ) -> String {
-    let writes: String = history
-        .iter()
-        .rev()
-        .take(HISTORY_SHOWN)
-        .map(|write| {
-            format!(
-                "<li><span class=\"t\">{}</span><span class=\"m\">{}</span></li>",
-                write
-                    .value
-                    .as_deref()
-                    .map_or("(taken off)".to_string(), pages::escape),
-                write.recorded_at
-            )
-        })
-        .collect();
+    // **Writes that could not be read are said so**, never drawn as no writes.
+    let writes = match history {
+        Err(error) => pages::blind("Status history", "the writes behind the status", error),
+        Ok(history) => {
+            let items: String = history
+                .iter()
+                .rev()
+                .take(HISTORY_SHOWN)
+                .map(|write| {
+                    format!(
+                        "<li><span class=\"t\">{}</span><span class=\"m\">{}</span></li>",
+                        write
+                            .value
+                            .as_deref()
+                            .map_or("(taken off)".to_string(), pages::escape),
+                        write.recorded_at
+                    )
+                })
+                .collect();
+            format!("<ul id=\"status-history\">{items}</ul>")
+        }
+    };
     shell::boxed_as(
         "work",
         false,
@@ -170,7 +177,7 @@ pub fn work(
         "",
         &format!(
             "<dl class=\"kv\"><dt>status</dt><dd>{}</dd><dt>needs</dt><dd>{}</dd>\
-             <dt>owner</dt><dd>{}</dd></dl><ul id=\"status-history\">{writes}</ul>",
+             <dt>owner</dt><dd>{}</dd></dl>{writes}",
             held_value(held, kinds::STATUS).map_or("—".to_string(), pages::escape),
             handles(held_value(held, "depends_on"), by_id),
             handles(held_value(held, "owner"), by_id),

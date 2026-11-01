@@ -266,34 +266,63 @@ pub(crate) async fn node(
     let mut children: Vec<&Entity> = below.iter().map(|object| &object.entity).collect();
     children.sort_by(|a, b| a.id.cmp(&b.id));
 
-    let mut question = jojobot_query_api::Question::new(
-        graph::Selection {
-            subject: Some(entity.id.clone()),
-            ..Default::default()
-        },
-        graph::Include {
-            facts: true,
-            prose: true,
-            stood_for: true,
-            status: None,
-        },
-        None,
-        None,
-    );
-    question.asks.backing = true;
-    // **A task's page lists the last writes of its status**, which the one answer
-    // carries when the question asks for them.
-    if entity.kind == EntityKind::WORK {
-        question.query.history = Some(graph::History {
-            of: graph::Trace::Key(kinds::STATUS.to_string()),
-            most: typed::HISTORY_SHOWN,
-        });
-    }
+    let question = |with_status_history: bool| {
+        let mut question = jojobot_query_api::Question::new(
+            graph::Selection {
+                subject: Some(entity.id.clone()),
+                ..Default::default()
+            },
+            graph::Include {
+                facts: true,
+                prose: true,
+                stood_for: true,
+                status: None,
+            },
+            None,
+            None,
+        );
+        question.asks.backing = true;
+        // **A task's page lists the last writes of its status**, which the one
+        // answer carries when the question asks for them.
+        if with_status_history {
+            question.query.history = Some(graph::History {
+                of: graph::Trace::Key(kinds::STATUS.to_string()),
+                most: typed::HISTORY_SHOWN,
+            });
+        }
+        question
+    };
+    // **An unreadable status history costs the page its list of writes and
+    // nothing else**: the question is asked again without it, and the box says
+    // which part it could not read.
+    let mut status_unreadable: Option<String> = None;
+    let asked_for_history = entity.kind == EntityKind::WORK;
     let mut answer = match queries
-        .ask(&jojobot_domain::actor::Actor::Operator, question)
+        .ask(
+            &jojobot_domain::actor::Actor::Operator,
+            question(asked_for_history),
+        )
         .await
     {
         Ok(answer) => answer,
+        Err(
+            jojobot_query_api::Failed::Selection(first)
+            | jojobot_query_api::Failed::Readiness(first)
+            | jojobot_query_api::Failed::Preparation(_, first),
+        ) if asked_for_history => {
+            status_unreadable = Some(first.to_string());
+            match queries
+                .ask(&jojobot_domain::actor::Actor::Operator, question(false))
+                .await
+            {
+                Ok(answer) => answer,
+                Err(
+                    jojobot_query_api::Failed::Selection(error)
+                    | jojobot_query_api::Failed::Readiness(error)
+                    | jojobot_query_api::Failed::Preparation(_, error),
+                ) => return unreadable(error),
+            }
+        }
         Err(
             jojobot_query_api::Failed::Selection(error)
             | jojobot_query_api::Failed::Readiness(error)
@@ -322,7 +351,10 @@ pub(crate) async fn node(
         return unreadable(error);
     }
     let ages = object.ages.unwrap_or_default();
-    let status_writes = object.history.map(|kept| kept.writes).unwrap_or_default();
+    let status_writes = match (&status_unreadable, object.history) {
+        (Some(error), _) => Err(error.as_str()),
+        (None, history) => Ok(history.map(|kept| kept.writes).unwrap_or_default()),
+    };
     let held = object.fields;
     let facts = object.facts;
     let prose = object.prose.unwrap_or_default();
@@ -345,9 +377,12 @@ pub(crate) async fn node(
     // **A piece of work is a task, a rhythm is a loop, a thread leads with what
     // was decided.** A kind with no rendering of its own is the generic page.
     match entity.kind {
-        EntityKind::WORK => {
-            typed_page.push_str(&typed::work(entity, &held, &by_id, &status_writes))
-        }
+        EntityKind::WORK => typed_page.push_str(&typed::work(
+            entity,
+            &held,
+            &by_id,
+            status_writes.as_deref().map_err(|error| *error),
+        )),
         EntityKind::RHYTHM => {
             typed_page.push_str(&typed::rhythm(&state, &queries, entity, &held).await)
         }
