@@ -11958,12 +11958,13 @@ mod later_cases;
 
 /// A store whose age read fails, while every other port method forwards to the
 /// in-memory store.
-struct AgesUnreadable(Arc<InMemoryMemory>);
+struct AgesUnreadable(Arc<InMemoryMemory>, Arc<std::sync::atomic::AtomicUsize>);
 
 #[jojobot_domain::forward(jojobot_domain::forward_memory, via = 0)]
 impl Memory for AgesUnreadable {
     async fn field_ages(&self, entity: &EntityId) -> Result<FieldAges, MemoryError> {
         let _ = entity;
+        self.1.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Err(MemoryError::Store("ages unavailable".into()))
     }
 }
@@ -11998,8 +11999,9 @@ async fn a_backing_over_a_store_that_cannot_read_ages_declines_instead_of_droppi
         "the instant is served while ages are readable: {read:?}"
     );
 
+    let age_reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let blind = Jojobot::new(
-        Arc::new(AgesUnreadable(memory)),
+        Arc::new(AgesUnreadable(memory, age_reads.clone())),
         Arc::new(SpySearch::default()),
         Arc::new(InMemoryMailboxes::knowing_any_owner()),
         Arc::new(InMemorySessions::new()),
@@ -12008,8 +12010,16 @@ async fn a_backing_over_a_store_that_cannot_read_ages_declines_instead_of_droppi
     );
     writing_as(&blind);
     let declined = blind.recall(Parameters(ask())).await;
+    // **The decline is the storage failure, and the age read is what failed.** A
+    // storage failure's words give no cause by design, so the cause is pinned
+    // twice: the refusal is the `Store` code with `retry` (a malformed ask or a
+    // missing subject says another code), and the failing read was reached.
+    let error = declined.expect_err("the read is declined, not served without the instant");
+    let data = error.data.as_ref().expect("a refusal carries its code");
+    assert_eq!(data["refusal_code"], "Store", "{error:?}");
+    assert_eq!(data["fix_by"], "retry", "{error:?}");
     assert!(
-        declined.is_err() || json_of(declined.as_ref().unwrap()).get("objects").is_none(),
-        "the read served an entry without its instant: {declined:?}"
+        age_reads.load(std::sync::atomic::Ordering::SeqCst) > 0,
+        "the decline did not come through the age read: {error:?}"
     );
 }

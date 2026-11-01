@@ -3796,7 +3796,9 @@ where
     }
     // **How old what each object holds is**, read for every object in the
     // answer. A store that cannot say, or does not hold the object, leaves it
-    // without an age; the answer is never refused over one.
+    // without an age; a plain read is never refused over one. A read that asks
+    // for the backing is: it declines through `key_written_at`, because an entry
+    // without its instant would read as a card that has none (rule 130).
     for object in &mut found.objects {
         match pre_read
             .get(&object.entity.id)
