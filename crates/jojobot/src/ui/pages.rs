@@ -390,7 +390,7 @@ pub(crate) async fn node(
     // **A bot's place in the org chart**: the chain it reports through and the
     // bots that report to it, read from the colleagues view.
     if entity.kind == EntityKind::BOT {
-        generic.push_str(&org::bot_section(&state, &entity.id, &by_id).await);
+        generic.push_str(&org::bot_section(&state, &queries, &entity.id).await);
     }
     // **A project's ready work is one link away**, the ready view with the
     // project as its input.

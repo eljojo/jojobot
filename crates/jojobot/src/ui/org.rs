@@ -9,9 +9,11 @@ use std::collections::{HashMap, HashSet};
 
 use axum::{extract::State, http::StatusCode, response::Response};
 use jojobot_domain::memory::{Entity, EntityId};
+use jojobot_mcp::memory::view_run;
+use jojobot_query_api::{Failed, QueryHandle};
 
 use crate::AppState;
-use crate::ui::{pages, shell, tree};
+use crate::ui::{pages, shell};
 
 /// The address of the org chart. It is no entity's path, so the gate knows it
 /// by name ([`crate::ui::require_browser`]).
@@ -28,8 +30,10 @@ pub struct Colleague {
 
 /// **Every bot the colleagues view lists**, or the page text saying why it could
 /// not be run.
-async fn colleagues(state: &AppState) -> Result<Vec<Colleague>, String> {
-    let answered = pages::answer_named_view(state, VIEW).await?;
+async fn colleagues(state: &AppState, queries: &QueryHandle) -> Result<Vec<Colleague>, String> {
+    let answered =
+        pages::answer_named_view_with(state, queries, VIEW, &std::collections::BTreeMap::new())
+            .await?;
     Ok(answered
         .found
         .into_iter()
@@ -120,12 +124,43 @@ fn forest(all: &[Colleague]) -> Vec<(usize, &Colleague)> {
     out
 }
 
-/// A bot as a link to its page, or as its handle when the page's path is not
-/// known.
-fn link(colleague: &Colleague, by_id: &HashMap<&EntityId, &Entity>) -> String {
+/// **Where each of these bots lives**, as a URL path, each asked of the graph
+/// through [`jojobot_query_api::ancestry`]. A bot whose ancestry cannot be read
+/// fails the whole set: a link to a guessed path is a link to the wrong page.
+async fn paths(
+    queries: &QueryHandle,
+    of: &[&Colleague],
+) -> Result<HashMap<EntityId, String>, Failed> {
+    let mut out = HashMap::new();
+    for colleague in of {
+        let chain = jojobot_query_api::ancestry(
+            queries,
+            &jojobot_domain::actor::Actor::Operator,
+            &colleague.entity.id,
+            colleague.entity.parent.as_ref(),
+        )
+        .await?;
+        let spelled: Vec<&str> = chain.iter().map(EntityId::as_str).collect();
+        out.insert(
+            colleague.entity.id.clone(),
+            format!("/{}/", spelled.join("/")),
+        );
+    }
+    Ok(out)
+}
+
+/// Why the ancestry could not be read.
+fn reason(failed: Failed) -> String {
+    let (Failed::Selection(error) | Failed::Readiness(error) | Failed::Preparation(_, error)) =
+        failed;
+    error.to_string()
+}
+
+/// A bot as a link to its page.
+fn link(colleague: &Colleague, paths: &HashMap<EntityId, String>) -> String {
     format!(
         "<a href=\"{}\">{}</a>",
-        pages::escape(&tree::canonical_path(&colleague.entity, by_id)),
+        pages::escape(&paths[&colleague.entity.id]),
         pages::escape(colleague.entity.id.as_str())
     )
 }
@@ -133,23 +168,27 @@ fn link(colleague: &Colleague, by_id: &HashMap<&EntityId, &Entity>) -> String {
 /// **The org chart section of a bot's page**: the chain it reports through, a
 /// link to the whole chart, and the bots that report to it. A bot that reports
 /// to nobody is a chain of one, which is a root and not an error.
-pub async fn bot_section(
-    state: &AppState,
-    bot: &EntityId,
-    by_id: &HashMap<&EntityId, &Entity>,
-) -> String {
-    let all = match colleagues(state).await {
+pub async fn bot_section(state: &AppState, queries: &QueryHandle, bot: &EntityId) -> String {
+    let all = match colleagues(state, queries).await {
         Ok(all) => all,
         Err(page) => return page,
     };
     let up = chain(bot, &all);
+    let under = reports(bot, &all);
+    let shown: Vec<&Colleague> = up.iter().copied().chain(under.iter().copied()).collect();
+    let by_id = match paths(queries, &shown).await {
+        Ok(by_id) => by_id,
+        Err(failed) => {
+            return pages::blind("Org chart", "where the bots live", &reason(failed));
+        }
+    };
     let steps: Vec<String> = up
         .iter()
         .map(|colleague| {
             if &colleague.entity.id == bot {
                 pages::escape(bot.as_str())
             } else {
-                link(colleague, by_id)
+                link(colleague, &by_id)
             }
         })
         .collect();
@@ -161,13 +200,12 @@ pub async fn bot_section(
             steps.join(" › ")
         }
     );
-    let under = reports(bot, &all);
     if under.is_empty() {
         out.push_str("<p id=\"reports\">Nobody reports to this bot.</p>\n");
     } else {
         out.push_str("<ul id=\"reports\">\n");
         for colleague in under {
-            out.push_str(&format!("<li>{}</li>\n", link(colleague, by_id)));
+            out.push_str(&format!("<li>{}</li>\n", link(colleague, &by_id)));
         }
         out.push_str("</ul>\n");
     }
@@ -176,22 +214,28 @@ pub async fn bot_section(
 
 /// `/ui/org/` — every bot, each under the bot it reports to.
 pub async fn chart(State(state): State<AppState>) -> Response {
-    let entities = match state.memory.list_entities(None).await {
-        Ok(entities) => entities,
-        Err(err) => {
-            tracing::warn!(error = %err, "the org chart could not read the entities");
-            return crate::ui::refuse(
-                StatusCode::BAD_GATEWAY,
-                "jojobot could not read its own store, so this page would be empty rather than accurate.",
-            );
-        }
-    };
-    let by_id: HashMap<&EntityId, &Entity> = entities.iter().map(|e| (&e.id, e)).collect();
-    let content = match colleagues(&state).await {
+    let queries = view_run::handle(
+        state.memory.clone(),
+        state.sessions.clone(),
+        state.search.clone(),
+    );
+    let content = match colleagues(&state, &queries).await {
         Err(page) => page,
         Ok(all) => {
+            let placed = forest(&all);
+            let listed: Vec<&Colleague> = placed.iter().map(|(_, c)| *c).collect();
+            let by_id = match paths(&queries, &listed).await {
+                Ok(by_id) => by_id,
+                Err(failed) => {
+                    tracing::warn!(error = %reason(failed), "the org chart could not read where the bots live");
+                    return crate::ui::refuse(
+                        StatusCode::BAD_GATEWAY,
+                        "jojobot could not read where its bots live, so this page would be empty rather than accurate.",
+                    );
+                }
+            };
             let mut lines = String::from("<ul class=\"org\" style=\"list-style:none\">\n");
-            for (depth, colleague) in forest(&all) {
+            for (depth, colleague) in placed {
                 lines.push_str(&format!(
                     "<li data-depth=\"{depth}\" style=\"margin-left:{}em\">{} <span class=\"m\">{}</span></li>\n",
                     depth * 2,

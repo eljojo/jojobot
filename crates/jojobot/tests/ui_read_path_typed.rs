@@ -6,6 +6,7 @@ mod support;
 use support::ui_board::{CLIENT_ID, READER, read, seeded_board_over, seeded_memory, set_on};
 use support::{browser, log_in, spawn_idp};
 
+use jojobot_domain::memory::testing::InMemoryMemory;
 use jojobot_domain::memory::{EntityId, Memory, NewEntity, NewFact};
 use std::sync::{
     Arc,
@@ -248,5 +249,149 @@ async fn a_topics_standing_decision_comes_with_the_pages_one_answer() {
         .nth(1)
         .unwrap_or_else(|| panic!("the topic's page lists its decisions: {page}"));
     assert!(list.contains("The cabinets are oak"), "{list}");
+    ct.cancel();
+}
+
+/// **The org chart links each bot at the path its ancestry spells.** A bot filed
+/// under a topic sits at the topic's path, and a topic renamed since reaches the
+/// bot by the name it wears now, as the node page's ancestry does.
+#[tokio::test]
+async fn the_org_chart_takes_each_bots_path_from_the_graphs_ancestry() {
+    let supplied = jojobot_mcp::provisions();
+    let store = InMemoryMemory::booted().knowing(supplied.clone());
+    let memory: Arc<dyn Memory> = Arc::new(jojobot_adapters::provisioned::Provisioned::new(
+        store, supplied,
+    ));
+    let staff = EntityId("topic:widgets".into());
+    memory
+        .add_entity(NewEntity::new(staff.clone(), "Staff", "the fixture roster"))
+        .await
+        .unwrap();
+    for (handle, boss, parent) in [
+        ("bot:rho", None, None),
+        ("bot:psi", Some("bot:rho"), Some(&staff)),
+    ] {
+        let mut new = NewEntity::new(EntityId(handle.into()), handle, "the fixture roster");
+        new.parent = parent.cloned();
+        memory.add_entity(new).await.unwrap();
+        if let Some(boss) = boss {
+            memory
+                .capture(set_on(NewFact {
+                    fields: [("reports_to".to_string(), boss.to_string())].into(),
+                    ..NewFact::about(
+                        EntityId(handle.into()),
+                        "who this bot reports to",
+                        jiff::civil::Date::constant(2026, 3, 5),
+                    )
+                }))
+                .await
+                .unwrap();
+        }
+    }
+    memory
+        .rename_entity(
+            &staff,
+            &EntityId("topic:tarps".into()),
+            None,
+            jiff::civil::Date::constant(2026, 3, 10),
+            jojobot_domain::memory::Override::none(),
+            None,
+        )
+        .await
+        .unwrap();
+    let board = seeded_board_over(memory.clone()).await;
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct, _) =
+        support::ui_board::spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+
+    let chart = read(&client, addr, "/ui/org/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    assert!(chart.contains("href=\"/topic:tarps/bot:psi/\""), "{chart}");
+    assert!(chart.contains("href=\"/bot:rho/\""), "{chart}");
+    ct.cancel();
+}
+
+/// A store that cannot read the claims of one topic, when told not to.
+struct FailingTopic {
+    inner: Arc<dyn Memory>,
+    failing: AtomicBool,
+}
+
+#[jojobot_domain::forward(jojobot_domain::forward_memory, via = inner)]
+impl Memory for FailingTopic {
+    async fn recall(&self, entity: &EntityId) -> Result<Vec<Fact>, MemoryError> {
+        if entity.as_str() == "topic:widgets" && self.failing.load(Ordering::SeqCst) {
+            return Err(MemoryError::Store("claims unavailable".into()));
+        }
+        self.inner.recall(entity).await
+    }
+}
+
+/// **An org chart whose ancestry cannot be read is refused in words, and the
+/// words are not markup the browser shows as text.** Paired: the same chart reads
+/// when the store does.
+#[tokio::test]
+async fn an_unreadable_ancestry_refuses_the_org_chart_in_plain_words() {
+    let supplied = jojobot_mcp::provisions();
+    let store = InMemoryMemory::booted().knowing(supplied.clone());
+    let inner: Arc<dyn Memory> = Arc::new(jojobot_adapters::provisioned::Provisioned::new(
+        store, supplied,
+    ));
+    let memory = Arc::new(FailingTopic {
+        inner,
+        failing: AtomicBool::new(false),
+    });
+    let staff = EntityId("topic:widgets".into());
+    memory
+        .inner
+        .add_entity(NewEntity::new(staff.clone(), "Staff", "the fixture roster"))
+        .await
+        .unwrap();
+    for (handle, boss, parent) in [
+        ("bot:rho", None, None),
+        ("bot:psi", Some("bot:rho"), Some(&staff)),
+    ] {
+        let mut new = NewEntity::new(EntityId(handle.into()), handle, "the fixture roster");
+        new.parent = parent.cloned();
+        memory.inner.add_entity(new).await.unwrap();
+        if let Some(boss) = boss {
+            memory
+                .inner
+                .capture(set_on(NewFact {
+                    fields: [("reports_to".to_string(), boss.to_string())].into(),
+                    ..NewFact::about(
+                        EntityId(handle.into()),
+                        "who this bot reports to",
+                        jiff::civil::Date::constant(2026, 3, 5),
+                    )
+                }))
+                .await
+                .unwrap();
+        }
+    }
+    let board = seeded_board_over(memory.clone()).await;
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct, _) =
+        support::ui_board::spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+
+    let chart = read(&client, addr, "/ui/org/", &cookie).await;
+    assert_eq!(chart.status().as_u16(), 200);
+    memory.failing.store(true, Ordering::SeqCst);
+    let refused = read(&client, addr, "/ui/org/", &cookie).await;
+    assert_eq!(refused.status().as_u16(), 502);
+    let body = refused.text().await.unwrap();
+    assert!(
+        !body.contains("&lt;"),
+        "escaped markup shows as text: {body}"
+    );
     ct.cancel();
 }
