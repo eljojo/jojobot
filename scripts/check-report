@@ -55,8 +55,8 @@ current checkout, so `HEAD` is the head being landed, and its output must be one
 whole number that meets the comparison. DONE fails, naming the number, when it does
 not. DONE also fails as unrunnable when the clause names no comparison and number,
 or the command fails or prints no number. Words after the number are not checked.
-A card with no `done when` clause has no done line: DONE passes and says so. A
-review report runs no DONE.
+The clause is required: a card with no `done when` clause fails DONE as
+unrunnable, so it cannot be carried. A review report runs no DONE.
 
 The forge is read the way scripts/wait-run reads it, with its lookup and its
 WAIT_RUN_API; no credential is asked for. With no API root the tool exits 4.
@@ -172,11 +172,10 @@ DONE_COMPARES = {
 
 
 def done_says(falsify):
-    """Whether the checkout meets the done line in a card's FALSIFY, and the reason.
-    None when the FALSIFY states no done line."""
+    """Whether the checkout meets the done line in a card's FALSIFY, and the reason."""
     clause = DONE_CLAUSE.search(falsify)
     if clause is None:
-        return None
+        return False, "unrunnable: the card's falsify has no `done when it prints [comparison] N` clause"
     wanted = DONE_PRINTS.match(clause.group(1).strip())
     command = falsify[: clause.start()].split(" prints ", 1)[0].strip()
     if wanted is None or not command:
@@ -393,8 +392,7 @@ def main():
             "the function, string or key",
         )
     if card_falsify is not None:
-        done = done_says(card_falsify)
-        results["DONE"] = done if done is not None else (True, "the card names no done line")
+        results["DONE"] = done_says(card_falsify)
     if re.fullmatch(r"(?i)none\W*", header.get("RETIRES", "")):
         results["RETIRES"] = (False, "none needs its reason")
     if re.search(r"^net lines by area since \S+", text, re.M) and re.search(r"total; source plus tests", text):

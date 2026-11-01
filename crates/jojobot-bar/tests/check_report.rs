@@ -494,7 +494,7 @@ fn card() -> Value {
     json!({
         "owner_module": "scripts/check-report",
         "retires": "the retyped header lines, because the card carries them",
-        "falsify": "git grep -n card -- scripts/check-report",
+        "falsify": "git rev-list --count HEAD prints 9 on main abc1234; done when it prints at least 2",
         "self_review": "read the diff once",
     })
 }
@@ -543,7 +543,8 @@ fn a_header_value_wins_over_the_cards() {
     let mut facts = facts_only(&repo);
     facts.push(("FALSIFY", "git grep -n x -- y".to_string()));
     let mut bad_falsify = card();
-    bad_falsify["falsify"] = json!("wc -l scripts/check-report");
+    bad_falsify["falsify"] =
+        json!("git rev-list --count HEAD | wc -l prints 1; done when it prints exactly 1");
     let (code, out, err) = check_card(&repo, &api, &report(&as_pairs(&facts)), Some(&bad_falsify));
     assert_eq!(code, 0, "{out}\n{err}");
 
@@ -734,18 +735,20 @@ fn a_done_line_the_machine_cannot_run_fails_as_unrunnable() {
     }
 }
 
-/// **A card whose FALSIFY states no done line has nothing to run, and says so.**
-/// A header with no card, and a review report beside a card, hold no DONE line.
+/// **A card whose FALSIFY states no done line is refused as unrunnable.** The clause
+/// is required, so a card without it cannot be carried. A header with no card holds
+/// no DONE line.
 #[test]
-fn a_card_with_no_done_line_passes_and_says_none_is_named() {
+fn a_card_with_no_done_line_fails_as_unrunnable() {
     let repo = repository();
     let api = stand(green(&repo));
     let text = report(&as_pairs(&facts_only(&repo)));
-    let (code, out, err) = check_card(&repo, &api, &text, Some(&card()));
-    assert_eq!(code, 0, "{out}\n{err}");
+    let bare = card_falsifying("git grep -n card -- scripts/check-report");
+    let (code, out, _) = check_card(&repo, &api, &text, Some(&bare));
+    assert_eq!(code, 1, "{out}");
     let line = done_line(&out);
     assert!(
-        line.starts_with("pass") && line.contains("no done line"),
+        line.starts_with("FAIL") && line.contains("unrunnable") && line.contains("done when"),
         "{line}"
     );
     let full = report(&as_pairs(&header(&repo)));
