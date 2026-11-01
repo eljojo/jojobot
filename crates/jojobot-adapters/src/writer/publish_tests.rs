@@ -319,7 +319,9 @@ impl Subscriber for Suspending {
 async fn a_delivery_that_suspends_ends_before_the_caller_is_answered_and_the_next_job_starts() {
     let writer = Writer::default();
     let log = Arc::new(Mutex::new(Vec::new()));
-    writer.subscribe(Arc::new(Suspending(log.clone())));
+    // The writer holds a subscriber weakly, so the case keeps it alive.
+    let suspending = Arc::new(Suspending(log.clone()));
+    writer.subscribe_borrowed(Arc::downgrade(&suspending) as _);
 
     let first = tokio::spawn({
         let (writer, log) = (writer.clone(), log.clone());
