@@ -540,8 +540,9 @@ async fn writer_recovery_an_ambiguous_mail_commit_uses_the_same_native_rail_relo
 }
 
 /// **Dropping a served index releases the native write fence.** A writer that
-/// took the fence holds it until its connection closes. The index is subscribed
-/// to that writer, so a subscription that owned the writer back kept the
+/// took the fence holds it until its connection closes. The memory index, the
+/// mail index and the push nudge are subscribed to that writer, so a
+/// subscription that owned the writer back kept the
 /// connection open after every owner had gone, and a fresh writer in the same
 /// process could not write.
 #[tokio::test]
@@ -570,6 +571,25 @@ async fn writer_recovery_a_dropped_index_frees_the_native_fence_for_a_fresh_writ
     image.rebuild().await.expect("published rail");
     let indexed = crate::search::IndexedMemory::with_writer(image, first.clone())
         .expect("the production search decorator");
+    // **The mail index and the push nudge are subscribed as the binary does.**
+    // Each holds the writer, so a strong subscription from the publication would
+    // keep the connection open after every owner had gone.
+    struct Quiet;
+    impl jojobot_domain::push::Nudge for Quiet {
+        fn nudge(&self) {}
+    }
+    let mail = Arc::new(
+        crate::fold::mail::FoldedMailboxes::new(Arc::new(
+            jojobot_domain::mailbox::testing::InMemoryMailboxes::new(),
+        ))
+        .with_writer(first.clone()),
+    );
+    let mail_index = Arc::new(crate::search::IndexedMailboxes::new(
+        mail.clone(),
+        indexed.index(),
+    ));
+    mail_index.subscribe();
+    let nudge = crate::nudge::NudgeOnPost::subscribe(&first, mail.clone(), Arc::new(Quiet));
     indexed
         .add_entity(NewEntity::new(id.clone(), "alpha", "fence"))
         .await
@@ -580,7 +600,7 @@ async fn writer_recovery_a_dropped_index_frees_the_native_fence_for_a_fresh_writ
         first.has_native_connection(),
         "the first writer took the fence"
     );
-    drop(indexed);
+    drop((indexed, mail_index, nudge, mail));
     drop(first);
 
     let second = crate::writer::Writer::default();
