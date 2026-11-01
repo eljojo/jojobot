@@ -40,6 +40,8 @@ struct Forge {
     branches: Vec<(String, String)>,
     /// Runs: id, ref, commit, status.
     runs: Vec<(u64, String, String, String)>,
+    /// Whether the run records carry no `index_in_repo`, as an older forge's do.
+    numberless: bool,
 }
 
 /// A stand-in forge on a free local port, answering until the test ends.
@@ -90,7 +92,7 @@ fn answer(forge: &Forge, path: &str) -> (u16, String) {
                     "id": id,
                     "title": "A change",
                     "workflow_id": "branch.yml",
-                    "index_in_repo": id - 2,
+                    "index_in_repo": if forge.numberless { Value::Null } else { json!(id - 2) },
                     "prettyref": branch,
                     "commit_sha": sha,
                     "event": "push",
@@ -171,6 +173,7 @@ fn green(repo: &Repository) -> Forge {
     Forge {
         branches: vec![(BRANCH.into(), repo.head.clone())],
         runs: vec![(700, BRANCH.into(), repo.head.clone(), "success".into())],
+        numberless: false,
     }
 }
 
@@ -362,10 +365,34 @@ fn the_forge_id_written_as_the_run_fails_and_names_the_number_to_use() {
     assert_eq!(code, 1, "{out}");
     let failed = failures(&out);
     assert_eq!(failed.len(), 1, "{out}");
+    assert!(failed[0].contains("RUN"), "{out}");
+    // The structure of the message, not three digits a fixture sha could hold.
     assert!(
-        failed[0].contains("RUN") && failed[0].contains("698"),
+        failed[0].contains("700 is the forge id of run #698; write RUN: 698"),
         "the failure names the number to use: {out}"
     );
+}
+
+/// **A run record with no number cannot be named by one**, so a report's RUN
+/// fails and says no run has that number, whether the line wrote the number or
+/// the forge id.
+#[test]
+fn a_run_record_with_no_number_fails_a_report_that_names_one() {
+    let repo = repository();
+    let mut forge = green(&repo);
+    forge.numberless = true;
+    let api = stand(forge);
+    let head = header(&repo);
+    for written in ["698", "700"] {
+        let (code, out, _) = check(&repo, &api, &report(&with(&head, "RUN", written)));
+        assert_eq!(code, 1, "{written}: {out}");
+        let failed = failures(&out);
+        assert_eq!(failed.len(), 1, "{written}: {out}");
+        assert!(
+            failed[0].contains(&format!("{written} is not a run number of")),
+            "{written}: {out}"
+        );
+    }
 }
 
 /// **A missing key is a failure that names it.** The prose below the header is
@@ -686,6 +713,7 @@ fn a_review_that_carries_a_wrong_key_fails_on_that_key() {
             files.repo.head.clone(),
             "success".into(),
         )],
+        numberless: false,
     };
     let api = stand(forge);
     let text = format!(
