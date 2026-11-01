@@ -718,7 +718,7 @@ async fn the_history_of_a_key_names_the_writer_and_the_run() {
                     .into_iter()
                     .collect(),
             ),
-            sid: Some(acting),
+            sid: Some(acting.clone()),
             ..capture_args("alpha", "ate one")
         },
     )
@@ -734,9 +734,10 @@ async fn the_history_of_a_key_names_the_writer_and_the_run() {
     .await;
     let writes = &asked["objects"][0]["history"]["writes"];
     assert_eq!(writes[0]["writer"], "bot:otto", "{asked}");
-    assert!(
-        writes[0]["run"].as_str().is_some_and(|run| !run.is_empty()),
-        "the booted capture names its run: {asked}"
+    assert_eq!(
+        writes[0]["run"],
+        run_name(&jojobot, &acting),
+        "the booted capture names its run by the public name: {asked}"
     );
 }
 
