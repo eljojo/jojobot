@@ -2744,6 +2744,16 @@ async fn signed_in() -> (SocketAddr, CancellationToken, reqwest::Client, String)
     (addr, ct, client, cookie)
 }
 
+/// **[`signed_in`] over a board the case built.**
+async fn signed_in_over(board: Board) -> (SocketAddr, CancellationToken, reqwest::Client, String) {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+    (addr, ct, client, cookie)
+}
+
 /// **[`signed_in`] over the board that holds the views this build supplies.**
 async fn signed_in_over_views() -> (SocketAddr, CancellationToken, reqwest::Client, String) {
     let idp = support::TestIdp::new();
@@ -3124,12 +3134,8 @@ async fn the_overdue_page_reads_today_in_the_instances_zone() {
         .await
         .expect("the zone is written");
 
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
     let board = seeded_board_over(memory).await;
-    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
+    let (addr, ct, client, cookie) = signed_in_over(board).await;
 
     let page = read_text(&client, addr, "/view:my-week/", &cookie).await;
     let answer = page
@@ -3237,12 +3243,8 @@ async fn the_overdue_page_reads_the_words_the_instance_maps() {
         .await
         .expect("the question is written");
 
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
     let board = seeded_board_over(memory).await;
-    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
+    let (addr, ct, client, cookie) = signed_in_over(board).await;
 
     let page = read_text(&client, addr, "/view:my-projects/", &cookie).await;
     let answer = page
@@ -3404,12 +3406,8 @@ async fn a_views_page_renders_its_inputs_as_a_form_and_answers_with_them() {
         .await
         .expect("the question is written");
 
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
     let board = seeded_board_over(memory).await;
-    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
+    let (addr, ct, client, cookie) = signed_in_over(board).await;
     let page = |path: String| {
         let client = client.clone();
         let cookie = cookie.clone();
@@ -3571,12 +3569,8 @@ async fn a_views_page_asks_for_the_type_its_input_names() {
         }))
         .await
         .expect("the question is written");
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
     let board = seeded_board_over(memory).await;
-    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
+    let (addr, ct, client, cookie) = signed_in_over(board).await;
     let page = |path: String| {
         let client = client.clone();
         let cookie = cookie.clone();
@@ -3682,12 +3676,8 @@ async fn a_views_page_runs_a_required_input_that_carries_a_default() {
             .await
             .expect("the question is written");
     }
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
     let board = seeded_board_over(memory).await;
-    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
+    let (addr, ct, client, cookie) = signed_in_over(board).await;
     let page = |path: String| {
         let client = client.clone();
         let cookie = cookie.clone();
@@ -3760,12 +3750,8 @@ async fn a_ready_view_over_something_that_is_not_work_cannot_be_run() {
         }))
         .await
         .expect("the question is written");
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
     let board = seeded_board_over(memory).await;
-    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
+    let (addr, ct, client, cookie) = signed_in_over(board).await;
 
     let page = read_text(&client, addr, "/view:my-people/", &cookie).await;
 
@@ -3814,12 +3800,8 @@ async fn a_view_holding_an_empty_type_cannot_be_run_by_the_page_or_the_verb() {
         }))
         .await
         .expect("the question is written");
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
     let board = seeded_board_over(memory).await;
-    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
+    let (addr, ct, client, cookie) = signed_in_over(board).await;
 
     let refused = recall_body_of_view(addr, "unscoped").await;
     assert_eq!(
@@ -4039,12 +4021,8 @@ fn answer_cells(page: &str) -> (Vec<String>, Vec<(String, Vec<String>)>) {
 /// row with none is too.
 #[tokio::test]
 async fn a_views_page_shows_the_fields_the_view_shows_as_the_verb_serves_them() {
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
     let board = seeded_board_over(memory_with_a_board().await).await;
-    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
+    let (addr, ct, client, cookie) = signed_in_over(board).await;
     let page = read_text(
         &client,
         addr,
@@ -4133,12 +4111,8 @@ async fn a_projects_page_links_to_the_ready_work_of_that_project() {
             .await
             .expect("the status is written");
     }
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
     let board = seeded_board_over(memory).await;
-    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
+    let (addr, ct, client, cookie) = signed_in_over(board).await;
     let page = |path: String| {
         let client = client.clone();
         let cookie = cookie.clone();
@@ -4246,12 +4220,8 @@ fn element<'a>(page: &'a str, id: &str, tag: &str) -> &'a str {
 
 #[tokio::test]
 async fn a_bots_page_shows_the_chain_it_reports_through_and_who_reports_to_it() {
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
     let board = seeded_board_over(memory_with_a_reporting_line().await).await;
-    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
+    let (addr, ct, client, cookie) = signed_in_over(board).await;
     let page = |path: &'static str| {
         let client = client.clone();
         let cookie = cookie.clone();
@@ -4423,12 +4393,8 @@ async fn memory_for_the_homepage() -> Arc<dyn Memory> {
 
 #[tokio::test]
 async fn the_homepage_has_a_box_for_each_kind_that_has_members_and_counts_them_truly() {
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
     let board = seeded_board_over(memory_for_the_homepage().await).await;
-    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
+    let (addr, ct, client, cookie) = signed_in_over(board).await;
     let home = read_text(&client, addr, "/", &cookie).await;
 
     // ── topics: five stand (widgets and four more), the archived one does not ─
@@ -4470,8 +4436,6 @@ async fn the_homepage_has_a_box_for_each_kind_that_has_members_and_counts_them_t
 
 #[tokio::test]
 async fn the_homepage_lists_every_top_level_thing_and_sorts_by_name_or_last_write() {
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
     let memory = memory_for_the_homepage().await;
     let children_of_alpha = memory
         .children(&EntityId("person:alpha".into()))
@@ -4479,9 +4443,7 @@ async fn the_homepage_lists_every_top_level_thing_and_sorts_by_name_or_last_writ
         .expect("children")
         .len();
     let board = seeded_board_over(memory).await;
-    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
+    let (addr, ct, client, cookie) = signed_in_over(board).await;
     let page = |path: &'static str| {
         let client = client.clone();
         let cookie = cookie.clone();
@@ -4538,12 +4500,8 @@ async fn the_homepage_lists_every_top_level_thing_and_sorts_by_name_or_last_writ
 
 #[tokio::test]
 async fn the_homepage_has_a_due_box_from_the_due_view_and_a_kind_has_a_page_of_its_own() {
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
     let board = seeded_board_over(memory_for_the_homepage().await).await;
-    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
+    let (addr, ct, client, cookie) = signed_in_over(board).await;
 
     let home = read_text(&client, addr, "/", &cookie).await;
     let due = element(&home, "due", "section");
@@ -4621,12 +4579,8 @@ async fn a_last_write_is_the_day_it_fell_on_in_the_instances_zone() {
         .await
         .expect("the zone is written");
 
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
     let board = seeded_board_over(memory).await;
-    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
+    let (addr, ct, client, cookie) = signed_in_over(board).await;
     let home = read_text(&client, addr, "/", &cookie).await;
 
     // The thing written last, in the box and in the listing: the day in the
@@ -4754,12 +4708,8 @@ async fn memory_with_a_board() -> Arc<dyn Memory> {
 
 #[tokio::test]
 async fn a_projects_page_is_a_board_with_a_column_for_each_status_word() {
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
     let board = seeded_board_over(memory_with_a_board().await).await;
-    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
+    let (addr, ct, client, cookie) = signed_in_over(board).await;
     let project = read_text(&client, addr, "/project:atlas/", &cookie).await;
     let board = element(&project, "board", "section");
 
@@ -4941,12 +4891,8 @@ async fn a_board_counts_work_in_a_word_the_instance_maps_to_done() {
 
 #[tokio::test]
 async fn a_pieces_of_work_page_leads_with_its_status_needs_owner_and_history() {
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
     let board = seeded_board_over(memory_with_a_board().await).await;
-    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
+    let (addr, ct, client, cookie) = signed_in_over(board).await;
     let page = |path: &'static str| {
         let client = client.clone();
         let cookie = cookie.clone();
@@ -5206,12 +5152,8 @@ async fn memory_with_a_kitchen_thread() -> Arc<dyn Memory> {
 
 #[tokio::test]
 async fn a_threads_page_puts_its_standing_decisions_first_and_then_its_own_claims() {
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
     let board = seeded_board_over(memory_with_a_kitchen_thread().await).await;
-    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
+    let (addr, ct, client, cookie) = signed_in_over(board).await;
     let thread = read_text(&client, addr, "/thread:simpson-kitchen/", &cookie).await;
 
     // The standing decisions, each with what it says; the replaced one is not.
@@ -5248,12 +5190,8 @@ async fn a_threads_page_puts_its_standing_decisions_first_and_then_its_own_claim
 async fn a_page_whose_backing_cannot_be_read_says_so_and_is_still_drawn() {
     let inner = memory_with_views().await;
     let counted = Arc::new(jojobot_adapters::counted::Counted::new(inner));
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
     let board = seeded_board_over(counted.clone()).await;
-    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
+    let (addr, ct, client, cookie) = signed_in_over(board).await;
 
     counted.fail_backing_of(Some("person:alpha"));
     let down = read(&client, addr, "/person:alpha/", &cookie).await;
@@ -5343,12 +5281,8 @@ async fn a_threads_page_lists_numbered_decisions_in_number_order() {
                 .expect("the thread numbers its decisions");
         }
     }
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
     let board = seeded_board_over(memory).await;
-    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
+    let (addr, ct, client, cookie) = signed_in_over(board).await;
 
     let numbered = read_text(&client, addr, "/thread:krusty-burger/", &cookie).await;
     let decisions = element(&numbered, "decisions", "section");
@@ -5905,11 +5839,7 @@ async fn a_thin_search_says_the_words_are_matched_loosely_once_and_a_good_one_do
             .written()
             .expect("nothing collides with it");
     }
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
-    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
+    let (addr, ct, client, cookie) = signed_in_over(board).await;
     let page = |q: &'static str| {
         let (client, cookie) = (client.clone(), cookie.clone());
         async move { read_text(&client, addr, &format!("/ui/search?q={q}"), &cookie).await }
@@ -5954,11 +5884,7 @@ async fn hits_the_page_does_not_list_are_counted_with_the_way_to_read_them() {
         .expect("the thing is written")
         .written()
         .expect("nothing collides with it");
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
-    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
+    let (addr, ct, client, cookie) = signed_in_over(board).await;
 
     let unlisted = read_text(&client, addr, "/ui/search?q=stall", &cookie).await;
     let line = unlisted
@@ -6018,11 +5944,7 @@ async fn hits_the_page_does_not_list_are_counted_with_the_way_to_read_them() {
 #[tokio::test]
 async fn a_page_with_only_unlisted_hits_does_not_say_nothing_found_or_name_mail() {
     let board = seeded_board().await;
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
-    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
+    let (addr, ct, client, cookie) = signed_in_over(board).await;
 
     let unlisted = read_text(&client, addr, "/ui/search?q=prose", &cookie).await;
     assert!(
@@ -6179,14 +6101,10 @@ fn price_row(page: &str) -> &str {
 /// alpha. A page that picked the newest-entered record would keep naming beta.
 #[tokio::test]
 async fn a_page_names_the_write_the_fold_took_the_value_from_after_an_in_place_rewrite() {
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
     let (memory, alpha, beta) =
         price_written_twice_then_the_older_rewritten("work:donut-budget", "Donut budget").await;
     let board = seeded_board_over(memory.clone()).await;
-    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
+    let (addr, ct, client, cookie) = signed_in_over(board).await;
     let id = EntityId("work:donut-budget".into());
 
     let before = read_text(&client, addr, "/work:donut-budget/", &cookie).await;
@@ -6235,8 +6153,6 @@ async fn a_page_names_the_write_the_fold_took_the_value_from_after_an_in_place_r
 /// 3; `price` is written once and says how.
 #[tokio::test]
 async fn a_summing_key_says_nothing_of_how_it_is_known_and_an_ordinary_key_still_does() {
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
     let (memory, _, _) =
         price_written_twice_then_the_older_rewritten("work:donut-budget", "Donut budget").await;
     memory
@@ -6259,9 +6175,7 @@ async fn a_summing_key_says_nothing_of_how_it_is_known_and_an_ordinary_key_still
         memory.capture(eaten).await.expect("the count is written");
     }
     let board = seeded_board_over(memory).await;
-    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
+    let (addr, ct, client, cookie) = signed_in_over(board).await;
 
     let page = read_text(&client, addr, "/work:donut-budget/", &cookie).await;
     let fields = section(&page, "fields");
@@ -6293,14 +6207,10 @@ async fn a_summing_key_says_nothing_of_how_it_is_known_and_an_ordinary_key_still
 /// (testimony) is.
 #[tokio::test]
 async fn a_projects_page_names_the_write_the_fold_took_the_value_from_after_an_in_place_rewrite() {
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
     let (memory, alpha, _) =
         price_written_twice_then_the_older_rewritten("project:donut-fund", "Donut fund").await;
     let board = seeded_board_over(memory.clone()).await;
-    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
+    let (addr, ct, client, cookie) = signed_in_over(board).await;
 
     let who = |page: &str| -> String {
         let at = page
@@ -6432,12 +6342,8 @@ async fn a_topic_holding_decisions_still_says_what_is_around_it() {
         .await
         .expect("the town's claim is written");
 
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
     let board = seeded_board_over(memory).await;
-    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
+    let (addr, ct, client, cookie) = signed_in_over(board).await;
     let page = read_text(&client, addr, "/person:alpha/topic:widgets/", &cookie).await;
 
     // The positive: the decisions are on this page, so the read had them in front.
@@ -6606,12 +6512,8 @@ async fn a_page_that_maps_status_words_says_when_the_instance_record_cannot_be_r
         .expect("the status is written");
     let counted = Arc::new(jojobot_adapters::counted::Counted::new(inner));
 
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
     let board = seeded_board_over(counted.clone()).await;
-    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
+    let (addr, ct, client, cookie) = signed_in_over(board).await;
     let page = |path: &'static str| {
         let client = client.clone();
         let cookie = cookie.clone();
@@ -6702,12 +6604,8 @@ async fn a_bots_page_leaves_out_the_record_of_the_release_notes_it_was_told() {
 /// is cut with an ellipsis.
 #[tokio::test]
 async fn every_grid_track_on_a_page_has_a_minimum_of_zero() {
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
     let board = seeded_board_over(memory_with_a_board().await).await;
-    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
+    let (addr, ct, client, cookie) = signed_in_over(board).await;
     let page = read_text(&client, addr, "/project:atlas/", &cookie).await;
     ct.cancel();
 
