@@ -55,9 +55,10 @@ pub trait Answerer: Send + Sync {
     /// **Every entity the store holds, archived and folded ones included**, and
     /// the records of none of them. A page resolves a handle to its entity
     /// whatever became of it, so this list is total and costs one pass over the
-    /// index: a recall reads each thing's records, and one unreadable record would
-    /// fail the whole listing.
-    async fn entities(
+    /// index: a recall reads each thing's records, so it costs a pass over all of
+    /// them and omits the archived and folded. This read is the index read, kept
+    /// for that reason, and a bot's question may use it too.
+    async fn entity_index(
         &self,
         asker: &Actor,
     ) -> Result<Vec<jojobot_domain::memory::Entity>, MemoryError>;
@@ -85,11 +86,11 @@ impl QueryHandle {
         self.0.search(asker, question).await
     }
 
-    /// **Every entity the store holds**, see [`Answerer::entities`].
-    pub async fn every_entity(
+    /// **Every entity the store holds**, see [`Answerer::entity_index`].
+    pub async fn entity_index(
         &self,
         asker: &Actor,
     ) -> Result<Vec<jojobot_domain::memory::Entity>, MemoryError> {
-        self.0.entities(asker).await
+        self.0.entity_index(asker).await
     }
 }

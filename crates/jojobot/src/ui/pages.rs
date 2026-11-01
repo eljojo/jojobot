@@ -36,7 +36,7 @@ pub(crate) async fn index(
     axum::extract::Query(sort): axum::extract::Query<home::Sort>,
 ) -> Response {
     let entities = match queries
-        .every_entity(&jojobot_domain::actor::Actor::Operator)
+        .entity_index(&jojobot_domain::actor::Actor::Operator)
         .await
     {
         Ok(entities) => entities,
@@ -197,7 +197,7 @@ pub(crate) async fn node(
     };
 
     let entities = match queries
-        .every_entity(&jojobot_domain::actor::Actor::Operator)
+        .entity_index(&jojobot_domain::actor::Actor::Operator)
         .await
     {
         Ok(entities) => entities,

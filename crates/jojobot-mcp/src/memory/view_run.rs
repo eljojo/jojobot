@@ -158,11 +158,7 @@ pub fn handle(
             Ok(read)
         }
 
-        // TEMPORARY(9.3.2) the pages list through this read because a recall fails
-        // whole on one unreadable record. When the card
-        // q-932-recall-one-unreadable-fails-all lands, the listing returns to recall
-        // and this method goes.
-        async fn entities(
+        async fn entity_index(
             &self,
             _asker: &jojobot_domain::actor::Actor,
         ) -> Result<Vec<jojobot_domain::memory::Entity>, MemoryError> {

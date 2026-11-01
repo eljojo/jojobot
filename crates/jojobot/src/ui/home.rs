@@ -342,7 +342,7 @@ pub(crate) async fn kind_page(
     Query(sort): Query<Sort>,
 ) -> Response {
     let entities = match queries
-        .every_entity(&jojobot_domain::actor::Actor::Operator)
+        .entity_index(&jojobot_domain::actor::Actor::Operator)
         .await
     {
         Ok(entities) => entities,

@@ -216,7 +216,7 @@ mod tests {
             Err(MemoryError::Store("the store is down".into()))
         }
 
-        async fn entities(
+        async fn entity_index(
             &self,
             _: &Actor,
         ) -> Result<Vec<jojobot_domain::memory::Entity>, MemoryError> {
