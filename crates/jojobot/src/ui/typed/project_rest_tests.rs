@@ -125,7 +125,7 @@ async fn recent_shows_the_newest_ten_and_counts_the_rest() {
         "the eleventh newest is not shown: {recent}"
     );
     assert!(
-        recent.contains("older"),
+        recent.contains("5 older"),
         "and the older ones are counted: {recent}"
     );
     assert!(
