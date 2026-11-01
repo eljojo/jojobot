@@ -1338,9 +1338,9 @@ impl Jojobot {
                 Ok(runs) => runs,
                 Err(e) => return memory_declined("capture", e).map(Err),
             };
-            match self.sessions.summaries_of(&subject).await {
+            match self.sessions.run_starts(Some(&subject)).await {
                 Ok(runs) => jojobot_domain::memory::aging_cutoff(
-                    &jojobot_domain::session::history::started_ats(&runs),
+                    &jojobot_domain::session::history::start_moments(&runs),
                     ages_after,
                 ),
                 Err(e) => return session_declined(e, by_session.unwrap_or_default()).map(Err),

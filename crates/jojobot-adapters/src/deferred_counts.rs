@@ -164,8 +164,17 @@ mod tests {
         DeferredCounts,
         tokio::task::JoinHandle<()>,
         Arc<tokio::sync::Notify>,
+        jojobot_domain::session::Session,
     ) {
         let store = Arc::new(InMemorySessions::new());
+        // Begun before the hold: beginning a run is itself a write on the writer.
+        let run = jojobot_domain::session::testing::contract::begin(
+            store.as_ref(),
+            "gamma",
+            "reading",
+            0,
+        )
+        .await;
         let writer = Writer::default();
         let folded = Arc::new(
             FoldedSessions::new(store.clone(), store.write_stamp(), Clock::Real)
@@ -183,7 +192,7 @@ mod tests {
         while writer.submitted_jobs() == before {
             tokio::task::yield_now().await;
         }
-        (counting, held, release)
+        (counting, held, release, run)
     }
 
     /// **A counted call is answered while a slow write holds the writer, and it is
@@ -192,7 +201,7 @@ mod tests {
     /// released, the counts settle, and the count is one.
     #[tokio::test]
     async fn a_counted_call_does_not_wait_behind_a_slow_write_and_is_counted_exactly() {
-        let (counting, held, release) = behind_a_held_write().await;
+        let (counting, held, release, _) = behind_a_held_write().await;
 
         tokio::time::timeout(Duration::from_secs(1), counting.count_call(&a_call()))
             .await
@@ -213,7 +222,7 @@ mod tests {
     /// the write ends, and the read, with no settle of its own, must see it.
     #[tokio::test]
     async fn a_read_of_the_counts_sees_every_count_queued_before_it() {
-        let (counting, held, release) = behind_a_held_write().await;
+        let (counting, held, release, _) = behind_a_held_write().await;
         counting
             .count_call(&a_call())
             .await
@@ -224,5 +233,30 @@ mod tests {
         let counts = counting.call_counts().await.expect("the counts read");
         assert_eq!(counts.len(), 1, "{counts:?}");
         assert_eq!(counts[0].count, 1, "{counts:?}");
+    }
+
+    /// **The starts of a bot's runs are answered while a slow write holds the
+    /// writer and a count waits behind it.** The room of a bot's thoughts and the
+    /// age of a thought ask only when runs began, so they must not wait for the
+    /// counts that `summaries_of` waits for. Paired with the case above: the same
+    /// held write, the same queued count, and a read that is answered at once.
+    #[tokio::test]
+    async fn the_starts_of_runs_are_answered_without_waiting_for_a_queued_count() {
+        let (counting, held, release, run) = behind_a_held_write().await;
+        counting
+            .count_call(&a_call())
+            .await
+            .expect("the count is accepted");
+
+        let starts =
+            tokio::time::timeout(Duration::from_secs(1), counting.run_starts(Some(&run.bot)))
+                .await
+                .expect("reading when runs began waited for the writer")
+                .expect("the starts read");
+        assert_eq!(starts.len(), 1, "{starts:?}");
+        assert_eq!(starts[0].started_at, run.started_at, "{starts:?}");
+
+        release.notify_one();
+        held.await.expect("the slow write ends");
     }
 }

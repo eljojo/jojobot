@@ -1187,6 +1187,30 @@ pub struct SessionSummary {
     pub unreadable: Option<String>,
 }
 
+/// **When a run began and what state it is in**, and nothing a call count or a
+/// served total could change: the answer of [`Sessions::run_starts`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunStart {
+    /// When it began.
+    pub started_at: Timestamp,
+    /// Which column it sits in.
+    pub state: SessionState,
+    /// Whether the row could be read whole; a run that could not has no moment to
+    /// count (see [`SessionSummary::unreadable`]).
+    pub readable: bool,
+}
+
+impl RunStart {
+    /// The start of one summarised run.
+    pub fn of(summary: &SessionSummary) -> Self {
+        Self {
+            started_at: summary.started_at,
+            state: summary.state,
+            readable: summary.unreadable.is_none(),
+        }
+    }
+}
+
 impl SessionSummary {
     /// **The name the run answers to**: its public name, or its own id for a card
     /// written before names were kept. The name its calls are counted under.
@@ -1514,6 +1538,23 @@ pub trait Sessions: Send + Sync {
         let runs = self.all_sessions().await?;
         let histories = self.scan_session_history().await?;
         Ok(summaries_with(&runs, &histories))
+    }
+
+    /// **When each run began and what state it is in, with no count of calls and
+    /// no served total.** What a reader asks when it needs only which runs a bot
+    /// has and when they began: the room of a bot's thoughts, the age of a
+    /// thought, the number of live runs.
+    ///
+    /// **Defaulted off [`summaries_of`](Sessions::summaries_of) and
+    /// [`all_summaries`](Sessions::all_summaries)**, `None` meaning every bot's.
+    /// A layer that defers the counting of calls forwards this and does not wait
+    /// for the counts, because nothing it returns is a count.
+    async fn run_starts(&self, bot: Option<&EntityId>) -> Result<Vec<RunStart>, SessionError> {
+        let runs = match bot {
+            Some(bot) => self.summaries_of(bot).await?,
+            None => self.all_summaries().await?,
+        };
+        Ok(runs.iter().map(RunStart::of).collect())
     }
 
     /// **One run, without its chronology** — `None` when no run carries the id,

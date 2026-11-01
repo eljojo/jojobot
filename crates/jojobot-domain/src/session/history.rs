@@ -429,6 +429,15 @@ pub fn started_ats(runs: &[SessionSummary]) -> Vec<Timestamp> {
         .collect()
 }
 
+/// **The moments the runs of a bot began**, read from [`Sessions::run_starts`]:
+/// the same answer as [`started_ats`], for a caller that holds no summaries.
+pub fn start_moments(runs: &[super::RunStart]) -> Vec<Timestamp> {
+    runs.iter()
+        .filter(|run| run.readable)
+        .map(|run| run.started_at)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

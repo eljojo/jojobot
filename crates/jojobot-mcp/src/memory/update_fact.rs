@@ -962,10 +962,10 @@ impl Jojobot {
                 .is_some_and(|v| v.trim().parse::<usize>().is_ok())
                 && self.could_join_a_room(&address, &patch).await
             {
-                match self.sessions.summaries_of(&address.home).await {
+                match self.sessions.run_starts(Some(&address.home)).await {
                     Ok(runs) => {
                         patch.aged_before = jojobot_domain::memory::aging_cutoff(
-                            &jojobot_domain::session::history::started_ats(&runs),
+                            &jojobot_domain::session::history::start_moments(&runs),
                             jojobot_domain::memory::ages_after_runs_of(&fields),
                         );
                     }

@@ -77,12 +77,12 @@ impl Jojobot {
                 touched.insert(fact.id.clone(), at);
             }
         }
-        let runs = self.sessions.summaries_of(bot).await.ok();
+        let runs = self.sessions.run_starts(Some(bot)).await.ok();
         let setting = jojobot_domain::memory::ages_after_runs_setting(fields);
         let ages_after = setting.unwrap_or(jojobot_domain::memory::AGES_AFTER_RUNS);
         let cutoff = runs.as_ref().and_then(|runs| {
             jojobot_domain::memory::aging_cutoff(
-                &jojobot_domain::session::history::started_ats(runs),
+                &jojobot_domain::session::history::start_moments(runs),
                 ages_after,
             )
         });

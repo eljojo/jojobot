@@ -351,7 +351,7 @@ impl Metrics {
     /// **Read the store once for every gauge a scrape serves.**
     async fn read_gauges(&self, ports: &Ports) {
         self.sessions_live.clear();
-        let sessions = tokio::time::timeout(READ_TIMEOUT, ports.sessions.all_summaries()).await;
+        let sessions = tokio::time::timeout(READ_TIMEOUT, ports.sessions.run_starts(None)).await;
         let read = match sessions {
             Ok(Ok(runs)) => {
                 let live = runs
