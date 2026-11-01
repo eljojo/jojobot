@@ -14,6 +14,7 @@ test-adoption_room
 test-agency_room
 test-app_api
 test-app_api_unstable
+test-app_grant_kinds_start
 test-arbiter
 test-argument_coverage
 test-asking_room

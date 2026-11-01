@@ -175,11 +175,14 @@ async fn main() -> anyhow::Result<()> {
         mailboxes: booted.mailboxes.clone(),
         memory: booted.memory.clone(),
     };
-    jojobot::app_api::check_grants_are_served(
-        &config.apps,
-        &jojobot_mcp::app_ops::Registry::shipped(),
-    )
-    .map_err(|why| anyhow::anyhow!(why))?;
+    // **The grants are resolved here, not when the configuration is read**: they
+    // name kinds, and the kind set is loaded when the store comes up.
+    let apps = config
+        .apps
+        .build()
+        .context("resolving the registered apps")?;
+    jojobot::app_api::check_grants_are_served(&apps, &jojobot_mcp::app_ops::Registry::shipped())
+        .map_err(|why| anyhow::anyhow!(why))?;
     let state = AppState {
         resource: config.resource.clone(),
         issuer,
@@ -196,7 +199,7 @@ async fn main() -> anyhow::Result<()> {
         clock: booted.clock,
         push,
         quiet_after: None,
-        apps: jojobot::app_api::Apps::new(config.apps.clone()),
+        apps: jojobot::app_api::Apps::new(apps.clone()),
         metrics: metrics.clone(),
     };
     // The pool every port above holds is only good for as long as this
@@ -240,10 +243,10 @@ async fn main() -> anyhow::Result<()> {
     // listener is bound and never before, so a caller that spawned this process
     // can read it and know THIS server is the one on that address. A port
     // answering says only that somebody is there.
-    if !config.apps.is_empty() {
+    if !apps.is_empty() {
         tracing::info!(
-            apps = config.apps.len(),
-            revoked = config.apps.iter().filter(|a| a.revoked).count(),
+            apps = apps.len(),
+            revoked = apps.iter().filter(|a| a.revoked).count(),
             "apps registered: the app route is mounted"
         );
     }

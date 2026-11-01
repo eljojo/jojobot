@@ -70,10 +70,12 @@ pub struct Config {
     /// `None` means no push service is set up: nothing is pushed and nothing
     /// is logged about it.
     pub ntfy: Option<crate::push::NtfyConfig>,
-    /// **The apps the operator registered**, each with the hash of its token and
-    /// one grant. Empty means no app is registered: the app route is not
-    /// mounted and no app token opens anything.
-    pub apps: Vec<jojobot_domain::app::AppPrincipal>,
+    /// **The apps file and the token hashes, read but not yet resolved.** The
+    /// grants name kinds, and the kind set is loaded when the store comes up,
+    /// which is after the configuration is read, so [`AppInputs::build`] runs
+    /// then. Empty means no app is registered: the app route is not mounted and
+    /// no app token opens anything.
+    pub apps: AppInputs,
     /// **Where the metrics listener binds.** `None` binds nothing, which is what
     /// an instance gets unless the operator turns it on.
     pub metrics_bind: Option<SocketAddr>,
@@ -214,7 +216,7 @@ impl Config {
         )?;
 
         let ntfy = build_ntfy(raw.ntfy_url, raw.ntfy_topic, raw.ntfy_token)?;
-        let apps = build_apps(raw.apps_file, raw.credentials_dir)?;
+        let apps = read_apps(raw.apps_file, raw.credentials_dir)?;
 
         let metrics_bind = metrics_bind(raw.metrics_bind.as_deref(), bind)?;
 
@@ -263,12 +265,9 @@ pub fn app_credential_name(app: &str) -> String {
 /// due-making key) and an app with no token-hash credential each refuse to
 /// start: the other reading serves a grant nobody checked, or an app that
 /// can never log in while the operator believes it can.
-fn build_apps(
-    file: Option<String>,
-    credentials_dir: Option<String>,
-) -> anyhow::Result<Vec<jojobot_domain::app::AppPrincipal>> {
+fn read_apps(file: Option<String>, credentials_dir: Option<String>) -> anyhow::Result<AppInputs> {
     let Some(file) = file.map(|f| f.trim().to_string()).filter(|f| !f.is_empty()) else {
-        return Ok(Vec::new());
+        return Ok(AppInputs::default());
     };
     let text = std::fs::read_to_string(&file)
         .map_err(|e| anyhow::anyhow!("JOJOBOT_APPS_FILE ({file:?}) cannot be read: {e}"))?;
@@ -293,7 +292,24 @@ fn build_apps(
         })?;
         hashes.insert(spec.name.clone(), hash.trim().to_string());
     }
-    Ok(jojobot_domain::app::build_apps(&specs, &hashes)?)
+    Ok(AppInputs { specs, hashes })
+}
+
+/// **What the apps file and the credentials said**, before any grant is
+/// resolved against the instance's kinds.
+#[derive(Debug, Clone, Default)]
+pub struct AppInputs {
+    specs: Vec<jojobot_domain::app::AppSpec>,
+    hashes: std::collections::BTreeMap<String, String>,
+}
+
+impl AppInputs {
+    /// **Resolve every grant.** Call it once the store is up and its kinds are
+    /// loaded: a grant of `capture` on kinds is checked against that set, and a
+    /// kind nothing holds refuses the start, naming the token.
+    pub fn build(&self) -> anyhow::Result<Vec<jojobot_domain::app::AppPrincipal>> {
+        Ok(jojobot_domain::app::build_apps(&self.specs, &self.hashes)?)
+    }
 }
 
 /// Assemble where pushes go, or `None` when no push service is set up.
@@ -986,10 +1002,11 @@ mod tests {
         }
 
         fn load(&self) -> anyhow::Result<Vec<jojobot_domain::app::AppPrincipal>> {
-            super::build_apps(
+            super::read_apps(
                 Some(self.0.join("apps.json").display().to_string()),
                 Some(self.0.join("creds").display().to_string()),
-            )
+            )?
+            .build()
         }
     }
 
@@ -1012,9 +1029,17 @@ mod tests {
 
     #[test]
     fn no_apps_file_registers_no_app() {
-        assert!(super::build_apps(None, None).unwrap().is_empty());
         assert!(
-            super::build_apps(Some("  ".into()), None)
+            super::read_apps(None, None)
+                .unwrap()
+                .build()
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            super::read_apps(Some("  ".into()), None)
+                .unwrap()
+                .build()
                 .unwrap()
                 .is_empty()
         );
@@ -1109,7 +1134,7 @@ mod tests {
             missing.contains("springfield-ci") && missing.contains("credential"),
             "the app whose credential is missing is named: {missing}"
         );
-        let no_directory = super::build_apps(
+        let no_directory = super::read_apps(
             Some(no_credential.0.join("apps.json").display().to_string()),
             None,
         )
