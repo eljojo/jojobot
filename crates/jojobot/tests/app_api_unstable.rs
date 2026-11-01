@@ -431,6 +431,11 @@ async fn unstable_an_operation_nobody_has_is_a_404_naming_it_and_the_operations_
         said.contains("capture") && said.contains("post_message"),
         "the granted operations ride beside it: {refused}"
     );
+    // The set is the grant's, not the registry's: add_entity is served and was not granted.
+    assert!(
+        !said.contains("add_entity"),
+        "an operation the registry holds and the app was not granted stays off the list: {refused}"
+    );
 }
 
 #[tokio::test]

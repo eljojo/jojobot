@@ -245,6 +245,22 @@ mod tests {
     use super::*;
     use crate::app::{AppSpec, hash_token, mint_token};
 
+    /// **The allowed set is cut at the limit and counts the rest; an empty set
+    /// says so.** Each branch beside the set that stays under the limit.
+    #[test]
+    fn the_allowed_set_is_cut_at_the_limit_and_an_empty_one_says_none() {
+        let named =
+            |count: usize| -> Vec<String> { (0..count).map(|n| format!("k{n:02}")).collect() };
+        let exactly = named(LISTED);
+        let said = listed(exactly.iter().map(String::as_str));
+        assert!(said.contains("k19") && !said.contains("more"), "{said}");
+        let over = named(LISTED + 3);
+        let said = listed(over.iter().map(String::as_str));
+        assert!(said.contains("k19") && !said.contains("k20"), "{said}");
+        assert!(said.ends_with("and 3 more"), "{said}");
+        assert_eq!(listed(std::iter::empty()), "none");
+    }
+
     fn spec(operations: Vec<OperationSpec>) -> AppSpec {
         AppSpec {
             name: "springfield-watch".into(),
