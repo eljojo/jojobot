@@ -1201,6 +1201,42 @@ fn an_inventory_that_is_not_a_git_listing_or_lists_nothing_is_refused() {
     );
 }
 
+/// **An inventory only lists: an option that writes a file is refused and nothing is
+/// written.** `git diff --output=FILE` writes its diff to FILE, so the report could
+/// make the tool write. The same listing without the option, and a path after `--`
+/// that merely looks like the option, pass.
+#[test]
+fn an_inventory_option_that_writes_a_file_is_refused() {
+    let files = files_repository();
+    let all: Vec<String> = CHANGED.iter().map(|path| read_by(path)).collect();
+    let written = files.repo.dir.join("written-by-the-report");
+    for option in [
+        format!("--output={}", written.display()),
+        format!("--output {}", written.display()),
+    ] {
+        let inventory = format!(
+            "git diff {option} --name-only {}..{}",
+            files.repo.base, files.repo.head
+        );
+        let (code, out, _) = check_review(&files, &scoped(&files, &inventory, &all));
+        assert_eq!(code, 1, "{inventory}: {out}");
+        assert!(
+            failures(&out)
+                .iter()
+                .any(|l| l.contains("INVENTORY") && l.contains("--output")),
+            "{inventory}: {out}"
+        );
+        assert!(!written.exists(), "{inventory}: the report wrote a file");
+    }
+    let plain = format!(
+        "git diff --name-only {}..{} -- src",
+        files.repo.base, files.repo.head
+    );
+    let lines = vec![read_by(CHANGED[0]), read_by(CHANGED[1])];
+    let (code, out, err) = check_review(&files, &scoped(&files, &plain, &lines));
+    assert_eq!(code, 0, "{out}\n{err}");
+}
+
 /// **With no inventory the whole-range gate stands**: a block that reads two of the
 /// three changed files fails naming the third.
 #[test]

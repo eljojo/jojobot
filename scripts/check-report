@@ -335,6 +335,14 @@ def review_says(spec, text):
 
 # The git listings an INVENTORY line may name. Each only lists paths.
 INVENTORY_VERBS = ("diff", "ls-files", "ls-tree")
+# The options an INVENTORY may carry before `--`: those that choose which files a
+# listing names or how it prints them. Anything else is refused, because git
+# options can write a file (diff --output) or run a program (--ext-diff).
+INVENTORY_FLAG = re.compile(
+    r"-z|-r|-o|-c|-m|-d|-s|-M"
+    r"|--(name-only|name-status|cached|staged|full-name|others|modified|deleted"
+    r"|exclude-standard|no-renames|relative(=.*)?|diff-filter=[A-Za-z]+)"
+)
 
 
 def scope_of(block, changed, spec, fail):
@@ -363,6 +371,16 @@ def scope_of(block, changed, spec, fail):
             fail(
                 f"INVENTORY: `{command}` is not a git listing"
                 f" (git {' | '.join(INVENTORY_VERBS)})"
+            )
+            refused = True
+            continue
+        before_paths = words[2 : words.index("--")] if "--" in words else words[2:]
+        odd = [w for w in before_paths if w.startswith("-") and not INVENTORY_FLAG.fullmatch(w)]
+        if odd:
+            fail(
+                f"INVENTORY: `{command}` has the option {odd[0]}, which a listing does not"
+                " take (an option such as --output writes a file); the options allowed are"
+                " those that choose which files are listed"
             )
             refused = True
             continue
