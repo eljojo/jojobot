@@ -2574,7 +2574,7 @@ async fn markup_a_writer_typed_arrives_as_text_and_not_as_document() {
 }
 
 #[tokio::test]
-async fn a_long_body_is_collapsed_to_its_opening_and_still_whole_on_the_page() {
+async fn a_long_body_and_a_long_beat_are_collapsed_to_their_opening_and_still_whole_on_the_page() {
     let idp = support::TestIdp::new();
     let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
     let (addr, ct, _board) =
@@ -2613,23 +2613,6 @@ async fn a_long_body_is_collapsed_to_its_opening_and_still_whole_on_the_page() {
         1,
         "only the body that outgrew the budget is collapsed: {mail}"
     );
-    ct.cancel();
-}
-
-#[tokio::test]
-async fn a_long_beat_is_collapsed_the_same_way_as_a_long_body() {
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
-    let (addr, ct, _board) =
-        spawn_jojobot_over(endpoints, &[READER], &idp, seeded_board().await).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
-
-    let body = read(&client, addr, "/bot:otto/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
 
     // A chronology entry is somebody's writing at the same lengths a message
     // body reaches, so it is folded by the same rule rather than a second one.
