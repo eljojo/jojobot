@@ -569,6 +569,99 @@ async fn a_key_write_with_no_pointer_names_no_run() {
     store.stop().await;
 }
 
+/// 🚨 **A key write is read once, however many runs share the sid it names.** A
+/// `sid` is unique only among the runs that are active, so a wrapped run and a
+/// later one can hold the same sid, and a read that joined the run's row by sid
+/// alone would return the write once for each. The write names its run, the run
+/// names its bot, and the positive beside it: the history has the one entry.
+#[tokio::test]
+async fn a_key_write_is_read_once_when_two_runs_share_a_sid() {
+    use jojobot_domain::session::{NewSession, SessionState, Sessions, Sid};
+    let scratch = Scratch::new("shared-sid");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("sharedsid")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    let memory = DoltMemory::open(pool.clone());
+    jojobot_domain::memory::kinds::seed(&memory)
+        .await
+        .expect("the kinds are seeded");
+
+    let bot = EntityId("bot:contract-key-writer".into());
+    memory
+        .add_entity(NewEntity::new(
+            bot.clone(),
+            "Key Writer",
+            "contract-fixture",
+        ))
+        .await
+        .expect("add_entity ok")
+        .written()
+        .expect("the guard waves it through");
+    let sessions = crate::dolt::sessions::DoltSessions::open(pool.clone());
+    let begin = || NewSession {
+        bot: bot.clone(),
+        sid: Sid("cnf1".into()),
+        focus: "writing keys".into(),
+        started_at: jojobot_domain::session::testing::contract::epoch(),
+        timezone: None,
+        started_on: None,
+        id: None,
+        key_hash: None,
+    };
+    sessions.begin(begin()).await.expect("the first run begins");
+    sqlx::query("UPDATE session SET state = ? WHERE sid = ?")
+        .bind(SessionState::Wrapped.as_token())
+        .bind("cnf1")
+        .execute(&pool)
+        .await
+        .expect("the first run ends");
+    sessions.begin(begin()).await.expect("a later run begins");
+    let held: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM session WHERE sid = ?")
+        .bind("cnf1")
+        .fetch_one(&pool)
+        .await
+        .expect("the runs count");
+    assert_eq!(held, 2, "two runs hold the one sid");
+
+    let subject = EntityId::person("person:milhouse");
+    memory
+        .add_entity(NewEntity::new(
+            subject.clone(),
+            "Milhouse",
+            "contract-fixture",
+        ))
+        .await
+        .expect("add_entity ok")
+        .written()
+        .expect("the guard waves it through");
+    memory
+        .capture(jojobot_domain::memory::testing::contract::state(NewFact {
+            fields: [("colour".to_string(), "red".to_string())]
+                .into_iter()
+                .collect(),
+            session: Some("cnf1".to_string()),
+            ..NewFact::about(subject.clone(), "painted", date(2026, 10, 7))
+        }))
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("the guard waves it through");
+    let history = memory.history(&subject, "colour").await.expect("history");
+    assert_eq!(history.len(), 1, "the write comes back once: {history:?}");
+    assert_eq!(history[0].run.as_deref(), Some("cnf1"), "{history:?}");
+    assert!(
+        history[0].writer.is_some(),
+        "the run's bot is the writer: {history:?}"
+    );
+
+    store.stop().await;
+}
+
 /// **A field write as a merge orders it**: its key, its place in its own thing's
 /// history, the claim that carried it and the moment the store stamped it.
 #[derive(Debug, Clone, PartialEq, Eq)]
