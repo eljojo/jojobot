@@ -250,3 +250,104 @@ async fn a_bot_over_the_ceiling_by_the_warning_can_still_file_its_rules() {
         "the purpose landed: {filed:?}"
     );
 }
+
+/// **A filing that also changes another attribute of the rule is judged as growth.**
+/// The exemption is for the label the warning asks for, so a short purpose beside a
+/// date, an edge or a lineage pointer is an ordinary edit on a bot already over the
+/// ceiling: the floor refuses it and the stored claim is left as it was. Paired with
+/// the filing above, which lands on the same bot.
+#[tokio::test]
+async fn a_filing_that_also_changes_another_attribute_is_refused_over_the_ceiling() {
+    use jojobot_domain::memory::{EntityId, NewFact};
+    let jojobot = crate::mailboxes::testing::mailbox_handler();
+    a_bot_at_the_brink(&jojobot, "gamma").await;
+    let bot = EntityId("bot:gamma".into());
+    let mut second = NewFact::about(
+        bot.clone(),
+        "a second rule that names no purpose",
+        jiff::civil::Date::constant(2026, 3, 10),
+    );
+    second.fields = [("starred".to_string(), "true".to_string())].into();
+    jojobot
+        .memory
+        .capture(second)
+        .await
+        .expect("the rule is written");
+    let budget = jojobot_domain::text::BOOT_ANSWER.budget;
+    let floor = jojobot
+        .boot_floors_of_bots(&crate::memory::reads_left::ReadsLeft::default())
+        .await
+        .into_iter()
+        .find(|(held, _)| held == &bot)
+        .expect("the bot's floor is measured")
+        .1;
+    assert!(
+        floor > budget,
+        "the floor is not over the ceiling, so the case proves nothing: {floor} of {budget}"
+    );
+    let held = jojobot.memory.recall(&bot).await.expect("the bot's claims");
+    let rule = held
+        .iter()
+        .find(|fact| fact.content == "a second rule that names no purpose")
+        .expect("the unfiled rule");
+    let other = held
+        .iter()
+        .find(|fact| fact.id != rule.id)
+        .expect("another claim of the bot")
+        .address()
+        .to_string();
+    let address = rule.address().to_string();
+    let update = |args: crate::memory::update_fact::UpdateFactArgs| {
+        let jojobot = &jojobot;
+        async move {
+            json_of(
+                &jojobot
+                    .update_fact(Parameters(crate::memory::update_fact::UpdateFactArgs {
+                        sid: Some(writing_as(jojobot)),
+                        fields: Some([("purpose".to_string(), "boot".to_string())].into()),
+                        ..args
+                    }))
+                    .await
+                    .expect("update answers"),
+            )
+        }
+    };
+
+    let beside = [
+        (
+            "a date",
+            crate::memory::update_fact::UpdateFactArgs {
+                happened_at: Some("2026-02-01".into()),
+                ..update_args(&address)
+            },
+        ),
+        (
+            "an edge",
+            crate::memory::update_fact::UpdateFactArgs {
+                shape: Some("about".into()),
+                object: Some("bot:gamma".into()),
+                ..update_args(&address)
+            },
+        ),
+        (
+            "a lineage pointer",
+            crate::memory::update_fact::UpdateFactArgs {
+                derived_from: Some(other),
+                ..update_args(&address)
+            },
+        ),
+    ];
+    for (what, args) in beside {
+        let answer = update(args).await;
+        assert!(
+            answer.get("floor_parts").is_some(),
+            "a filing beside {what} was taken for a filing: {answer}"
+        );
+    }
+    let after = jojobot.memory.recall(&bot).await.expect("the bot's claims");
+    let kept = after
+        .iter()
+        .find(|fact| fact.id == rule.id)
+        .expect("the rule is still there");
+    assert_eq!(kept, rule, "a refused edit changed the stored claim");
+}

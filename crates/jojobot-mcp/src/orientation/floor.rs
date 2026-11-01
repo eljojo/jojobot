@@ -726,11 +726,16 @@ impl Jojobot {
     /// **The purpose is a short label.** The exemption exists for the label the
     /// warning asks for, so a purpose over [`PURPOSE_FILING_MAX`] characters is an
     /// ordinary growth and is judged by the floor as one.
+    ///
+    /// **Every other part of the record must be as it was**: the whole record is
+    /// compared with its purpose taken off, so a date, an edge, a lineage pointer or
+    /// a standing changed beside the purpose is not a filing. A list of the parts
+    /// that count would miss the next attribute the record gains.
     fn only_files(before: &Fact, after: &Fact) -> bool {
-        let mut without = after.fields.clone();
-        without.remove("purpose");
-        let mut earlier = before.fields.clone();
-        earlier.remove("purpose");
+        let mut without = after.clone();
+        without.fields.remove("purpose");
+        let mut earlier = before.clone();
+        earlier.fields.remove("purpose");
         jojobot_domain::memory::seats::is_unfiled(before)
             && !jojobot_domain::memory::seats::is_unfiled(after)
             && after
@@ -738,9 +743,6 @@ impl Jojobot {
                 .get("purpose")
                 .is_some_and(|purpose| purpose.chars().count() <= PURPOSE_FILING_MAX)
             && earlier == without
-            && before.content == after.content
-            && before.details == after.details
-            && before.status == after.status
     }
 
     /// **Whether the boot of `bot` is over the ceiling as it stands**, for the
