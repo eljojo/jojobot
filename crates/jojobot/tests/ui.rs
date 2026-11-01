@@ -5967,60 +5967,6 @@ async fn a_page_names_the_write_the_fold_took_the_value_from_after_an_in_place_r
     ct.cancel();
 }
 
-/// **A summing key says nothing about how it is known, and an ordinary key beside
-/// it still does.** The verb names no backing for a total, because no one write
-/// holds it, so the page does not pick one. `donuts` is written twice and totals
-/// 3; `price` is written once and says how.
-#[tokio::test]
-async fn a_summing_key_says_nothing_of_how_it_is_known_and_an_ordinary_key_still_does() {
-    let (memory, _, _) =
-        price_written_twice_then_the_older_rewritten("work:donut-budget", "Donut budget").await;
-    memory
-        .declare_type(
-            DeclaredType::new("donut-eaten", vec![Field::summing("donuts")]),
-            None,
-        )
-        .await
-        .expect("the counter is declared");
-    for (count, day) in [("1", 12), ("2", 13)] {
-        let mut eaten = NewFact::about(
-            EntityId("work:donut-budget".into()),
-            "some were eaten",
-            Date::constant(2026, 3, day),
-        );
-        eaten.fields = [("donuts".to_string(), count.to_string())]
-            .into_iter()
-            .collect();
-        eaten.sets = ["donuts".to_string()].into_iter().collect();
-        memory.capture(eaten).await.expect("the count is written");
-    }
-    let board = seeded_board_over(memory).await;
-    let (addr, ct, client, cookie) = signed_in_over(board).await;
-
-    let page = read_text(&client, addr, "/work:donut-budget/", &cookie).await;
-    let fields = section(&page, "fields");
-    let donuts = fields
-        .split_once("?history=donuts")
-        .expect("the donuts key is in the fields table")
-        .1
-        .split_once("</tr>")
-        .expect("…and its row closes")
-        .0;
-    assert!(
-        donuts.contains("<td>3"),
-        "the total leads the row: {donuts}"
-    );
-    assert!(
-        !donuts.contains("<details>"),
-        "a total has no one write to name, so no fold: {donuts}"
-    );
-    assert!(
-        price_row(&page).contains("<details>"),
-        "an ordinary key on the same page still says how it is known"
-    );
-    ct.cancel();
-}
-
 /// **A project's page names the write the fold took a value from.** The same
 /// pair as a thing's page, through the project's own "who wrote each value":
 /// before the rewrite beta (inference) is named for `price`, after it alpha
