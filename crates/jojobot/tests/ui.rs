@@ -363,11 +363,7 @@ fn summary_of(chunk: &str) -> &str {
 
 #[tokio::test]
 async fn a_node_page_lists_what_is_below_it() {
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
-    let (addr, ct) = spawn_jojobot(endpoints, &[READER], &idp).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
+    let (addr, ct, client, cookie) = signed_in().await;
 
     let page = read(&client, addr, "/person:alpha/", &cookie).await;
     assert_eq!(page.status(), reqwest::StatusCode::OK);
@@ -388,11 +384,7 @@ async fn a_node_page_lists_what_is_below_it() {
 
 #[tokio::test]
 async fn a_node_page_shows_the_facts_held_there_and_who_backs_them() {
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
-    let (addr, ct) = spawn_jojobot(endpoints, &[READER], &idp).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
+    let (addr, ct, client, cookie) = signed_in().await;
 
     let body = read(&client, addr, "/person:alpha/topic:widgets/", &cookie)
         .await
@@ -586,11 +578,7 @@ async fn a_mention_in_served_text_becomes_a_followable_link() {
 /// page for one key carries that key's writes, oldest first.
 #[tokio::test]
 async fn a_key_on_a_node_page_opens_to_the_writes_behind_it() {
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
-    let (addr, ct) = spawn_jojobot(endpoints, &[READER], &idp).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
+    let (addr, ct, client, cookie) = signed_in().await;
 
     let plain = read(&client, addr, "/person:alpha/topic:widgets/", &cookie)
         .await
@@ -652,11 +640,7 @@ async fn a_key_on_a_node_page_opens_to_the_writes_behind_it() {
 /// them: either header read on its own is defensible.
 #[tokio::test]
 async fn the_two_tables_head_one_axis_with_one_word() {
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
-    let (addr, ct) = spawn_jojobot(endpoints, &[READER], &idp).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
+    let (addr, ct, client, cookie) = signed_in().await;
 
     let page = read(
         &client,
@@ -707,11 +691,7 @@ async fn the_two_tables_head_one_axis_with_one_word() {
 /// matters on the few that do.
 #[tokio::test]
 async fn a_node_page_with_no_fields_says_so_rather_than_showing_an_empty_table() {
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
-    let (addr, ct) = spawn_jojobot(endpoints, &[READER], &idp).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
+    let (addr, ct, client, cookie) = signed_in().await;
 
     let body = read(&client, addr, "/place:shelbyville/", &cookie)
         .await
@@ -739,11 +719,7 @@ async fn a_node_page_with_no_fields_says_so_rather_than_showing_an_empty_table()
 
 #[tokio::test]
 async fn a_relation_is_a_link_to_the_entity_on_the_other_end() {
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
-    let (addr, ct) = spawn_jojobot(endpoints, &[READER], &idp).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
+    let (addr, ct, client, cookie) = signed_in().await;
 
     let body = read(&client, addr, "/person:alpha/topic:widgets/", &cookie)
         .await
@@ -764,11 +740,7 @@ async fn a_relation_is_a_link_to_the_entity_on_the_other_end() {
 
 #[tokio::test]
 async fn a_path_that_is_not_where_an_entity_lives_lands_at_the_one_that_is() {
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
-    let (addr, ct) = spawn_jojobot(endpoints, &[READER], &idp).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
+    let (addr, ct, client, cookie) = signed_in().await;
 
     // The handle is identity and the path is position. A handle typed at the
     // top is the same entity, so it is sent to where that entity sits rather
@@ -785,11 +757,7 @@ async fn a_path_that_is_not_where_an_entity_lives_lands_at_the_one_that_is() {
 
 #[tokio::test]
 async fn a_handle_nobody_has_is_not_found() {
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
-    let (addr, ct) = spawn_jojobot(endpoints, &[READER], &idp).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
+    let (addr, ct, client, cookie) = signed_in().await;
 
     for missing in ["/person:contract-ghost/", "/not-a-handle/"] {
         let response = read(&client, addr, missing, &cookie).await;
@@ -1126,12 +1094,7 @@ async fn an_archived_entity_is_excluded_from_every_browse_but_still_serves_its_o
 
 #[tokio::test]
 async fn a_bot_page_shows_the_mailbox_it_owns_and_the_mail_in_it() {
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
-    let (addr, ct, _board) =
-        spawn_jojobot_over(endpoints, &[READER], &idp, seeded_board().await).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
+    let (addr, ct, client, cookie) = signed_in().await;
 
     let body = read(&client, addr, "/bot:otto/", &cookie)
         .await
@@ -2285,12 +2248,7 @@ async fn the_action_takes_a_referer_under_our_origin_when_there_is_no_origin() {
 
 #[tokio::test]
 async fn a_bot_page_shows_its_runs_and_what_each_one_recorded() {
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
-    let (addr, ct, _board) =
-        spawn_jojobot_over(endpoints, &[READER], &idp, seeded_board().await).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
+    let (addr, ct, client, cookie) = signed_in().await;
 
     let body = read(&client, addr, "/bot:otto/", &cookie)
         .await
@@ -2450,12 +2408,7 @@ async fn looking_through_the_listing_writes_to_no_rail() {
 /// page.
 #[tokio::test]
 async fn markup_a_writer_typed_arrives_as_text_and_not_as_document() {
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
-    let (addr, ct, _board) =
-        spawn_jojobot_over(endpoints, &[READER], &idp, seeded_board().await).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
+    let (addr, ct, client, cookie) = signed_in().await;
 
     for (path, fields) in [
         ("/", &["place-name"][..]),
@@ -2494,12 +2447,7 @@ async fn markup_a_writer_typed_arrives_as_text_and_not_as_document() {
 
 #[tokio::test]
 async fn a_long_body_and_a_long_beat_are_collapsed_to_their_opening_and_still_whole_on_the_page() {
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
-    let (addr, ct, _board) =
-        spawn_jojobot_over(endpoints, &[READER], &idp, seeded_board().await).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
+    let (addr, ct, client, cookie) = signed_in().await;
 
     let body = read(&client, addr, "/bot:otto/", &cookie)
         .await
@@ -2898,6 +2846,27 @@ async fn spawn_over_views(
     (addr, ct)
 }
 
+/// **A server over the ordinary board and a browser signed in to it**, for a case
+/// that reads pages and needs nothing from the login but its cookie.
+async fn signed_in() -> (SocketAddr, CancellationToken, reqwest::Client, String) {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct) = spawn_jojobot(endpoints, &[READER], &idp).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+    (addr, ct, client, cookie)
+}
+
+/// **[`signed_in`] over the board that holds the views this build supplies.**
+async fn signed_in_over_views() -> (SocketAddr, CancellationToken, reqwest::Client, String) {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct) = spawn_over_views(&idp, endpoints).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+    (addr, ct, client, cookie)
+}
+
 /// The refusal sentence alone — everything the page says about why the view
 /// could not be run, and nothing else it happens to carry.
 fn refusal_on(page: &str) -> &str {
@@ -2930,11 +2899,7 @@ fn refusal_on(page: &str) -> &str {
 /// each result linking onward.
 #[tokio::test]
 async fn a_views_page_runs_the_view_and_shows_the_result() {
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
-    let (addr, ct) = spawn_over_views(&idp, endpoints).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
+    let (addr, ct, client, cookie) = signed_in_over_views().await;
 
     let page = read(&client, addr, "/view:loops/", &cookie)
         .await
@@ -2970,11 +2935,7 @@ async fn a_views_page_runs_the_view_and_shows_the_result() {
 /// the handle order they would otherwise take.
 #[tokio::test]
 async fn a_views_page_runs_the_views_expression_and_order() {
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
-    let (addr, ct) = spawn_over_views(&idp, endpoints).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
+    let (addr, ct, client, cookie) = signed_in_over_views().await;
 
     let page = read(&client, addr, "/view:latest-first/", &cookie)
         .await
@@ -3046,11 +3007,7 @@ fn answer_rows(page: &str) -> Vec<&str> {
 /// column for each and the value in the colleague's own row, not in another's.
 #[tokio::test]
 async fn the_colleagues_views_page_shows_who_each_bot_reports_to() {
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
-    let (addr, ct) = spawn_over_views(&idp, endpoints).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
+    let (addr, ct, client, cookie) = signed_in_over_views().await;
 
     let page = read(&client, addr, "/view:colleagues/", &cookie)
         .await
@@ -3082,11 +3039,7 @@ async fn the_colleagues_views_page_shows_who_each_bot_reports_to() {
 /// differently from a view that could not be run at all.
 #[tokio::test]
 async fn a_view_that_matches_nothing_says_so() {
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
-    let (addr, ct) = spawn_over_views(&idp, endpoints).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
+    let (addr, ct, client, cookie) = signed_in_over_views().await;
 
     let page = read(&client, addr, "/view:matches-nothing/", &cookie)
         .await
@@ -3116,11 +3069,7 @@ async fn a_view_that_matches_nothing_says_so() {
 /// nobody can ask, the other is a question with no answer today.
 #[tokio::test]
 async fn a_view_short_of_a_key_names_the_key_rather_than_reading_as_empty() {
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
-    let (addr, ct) = spawn_over_views(&idp, endpoints).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
+    let (addr, ct, client, cookie) = signed_in_over_views().await;
 
     let page = read(&client, addr, "/view:my-people/", &cookie)
         .await
@@ -3148,11 +3097,7 @@ async fn a_view_short_of_a_key_names_the_key_rather_than_reading_as_empty() {
 /// holds something that is no kind* send a reader to different places.
 #[tokio::test]
 async fn a_view_selecting_something_that_is_no_kind_says_what_it_holds() {
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
-    let (addr, ct) = spawn_over_views(&idp, endpoints).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
+    let (addr, ct, client, cookie) = signed_in_over_views().await;
 
     let page = read(&client, addr, "/view:names-no-kind/", &cookie)
         .await
@@ -3183,11 +3128,7 @@ async fn a_view_selecting_something_that_is_no_kind_says_what_it_holds() {
 /// different answer.
 #[tokio::test]
 async fn a_view_that_asks_for_what_is_overdue_leaves_out_what_is_not() {
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
-    let (addr, ct) = spawn_over_views(&idp, endpoints).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
+    let (addr, ct, client, cookie) = signed_in_over_views().await;
 
     let page = read(&client, addr, "/view:my-week/", &cookie)
         .await
@@ -3223,11 +3164,7 @@ async fn a_view_that_asks_for_what_is_overdue_leaves_out_what_is_not() {
 /// than passing on a page that was never reordered at all.
 #[tokio::test]
 async fn a_view_that_asks_for_what_is_overdue_renders_oldest_first() {
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
-    let (addr, ct) = spawn_over_views(&idp, endpoints).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
+    let (addr, ct, client, cookie) = signed_in_over_views().await;
 
     let page = read(&client, addr, "/view:my-week/", &cookie)
         .await
@@ -3481,11 +3418,7 @@ async fn the_overdue_page_reads_the_words_the_instance_maps() {
 /// **A handle that is no view is unaffected.**
 #[tokio::test]
 async fn a_page_that_is_no_view_carries_no_answer() {
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
-    let (addr, ct) = spawn_over_views(&idp, endpoints).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
+    let (addr, ct, client, cookie) = signed_in_over_views().await;
 
     let page = read(&client, addr, "/person:alpha/", &cookie)
         .await
@@ -4102,11 +4035,7 @@ fn left_out_on(page: &str, id: &str) -> Option<u64> {
 /// same reading instruction.
 #[tokio::test]
 async fn a_views_page_says_what_it_left_out_as_recall_does() {
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
-    let (addr, ct) = spawn_over_views(&idp, endpoints).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
+    let (addr, ct, client, cookie) = signed_in_over_views().await;
 
     let week = read(&client, addr, "/view:my-week/", &cookie)
         .await
@@ -4199,11 +4128,7 @@ const PAGES: [&str; 4] = [
 
 #[tokio::test]
 async fn every_page_wears_the_one_stylesheet_and_the_shell() {
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
-    let (addr, ct) = spawn_jojobot(endpoints, &[READER], &idp).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
+    let (addr, ct, client, cookie) = signed_in().await;
 
     for path in PAGES {
         let page = read(&client, addr, path, &cookie)
@@ -4237,11 +4162,7 @@ async fn every_page_wears_the_one_stylesheet_and_the_shell() {
 
 #[tokio::test]
 async fn the_header_walks_the_handle_path_and_the_page_content_is_unchanged_inside_main() {
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
-    let (addr, ct) = spawn_jojobot(endpoints, &[READER], &idp).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
+    let (addr, ct, client, cookie) = signed_in().await;
 
     let page = read(&client, addr, "/person:alpha/topic:widgets/", &cookie)
         .await
@@ -6126,11 +6047,7 @@ async fn a_project_with_nothing_under_it_has_no_contents_box() {
 /// result is an address a person can keep.
 #[tokio::test]
 async fn every_page_carries_a_search_box_that_asks_the_search_page() {
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
-    let (addr, ct) = spawn_jojobot(endpoints, &[READER], &idp).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
+    let (addr, ct, client, cookie) = signed_in().await;
 
     for path in ["/", "/person:alpha/", "/person:alpha/topic:widgets/"] {
         let body = read(&client, addr, path, &cookie)
@@ -6154,11 +6071,7 @@ async fn every_page_carries_a_search_box_that_asks_the_search_page() {
 /// thing named by it, and a word nothing holds says so and links nothing.
 #[tokio::test]
 async fn a_search_from_the_box_lists_what_the_search_finds_and_only_that() {
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
-    let (addr, ct) = spawn_jojobot(endpoints, &[READER], &idp).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
+    let (addr, ct, client, cookie) = signed_in().await;
 
     let found = read(&client, addr, "/ui/search?q=widgets", &cookie)
         .await
@@ -6485,11 +6398,7 @@ async fn a_page_with_only_unlisted_hits_does_not_say_nothing_found_or_name_mail(
 /// the page: outside the fold the row says none of it, inside it says all of it.
 #[tokio::test]
 async fn a_value_says_how_it_is_known_only_behind_its_fold() {
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
-    let (addr, ct) = spawn_jojobot(endpoints, &[READER], &idp).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
+    let (addr, ct, client, cookie) = signed_in().await;
 
     let page = read(&client, addr, "/person:alpha/topic:widgets/", &cookie)
         .await
@@ -6804,11 +6713,7 @@ fn labelled_row<'a>(body: &'a str, id: &str, label: &str) -> &'a str {
 /// holds its own neighbour and not the other's.
 #[tokio::test]
 async fn a_things_page_says_its_parent_and_what_points_at_it_and_what_it_points_at() {
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
-    let (addr, ct) = spawn_jojobot(endpoints, &[READER], &idp).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
+    let (addr, ct, client, cookie) = signed_in().await;
 
     let stall = read(&client, addr, "/person:alpha/topic:widgets/", &cookie)
         .await
