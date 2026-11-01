@@ -190,7 +190,7 @@ fn header(repo: &Repository) -> Vec<(&'static str, String)> {
         ("COMMIT", repo.head.clone()),
         ("BRANCH", BRANCH.to_string()),
         ("BASE", repo.base.clone()),
-        ("RUN", "700".to_string()),
+        ("RUN", "698".to_string()),
         ("OWNER", "scripts/check-report".to_string()),
         ("RETIRES", "none: nothing was made redundant".to_string()),
         ("FALSIFY", "git grep -n x -- y".to_string()),
@@ -245,7 +245,7 @@ fn a_header_whose_facts_hold_passes_every_key_and_exits_zero() {
     let repo = repository();
     let api = stand(green(&repo));
     let head = header(&repo);
-    let (code, out, err) = check(&repo, &api, &report(&with(&head, "RUN", "700")));
+    let (code, out, err) = check(&repo, &api, &report(&with(&head, "RUN", "698")));
     assert_eq!(code, 0, "{out}\n{err}");
     for key in [
         "COMMIT",
@@ -276,7 +276,7 @@ fn a_commit_that_is_not_the_head_of_the_branch_fails() {
     forge.branches = vec![(BRANCH.into(), repo.side.clone())];
     let api = stand(forge);
     let head = header(&repo);
-    let (code, out, _) = check(&repo, &api, &report(&with(&head, "RUN", "700")));
+    let (code, out, _) = check(&repo, &api, &report(&with(&head, "RUN", "698")));
     assert_eq!(code, 1, "{out}");
     let failed = failures(&out);
     assert_eq!(failed.len(), 1, "{out}");
@@ -342,12 +342,30 @@ fn a_run_that_is_not_a_green_run_of_the_commit_on_the_branch_fails() {
     ];
     for (name, forge) in cases {
         let api = stand(forge);
-        let (code, out, _) = check(&repo, &api, &report(&with(&head, "RUN", "700")));
+        let (code, out, _) = check(&repo, &api, &report(&with(&head, "RUN", "698")));
         assert_eq!(code, 1, "{name}: {out}");
         let failed = failures(&out);
         assert_eq!(failed.len(), 1, "{name}: {out}");
         assert!(failed[0].contains("RUN"), "{name}: {out}");
     }
+}
+
+/// **The forge id of the run is not its number, and the failure says which
+/// number to write.** `scripts/wait-run` prints the run's number first and its
+/// forge id in brackets; the report's RUN is the number.
+#[test]
+fn the_forge_id_written_as_the_run_fails_and_names_the_number_to_use() {
+    let repo = repository();
+    let api = stand(green(&repo));
+    let head = header(&repo);
+    let (code, out, _) = check(&repo, &api, &report(&with(&head, "RUN", "700")));
+    assert_eq!(code, 1, "{out}");
+    let failed = failures(&out);
+    assert_eq!(failed.len(), 1, "{out}");
+    assert!(
+        failed[0].contains("RUN") && failed[0].contains("698"),
+        "the failure names the number to use: {out}"
+    );
 }
 
 /// **A missing key is a failure that names it.** The prose below the header is
@@ -390,7 +408,7 @@ fn a_missing_net_table_and_a_bare_none_fail_like_a_missing_key() {
     let repo = repository();
     let api = stand(green(&repo));
     let head = header(&repo);
-    let text = report(&with(&head, "RUN", "700")).replace(NET_TABLE, "");
+    let text = report(&with(&head, "RUN", "698")).replace(NET_TABLE, "");
     let (code, out, _) = check(&repo, &api, &text);
     assert_eq!(code, 1, "{out}");
     assert!(failures(&out).iter().any(|l| l.contains("NET")), "{out}");
@@ -414,8 +432,8 @@ fn the_net_table_needs_its_heading_and_its_total_like_a_missing_key() {
     let head = header(&repo);
     let (heading, total) = NET_TABLE.split_at(NET_TABLE.find("-4").unwrap());
     for (kept, dropped) in [(heading, total), (total, heading)] {
-        let text = report(&with(&head, "RUN", "700")).replace(NET_TABLE, kept);
-        assert_ne!(text, report(&with(&head, "RUN", "700")), "{dropped}");
+        let text = report(&with(&head, "RUN", "698")).replace(NET_TABLE, kept);
+        assert_ne!(text, report(&with(&head, "RUN", "698")), "{dropped}");
         let (code, out, _) = check(&repo, &api, &text);
         assert_eq!(code, 1, "{out}");
         assert!(failures(&out).iter().any(|l| l.contains("NET")), "{out}");
@@ -431,7 +449,7 @@ fn a_preamble_above_the_header_leaves_the_keys_missing_like_a_missing_key() {
     let head = header(&repo);
     let text = format!(
         "A line of preamble.\n{}",
-        report(&with(&head, "RUN", "700"))
+        report(&with(&head, "RUN", "698"))
     );
     let (code, out, _) = check(&repo, &api, &text);
     assert_eq!(code, 1, "{out}");
@@ -671,7 +689,7 @@ fn a_review_that_carries_a_wrong_key_fails_on_that_key() {
     };
     let api = stand(forge);
     let text = format!(
-        "COMMIT: {head}\nBRANCH: {BRANCH}\nBASE: {wrong}\nRUN: 700\nREVIEW: {base}..{head}\n\nCOVERAGE:\n{}\n",
+        "COMMIT: {head}\nBRANCH: {BRANCH}\nBASE: {wrong}\nRUN: 698\nREVIEW: {base}..{head}\n\nCOVERAGE:\n{}\n",
         lines.join("\n"),
         head = files.repo.head,
         base = files.repo.base,
