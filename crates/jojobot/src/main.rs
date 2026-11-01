@@ -342,6 +342,14 @@ async fn main() -> anyhow::Result<()> {
         ?push_ended,
         "background tasks ended before the store stops"
     );
+    // **The counts of the calls just answered are queued, not awaited, so they
+    // reach the store before it stops.** A count still queued past the grace is lost.
+    if tokio::time::timeout(TASK_GRACE, booted.counts.settle())
+        .await
+        .is_err()
+    {
+        tracing::warn!("queued call counts were still unsaved at the grace; they are dropped");
+    }
     // **The store outlives the drain and stops here, asked and then killed.** The
     // unit signals this process alone, and the store has a process group of its
     // own, so nothing stops it before the calls above have finished with it.

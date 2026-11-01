@@ -36,6 +36,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Context;
+use jojobot_adapters::deferred_counts::DeferredCounts;
 use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::mailboxes::DoltMailboxes;
 use jojobot_adapters::dolt::memory::DoltMemory;
@@ -225,6 +226,9 @@ pub struct Wired {
     /// Mention-resolving — what `AppState.sessions` is directly. Never
     /// further indexed: see `sessions_indexed`.
     pub sessions: Arc<dyn Sessions>,
+    /// The same port as `sessions`, concrete: a call's counts are queued and not
+    /// awaited, and a caller that stops the store settles them first.
+    pub counts: Arc<DeferredCounts>,
     /// The same sessions, indexed — concrete, for a caller's own `rebuild`.
     /// `AppState.sessions` is `sessions` above, not this: a bot's own runs
     /// are indexed for `search` alone, the same asymmetry `main.rs` always
@@ -304,10 +308,15 @@ pub fn assemble_ports(
         vec![indexed, mail_index.clone(), sessions_indexed.clone()],
     ));
 
+    // **The last wrap on the runs, so the web pages and the verbs hold one port.**
+    // Counting a call is queued and the call is answered; see [`DeferredCounts`].
+    let counts = Arc::new(DeferredCounts::new(sessions_mentioned));
+
     Wired {
         mailboxes: mail_mentioned,
         mail_index,
-        sessions: sessions_mentioned,
+        sessions: counts.clone(),
+        counts,
         sessions_indexed,
         search,
         mail_image,
@@ -361,6 +370,8 @@ pub struct Booted {
     pub outbox: Arc<dyn jojobot_domain::push::Outbox>,
     /// What `AppState.sessions` is.
     pub sessions: Arc<dyn Sessions>,
+    /// The same port, concrete, to settle the queued counts before the store stops.
+    pub counts: Arc<DeferredCounts>,
     /// What `AppState.teachings` is.
     pub teachings: Arc<dyn Teachings>,
     /// What `AppState.registry` is.
@@ -1020,6 +1031,7 @@ pub async fn boot_store_observed(
         mailboxes,
         outbox,
         sessions,
+        counts: wired.counts.clone(),
         teachings,
         registry,
         requests: observation.requests(Arc::new(

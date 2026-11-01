@@ -12,6 +12,7 @@
 //! mailbox asks whether a handle resolves, because the question crosses a
 //! context rather than a store: mail does not know what an entity is.
 
+pub mod deferred_counts;
 pub mod dolt;
 pub mod dolt_log;
 pub mod fold;
