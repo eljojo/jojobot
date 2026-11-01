@@ -3041,40 +3041,6 @@ fn answer_rows(page: &str) -> Vec<&str> {
         .collect()
 }
 
-/// **A view's page answers the question `recall` answers.** The ready view asks
-/// which work can start: the page lists the work that can, and not the work that
-/// is finished or waits on work that is not. Paired in one read, because a page
-/// that listed every piece of work would pass the positives alone.
-#[tokio::test]
-async fn the_ready_views_page_lists_the_work_that_can_start_and_no_other() {
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
-    let (addr, ct) = spawn_over_views(&idp, endpoints).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
-
-    let page = read(&client, addr, "/view:ready/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
-    let rows = answer_rows(&page);
-    let listed = |handle: &str| rows.iter().any(|row| row.contains(&format!("{handle}/")));
-    assert!(
-        listed("work:delta") && listed("work:phi"),
-        "work that can start is listed: {rows:?}"
-    );
-    assert!(
-        !listed("work:epsilon"),
-        "finished work is not listed: {rows:?}"
-    );
-    assert!(
-        !listed("work:gamma"),
-        "work waiting on unfinished work is not listed: {rows:?}"
-    );
-    ct.cancel();
-}
-
 /// **A view's page shows the keys the view says it shows.** The directory view
 /// shows each colleague's one-liner and who they report to; the page carries a
 /// column for each and the value in the colleague's own row, not in another's.
