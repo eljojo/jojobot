@@ -516,6 +516,23 @@ impl Sessions for CountingSessions {
             .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
         self.inner.all_summaries().await
     }
+    /// **The default, spelled out**: a store with no cheaper query answers when
+    /// runs began from its summaries. Left to the forward, this double would skip
+    /// the read it counts and the fault it injects there, and a caller that asks
+    /// only when runs began would read a store that cannot be read.
+    async fn run_starts(
+        &self,
+        bot: Option<&EntityId>,
+    ) -> Result<Vec<jojobot_domain::session::RunStart>, SessionError> {
+        let runs = match bot {
+            Some(bot) => self.summaries_of(bot).await?,
+            None => self.all_summaries().await?,
+        };
+        Ok(runs
+            .iter()
+            .map(jojobot_domain::session::RunStart::of)
+            .collect())
+    }
     /// Forwarded, as the layers over a real store forward them: left to the
     /// default, this double would answer from the whole board and count it.
     async fn summary_of(
