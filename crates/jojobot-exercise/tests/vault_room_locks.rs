@@ -994,8 +994,9 @@ async fn the_fair_deadline_lock_fails_when_the_day_is_on_the_fair_and_on_louise(
 const PIANO_CADENCE_FRAGMENT: &str = "the piano's loop still carries a cadence";
 
 /// **The cadence taken off the piano's loop**, the way a sitting that clears
-/// the schedule rather than dropping the loop would write it: the record the
-/// room furnished holds the cadence, so that is the record edited.
+/// the schedule rather than dropping the loop would write it: each key is
+/// cleared on the claim that backs it, because a clear sent to an older claim
+/// is refused.
 async fn clear_the_piano_cadence(surface: &Surface, sid: &str) {
     // A clear goes to the claim that backing names for the key, the cadence
     // last so no step leaves a schedule without one.
