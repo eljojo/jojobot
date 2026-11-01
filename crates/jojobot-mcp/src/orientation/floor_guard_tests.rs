@@ -232,8 +232,32 @@ async fn a_bot_over_the_ceiling_by_the_warning_can_still_file_its_rules() {
         long.get("floor_parts").is_some(),
         "a long purpose was taken for a filing: {long}"
     );
+    // **The refusal says the purpose is the part to cut, and by how much**: the cap
+    // rides as a field, so the case asserts the number and not a sentence. A
+    // purpose one character over is refused the same way.
+    let cap = super::floor::PURPOSE_FILING_MAX;
+    assert_eq!(
+        long["purpose_cap"], cap,
+        "the refusal names the cap: {long}"
+    );
+    let just_over = update(crate::memory::update_fact::UpdateFactArgs {
+        fields: Some([("purpose".to_string(), "x".repeat(cap + 1))].into()),
+        ..update_args(&address_of("a second rule that names no purpose"))
+    })
+    .await;
+    assert_eq!(
+        just_over["purpose_cap"], cap,
+        "one over the cap is refused with it: {just_over}"
+    );
+    // The refusal of a write that is not a filing names no purpose cap.
+    assert!(
+        growing.get("purpose_cap").is_none(),
+        "a refusal for growing the rule names a purpose cap: {growing}"
+    );
+    // A purpose of exactly the cap is the filing the warning asks for.
+    let label = "x".repeat(cap);
     let filing = update(crate::memory::update_fact::UpdateFactArgs {
-        fields: Some([("purpose".to_string(), "boot".to_string())].into()),
+        fields: Some([("purpose".to_string(), label.clone())].into()),
         ..update_args(&address_of("a second rule that names no purpose"))
     })
     .await;
@@ -245,7 +269,7 @@ async fn a_bot_over_the_ceiling_by_the_warning_can_still_file_its_rules() {
     assert!(
         filed.iter().any(|fact| {
             fact.content == "a second rule that names no purpose"
-                && fact.fields.get("purpose").map(String::as_str) == Some("boot")
+                && fact.fields.get("purpose").map(String::as_str) == Some(label.as_str())
         }),
         "the purpose landed: {filed:?}"
     );

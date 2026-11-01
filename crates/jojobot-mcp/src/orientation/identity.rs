@@ -163,12 +163,16 @@ pub(crate) fn off_the_tree(in_force: &[Fact]) -> Option<serde_json::Value> {
             "count": count,
             "warning": "Rules in force that name no `purpose`: a charter loads rules by the \
                         purposes it names, so these are never loaded by it.",
-            "how_to_fix": "List them with recall on this bot, facts true, status active: the \
-                           unfiled ones carry no `purpose`. Give each a `purpose` with \
-                           update_fact, fields {purpose: the area it covers}; start_here skill: \
-                           organizing teaches purposes and the index rule that names them. A bot \
-                           whose charter names no purposes to load needs its charter changed: \
-                           ask whoever writes it.",
+            "how_to_fix": format!(
+                "List them with recall on this bot, facts true, status active: the \
+                 unfiled ones carry no `purpose`. Give each a `purpose` with \
+                 update_fact, fields {{purpose: the area it covers}}; start_here skill: \
+                 organizing teaches purposes and the index rule that names them. A purpose \
+                 is a few words, at most {} characters. A bot \
+                 whose charter names no purposes to load needs its charter changed: \
+                 ask whoever writes it.",
+                super::floor::PURPOSE_FILING_MAX,
+            ),
         })
     })
 }

@@ -19,7 +19,7 @@ use jojobot_domain::memory::{FactStatus, RULE_SEATS, rule_seats_of, rules_in_for
 
 /// The longest purpose, in characters, that a filing may give a rule while the
 /// bot's boot is over the ceiling. A purpose names an area in a few words.
-const PURPOSE_FILING_MAX: usize = 80;
+pub(crate) const PURPOSE_FILING_MAX: usize = 80;
 
 mod fold;
 mod rename;
@@ -391,6 +391,7 @@ impl Jojobot {
             budget,
             parts: after.parts,
             stamp_margin,
+            purpose_cap: None,
         })
     }
 
@@ -689,11 +690,13 @@ impl Jojobot {
         if !starred && seats.is_none() {
             return None;
         }
-        let filing = Self::only_files(&held[at], &edited);
+        let given = Self::only_gives_a_purpose(&held[at], &edited);
+        let filing = given.is_some_and(|length| length <= PURPOSE_FILING_MAX);
+        let too_long = given.is_some_and(|length| length > PURPOSE_FILING_MAX);
         let current = held.clone();
         held[at] = edited;
         // An edit keeps the stamp the record already has, so it holds none back.
-        let refused = self
+        let mut refused = self
             .refuses_a_boot_floor_over(
                 &address.home,
                 &held,
@@ -717,11 +720,22 @@ impl Jojobot {
         {
             return None;
         }
+        // **A filing refused for its purpose says so.** The floor's own advice is
+        // about rules and seats, so a bot over the ceiling that wrote a long purpose
+        // would be told to cut something else. The refusal carries the cap.
+        if too_long
+            && let Some(MemoryError::BootTooHeavy { purpose_cap, .. }) = refused.as_mut()
+            && self
+                .is_over_the_ceiling(&address.home, &current, reads)
+                .await
+        {
+            *purpose_cap = Some(PURPOSE_FILING_MAX);
+        }
         refused
     }
 
-    /// **Whether an edit changes nothing of a rule but giving it a purpose** it
-    /// did not name before.
+    /// **The length, in characters, of the purpose an edit gives a rule that named
+    /// none, when it changes nothing else of the rule**; `None` for any other edit.
     ///
     /// **The purpose is a short label.** The exemption exists for the label the
     /// warning asks for, so a purpose over [`PURPOSE_FILING_MAX`] characters is an
@@ -731,18 +745,15 @@ impl Jojobot {
     /// compared with its purpose taken off, so a date, an edge, a lineage pointer or
     /// a standing changed beside the purpose is not a filing. A list of the parts
     /// that count would miss the next attribute the record gains.
-    fn only_files(before: &Fact, after: &Fact) -> bool {
+    fn only_gives_a_purpose(before: &Fact, after: &Fact) -> Option<usize> {
         let mut without = after.clone();
         without.fields.remove("purpose");
         let mut earlier = before.clone();
         earlier.fields.remove("purpose");
-        jojobot_domain::memory::seats::is_unfiled(before)
+        (jojobot_domain::memory::seats::is_unfiled(before)
             && !jojobot_domain::memory::seats::is_unfiled(after)
-            && after
-                .fields
-                .get("purpose")
-                .is_some_and(|purpose| purpose.chars().count() <= PURPOSE_FILING_MAX)
-            && earlier == without
+            && earlier == without)
+            .then(|| after.fields.get("purpose").map_or(0, |p| p.chars().count()))
     }
 
     /// **Whether the boot of `bot` is over the ceiling as it stands**, for the

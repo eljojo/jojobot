@@ -447,6 +447,7 @@ Rules in force that name no `purpose`: a charter loads rules by the purposes it 
 ```text
 List them with recall on this bot, facts true, status active: the unfiled ones carry no `purpose`.
 Give each a `purpose` with update_fact, fields {purpose: the area it covers}; start_here skill: organizing teaches purposes and the index rule that names them.
+A purpose is a few words, at most 80 characters.
 A bot whose charter names no purposes to load needs its charter changed: ask whoever writes it.
 ```
 

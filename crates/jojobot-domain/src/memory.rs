@@ -5750,6 +5750,11 @@ pub enum MemoryError {
         /// A writer about this many characters short of the ceiling is
         /// refused for it, and this is how the refusal says so.
         stamp_margin: usize,
+        /// **The longest purpose a filing may give while the boot is over its
+        /// ceiling**, set only when the write is a rule filing refused because its
+        /// purpose is longer. Without it the refusal reads as the floor's advice
+        /// alone, which never says the purpose is the part to cut.
+        purpose_cap: Option<usize>,
     },
     /// **A record the write would make cannot be read back whole in one
     /// answer.** The record as a read serves it, beside the rest of that

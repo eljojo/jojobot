@@ -1046,6 +1046,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             budget,
             ref parts,
             stamp_margin,
+            purpose_cap,
         } => {
             let largest = parts
                 .first()
@@ -1118,6 +1119,24 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                         "{said} Part of the margin is kept for the timestamp the store gives \
                          the new record: the check holds back {stamp_margin} characters for \
                          it, so a rule that short of the ceiling is refused."
+                    )
+                    .into();
+                }
+            }
+            // **Said only when the purpose is the part to cut.** A filing is let
+            // through over the ceiling with a short purpose and refused with a long
+            // one, and the floor's advice above says nothing of it.
+            if let Some(cap) = purpose_cap
+                && let Some(object) = body.as_object_mut()
+            {
+                object.insert("purpose_cap".into(), cap.into());
+                if let Some(how) = object.get_mut("how_to_proceed")
+                    && let Some(said) = how.as_str()
+                {
+                    *how = format!(
+                        "The purpose you sent is over {cap} characters, the most a rule may be \
+                         filed under while the boot is over its ceiling: send one of {cap} or \
+                         fewer, a few words that name the area. {said}"
                     )
                     .into();
                 }
@@ -2969,6 +2988,7 @@ pub(crate) mod tests {
                     budget: 28_000,
                     parts: vec![(s("charter"), 20_000)],
                     stamp_margin: 0,
+                    purpose_cap: None,
                 },
                 Some("change"),
             ),
