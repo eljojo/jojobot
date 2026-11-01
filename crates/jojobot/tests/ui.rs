@@ -5946,11 +5946,12 @@ async fn a_threads_page_puts_its_standing_decisions_first_and_then_its_own_claim
     ct.cancel();
 }
 
-/// **A page whose backing cannot be read is refused whole, never drawn without
-/// the account of where each value came from.** Paired in the same read: the same
-/// page, read while the backing answers, draws.
+/// **A page whose backing cannot be read is drawn with a section that says so,
+/// never drawn without the account of where each value came from as if it held
+/// none.** Paired in the same read: the same page, read while the backing
+/// answers, draws and carries no such section.
 #[tokio::test]
-async fn a_page_whose_backing_cannot_be_read_is_refused_whole() {
+async fn a_page_whose_backing_cannot_be_read_says_so_and_is_still_drawn() {
     let inner = memory_with_views().await;
     let counted = Arc::new(jojobot_adapters::counted::Counted::new(inner));
     let idp = support::TestIdp::new();
@@ -5962,10 +5963,20 @@ async fn a_page_whose_backing_cannot_be_read_is_refused_whole() {
 
     counted.fail_backing_of(Some("person:alpha"));
     let down = read(&client, addr, "/person:alpha/", &cookie).await;
-    assert_eq!(down.status(), reqwest::StatusCode::BAD_GATEWAY);
+    assert!(down.status().is_success(), "{}", down.status());
+    let down = down.text().await.unwrap();
+    assert!(
+        down.contains("id=\"unreadable-where-the-fields-come-from\""),
+        "the lost part is marked: {down}"
+    );
     counted.fail_backing_of(None);
     let healthy = read(&client, addr, "/person:alpha/", &cookie).await;
     assert!(healthy.status().is_success(), "{}", healthy.status());
+    let healthy = healthy.text().await.unwrap();
+    assert!(
+        !healthy.contains("id=\"unreadable-where-the-fields-come-from\""),
+        "a page whose backing reads carries no such section: {healthy}"
+    );
     ct.cancel();
 }
 
