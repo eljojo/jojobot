@@ -129,6 +129,35 @@ pub(super) fn grants_from_specs(
     Ok(grants)
 }
 
+/// **How many items a refusal lists** before it counts the rest, so an answer
+/// stays one readable line however large a grant is.
+const LISTED: usize = 20;
+
+/// **The allowed set, in words**: the items in order, up to [`LISTED`], then how
+/// many more there are. Empty is said, so a refusal never ends on a bare colon.
+fn listed<'a>(items: impl IntoIterator<Item = &'a str>) -> String {
+    let items: Vec<&str> = items.into_iter().collect();
+    if items.is_empty() {
+        return "none".to_string();
+    }
+    let shown = items
+        .iter()
+        .take(LISTED)
+        .copied()
+        .collect::<Vec<_>>()
+        .join(", ");
+    match items.len().checked_sub(LISTED) {
+        Some(more) if more > 0 => format!("{shown}, and {more} more"),
+        _ => shown,
+    }
+}
+
+/// **The operations an app was granted, in words**, for a refusal that names
+/// what the app may call. The one reading of the grant a refusal quotes.
+pub fn granted_operations(app: &AppPrincipal) -> String {
+    listed(app.operations.iter().map(|g| g.operation.as_str()))
+}
+
 /// **One call, as the check judges it.**
 #[derive(Debug, Clone, Default)]
 pub struct Operation {
@@ -156,7 +185,8 @@ pub fn permit(app: &AppPrincipal, call: &Operation) -> Result<(), AppError> {
     let name = call.name.as_str();
     let Some(grant) = app.operations.iter().find(|g| g.operation == name) else {
         return outside(format!(
-            "the operation {name:?} is not one this app was granted"
+            "the operation {name:?} is not one this app was granted; it may call: {}",
+            granted_operations(app)
         ));
     };
     let allowed: &[&str] = match name {
@@ -171,7 +201,8 @@ pub fn permit(app: &AppPrincipal, call: &Operation) -> Result<(), AppError> {
         .find(|a| name != "recall" && !allowed.contains(&a.as_str()));
     if let Some(arg) = unlisted {
         return outside(format!(
-            "the argument {arg:?} is not one an app may send to {name}"
+            "the argument {arg:?} is not one an app may send to {name}; it may send: {}",
+            listed(allowed.iter().copied())
         ));
     }
     if name == "post_message" && !call.to_operator {
@@ -182,18 +213,27 @@ pub fn permit(app: &AppPrincipal, call: &Operation) -> Result<(), AppError> {
             Some(kind) if grant.kinds.contains(&kind) => {}
             Some(kind) => {
                 return outside(format!(
-                    "the kind {} is not one this app may write with {name}",
-                    kind.as_token()
+                    "the kind {} is not one this app may write with {name}; it may write: {}",
+                    kind.as_token(),
+                    listed(grant.kinds.iter().map(|k| k.as_token()))
                 ));
             }
-            None => return outside(format!("{name} names no kind this app may write")),
+            None => {
+                return outside(format!(
+                    "{name} names no kind this app may write; it may write: {}",
+                    listed(grant.kinds.iter().map(|k| k.as_token()))
+                ));
+            }
         }
         for key in &call.keys {
             if let Some(why) = key_never_granted(key) {
                 return outside(format!("the key {key:?} is {why} and no app may set it"));
             }
             if !grant.keys.contains(key) {
-                return outside(format!("the key {key:?} is not one this app may set"));
+                return outside(format!(
+                    "the key {key:?} is not one this app may set; it may set: {}",
+                    listed(grant.keys.iter().map(String::as_str))
+                ));
             }
         }
     }
@@ -269,13 +309,21 @@ mod tests {
     #[test]
     fn an_operation_the_app_was_not_granted_is_refused_naming_it() {
         let c = call("add_entity", &["kind"], Some(EntityKind::ROLE), &[]);
-        assert!(refusal(permit(&watcher(), &c)).contains("add_entity"));
+        let why = refusal(permit(&watcher(), &c));
+        assert!(why.contains("add_entity"), "{why}");
+        // The granted operations ride beside it, read from the grant.
+        assert!(
+            why.contains("capture") && why.contains("post_message"),
+            "{why}"
+        );
     }
 
     #[test]
     fn a_kind_outside_the_grant_is_refused_naming_it() {
         let c = call("capture", &["subject"], Some(EntityKind::THREAD), &[]);
-        assert!(refusal(permit(&watcher(), &c)).contains("thread"));
+        let why = refusal(permit(&watcher(), &c));
+        assert!(why.contains("thread"), "{why}");
+        assert!(why.contains("role") && why.contains("work"), "{why}");
     }
 
     #[test]
@@ -286,7 +334,12 @@ mod tests {
             Some(EntityKind::ROLE),
             &["watch_other"],
         );
-        assert!(refusal(permit(&watcher(), &c)).contains("watch_other"));
+        let why = refusal(permit(&watcher(), &c));
+        assert!(why.contains("watch_other"), "{why}");
+        assert!(
+            why.contains("watch_state") && why.contains("watch_seen"),
+            "{why}"
+        );
     }
 
     #[test]
@@ -321,7 +374,10 @@ mod tests {
             "provenance",
         ] {
             let c = call("capture", &["subject", arg], Some(EntityKind::ROLE), &[]);
-            assert!(refusal(permit(&watcher(), &c)).contains(arg), "{arg}");
+            let why = refusal(permit(&watcher(), &c));
+            assert!(why.contains(arg), "{arg}: {why}");
+            // The arguments an app may send to capture ride beside it.
+            assert!(why.contains("content") && why.contains("sets"), "{why}");
         }
     }
 

@@ -419,6 +419,21 @@ async fn unstable_an_entry_added_to_the_registry_is_served_with_no_other_edit() 
 }
 
 #[tokio::test]
+async fn unstable_an_operation_nobody_has_is_a_404_naming_it_and_the_operations_the_app_was_granted()
+ {
+    let (app, token) = watcher();
+    let served = serve(vec![app], Registry::shipped()).await;
+    let (status, refused) = call(&served, &token, "nonesuch", json!({})).await;
+    assert_eq!(status, 404, "{refused}");
+    let said = refused["error"].as_str().expect("an error text");
+    assert!(said.contains("nonesuch"), "{refused}");
+    assert!(
+        said.contains("capture") && said.contains("post_message"),
+        "the granted operations ride beside it: {refused}"
+    );
+}
+
+#[tokio::test]
 async fn unstable_a_token_that_names_no_app_opens_nothing() {
     let (app, _) = watcher();
     let served = serve(vec![app], Registry::shipped()).await;

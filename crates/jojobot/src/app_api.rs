@@ -286,7 +286,10 @@ pub async fn unstable_operation(
         tracing::info!(app = %app.id, reason = "no such operation", "app call refused");
         return answer(
             StatusCode::NOT_FOUND,
-            json!({ "error": format!("there is no operation {operation:?}") }),
+            json!({ "error": format!(
+                "there is no operation {operation:?}; this app may call: {}",
+                jojobot_domain::app::operations::granted_operations(&app)
+            ) }),
         );
     };
     let stamp = jojobot_domain::app::AppStamp {
