@@ -212,8 +212,19 @@ pub async fn rhythm(
         .and_then(|answered| answered.narrowed.owed);
     let marked = owed
         .as_ref()
-        .and_then(|pass| pass.marks.get(&rhythm.id).copied());
-    let (next, late) = match marked.map(|mark| (mark.due, mark.days_overdue)) {
+        .and_then(|pass| pass.marks.get(&rhythm.id).copied())
+        .map(|mark| (mark.due, mark.days_overdue));
+    rhythm_box(rhythm, held, marked)
+}
+
+/// **The box of a rhythm from its keys and its due mark**: the mark is the due
+/// day and how many days late, and none when the answer could not be read.
+fn rhythm_box(
+    rhythm: &Entity,
+    held: &BTreeMap<String, String>,
+    marked: Option<(attention::Due, Option<i64>)>,
+) -> String {
+    let (next, late) = match marked {
         Some((attention::Due::On(day), overdue)) => (
             format!("next due {day}"),
             overdue
@@ -433,3 +444,5 @@ pub fn claims(facts: &[Fact], by_id: &HashMap<&EntityId, &Entity>) -> String {
 
 #[cfg(test)]
 mod project_rest_tests;
+#[cfg(test)]
+mod rhythm_box_tests;
