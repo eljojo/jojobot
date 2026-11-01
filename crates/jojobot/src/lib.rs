@@ -272,11 +272,11 @@ fn build_app_with(
     // a login, because without a login they are not routes at all.
     let ui_router = state.ui.is_some().then(|| {
         Router::new()
-            .route("/", get(ui::pages::index))
-            .route(ui::org::PATH, get(ui::org::chart))
-            .route("/ui/kind/{kind}/", get(ui::home::kind_page))
             .merge(
                 Router::new()
+                    .route("/", get(ui::pages::index))
+                    .route(ui::org::PATH, get(ui::org::chart))
+                    .route("/ui/kind/{kind}/", get(ui::home::kind_page))
                     .route(ui::search::PATH, get(ui::search::results))
                     .route("/{*path}", get(ui::pages::node))
                     .with_state(ui::pages::NodeState {

@@ -9,7 +9,6 @@ use std::collections::{HashMap, HashSet};
 
 use axum::{extract::State, http::StatusCode, response::Response};
 use jojobot_domain::memory::{Entity, EntityId};
-use jojobot_mcp::memory::view_run;
 use jojobot_query_api::{Failed, QueryHandle};
 
 use crate::AppState;
@@ -213,12 +212,13 @@ pub async fn bot_section(state: &AppState, queries: &QueryHandle, bot: &EntityId
 }
 
 /// `/ui/org/` — every bot, each under the bot it reports to.
-pub async fn chart(State(state): State<AppState>) -> Response {
-    let queries = view_run::handle(
-        state.memory.clone(),
-        state.sessions.clone(),
-        state.search.clone(),
-    );
+pub(crate) async fn chart(
+    State(pages::NodeState {
+        app: state,
+        queries,
+        ..
+    }): State<pages::NodeState>,
+) -> Response {
     let content = match colleagues(&state, &queries).await {
         Err(page) => page,
         Ok(all) => {

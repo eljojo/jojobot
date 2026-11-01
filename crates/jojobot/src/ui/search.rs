@@ -215,6 +215,13 @@ mod tests {
         async fn search(&self, _: &Actor, _: SearchQuestion) -> Result<Searched, MemoryError> {
             Err(MemoryError::Store("the store is down".into()))
         }
+
+        async fn entities(
+            &self,
+            _: &Actor,
+        ) -> Result<Vec<jojobot_domain::memory::Entity>, MemoryError> {
+            Err(MemoryError::Store("the store is down".into()))
+        }
     }
 
     fn handle(unknown: bool) -> QueryHandle {

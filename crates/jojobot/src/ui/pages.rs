@@ -27,11 +27,18 @@ use crate::ui::{encode_component, home, org, shell, tree, typed};
 /// Descending is a link away and a level at a time, which is what the tree is
 /// for: a page of everything jojobot knows is the silting the tree exists to
 /// stop.
-pub async fn index(
-    State(state): State<AppState>,
+pub(crate) async fn index(
+    State(NodeState {
+        app: state,
+        queries,
+        ..
+    }): State<NodeState>,
     axum::extract::Query(sort): axum::extract::Query<home::Sort>,
 ) -> Response {
-    let entities = match state.memory.list_entities(None).await {
+    let entities = match queries
+        .every_entity(&jojobot_domain::actor::Actor::Operator)
+        .await
+    {
         Ok(entities) => entities,
         Err(err) => {
             return unreadable(err);
@@ -53,7 +60,7 @@ pub async fn index(
     }
     unreachable.sort_by(|a, b| a.id.cmp(&b.id));
 
-    let mut body = match home::body(&state, &entities, &sort).await {
+    let mut body = match home::body(&state, &queries, &entities, &sort).await {
         Ok(body) => format!("<h1>Index of /</h1>\n{body}"),
         Err(err) => return unreadable(err),
     };
@@ -189,7 +196,10 @@ pub(crate) async fn node(
         return not_found();
     };
 
-    let entities = match state.memory.list_entities(None).await {
+    let entities = match queries
+        .every_entity(&jojobot_domain::actor::Actor::Operator)
+        .await
+    {
         Ok(entities) => entities,
         Err(err) => return unreadable(err),
     };
@@ -464,7 +474,7 @@ pub(crate) async fn node(
     // **Who works on a piece of work, and who has**, rolled up from everything
     // under it. Only work and projects carry it.
     if matches!(entity.kind, EntityKind::WORK | EntityKind::PROJECT) {
-        generic.push_str(&working_on_section(&state, entity, &entities, &by_id).await);
+        generic.push_str(&working_on_section(&state, &queries, entity, &entities, &by_id).await);
     }
     // **A bot's place in the org chart**: the chain it reports through and the
     // bots that report to it, read from the colleagues view.
@@ -568,6 +578,7 @@ pub(crate) async fn node(
 /// only wrote to the work is not here, because only a declaration counts.
 async fn working_on_section(
     state: &AppState,
+    queries: &jojobot_query_api::QueryHandle,
     entity: &Entity,
     entities: &[Entity],
     by_id: &HashMap<&EntityId, &Entity>,
@@ -600,7 +611,7 @@ async fn working_on_section(
     let (declarations, incomplete) =
         declarations_on(&*state.memory, &*state.sessions, &bots, &under).await;
 
-    let day_of = home::day_of_in_the_instance_zone(state).await;
+    let day_of = home::day_of_in_the_instance_zone(state, queries).await;
     let link = |id: &EntityId| match by_id.get(id) {
         Some(found) => format!(
             "<a href=\"{}\">{}/</a>",
@@ -1406,13 +1417,12 @@ pub(crate) async fn answer_named_view_with(
 /// **A view the build ships, run with no inputs**, as the page of that view runs
 /// it: its definition is read from the view's own record and the answer is the
 /// one `recall` of the view gives. The page text of why not when it cannot run.
-pub(crate) async fn answer_named_view(state: &AppState, handle: &str) -> Result<Answered, String> {
-    let queries = view_run::handle(
-        state.memory.clone(),
-        state.sessions.clone(),
-        state.search.clone(),
-    );
-    answer_named_view_with(state, &queries, handle, &BTreeMap::new()).await
+pub(crate) async fn answer_named_view(
+    state: &AppState,
+    queries: &jojobot_query_api::QueryHandle,
+    handle: &str,
+) -> Result<Answered, String> {
+    answer_named_view_with(state, queries, handle, &BTreeMap::new()).await
 }
 
 /// **A view, run**: what it found, and what the page around the answer needs.

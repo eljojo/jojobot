@@ -20,6 +20,7 @@ use jiff::Timestamp;
 use jojobot_domain::memory::{Entity, EntityId, MemoryError};
 
 use crate::AppState;
+use crate::ui::pages::NodeState;
 use crate::ui::{org, pages, shell, tree};
 
 /// Where the page of a kind lives: `/ui/kind/<kind>/`. It is no entity's path,
@@ -71,8 +72,31 @@ type DayOf<'a> = &'a dyn Fn(Timestamp) -> String;
 
 pub(crate) async fn day_of_in_the_instance_zone(
     state: &AppState,
+    queries: &jojobot_query_api::QueryHandle,
 ) -> impl Fn(Timestamp) -> String + use<> {
-    let frame = jojobot_mcp::orientation::instance_zone::unzoned_frame(&*state.memory).await;
+    // **The instance's record is asked of the query handle** like any other thing,
+    // and the frame is worked out from the fields it holds: UTC when it holds no
+    // zone, one this build cannot resolve, or cannot be read.
+    let asked = jojobot_query_api::Question::about(
+        EntityId(jojobot_domain::memory::INSTANCE_RECORD.to_string()),
+        None,
+        None,
+    );
+    let frame = match queries
+        .ask(&jojobot_domain::actor::Actor::Operator, asked)
+        .await
+    {
+        Ok(answered) => jojobot_mcp::orientation::instance_zone::frame_of_fields(
+            &answered
+                .selected
+                .objects
+                .into_iter()
+                .next()
+                .map(|object| object.fields)
+                .unwrap_or_default(),
+        ),
+        Err(_) => jiff::tz::TimeZone::UTC,
+    };
     let clock = state.clock;
     move |moment| clock.day_of(moment, &frame).to_string()
 }
@@ -231,8 +255,12 @@ fn kind_box(
 
 /// **The box of what is due**, from the due view run as its page runs it. A view
 /// that cannot be run puts its words in the box instead.
-async fn due_box(state: &AppState, by_id: &HashMap<&EntityId, &Entity>) -> String {
-    match pages::answer_named_view(state, "view:due").await {
+async fn due_box(
+    state: &AppState,
+    queries: &jojobot_query_api::QueryHandle,
+    by_id: &HashMap<&EntityId, &Entity>,
+) -> String {
+    match pages::answer_named_view(state, queries, "view:due").await {
         Err(why) => shell::boxed_as("due", true, "due", "", &why),
         Ok(answer) => {
             let mut list = String::from("<ul>\n");
@@ -263,6 +291,7 @@ async fn due_box(state: &AppState, by_id: &HashMap<&EntityId, &Entity>) -> Strin
 /// or the page that says the store could not be read.
 pub async fn body(
     state: &AppState,
+    queries: &jojobot_query_api::QueryHandle,
     entities: &[Entity],
     sort: &Sort,
 ) -> Result<String, MemoryError> {
@@ -271,7 +300,7 @@ pub async fn body(
     let standing = standing(entities);
     let inside = inside_of(&standing);
 
-    let day_of = day_of_in_the_instance_zone(state).await;
+    let day_of = day_of_in_the_instance_zone(state, queries).await;
     let mut kinds: BTreeMap<&str, Vec<&Entity>> = BTreeMap::new();
     for entity in &standing {
         kinds
@@ -283,7 +312,7 @@ pub async fn body(
         .iter()
         .map(|(kind, members)| kind_box(kind, members, &written, &by_id, &day_of))
         .collect();
-    boxes.push(due_box(state, &by_id).await);
+    boxes.push(due_box(state, queries, &by_id).await);
 
     let roots: Vec<&Entity> = standing
         .iter()
@@ -303,12 +332,19 @@ pub async fn body(
 
 /// `/ui/kind/<kind>/` — every thing of one kind that stands, in the shell. A kind
 /// nothing holds has no page.
-pub async fn kind_page(
-    State(state): State<AppState>,
+pub(crate) async fn kind_page(
+    State(NodeState {
+        app: state,
+        queries,
+        ..
+    }): State<NodeState>,
     Path(kind): Path<String>,
     Query(sort): Query<Sort>,
 ) -> Response {
-    let entities = match state.memory.list_entities(None).await {
+    let entities = match queries
+        .every_entity(&jojobot_domain::actor::Actor::Operator)
+        .await
+    {
         Ok(entities) => entities,
         Err(err) => return pages::unreadable(err),
     };
@@ -327,7 +363,7 @@ pub async fn kind_page(
         Err(err) => return pages::unreadable(err),
     };
     let inside = inside_of(&standing);
-    let day_of = day_of_in_the_instance_zone(&state).await;
+    let day_of = day_of_in_the_instance_zone(&state, &queries).await;
     let here = format!("{KIND_PATH}{}/", pages::escape(&kind));
     let members = ordered(members, &written, sort.by_write());
     let note = format!("{} things · {}", members.len(), sort_links(&here));
