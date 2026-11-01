@@ -128,13 +128,13 @@ pub enum Append {
 
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum LogError {
-    #[error("a batch must contain events and fit in the position space")]
+    #[error("the write is empty or too large; send changes that fit in one write")]
     InvalidBatch,
-    #[error("the batch identity or reserved range conflicts with committed bytes")]
+    #[error("this write conflicts with one already recorded; read before writing again")]
     Conflict,
-    #[error("the preceding append has no terminal fence yet")]
+    #[error("{}", crate::request::INDETERMINATE_WRITE)]
     Indeterminate,
-    #[error("the log store failed: {0}")]
+    #[error("jojobot could not access its recorded writes; read before writing again")]
     Store(String),
 }
 

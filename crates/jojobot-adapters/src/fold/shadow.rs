@@ -10,14 +10,14 @@
 //! sees.
 //!
 //! **Off by default.** A family is shadowed only when it is named in the
-//! configuration (`JOJOBOT_SHADOW`, a comma-separated list of family names), and
-//! a name no family answers to refuses the start rather than shadowing nothing.
+//! boot registry's `feature_shadow` setting, with `JOJOBOT_SHADOW` as its legacy
+//! fallback. A name no family answers to refuses that configuration.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use jojobot_domain::memory::{EntityId, Fact};
 
-/// TEMPORARY(9.3.3) the referring_to shadow, JOJOBOT_SHADOW. The projection families that can be shadowed.
+/// The projection families selected by the boot registry's `feature_shadow` setting.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Family {
     /// `referring_to`: who points at a thing.

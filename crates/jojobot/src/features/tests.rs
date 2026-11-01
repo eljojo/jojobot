@@ -76,9 +76,9 @@ async fn feature_registry_selects_instance_before_legacy_before_default_and_logs
             Some("referring_to"),
             Some("missing_family"),
             "referring_to,teachings",
-            "instance",
+            "topic:instance",
         ),
-        (Some("off"), Some("referring_to"), "off", "instance"),
+        (Some("off"), Some("referring_to"), "off", "topic:instance"),
     ] {
         let memory = match instance {
             Some(value) => held(&[("feature_shadow", value)]).await,

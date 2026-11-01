@@ -2,7 +2,8 @@
 //! families that are computed two ways and compared without changing the served
 //! answer. The teaching ledger is always one of them unless the flag says `off`:
 //! the log serves it, and the shadow is what keeps the legacy rows current and
-//! compared, so a return to the old path stays possible until 9.3.3 cuts it.
+//! compared, so a return to the old path stays possible until 9.3.3 cuts it. The
+//! teaching pilot (`q-thin-4-teaching-pilot`) retires the flag.
 //! Values are read before the fold exists.
 
 use jojobot_adapters::fold::Folded;
@@ -11,7 +12,6 @@ use std::sync::Arc;
 
 const KEY: &str = "feature_shadow";
 const LEGACY_ENV: &str = "JOJOBOT_SHADOW";
-const RETIRES: &str = "q-thin-4-teaching-pilot";
 /// The family that is shadowed whenever the flag does not say `off`.
 const TEACHINGS: &str = "teachings";
 
@@ -55,7 +55,7 @@ async fn load(memory: Arc<dyn Memory>, legacy: Option<&str>) -> anyhow::Result<F
     }
     let (value, source) = fields
         .get(KEY)
-        .map(|value| (value.as_str(), "instance"))
+        .map(|value| (value.as_str(), INSTANCE_RECORD))
         .or_else(|| legacy.map(|value| (value, LEGACY_ENV)))
         .unwrap_or(("", "default"));
     let spec = if value.trim() == "off" {
@@ -72,11 +72,6 @@ async fn load(memory: Arc<dyn Memory>, legacy: Option<&str>) -> anyhow::Result<F
     let folded = match Folded::new(memory.clone()).shadowing(&spec) {
         Ok(folded) => folded,
         Err(error) => {
-            let source = if source == "instance" {
-                instance.as_str()
-            } else {
-                source
-            };
             tracing::warn!(key = KEY, source, %error, "invalid shadow family; starting with the default shadow");
             Folded::new(memory)
                 .shadowing(TEACHINGS)
@@ -91,7 +86,7 @@ async fn load(memory: Arc<dyn Memory>, legacy: Option<&str>) -> anyhow::Result<F
         .join(",");
     let state = if state.is_empty() { "off" } else { &state };
     tracing::info!(flag = "shadow", key = KEY, state = %state, source, takes_effect = "boot",
-        deprecated = source == LEGACY_ENV, retires = RETIRES, "feature flag at boot");
+        deprecated = source == LEGACY_ENV, "feature flag at boot");
     Ok(folded)
 }
 
