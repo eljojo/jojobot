@@ -685,10 +685,11 @@ fn word(n: usize) -> String {
 /// through the verbs, is filled out to about 4,900 claims and 22,000 field writes
 /// by copying rows the verbs wrote under new ids, which is the shape a long-used
 /// store has. A check that tests every claim and field write against every thing
-/// takes tens of seconds here. This one finds no damage and answers inside two
-/// seconds, and finds the damage a single edit makes in that same store.
+/// takes tens of seconds here. This one finds no damage and answers well inside
+/// ten seconds (its fastest of three runs), and finds the damage a single edit
+/// makes in that same store.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn the_check_over_a_large_store_answers_inside_two_seconds() {
+async fn the_check_over_a_large_store_does_not_test_every_claim_against_every_thing() {
     let dir = jojobot_adapters::testing::scratch_path("storage-check-large");
     std::fs::create_dir_all(&dir).expect("a scratch directory");
     let _scratch = Scratch(dir.clone());
@@ -775,17 +776,34 @@ async fn the_check_over_a_large_store_answers_inside_two_seconds() {
         "the store is as heavy as the case says: {claims} claims, {writes} field writes"
     );
 
-    let started = std::time::Instant::now();
-    let named = found(&pool).await;
-    let took = started.elapsed();
-    eprintln!("the check took {took:?} over {claims} claims and {writes} field writes");
+    // **The bound separates a check that reads the store a few times from one that
+    // tests every claim against every thing, and not a quiet runner from a busy
+    // one.** The check answers in about two seconds here; the quadratic check this
+    // case exists to refuse takes tens of seconds, on every run. A runner under load
+    // slows one run, for a while, by a factor nobody sets, and a 2 s line reddened a
+    // release gate at 2.04 s while a loaded runner took 45 s once. So the check is
+    // run up to three times, and the fastest run is judged against ten seconds, five
+    // times what it takes quiet: a regression is slow every time and still fails, and
+    // one busy moment does not.
+    let mut fastest = std::time::Duration::MAX;
+    for _ in 0..3 {
+        let started = std::time::Instant::now();
+        let named = found(&pool).await;
+        let took = started.elapsed();
+        eprintln!("the check took {took:?} over {claims} claims and {writes} field writes");
+        assert!(
+            named.is_empty(),
+            "a store the verbs wrote has no damage: {named:?}"
+        );
+        fastest = fastest.min(took);
+        if fastest < std::time::Duration::from_secs(2) {
+            break;
+        }
+    }
     assert!(
-        named.is_empty(),
-        "a store the verbs wrote has no damage: {named:?}"
-    );
-    assert!(
-        took < std::time::Duration::from_secs(2),
-        "the check took {took:?} over {claims} claims and {writes} field writes"
+        fastest < std::time::Duration::from_secs(10),
+        "the fastest of three runs of the check took {fastest:?} over {claims} claims and \
+         {writes} field writes"
     );
     // The positive beside it: the same store, one edit, and the check names it.
     run(
