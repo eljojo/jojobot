@@ -39,6 +39,7 @@ use crate::memory::EntityId;
 pub mod history;
 pub mod mention;
 pub mod role_keys;
+mod run_named;
 
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
@@ -1576,6 +1577,18 @@ pub trait Sessions: Send + Sync {
             Err(SessionError::UnknownSession { .. } | SessionError::InvalidId(_)) => Ok(None),
             Err(other) => Err(other),
         }
+    }
+
+    /// **The run a stored record names**: a write keeps the run's public name, and
+    /// this finds the run by its card id first and by that name when no card
+    /// carries it, so a run from before the boot minted names is found too.
+    ///
+    /// **Defaulted off [`summary_of`](Sessions::summary_of) and
+    /// [`all_summaries`](Sessions::all_summaries)**, so a layer that forwards those
+    /// two answers it correctly without forwarding this one; the name step reads
+    /// the board only when no card carries the id.
+    async fn run_named(&self, stored: &str) -> Result<Option<SessionSummary>, SessionError> {
+        run_named::find(self, stored).await
     }
 
     /// **What every run has been served and every compaction it reported**, in

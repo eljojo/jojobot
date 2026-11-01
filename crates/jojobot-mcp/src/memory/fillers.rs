@@ -25,7 +25,6 @@
 
 use super::*;
 use jojobot_domain::memory::capacity;
-use jojobot_domain::session::SessionId;
 use std::collections::BTreeMap;
 
 impl Jojobot {
@@ -141,7 +140,7 @@ impl Jojobot {
             let behind = match (&first.bot, &first.session) {
                 (None, Some(run)) => self
                     .sessions
-                    .summary_of(&SessionId(run.clone()))
+                    .run_named(run)
                     .await
                     .map_err(|e| MemoryError::Store(format!("the run behind a record: {e}")))?
                     .map(|summary| summary.bot),

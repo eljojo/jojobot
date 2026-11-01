@@ -17,7 +17,7 @@ use jojobot_domain::memory::Memory;
 use jojobot_domain::memory::graph::Object;
 use jojobot_domain::memory::kinds::WORKING_ON;
 use jojobot_domain::memory::{FactAddress, FactPatch, Guarded, NewFact};
-use jojobot_domain::session::{SessionId, SessionState, Sessions};
+use jojobot_domain::session::{SessionState, Sessions};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// The words of the bot's one working-on record. The link is in its fields, so
@@ -64,7 +64,7 @@ pub async fn working_on_of(
     let Some(run) = chain.last().and_then(|write| write.session.clone()) else {
         return Ok(WorkingOn::Stale);
     };
-    match sessions.summary_of(&SessionId(run)).await {
+    match sessions.run_named(&run).await {
         Ok(Some(summary)) if summary.state == SessionState::Active => Ok(WorkingOn::Live(value)),
         Ok(_) => Ok(WorkingOn::Stale),
         Err(e) => {
@@ -310,7 +310,7 @@ pub async fn declarations_on(
                 continue;
             }
             let run = match &claim.session {
-                Some(id) => match sessions.summary_of(&SessionId(id.clone())).await {
+                Some(id) => match sessions.run_named(id).await {
                     Ok(Some(summary)) => summary.sid.map(|sid| sid.as_str().to_string()),
                     _ => None,
                 },
@@ -399,4 +399,70 @@ pub(crate) fn hidden_note(bots: &BTreeSet<EntityId>) -> String {
             .collect::<Vec<_>>()
             .join(", ")
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use jojobot_domain::memory::testing::InMemoryMemory;
+    use jojobot_domain::session::testing::InMemorySessions;
+    use jojobot_domain::session::{NewSession, Sid};
+
+    /// **A declaration made by a run whose card id is not its name lists that
+    /// run.** The write keeps the run's public name; the store minted this card's
+    /// id, as it did for every run before the boot named them. The id lookup alone
+    /// finds no card and the run cell was empty.
+    #[tokio::test]
+    async fn a_declaration_by_a_run_whose_id_is_not_its_name_lists_that_run() {
+        let memory = InMemoryMemory::booted();
+        let sessions = InMemorySessions::default();
+        let bot = EntityId("bot:otto".to_string());
+        let work = EntityId("work:sigma".to_string());
+        for (handle, name) in [("bot:otto", "Otto"), ("work:sigma", "Sigma")] {
+            memory
+                .add_entity(jojobot_domain::memory::NewEntity::new(
+                    EntityId(handle.to_string()),
+                    name,
+                    "the fixture roster",
+                ))
+                .await
+                .expect("the entity is written")
+                .written()
+                .expect("nothing collides with it");
+        }
+        let run = sessions
+            .begin(NewSession {
+                bot: bot.clone(),
+                sid: Sid("s001".to_string()),
+                focus: "an older run".to_string(),
+                started_at: jiff::Timestamp::UNIX_EPOCH,
+                timezone: None,
+                started_on: None,
+                id: None,
+                key_hash: None,
+            })
+            .await
+            .expect("the run begins");
+        assert_ne!(run.id.as_str(), "s001", "the fixture's card id is minted");
+        let mut declared = NewFact::about(bot.clone(), RECORD, jiff::civil::date(2026, 3, 1));
+        declared.fields = [(WORKING_ON.to_string(), work.as_str().to_string())].into();
+        declared.sets = [WORKING_ON.to_string()].into();
+        declared.session = Some("s001".to_string());
+        memory
+            .capture(declared)
+            .await
+            .expect("the declaration is written");
+
+        let (found, incomplete) = declarations_on(
+            &memory,
+            &sessions,
+            std::slice::from_ref(&bot),
+            &BTreeSet::from([work.clone()]),
+        )
+        .await;
+
+        assert!(!incomplete, "the history reads whole");
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].run.as_deref(), Some("s001"), "{found:?}");
+    }
 }

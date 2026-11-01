@@ -2151,6 +2151,72 @@ pub mod contract {
         );
     }
 
+    /// **A stored run name finds its card, by id first and by name second.** A run
+    /// from before the boot minted names has a card id that is not its name, and
+    /// the id lookup alone misses it; a run the boot named is found by its id; a
+    /// name nobody holds, and a string that could never be one, find nothing.
+    pub async fn a_stored_run_name_finds_its_card_by_id_then_by_name(store: &dyn Sessions) {
+        // The store mints this card's id, so the id is NOT the run's name: the
+        // shape of every run begun before the boot minted names.
+        let older = begin(store, "gamma", "an older run", 0).await;
+        let older_name = older.sid.clone().expect("the card keeps its name");
+        assert_ne!(
+            older.id.as_str(),
+            older_name.as_str(),
+            "the fixture's id is minted"
+        );
+        // The boot minted this card's name and made it the card's id.
+        let named = Sid("m0nt".to_string());
+        store
+            .begin(NewSession {
+                bot: bot("gamma"),
+                sid: named.clone(),
+                focus: "a minted run".to_string(),
+                started_at: at(300),
+                timezone: None,
+                started_on: None,
+                id: Some(SessionId(named.as_str().to_string())),
+                key_hash: None,
+            })
+            .await
+            .expect("a run with a minted name begins");
+
+        // Found by name, where the id lookup alone finds nothing (the branch that
+        // fires only for the older run).
+        assert!(
+            store
+                .summary_of(&SessionId(older_name.as_str().to_string()))
+                .await
+                .expect("a miss is not an error")
+                .is_none(),
+            "the id lookup misses a run whose id is not its name"
+        );
+        let by_name = store
+            .run_named(older_name.as_str())
+            .await
+            .expect("the lookup reads")
+            .expect("the older run is found by its name");
+        assert_eq!(by_name.id, older.id);
+        // Found by id (the branch that fires for the run the boot named).
+        let by_id = store
+            .run_named(named.as_str())
+            .await
+            .expect("the lookup reads")
+            .expect("the minted run is found");
+        assert_eq!(by_id.sid, Some(named));
+        // Found by neither: a name nobody holds, and a string that could never be one.
+        for stored in ["nobody", "Not A Run!", ""] {
+            assert!(
+                store
+                    .run_named(stored)
+                    .await
+                    .expect("a miss is not an error")
+                    .is_none(),
+                "{stored:?} names no run"
+            );
+        }
+    }
+
     /// **One run is summarised without its chronology, and the runs of each bot
     /// are counted without reading any of them.** The summary agrees with the one
     /// the bot's own listing gives for the same run, so the cheap read is the same
@@ -3904,6 +3970,7 @@ pub mod contract {
         runs_are_ordered_by_their_moment_and_not_by_the_text_of_it(&fresh()).await;
         a_runs_last_beat_is_the_later_moment_and_not_the_later_text(&fresh()).await;
         one_run_is_summarised_and_the_runs_of_each_bot_are_counted(&fresh()).await;
+        a_stored_run_name_finds_its_card_by_id_then_by_name(&fresh()).await;
         all_sessions_carries_every_card_across_bots_with_its_handle(&fresh()).await;
         a_closed_session_stays_on_the_record(&fresh()).await;
         addressing_an_unknown_session_is_a_miss(&fresh()).await;

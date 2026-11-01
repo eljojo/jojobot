@@ -848,11 +848,7 @@ impl Jojobot {
             }
         }
         for run in runs {
-            let writer = self
-                .sessions
-                .summary_of(&jojobot_domain::session::SessionId(run.clone()))
-                .await
-                .ok()??;
+            let writer = self.sessions.run_named(run).await.ok()??;
             if writer.bot != *bot {
                 return None;
             }
