@@ -174,18 +174,34 @@ pub(super) struct Image {
     events: Vec<jojobot_domain::memory::MergeEvent>,
 }
 
+/// **One phase of the fill, named with the time it took and how many it held.** The
+/// fill is the longest step of a boot and used to log as one line, so a restart
+/// that took minutes could not say which read took them. The count is what grows
+/// with the store: things listed, documents read, names asked about, merges held.
+fn fill_phase(phase: &'static str, started: std::time::Instant, count: usize) {
+    tracing::info!(
+        phase,
+        count,
+        elapsed_ms = started.elapsed().as_millis() as u64,
+        "fold fill phase finished"
+    );
+}
+
 impl Image {
     /// Fill the image from a full read of the store — the startup path.
     pub async fn load(
         inner: &Arc<dyn Memory>,
         reader: Option<&dyn BootReader>,
     ) -> Result<Image, MemoryError> {
+        let started = std::time::Instant::now();
         let entities = inner.list_entities(None).await?;
         let former = inner.former_handles().await?;
         let types = inner.declared_types().await?;
         let kinds = inner.declared_kinds().await?;
+        fill_phase("lists", started, entities.len());
         // **The documents come from the reader when the store has one**, a thing at
         // a time only for those it leaves out; otherwise the store scans them all.
+        let started = std::time::Instant::now();
         let mut scans: HashMap<EntityId, DocScan> = match reader {
             Some(reader) => {
                 let handles: Vec<EntityId> = entities.iter().map(|e| e.id.clone()).collect();
@@ -199,11 +215,14 @@ impl Image {
                 .collect(),
         };
 
+        fill_phase("documents", started, scans.len());
+
         // **As many things at once as the store answers at once**, never a
         // number of the fold's own, so a fill does not queue on the store's
         // connections.
         // **What the store can answer for many things at once is asked once.** A
         // thing it leaves out is read the way it always was.
+        let started = std::time::Instant::now();
         let mut parts = match reader {
             Some(reader) => {
                 let handles: Vec<EntityId> = entities.iter().map(|e| e.id.clone()).collect();
@@ -211,6 +230,8 @@ impl Image {
             }
             None => Parts::default(),
         };
+        fill_phase("bulk-parts", started, entities.len());
+        let started = std::time::Instant::now();
         let width = inner.read_width().max(1);
         let mut docs = HashMap::with_capacity(entities.len());
         let mut pending = entities.iter();
@@ -244,10 +265,18 @@ impl Image {
                 docs.insert(id, doc?);
             }
         }
+        fill_phase("per-thing-reads", started, docs.len());
+        let started = std::time::Instant::now();
         let mut image = Image::assembled(entities, former, types, kinds, docs);
+        fill_phase("assembly", started, image.docs.len());
+        let started = std::time::Instant::now();
         let names = image.names_in(&image.docs.values().collect::<Vec<_>>());
+        let asked = names.len();
         image.referring = ask_referring(inner, names).await?.into_iter().collect();
+        fill_phase("referring", started, asked);
+        let started = std::time::Instant::now();
         image.events = inner.merge_events(None).await?;
+        fill_phase("merge-events", started, image.events.len());
         Ok(image)
     }
 

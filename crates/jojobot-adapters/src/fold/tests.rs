@@ -1566,3 +1566,85 @@ async fn a_rename_drops_the_cached_fields_that_name_the_old_handle() {
         "the holder's cached copy still names the handle the friend wore before the rename"
     );
 }
+
+/// Keeps the phase and the count of each "fold fill phase finished" event.
+#[derive(Clone, Default)]
+struct FillPhases(Arc<std::sync::Mutex<Vec<(String, u64)>>>);
+
+impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for FillPhases {
+    fn on_event(&self, event: &tracing::Event<'_>, _: tracing_subscriber::layer::Context<'_, S>) {
+        #[derive(Default)]
+        struct Fields {
+            message: String,
+            phase: String,
+            count: u64,
+        }
+        impl tracing::field::Visit for Fields {
+            fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+                if field.name() == "phase" {
+                    self.phase = value.to_string();
+                }
+            }
+            fn record_u64(&mut self, field: &tracing::field::Field, value: u64) {
+                if field.name() == "count" {
+                    self.count = value;
+                }
+            }
+            fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+                if field.name() == "message" {
+                    self.message = format!("{value:?}");
+                }
+            }
+        }
+        let mut seen = Fields::default();
+        event.record(&mut seen);
+        if seen.message == "fold fill phase finished" {
+            self.0
+                .lock()
+                .expect("phases")
+                .push((seen.phase, seen.count));
+        }
+    }
+}
+
+/// **The fill of the fold names each phase with how many it held**, so a restart
+/// that spent minutes in it can say which read took them. One line per phase, in
+/// the order the fill runs them, the count being what grows with the store.
+#[tokio::test]
+async fn a_fill_logs_each_phase_with_the_count_it_held() {
+    use tracing_subscriber::prelude::*;
+    let store = Arc::new(InMemoryMemory::booted());
+    for (id, name) in [(alpha(), "Alpha"), (beta(), "Beta")] {
+        store
+            .add_entity(NewEntity::new(id, name, "user-named"))
+            .await
+            .expect("add ok")
+            .written()
+            .expect("not blocked");
+    }
+    let held = store.list_entities(None).await.expect("listed").len() as u64;
+    let phases = FillPhases::default();
+    let _logging =
+        tracing::subscriber::set_default(tracing_subscriber::registry().with(phases.clone()));
+    let folded = Folded::new(store);
+    folded.rebuild().await.expect("rebuild ok");
+
+    let seen = phases.0.lock().expect("phases").clone();
+    let names: Vec<&str> = seen.iter().map(|(phase, _)| phase.as_str()).collect();
+    assert_eq!(
+        names,
+        [
+            "lists",
+            "documents",
+            "bulk-parts",
+            "per-thing-reads",
+            "assembly",
+            "referring",
+            "merge-events"
+        ],
+        "{seen:?}"
+    );
+    let count = |phase: &str| seen.iter().find(|(name, _)| name == phase).map(|(_, n)| *n);
+    assert_eq!(count("lists"), Some(held), "{seen:?}");
+    assert_eq!(count("per-thing-reads"), Some(held), "{seen:?}");
+}
