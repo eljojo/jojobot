@@ -72,7 +72,8 @@ impl Jojobot {
                        candidates, never an empty list, because an empty list would read as \
                        'it never arrived'. Messages jojobot cannot read are reported \
                        separately under `unreadable`: it cannot tell who sent them, so one of \
-                       yours could be there. Newest first, each with its state (`new` = \
+                       yours could be there. Damage in boxes you cannot see is only counted, \
+                       under `unreadable_elsewhere`, with no box, id or sender.Newest first, each with its state (`new` = \
                        nobody has picked it up · `read` = delivered, not yet finished with · \
                        `processed` = acted on) plus notes when the consumer recorded an \
                        outcome (left out, with `notes_withheld`, for mail in a box above \
@@ -243,6 +244,20 @@ impl Jojobot {
             })
             .collect();
 
+        // **Damage in a box this caller cannot see is counted and never shown.**
+        // A message that cannot be read has no readable sender, so one of these
+        // may be the caller's own; the count is all that can be said without
+        // naming a box, an id or a sender.
+        let unreadable_elsewhere: usize = board
+            .iter()
+            .filter(|_| !operator_unopened)
+            .filter(|b| only.is_none_or(|name| b.name.as_str() == name))
+            .filter(|b| {
+                b.is_private() || visible.message(&b.name, None) != MessageVisibility::Readable
+            })
+            .map(|b| b.quarantined.len())
+            .sum();
+
         // **The cut is the last thing that happens**, after the ordering, so
         // what comes back is the newest rather than whatever the store handed
         // over first. `limit` is the size of a page and `offset` is how many
@@ -303,6 +318,12 @@ impl Jojobot {
                                     it cannot tell who sent them. If one of yours is missing, it \
                                     may be here, and a person has to repair it before any verb \
                                     can act on it.",
+                "unreadable_elsewhere": {
+                    "count": unreadable_elsewhere,
+                    "note": "Unreadable messages in boxes you cannot see: only their number is \
+                             told. One of them may be yours; a person has to repair it before \
+                             any verb can act on it.",
+                },
                 "messages": [],
             })
         };
@@ -858,6 +879,47 @@ mod tests {
             !listed.contains(&"marge"),
             "a box beside the caller is not named: {body}"
         );
+        // **The damage out of sight is counted and nothing of it is shown**: one
+        // message, and no box, id or sender of it.
+        assert_eq!(body["unreadable_elsewhere"]["count"], 1, "{body}");
+        for leaked in ["marge", "4213"] {
+            assert!(
+                !body["unreadable_elsewhere"].to_string().contains(leaked),
+                "the count names {leaked}: {body}"
+            );
+        }
+    }
+
+    /// **A caller with no damage out of sight is told so.** The count is absent
+    /// as a count and present as nothing: a sender whose own box is the only one
+    /// damaged reads `unreadable_elsewhere` as zero, so the key does not appear
+    /// only when something is wrong.
+    #[tokio::test]
+    async fn list_sent_counts_no_damage_out_of_sight_when_there_is_none() {
+        let boxes = Arc::new(InMemoryMailboxes::knowing_any_owner());
+        let jojobot = with_mailboxes(boxes.clone());
+        make_box(&jojobot, "pm").await;
+        make_box(&jojobot, "marge").await;
+        boxes.quarantine_by_damage(
+            &MailboxName("pm".into()),
+            &MessageId("4212".into()),
+            "its row on the page cannot be read — a state or a sender has been edited past parsing",
+        );
+        let body = json_of(
+            &jojobot
+                .list_sent(Parameters(ListSentArgs {
+                    limit: None,
+                    offset: None,
+                    sender: None,
+                    to: None,
+                    include_bodies: None,
+                    sid: Some(as_bot(&jojobot, "pm")),
+                }))
+                .await
+                .expect("list_sent ok"),
+        );
+        assert_eq!(body["unreadable_elsewhere"]["count"], 0, "{body}");
+        assert_eq!(body["unreadable"][0]["ids"][0], "4212", "{body}");
     }
 
     /// Ids are minted as decimal counters, so ordering them as text puts `9`
