@@ -1579,8 +1579,16 @@ async fn history_section(
         None | Some("") => return String::new(),
         Some(key) => key,
     };
-    let question =
-        jojobot_query_api::Question::about(entity.clone(), None, Some(graph::History::of(key)));
+    // **Every write, oldest first**: the page is the operator's whole story of a
+    // key, and no verb of a bot's is named to read the rest.
+    let question = jojobot_query_api::Question::about(
+        entity.clone(),
+        None,
+        Some(graph::History {
+            most: usize::MAX,
+            ..graph::History::of(key)
+        }),
+    );
     let answer = match queries
         .ask(&jojobot_domain::actor::Actor::Operator, question)
         .await
@@ -1599,7 +1607,6 @@ async fn history_section(
     else {
         return blind_history(key, "the answer held no history for this thing");
     };
-    let left = history.elided();
     let writes = history.writes;
     if writes.is_empty() {
         return format!(
@@ -1631,17 +1638,6 @@ async fn history_section(
         ));
     }
     out.push_str("</table>\n");
-    if left > 0 {
-        out.push_str(&left_out_line(
-            "history-left-out",
-            left,
-            "earlier writes are",
-            &format!(
-                "`recall` with history and a larger history_most on {} reads more of them.",
-                escape(key)
-            ),
-        ));
-    }
     out
 }
 

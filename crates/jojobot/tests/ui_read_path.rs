@@ -390,7 +390,7 @@ async fn node_read_path_keeps_folded_fields_without_type_fit() {
 }
 
 #[tokio::test]
-async fn node_key_history_shows_the_window_recall_answers_and_says_what_it_left_out() {
+async fn node_key_history_shows_every_write_oldest_first_and_names_no_bot_verb() {
     use jojobot_domain::memory::{NewFact, graph};
     use support::ui_board::{seeded_board_over, seeded_memory, spawn_jojobot_over};
     let memory = seeded_memory().await;
@@ -429,13 +429,14 @@ async fn node_key_history_shows_the_window_recall_answers_and_says_what_it_left_
         .split_once("</table>")
         .expect("the history table closes")
         .0;
-    assert_eq!(table.matches("<tr><td>").count(), graph::WRITES_SHOWN);
-    let after = table.rsplit_once("<tr><td>").unwrap().1;
-    assert!(after.starts_with(&format!("{}<", writes - 1)), "{after}");
-    let left = writes - graph::WRITES_SHOWN;
+    assert_eq!(table.matches("<tr><td>").count(), writes);
+    let first = table.split_once("<tr><td>").unwrap().1;
+    assert!(first.starts_with("0<"), "oldest first: {first}");
+    let last = table.rsplit_once("<tr><td>").unwrap().1;
+    assert!(last.starts_with(&format!("{}<", writes - 1)), "{last}");
     assert!(
-        page.contains(&format!("id=\"history-left-out\" data-left-out=\"{left}\"")),
-        "{page}"
+        !page.contains("history-left-out") && !page.contains("history_most"),
+        "the page cuts nothing and names no bot verb: {page}"
     );
     ct.cancel();
 }
