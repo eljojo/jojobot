@@ -59,6 +59,18 @@ pub(crate) struct Note {
 /// fails for it.
 pub(crate) const SHIPPED: &[(&str, &str)] = &[
     (
+        "blank-value-takes-the-key-off",
+        include_str!("../release-notes/deploy-9.3.2/blank-value-takes-the-key-off.md"),
+    ),
+    (
+        "boot-names-rules-off-the-tree",
+        include_str!("../release-notes/deploy-9.3.2/boot-names-rules-off-the-tree.md"),
+    ),
+    (
+        "key-history-names-writer-and-run",
+        include_str!("../release-notes/deploy-9.3.2/key-history-names-writer-and-run.md"),
+    ),
+    (
         "watchbot-wakes-idle-lines",
         include_str!("../release-notes/deploy-9.3.1.3/watchbot-wakes-idle-lines.md"),
     ),
