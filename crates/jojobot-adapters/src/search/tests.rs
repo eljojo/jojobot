@@ -204,8 +204,13 @@ async fn the_fakes_write_summary_moves_under_every_write_and_holds_under_reads()
 /// document for moves the summary, and a read that finds the summary moved and
 /// scans everything anyway pays the cost of the whole corpus for one claim.
 async fn an_index_over_the_fake() -> (Arc<InMemoryMemory>, Arc<IndexedMemory>, Retrieval) {
-    let (fake, store, retrieval) = an_index_over_the_fake_with_no_image().await;
+    let (fake, store, _refreshing) = an_index_over_the_fake_with_no_image().await;
     store.state().rebuild().await.expect("the fold loads");
+    // **No half to refresh before an answer**, so the index answers with what the
+    // writer's delivery left in it. The fold holds an image, so a refresh would
+    // read that image and find the write whether or not the subscriber heard it,
+    // and the store's scan count cannot move on either path.
+    let retrieval = Retrieval::new(store.index(), vec![]);
     (fake, store, retrieval)
 }
 
@@ -233,7 +238,7 @@ fn a_hit_names(hits: &[Hit], who: &EntityId) -> bool {
 /// simply never scans cannot pass.
 #[tokio::test]
 async fn a_search_after_a_write_finds_it_without_scanning_the_store() {
-    let (fake, store, retrieval) = an_index_over_the_fake().await;
+    let (_fake, store, retrieval) = an_index_over_the_fake().await;
     let bart = EntityId::person("person:bart");
     store
         .add_entity(NewEntity::new(bart.clone(), "Bart", "user-named"))
@@ -252,7 +257,6 @@ async fn a_search_after_a_write_finds_it_without_scanning_the_store() {
         .written()
         .expect("lands");
 
-    let scans = fake.full_scans();
     let hits = retrieval
         .search(&SearchQuery::text("lasagna"))
         .await
@@ -260,11 +264,6 @@ async fn a_search_after_a_write_finds_it_without_scanning_the_store() {
     assert!(
         a_hit_names(&hits, &bart),
         "the claim just written is found: {hits:?}"
-    );
-    assert_eq!(
-        fake.full_scans(),
-        scans,
-        "the index had read the written document, so the search scanned nothing"
     );
 }
 
@@ -371,7 +370,7 @@ async fn a_write_does_not_hide_a_change_made_past_the_writes() {
 /// merge, so the answer does not depend on a scan the next read happens to take.
 #[tokio::test]
 async fn a_fold_reaches_its_holders_without_a_scan_of_the_store() {
-    let (fake, store, retrieval) = an_index_over_the_fake().await;
+    let (_fake, store, retrieval) = an_index_over_the_fake().await;
     let kept = EntityId("pet:contract-quokka-kept".into());
     let spare = EntityId("pet:contract-wombat-spare".into());
     let holder = EntityId::person("person:contract-bellringer");
@@ -403,7 +402,6 @@ async fn a_fold_reaches_its_holders_without_a_scan_of_the_store() {
         .await
         .expect("the fold lands");
 
-    let scans = fake.full_scans();
     let by_survivor = retrieval
         .search(&SearchQuery {
             holding: vec![jojobot_domain::memory::search::HeldField {
@@ -417,11 +415,6 @@ async fn a_fold_reaches_its_holders_without_a_scan_of_the_store() {
     assert!(
         a_hit_names(&by_survivor, &holder),
         "the holder is found by the survivor: {by_survivor:?}"
-    );
-    assert_eq!(
-        fake.full_scans(),
-        scans,
-        "the fold re-read its holders, so the search scanned nothing"
     );
 }
 
@@ -467,7 +460,7 @@ fn holding_companion(who: &EntityId) -> SearchQuery {
 /// old one does not.
 #[tokio::test]
 async fn a_rename_reaches_its_holders_without_a_scan_of_the_store() {
-    let (fake, store, retrieval) = an_index_over_the_fake().await;
+    let (_fake, store, retrieval) = an_index_over_the_fake().await;
     let (pet, holder) = a_pet_and_the_person_who_keeps_it(&store).await;
     let renamed = EntityId("pet:contract-wombat-renamed".into());
     store
@@ -482,7 +475,6 @@ async fn a_rename_reaches_its_holders_without_a_scan_of_the_store() {
         .await
         .expect("the rename lands");
 
-    let scans = fake.full_scans();
     let by_new = retrieval
         .search(&holding_companion(&renamed))
         .await
@@ -498,11 +490,6 @@ async fn a_rename_reaches_its_holders_without_a_scan_of_the_store() {
     assert!(
         !a_hit_names(&by_old, &holder),
         "and not by the old one: {by_old:?}"
-    );
-    assert_eq!(
-        fake.full_scans(),
-        scans,
-        "the rename re-read its holders, so the search scanned nothing"
     );
 }
 
@@ -525,7 +512,8 @@ async fn a_rename_reaches_the_words_that_mention_the_renamed_thing() {
     );
     store.state().rebuild().await.expect("the fold loads");
     store.rebuild().await.expect("the boot scan reads");
-    let retrieval = Retrieval::new(store.index(), vec![store.clone()]);
+    // No half to refresh: the answer is what the writer's delivery left behind.
+    let retrieval = Retrieval::new(store.index(), vec![]);
     let (pet, holder) = a_pet_and_the_person_who_keeps_it(&store).await;
     let pager = EntityId::person("person:contract-lamplighter");
     store
@@ -574,7 +562,6 @@ async fn a_rename_reaches_the_words_that_mention_the_renamed_thing() {
         .await
         .expect("the rename lands");
 
-    let scans = fake.full_scans();
     for (word, handle, gone) in [
         ("wombat", "contract-wombat-renamed", false),
         ("quokka", "contract-quokka-kept", true),
@@ -597,17 +584,12 @@ async fn a_rename_reaches_the_words_that_mention_the_renamed_thing() {
             "{word}: the claim and the prose that mention the pet read as its current handle: {hits:?}"
         );
     }
-    assert_eq!(
-        fake.full_scans(),
-        scans,
-        "the rename re-read what mentions the pet, so the search scanned nothing"
-    );
 }
 
 /// **An edit of a thing leaves the next search without a scan of the store.**
 #[tokio::test]
 async fn an_entity_edit_is_found_without_a_scan_of_the_store() {
-    let (fake, store, retrieval) = an_index_over_the_fake().await;
+    let (_fake, store, retrieval) = an_index_over_the_fake().await;
     let (pet, _) = a_pet_and_the_person_who_keeps_it(&store).await;
     store
         .update_entity(
@@ -622,23 +604,17 @@ async fn an_entity_edit_is_found_without_a_scan_of_the_store() {
         .written()
         .expect("lands");
 
-    let scans = fake.full_scans();
     let hits = retrieval
         .search(&SearchQuery::text("Marmalade"))
         .await
         .expect("search answers");
     assert!(a_hit_names(&hits, &pet), "the new name is found: {hits:?}");
-    assert_eq!(
-        fake.full_scans(),
-        scans,
-        "the edit re-read its document, so the search scanned nothing"
-    );
 }
 
 /// **An edit that carries a claim leaves the next search without a scan.**
 #[tokio::test]
 async fn an_entity_edit_with_a_claim_is_found_without_a_scan_of_the_store() {
-    let (fake, store, retrieval) = an_index_over_the_fake().await;
+    let (_fake, store, retrieval) = an_index_over_the_fake().await;
     let (pet, _) = a_pet_and_the_person_who_keeps_it(&store).await;
     store
         .update_entity_with_claim(
@@ -654,7 +630,6 @@ async fn an_entity_edit_with_a_claim_is_found_without_a_scan_of_the_store() {
         .written()
         .expect("lands");
 
-    let scans = fake.full_scans();
     let by_name = retrieval
         .search(&SearchQuery::text("Marmalade"))
         .await
@@ -671,24 +646,18 @@ async fn an_entity_edit_with_a_claim_is_found_without_a_scan_of_the_store() {
         a_hit_names(&by_claim, &pet),
         "the claim is found: {by_claim:?}"
     );
-    assert_eq!(
-        fake.full_scans(),
-        scans,
-        "the edit re-read its document, so the search scanned nothing"
-    );
 }
 
 /// **A page of prose leaves the next search without a scan of the store.**
 #[tokio::test]
 async fn a_prose_write_is_found_without_a_scan_of_the_store() {
-    let (fake, store, retrieval) = an_index_over_the_fake().await;
+    let (_fake, store, retrieval) = an_index_over_the_fake().await;
     let (pet, _) = a_pet_and_the_person_who_keeps_it(&store).await;
     store
         .set_prose(&pet, "sleeps under the marmalade tree", None)
         .await
         .expect("prose lands");
 
-    let scans = fake.full_scans();
     let hits = retrieval
         .search(&SearchQuery::text("marmalade"))
         .await
@@ -699,11 +668,6 @@ async fn a_prose_write_is_found_without_a_scan_of_the_store() {
             Hit::Prose { entity: Some(e), .. } if e.id == pet
         )),
         "the prose is found: {hits:?}"
-    );
-    assert_eq!(
-        fake.full_scans(),
-        scans,
-        "the write re-read its document, so the search scanned nothing"
     );
 }
 
@@ -736,11 +700,6 @@ async fn an_archive_and_a_restore_are_found_without_a_scan_of_the_store() {
         }
         let scans = fake.full_scans();
         let fast = answers(&retrieval, &pet, &holder).await;
-        assert_eq!(
-            fake.full_scans(),
-            scans,
-            "after the {step} the search scanned the store"
-        );
         // The oracle: a second index over the same store, which reads it whole.
         let oracle = Arc::new(IndexedMemory::new(fake.clone()).expect("index opens"));
         oracle.rebuild().await.expect("the oracle scans");
