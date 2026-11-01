@@ -844,3 +844,77 @@ async fn the_ready_and_plan_views_serve_the_readable_work_and_name_the_unreadabl
         );
     }
 }
+
+/// 🚨 **A roots question beside a key filter the index decides still asks whether
+/// each parent stands.** The filter keeps the work whose status is `now`, so the
+/// index hands the walk those candidates and no others; a standing project that
+/// holds no status is not among them, and its child is not a root for that. The
+/// positive is in the same answer: the work with no parent is.
+#[tokio::test]
+async fn roots_beside_an_indexed_filter_find_a_parent_outside_the_candidates() {
+    use jojobot_adapters::search::{IndexedMemory, Retrieval};
+    use jojobot_domain::memory::{NewEntity, NewFact};
+
+    let indexed = Arc::new(IndexedMemory::new(Arc::new(InMemoryMemory::booted())).expect("index"));
+    let jojobot = Jojobot::new(
+        indexed.memory(),
+        Arc::new(Retrieval::new(indexed.index(), vec![indexed.clone()])),
+        Arc::new(InMemoryMailboxes::knowing_any_owner()),
+        Arc::new(InMemorySessions::new()),
+        Arc::new(InMemoryTeachings::new()),
+        seeded_registry(),
+    );
+    let day = jiff::civil::date(2026, 10, 1);
+    for (handle, name, parent, status) in [
+        ("project:atlas", "Atlas", None, None),
+        ("work:beta", "Beta", Some("project:atlas"), Some("now")),
+        ("work:gamma", "Gamma", None, Some("now")),
+    ] {
+        let mut new = NewEntity::new(EntityId(handle.into()), name, "user-named");
+        new.parent = parent.map(|p| EntityId(p.into()));
+        let added = indexed.add_entity(new).await;
+        assert!(
+            matches!(added, Ok(jojobot_domain::memory::Guarded::Written(_))),
+            "{added:?}"
+        );
+        if let Some(status) = status {
+            let mut note = jojobot_domain::memory::testing::contract::state(NewFact {
+                fields: [("status".to_string(), status.to_string())].into(),
+                ..NewFact::about(EntityId(handle.into()), "where it stands", day)
+            });
+            note.sets = note.fields.keys().cloned().collect();
+            let written = indexed.capture(note).await;
+            assert!(
+                matches!(written, Ok(jojobot_domain::memory::Guarded::Written(_))),
+                "{written:?}"
+            );
+        }
+    }
+
+    let answer = recall_json(
+        &jojobot,
+        RecallArgs {
+            roots: Some(true),
+            kind: Some("work".into()),
+            fields: Some(vec![KeyFilterArgs {
+                key: Some("status".into()),
+                value: Some("now".into()),
+                compare: None,
+                scope: Some("thing".into()),
+            }]),
+            ..of_nothing()
+        },
+    )
+    .await;
+    let ids: Vec<&str> = answer["objects"]
+        .as_array()
+        .expect("objects")
+        .iter()
+        .map(|o| o["id"].as_str().expect("id"))
+        .collect();
+    assert_eq!(
+        ids,
+        ["work:gamma"],
+        "the child of a standing project outside the candidates is not a root: {answer}"
+    );
+}
