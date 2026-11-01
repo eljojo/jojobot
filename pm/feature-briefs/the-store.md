@@ -36,7 +36,7 @@
 
 ## Schema
 
-**Migrations are ordered and versioned. The server applies them. The database records what has run.** Nobody applies one by hand. jojobot infers nothing from the shape it finds.
+**Migrations are ordered and versioned. The server applies them. The database records what has run.** Nobody applies one by hand. jojobot infers nothing from the shape it finds, except to finish a migration its own begun marker says it started.
 
 **A migration that somebody has pushed has run somewhere, and it is frozen.** Editing one creates a new migration. *Pushed* is the test because it is the question anybody can answer. The repository does not know which instances are live.
 

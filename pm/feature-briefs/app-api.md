@@ -41,7 +41,9 @@ Both tiers pass through the same check, so a guard written once binds both.
 
 **A claim an app wrote carries the app's mark**, a typed field and never a key among its fields, so a bot that writes an app's name into a key gets no mark, and a reader tells "the app recorded this" from "a bot said so" by the mark alone.
 
-**A retry is safe.** The app names each attempt. The same attempt with the same body answers the first receipt and writes nothing; the same attempt with a different body is a conflict.
+**Operation grants and ownership rows are two things, built at two times.** Operation grants (which operations, kinds and keys an app may use, judged by `permit()`) are built in 9.3.1.3. Ownership rows (only the owning app writes its keys) come at 9.3.3 to 9.3.5 (rule 748).
+
+**A retry is safe.** The app names each attempt. The same attempt with the same body answers the first receipt and writes nothing; the same attempt with a different body is a conflict. The unstable tier does not yet dedupe a retried app write; that lands with the ledgers on the log at 9.3.3.
 
 ## The app stays connected
 
