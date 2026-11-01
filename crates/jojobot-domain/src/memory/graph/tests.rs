@@ -3790,3 +3790,51 @@ fn children_are_counted_live_and_archived_apart_and_a_folded_one_is_not_counted(
         "a leaf has none"
     );
 }
+
+/// **A container reads its decisions by the number they hold under the key it
+/// numbers by, then by handle.** A thread that numbers its decisions puts 2 before
+/// 10, where their handles sort the other way. Paired: a container that numbers
+/// nothing, and a decision holding no number, read in handle order.
+#[test]
+fn decisions_read_by_number_when_the_container_numbers_them_and_by_handle_otherwise() {
+    let held = |number: &str| BTreeMap::from([("number".to_string(), number.to_string())]);
+    let mut numbered = [
+        (
+            decision_order(Some("number"), &held("10"), "decision:cabinets-oak"),
+            "cabinets-oak",
+        ),
+        (
+            decision_order(Some("number"), &held("2"), "decision:floor-tile"),
+            "floor-tile",
+        ),
+        (
+            decision_order(Some("number"), &BTreeMap::new(), "decision:paint-cream"),
+            "paint-cream",
+        ),
+    ];
+    numbered.sort();
+    let order: Vec<&str> = numbered.iter().map(|(_, name)| *name).collect();
+    assert_eq!(
+        order,
+        ["paint-cream", "floor-tile", "cabinets-oak"],
+        "the unnumbered one leads, then 2 before 10"
+    );
+
+    let mut plain = [
+        (
+            decision_order(None, &held("2"), "decision:floor-tile"),
+            "floor-tile",
+        ),
+        (
+            decision_order(None, &held("10"), "decision:cabinets-oak"),
+            "cabinets-oak",
+        ),
+    ];
+    plain.sort();
+    let order: Vec<&str> = plain.iter().map(|(_, name)| *name).collect();
+    assert_eq!(
+        order,
+        ["cabinets-oak", "floor-tile"],
+        "a container that numbers nothing reads by handle"
+    );
+}
