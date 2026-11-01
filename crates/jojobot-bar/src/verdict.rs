@@ -72,7 +72,7 @@ impl Infra {
 /// second is the line the allocator prints before a process aborts. The third
 /// and fourth are how cargo names a binary that a signal ended. The next three
 /// are cargo's lines for a registry it could not reach, and the last is the
-/// linker's line for a library of a pruned target directory.
+/// compiler's line for a library of a cleared target directory.
 const INFRA_TEXT: [(&str, Infra); 9] = [
     ("No space left on device (os error 28)", Infra::DiskFull),
     ("code: 28, kind: StorageFull", Infra::DiskFull),
@@ -82,8 +82,8 @@ const INFRA_TEXT: [(&str, Infra); 9] = [
     ("spurious network error", Infra::NetworkFetch),
     ("failed to download from", Infra::NetworkFetch),
     ("Could not resolve host", Infra::NetworkFetch),
-    // The linker naming a library of a target directory the runner pruned.
-    (".rlib: No such file or directory", Infra::TargetPruned),
+    // The compiler naming a library of a target directory the runner cleared.
+    ("extern location for ", Infra::TargetPruned),
 ];
 
 /// **A warning is never a reason.** Cargo prints "spurious network error" while it
@@ -969,14 +969,12 @@ mod tests {
         }
     }
 
-    /// **A target directory the runner pruned is the runner's loss.** The linker
-    /// names the library it could not open.
+    /// **A target directory the runner cleared mid-run is the runner's loss.** The
+    /// fixture is the excerpt of a real run's report log: the compiler says the
+    /// library it was given does not exist, and a compile error follows it.
     #[test]
     fn a_pruned_target_directory_is_infra() {
-        let text = "   Compiling jojobot-domain v0.1.0 (/work/crates/jojobot-domain)\n\
-                    error: linking with `cc` failed: exit status: 1\n\
-                    \x20 = note: rust-lld: error: cannot open /work/cargo-target/debug/deps/libserde-0123456789abcdef.rlib: No such file or directory\n\
-                    error: could not compile `jojobot-domain` (lib) due to 1 previous error\n";
+        let text = include_str!("../tests/fixtures/verdict-pruned-target.txt");
         let verdict = read(text, false, 0);
         assert_eq!(verdict.overall, Overall::Infra);
         assert_eq!(verdict.infra, Some(Infra::TargetPruned));
