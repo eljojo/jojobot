@@ -4759,12 +4759,8 @@ async fn a_board_counts_work_in_a_word_the_instance_maps_to_done() {
             "1 done",
         ),
     ] {
-        let idp = support::TestIdp::new();
-        let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
         let board = seeded_board_over(memory_with_a_project_of(project, &work).await).await;
-        let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
-        let client = browser();
-        let cookie = log_in(&client, addr, "/").await;
+        let (addr, ct, client, cookie) = signed_in_over(board).await;
         let page = read_text(&client, addr, &format!("/{project}/"), &cookie).await;
         let board = element(&page, "board", "section");
         assert_eq!(
@@ -4960,12 +4956,8 @@ async fn a_rhythms_page_says_a_calendar_rule_in_words_and_a_loop_with_none_in_a_
             "every",
         ),
     ] {
-        let idp = support::TestIdp::new();
-        let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
         let board = seeded_board_over(memory_with_a_loop(handle, &fields).await).await;
-        let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
-        let client = browser();
-        let cookie = log_in(&client, addr, "/").await;
+        let (addr, ct, client, cookie) = signed_in_over(board).await;
         let page = read_text(&client, addr, &format!("/person:alpha/{handle}/"), &cookie).await;
         let rhythm = element(&page, "rhythm", "section");
         assert!(rhythm.contains(said), "{handle}: {rhythm}");
