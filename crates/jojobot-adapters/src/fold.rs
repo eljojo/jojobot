@@ -152,6 +152,11 @@ impl Folded {
         Ok(self)
     }
 
+    /// The shadow the serving rails report their comparisons to.
+    pub fn shadow(&self) -> Arc<shadow::Shadow> {
+        self.shadow.clone()
+    }
+
     /// What each shadowed family has counted.
     pub fn shadow_counts(&self) -> Vec<shadow::Counts> {
         self.shadow.counts()

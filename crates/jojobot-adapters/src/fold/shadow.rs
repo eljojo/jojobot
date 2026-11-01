@@ -22,15 +22,19 @@ use jojobot_domain::memory::{EntityId, Fact};
 pub enum Family {
     /// `referring_to`: who points at a thing.
     ReferringTo,
+    /// `teachings`: whether a run was already taught a domain, the log's answer
+    /// against the old held set's.
+    Teachings,
 }
 
 impl Family {
-    const ALL: [Family; 1] = [Family::ReferringTo];
+    const ALL: [Family; 2] = [Family::ReferringTo, Family::Teachings];
 
     /// The name the configuration gives it.
     pub fn name(self) -> &'static str {
         match self {
             Family::ReferringTo => "referring_to",
+            Family::Teachings => "teachings",
         }
     }
 }
@@ -86,6 +90,30 @@ impl Shadow {
                 disagreements: disagreements.load(Ordering::Relaxed),
             })
             .collect()
+    }
+
+    /// **Compare the log's answer to one teaching contact with the old held
+    /// set's**, count it, and log the difference. The log's answer is served.
+    pub fn compared_teaching(&self, run: &str, domain: &str, log_holds: bool, old_holds: bool) {
+        let Some((family, reads, disagreements)) = self
+            .watched
+            .iter()
+            .find(|(f, _, _)| *f == Family::Teachings)
+        else {
+            return;
+        };
+        reads.fetch_add(1, Ordering::Relaxed);
+        if log_holds != old_holds {
+            disagreements.fetch_add(1, Ordering::Relaxed);
+            tracing::error!(
+                family = family.name(),
+                run,
+                domain,
+                log_holds,
+                old_holds,
+                "shadow: the log and the old held set answer a contact differently (the log is served)"
+            );
+        }
     }
 
     /// **Compare the two answers to one `referring_to` read**, count it, and log

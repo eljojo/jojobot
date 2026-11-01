@@ -44,11 +44,11 @@ use jojobot_adapters::dolt::teaching::DoltTeachings;
 use jojobot_adapters::fold::Folded;
 use jojobot_adapters::fold::mail::FoldedMailboxes;
 use jojobot_adapters::fold::sessions::FoldedSessions;
-use jojobot_adapters::fold::teachings::FoldedTeachings;
 use jojobot_adapters::owners::MemoryOwners;
 use jojobot_adapters::provisioned::Provisioned;
 use jojobot_adapters::provisioned_boot::ProvisionedBootReader;
 use jojobot_adapters::search::{IndexedMailboxes, IndexedMemory, IndexedSessions, Retrieval};
+use jojobot_adapters::teaching_log::LoggedTeachings;
 use jojobot_domain::clock::Clock;
 use jojobot_domain::mailbox::mention as mailbox_mention;
 use jojobot_domain::mailbox::{Mailboxes, OwnerIndex};
@@ -877,13 +877,28 @@ pub async fn boot_store_observed(
     }
 
     let requests_pool = store.pool().clone();
-    let folded_teachings = Arc::new(
-        FoldedTeachings::new(
-            observation.teachings(Arc::new(DoltTeachings::open(store.pool().clone()))),
-        )
-        .with_writer(folded.writer()),
+    // **Teaching is served from the event log.** The log's connection holds the
+    // one-writer lock, so a second process cannot start beside this one. The old
+    // rows seed the first boot's import and, with the teachings shadow on, are
+    // kept current and compared.
+    let teaching_log = Arc::new(
+        jojobot_adapters::dolt_log::DoltLog::open(store.pool().clone())
+            .await
+            .map_err(|e| anyhow::anyhow!("EVENT LOG UNAVAILABLE — {e}"))?,
     );
-    let teachings: Arc<dyn Teachings> = folded_teachings.clone();
+    let teaching_marks = DoltTeachings::open(store.pool().clone())
+        .marks()
+        .await
+        .map_err(|e| anyhow::anyhow!("TEACHING ROWS UNREADABLE — {e}"))?;
+    let shadow = folded.shadow();
+    let logged_teachings = if shadow.watches(jojobot_adapters::fold::shadow::Family::Teachings) {
+        LoggedTeachings::open_shadowed(teaching_log, &teaching_marks, shadow).await
+    } else {
+        LoggedTeachings::open(teaching_log, &teaching_marks).await
+    }
+    .map_err(|e| anyhow::anyhow!("TEACHING LEDGER UNAVAILABLE — {e}"))?
+    .with_writer(folded.writer());
+    let teachings: Arc<dyn Teachings> = observation.teachings(Arc::new(logged_teachings));
 
     // **Wrapped in the same decorators the story harness shares** — see this
     // module's own doc.
@@ -928,21 +943,6 @@ pub async fn boot_store_observed(
              wrong; every read stays correct and only slower until then."
         ),
     }
-    let filling = std::time::Instant::now();
-    match folded_teachings.rebuild().await {
-        Ok(taught) => tracing::info!(
-            taught,
-            elapsed_ms = filling.elapsed().as_millis() as u64,
-            "fold: the teaching ledger is held in memory, from a full read"
-        ),
-        Err(e) => tracing::warn!(
-            error = %e,
-            "TEACHING LEDGER NOT HELD IN MEMORY — the boot read failed, so every first contact \
-             goes to the store until a write through this process fills the ledger again. \
-             Nothing is wrong; every answer stays correct and only slower until then."
-        ),
-    }
-
     // Mail goes into the SAME index — one front door, one ranked list — so the
     // mailbox store gets the same decorator treatment Memory's does: every verb
     // that changes a message re-indexes it, and boot loads the board once.

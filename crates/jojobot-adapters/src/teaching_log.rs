@@ -17,6 +17,8 @@ use jojobot_domain::teaching::{TeachingError, Teachings};
 use std::collections::BTreeSet;
 use tokio::sync::Mutex;
 
+use crate::writer::Writer;
+
 use crate::dolt_log::{Companion, DoltLog};
 use crate::fold::teachings::{held_after_contact, held_after_forget};
 
@@ -65,37 +67,20 @@ impl CompanionLog for DoltLog {
     }
 }
 
-/// What the shadow has counted: reads compared against the old held set, and
-/// the ones that differed.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct ShadowCounts {
-    pub comparisons: u64,
-    pub disagreements: u64,
-}
-
 /// The old path beside the log: its held set, run through the old transition
 /// code, and the legacy rows its statements keep current in the batch's own
 /// transaction.
 struct Shadow {
     log: Arc<dyn CompanionLog>,
     legacy: BTreeSet<(Sid, String)>,
-    counts: ShadowCounts,
+    report: Arc<crate::fold::shadow::Shadow>,
 }
 
 impl Shadow {
-    fn compare(&mut self, sid: &Sid, domain: &str, log_holds: bool) {
-        self.counts.comparisons += 1;
-        let legacy_holds = self.legacy.contains(&(sid.clone(), domain.to_string()));
-        if legacy_holds != log_holds {
-            self.counts.disagreements += 1;
-            tracing::error!(
-                run = sid.as_str(),
-                domain,
-                log_holds,
-                legacy_holds,
-                "teaching shadow: the log and the old held set disagree (the log is served)"
-            );
-        }
+    fn compare(&self, sid: &Sid, domain: &str, log_holds: bool) {
+        let old_holds = self.legacy.contains(&(sid.clone(), domain.to_string()));
+        self.report
+            .compared_teaching(sid.as_str(), domain, log_holds, old_holds);
     }
 
     fn statement(event: &TeachingEvent) -> Companion {
@@ -131,6 +116,7 @@ impl Shadow {
 /// The teaching ledger, answered from the log.
 #[derive(Clone)]
 pub struct LoggedTeachings {
+    writer: Writer,
     log: Arc<dyn LogStore>,
     held: Arc<Mutex<Held>>,
 }
@@ -156,6 +142,7 @@ impl LoggedTeachings {
     /// batch, in `(sid, domain)` order, each with its own `taught_at`.
     pub async fn open(log: Arc<dyn LogStore>, marks: &[Mark]) -> Result<Self, TeachingError> {
         let this = Self {
+            writer: Writer::default(),
             log,
             held: Arc::new(Mutex::new(Held {
                 state: State::default(),
@@ -169,12 +156,14 @@ impl LoggedTeachings {
 
     /// **Open with the old path as a shadow.** Every batch carries the legacy
     /// row statements, and `marks` seed the old held set. The counts say how
-    /// often the two answered and how often they differed.
+    /// often the two answered and how often they differed, on `report`.
     pub async fn open_shadowed<L: CompanionLog + 'static>(
         log: Arc<L>,
         marks: &[Mark],
+        report: Arc<crate::fold::shadow::Shadow>,
     ) -> Result<Self, TeachingError> {
         let this = Self {
+            writer: Writer::default(),
             log: log.clone(),
             held: Arc::new(Mutex::new(Held {
                 state: State::default(),
@@ -185,7 +174,7 @@ impl LoggedTeachings {
                         .iter()
                         .map(|m| (m.sid.clone(), m.domain.clone()))
                         .collect(),
-                    counts: ShadowCounts::default(),
+                    report,
                 }),
             })),
         };
@@ -193,15 +182,11 @@ impl LoggedTeachings {
         Ok(this)
     }
 
-    /// What the shadow has counted; zero when there is none.
-    pub async fn shadow_counts(&self) -> ShadowCounts {
-        self.held
-            .lock()
-            .await
-            .shadow
-            .as_ref()
-            .map(|s| s.counts)
-            .unwrap_or_default()
+    /// Share the serving process's writer with the other rails, so a write
+    /// here queues with theirs and finishes even when its caller stops waiting.
+    pub fn with_writer(mut self, writer: Writer) -> Self {
+        self.writer = writer;
+        self
     }
 
     async fn fill(&self, marks: &[Mark]) -> Result<(), TeachingError> {
@@ -314,13 +299,45 @@ impl Teachings for LoggedTeachings {
         domain: &str,
         at: Timestamp,
     ) -> Result<bool, TeachingError> {
+        let this = self.clone();
+        let (sid, domain) = (sid.clone(), domain.to_string());
+        self.writer
+            .run(async move { this.contact(&sid, &domain, at).await })
+            .await
+    }
+
+    async fn has_contact(&self, sid: &Sid, domain: &str) -> Result<bool, TeachingError> {
+        Ok(self.held.lock().await.state.has_contact(&run(sid), domain))
+    }
+
+    async fn forget(&self, sid: &Sid) -> Result<(), TeachingError> {
+        let this = self.clone();
+        let sid = sid.clone();
+        self.writer.run(async move { this.clear(&sid).await }).await
+    }
+
+    async fn taught(&self) -> Result<Option<Vec<(Sid, String)>>, TeachingError> {
+        Ok(Some(
+            self.held
+                .lock()
+                .await
+                .state
+                .taught()
+                .map(|(run, domain)| (Sid(run.0.clone()), domain.clone()))
+                .collect(),
+        ))
+    }
+}
+
+impl LoggedTeachings {
+    async fn contact(&self, sid: &Sid, domain: &str, at: Timestamp) -> Result<bool, TeachingError> {
         let mut held = self.held.lock().await;
         self.catch_up(&mut held).await?;
         let prepared = held
             .state
             .first_contact(&run(sid), domain, at)
             .map_err(|refusal| TeachingError::Refused(refusal.to_string()))?;
-        if let Some(shadow) = held.shadow.as_mut() {
+        if let Some(shadow) = held.shadow.as_ref() {
             shadow.compare(sid, domain, !prepared.answer);
         }
         if !prepared.events.is_empty() {
@@ -329,11 +346,7 @@ impl Teachings for LoggedTeachings {
         Ok(prepared.answer)
     }
 
-    async fn has_contact(&self, sid: &Sid, domain: &str) -> Result<bool, TeachingError> {
-        Ok(self.held.lock().await.state.has_contact(&run(sid), domain))
-    }
-
-    async fn forget(&self, sid: &Sid) -> Result<(), TeachingError> {
+    async fn clear(&self, sid: &Sid) -> Result<(), TeachingError> {
         let mut held = self.held.lock().await;
         self.catch_up(&mut held).await?;
         let prepared = held.state.forget(&run(sid));
@@ -349,17 +362,5 @@ impl Teachings for LoggedTeachings {
             self.commit(&mut held, prepared.events, at, true).await?;
         }
         Ok(())
-    }
-
-    async fn taught(&self) -> Result<Option<Vec<(Sid, String)>>, TeachingError> {
-        Ok(Some(
-            self.held
-                .lock()
-                .await
-                .state
-                .taught()
-                .map(|(run, domain)| (Sid(run.0.clone()), domain.clone()))
-                .collect(),
-        ))
     }
 }

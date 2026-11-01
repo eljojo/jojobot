@@ -287,3 +287,28 @@ async fn a_refused_companion_leaves_no_batch() {
     drop(log);
     server.stop().await;
 }
+
+/// **The import reads every mark with its own taught_at**, including a run with
+/// no session card.
+#[tokio::test]
+async fn the_marks_come_back_with_their_times() {
+    let (_scratch, mut server, pool, log) = fixture().await;
+    let next = batch("marks", 0, &[b"a"]);
+    log.append_with(Position(0), &next, vec![companion_row("homer")])
+        .await
+        .unwrap();
+    let marks = crate::dolt::teaching::DoltTeachings::open(pool.clone())
+        .marks()
+        .await
+        .unwrap();
+    assert_eq!(
+        marks,
+        [crate::teaching_log::Mark {
+            sid: jojobot_domain::session::Sid("homer".into()),
+            domain: "claims".into(),
+            taught_at: "2026-01-01T00:00:00Z".parse().unwrap(),
+        }]
+    );
+    drop(log);
+    server.stop().await;
+}

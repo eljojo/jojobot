@@ -26,6 +26,32 @@ impl DoltTeachings {
     }
 }
 
+impl DoltTeachings {
+    /// **Every stored mark with the time it was taught** — the import's source.
+    /// [`Teachings::taught`] returns only the pairs. A time that does not parse
+    /// is an error: the import never invents one.
+    pub async fn marks(&self) -> Result<Vec<crate::teaching_log::Mark>, TeachingError> {
+        let rows: Vec<(String, String, String)> = sqlx::query_as(
+            "SELECT sid, domain, taught_at FROM session_teaching ORDER BY sid, domain",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(store)?;
+        rows.into_iter()
+            .map(|(sid, domain, taught_at)| {
+                let taught_at = taught_at.parse().map_err(|e| {
+                    TeachingError::Store(format!("a stored teaching time is unreadable: {e}"))
+                })?;
+                Ok(crate::teaching_log::Mark {
+                    sid: Sid(sid),
+                    domain,
+                    taught_at,
+                })
+            })
+            .collect()
+    }
+}
+
 /// **A conflict is told apart from every other failure here, at the one
 /// seam every write already passes through** — the same check the memory
 /// rail's own `store` runs, see its doc for why.

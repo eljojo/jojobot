@@ -312,14 +312,18 @@ fn row_keys(log: &RowLog) -> Vec<(String, String)> {
 #[tokio::test]
 async fn the_shadow_keeps_the_rows_and_agrees() {
     let log = RowLog::default();
+    let report = Arc::new(crate::fold::shadow::Shadow::named("teachings").unwrap());
     log.rows.lock().unwrap().insert(
         ("homer".to_string(), "claims".to_string()),
         at(3).to_string(),
     );
-    let teachings =
-        LoggedTeachings::open_shadowed(Arc::new(log.clone()), &[mark("homer", "claims", 3)])
-            .await
-            .unwrap();
+    let teachings = LoggedTeachings::open_shadowed(
+        Arc::new(log.clone()),
+        &[mark("homer", "claims", 3)],
+        report.clone(),
+    )
+    .await
+    .unwrap();
     let homer = vec![("homer".to_string(), "claims".to_string())];
     assert_eq!(row_keys(&log), homer);
     assert!(
@@ -343,9 +347,8 @@ async fn the_shadow_keeps_the_rows_and_agrees() {
     assert_eq!(row_keys(&log).len(), 3);
     teachings.forget(&sid("marge")).await.unwrap();
     assert_eq!(row_keys(&log), homer);
-    let counts = teachings.shadow_counts().await;
-    assert_eq!(counts.comparisons, 3);
-    assert_eq!(counts.disagreements, 0);
+    let counts = &report.counts()[0];
+    assert_eq!((counts.reads, counts.disagreements), (3, 0));
 }
 
 /// **A deliberately divergent old set is detected**, with nonzero comparisons.
@@ -355,15 +358,18 @@ async fn a_divergent_old_set_is_counted() {
     LoggedTeachings::open(Arc::new(log.clone()), &[mark("bart", "mail", 1)])
         .await
         .unwrap();
-    let teachings =
-        LoggedTeachings::open_shadowed(Arc::new(log.clone()), &[mark("homer", "claims", 3)])
-            .await
-            .unwrap();
+    let report = Arc::new(crate::fold::shadow::Shadow::named("teachings").unwrap());
+    let teachings = LoggedTeachings::open_shadowed(
+        Arc::new(log.clone()),
+        &[mark("homer", "claims", 3)],
+        report.clone(),
+    )
+    .await
+    .unwrap();
     teachings
         .first_contact(&sid("homer"), "claims", at(4))
         .await
         .ok();
-    let counts = teachings.shadow_counts().await;
-    assert_eq!(counts.comparisons, 1);
-    assert_eq!(counts.disagreements, 1);
+    let counts = &report.counts()[0];
+    assert_eq!((counts.reads, counts.disagreements), (1, 1));
 }
