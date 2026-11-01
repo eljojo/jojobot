@@ -386,11 +386,7 @@ async fn a_node_page_lists_what_is_below_it() {
 async fn a_node_page_shows_the_facts_held_there_and_who_backs_them() {
     let (addr, ct, client, cookie) = signed_in().await;
 
-    let body = read(&client, addr, "/person:alpha/topic:widgets/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let body = read_text(&client, addr, "/person:alpha/topic:widgets/", &cookie).await;
 
     assert!(
         body.contains("The widget stall runs on Thursdays"),
@@ -437,11 +433,7 @@ async fn a_node_page_leaves_a_review_mark_out_of_its_records() {
     let client = browser();
     let cookie = log_in(&client, addr, "/").await;
 
-    let body = read(&client, addr, "/person:alpha/topic:widgets/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let body = read_text(&client, addr, "/person:alpha/topic:widgets/", &cookie).await;
 
     assert!(
         body.contains("The widget stall runs on Thursdays"),
@@ -516,11 +508,7 @@ async fn a_mention_in_served_text_becomes_a_followable_link() {
 
     let client = browser();
     let cookie = log_in(&client, addr, "/").await;
-    let body = read(&client, addr, "/person:alpha/topic:widgets/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let body = read_text(&client, addr, "/person:alpha/topic:widgets/", &cookie).await;
 
     assert!(
         body.contains("<a href=\"/person:alpha/\">@person:alpha</a>"),
@@ -551,11 +539,7 @@ async fn a_mention_in_served_text_becomes_a_followable_link() {
         .await
         .expect("the rename is written");
 
-    let after = read(&client, addr, "/person:alpha/topic:widgets/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let after = read_text(&client, addr, "/person:alpha/topic:widgets/", &cookie).await;
     assert!(
         after.contains("<a href=\"/thing:handcart-2/\">@thing:handcart-2</a>"),
         "the mention did not follow the rename to the thing's new page: {after}"
@@ -580,11 +564,7 @@ async fn a_mention_in_served_text_becomes_a_followable_link() {
 async fn a_key_on_a_node_page_opens_to_the_writes_behind_it() {
     let (addr, ct, client, cookie) = signed_in().await;
 
-    let plain = read(&client, addr, "/person:alpha/topic:widgets/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let plain = read_text(&client, addr, "/person:alpha/topic:widgets/", &cookie).await;
     assert!(
         plain.contains("?history=takings"),
         "the key is a link to its own writes — a page nobody can ask is a \
@@ -595,16 +575,13 @@ async fn a_key_on_a_node_page_opens_to_the_writes_behind_it() {
         "…and a page nobody asked carries no history: {plain}"
     );
 
-    let opened = read(
+    let opened = read_text(
         &client,
         addr,
         "/person:alpha/topic:widgets/?history=takings",
         &cookie,
     )
-    .await
-    .text()
-    .await
-    .unwrap();
+    .await;
     let table = opened
         .split_once("id=\"history\"")
         .expect("the opened page carries the history table")
@@ -642,16 +619,13 @@ async fn a_key_on_a_node_page_opens_to_the_writes_behind_it() {
 async fn the_two_tables_head_one_axis_with_one_word() {
     let (addr, ct, client, cookie) = signed_in().await;
 
-    let page = read(
+    let page = read_text(
         &client,
         addr,
         "/person:alpha/topic:widgets/?history=takings",
         &cookie,
     )
-    .await
-    .text()
-    .await
-    .unwrap();
+    .await;
 
     let facts = page
         .split_once("<h2>Facts</h2>")
@@ -693,11 +667,7 @@ async fn the_two_tables_head_one_axis_with_one_word() {
 async fn a_node_page_with_no_fields_says_so_rather_than_showing_an_empty_table() {
     let (addr, ct, client, cookie) = signed_in().await;
 
-    let body = read(&client, addr, "/place:shelbyville/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let body = read_text(&client, addr, "/place:shelbyville/", &cookie).await;
 
     assert!(
         body.contains("Fields"),
@@ -721,11 +691,7 @@ async fn a_node_page_with_no_fields_says_so_rather_than_showing_an_empty_table()
 async fn a_relation_is_a_link_to_the_entity_on_the_other_end() {
     let (addr, ct, client, cookie) = signed_in().await;
 
-    let body = read(&client, addr, "/person:alpha/topic:widgets/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let body = read_text(&client, addr, "/person:alpha/topic:widgets/", &cookie).await;
 
     assert!(
         body.contains("location"),
@@ -1015,11 +981,7 @@ async fn an_entity_whose_parent_is_missing_is_shown_as_damaged_rather_than_hidde
     let client = browser();
     let cookie = log_in(&client, addr, "/").await;
 
-    let body = read(&client, addr, "/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let body = read_text(&client, addr, "/", &cookie).await;
 
     // It sits under a handle nobody has, so it is nobody's child — and it is
     // not a root either. Without a place of its own it is on no page at all.
@@ -1056,11 +1018,7 @@ async fn an_archived_entity_is_excluded_from_every_browse_but_still_serves_its_o
     let client = browser();
     let cookie = log_in(&client, addr, "/").await;
 
-    let roots = read(&client, addr, "/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let roots = read_text(&client, addr, "/", &cookie).await;
     assert!(
         !section(&roots, "roots").contains("shelbyville"),
         "an archived root must not be on the default browse: {roots}"
@@ -1071,11 +1029,7 @@ async fn an_archived_entity_is_excluded_from_every_browse_but_still_serves_its_o
         "a live root is still a root: {roots}"
     );
 
-    let parent = read(&client, addr, "/person:alpha/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let parent = read_text(&client, addr, "/person:alpha/", &cookie).await;
     assert!(
         !parent.contains("topic:widgets"),
         "an archived child must not be listed below its parent: {parent}"
@@ -1096,11 +1050,7 @@ async fn an_archived_entity_is_excluded_from_every_browse_but_still_serves_its_o
 async fn a_bot_page_shows_the_mailbox_it_owns_and_the_mail_in_it() {
     let (addr, ct, client, cookie) = signed_in().await;
 
-    let body = read(&client, addr, "/bot:otto/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let body = read_text(&client, addr, "/bot:otto/", &cookie).await;
 
     let mail = section(&body, "mailbox");
     assert!(
@@ -1128,11 +1078,7 @@ async fn page_over(board: Board, path: &str) -> String {
     let (addr, ct, _board) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
     let client = browser();
     let cookie = log_in(&client, addr, "/").await;
-    let body = read(&client, addr, path, &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let body = read_text(&client, addr, path, &cookie).await;
     ct.cancel();
     body
 }
@@ -1489,11 +1435,7 @@ async fn the_operators_mail_is_on_the_operators_page_and_no_other() {
     let client = browser();
     let cookie = log_in(&client, addr, "/").await;
 
-    let operator_page = read(&client, addr, "/person:lisa/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let operator_page = read_text(&client, addr, "/person:lisa/", &cookie).await;
     let box_section = section(&operator_page, "mailbox");
     assert!(
         box_section.contains(OPERATOR_SUBJECT),
@@ -1514,21 +1456,13 @@ async fn the_operators_mail_is_on_the_operators_page_and_no_other() {
         "/bot:otto/",
         "/person:alpha/",
     ] {
-        let page = read(&client, addr, other, &cookie)
-            .await
-            .text()
-            .await
-            .unwrap();
+        let page = read_text(&client, addr, other, &cookie).await;
         assert!(
             !page.contains(OPERATOR_BODY) && !page.contains(OPERATOR_SUBJECT),
             "{other} carries the operator's mail: {page}"
         );
     }
-    let bot_page = read(&client, addr, "/bot:otto/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let bot_page = read_text(&client, addr, "/bot:otto/", &cookie).await;
     assert!(
         bot_page.contains("A note for a bot"),
         "a bot's own box is still on its own page: {bot_page}"
@@ -1572,11 +1506,7 @@ async fn a_replaced_message_shows_as_replaced_on_the_operators_page_and_names_it
     let client = browser();
     let cookie = log_in(&client, addr, "/").await;
 
-    let page = read(&client, addr, "/person:lisa/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let page = read_text(&client, addr, "/person:lisa/", &cookie).await;
 
     let row_for = |id: &str| -> String {
         let anchor = format!("<tr><td>{id}</td>");
@@ -1627,11 +1557,7 @@ async fn opening_the_operators_page_leaves_new_mail_new() {
     );
 
     read(&client, addr, "/person:milhouse/", &cookie).await;
-    let page = read(&client, addr, "/person:lisa/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let page = read_text(&client, addr, "/person:lisa/", &cookie).await;
     read(&client, addr, "/person:lisa/", &cookie).await;
 
     assert!(
@@ -1702,11 +1628,7 @@ async fn the_open_button_takes_delivery_of_one_message_only() {
     );
     assert_eq!(state_in_the_store(&mailboxes, &mail.to_a_bot).await, "new");
 
-    let page = read(&client, addr, "/person:lisa/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let page = read_text(&client, addr, "/person:lisa/", &cookie).await;
     assert!(
         page.contains(OPERATOR_BODY),
         "an opened message shows its body: {page}"
@@ -1804,11 +1726,7 @@ async fn the_operators_mail_is_withheld_unless_the_allowlist_is_one_person() {
         let cookie = log_in(&client, addr, "/").await;
         let origin = format!("http://{addr}");
 
-        let page = read(&client, addr, "/person:lisa/", &cookie)
-            .await
-            .text()
-            .await
-            .unwrap();
+        let page = read_text(&client, addr, "/person:lisa/", &cookie).await;
         assert!(
             page.contains("id=\"mailbox-withheld\""),
             "with {what} the page says the mail is not shown: {page}"
@@ -1995,11 +1913,7 @@ async fn one_person_listed_twice_still_gets_the_operators_mail() {
         let cookie = log_in(&client, addr, "/").await;
         let origin = format!("http://{addr}");
 
-        let page = read(&client, addr, "/person:lisa/", &cookie)
-            .await
-            .text()
-            .await
-            .unwrap();
+        let page = read_text(&client, addr, "/person:lisa/", &cookie).await;
         assert!(
             !page.contains("id=\"mailbox-withheld\"") && page.contains(OPERATOR_SUBJECT),
             "with one person {what} the page withheld the box: {page}"
@@ -2038,11 +1952,7 @@ async fn the_operator_marks_a_message_processed_with_a_note() {
     // **A message still new carries the mark-processed form**, beside its Open
     // button: the operator may finish it without opening it, and nothing but
     // Open sets `read`.
-    let page = read(&client, addr, "/person:lisa/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let page = read_text(&client, addr, "/person:lisa/", &cookie).await;
     assert!(
         mark_form_for(&page, mail.to_the_operator.as_str()) && page.contains("name=\"note\""),
         "a new message carries a mark-processed form with a note: {page}"
@@ -2074,11 +1984,7 @@ async fn the_operator_marks_a_message_processed_with_a_note() {
         .expect("the message is there");
     assert_eq!(held.state.as_token(), "processed");
     assert_eq!(held.notes.as_deref(), Some("paid on the second"));
-    let after = read(&client, addr, "/person:lisa/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let after = read_text(&client, addr, "/person:lisa/", &cookie).await;
     assert!(
         after.contains("paid on the second"),
         "the note is on the page: {after}"
@@ -2250,11 +2156,7 @@ async fn the_action_takes_a_referer_under_our_origin_when_there_is_no_origin() {
 async fn a_bot_page_shows_its_runs_and_what_each_one_recorded() {
     let (addr, ct, client, cookie) = signed_in().await;
 
-    let body = read(&client, addr, "/bot:otto/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let body = read_text(&client, addr, "/bot:otto/", &cookie).await;
 
     let runs = section(&body, "sessions");
     assert!(
@@ -2346,21 +2248,9 @@ async fn looking_through_the_listing_writes_to_no_rail() {
         (&before.memory, &before.mail, &before.runs)
     );
 
-    let index = read(&client, addr, "/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
-    let node = read(&client, addr, "/person:alpha/topic:widgets/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
-    let bot = read(&client, addr, "/bot:otto/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let index = read_text(&client, addr, "/", &cookie).await;
+    let node = read_text(&client, addr, "/person:alpha/topic:widgets/", &cookie).await;
+    let bot = read_text(&client, addr, "/bot:otto/", &cookie).await;
 
     // The positive half, one per page: each really did serve the records it is
     // about to be checked against. Without it a handler that returned nothing
@@ -2422,11 +2312,7 @@ async fn markup_a_writer_typed_arrives_as_text_and_not_as_document() {
             &["message-subject", "message-body", "chronology-beat"][..],
         ),
     ] {
-        let page = read(&client, addr, path, &cookie)
-            .await
-            .text()
-            .await
-            .unwrap();
+        let page = read_text(&client, addr, path, &cookie).await;
         for field in fields {
             let raw = typed(field);
             // The pair, in the same read: the value is on the page, and it is on
@@ -2449,11 +2335,7 @@ async fn markup_a_writer_typed_arrives_as_text_and_not_as_document() {
 async fn a_long_body_and_a_long_beat_are_collapsed_to_their_opening_and_still_whole_on_the_page() {
     let (addr, ct, client, cookie) = signed_in().await;
 
-    let body = read(&client, addr, "/bot:otto/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let body = read_text(&client, addr, "/bot:otto/", &cookie).await;
     let mail = section(&body, "mailbox");
 
     // Collapsed: the ellipsis is what the digest strategy adds when it cuts, so
@@ -2846,6 +2728,11 @@ async fn spawn_over_views(
     (addr, ct)
 }
 
+/// **The body of a page**, read with the session cookie.
+async fn read_text(client: &reqwest::Client, addr: SocketAddr, path: &str, cookie: &str) -> String {
+    read(client, addr, path, cookie).await.text().await.unwrap()
+}
+
 /// **A server over the ordinary board and a browser signed in to it**, for a case
 /// that reads pages and needs nothing from the login but its cookie.
 async fn signed_in() -> (SocketAddr, CancellationToken, reqwest::Client, String) {
@@ -2901,11 +2788,7 @@ fn refusal_on(page: &str) -> &str {
 async fn a_views_page_runs_the_view_and_shows_the_result() {
     let (addr, ct, client, cookie) = signed_in_over_views().await;
 
-    let page = read(&client, addr, "/view:loops/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let page = read_text(&client, addr, "/view:loops/", &cookie).await;
 
     let answer = page
         .split_once("id=\"answer\"")
@@ -2937,11 +2820,7 @@ async fn a_views_page_runs_the_view_and_shows_the_result() {
 async fn a_views_page_runs_the_views_expression_and_order() {
     let (addr, ct, client, cookie) = signed_in_over_views().await;
 
-    let page = read(&client, addr, "/view:latest-first/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let page = read_text(&client, addr, "/view:latest-first/", &cookie).await;
 
     let answer = page
         .split_once("id=\"answer\"")
@@ -3009,11 +2888,7 @@ fn answer_rows(page: &str) -> Vec<&str> {
 async fn the_colleagues_views_page_shows_who_each_bot_reports_to() {
     let (addr, ct, client, cookie) = signed_in_over_views().await;
 
-    let page = read(&client, addr, "/view:colleagues/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let page = read_text(&client, addr, "/view:colleagues/", &cookie).await;
     let rows = answer_rows(&page);
     let row_of = |handle: &str| {
         rows.iter()
@@ -3041,11 +2916,7 @@ async fn the_colleagues_views_page_shows_who_each_bot_reports_to() {
 async fn a_view_that_matches_nothing_says_so() {
     let (addr, ct, client, cookie) = signed_in_over_views().await;
 
-    let page = read(&client, addr, "/view:matches-nothing/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let page = read_text(&client, addr, "/view:matches-nothing/", &cookie).await;
 
     let said = page
         .split_once("This view matches nothing")
@@ -3071,11 +2942,7 @@ async fn a_view_that_matches_nothing_says_so() {
 async fn a_view_short_of_a_key_names_the_key_rather_than_reading_as_empty() {
     let (addr, ct, client, cookie) = signed_in_over_views().await;
 
-    let page = read(&client, addr, "/view:my-people/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let page = read_text(&client, addr, "/view:my-people/", &cookie).await;
 
     let why = refusal_on(&page);
     assert!(
@@ -3099,11 +2966,7 @@ async fn a_view_short_of_a_key_names_the_key_rather_than_reading_as_empty() {
 async fn a_view_selecting_something_that_is_no_kind_says_what_it_holds() {
     let (addr, ct, client, cookie) = signed_in_over_views().await;
 
-    let page = read(&client, addr, "/view:names-no-kind/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let page = read_text(&client, addr, "/view:names-no-kind/", &cookie).await;
 
     // **Scoped to the sentence**, because the view's own definition is on the
     // page too: a substring over the whole page finds `sandwich` in the fields
@@ -3130,11 +2993,7 @@ async fn a_view_selecting_something_that_is_no_kind_says_what_it_holds() {
 async fn a_view_that_asks_for_what_is_overdue_leaves_out_what_is_not() {
     let (addr, ct, client, cookie) = signed_in_over_views().await;
 
-    let page = read(&client, addr, "/view:my-week/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let page = read_text(&client, addr, "/view:my-week/", &cookie).await;
     let answer = page
         .split_once("id=\"answer\"")
         .expect("the page carries the view's answer")
@@ -3166,11 +3025,7 @@ async fn a_view_that_asks_for_what_is_overdue_leaves_out_what_is_not() {
 async fn a_view_that_asks_for_what_is_overdue_renders_oldest_first() {
     let (addr, ct, client, cookie) = signed_in_over_views().await;
 
-    let page = read(&client, addr, "/view:my-week/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let page = read_text(&client, addr, "/view:my-week/", &cookie).await;
     let answer = page
         .split_once("id=\"answer\"")
         .expect("the page carries the view's answer")
@@ -3276,11 +3131,7 @@ async fn the_overdue_page_reads_today_in_the_instances_zone() {
     let client = browser();
     let cookie = log_in(&client, addr, "/").await;
 
-    let page = read(&client, addr, "/view:my-week/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let page = read_text(&client, addr, "/view:my-week/", &cookie).await;
     let answer = page
         .split_once("id=\"answer\"")
         .expect("the page carries the view's answer")
@@ -3393,11 +3244,7 @@ async fn the_overdue_page_reads_the_words_the_instance_maps() {
     let client = browser();
     let cookie = log_in(&client, addr, "/").await;
 
-    let page = read(&client, addr, "/view:my-projects/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let page = read_text(&client, addr, "/view:my-projects/", &cookie).await;
     let answer = page
         .split_once("id=\"answer\"")
         .expect("the page carries the view's answer")
@@ -3420,11 +3267,7 @@ async fn the_overdue_page_reads_the_words_the_instance_maps() {
 async fn a_page_that_is_no_view_carries_no_answer() {
     let (addr, ct, client, cookie) = signed_in_over_views().await;
 
-    let page = read(&client, addr, "/person:alpha/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let page = read_text(&client, addr, "/person:alpha/", &cookie).await;
 
     assert!(
         page.contains("<h1>Index of /person:alpha/</h1>"),
@@ -3570,13 +3413,7 @@ async fn a_views_page_renders_its_inputs_as_a_form_and_answers_with_them() {
     let page = |path: String| {
         let client = client.clone();
         let cookie = cookie.clone();
-        async move {
-            read(&client, addr, &path, &cookie)
-                .await
-                .text()
-                .await
-                .unwrap()
-        }
+        async move { read_text(&client, addr, &path, &cookie).await }
     };
 
     // ── the ready view: a form with its one input, and the whole answer ─────
@@ -3743,13 +3580,7 @@ async fn a_views_page_asks_for_the_type_its_input_names() {
     let page = |path: String| {
         let client = client.clone();
         let cookie = cookie.clone();
-        async move {
-            read(&client, addr, &path, &cookie)
-                .await
-                .text()
-                .await
-                .unwrap()
-        }
+        async move { read_text(&client, addr, &path, &cookie).await }
     };
 
     let asked = page("/view:my-things-of/".into()).await;
@@ -3860,13 +3691,7 @@ async fn a_views_page_runs_a_required_input_that_carries_a_default() {
     let page = |path: String| {
         let client = client.clone();
         let cookie = cookie.clone();
-        async move {
-            read(&client, addr, &path, &cookie)
-                .await
-                .text()
-                .await
-                .unwrap()
-        }
+        async move { read_text(&client, addr, &path, &cookie).await }
     };
 
     // The verb, sent nothing, uses the default.
@@ -3942,11 +3767,7 @@ async fn a_ready_view_over_something_that_is_not_work_cannot_be_run() {
     let client = browser();
     let cookie = log_in(&client, addr, "/").await;
 
-    let page = read(&client, addr, "/view:my-people/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let page = read_text(&client, addr, "/view:my-people/", &cookie).await;
 
     let why = refusal_on(&page);
     assert!(
@@ -4006,11 +3827,7 @@ async fn a_view_holding_an_empty_type_cannot_be_run_by_the_page_or_the_verb() {
         "the verb refuses a view whose type is empty: {refused}"
     );
 
-    let page = read(&client, addr, "/view:unscoped/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let page = read_text(&client, addr, "/view:unscoped/", &cookie).await;
     refusal_on(&page);
     assert!(
         !page.contains("id=\"answer\""),
@@ -4037,11 +3854,7 @@ fn left_out_on(page: &str, id: &str) -> Option<u64> {
 async fn a_views_page_says_what_it_left_out_as_recall_does() {
     let (addr, ct, client, cookie) = signed_in_over_views().await;
 
-    let week = read(&client, addr, "/view:my-week/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let week = read_text(&client, addr, "/view:my-week/", &cookie).await;
     let served = recall_body_of_view(addr, "my-week").await;
     let because = &served["overdue_excluded_because"];
     assert!(
@@ -4065,11 +3878,7 @@ async fn a_views_page_says_what_it_left_out_as_recall_does() {
         );
     }
 
-    let ready = read(&client, addr, "/view:ready/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let ready = read_text(&client, addr, "/view:ready/", &cookie).await;
     let served = recall_body_of_view(addr, "ready").await;
     assert!(
         served["ready_left_out"]["count"].as_u64() > Some(0),
@@ -4089,11 +3898,7 @@ async fn a_views_page_says_what_it_left_out_as_recall_does() {
     );
 
     // An answer with nothing in it still says what the view left out.
-    let empty = read(&client, addr, "/view:nothing-owed/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let empty = read_text(&client, addr, "/view:nothing-owed/", &cookie).await;
     assert!(
         empty.contains("This view matches nothing") && !empty.contains("cannot be run"),
         "the view answers empty: {empty}"
@@ -4102,11 +3907,7 @@ async fn a_views_page_says_what_it_left_out_as_recall_does() {
 
     // The positive beside the negative: a view that left nothing out says
     // nothing about it.
-    let colleagues = read(&client, addr, "/view:colleagues/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let colleagues = read_text(&client, addr, "/view:colleagues/", &cookie).await;
     assert!(
         !colleagues.contains("data-left-out"),
         "a view that left nothing out has no such line: {colleagues}"
@@ -4131,11 +3932,7 @@ async fn every_page_wears_the_one_stylesheet_and_the_shell() {
     let (addr, ct, client, cookie) = signed_in().await;
 
     for path in PAGES {
-        let page = read(&client, addr, path, &cookie)
-            .await
-            .text()
-            .await
-            .unwrap();
+        let page = read_text(&client, addr, path, &cookie).await;
         // The positive: the page carries the mockup's palette, once.
         assert_eq!(
             page.matches("<style>").count(),
@@ -4164,11 +3961,7 @@ async fn every_page_wears_the_one_stylesheet_and_the_shell() {
 async fn the_header_walks_the_handle_path_and_the_page_content_is_unchanged_inside_main() {
     let (addr, ct, client, cookie) = signed_in().await;
 
-    let page = read(&client, addr, "/person:alpha/topic:widgets/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let page = read_text(&client, addr, "/person:alpha/topic:widgets/", &cookie).await;
     let header = page
         .split_once("<header class=\"bar\">")
         .and_then(|(_, rest)| rest.split_once("</header>"))
@@ -4252,16 +4045,13 @@ async fn a_views_page_shows_the_fields_the_view_shows_as_the_verb_serves_them() 
     let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
     let client = browser();
     let cookie = log_in(&client, addr, "/").await;
-    let page = read(
+    let page = read_text(
         &client,
         addr,
         "/view:board/?project=project%3Aatlas",
         &cookie,
     )
-    .await
-    .text()
-    .await
-    .unwrap();
+    .await;
     let (keys, rows) = answer_cells(&page);
     assert_eq!(keys, ["status", "depends_on", "owner"], "{page}");
     assert!(
@@ -4352,13 +4142,7 @@ async fn a_projects_page_links_to_the_ready_work_of_that_project() {
     let page = |path: String| {
         let client = client.clone();
         let cookie = cookie.clone();
-        async move {
-            read(&client, addr, &path, &cookie)
-                .await
-                .text()
-                .await
-                .unwrap()
-        }
+        async move { read_text(&client, addr, &path, &cookie).await }
     };
 
     // ── the project's page carries the link, and the link opens its work ────
@@ -4471,13 +4255,7 @@ async fn a_bots_page_shows_the_chain_it_reports_through_and_who_reports_to_it() 
     let page = |path: &'static str| {
         let client = client.clone();
         let cookie = cookie.clone();
-        async move {
-            read(&client, addr, path, &cookie)
-                .await
-                .text()
-                .await
-                .unwrap()
-        }
+        async move { read_text(&client, addr, path, &cookie).await }
     };
 
     // ── upsilon: the chain from the head down to it, each step a link ─────────
@@ -4545,11 +4323,7 @@ async fn the_org_chart_page_folds_every_reporting_line_into_one_tree() {
     assert!(closed.status().is_redirection(), "{}", closed.status());
 
     let cookie = log_in(&client, addr, "/").await;
-    let chart = read(&client, addr, "/ui/org/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let chart = read_text(&client, addr, "/ui/org/", &cookie).await;
     // Each bot is one line, deeper for each manager above it.
     let depth_of = |handle: &str| -> usize {
         let line = chart
@@ -4581,11 +4355,7 @@ async fn the_org_chart_page_folds_every_reporting_line_into_one_tree() {
         chart.contains("<section class=\"box\"><h2>Org chart"),
         "{chart}"
     );
-    let upsilon = read(&client, addr, "/bot:upsilon/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let upsilon = read_text(&client, addr, "/bot:upsilon/", &cookie).await;
     assert!(upsilon.contains("<a href=\"/ui/org/\">"), "{upsilon}");
     // A path no entity answers to is still missing, chart or no chart.
     let missing = read(&client, addr, "/ui/nothing/", &cookie).await;
@@ -4659,11 +4429,7 @@ async fn the_homepage_has_a_box_for_each_kind_that_has_members_and_counts_them_t
     let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
     let client = browser();
     let cookie = log_in(&client, addr, "/").await;
-    let home = read(&client, addr, "/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let home = read_text(&client, addr, "/", &cookie).await;
 
     // ── topics: five stand (widgets and four more), the archived one does not ─
     let topics = element(&home, "kind-topic", "section");
@@ -4719,13 +4485,7 @@ async fn the_homepage_lists_every_top_level_thing_and_sorts_by_name_or_last_writ
     let page = |path: &'static str| {
         let client = client.clone();
         let cookie = cookie.clone();
-        async move {
-            read(&client, addr, path, &cookie)
-                .await
-                .text()
-                .await
-                .unwrap()
-        }
+        async move { read_text(&client, addr, path, &cookie).await }
     };
     let by_name = page("/").await;
     let roots = element(&by_name, "roots", "table");
@@ -4785,11 +4545,7 @@ async fn the_homepage_has_a_due_box_from_the_due_view_and_a_kind_has_a_page_of_i
     let client = browser();
     let cookie = log_in(&client, addr, "/").await;
 
-    let home = read(&client, addr, "/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let home = read_text(&client, addr, "/", &cookie).await;
     let due = element(&home, "due", "section");
     // The loop that went quiet long ago is due; the one counted from 2400 is not.
     assert!(
@@ -4802,11 +4558,7 @@ async fn the_homepage_has_a_due_box_from_the_due_view_and_a_kind_has_a_page_of_i
     );
 
     // The page of a kind lists every thing of it that stands, in the same shell.
-    let topics = read(&client, addr, "/ui/kind/topic/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let topics = read_text(&client, addr, "/ui/kind/topic/", &cookie).await;
     let table = element(&topics, "things", "table");
     for stands in [
         "person:alpha/topic:widgets",
@@ -4875,11 +4627,7 @@ async fn a_last_write_is_the_day_it_fell_on_in_the_instances_zone() {
     let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
     let client = browser();
     let cookie = log_in(&client, addr, "/").await;
-    let home = read(&client, addr, "/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let home = read_text(&client, addr, "/", &cookie).await;
 
     // The thing written last, in the box and in the listing: the day in the
     // instance's zone, and not the day in UTC.
@@ -4889,11 +4637,7 @@ async fn a_last_write_is_the_day_it_fell_on_in_the_instances_zone() {
         .find(|row| row.contains("href=\"/person:alpha/\""))
         .expect("person:alpha is a root")
         .to_string();
-    let kind_page = read(&client, addr, "/ui/kind/person/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let kind_page = read_text(&client, addr, "/ui/kind/person/", &cookie).await;
     let kind_row = element(&kind_page, "things", "table");
     for (what, cell) in [
         ("the box", people),
@@ -5016,11 +4760,7 @@ async fn a_projects_page_is_a_board_with_a_column_for_each_status_word() {
     let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
     let client = browser();
     let cookie = log_in(&client, addr, "/").await;
-    let project = read(&client, addr, "/project:atlas/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let project = read_text(&client, addr, "/project:atlas/", &cookie).await;
     let board = element(&project, "board", "section");
 
     // The column of a status word: its cards, and no other column's.
@@ -5184,11 +4924,7 @@ async fn a_board_counts_work_in_a_word_the_instance_maps_to_done() {
         let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
         let client = browser();
         let cookie = log_in(&client, addr, "/").await;
-        let page = read(&client, addr, &format!("/{project}/"), &cookie)
-            .await
-            .text()
-            .await
-            .unwrap();
+        let page = read_text(&client, addr, &format!("/{project}/"), &cookie).await;
         let board = element(&page, "board", "section");
         assert_eq!(
             board.matches("class=\"card done\"").count(),
@@ -5214,13 +4950,7 @@ async fn a_pieces_of_work_page_leads_with_its_status_needs_owner_and_history() {
     let page = |path: &'static str| {
         let client = client.clone();
         let cookie = cookie.clone();
-        async move {
-            read(&client, addr, path, &cookie)
-                .await
-                .text()
-                .await
-                .unwrap()
-        }
+        async move { read_text(&client, addr, path, &cookie).await }
     };
 
     // The work that is under way, owned, and needed by other work.
@@ -5315,13 +5045,7 @@ async fn a_rhythms_page_says_its_cadence_last_check_in_next_due_and_how_late() {
     let page = |path: &'static str| {
         let client = client.clone();
         let cookie = cookie.clone();
-        async move {
-            read(&client, addr, path, &cookie)
-                .await
-                .text()
-                .await
-                .unwrap()
-        }
+        async move { read_text(&client, addr, path, &cookie).await }
     };
 
     // The loop that fell due three days ago says so, with the day it fell due.
@@ -5405,11 +5129,7 @@ async fn a_rhythms_page_says_a_calendar_rule_in_words_and_a_loop_with_none_in_a_
         let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
         let client = browser();
         let cookie = log_in(&client, addr, "/").await;
-        let page = read(&client, addr, &format!("/person:alpha/{handle}/"), &cookie)
-            .await
-            .text()
-            .await
-            .unwrap();
+        let page = read_text(&client, addr, &format!("/person:alpha/{handle}/"), &cookie).await;
         let rhythm = element(&page, "rhythm", "section");
         assert!(rhythm.contains(said), "{handle}: {rhythm}");
         assert!(!rhythm.contains(not_said), "{handle}: {rhythm}");
@@ -5492,11 +5212,7 @@ async fn a_threads_page_puts_its_standing_decisions_first_and_then_its_own_claim
     let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
     let client = browser();
     let cookie = log_in(&client, addr, "/").await;
-    let thread = read(&client, addr, "/thread:simpson-kitchen/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let thread = read_text(&client, addr, "/thread:simpson-kitchen/", &cookie).await;
 
     // The standing decisions, each with what it says; the replaced one is not.
     let decisions = element(&thread, "decisions", "section");
@@ -5634,21 +5350,13 @@ async fn a_threads_page_lists_numbered_decisions_in_number_order() {
     let client = browser();
     let cookie = log_in(&client, addr, "/").await;
 
-    let numbered = read(&client, addr, "/thread:krusty-burger/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let numbered = read_text(&client, addr, "/thread:krusty-burger/", &cookie).await;
     let decisions = element(&numbered, "decisions", "section");
     assert!(
         place(decisions, "burger-roof") < place(decisions, "burger-bridge"),
         "decision 2 comes before decision 10: {decisions}"
     );
-    let plain = read(&client, addr, "/thread:krusty-telethon/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let plain = read_text(&client, addr, "/thread:krusty-telethon/", &cookie).await;
     let decisions = element(&plain, "decisions", "section");
     assert!(
         place(decisions, "telethon-bridge") < place(decisions, "telethon-roof"),
@@ -6050,11 +5758,7 @@ async fn every_page_carries_a_search_box_that_asks_the_search_page() {
     let (addr, ct, client, cookie) = signed_in().await;
 
     for path in ["/", "/person:alpha/", "/person:alpha/topic:widgets/"] {
-        let body = read(&client, addr, path, &cookie)
-            .await
-            .text()
-            .await
-            .unwrap();
+        let body = read_text(&client, addr, path, &cookie).await;
         assert!(
             body.contains("<form class=\"find\" action=\"/ui/search\" method=\"get\">")
                 && body.contains("name=\"q\""),
@@ -6073,31 +5777,19 @@ async fn every_page_carries_a_search_box_that_asks_the_search_page() {
 async fn a_search_from_the_box_lists_what_the_search_finds_and_only_that() {
     let (addr, ct, client, cookie) = signed_in().await;
 
-    let found = read(&client, addr, "/ui/search?q=widgets", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let found = read_text(&client, addr, "/ui/search?q=widgets", &cookie).await;
     assert!(
         found.contains("href=\"/person:alpha/topic:widgets/\""),
         "the thing the words name is a link to its page: {found}"
     );
-    let claim = read(&client, addr, "/ui/search?q=stall", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let claim = read_text(&client, addr, "/ui/search?q=stall", &cookie).await;
     assert!(
         claim.contains("The widget stall runs on Thursdays")
             && claim.contains("href=\"/person:alpha/topic:widgets/\""),
         "a claim found by its words is shown and links to the page it is about: {claim}"
     );
 
-    let nothing = read(&client, addr, "/ui/search?q=tractor", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let nothing = read_text(&client, addr, "/ui/search?q=tractor", &cookie).await;
     assert!(
         nothing.contains("id=\"nothing-found\"")
             && !nothing.contains("href=\"/person:alpha/topic:widgets/\""),
@@ -6163,11 +5855,7 @@ async fn an_empty_search_says_when_the_index_has_not_caught_up() {
     .await;
     let client = browser();
     let cookie = log_in(&client, addr, "/").await;
-    let behind = read(&client, addr, "/ui/search?q=tractor", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let behind = read_text(&client, addr, "/ui/search?q=tractor", &cookie).await;
     assert!(
         behind.contains("id=\"nothing-found\"") && behind.contains("id=\"search-behind\""),
         "an empty answer from an index that has not caught up says so: {behind}"
@@ -6188,11 +5876,7 @@ async fn an_empty_search_says_when_the_index_has_not_caught_up() {
     let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
     let (addr, ct) = spawn_jojobot(endpoints, &[READER], &idp).await;
     let cookie = log_in(&client, addr, "/").await;
-    let loaded = read(&client, addr, "/ui/search?q=tractor", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let loaded = read_text(&client, addr, "/ui/search?q=tractor", &cookie).await;
     assert!(
         loaded.contains("id=\"nothing-found\"") && !loaded.contains("search-behind"),
         "a loaded index adds nothing to an empty answer: {loaded}"
@@ -6228,13 +5912,7 @@ async fn a_thin_search_says_the_words_are_matched_loosely_once_and_a_good_one_do
     let cookie = log_in(&client, addr, "/").await;
     let page = |q: &'static str| {
         let (client, cookie) = (client.clone(), cookie.clone());
-        async move {
-            read(&client, addr, &format!("/ui/search?q={q}"), &cookie)
-                .await
-                .text()
-                .await
-                .unwrap()
-        }
+        async move { read_text(&client, addr, &format!("/ui/search?q={q}"), &cookie).await }
     };
 
     for thin in ["tractor", "quartz"] {
@@ -6282,11 +5960,7 @@ async fn hits_the_page_does_not_list_are_counted_with_the_way_to_read_them() {
     let client = browser();
     let cookie = log_in(&client, addr, "/").await;
 
-    let unlisted = read(&client, addr, "/ui/search?q=stall", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let unlisted = read_text(&client, addr, "/ui/search?q=stall", &cookie).await;
     let line = unlisted
         .split_once("id=\"not-listed\">")
         .unwrap_or_else(|| panic!("the unlisted hits are not counted: {unlisted}"))
@@ -6327,11 +6001,7 @@ async fn hits_the_page_does_not_list_are_counted_with_the_way_to_read_them() {
         "the line names the verb that returns them, and only it: {line}"
     );
 
-    let listed = read(&client, addr, "/ui/search?q=quartz", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let listed = read_text(&client, addr, "/ui/search?q=quartz", &cookie).await;
     assert!(
         listed.contains("href=\"/thing:") && !listed.contains("not-listed"),
         "a thing found and nothing held back says nothing about unlisted hits: {listed}"
@@ -6354,11 +6024,7 @@ async fn a_page_with_only_unlisted_hits_does_not_say_nothing_found_or_name_mail(
     let client = browser();
     let cookie = log_in(&client, addr, "/").await;
 
-    let unlisted = read(&client, addr, "/ui/search?q=prose", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let unlisted = read_text(&client, addr, "/ui/search?q=prose", &cookie).await;
     assert!(
         !unlisted.contains("id=\"found\""),
         "the word must find no listed row for this case to be about the empty table: {unlisted}"
@@ -6379,11 +6045,7 @@ async fn a_page_with_only_unlisted_hits_does_not_say_nothing_found_or_name_mail(
         "the line names the source it searched and not the one it did not: {line}"
     );
 
-    let nothing = read(&client, addr, "/ui/search?q=zzyzx", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let nothing = read_text(&client, addr, "/ui/search?q=zzyzx", &cookie).await;
     assert!(
         nothing.contains("id=\"nothing-found\"") && !nothing.contains("not-listed"),
         "a word nothing holds still says so: {nothing}"
@@ -6400,11 +6062,7 @@ async fn a_page_with_only_unlisted_hits_does_not_say_nothing_found_or_name_mail(
 async fn a_value_says_how_it_is_known_only_behind_its_fold() {
     let (addr, ct, client, cookie) = signed_in().await;
 
-    let page = read(&client, addr, "/person:alpha/topic:widgets/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let page = read_text(&client, addr, "/person:alpha/topic:widgets/", &cookie).await;
     let fields = section(&page, "fields");
     let row = fields
         .split_once("?history=takings")
@@ -6531,11 +6189,7 @@ async fn a_page_names_the_write_the_fold_took_the_value_from_after_an_in_place_r
     let cookie = log_in(&client, addr, "/").await;
     let id = EntityId("work:donut-budget".into());
 
-    let before = read(&client, addr, "/work:donut-budget/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let before = read_text(&client, addr, "/work:donut-budget/", &cookie).await;
     let row = price_row(&before);
     assert!(
         row.contains("<td>7"),
@@ -6551,11 +6205,7 @@ async fn a_page_names_the_write_the_fold_took_the_value_from_after_an_in_place_r
 
     rewrite_price(&memory, &alpha, "6").await;
 
-    let after = read(&client, addr, "/work:donut-budget/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let after = read_text(&client, addr, "/work:donut-budget/", &cookie).await;
     let row = price_row(&after);
     assert!(
         row.contains("<td>6"),
@@ -6613,11 +6263,7 @@ async fn a_summing_key_says_nothing_of_how_it_is_known_and_an_ordinary_key_still
     let client = browser();
     let cookie = log_in(&client, addr, "/").await;
 
-    let page = read(&client, addr, "/work:donut-budget/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let page = read_text(&client, addr, "/work:donut-budget/", &cookie).await;
     let fields = section(&page, "fields");
     let donuts = fields
         .split_once("?history=donuts")
@@ -6670,11 +6316,7 @@ async fn a_projects_page_names_the_write_the_fold_took_the_value_from_after_an_i
             .0
             .to_string()
     };
-    let before = read(&client, addr, "/project:donut-fund/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let before = read_text(&client, addr, "/project:donut-fund/", &cookie).await;
     assert!(
         who(&before).contains("inference"),
         "beta wrote the newest price: {}",
@@ -6683,11 +6325,7 @@ async fn a_projects_page_names_the_write_the_fold_took_the_value_from_after_an_i
 
     rewrite_price(&memory, &alpha, "6").await;
 
-    let after = read(&client, addr, "/project:donut-fund/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let after = read_text(&client, addr, "/project:donut-fund/", &cookie).await;
     assert!(
         who(&after).contains("testimony"),
         "alpha's rewrite is the newest: {}",
@@ -6715,11 +6353,7 @@ fn labelled_row<'a>(body: &'a str, id: &str, label: &str) -> &'a str {
 async fn a_things_page_says_its_parent_and_what_points_at_it_and_what_it_points_at() {
     let (addr, ct, client, cookie) = signed_in().await;
 
-    let stall = read(&client, addr, "/person:alpha/topic:widgets/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let stall = read_text(&client, addr, "/person:alpha/topic:widgets/", &cookie).await;
     assert!(
         labelled_row(&stall, "around", "parent").contains("href=\"/person:alpha/\""),
         "the parent is a link: {stall}"
@@ -6734,11 +6368,7 @@ async fn a_things_page_says_its_parent_and_what_points_at_it_and_what_it_points_
         "the town does not point at the stall"
     );
 
-    let town = read(&client, addr, "/place:shelbyville/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let town = read_text(&client, addr, "/place:shelbyville/", &cookie).await;
     assert!(
         labelled_row(&town, "around", "pointed at by")
             .contains("href=\"/person:alpha/topic:widgets/\""),
@@ -6808,11 +6438,7 @@ async fn a_topic_holding_decisions_still_says_what_is_around_it() {
     let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
     let client = browser();
     let cookie = log_in(&client, addr, "/").await;
-    let page = read(&client, addr, "/person:alpha/topic:widgets/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let page = read_text(&client, addr, "/person:alpha/topic:widgets/", &cookie).await;
 
     // The positive: the decisions are on this page, so the read had them in front.
     assert!(page.contains("decision:cabinets-oak"), "{page}");
@@ -6855,11 +6481,7 @@ async fn a_listing_row_says_how_much_sits_under_a_thing_directly_and_in_all() {
     let client = browser();
     let cookie = log_in(&client, addr, "/").await;
 
-    let index = read(&client, addr, "/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let index = read_text(&client, addr, "/", &cookie).await;
     let alpha = element(&index, "roots", "table")
         .split("<tr>")
         .find(|row| row.contains("href=\"/person:alpha/\""))
@@ -6926,22 +6548,14 @@ async fn a_date_key_keeps_its_stored_value_without_a_type_fit_verdict() {
     let client = browser();
     let cookie = log_in(&client, addr, "/").await;
 
-    let flea = read(&client, addr, "/person:alpha/topic:flea/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let flea = read_text(&client, addr, "/person:alpha/topic:flea/", &cookie).await;
     let badly = opens_row(&flea);
     assert!(
         badly.contains("next spring"),
         "the stored date value is kept: {badly}"
     );
     assert!(!flea.contains("id=\"conforms\""));
-    let stall = read(&client, addr, "/person:alpha/topic:widgets/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let stall = read_text(&client, addr, "/person:alpha/topic:widgets/", &cookie).await;
     let well = opens_row(&stall);
     assert!(
         well.contains("2026-03-05"),
@@ -7001,13 +6615,7 @@ async fn a_page_that_maps_status_words_says_when_the_instance_record_cannot_be_r
     let page = |path: &'static str| {
         let client = client.clone();
         let cookie = cookie.clone();
-        async move {
-            read(&client, addr, path, &cookie)
-                .await
-                .text()
-                .await
-                .unwrap()
-        }
+        async move { read_text(&client, addr, path, &cookie).await }
     };
     // The id the page gives what it could not read, not the sentence beside it.
     let words = "id=\"unreadable-the-operator-s-status-words\"";
@@ -7100,11 +6708,7 @@ async fn every_grid_track_on_a_page_has_a_minimum_of_zero() {
     let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
     let client = browser();
     let cookie = log_in(&client, addr, "/").await;
-    let page = read(&client, addr, "/project:atlas/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
+    let page = read_text(&client, addr, "/project:atlas/", &cookie).await;
     ct.cancel();
 
     let property = "grid-template-columns:";
