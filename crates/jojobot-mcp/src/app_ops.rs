@@ -103,7 +103,39 @@ fn refusal(result: &CallToolResult) -> Answer {
         .ok()
         .and_then(|v| v["content"][0]["text"].as_str().map(str::to_string))
         .unwrap_or_default();
-    Answer::Refused(serde_json::from_str(&text).unwrap_or(Value::String(text)))
+    Answer::Refused(for_an_app(
+        serde_json::from_str(&text).unwrap_or(Value::String(text)),
+    ))
+}
+
+/// **A refusal that names other things is rewritten for an app.** A near-name, a
+/// taken-handle or an unknown-handle refusal lists candidate handles of any kind
+/// and offers an `override_token` that `permit` refuses an app, so it names things
+/// the grant never judged and a route the app may not take (rule 731). It is read
+/// by its refusal code, never by its prose; every other refusal passes whole.
+fn for_an_app(mut body: Value) -> Value {
+    if body["status"] != "blocked" {
+        return body;
+    }
+    let advice = match body["refusal_code"].as_str() {
+        Some("NearName") => {
+            "Nothing was written. The name is too close to something already recorded. Send a \
+             distinct name or handle, or ask the operator."
+        }
+        Some("HandleTaken") => {
+            "Nothing was written. The handle is already in use. Send a different handle."
+        }
+        Some("UnknownEntity") => {
+            "Nothing was written. The handle names nothing this app may reach. Check the \
+             handle, or ask the operator."
+        }
+        _ => return body,
+    };
+    if let Some(refusal) = body.as_object_mut() {
+        refusal.remove("candidates");
+        refusal.insert("how_to_proceed".into(), advice.into());
+    }
+    body
 }
 
 fn unavailable(error: impl std::fmt::Display) -> Answer {

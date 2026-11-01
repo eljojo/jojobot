@@ -1078,3 +1078,130 @@ async fn unstable_a_callers_mistake_is_unprocessable_and_names_the_mistake() {
         );
     }
 }
+
+/// A person named Lambda, outside every grant here, whose handle and name a
+/// refusal must not give away.
+async fn an_unreadable_person(served: &Served) {
+    served
+        .memory
+        .add_entity(NewEntity::new(
+            EntityId("person:lambda".into()),
+            "Lambda",
+            "fixture",
+        ))
+        .await
+        .expect("add")
+        .written()
+        .expect("not blocked");
+}
+
+/// An app that may create and write roles and works under one key.
+fn scribe() -> (AppPrincipal, String) {
+    enrolled(
+        "springfield-scribe",
+        vec![
+            op("add_entity", &["role", "work"], &["watch_state"]),
+            op("capture", &["role", "work"], &["watch_state"]),
+        ],
+    )
+}
+
+/// **What an app is told when a name is too close or a handle names nothing**
+/// (rules 731, 732). The refusal is a 409 that names the reason and the handle
+/// the app sent, and it lists no handle the app did not send, offers no
+/// override and names no thing of a kind outside the grant. `person:lambda` is
+/// outside the grant, so its handle in the body
+/// is the leak.
+fn assert_a_closed_refusal(operation: &str, status: u16, refused: &Value, code: &str) {
+    assert_eq!(status, 409, "{operation}: {refused}");
+    let body = &refused["refused"];
+    assert_eq!(body["refusal_code"], code, "{operation}: {refused}");
+    assert_eq!(body["wrote"], false, "{operation}: {refused}");
+    assert!(
+        body["how_to_proceed"]
+            .as_str()
+            .is_some_and(|how| !how.trim().is_empty()),
+        "{operation}: the refusal says what to do: {refused}"
+    );
+    assert!(
+        body.get("candidates").is_none(),
+        "{operation}: no candidates: {refused}"
+    );
+    let text = refused.to_string();
+    for leaked in ["person:lambda", "override", "Lambda"] {
+        assert!(
+            !text.contains(leaked),
+            "{operation}: the refusal carries {leaked}: {refused}"
+        );
+    }
+}
+
+/// An app that creates a thing whose name an unreadable thing already wears is
+/// refused without a name or a route it may not take, and the same creation under
+/// a name nobody wears lands.
+#[tokio::test]
+async fn unstable_a_near_name_creation_is_refused_without_candidates_or_an_override() {
+    let (app, token) = scribe();
+    let served = serve(vec![app], Registry::shipped()).await;
+    an_unreadable_person(&served).await;
+
+    let (status, refused) = call(
+        &served,
+        &token,
+        "add_entity",
+        json!({"kind": "role", "handle": "lambda", "name": "Lambda", "source": "the scribe",
+               "sets": {"watch_state": "ok"}}),
+    )
+    .await;
+    assert_a_closed_refusal("add_entity", status, &refused, "NearName");
+    assert_eq!(refused["refused"]["attempted"], "role:lambda", "{refused}");
+    assert!(
+        served
+            .memory
+            .list_entities(None)
+            .await
+            .expect("the listing reads")
+            .iter()
+            .all(|entity| entity.id.as_str() != "role:lambda"),
+        "a refused creation made nothing"
+    );
+
+    let (status, landed) = call(
+        &served,
+        &token,
+        "add_entity",
+        json!({"kind": "role", "handle": "kappa", "name": "Kappa", "source": "the scribe",
+               "sets": {"watch_state": "ok"}}),
+    )
+    .await;
+    assert_eq!(status, 200, "{landed}");
+}
+
+/// An app that writes to a handle nothing wears, one letter from an unreadable
+/// thing's, is refused without that name, and the same write to a thing that is
+/// there lands.
+#[tokio::test]
+async fn unstable_a_capture_on_a_handle_nothing_wears_is_refused_without_candidates() {
+    let (app, token) = scribe();
+    let served = serve(vec![app], Registry::shipped()).await;
+    an_unreadable_person(&served).await;
+
+    let (status, refused) = call(
+        &served,
+        &token,
+        "capture",
+        json!({"subject": "role:lambda", "content": "Seen.", "sets": {"watch_state": "ok"}}),
+    )
+    .await;
+    assert_a_closed_refusal("capture", status, &refused, "UnknownEntity");
+    assert_eq!(refused["refused"]["attempted"], "role:lambda", "{refused}");
+
+    let (status, landed) = call(
+        &served,
+        &token,
+        "capture",
+        json!({"subject": "role:alpha", "content": "Seen.", "sets": {"watch_state": "ok"}}),
+    )
+    .await;
+    assert_eq!(status, 200, "{landed}");
+}
