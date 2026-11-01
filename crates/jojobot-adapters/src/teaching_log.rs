@@ -1,7 +1,9 @@
 //! **Teaching served from the event log.** The marks live in a
 //! [`State`] held in memory; a contact or a clear is prepared against it,
 //! appended to the log as one batch, and applied to the state from the value
-//! that was appended. After boot nothing reads the store (decision log 292).
+//! that was appended. After boot nothing reads the old teaching rows (decision
+//! log 292). **The log's own tail is read before every write**, once, to catch up
+//! a commit whose answer was lost; no other read of the store is made.
 //!
 //! **Boot** replays the log. A log with no batch is filled once from the
 //! teaching rows ([`LoggedTeachings::open`]), each mark keeping its own source

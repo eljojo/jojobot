@@ -195,6 +195,24 @@ async fn restore_a_fixture_recorded_earlier(
                 panic!("replaying the fixture recorded at {git_ref} failed on:\n{statement}\n{e}")
             });
     }
+    // **Two teaching marks the older build wrote, which the recording holds none
+    // of.** A run with no session card, and a time with a fraction. The key order
+    // `(sid, domain)` and the order of the times are opposite, so an import that
+    // sorted by time, dropped a time or rounded one cannot read back equal. The
+    // text is the old build's own: `Timestamp`'s display form.
+    for (sid, taught_at) in [
+        ("alpha", "2026-03-01T09:00:00Z"),
+        ("beta", "2026-03-01T08:00:00.25Z"),
+    ] {
+        sqlx::query(
+            "INSERT INTO session_teaching (sid, domain, taught_at) VALUES (?, 'claims', ?)",
+        )
+        .bind(sid)
+        .bind(taught_at)
+        .execute(restoring.pool())
+        .await
+        .expect("the older build's teaching mark lands");
+    }
     // **The recording is aged before the gate pins anything.** The moments a case
     // compares against the clock are the three the edits below set, each to a
     // moment of its own choosing, so the age the recording was given changes
@@ -1143,7 +1161,16 @@ async fn assert_the_teaching_import_equals_the_rows(
             }
         }
     }
-    imported.sort_by(|a, b| (&a.sid, &a.domain).cmp(&(&b.sid, &b.domain)));
+    // **Not empty, so the equality below can fail**: the restore seeds two marks,
+    // and the recording may hold marks of its own beside them.
+    for seeded in ["alpha", "beta"] {
+        assert!(
+            rows.iter().any(|mark| mark.sid.as_str() == seeded),
+            "the seeded mark of {seeded} is in the store recorded at {git_ref}: {rows:?}"
+        );
+    }
+    // **In the log's own order**, not sorted here: the rows read back by key, and
+    // an import that ordered them by their times would differ.
     assert_eq!(
         imported, rows,
         "the teaching marks the first boot imported differ from the rows of the store recorded at {git_ref}"
