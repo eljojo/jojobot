@@ -76,6 +76,7 @@ pub async fn drop_old_role_keys<M: Memory + ?Sized>(
     }
     let claim = role_claim_content(role);
     let mut touched = BTreeSet::new();
+    let mut refused = BTreeSet::new();
     // A clear goes only to the record that backs the key, so a key carried by
     // two records comes off the backing one first. Its older carriers then back
     // nothing and clear in the next round. Each round clears at least one key
@@ -84,7 +85,7 @@ pub async fn drop_old_role_keys<M: Memory + ?Sized>(
         let backing = store.backing(bot).await?;
         let mut cleared = false;
         for fact in store.recall(bot).await? {
-            if fact.status != FactStatus::Active {
+            if fact.status != FactStatus::Active || refused.contains(&fact.id) {
                 continue;
             }
             let carried: Vec<String> = keys
@@ -97,7 +98,7 @@ pub async fn drop_old_role_keys<M: Memory + ?Sized>(
                 continue;
             }
             let left_empty = fact.fields.len() == carried.len() && fact.content == claim;
-            store
+            let result = store
                 .update_fact(
                     &fact.address(),
                     FactPatch {
@@ -111,6 +112,12 @@ pub async fn drop_old_role_keys<M: Memory + ?Sized>(
                     bot,
                 )
                 .await?;
+            // A refused clear wrote nothing: the record is left alone, or the
+            // round would send it again for ever.
+            if !matches!(result, Guarded::Written(_)) {
+                refused.insert(fact.id.clone());
+                continue;
+            }
             touched.insert(fact.id.clone());
             cleared = true;
             // The backing has moved: read it again before the next record.

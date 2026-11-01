@@ -43,6 +43,8 @@ pub mod receipt;
 pub mod record_capacity;
 pub mod review_stamp;
 pub mod role_claims;
+#[cfg(test)]
+mod role_claims_blocked;
 pub mod rules_index;
 pub mod seam_leads;
 pub mod search;
