@@ -350,11 +350,14 @@ fn unavailable_text(operation: &str) -> &'static str {
 /// only that an operation's name is a plain one, because it does not know the
 /// registry. A name nobody serves would be a grant that never works, and the
 /// operator would learn it from a 404.
+///
+/// **A revoked app is not checked.** It is refused at the door and its keys stay
+/// locked, so a grant it still holds is inert and never a reason not to start.
 pub fn check_grants_are_served(
     apps: &[AppPrincipal],
     registry: &jojobot_mcp::app_ops::Registry,
 ) -> Result<(), String> {
-    for app in apps {
+    for app in apps.iter().filter(|app| !app.revoked) {
         for grant in &app.operations {
             if registry.get(&grant.operation).is_none() {
                 return Err(format!(
@@ -431,6 +434,48 @@ mod tests {
         );
         let why = check_grants_are_served(&[app("dance")], &registry).expect_err("not served");
         assert!(why.contains("dance") && why.contains("capture"), "{why}");
+    }
+
+    /// **A revoked app's stale grant never stops the boot.** A revoked app is refused at
+    /// the door and its keys stay locked, so a grant it still holds of an operation the
+    /// registry no longer serves is inert. Paired in one read with a live app holding
+    /// the same unserved grant, which still refuses and names the app and the operation.
+    #[test]
+    fn a_revoked_apps_unserved_grant_does_not_stop_the_boot() {
+        use jojobot_domain::app::operations::OperationSpec;
+        use jojobot_domain::app::{AppSpec, hash_token, mint_token};
+        let app = |name: &str, operation: &str, revoked: bool| {
+            AppPrincipal::from_spec(
+                &AppSpec {
+                    name: name.into(),
+                    operation: String::new(),
+                    thread: String::new(),
+                    kind: String::new(),
+                    keys: vec![],
+                    operations: vec![OperationSpec {
+                        operation: operation.into(),
+                        kinds: vec![],
+                        keys: vec![],
+                    }],
+                    revoked,
+                },
+                &hash_token(&mint_token()),
+            )
+            .expect("a plain grant")
+        };
+        let registry = jojobot_mcp::app_ops::Registry::shipped();
+        let live = app("springfield-watch", "post_message", false);
+        let revoked = app("shelbyville-watch", "dance", true);
+        assert_eq!(
+            check_grants_are_served(&[live.clone(), revoked], &registry),
+            Ok(())
+        );
+        let stale_live = app("capital-city-watch", "dance", false);
+        let why = check_grants_are_served(&[live, stale_live], &registry).expect_err("not served");
+        assert!(
+            why.contains("capital-city-watch") && why.contains("dance"),
+            "{why}"
+        );
     }
 
     /// `jojobot app-token` prints a token an app can send and the hash the
