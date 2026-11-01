@@ -49,6 +49,7 @@ pub enum Infra {
     OutOfMemory,
     Killed,
     NetworkFetch,
+    TargetPruned,
 }
 
 impl Infra {
@@ -58,6 +59,7 @@ impl Infra {
             Infra::OutOfMemory => "out-of-memory",
             Infra::Killed => "killed",
             Infra::NetworkFetch => "network-fetch",
+            Infra::TargetPruned => "target-pruned",
         }
     }
 }
@@ -66,9 +68,10 @@ impl Infra {
 /// prints it: the operating system's words with the error number, and the
 /// debug form that `unwrap` prints. The
 /// second is the line the allocator prints before a process aborts. The third
-/// and fourth are how cargo names a binary that a signal ended. The last two
-/// are cargo's lines for a registry it could not reach.
-const INFRA_TEXT: [(&str, Infra); 8] = [
+/// and fourth are how cargo names a binary that a signal ended. The next three
+/// are cargo's lines for a registry it could not reach, and the last is the
+/// linker's line for a library of a pruned target directory.
+const INFRA_TEXT: [(&str, Infra); 9] = [
     ("No space left on device (os error 28)", Infra::DiskFull),
     ("code: 28, kind: StorageFull", Infra::DiskFull),
     ("memory allocation of ", Infra::OutOfMemory),
@@ -77,9 +80,16 @@ const INFRA_TEXT: [(&str, Infra); 8] = [
     ("spurious network error", Infra::NetworkFetch),
     ("failed to download from", Infra::NetworkFetch),
     ("Could not resolve host", Infra::NetworkFetch),
+    // The linker naming a library of a target directory the runner pruned.
+    (".rlib: No such file or directory", Infra::TargetPruned),
 ];
 
+/// **A warning is never a reason.** Cargo prints "spurious network error" while it
+/// tries again, and an exhausted retry prints an error line of its own.
 fn infra_of(line: &str) -> Option<Infra> {
+    if line.trim_start().starts_with("warning:") {
+        return None;
+    }
     INFRA_TEXT
         .iter()
         .find(|(text, _)| line.contains(text))
@@ -319,8 +329,12 @@ impl Parsed<'_> {
 fn first_line(lines: &[&str]) -> String {
     let mut first = String::new();
     let mut awaiting: Option<String> = None;
+    let mut panicked = false;
     for line in lines {
-        if let Some(place) = line.split(" panicked at ").nth(1) {
+        if let Some(place) = line.split(" panicked at ").nth(1)
+            && !panicked
+        {
+            panicked = true;
             awaiting = Some(place.trim().to_string());
             first = place.trim().to_string();
         } else if let Some(place) = awaiting.take_if(|_| !line.trim().is_empty()) {
@@ -905,6 +919,54 @@ mod tests {
     #[test]
     fn a_non_zero_exit_with_every_suite_green_is_red() {
         assert_eq!(read(GREEN, false, 0).overall, Overall::Red);
+    }
+
+    /// **A retry warning is not a failure.** Cargo prints it while it tries again;
+    /// a download that failed for good prints an error line of its own. A warning
+    /// before a compile error does not turn the compile error into infra, and a
+    /// warning in a run whose suites passed does not explain a bad exit status.
+    #[test]
+    fn a_retry_warning_does_not_make_a_compile_error_or_a_bad_exit_infra() {
+        let warning = "warning: spurious network error (2 tries remaining): [6] Could not resolve host: index.crates.io\n";
+        for (text, why) in [
+            (
+                format!("{warning}{COMPILE_ERROR}"),
+                "before a compile error",
+            ),
+            (format!("{warning}{GREEN}"), "before suites that passed"),
+        ] {
+            let verdict = read(&text, false, 0);
+            assert_eq!(verdict.overall, Overall::Red, "{why}");
+            assert_eq!(verdict.infra, None, "{why}");
+        }
+    }
+
+    /// **A target directory the runner pruned is the runner's loss.** The linker
+    /// names the library it could not open.
+    #[test]
+    fn a_pruned_target_directory_is_infra() {
+        let text = "   Compiling jojobot-domain v0.1.0 (/work/crates/jojobot-domain)\n\
+                    error: linking with `cc` failed: exit status: 1\n\
+                    \x20 = note: rust-lld: error: cannot open /work/cargo-target/debug/deps/libserde-0123456789abcdef.rlib: No such file or directory\n\
+                    error: could not compile `jojobot-domain` (lib) due to 1 previous error\n";
+        let verdict = read(text, false, 0);
+        assert_eq!(verdict.overall, Overall::Infra);
+        assert_eq!(verdict.infra, Some(Infra::TargetPruned));
+    }
+
+    /// **A failure reports its first panic.**
+    #[test]
+    fn a_failure_with_two_panics_reports_the_first() {
+        let lines = [
+            "thread 'a_test' panicked at crates/x/src/a.rs:10:5:",
+            "the first message",
+            "thread 'a_test' panicked at crates/x/src/b.rs:20:5:",
+            "the second message",
+        ];
+        assert_eq!(
+            first_line(&lines),
+            "crates/x/src/a.rs:10:5: the first message"
+        );
     }
 
     /// **A test that quotes an infra phrase while it passes is not infra.**
