@@ -496,17 +496,44 @@ async fn a_rhythms_failed_due_read_is_a_blind_section() {
     .await;
     let client = browser();
     let cookie = log_in(&client, addr, "/").await;
+    let mut held_rows = None;
     for failed in [false, true, false] {
         memory.fail_fields_of(failed.then_some("topic:instance"));
         let page = read(&client, addr, "/person:alpha/rhythm:descale/", &cookie).await;
         assert_eq!(page.status(), reqwest::StatusCode::OK);
         let body = page.text().await.unwrap();
+        let rhythm = body
+            .split_once("id=\"rhythm\"")
+            .expect("the rhythm box remains")
+            .1
+            .split_once("</section>")
+            .unwrap()
+            .0;
+        let rows = ["cadence", "last check-in"].map(|label| {
+            let marker = format!("<dt>{label}</dt><dd>");
+            rhythm
+                .split_once(&marker)
+                .expect("the readable row remains")
+                .1
+                .split_once("</dd>")
+                .unwrap()
+                .0
+                .to_string()
+        });
+        if let Some(expected) = &held_rows {
+            assert_eq!(
+                &rows, expected,
+                "the due-read failure must keep the readable rows"
+            );
+        } else {
+            held_rows = Some(rows);
+        }
         assert_eq!(
-            body.contains("id=\"unreadable-the-due-day\""),
+            rhythm.contains("id=\"unreadable-the-due-day\""),
             failed,
             "the due-day section must distinguish an unreadable answer: {body}"
         );
-        assert_eq!(body.contains("2026-03-08"), !failed, "{body}");
+        assert_eq!(rhythm.contains("2026-03-08"), !failed, "{body}");
     }
     ct.cancel();
 }

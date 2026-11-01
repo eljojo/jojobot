@@ -205,49 +205,71 @@ pub async fn rhythm(
     // not yet due.
     let mut asked = jojobot_query_api::Question::about(rhythm.id.clone(), None, None);
     asked.asks.overdue = Some(today);
-    let owed = match queries
+    let (owed, read_error) = match queries
         .ask(&jojobot_domain::actor::Actor::Operator, asked)
         .await
     {
-        Ok(answered) => answered.narrowed.owed,
+        Ok(answered) => (answered.narrowed.owed, None),
         Err(
             jojobot_query_api::Failed::Selection(error)
             | jojobot_query_api::Failed::Readiness(error)
             | jojobot_query_api::Failed::Preparation(_, error),
-        ) => return pages::blind("Due day", "the due day", &error.to_string()),
+        ) => (None, Some(error.to_string())),
     };
     let marked = owed
         .as_ref()
         .and_then(|pass| pass.marks.get(&rhythm.id).copied())
         .map(|mark| (mark.due, mark.days_overdue));
-    rhythm_box(rhythm, held, marked)
+    rhythm_box_with_error(rhythm, held, marked, read_error.as_deref())
 }
 
 /// **The box of a rhythm from its keys and its due mark**: the mark is the due
 /// day and how many days late, and none when the answer could not be read.
+#[cfg(test)]
 fn rhythm_box(
     rhythm: &Entity,
     held: &BTreeMap<String, String>,
     marked: Option<(attention::Due, Option<i64>)>,
 ) -> String {
-    let (next, late) = match marked {
-        Some((attention::Due::On(day), overdue)) => (
-            format!("next due {day}"),
-            overdue
-                .filter(|days| *days > 0)
-                .map(|days| format!("{days} days overdue (fell due {day})")),
-        ),
-        Some((attention::Due::NotYetOpened, _)) => ("not checked in yet".to_string(), None),
-        Some((attention::Due::Never, _)) => ("nothing falls due".to_string(), None),
-        // A missing or unreadable due mark describes the schedule's keys.
-        Some((attention::Due::Unreadable, _)) | None => (
-            "next due cannot be worked out from its keys".to_string(),
-            None,
-        ),
+    rhythm_box_with_error(rhythm, held, marked, None)
+}
+
+/// **The box of a rhythm, with the reason the due day could not be read**: a
+/// failed read marks only the due row, so the cadence and the last check-in
+/// still show.
+fn rhythm_box_with_error(
+    rhythm: &Entity,
+    held: &BTreeMap<String, String>,
+    marked: Option<(attention::Due, Option<i64>)>,
+    read_error: Option<&str>,
+) -> String {
+    let (next, late) = if let Some(error) = read_error {
+        (format!("next due could not be read: {error}"), None)
+    } else {
+        match marked {
+            Some((attention::Due::On(day), overdue)) => (
+                format!("next due {day}"),
+                overdue
+                    .filter(|days| *days > 0)
+                    .map(|days| format!("{days} days overdue (fell due {day})")),
+            ),
+            Some((attention::Due::NotYetOpened, _)) => ("not checked in yet".to_string(), None),
+            Some((attention::Due::Never, _)) => ("nothing falls due".to_string(), None),
+            // A mark that cannot say, or an answer that could not be read, is said so.
+            Some((attention::Due::Unreadable, _)) | None => (
+                "next due cannot be worked out from its keys".to_string(),
+                None,
+            ),
+        }
     };
     let is_late = late.is_some();
+    let due_marker = if read_error.is_some() {
+        " id=\"unreadable-the-due-day\""
+    } else {
+        ""
+    };
     let mut rows = format!(
-        "<dt>cadence</dt><dd>{}</dd><dt>last check-in</dt><dd>{}</dd><dd>{}</dd>",
+        "<dt>cadence</dt><dd>{}</dd><dt>last check-in</dt><dd>{}</dd><dd{due_marker}>{}</dd>",
         attention::cadence_in_words(held).map_or("—".to_string(), |said| pages::escape(&said)),
         held_value(held, "last_check_in").map_or("—".to_string(), pages::escape),
         pages::escape(&next),
