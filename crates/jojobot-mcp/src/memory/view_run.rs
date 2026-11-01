@@ -158,6 +158,9 @@ pub fn handle(
             Ok(read)
         }
 
+        // TEMPORARY(q-932-recall-one-unreadable-fails-all): the pages list through
+        // this read because a recall fails whole on one unreadable record. When that
+        // lands, the listing returns to recall and this method goes.
         async fn entities(
             &self,
             _asker: &jojobot_domain::actor::Actor,
