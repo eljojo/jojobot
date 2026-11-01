@@ -219,3 +219,113 @@ fn the_scanner_flags_a_run_and_passes_a_continuation() {
     let quote = "fn f() { let q = '\"'; let s = \"a  b\"; }";
     assert_eq!(space_runs(quote).len(), 1);
 }
+
+/// **No sentence runs into the next.** A full stop, `!` or `?` straight after a
+/// lowercase letter or a closing bracket and straight before a capital is two
+/// sentences with no space between them: a string written across two source
+/// lines without a space at the join. The shape is asserted over the rendered
+/// texts a model reads (the snapshot files), because that is where the join
+/// shows whichever source line wrote it.
+///
+/// An inline code span is skipped, and so is a word that
+/// holds a `/`, a `:` or a `_`, which is a path, a handle or an identifier. A
+/// full stop before a capital that is no sentence break needs an entry in
+/// [`ALLOWED`], with its reason.
+const SERVED_TEXT_DIRECTORY: &str = "crates/jojobot-mcp/served-texts";
+
+/// `(file, the word as written, why it is not a run-on)`. Empty: no served text
+/// needs one today.
+const ALLOWED: [(&str, &str, &str); 0] = [];
+
+/// Every run-on in `text`, as `line N: the word`.
+fn run_ons(text: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    for (number, line) in text.lines().enumerate() {
+        // The snapshot puts every served text in a fenced block, so a fence is
+        // layout and never a reason to skip what is inside it.
+        if line.trim_start().starts_with("```") {
+            continue;
+        }
+        // Inline code spans carry code, not sentences.
+        let mut outside = String::new();
+        let mut in_span = false;
+        for c in line.chars() {
+            if c == '`' {
+                in_span = !in_span;
+                outside.push(' ');
+            } else if in_span {
+                outside.push(' ');
+            } else {
+                outside.push(c);
+            }
+        }
+        for word in outside.split_whitespace() {
+            if word.contains(['/', ':', '_']) {
+                continue;
+            }
+            let chars: Vec<char> = word.chars().collect();
+            let broken = chars.windows(3).any(|w| {
+                matches!(w[1], '.' | '!' | '?')
+                    && (w[0].is_ascii_lowercase() || matches!(w[0], ')' | ']'))
+                    && w[2].is_ascii_uppercase()
+            });
+            if broken {
+                found.push(format!("line {}: {word}", number + 1));
+            }
+        }
+    }
+    found
+}
+
+#[test]
+fn no_served_text_runs_one_sentence_into_the_next() {
+    let directory = workspace_root().join(SERVED_TEXT_DIRECTORY);
+    let mut files: Vec<PathBuf> = fs::read_dir(&directory)
+        .expect("the served texts are readable")
+        .map(|entry| entry.expect("a directory entry").path())
+        .filter(|path| path.extension().is_some_and(|e| e == "md"))
+        .collect();
+    files.sort();
+    assert!(
+        files.len() >= 6,
+        "the scan reached {} files, so it is not reading the served texts",
+        files.len()
+    );
+    let mut violations = Vec::new();
+    for file in &files {
+        let name = file.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        let text = fs::read_to_string(file).expect("a readable served text");
+        for run in run_ons(&text) {
+            let word = run.split_once(": ").map_or("", |(_, word)| word);
+            if ALLOWED.iter().any(|(f, w, _)| *f == name && *w == word) {
+                continue;
+            }
+            violations.push(format!("{name} {run}"));
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "a served text runs one sentence into the next with no space after the full stop:\n{}",
+        violations.join("\n")
+    );
+}
+
+/// The scanner finds the defect it exists for and passes the shapes that are no
+/// defect, so a green corpus case means the texts are clean and not that the
+/// scanner reads nothing.
+#[test]
+fn the_run_on_scanner_flags_a_join_and_passes_the_ordinary_shapes() {
+    assert_eq!(
+        run_ons("one\nwith no box, id or sender.Newest first"),
+        ["line 2: sender.Newest"]
+    );
+    assert_eq!(run_ons("is it done?Next"), ["line 1: done?Next"]);
+    assert_eq!(run_ons("(see the note).Then"), ["line 1: note).Then"]);
+    // A sentence break, a version, a path, a handle, an identifier, an initialism.
+    assert!(
+        run_ons("done. Next 9.3.2 crates/jojobot/Foo.rs bot:alpha.Next a_b.C U.S.A").is_empty()
+    );
+    // A code span; the text inside a fence is read like any other.
+    assert!(run_ons("see `done.Next` here").is_empty());
+    assert_eq!(run_ons("```text\ndone.Next\n```"), ["line 2: done.Next"]);
+}
