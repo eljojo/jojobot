@@ -17,6 +17,9 @@ fn a_denied_plus_one_is_not_a_plus_one_coming() {
         "none of them is bringing a plus-one",
         "nobody is bringing a partner",
         "not bringing a partner",
+        // The denial sits in a later clause that is about the coming itself.
+        "a partner, not coming",
+        "a plus-one, never coming",
     ] {
         assert!(
             !super::says_a_plus_one_is_coming(&json!({"content": said})),

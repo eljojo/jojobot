@@ -4284,22 +4284,46 @@ fn claim_number_of(address: &str) -> u64 {
 /// ⚠️ **One clause at a time, and a clause that denies one does not say
 /// it.** "No plus-one this time" names the plus-one and says the opposite. A
 /// denial in another clause of the sentence is about something else: "bringing a
-/// partner, no dietary needs" says a partner is coming.
+/// partner, no dietary needs" says a partner is coming. A later clause that denies
+/// the coming itself ("a partner, not coming") turns the sentence round.
 fn says_a_plus_one_is_coming(fact: &Value) -> bool {
     const DENIALS: [&str; 6] = ["no", "not", "without", "never", "none", "nobody"];
+    // Whole words, so "know" is not a "no".
+    let words = |clause: &str| -> Vec<String> {
+        clause
+            .split(|c: char| !c.is_alphanumeric() && c != '\'')
+            .filter(|word| !word.is_empty())
+            .map(str::to_string)
+            .collect()
+    };
+    let names_one = |clause: &str| {
+        clause.contains("partner") || clause.contains("plus-one") || clause.contains("plus one")
+    };
+    // **A clause that opens by denying a coming**, naming no plus-one itself: the
+    // "not coming" of "a partner, not coming". "no dietary needs" denies something
+    // else and has no coming in it.
+    let denies_the_coming = |clause: &str| {
+        let words = words(clause);
+        let arrival = ["coming", "come", "attend", "attending", "join", "joining"];
+        words.first().is_some_and(|first| {
+            ["no", "not", "never"].contains(&first.as_str()) || first.ends_with("n't")
+        }) && words.iter().any(|word| arrival.contains(&word.as_str()))
+    };
     ["content", "details"].iter().any(|key| {
         fact[*key].as_str().is_some_and(|said| {
             said.to_lowercase()
-                .split(['.', ';', '!', '?', '\n', ','])
+                .split(['.', ';', '!', '?', '\n'])
                 .any(|sentence| {
-                    let names_one = sentence.contains("partner")
-                        || sentence.contains("plus-one")
-                        || sentence.contains("plus one");
-                    // Whole words, so "know" is not a "no".
-                    let denied = sentence
-                        .split(|c: char| !c.is_alphanumeric() && c != '\'')
-                        .any(|word| DENIALS.contains(&word) || word.ends_with("n't"));
-                    names_one && !denied
+                    let clauses: Vec<&str> = sentence.split(',').map(str::trim).collect();
+                    !clauses
+                        .iter()
+                        .any(|clause| !names_one(clause) && denies_the_coming(clause))
+                        && clauses.iter().any(|clause| {
+                            names_one(clause)
+                                && !words(clause).iter().any(|word| {
+                                    DENIALS.contains(&word.as_str()) || word.ends_with("n't")
+                                })
+                        })
                 })
         })
     })
