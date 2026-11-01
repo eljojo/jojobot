@@ -65,6 +65,7 @@ struct Driver {
     recovered: AtomicU64,
     failed: AtomicU64,
     reload_micros: AtomicU64,
+    subscriber_panics: AtomicU64,
     #[cfg(test)]
     contended: tokio::sync::Notify,
     #[cfg(any(test, feature = "testing"))]
@@ -89,6 +90,7 @@ impl Default for Writer {
             recovered: AtomicU64::new(0),
             failed: AtomicU64::new(0),
             reload_micros: AtomicU64::new(0),
+            subscriber_panics: AtomicU64::new(0),
             #[cfg(test)]
             contended: tokio::sync::Notify::new(),
             #[cfg(any(test, feature = "testing"))]
@@ -152,6 +154,11 @@ impl Writer {
         }
     }
 
+    /// How many times a subscriber panicked while told of a committed write.
+    pub fn subscriber_panics(&self) -> u64 {
+        self.0.subscriber_panics.load(Ordering::SeqCst)
+    }
+
     /// A nested call shares the current write rather than queueing behind it.
     pub(crate) fn inside(&self) -> bool {
         CURRENT.try_with(|id| *id == self.0.id).unwrap_or(false)
@@ -197,7 +204,11 @@ impl Writer {
                 // After the State holds the write and before the next write
                 // starts. The job owns this step, so a caller that stopped
                 // waiting cannot lose it.
-                owner.0.publication.deliver().await;
+                let panicked = owner.0.publication.deliver().await;
+                owner
+                    .0
+                    .subscriber_panics
+                    .fetch_add(panicked, Ordering::SeqCst);
                 let _ = answer.send(result);
             }))
             .unwrap_or_else(|_| panic!("the writer task stopped before accepting its write"));

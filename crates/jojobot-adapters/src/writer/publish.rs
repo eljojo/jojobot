@@ -65,11 +65,15 @@ impl Publication {
         self.pending.lock().expect("pending lock").push(change);
     }
 
-    /// Hand the changes of the write that just finished to every subscriber.
-    pub(super) async fn deliver(&self) {
+    /// Hand the changes of the write that just finished to every subscriber, and
+    /// say how many of them panicked. **The write has committed by now, so a
+    /// panic is reported and never raised:** raising it would answer the caller
+    /// with a crash for a write that is stored, and an obedient caller writes it
+    /// twice.
+    pub(super) async fn deliver(&self) -> u64 {
         let changes = std::mem::take(&mut *self.pending.lock().expect("pending lock"));
         if changes.is_empty() {
-            return;
+            return 0;
         }
         let subscribers: Vec<Arc<dyn Subscriber>> = {
             let mut held = self.subscribers.lock().expect("subscriber lock");
@@ -77,18 +81,22 @@ impl Publication {
             held.iter().filter_map(Weak::upgrade).collect()
         };
         // A subscriber that panics must not take the change from the ones after
-        // it: each is told, and the first panic is raised once all have been.
-        let mut failed = None;
+        // it: each is told, and each panic is logged as an error.
+        let mut panicked = 0;
         for subscriber in subscribers {
             if let Err(panic) = AssertUnwindSafe(subscriber.changed(&changes))
                 .catch_unwind()
                 .await
             {
-                failed.get_or_insert(panic);
+                panicked += 1;
+                let message = panic
+                    .downcast_ref::<&str>()
+                    .map(|text| text.to_string())
+                    .or_else(|| panic.downcast_ref::<String>().cloned())
+                    .unwrap_or_else(|| "a panic without a message".to_string());
+                tracing::error!(%message, "a subscriber panicked after the write committed");
             }
         }
-        if let Some(panic) = failed {
-            std::panic::resume_unwind(panic);
-        }
+        panicked
     }
 }

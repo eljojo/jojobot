@@ -159,13 +159,14 @@ impl Subscriber for Panicking {
     }
 }
 
-/// **A subscriber that panics is loud and not fatal to the writer.** The write has
-/// committed by then, so the State holds it; the caller of that write fails
-/// instead of being told the write did not happen quietly, and the next write is
-/// served. A change recorded by a job that panicked before its delivery is not
-/// lost: it rides out with the next delivery, ahead of that job's own changes.
+/// **A subscriber that panics is loud and not fatal to the writer, and it does
+/// not turn a committed write into a failure.** The write has committed by then,
+/// so its caller is answered with what the write returned: an obedient caller
+/// that is told a stored write failed writes it twice. The panic is counted, the
+/// subscribers after the panicking one are still told, and the next write is
+/// served.
 #[tokio::test]
-async fn a_subscriber_panic_fails_its_caller_after_the_commit_and_the_writer_serves_on() {
+async fn a_subscriber_panic_leaves_the_committed_write_answered_and_is_counted() {
     let writer = Writer::default();
     let panicking = Arc::new(Panicking(AtomicBool::new(true)));
     let seen = Arc::new(Batches::default());
@@ -173,7 +174,7 @@ async fn a_subscriber_panic_fails_its_caller_after_the_commit_and_the_writer_ser
     writer.subscribe_borrowed(Arc::downgrade(&seen) as _);
     let committed = Arc::new(AtomicBool::new(false));
 
-    let failed = tokio::spawn({
+    let answered = tokio::spawn({
         let (writer, committed) = (writer.clone(), committed.clone());
         async move {
             let inner = writer.clone();
@@ -181,16 +182,22 @@ async fn a_subscriber_panic_fails_its_caller_after_the_commit_and_the_writer_ser
                 .run(async move {
                     committed.store(true, Ordering::SeqCst);
                     inner.publish(Change::MailPosition(1));
+                    "stored"
                 })
-                .await;
+                .await
         }
     })
     .await;
-    assert!(failed.is_err(), "the caller of the write is told it failed");
+    assert_eq!(
+        answered.expect("the caller of a committed write is not unwound"),
+        "stored",
+        "the caller is answered with what the write returned"
+    );
     assert!(
         committed.load(Ordering::SeqCst),
         "the write itself had committed"
     );
+    assert_eq!(writer.subscriber_panics(), 1, "the panic is counted");
 
     let inner = writer.clone();
     writer
