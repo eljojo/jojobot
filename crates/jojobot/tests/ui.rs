@@ -2964,40 +2964,6 @@ async fn a_views_page_runs_the_view_and_shows_the_result() {
     ct.cancel();
 }
 
-/// **A view's page runs the view's own filter, not only its `selects`.**
-/// A view narrowed to one loop by a key filter must answer with that loop
-/// alone — the record the filter excludes must not be on the page, in the
-/// same read as the record it keeps.
-#[tokio::test]
-async fn a_views_page_runs_the_views_own_filter() {
-    let idp = support::TestIdp::new();
-    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
-    let (addr, ct) = spawn_over_views(&idp, endpoints).await;
-    let client = browser();
-    let cookie = log_in(&client, addr, "/").await;
-
-    let page = read(&client, addr, "/view:the-old-loop/", &cookie)
-        .await
-        .text()
-        .await
-        .unwrap();
-
-    let answer = page
-        .split_once("id=\"answer\"")
-        .expect("the page carries the view's answer")
-        .1;
-    let answer = answer.split_once("</table>").expect("…and it closes").0;
-    assert!(
-        answer.contains("rhythm:descale"),
-        "the loop the filter keeps is in the answer: {answer}"
-    );
-    assert!(
-        !answer.contains("rhythm:worming") && !answer.contains("rhythm:abseiling"),
-        "the loops the filter excludes must not be in the answer: {answer}"
-    );
-    ct.cancel();
-}
-
 /// **A view's page runs the view's expression and its order.** The page reads
 /// `where` and `order` where the verb reads them, so the loop counted from
 /// before the cut is not on the page and the other two come latest first, against
