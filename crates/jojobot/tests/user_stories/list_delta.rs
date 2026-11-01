@@ -148,6 +148,44 @@ async fn removing_one_dependency_keeps_the_others_through_either_verb() {
     story.finish().await;
 }
 
+/// **Taking off the last item leaves the key holding an empty list** (rule 751),
+/// while a blank sent to a key that holds one value takes that key off. The two
+/// are asked of the same thing in one read.
+#[tokio::test]
+async fn removing_the_last_dependency_leaves_an_empty_list_and_a_blank_status_leaves_none() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    let record = work_waiting_on_two(&s).await;
+
+    s.call(
+        "update_fact",
+        json!({"address": record,
+               "sets_remove": {"depends_on": "work:pour-the-slab, work:order-the-lumber"}}),
+    )
+    .await;
+    s.call(
+        "capture",
+        json!({"subject": "work:lay-the-tiles", "content": "no status any more",
+               "provenance": "testimony", "sets": {"status": ""}}),
+    )
+    .await;
+    let read = s
+        .call("recall", json!({"subject": "work:lay-the-tiles"}))
+        .await
+        .json();
+    let fields = &read["objects"][0]["fields"];
+    assert_eq!(
+        fields.get("depends_on"),
+        Some(&json!("")),
+        "an emptied list keeps its key: {read}"
+    );
+    assert!(
+        fields.get("status").is_none(),
+        "a blank single-valued key is off the thing: {read}"
+    );
+    story.finish().await;
+}
+
 /// **An item added must be a thing that exists, and a refusal names the
 /// nearest.** Nothing lands. The positive is the same call naming a real thing.
 #[tokio::test]

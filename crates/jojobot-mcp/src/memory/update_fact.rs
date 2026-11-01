@@ -216,7 +216,8 @@ pub struct UpdateFactArgs {
     pub(crate) sets_remove: Option<std::collections::BTreeMap<String, String>>,
     /// **Fields to remove**, by key. A blank value in `fields` takes the key off
     /// the thing too, but the claim keeps the blank; this argument takes the key
-    /// off the claim as well. A view's declaration keys keep a blank.
+    /// off the claim as well. A declared list key and a view's declaration keys
+    /// keep a blank, so this argument is how they come off.
     ///
     /// **It takes the key off the thing as well as off the claim**, whichever
     /// bag holds it, so this is the way to take a key off a thing. Send it to

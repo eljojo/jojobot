@@ -535,7 +535,8 @@ pub struct RecallArgs {
     /// the years; ask it of a key a sitting records once each time it happens
     /// and you get how often. A write that took the key off the thing comes
     /// back with no value; a blank write comes back with the blank as its value,
-    /// and it took the key off the thing all the same.
+    /// and it took the key off the thing all the same, unless the key is a
+    /// declared list, which a blank leaves holding an empty list.
     ///
     /// Omit it and no history comes back at all, which is the normal read: a
     /// caller who wants the value wants one value. A key nobody has written

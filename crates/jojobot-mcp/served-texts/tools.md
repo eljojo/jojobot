@@ -887,10 +887,12 @@ the claim (`read_from`, `read_ref`, `starred`, `subject`, `purpose`,
 The keys that make a thing fall due act on it only when sent here. A list
 key (`depends_on`) changes by its items with `sets_add` and `sets_remove`:
 its whole value sent here replaces what another session added. A blank
-value takes its key off the thing, and so does `update_fact`'s
-`clear_fields` on the claim that carries it. A view's declaration keys
-(`selects`, `answers_type`, `follow_shape`, `follow_relation`,
-`follow_direction`, `follow_fits_type`) keep a blank. Setting `status` to `now` on work your bot owns
+value takes its key off the thing, except on a key a declared type holds
+as a list, which an emptied list leaves holding an empty list, and on a
+view's declaration keys (`selects`, `answers_type`, `follow_shape`,
+`follow_relation`, `follow_direction`, `follow_fits_type`), which keep a
+blank. `update_fact`'s `clear_fields` on the claim that carries a key
+takes it off whatever it holds. Setting `status` to `now` on work your bot owns
 also points your bot's `working_on` at it.
 A write whose status words could not be read from `topic:instance` still lands, and its receipt carries `instance_unread`, naming under `not_worked_out` what it left undone. A note the receipt would have carried and a failed read kept from it is named the same way, under `reads_left`.
 
@@ -2882,7 +2884,8 @@ times"**. Ask it of `weight` and you get what a thing has weighed over
 the years; ask it of a key a sitting records once each time it happens
 and you get how often. A write that took the key off the thing comes
 back with no value; a blank write comes back with the blank as its value,
-and it took the key off the thing all the same.
+and it took the key off the thing all the same, unless the key is a
+declared list, which a blank leaves holding an empty list.
 
 Omit it and no history comes back at all, which is the normal read: a
 caller who wants the value wants one value. A key nobody has written
@@ -4711,7 +4714,8 @@ un-retract.
 ```text
 **Fields to remove**, by key. A blank value in `fields` takes the key off
 the thing too, but the claim keeps the blank; this argument takes the key
-off the claim as well. A view's declaration keys keep a blank.
+off the claim as well. A declared list key and a view's declaration keys
+keep a blank, so this argument is how they come off.
 
 **It takes the key off the thing as well as off the claim**, whichever
 bag holds it, so this is the way to take a key off a thing. Send it to
