@@ -11,7 +11,8 @@ OWNERSHIP. The checkout says which target dir is the line's own: the
 target_directory that `cargo metadata` reports must be named after the checkout
 this script lives in (a line's checkout and its dir share a name), or be the
 checkout's own `target`. A shared root or another line's dir refuses with exit 2
-and one line saying what was expected and what was found. The one environment
+and one line saying what was expected and what was found. Hand a refusal to the
+EM; do not override CARGO_TARGET_DIR to get past it. The one environment
 value it reads is the forge runner's own mark, GITHUB_ACTIONS=true: a runner's
 job builds in the shared target dir its runner sets, which no checkout name
 fits, so the ownership check is skipped there. A launch is never relied on.
@@ -96,7 +97,8 @@ def recover(marker, incremental):
     """Undo what a killed run left: reap its group, remove the units it touched."""
     state = json.loads(marker.read_text())
     if start_time(state["pid"]) is not None and state["pid"] != os.getpid():
-        raise Refused(f"the run that left {marker} (pid {state['pid']}) is still running")
+        raise Refused(f"the recorded process (pid {state['pid']}) is still present for {marker}; "
+                      "wait for it to exit or ask the EM to check it")
     reap(state)
     now = snapshot(incremental)
     for name, signature in now.items():
@@ -120,7 +122,8 @@ def main(command):
         if (os.environ.get("GITHUB_ACTIONS") != "true" and found.resolve() != CHECKOUT / "target"
                 and found.resolve().name != CHECKOUT.name):
             raise Refused(f"expected a target dir named {CHECKOUT.name} or {CHECKOUT / 'target'}, "
-                          f"found {found}")
+                          f"found {found}; ask the EM to correct the target, "
+                          "do not override CARGO_TARGET_DIR")
         incremental, marker = found / "debug" / "incremental", found / ".build-guard.json"
         confine(found, incremental)
         if marker.exists():

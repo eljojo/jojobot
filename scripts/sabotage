@@ -260,7 +260,11 @@ def gate():
     text and the one command that puts it back, and nothing else."""
     left = list(outstanding())
     for target, kept, old in left:
-        print(f"{target}\n{json.dumps(old)}\n{shlex.join(['cp', kept, target])}")
+        print(
+            f"A sabotage left {target} changed.\n"
+            f"The replaced text was {json.dumps(old)}.\n"
+            f"Restore it with:\n{shlex.join(['cp', kept, target])}"
+        )
     return 1 if left else 0
 
 

@@ -196,7 +196,11 @@ fn cleanup_is_refused_for_a_symlink_out_of_the_cache_and_for_a_live_owner() {
     let after = root.join("after");
     let out = guard(&root, &own, "own", &format!("touch {}", after.display()));
     assert_eq!(out.status.code(), Some(2), "{}", said(&out));
-    assert!(said(&out).contains("still running"), "{}", said(&out));
+    assert!(
+        said(&out).contains(&format!("pid {}", std::process::id())),
+        "{}",
+        said(&out)
+    );
     assert!(!after.exists(), "the command started beside a live owner");
     let _ = fs::remove_dir_all(root);
 }

@@ -9,8 +9,9 @@ first line that is neither blank nor one of those keys, so the header is the top
 of the report and any preamble goes below it. The tool prints one line
 per key, `pass` or `FAIL` and the reason, and exits 0 only when all pass.
 
-  OWNER, FALSIFY and SELF-REVIEW pass when they hold a value. RETIRES passes when
-  it names what it retires, or says `none` and then the reason.
+  OWNER and SELF-REVIEW pass when they hold a value. FALSIFY also refuses a
+  line window or a count alone; a grep for a name is accepted. RETIRES passes
+  when it names what it retires, or says `none` and then the reason.
   NET passes when the report holds the bar's net table (`bar size --net`): its
   heading line and its total line, anywhere in the text.
 
@@ -25,7 +26,8 @@ per key, `pass` or `FAIL` and the reason, and exits 0 only when all pass.
 A key the header lacks is a FAIL that names it. A check that needs a missing key
 says which one.
 
-**The card's own keys.** `--card FILE` names a JSON file holding the card's fields as
+**Build-specific card input.** These keys are the build's work-card convention,
+not an engine requirement. `--card FILE` names a JSON file holding its fields as
 `recall` returns them under `fields` for one item, made with `recall` subject
 work:q-CARD keys [owner_module, retires, falsify, review, self_review, done_line]. OWNER,
 RETIRES, FALSIFY and SELF-REVIEW that the header lacks are taken from `owner_module`,
