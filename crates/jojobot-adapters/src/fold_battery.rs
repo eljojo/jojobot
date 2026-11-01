@@ -818,6 +818,56 @@ pub async fn agree_after_a_reload(fresh: &dyn Memory, direct: &dyn Memory) {
     }
 }
 
+/// **A fill asks the store who points at a name only for a name an engine record
+/// points at.** The stores disagree on whether such a record is a holder (a merge's
+/// account of what it folded is one in the fake and none in the real store), so the
+/// store answers for those names and the documents answer for every other. A fill
+/// that asked the store for every name, or for none, gets the count wrong. Returns how
+/// many names engine records point at, so a caller that knows its store holds some can
+/// say so; the case itself requires names pointed at by ordinary records too, or the
+/// count could not tell the two ways apart.
+pub async fn a_fill_asks_the_store_only_for_the_names_an_engine_record_points_at(
+    counted: &std::sync::Arc<Counted>,
+    direct: &dyn Memory,
+) -> usize {
+    use jojobot_domain::memory::capacity::ENGINE_RECORD;
+    use jojobot_domain::memory::{names_in_fact, validate_subject};
+    let mut every = std::collections::BTreeSet::new();
+    let mut by_engine = std::collections::BTreeSet::new();
+    for doc in direct.scan().await.expect("the store scans") {
+        for fact in &doc.facts {
+            let names: Vec<String> = names_in_fact(fact)
+                .into_iter()
+                .filter(|name| validate_subject(&id(name)).is_ok())
+                .collect();
+            if fact.fields.contains_key(ENGINE_RECORD) {
+                by_engine.extend(names.iter().cloned());
+            }
+            every.extend(names);
+        }
+    }
+    assert!(
+        every.len() > by_engine.len(),
+        "the store points at {} names, {} of them from engine records: nothing for an ordinary \
+         record to tell apart",
+        every.len(),
+        by_engine.len()
+    );
+    counted.reset();
+    let fresh = crate::fold::Folded::new(counted.clone());
+    fresh.rebuild().await.expect("the fold fills");
+    let asked = counted.seen().get("referring_to").copied().unwrap_or(0);
+    assert_eq!(
+        asked,
+        by_engine.len(),
+        "the fill asked the store about {asked} names; engine records point at {}, ordinary \
+         records at {} more",
+        by_engine.len(),
+        every.len() - by_engine.len()
+    );
+    by_engine.len()
+}
+
 // ── a merge and a rename with every kind of holder around them ───────────────
 
 /// **A merge and a rename of things that others point at, each followed by the

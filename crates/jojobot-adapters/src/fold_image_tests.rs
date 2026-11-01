@@ -12,7 +12,8 @@ use jojobot_domain::memory::testing::InMemoryMemory;
 use crate::counted::Counted;
 use crate::fold::Folded;
 use crate::fold_battery::{
-    Probe, agree_after_a_reload, walk_a_merge_among_holders_of_one_name,
+    Probe, a_fill_asks_the_store_only_for_the_names_an_engine_record_points_at,
+    agree_after_a_reload, walk_a_merge_among_holders_of_one_name,
     walk_a_merge_and_a_rename_among_holders, walk_every_kind_of_write,
 };
 
@@ -374,6 +375,9 @@ async fn a_merge_and_a_rename_among_holders_leave_the_image_as_the_store_answers
     let fresh = Folded::new(counted.clone());
     fresh.rebuild().await.expect("the fold loads again");
     agree_after_a_reload(&fresh, &*store).await;
+    // The merges here leave no engine record that points at a name, so this walk shows the fill
+    // asking the store for none; the case with an engine record is in `fold::tests`.
+    a_fill_asks_the_store_only_for_the_names_an_engine_record_points_at(&counted, &*store).await;
 }
 
 /// **A kind declared again as it already stands reads the image no more.** The

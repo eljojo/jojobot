@@ -1677,6 +1677,53 @@ async fn a_fill_does_not_ask_the_store_for_the_records_that_point_at_each_name()
     );
 }
 
+/// **A fill asks the store for a name an engine record points at, and for no other.**
+/// The stores disagree on whether an engine record is a holder, so the store answers
+/// for the names such a record points at and the documents answer for the rest. One
+/// engine record here points at gamma, which no ordinary record points at: the fill
+/// asks the store once, for gamma, and the fold's answer is the store's. Paired with
+/// the case above, where no engine record exists and the fill asks for nothing, so a
+/// fill that asked for every name, or for none, fails one of the two.
+#[tokio::test]
+async fn a_fill_asks_the_store_for_a_name_an_engine_record_points_at_and_for_no_other() {
+    let inner = a_store_with_links().await;
+    let kenny = EntityId::person("person:kenny");
+    let gamma = EntityId::person("person:gamma");
+    inner
+        .capture(jojobot_domain::memory::testing::contract::state(NewFact {
+            fields: BTreeMap::from([
+                ("friend".to_string(), gamma.to_string()),
+                (
+                    jojobot_domain::memory::capacity::ENGINE_RECORD.to_string(),
+                    "rename".to_string(),
+                ),
+            ]),
+            ..NewFact::about(kenny, "told apart from gamma", date(2026, 9, 2))
+        }))
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("not blocked");
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let folded = Folded::new(Arc::new(CountsReferring(inner.clone(), calls.clone())));
+    folded.rebuild().await.expect("rebuild ok");
+
+    assert_eq!(
+        calls.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "the fill asks the store about gamma, the one name an engine record points at"
+    );
+    let ids = |facts: Vec<Fact>| facts.into_iter().map(|f| f.id).collect::<Vec<_>>();
+    let mine = ids(folded.referring_to(&gamma).await.expect("fold answers"));
+    let theirs = ids(inner.referring_to(&gamma).await.expect("store answers"));
+    assert_eq!(mine, theirs);
+    assert_eq!(
+        mine.len(),
+        1,
+        "the engine record is the one holder of gamma"
+    );
+}
+
 /// Keeps the phase and the count of each "fold fill phase finished" event.
 #[derive(Clone, Default)]
 struct FillPhases(Arc<std::sync::Mutex<Vec<(String, u64)>>>);
