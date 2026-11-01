@@ -51,20 +51,7 @@ const MAIL_PILE_AT: usize = 20;
 /// compaction, which forgets what a run was taught.
 const MAIL_PILE_DOMAIN: &str = "mail-pile";
 
-/// **What a bot has for a mailbox.** One box per bot is settled, so the other
-/// two answers are damage rather than variety — and they are apart from each
-/// other because a bot with no box and a bot with two are different repairs.
-pub enum OwnBox {
-    /// The one box it owns.
-    The(mailbox::MailboxName),
-    /// It owns none. A bot's box opens with the bot, so this is a creation
-    /// that was interrupted or a record predating the rule.
-    None,
-    /// It owns more than one, which nothing should be able to produce.
-    Several(Vec<mailbox::MailboxName>),
-    /// The board could not be read, so this says nothing about the bot.
-    Unreadable,
-}
+pub use jojobot_query_api::words::{OwnBox, owned_box};
 
 impl Jojobot {
     /// Attach the block to an answer, when there is anything to say.
@@ -257,22 +244,6 @@ impl Jojobot {
             .iter()
             .find(|held| held.name == own && !held.is_private())
             .map(|held| held.counts.new)
-    }
-}
-
-/// **The ownership question, over a board already read.** Apart from the fetch
-/// so that a caller holding the listing can answer it — and anything else the
-/// same listing answers — without asking the store for the table again.
-pub fn owned_box(boxes: &[mailbox::Mailbox], bot: &EntityId) -> OwnBox {
-    let mut owned: Vec<mailbox::MailboxName> = boxes
-        .iter()
-        .filter(|held| &held.owner == bot)
-        .map(|held| held.name.clone())
-        .collect();
-    match owned.len() {
-        1 => OwnBox::The(owned.pop().expect("one box")),
-        0 => OwnBox::None,
-        _ => OwnBox::Several(owned),
     }
 }
 

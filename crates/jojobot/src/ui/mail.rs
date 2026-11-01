@@ -66,16 +66,16 @@ pub(crate) async fn operators_box(mail: &MailHandle, operator: &EntityId) -> Ope
     let Ok(boxes) = mail.boxes(&jojobot_domain::actor::Actor::Operator).await else {
         return OperatorsBox::Unreadable;
     };
-    match jojobot_mcp::owned_box(&boxes, operator) {
-        jojobot_mcp::OwnBox::The(name) => boxes
+    match jojobot_query_api::words::owned_box(&boxes, operator) {
+        jojobot_query_api::words::OwnBox::The(name) => boxes
             .into_iter()
             .find(|held| held.name == name)
             .map_or(OperatorsBox::Unreadable, OperatorsBox::The),
-        jojobot_mcp::OwnBox::None => OperatorsBox::None,
-        jojobot_mcp::OwnBox::Several(names) => {
+        jojobot_query_api::words::OwnBox::None => OperatorsBox::None,
+        jojobot_query_api::words::OwnBox::Several(names) => {
             OperatorsBox::Several(names.iter().map(|name| name.as_str().to_string()).collect())
         }
-        jojobot_mcp::OwnBox::Unreadable => OperatorsBox::Unreadable,
+        jojobot_query_api::words::OwnBox::Unreadable => OperatorsBox::Unreadable,
     }
 }
 
@@ -122,7 +122,7 @@ fn answer(refused: Refused, failed: &str) -> Response {
         // is not a person and a bot's mail is not finished from here.
         Refused::NotAPerson(held) => refuse(
             StatusCode::NOT_FOUND,
-            &jojobot_mcp::orientation::instance_zone::operator_is_not_a_person(&held),
+            &jojobot_query_api::words::operator_is_not_a_person(&held),
         ),
         Refused::RecordUnreadable(err) => {
             tracing::warn!(error = %err, "the instance's record could not be read for an action");
@@ -134,7 +134,7 @@ fn answer(refused: Refused, failed: &str) -> Response {
         Refused::NoBox => refuse(StatusCode::NOT_FOUND, "The operator has no mailbox yet."),
         Refused::SeveralBoxes(names) => refuse(
             StatusCode::INTERNAL_SERVER_ERROR,
-            &jojobot_mcp::orientation::instance_zone::operator_owns_several_boxes(&names),
+            &jojobot_query_api::words::operator_owns_several_boxes(&names),
         ),
         Refused::BoardUnreadable(err) => {
             tracing::warn!(error = %err, "the mail board could not be read for an action");

@@ -14,8 +14,9 @@ use jojobot_domain::memory::{
     Entity, EntityId, EntityKind, Fact, FieldAges, FieldBacking, graph, kinds, mention, readiness,
 };
 use jojobot_domain::text;
-use jojobot_mcp::memory::{left_out, view_run};
-use jojobot_mcp::orientation::instance_zone::OperatorIs;
+use jojobot_mcp::memory::view_run;
+use jojobot_query_api::OperatorIs;
+use jojobot_query_api::left_out;
 
 use crate::AppState;
 use crate::ui::{encode_component, home, org, shell, tree, typed};
@@ -439,7 +440,7 @@ pub(crate) async fn node(
         generic.push_str(&crate::ui::document::block(
             &entity.name,
             held.get("one_liner").map(String::as_str),
-            &jojobot_mcp::memory::documents::live_text(&facts),
+            &jojobot_query_api::words::live_text(&facts),
             &by_id,
         ));
     }
@@ -538,7 +539,7 @@ pub(crate) async fn node(
     {
         generic.push_str(&format!(
             "<h2>Operator</h2>\n<p id=\"operator-not-a-person\">{}</p>\n",
-            escape(&jojobot_mcp::orientation::instance_zone::operator_is_not_a_person(&held))
+            escape(&jojobot_query_api::words::operator_is_not_a_person(&held))
         ));
     }
 
@@ -792,9 +793,9 @@ async fn operators_mailbox_section(
         crate::ui::mail::OperatorsBox::Several(names) => {
             return format!(
                 "<h2>Mailbox</h2>\n<p id=\"mailbox-damaged\">{}</p>\n",
-                escape(
-                    &jojobot_mcp::orientation::instance_zone::operator_owns_several_boxes(&names)
-                )
+                escape(&jojobot_query_api::words::operator_owns_several_boxes(
+                    &names
+                ))
             );
         }
         crate::ui::mail::OperatorsBox::Unreadable => {

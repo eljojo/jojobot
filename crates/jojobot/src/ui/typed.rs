@@ -196,7 +196,7 @@ pub async fn rhythm(
 ) -> String {
     // **A record that cannot be read falls back to UTC**, as every unzoned read
     // does; the boot says so.
-    let frame = jojobot_mcp::orientation::instance_zone::frame_of_fields(
+    let frame = jojobot_query_api::words::frame_of_fields(
         &pages::instance_fields(queries).await.unwrap_or_default(),
     );
     let today = state.clock.today_in(&frame);

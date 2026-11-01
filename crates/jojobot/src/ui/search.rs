@@ -98,7 +98,7 @@ pub(crate) async fn results(
     if not_listed > 0 {
         body.push_str(&format!(
             "<p id=\"not-listed\">{}</p>\n",
-            pages::escape(&jojobot_mcp::memory::search::not_listed_note(not_listed))
+            pages::escape(&jojobot_query_api::words::not_listed_note(not_listed))
         ));
     }
     if let Some(note) = unseen.0 {

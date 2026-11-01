@@ -9,73 +9,11 @@
 use super::*;
 use jiff::civil::Date;
 use jojobot_domain::memory::FactId;
-use jojobot_domain::memory::document::{self, Section};
+use jojobot_domain::memory::document;
 use jojobot_domain::memory::order;
 
-/// One live section of a document: the record, its order key and the section it
-/// holds.
-pub(crate) struct Held<'a> {
-    pub(crate) order: String,
-    pub(crate) section: Section,
-    pub(crate) fact: &'a Fact,
-    /// For a chunk that carries a section on: the local id of the record that
-    /// holds that section's heading.
-    pub(crate) head: Option<&'a str>,
-}
-
-/// **The live sections among a document's records, in reading order.** A section
-/// that was archived or taken back is not live: it stays readable by its address
-/// and is left out of the page. **A chunk whose heading is not live is not live
-/// either**: archiving a section takes the whole of it out. Ties in the order
-/// key, which only a hand-written key can make, fall back to the record's id so
-/// the page is still the same page every time it is read.
-pub(crate) fn live_sections(facts: &[Fact]) -> Vec<Held<'_>> {
-    let mut held: Vec<Held<'_>> = document::placed_in_order(facts)
-        .into_iter()
-        .filter(|fact| fact.status == FactStatus::Active)
-        .filter_map(|fact| {
-            let (order, section) =
-                document::from_record(&fact.content, fact.details.as_deref(), &fact.fields)?;
-            Some(Held {
-                order,
-                section,
-                fact,
-                head: fact
-                    .fields
-                    .get(document::CONTINUES)
-                    .map(String::as_str)
-                    .filter(|_| facts_continue(fact)),
-            })
-        })
-        .collect();
-    let heads: std::collections::BTreeSet<&str> = held
-        .iter()
-        .filter(|h| h.head.is_none())
-        .map(|h| h.fact.id.0.as_str())
-        .collect();
-    held.retain(|h| h.head.is_none_or(|head| heads.contains(head)));
-    held
-}
-
-/// **The markdown of one live section**, joined from its parts. This is the one
-/// join of a section's text: `read_document` pages over it and the web page
-/// concatenates it, so the two cannot disagree about what a document says.
-pub(crate) fn section_text(held: &Held<'_>) -> String {
-    document::join(std::slice::from_ref(&held.section))
-}
-
-/// **A document's whole live text**, as `read_document` returns it when it
-/// fits in one answer: the live sections in reading order, each joined by
-/// [`section_text`]. For a reader that is not a verb, such as the web page.
-pub fn live_text(facts: &[Fact]) -> String {
-    live_sections(facts).iter().map(section_text).collect()
-}
-
-fn facts_continue(fact: &Fact) -> bool {
-    fact.fields
-        .get(document::CONTINUES)
-        .is_some_and(|value| !value.is_empty() && value != "false")
-}
+pub use jojobot_query_api::words::live_text;
+pub(crate) use jojobot_query_api::words::{Held, live_sections, section_text};
 
 /// **The positions of a section and of every chunk that carries it on**, in
 /// reading order. A position that names a chunk stands for the section it

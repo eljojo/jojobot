@@ -14,7 +14,7 @@ use super::*;
 pub(crate) const INSTANCE_RECORD: &str = jojobot_domain::memory::INSTANCE_RECORD;
 
 /// The key on [`INSTANCE_RECORD`] that holds the zone, as an IANA name.
-pub(crate) const INSTANCE_ZONE_KEY: &str = "timezone";
+pub(crate) use jojobot_query_api::words::ZONE_KEY as INSTANCE_ZONE_KEY;
 
 /// The key on [`INSTANCE_RECORD`] that holds the operator, as the handle of a
 /// person. A work thing that waits on the operator holds the same handle under
@@ -80,17 +80,9 @@ pub async fn unzoned_frame(memory: &dyn Memory) -> jiff::tz::TimeZone {
         .unwrap_or(jiff::tz::TimeZone::UTC)
 }
 
-/// **The frame an unzoned read is answered in, from the instance's folded
-/// fields** a reader already holds: UTC when they hold no zone or one this build
-/// cannot resolve. The same frame [`unzoned_frame`] answers.
-pub fn frame_of_fields(fields: &std::collections::BTreeMap<String, String>) -> jiff::tz::TimeZone {
-    fields
-        .get(INSTANCE_ZONE_KEY)
-        .map(|raw| raw.trim())
-        .filter(|raw| !raw.is_empty())
-        .and_then(|raw| jiff::tz::TimeZone::get(raw).ok())
-        .unwrap_or(jiff::tz::TimeZone::UTC)
-}
+pub use jojobot_query_api::words::{
+    frame_of_fields, operator_is_not_a_person, operator_owns_several_boxes,
+};
 
 /// **The instance's own record, folded**, for the readers that need what the
 /// operator wrote on it besides a zone: the status words it maps and the columns
@@ -145,20 +137,6 @@ pub(crate) fn operator_unreadable() -> String {
     format!("not known: {INSTANCE_RECORD} could not be read just now, so try again")
 }
 
-/// **The sentence for a record that names something other than a person as the
-/// operator.** The operator is a person, so the handle the record holds does not
-/// count, and the sentence says what it holds, its kind, and where a person is
-/// written. The entity exists, so it never says there is none. The boot and a
-/// post to that handle both carry this one sentence, so they cannot disagree.
-pub fn operator_is_not_a_person(held: &EntityId) -> String {
-    let kind = held.kind().map_or("unknown kind", |kind| kind.as_token());
-    format!(
-        "the instance's record holds '{held}' as its operator, which is a {kind} and not a \
-         person, so there is no operator yet: capture {INSTANCE_OPERATOR_KEY} in sets with a \
-         person's handle on {INSTANCE_RECORD}"
-    )
-}
-
 /// **What the instance's record makes of its operator.** The one reading of the
 /// record, public so the operator's window asks it what the verbs ask it
 /// (rule 598): the record names nobody, names something that is not a person, or
@@ -192,20 +170,6 @@ pub async fn operator_of(
         Some(held) if held.kind() == Some(EntityKind::PERSON) => OperatorIs::Person(held),
         Some(held) => OperatorIs::NotAPerson(held),
     })
-}
-
-/// **The sentence for an operator who owns more than one mailbox.** One person has
-/// exactly one, so several is damage and not a choice: no caller picks one of them,
-/// and a person has to repair it. The verbs' refusal and the operator's page both
-/// say this sentence, so they cannot tell a caller different things (rule 498).
-pub fn operator_owns_several_boxes(names: &[String]) -> String {
-    format!(
-        "The operator owns more than one mailbox ({}), and one person has exactly one. This is \
-         stored damage rather than a mistake in any call: nothing sent through a verb or this \
-         page changes it, and a person who runs this instance has to repair it. A session that \
-         meets it reports it.",
-        names.join(", ")
-    )
 }
 
 impl Jojobot {
