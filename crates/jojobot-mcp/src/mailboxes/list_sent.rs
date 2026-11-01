@@ -1054,13 +1054,13 @@ mod tests {
     }
 
     /// **A message to a person's box is listed by id, time and subject, and no
-    /// more, to everyone who asks.** The sender and a different bot asking
-    /// after its outbox see the same restricted receipt, with bodies asked for
-    /// and without. Other bot-box messages still follow the chart. A later session must not be
-    /// able to read what its predecessor sent to the person, so the text is
-    /// withheld even from the sender. A message to a bot's box beside it keeps
-    /// its ordinary rendering, so the withholding is the box's and not a
-    /// blanket one.
+    /// more, to its writer alone.** The writer sees the restricted receipt, with
+    /// bodies asked for and without. A different bot asking after the writer's
+    /// outbox is told the message is withheld and sees no id, time or subject.
+    /// A later session must not be able to read what its predecessor sent to the
+    /// person, so the text is withheld even from the sender. A message to a
+    /// bot's box beside it keeps its ordinary rendering, so the withholding is
+    /// the box's and not a blanket one.
     #[tokio::test]
     async fn a_message_to_a_persons_box_is_listed_by_id_time_and_subject_only() {
         let jojobot = mailbox_handler();
@@ -1085,6 +1085,32 @@ mod tests {
 
         for (sid, sender) in [(Some(writer), None), (Some(other), Some("bot:epsilon"))] {
             for include_bodies in [None, Some(true)] {
+                if sender.is_some() {
+                    // Another bot's mail to the person is no business of this one.
+                    let listed = json_of(
+                        &jojobot
+                            .list_sent(Parameters(ListSentArgs {
+                                limit: None,
+                                offset: None,
+                                sender: sender.map(str::to_string),
+                                to: None,
+                                include_bodies,
+                                sid: sid.clone(),
+                            }))
+                            .await
+                            .expect("list_sent ok"),
+                    );
+                    assert_eq!(listed["count"], 0, "{listed}");
+                    assert_eq!(
+                        listed["withheld"], 2,
+                        "both messages are withheld: {listed}"
+                    );
+                    assert!(
+                        !listed.to_string().contains(private["id"].as_str().unwrap()),
+                        "the other bot is not told the message exists: {listed}"
+                    );
+                    continue;
+                }
                 let listed = json_of(
                     &jojobot
                         .list_sent(Parameters(ListSentArgs {
@@ -1098,16 +1124,8 @@ mod tests {
                         .await
                         .expect("list_sent ok"),
                 );
-                assert_eq!(
-                    listed["count"],
-                    if sender.is_some() { 1 } else { 2 },
-                    "{listed}"
-                );
-                assert_eq!(
-                    listed["withheld"],
-                    if sender.is_some() { 1 } else { 0 },
-                    "{listed}"
-                );
+                assert_eq!(listed["count"], 2, "{listed}");
+                assert_eq!(listed["withheld"], 0, "{listed}");
                 let messages = listed["messages"].as_array().expect("messages");
                 let to_the_person = messages
                     .iter()
@@ -1144,10 +1162,6 @@ mod tests {
                     "the note reads as one line: {note:?}"
                 );
                 // The ordinary message beside it is rendered as it always was.
-                if sender.is_some() {
-                    assert!(!listed.to_string().contains("ordinary report"), "{listed}");
-                    continue;
-                }
                 let ordinary = messages
                     .iter()
                     .find(|m| m["id"] != private["id"])

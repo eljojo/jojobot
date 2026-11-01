@@ -460,10 +460,12 @@ async fn mail_visible_own_outbox_is_readable_above_and_beside_in_all_three_reads
     assert!(receipt.get("body").is_none(), "{receipt}");
     assert!(receipt.get("body_head").is_none(), "{receipt}");
     assert_eq!(listed["withheld"], 0, "{listed}");
+    // A bot beside the author sees the message to its own box and is told the
+    // rest is withheld: the mail to the person's box is not its business.
     let other_sender = sent(&jojobot, &marge, "bot:bart", true).await;
     assert_eq!(
         other_sender["messages"].as_array().unwrap().len(),
-        2,
+        1,
         "{other_sender}"
     );
     assert_eq!(
@@ -476,10 +478,18 @@ async fn mail_visible_own_outbox_is_readable_above_and_beside_in_all_three_reads
         1,
         "{other_sender}"
     );
-    assert_eq!(other_sender["withheld"], 1, "{other_sender}");
+    assert_eq!(other_sender["withheld"], 2, "{other_sender}");
     assert!(
         !other_sender.to_string().contains("person-milhouse"),
         "{other_sender}"
+    );
+    assert!(
+        other_sender["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|message| message["id"] != private["id"]),
+        "the other bot is not told the message to the person exists: {other_sender}"
     );
     assert_eq!(
         found_boxes(&find(&jojobot, Some(&bart), 0, 20).await).len(),

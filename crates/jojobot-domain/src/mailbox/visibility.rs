@@ -73,7 +73,17 @@ impl VisibleBoxes {
     /// An unknown sender cannot establish an author's outbox entitlement.
     pub fn message(&self, mailbox: &MailboxName, sender: Option<&str>) -> MessageVisibility {
         if self.private_boxes.contains(mailbox) {
-            return MessageVisibility::Receipt;
+            // A writer sees where its own mail got to; no one else sees that the
+            // mail exists. A grader has no author and sees every receipt.
+            let authored = self
+                .caller
+                .as_ref()
+                .is_some_and(|caller| sender == Some(caller.as_str()));
+            return if self.reads_every_bot_box || authored {
+                MessageVisibility::Receipt
+            } else {
+                MessageVisibility::Withheld
+            };
         }
         if self.reads_every_bot_box {
             return MessageVisibility::Readable;
@@ -202,12 +212,14 @@ mod tests {
             box_of("person", "milhouse"),
         ];
         // For each caller: what a message from the outsider homer gets in each box,
-        // in the order alpha, beta, gamma, delta, milhouse, stranger.
+        // in the order alpha, beta, gamma, delta, milhouse, stranger. A person's
+        // box answers a receipt to the author of a message in it and nothing to
+        // anyone else.
         let expected = [
-            ("bot:alpha", [R, R, R, W, P, W]),
-            ("bot:beta", [W, R, R, W, P, W]),
-            ("bot:gamma", [W, W, R, W, P, W]),
-            ("bot:delta", [W, W, W, R, P, W]),
+            ("bot:alpha", [R, R, R, W, W, W]),
+            ("bot:beta", [W, R, R, W, W, W]),
+            ("bot:gamma", [W, W, R, W, W, W]),
+            ("bot:delta", [W, W, W, R, W, W]),
         ];
         let names = ["alpha", "beta", "gamma", "delta", "milhouse", "stranger"];
         for (caller, answers) in expected {
