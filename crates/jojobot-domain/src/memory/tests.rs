@@ -1457,6 +1457,41 @@ fn a_blank_write_takes_the_backing_off_with_the_key() {
     assert!(backing.contains_key("selects"), "{backing:?}");
 }
 
+/// **A key a declared type holds as a list keeps its key when it is emptied**
+/// (rule 751): a blank is an empty list there, and takes the key off only where
+/// the key holds one value. Each negative sits beside its positive: the list key
+/// and the plain key are blanked together, and only the plain one goes.
+#[test]
+fn a_blank_write_keeps_a_list_key_and_takes_a_single_valued_key_off() {
+    let declared = [types::DeclaredType::new(
+        "outing",
+        vec![
+            types::Field::listing("guests", types::ValueType::Text),
+            types::Field::new("venue", types::ValueType::Text),
+        ],
+    )];
+    let writes = [
+        wrote("guests", 1, Some("milhouse,nelson")),
+        wrote("guests", 2, Some("")),
+        wrote("venue", 1, Some("the rink")),
+        wrote("venue", 2, Some("")),
+        wrote("mood", 1, Some("calm")),
+        wrote("mood", 2, Some("")),
+    ];
+    let backing = folded_backing(&writes, &declared);
+    assert!(backing.contains_key("guests"), "{backing:?}");
+    assert!(!backing.contains_key("venue"), "{backing:?}");
+    assert!(!backing.contains_key("mood"), "{backing:?}");
+    let (folded, _) = fold(&writes, &declared);
+    assert_eq!(
+        folded.get("guests").map(String::as_str),
+        Some(""),
+        "{folded:?}"
+    );
+    assert!(!folded.contains_key("venue"), "{folded:?}");
+    assert!(!folded.contains_key("mood"), "{folded:?}");
+}
+
 /// **Only the build declares a key that describes its record** (rule 360). A
 /// type a caller declares is refused over it, and the same field in a shipped
 /// type is taken: a bot that could declare it could make any key stop folding
@@ -2009,6 +2044,12 @@ async fn fake_satisfies_the_app_contract() {
 #[tokio::test]
 async fn fake_names_the_writer_and_run_of_each_key_write() {
     contract::a_keys_history_names_the_writer_and_run_of_each_write(&InMemoryMemory::booted())
+        .await;
+}
+
+#[tokio::test]
+async fn fake_keeps_an_emptied_list_key_and_takes_a_blank_single_valued_key_off() {
+    contract::a_blank_keeps_a_list_key_and_takes_a_single_valued_key_off(&InMemoryMemory::booted())
         .await;
 }
 

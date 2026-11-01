@@ -4699,7 +4699,7 @@ pub fn folded_backing(
             backing.remove(&write.key);
             continue;
         }
-        match types::held_value(write) {
+        match types::held_value(write, declared) {
             // A clear is a write, and so is a blank: each takes the backing off
             // with the value, as the fold takes the key off.
             None => {
@@ -4824,7 +4824,7 @@ fn fold(
     // ends the total the same way it ends the value.
     let mut totals: BTreeMap<&str, Total> = BTreeMap::new();
     for write in standing {
-        let Some(value) = types::held_value(write) else {
+        let Some(value) = types::held_value(write, declared) else {
             folded.remove(&write.key);
             moments.remove(&write.key);
             totals.remove(write.key.as_str());

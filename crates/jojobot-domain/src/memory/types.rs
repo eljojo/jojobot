@@ -174,14 +174,24 @@ const VIEW_DECLARATION_KEYS: [&str; 6] = [
     "follow_fits_type",
 ];
 
+/// **Whether any declared type holds this key as a list.** An emptied list keeps
+/// its key and holds an empty list (rule 751), so a blank is a value there.
+fn holds_a_list(key: &str, declared: &[DeclaredType]) -> bool {
+    let key = key.trim();
+    declared
+        .iter()
+        .any(|d| d.field(key).is_some_and(|f| f.list))
+}
+
 /// **The value a write gives its key, or none when it takes the key off.** A
 /// blank gives none, except on a view's declaration key, where it stays a stored
-/// blank.
-pub fn held_value(write: &super::KeyWrite) -> Option<&String> {
-    write
-        .value
-        .as_ref()
-        .filter(|v| holds_a_value(v) || VIEW_DECLARATION_KEYS.contains(&write.key.trim()))
+/// blank, and on a key a declared type holds as a list, where it is an empty list.
+pub fn held_value<'a>(write: &'a super::KeyWrite, declared: &[DeclaredType]) -> Option<&'a String> {
+    write.value.as_ref().filter(|v| {
+        holds_a_value(v)
+            || VIEW_DECLARATION_KEYS.contains(&write.key.trim())
+            || holds_a_list(&write.key, declared)
+    })
 }
 
 /// **How a key folds, over everything that has been declared.**
