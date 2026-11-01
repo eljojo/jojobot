@@ -52,6 +52,15 @@ impl DoltTeachings {
     }
 }
 
+/// **Whether the refusal is the pair's own key**, which means the pair is
+/// already taught. Another unique index refusing the insert is a refused rule,
+/// not a repeat contact.
+fn duplicate_pair(err: &sqlx::Error) -> bool {
+    err.as_database_error().is_some_and(|db| {
+        db.is_unique_violation() && db.message().to_ascii_lowercase().contains("primary")
+    })
+}
+
 /// **A conflict is told apart from every other failure here, at the one
 /// seam every write already passes through** — the same check the memory
 /// rail's own `store` runs, see its doc for why.
@@ -75,38 +84,24 @@ impl Teachings for DoltTeachings {
         domain: &str,
         at: jiff::Timestamp,
     ) -> Result<bool, TeachingError> {
+        // The key `(sid, domain)` decides: a second insert of the pair is the
+        // duplicate-key refusal, which is the answer `false`. No read is made.
         let mut tx = self.pool.begin().await.map_err(store)?;
-        let existing: Option<i64> =
-            sqlx::query_scalar("SELECT 1 FROM session_teaching WHERE sid = ? AND domain = ?")
+        let inserted =
+            sqlx::query("INSERT INTO session_teaching (sid, domain, taught_at) VALUES (?, ?, ?)")
                 .bind(sid.as_str())
                 .bind(domain)
-                .fetch_optional(&mut *tx)
-                .await
-                .map_err(store)?;
-        if existing.is_some() {
-            crate::writer::sql::commit(tx).await.map_err(store)?;
-            return Ok(false);
+                .bind(at.to_string())
+                .execute(&mut *tx)
+                .await;
+        match inserted {
+            Ok(_) => {
+                crate::writer::sql::commit(tx).await.map_err(store)?;
+                Ok(true)
+            }
+            Err(err) if duplicate_pair(&err) => Ok(false),
+            Err(err) => Err(store(err)),
         }
-        sqlx::query("INSERT INTO session_teaching (sid, domain, taught_at) VALUES (?, ?, ?)")
-            .bind(sid.as_str())
-            .bind(domain)
-            .bind(at.to_string())
-            .execute(&mut *tx)
-            .await
-            .map_err(store)?;
-        crate::writer::sql::commit(tx).await.map_err(store)?;
-        Ok(true)
-    }
-
-    async fn has_contact(&self, sid: &Sid, domain: &str) -> Result<bool, TeachingError> {
-        let held: Option<i64> =
-            sqlx::query_scalar("SELECT 1 FROM session_teaching WHERE sid = ? AND domain = ?")
-                .bind(sid.as_str())
-                .bind(domain)
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(store)?;
-        Ok(held.is_some())
     }
 
     async fn forget(&self, sid: &Sid) -> Result<(), TeachingError> {
