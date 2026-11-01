@@ -272,7 +272,23 @@ impl Image {
         let started = std::time::Instant::now();
         let names = image.names_in(&image.docs.values().collect::<Vec<_>>());
         let asked = names.len();
-        image.referring = ask_referring(inner, names).await?.into_iter().collect();
+        // **Worked out from the documents the fill holds, as a write works it out**
+        // ([`Image::referring_patch`]); only a name an engine record points at is
+        // asked of the store, which is the one answer the stores disagree on
+        // ([`Image::names_to_ask`]). Asking the store for every name cost a
+        // transaction and a read of each holder's records per name, which grew
+        // with the store until a restart spent minutes in it.
+        let engine: std::collections::BTreeSet<String> = image
+            .docs
+            .values()
+            .flat_map(|doc| image.names_to_ask(doc))
+            .collect();
+        let (from_store, from_documents): (Vec<String>, Vec<String>) =
+            names.into_iter().partition(|name| engine.contains(name));
+        image.referring = image.referring_from_documents(from_documents);
+        image
+            .referring
+            .extend(ask_referring(inner, from_store).await?);
         fill_phase("referring", started, asked);
         let started = std::time::Instant::now();
         image.events = inner.merge_events(None).await?;
@@ -374,6 +390,42 @@ impl Image {
             }
         }
         names.into_iter().collect()
+    }
+
+    /// **What the store answers for each of these names, worked out from the
+    /// documents held.** Each record is read once and filed under every name it
+    /// links to; a name's list is the records that link to it, the holders in the
+    /// order every store answers in ([`jojobot_domain::memory::referring_holder_order`])
+    /// and each holder's records in the order its document serves them. A name no
+    /// record links to has an empty list, as the store answers it. A name that is
+    /// no well-formed handle is left out: nothing can ask for it.
+    fn referring_from_documents(&self, names: Vec<String>) -> HashMap<String, Vec<Fact>> {
+        let mut holders: Vec<(String, &Doc)> = self
+            .docs
+            .iter()
+            .map(|(handle, doc)| (self.storage_key(handle), doc))
+            .collect();
+        holders.sort_by(|a, b| jojobot_domain::memory::referring_holder_order(&a.0, &b.0));
+        let mut naming: HashMap<String, Vec<Fact>> = HashMap::new();
+        for (_, doc) in holders {
+            for fact in &doc.scan.facts {
+                let linked: std::collections::BTreeSet<String> =
+                    names_in_fact(fact).into_iter().collect();
+                for name in linked {
+                    naming.entry(name).or_default().push(fact.clone());
+                }
+            }
+        }
+        names
+            .into_iter()
+            .filter(|name| {
+                jojobot_domain::memory::validate_subject(&EntityId(name.clone())).is_ok()
+            })
+            .map(|name| {
+                let list = naming.remove(&name).unwrap_or_default();
+                (name, list)
+            })
+            .collect()
     }
 
     /// **What the store would answer for each name this thing's records point at,

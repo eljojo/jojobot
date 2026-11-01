@@ -1567,6 +1567,116 @@ async fn a_rename_drops_the_cached_fields_that_name_the_old_handle() {
     );
 }
 
+/// A store that counts the calls of `referring_to`, every other method forwarding to
+/// the in-memory store.
+struct CountsReferring(Arc<InMemoryMemory>, Arc<std::sync::atomic::AtomicUsize>);
+
+#[jojobot_domain::forward(jojobot_domain::forward_memory, via = 0)]
+impl Memory for CountsReferring {
+    async fn referring_to(&self, target: &EntityId) -> Result<Vec<Fact>, MemoryError> {
+        self.1.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.0.referring_to(target).await
+    }
+}
+
+/// A store with the links the two cases below read: two holders of the friend
+/// field point at alpha, one at beta, and gamma has no holder.
+async fn a_store_with_links() -> Arc<InMemoryMemory> {
+    let inner = Arc::new(InMemoryMemory::booted());
+    inner
+        .declare_type(
+            DeclaredType::new(
+                "fill-pointing",
+                vec![Field::new("friend", ValueType::Reference)],
+            ),
+            None,
+        )
+        .await
+        .expect("the type is declared");
+    let kenny = EntityId::person("person:kenny");
+    let stan = EntityId::person("person:stan");
+    for (id, name) in [
+        (alpha(), "Alpha"),
+        (beta(), "Beta"),
+        (EntityId::person("person:gamma"), "Gamma"),
+        (kenny.clone(), "Kenny"),
+        (stan.clone(), "Stan"),
+    ] {
+        inner
+            .add_entity(NewEntity::new(id, name, "user-named"))
+            .await
+            .expect("add ok")
+            .written()
+            .expect("not blocked");
+    }
+    for (holder, friend) in [(&kenny, alpha()), (&stan, alpha()), (&stan, beta())] {
+        inner
+            .capture(jojobot_domain::memory::testing::contract::state(NewFact {
+                fields: BTreeMap::from([("friend".to_string(), friend.to_string())]),
+                ..NewFact::about(holder.clone(), "has a friend", date(2026, 9, 1))
+            }))
+            .await
+            .expect("capture ok")
+            .written()
+            .expect("not blocked");
+    }
+    inner
+}
+
+/// **A fill works the records that point at a name out from the documents it
+/// holds, and the answer is the store's.** For each name the fold answers from its
+/// image and the store answers from its rows, and the two lists are the same records
+/// in the same order. The positive is in the same read: alpha has two holders, so
+/// an image that held empty lists would not pass.
+#[tokio::test]
+async fn a_fill_answers_referring_to_as_the_store_does() {
+    let inner = a_store_with_links().await;
+    let folded = Folded::new(inner.clone());
+    folded.rebuild().await.expect("rebuild ok");
+    let ids = |facts: Vec<Fact>| facts.into_iter().map(|f| f.id).collect::<Vec<_>>();
+    for name in [alpha(), beta(), EntityId::person("person:gamma")] {
+        let mine = ids(folded.referring_to(&name).await.expect("fold answers"));
+        let theirs = ids(inner.referring_to(&name).await.expect("store answers"));
+        assert_eq!(mine, theirs, "{name}");
+    }
+    assert_eq!(
+        folded
+            .referring_to(&alpha())
+            .await
+            .expect("fold answers")
+            .len(),
+        2,
+        "alpha has two holders"
+    );
+}
+
+/// **A fill asks the store for no name that no engine record points at.** Asking
+/// the store once per name opened a transaction and read each holder's records for
+/// every name, which grew with the store until a restart spent minutes in the fill.
+/// Paired with the case above: the answers are there, and the store was not asked.
+#[tokio::test]
+async fn a_fill_does_not_ask_the_store_for_the_records_that_point_at_each_name() {
+    let inner = a_store_with_links().await;
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let folded = Folded::new(Arc::new(CountsReferring(inner, calls.clone())));
+    folded.rebuild().await.expect("rebuild ok");
+
+    assert_eq!(
+        folded
+            .referring_to(&alpha())
+            .await
+            .expect("fold answers")
+            .len(),
+        2,
+        "the fill holds the records that point at alpha"
+    );
+    assert_eq!(
+        calls.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "the fill asked the store for the records that point at a name"
+    );
+}
+
 /// Keeps the phase and the count of each "fold fill phase finished" event.
 #[derive(Clone, Default)]
 struct FillPhases(Arc<std::sync::Mutex<Vec<(String, u64)>>>);
