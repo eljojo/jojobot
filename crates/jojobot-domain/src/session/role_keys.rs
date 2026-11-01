@@ -75,35 +75,52 @@ pub async fn drop_old_role_keys<M: Memory + ?Sized>(
         return Ok(0);
     }
     let claim = role_claim_content(role);
-    let mut touched = 0;
-    for fact in store.recall(bot).await? {
-        if fact.status != FactStatus::Active {
-            continue;
+    let mut touched = BTreeSet::new();
+    // A clear goes only to the record that backs the key, so a key carried by
+    // two records comes off the backing one first. Its older carriers then back
+    // nothing and clear in the next round. Each round clears at least one key
+    // or the loop ends.
+    loop {
+        let backing = store.backing(bot).await?;
+        let mut cleared = false;
+        for fact in store.recall(bot).await? {
+            if fact.status != FactStatus::Active {
+                continue;
+            }
+            let carried: Vec<String> = keys
+                .iter()
+                .filter(|key| fact.fields.contains_key(*key))
+                .filter(|key| backing.get(*key).is_none_or(|held| held.fact == fact.id))
+                .cloned()
+                .collect();
+            if carried.is_empty() {
+                continue;
+            }
+            let left_empty = fact.fields.len() == carried.len() && fact.content == claim;
+            store
+                .update_fact(
+                    &fact.address(),
+                    FactPatch {
+                        clear_fields: carried,
+                        status: left_empty.then_some(FactStatus::Archived),
+                        details: left_empty.then(|| {
+                            format!("Archived when the {role} role moved onto role:{role}.")
+                        }),
+                        ..FactPatch::default()
+                    },
+                    bot,
+                )
+                .await?;
+            touched.insert(fact.id.clone());
+            cleared = true;
+            // The backing has moved: read it again before the next record.
+            break;
         }
-        let carried: Vec<String> = keys
-            .iter()
-            .filter(|key| fact.fields.contains_key(*key))
-            .cloned()
-            .collect();
-        if carried.is_empty() {
-            continue;
+        if !cleared {
+            break;
         }
-        let left_empty = fact.fields.len() == carried.len() && fact.content == claim;
-        store
-            .update_fact(
-                &fact.address(),
-                FactPatch {
-                    clear_fields: carried,
-                    status: left_empty.then_some(FactStatus::Archived),
-                    details: left_empty
-                        .then(|| format!("Archived when the {role} role moved onto role:{role}.")),
-                    ..FactPatch::default()
-                },
-                bot,
-            )
-            .await?;
-        touched += 1;
     }
+    let touched = touched.len();
     Ok(touched)
 }
 
