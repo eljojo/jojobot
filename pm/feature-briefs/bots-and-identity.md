@@ -26,8 +26,7 @@ The metaphor does real work: it says which things about a colleague you may look
 
 **The surface does not vary by bot.** A charter shapes what a bot considers *appropriate*; it never decides what a bot is *allowed* to call.
 
-**jojobot aligns, it does not police, everywhere but identity.** A per-bot surface would put the judgement in the wrong place and make the software responsible for something only a mind can weigh. **The acts that decide who a session is and what another bot becomes are the exception:** booting, claiming a role, and changing a subordinate's charter need a voucher, because a rule against impersonation holds only as well as each session's attention. **A bot is created by chart position (rules 139, 417) and, once the trust gate is on, from a session holding its voucher.** Both hold, not the chart alone.
-
+**jojobot aligns, it does not police, everywhere but identity.** A per-bot surface would put the judgement in the wrong place and make the software responsible for something only a mind can weigh. **The acts that decide who a session is and what another bot becomes are the exception:** booting, claiming a role, and changing a subordinate's charter need a voucher, because a rule against impersonation holds only as well as each session's attention. **A bot is created by chart position (rules 139, 417) and, once the trust gate is on, from a session holding its voucher.**
 ## Two layers, and nothing above knows
 
 **A charter has a half the build supplies and a half the instance writes, and neither is a copy of the other.** The build's comes first; what an instance writes sits under it and narrows it rather than repealing it. A bot nobody has written for still answers with what the build supplies.
