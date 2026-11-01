@@ -198,11 +198,11 @@ async fn the_fakes_write_summary_moves_under_every_write_and_holds_under_reads()
     );
 }
 
-/// **An index that has caught up with a write is current, so the next search
-/// does not scan the store.** The store is the in-memory one with its write
-/// summary and its count of whole-store scans: a write the index re-read one
-/// document for moves the summary, and a read that finds the summary moved and
-/// scans everything anyway pays the cost of the whole corpus for one claim.
+/// **An index the writer's delivery has updated is current, so a search with nothing
+/// refreshed in front of it finds the write.** The fold in front of the store holds an
+/// image, so the store is not scanned on any path and its scan count cannot say whether
+/// the index was updated; the cases that use this helper read the index as the
+/// subscriber left it.
 async fn an_index_over_the_fake() -> (Arc<InMemoryMemory>, Arc<IndexedMemory>, Retrieval) {
     let (fake, store, _refreshing) = an_index_over_the_fake_with_no_image().await;
     store.state().rebuild().await.expect("the fold loads");
@@ -233,9 +233,10 @@ fn a_hit_names(hits: &[Hit], who: &EntityId) -> bool {
     })
 }
 
-/// **After a write the search finds it and the store is not scanned.** Paired
-/// with [`a_change_made_past_the_writes_is_still_found_by_a_scan`] so a fix that
-/// simply never scans cannot pass.
+/// **After a write the index finds it with nothing refreshed in front of it.** Paired
+/// with [`a_change_made_past_the_writes_is_still_found_by_a_scan`], where a change the
+/// writes did not make is found only by a scan, so an index that simply never updates
+/// cannot pass either.
 #[tokio::test]
 async fn a_search_after_a_write_finds_it_without_scanning_the_store() {
     let (_fake, store, retrieval) = an_index_over_the_fake().await;
@@ -366,8 +367,9 @@ async fn a_write_does_not_hide_a_change_made_past_the_writes() {
 }
 
 /// **A fold reaches the things that held the folded one, and the search after
-/// it does not scan the store.** The holders are re-read one by one at the
-/// merge, so the answer does not depend on a scan the next read happens to take.
+/// it, with nothing refreshed, finds the holder by the survivor.** The holders are
+/// re-read one by one at the merge, so the answer does not depend on a refresh the
+/// next read happens to take.
 #[tokio::test]
 async fn a_fold_reaches_its_holders_without_a_scan_of_the_store() {
     let (_fake, store, retrieval) = an_index_over_the_fake().await;
@@ -456,8 +458,8 @@ fn holding_companion(who: &EntityId) -> SearchQuery {
 }
 
 /// **A rename reaches the things that name the renamed one, and the search after
-/// it does not scan the store.** Paired: the new handle finds the holder and the
-/// old one does not.
+/// it, with nothing refreshed, finds them by the new handle.** Paired: the new handle
+/// finds the holder and the old one does not.
 #[tokio::test]
 async fn a_rename_reaches_its_holders_without_a_scan_of_the_store() {
     let (_fake, store, retrieval) = an_index_over_the_fake().await;
@@ -495,9 +497,12 @@ async fn a_rename_reaches_its_holders_without_a_scan_of_the_store() {
 
 /// **A rename reaches the words that name the renamed one**, not only the
 /// fields that hold its handle. A claim that mentions the pet in its words and a
-/// page of prose that mentions it read as the new handle after the rename, and
-/// the search after it scans nothing. Paired: the new spelling finds the
-/// holders and the old one does not.
+/// page of prose that mentions it read as the new handle after the rename.
+/// **This is the one rename case that searches as the binary wires it**, with the
+/// refresh half in front of the index: a rename changes what other things'
+/// documents say, so the next search re-reads the corpus through the half. The other
+/// rename cases read the index with nothing in front of it. Paired: the new spelling
+/// finds the holders and the old one does not.
 #[tokio::test]
 async fn a_rename_reaches_the_words_that_mention_the_renamed_thing() {
     // **Through the layer that renders a mention as a handle**, as the server
@@ -512,8 +517,8 @@ async fn a_rename_reaches_the_words_that_mention_the_renamed_thing() {
     );
     store.state().rebuild().await.expect("the fold loads");
     store.rebuild().await.expect("the boot scan reads");
-    // No half to refresh: the answer is what the writer's delivery left behind.
-    let retrieval = Retrieval::new(store.index(), vec![]);
+    // The half the binary wires (wiring.rs) sits in front of the index.
+    let retrieval = Retrieval::new(store.index(), vec![store.clone()]);
     let (pet, holder) = a_pet_and_the_person_who_keeps_it(&store).await;
     let pager = EntityId::person("person:contract-lamplighter");
     store
@@ -586,7 +591,7 @@ async fn a_rename_reaches_the_words_that_mention_the_renamed_thing() {
     }
 }
 
-/// **An edit of a thing leaves the next search without a scan of the store.**
+/// **An edit of a thing is found by the next search with nothing refreshed.**
 #[tokio::test]
 async fn an_entity_edit_is_found_without_a_scan_of_the_store() {
     let (_fake, store, retrieval) = an_index_over_the_fake().await;
@@ -611,7 +616,7 @@ async fn an_entity_edit_is_found_without_a_scan_of_the_store() {
     assert!(a_hit_names(&hits, &pet), "the new name is found: {hits:?}");
 }
 
-/// **An edit that carries a claim leaves the next search without a scan.**
+/// **An edit that carries a claim is found by the next search with nothing refreshed.**
 #[tokio::test]
 async fn an_entity_edit_with_a_claim_is_found_without_a_scan_of_the_store() {
     let (_fake, store, retrieval) = an_index_over_the_fake().await;
@@ -648,7 +653,7 @@ async fn an_entity_edit_with_a_claim_is_found_without_a_scan_of_the_store() {
     );
 }
 
-/// **A page of prose leaves the next search without a scan of the store.**
+/// **A page of prose is found by the next search with nothing refreshed.**
 #[tokio::test]
 async fn a_prose_write_is_found_without_a_scan_of_the_store() {
     let (_fake, store, retrieval) = an_index_over_the_fake().await;
@@ -671,7 +676,7 @@ async fn a_prose_write_is_found_without_a_scan_of_the_store() {
     );
 }
 
-/// **An archive and a restore each leave the next search without a scan, and
+/// **An archive and a restore each reach the index with nothing refreshed, and
 /// each answers as a real scan would.** The oracle is a scan forced by a row
 /// staged past the writes.
 #[tokio::test]
