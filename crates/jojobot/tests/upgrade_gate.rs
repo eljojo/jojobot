@@ -402,6 +402,7 @@ async fn boots_on_a_restored_store(fixture_dir: &str, restored: Restored) {
     let first = boot_current(&state_dir, store_port, &git_ref).await;
     first.stop().await;
     assert_the_ledger_ends_whole(&state_dir, &git_ref).await;
+    assert_the_teaching_import_equals_the_rows(&state_dir, store_port, &git_ref).await;
     let after_first = dump_store(&state_dir).await;
     // The first boot reported the recording's handle; the passes are marked, so the
     // next boots report nothing.
@@ -1095,6 +1096,60 @@ async fn assert_the_ledger_ends_whole(state_dir: &std::path::Path, git_ref: &str
         begun.is_empty(),
         "the first boot over the store recorded at {git_ref} left migrations begun: {begun:?}"
     );
+}
+
+/// **The first boot imported the teaching rows into the event log whole.** The
+/// store is brought up with no binary over it. Every mark the log's events
+/// record, with its source time, equals a row of `session_teaching` read the
+/// same way, and a store with no rows has an empty log.
+async fn assert_the_teaching_import_equals_the_rows(
+    state_dir: &std::path::Path,
+    store_port: u16,
+    git_ref: &str,
+) {
+    use jojobot_adapters::dolt::teaching::DoltTeachings;
+    use jojobot_adapters::dolt_log::DoltLog;
+    use jojobot_adapters::teaching_log::{Mark, codec};
+    use jojobot_domain::log::{LogStore, Position};
+    use jojobot_domain::teaching::events::TeachingEvent;
+    let mut store = open_the_store(state_dir, store_port).await;
+    let rows = DoltTeachings::open(store.pool().clone())
+        .marks()
+        .await
+        .expect("the teaching rows read back");
+    let log = DoltLog::open(store.pool().clone())
+        .await
+        .expect("the event log opens");
+    let mut imported: Vec<Mark> = Vec::new();
+    for batch in log
+        .read_from(Position(0), 100_000)
+        .await
+        .expect("the log reads")
+    {
+        for member in batch.members() {
+            match codec::decode(member).expect("every stored event reads") {
+                TeachingEvent::Recorded {
+                    run,
+                    domain,
+                    taught_at,
+                } => imported.push(Mark {
+                    sid: jojobot_domain::session::Sid(run.0),
+                    domain,
+                    taught_at,
+                }),
+                TeachingEvent::Cleared { .. } => {
+                    panic!("the import of the store recorded at {git_ref} cleared a run")
+                }
+            }
+        }
+    }
+    imported.sort_by(|a, b| (&a.sid, &a.domain).cmp(&(&b.sid, &b.domain)));
+    assert_eq!(
+        imported, rows,
+        "the teaching marks the first boot imported differ from the rows of the store recorded at {git_ref}"
+    );
+    drop(log);
+    store.stop().await;
 }
 
 /// **A lease on a role object survives a restart, and a renewal past the renewal
