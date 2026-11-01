@@ -121,6 +121,11 @@ enum Leaves {
     /// asks the one the add's own [`Index`] check cannot: whether the name is
     /// gone.
     NoIndex(&'static str, &'static str),
+    /// TEMPORARY(9.3.10) the one migration the start adopts from the schema's
+    /// shape. A fresh store reaches it: 0074 built the index in its own `ALTER`,
+    /// so 0090 is never begun and its index stands. Removing the path means
+    /// first making 0090 safe to skip, which waits for the support boundary.
+    ///
     /// The index this statement adds **only when it is missing**, asked BEFORE
     /// the statement is issued.
     ///
