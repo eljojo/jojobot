@@ -1003,9 +1003,9 @@ async fn resolve_stale_pointer_columns_reads_the_captured_rows() {
         ("entity", "parent"),
     ];
     for (table, column) in columns {
-        let before: Vec<String> = sqlx::query_scalar(&format!(
+        let before: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT DISTINCT {column} FROM {table} WHERE {column} IS NOT NULL"
-        ))
+        )))
         .fetch_all(&pool)
         .await
         .unwrap();
@@ -1018,9 +1018,9 @@ async fn resolve_stale_pointer_columns_reads_the_captured_rows() {
     assert_eq!(memory.resolve_stale_pointer_columns().await.unwrap(), 4);
     let badge = badge_of(&pool, "thing:pointer-migration-object").await;
     for (table, column) in columns {
-        let after: Vec<String> = sqlx::query_scalar(&format!(
+        let after: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT DISTINCT {column} FROM {table} WHERE {column} IS NOT NULL"
-        ))
+        )))
         .fetch_all(&pool)
         .await
         .unwrap();
