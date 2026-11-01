@@ -21,10 +21,13 @@ use super::dsl::{Session, Story};
 /// added here, and a story that finds one missing or sent twice fails.
 const SHIPPED_NOTES: &[&str] = &[
     "a-field-value-naming-a-handle-is-a-link",
+    "blank-value-takes-the-key-off",
+    "boot-names-rules-off-the-tree",
     "closing-mail-costs-what-reading-costs",
     "declare-type-needs-a-session",
     "defrag-ships-a-charter",
     "edge-types-use-writable-tokens",
+    "key-history-names-writer-and-run",
     "list-read-pages-and-counts-ticks",
     "mail-visible-down-the-chart",
     "many-entries-or-ticks-in-one-call",
@@ -962,10 +965,12 @@ async fn a_bot_that_uses_none_of_the_features_reads_the_problem_each_note_solves
         "each one says something: {reach:?}"
     );
 
-    // A note that cuts an existing call leads. Four carry `narrows: true`, so the case
-    // names them and asks that the first note named is one of them.
-    const CUT_A_CALL: [&str; 4] = [
+    // A note that cuts an existing call leads, in the order the build lists its notes, newest
+    // first. The case names the narrowing notes that can come first and asks that the first
+    // note named is one of them.
+    const CUT_A_CALL: [&str; 5] = [
         "declare-type-needs-a-session",
+        "blank-value-takes-the-key-off",
         "list-read-pages-and-counts-ticks",
         "memory-write-receipts",
         "search-matching-passages",
