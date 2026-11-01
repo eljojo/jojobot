@@ -167,11 +167,25 @@ async fn node_read_path_keeps_unreadable_parts_in_the_shared_answer_and_each_ren
             "the view's answer lists the topic only when its records read, row {failed}"
         );
         for view in [None, Some("bare-listing")] {
-            let recall = recall_body(addr, failed & 6 != 0, view).await;
+            let recall = recall_body(addr, view).await;
             if failed & 6 != 0 {
-                assert_eq!(recall["code"], -32603, "{recall}");
+                // **The verb names the thing it cannot read and serves the rest**: the
+                // subject is the one unreadable thing, so no object comes back and the
+                // damage is named with `fix_by: person`, never an error for the call.
+                assert!(recall.get("code").is_none(), "{recall}");
+                assert_eq!(
+                    recall["objects"].as_array().map(Vec::len),
+                    Some(0),
+                    "{recall}"
+                );
+                assert_eq!(
+                    recall["unreadable"][0]["handle"], "topic:widgets",
+                    "{recall}"
+                );
+                assert_eq!(recall["unreadable"][0]["fix_by"], "person", "{recall}");
             } else {
                 assert_eq!(recall["objects"][0]["fields"]["pitch"], "14", "{recall}");
+                assert!(recall.get("unreadable").is_none(), "{recall}");
             }
         }
         assert_eq!(
@@ -236,11 +250,7 @@ async fn node_read_path_keeps_unreadable_parts_in_the_shared_answer_and_each_ren
     ct.cancel();
 }
 
-async fn recall_body(
-    addr: std::net::SocketAddr,
-    unreadable: bool,
-    view: Option<&str>,
-) -> serde_json::Value {
+async fn recall_body(addr: std::net::SocketAddr, view: Option<&str>) -> serde_json::Value {
     let http = reqwest::Client::new();
     let url = format!("http://{addr}/mcp");
     let (session, _) = support::open_with(&http, &url, "2025-06-18").await;
@@ -256,11 +266,7 @@ async fn recall_body(
         request = request.header("mcp-session-id", session);
     }
     let body = request.send().await.unwrap().text().await.unwrap();
-    if unreadable {
-        support::event_stream_error(&body)
-    } else {
-        support::tool_body(&support::event_stream_result(&body))
-    }
+    support::tool_body(&support::event_stream_result(&body))
 }
 
 #[tokio::test]

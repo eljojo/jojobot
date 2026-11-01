@@ -75,6 +75,7 @@ test-dolt_storage_check
 test-dolt_storage_check_rows
 test-dolt_store
 test-dolt_ungrouped_max
+test-dolt_unreadable_scan
 test-dolt_without_a_home
 test-doubles_follow_the_port
 test-entity_write_snapshot
