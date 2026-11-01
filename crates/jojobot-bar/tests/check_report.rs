@@ -735,6 +735,49 @@ fn a_done_line_the_machine_cannot_run_fails_as_unrunnable() {
     }
 }
 
+/// **A done line that counts matches passes when nothing matches.** `git grep` exits 1
+/// on no match, and under pipefail so does the pipeline, but its stderr is empty and
+/// the count it prints is 0: a deletion card's "done when it prints 0" must be able
+/// to pass. A failure with an error on stderr stays unrunnable.
+#[test]
+fn a_done_line_counting_zero_matches_passes_and_an_error_still_fails() {
+    let repo = repository();
+    let api = stand(green(&repo));
+    let text = report(&as_pairs(&facts_only(&repo)));
+    let none = card_falsifying(
+        "git grep -n zeta -- . | wc -l prints 3 on main abc1234; done when it prints exactly 0",
+    );
+    let (code, out, err) = check_card(&repo, &api, &text, Some(&none));
+    assert_eq!(code, 0, "{out}\n{err}");
+    assert!(done_line(&out).starts_with("pass"), "{out}");
+    let missing = card_falsifying(
+        "git show HEAD:nowhere.rs | wc -l prints 3 on main abc1234; done when it prints exactly 0",
+    );
+    let (code, out, _) = check_card(&repo, &api, &text, Some(&missing));
+    assert_eq!(code, 1, "{out}");
+    assert!(done_line(&out).contains("unrunnable"), "{out}");
+}
+
+/// **DONE runs at the head the report names, or refuses.** A checkout whose HEAD is
+/// not the header's COMMIT would judge another tree, so DONE fails and names both.
+#[test]
+fn a_done_line_run_in_another_checkout_than_the_head_is_refused() {
+    let repo = repository();
+    let api = stand(green(&repo));
+    let text = report(&as_pairs(&facts_only(&repo)));
+    let held = card_falsifying(
+        "git rev-list --count HEAD prints 9 on main abc1234; done when it prints at least 1",
+    );
+    git(&repo.dir, &["switch", "side"]);
+    let (code, out, _) = check_card(&repo, &api, &text, Some(&held));
+    assert_eq!(code, 1, "{out}");
+    let line = done_line(&out);
+    assert!(
+        line.starts_with("FAIL") && line.contains(&repo.side) && line.contains(&repo.head),
+        "{line}"
+    );
+}
+
 /// **A card whose FALSIFY states no done line is refused as unrunnable.** The clause
 /// is required, so a card without it cannot be carried. A header with no card holds
 /// no DONE line.

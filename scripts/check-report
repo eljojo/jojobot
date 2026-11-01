@@ -54,7 +54,10 @@ command is the text before the first ` prints `. It runs through `bash -o pipefa
 current checkout, so `HEAD` is the head being landed, and its output must be one
 whole number that meets the comparison. DONE fails, naming the number, when it does
 not. DONE also fails as unrunnable when the clause names no comparison and number,
-or the command fails or prints no number. Words after the number are not checked.
+or the command fails or prints no number. It runs only where HEAD is the header's
+COMMIT, and DONE fails naming both otherwise. A failure with exit 1 and nothing on
+stderr is a grep that matched nothing, so a count of 0 stands; any other failure
+is unrunnable. Words after the number are not checked.
 The clause is required: a card with no `done when` clause fails DONE as
 unrunnable, so it cannot be carried. A review report runs no DONE.
 
@@ -171,8 +174,9 @@ DONE_COMPARES = {
 }
 
 
-def done_says(falsify):
-    """Whether the checkout meets the done line in a card's FALSIFY, and the reason."""
+def done_says(falsify, commit):
+    """Whether the checkout meets the done line in a card's FALSIFY, and the reason.
+    It runs only where HEAD is `commit`, the head the report names."""
     clause = DONE_CLAUSE.search(falsify)
     if clause is None:
         return False, "unrunnable: the card's falsify has no `done when it prints [comparison] N` clause"
@@ -181,11 +185,20 @@ def done_says(falsify):
     if wanted is None or not command:
         return False, "unrunnable: the done line names no command and `it prints [comparison] N`"
     comparison, number = wanted.group(1), int(wanted.group(2))
+    head, want = resolve("HEAD"), resolve(commit) if commit else None
+    if want is None or head != want:
+        return False, (
+            f"this checkout is at {head}, not at COMMIT {commit} ({want}): "
+            "run the done line where the head is checked out"
+        )
     try:
         ran = subprocess.run(["bash", "-o", "pipefail", "-c", command], capture_output=True, text=True, timeout=120)
     except subprocess.TimeoutExpired:
         return False, f"unrunnable: `{command}` ran past 120 seconds"
-    if ran.returncode != 0:
+    # A pipeline that counts matches exits 1 under pipefail when grep finds none, with
+    # nothing on stderr. Any other failure, such as a missing path, is not a count.
+    no_match = ran.returncode == 1 and not ran.stderr.strip()
+    if ran.returncode != 0 and not no_match:
         return False, f"unrunnable: `{command}` exited {ran.returncode}: {ran.stderr.strip()}"
     printed = ran.stdout.strip()
     if not re.fullmatch(r"\d+", printed):
@@ -392,7 +405,7 @@ def main():
             "the function, string or key",
         )
     if card_falsify is not None:
-        results["DONE"] = done_says(card_falsify)
+        results["DONE"] = done_says(card_falsify, commit)
     if re.fullmatch(r"(?i)none\W*", header.get("RETIRES", "")):
         results["RETIRES"] = (False, "none needs its reason")
     if re.search(r"^net lines by area since \S+", text, re.M) and re.search(r"total; source plus tests", text):
