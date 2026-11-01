@@ -600,6 +600,7 @@ pub(crate) fn memory_fix_by(e: &MemoryError) -> Option<FixBy> {
         | MemoryError::UnsourcedObservation
         | MemoryError::UnstatedProvenance
         | MemoryError::KeyInOtherBag { .. }
+        | MemoryError::ClearsAnOlderWrite { .. }
         | MemoryError::UnreceiptedSettling
         | MemoryError::ReceiptWithoutSettling
         | MemoryError::TestimonyRewritten { .. }
@@ -788,6 +789,18 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                 "Nothing was written: {e}. The call is not what is wrong, and sending it again \
                  will not help: jojobot loaded no kinds when it started, and nothing a caller \
                  does re-reads them. This one needs the operator."
+            ),
+        )),
+        // **The way forward is a different claim, not this call again.** The error
+        // names the claim that backs the value, and the sentence below adds nothing
+        // else: sending the same clear again meets the same refusal.
+        MemoryError::ClearsAnOlderWrite { ref address, .. } => Ok(blocked_body(
+            "MemoryDeclinedArms",
+            &EntityId(address.clone()),
+            &[],
+            format!(
+                "Nothing was written: {e}. Nothing is missing from the store and nothing here \
+                 needs the operator."
             ),
         )),
         // **The way forward is a different pair of calls, not this one again**: the
@@ -2206,6 +2219,7 @@ fn memory_error_arms(e: MemoryError) -> McpError {
         | MemoryError::TestimonyRewritten { .. }
         | MemoryError::AppClaimRewritten { .. }
         | MemoryError::KeyInOtherBag { .. }
+        | MemoryError::ClearsAnOlderWrite { .. }
         | MemoryError::UnstatedProvenance => McpError::invalid_params(e.to_string(), None),
         MemoryError::Store(msg) => {
             McpError::internal_error(crate::boundary::store_failed("this call", &msg), None)

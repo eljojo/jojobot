@@ -4120,6 +4120,7 @@ impl Memory for InMemoryMemory {
         let writes = self.writes_on(&home, &facts);
         let declared = self.declarations();
         let before = super::super::folded_fields(&writes, &declared);
+        super::super::guard_clear_backing(&writes, &edited, &patch, &carried, &declared)?;
         let after = super::super::stood_after(&writes, &edited, &patch, &carried, &declared);
         // **Off the entity resolved above, never off `home`** — that is a
         // badge now, and a badge carries no kind token to parse.

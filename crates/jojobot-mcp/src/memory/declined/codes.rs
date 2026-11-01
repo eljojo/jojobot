@@ -66,6 +66,7 @@ memory_refusal_code, MEMORY_REFUSAL_CODES, MemoryError;
     TestimonyRewritten { .. },
     AppClaimRewritten { .. },
     KeyInOtherBag { .. },
+    ClearsAnOlderWrite { .. },
     UnreceiptedSettling,
     ReceiptWithoutSettling,
     Store(..),

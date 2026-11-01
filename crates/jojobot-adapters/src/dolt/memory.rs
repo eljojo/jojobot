@@ -5680,6 +5680,7 @@ impl Memory for DoltMemory {
         let kind = kind_of_handle(&handle)?;
         let governs = Self::kind_keys_in(&mut tx, kind.as_token()).await?;
         let before_fold = folded_fields(&held, &declared);
+        jojobot_domain::memory::guard_clear_backing(&held, &fact, &patch, &carried, &declared)?;
         let after_fold = stood_after(&held, &fact, &patch, &carried, &declared);
         // **The type check reads the folds as handles, as a caller does.** A
         // reference key holds the permanent id of what it names, and an edit that

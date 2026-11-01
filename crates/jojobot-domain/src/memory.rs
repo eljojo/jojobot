@@ -3727,6 +3727,41 @@ pub fn writes_of(
         .collect()
 }
 
+/// **A clear may only go to the claim that backs the value.** A clear is the newest
+/// write of its key, so one sent to a claim whose write is older than the one the
+/// thing holds would take the key off the thing and erase another session's newer
+/// value. It is refused, naming the claim that backs the value
+/// ([`MemoryError::ClearsAnOlderWrite`]).
+///
+/// It judges only a clear that is a write ([`writes_of`]: the addressed record
+/// carries the key), only a key that folds as the newest write (a counter has no
+/// single backing claim), and not a key the same patch sets again, which leaves
+/// the value it asked for. One function, called from both stores.
+pub fn guard_clear_backing(
+    writes: &[KeyWrite],
+    edited: &Fact,
+    patch: &FactPatch,
+    carried: &BTreeMap<String, String>,
+    declared: &[types::DeclaredType],
+) -> Result<(), MemoryError> {
+    let backing = folded_backing(writes, declared);
+    for key in patch.clear_fields.iter().map(|key| key.trim()) {
+        if !carried.contains_key(key) || patch.fields.keys().any(|set| set.trim() == key) {
+            continue;
+        }
+        if let Some(held) = backing.get(key)
+            && held.fact != edited.id
+        {
+            return Err(MemoryError::ClearsAnOlderWrite {
+                address: edited.address().to_string(),
+                key: key.to_string(),
+                backing: held.fact.as_str().to_string(),
+            });
+        }
+    }
+    Ok(())
+}
+
 /// **The thing's fields as they will stand once this edit lands** — what
 /// [`guard_fit`] weighs the write against.
 ///
@@ -6346,6 +6381,26 @@ pub enum MemoryError {
         held: &'static str,
         /// How this call names it.
         named: &'static str,
+    },
+    /// **A clear was sent to a claim whose write of the key is not the one the
+    /// thing holds.** A clear is the newest write of its key, so it would take
+    /// the key off the thing and erase a newer value another session wrote. It is
+    /// refused, naming the claim that backs the value.
+    ///
+    /// TEMPORARY(9.3.3): a clear becomes an event about one claim's write, the fold
+    /// picks the newest remaining write, and the key leaves only when none remains.
+    #[error(
+        "'{key}' is held by the claim {backing}, and {address} wrote an older value of it. A \
+         clear sent to {address} would take '{key}' off the thing and erase the newer value \
+         {backing} holds. Clear it on {backing}, or write a new value of '{key}'"
+    )]
+    ClearsAnOlderWrite {
+        /// The claim the clear was sent to.
+        address: String,
+        /// The key.
+        key: String,
+        /// The local id of the claim that backs the value the thing holds.
+        backing: String,
     },
     /// **An open claim was asked to be settled with no receipt.** Settling
     /// moves standing and never provenance, and what makes the move honest is

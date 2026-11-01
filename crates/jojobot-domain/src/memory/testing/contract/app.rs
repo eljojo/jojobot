@@ -313,5 +313,6 @@ pub async fn run_all_app<M: Memory>(store: &M) {
     a_folded_values_backing_tells_the_app_from_a_bot(store).await;
     super::key_writer::a_keys_history_names_the_writer_and_run_of_each_write(store).await;
     super::list_blank::a_blank_keeps_a_list_key_and_takes_a_single_valued_key_off(store).await;
+    super::clear_backing::a_clear_on_an_older_claim_is_refused_and_one_on_the_backing_claim_takes_the_key_off(store).await;
     an_app_event_lands_once_and_a_retry_writes_nothing(store).await;
 }

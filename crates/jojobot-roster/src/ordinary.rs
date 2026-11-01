@@ -606,6 +606,7 @@ pub const ORDINARY: &[&str] = &[
     "thing:commuter-bike",
     "thing:contract-app-backing",
     "thing:contract-outing-list",
+    "thing:contract-clear-older",
     "thing:contract-stage-edict",
     "bot:contract-key-writer",
     "thing:contract-archive-reason",

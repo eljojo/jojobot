@@ -173,3 +173,66 @@ async fn a_counter_key_is_cleared_by_following_the_sentence() {
 
     story.finish().await;
 }
+
+/// **A clear goes to the record that backs the value, and a clear sent to an
+/// older record is turned away.** Two records wrote Homer's mood, the newer one
+/// holds it, and a clear sent to the older one would take the key off the
+/// thing and erase the newer value. The refusal names the record that backs the
+/// value; the thing still holds it; the clear sent there takes the key off.
+#[tokio::test]
+async fn a_clear_sent_to_an_older_record_is_refused_and_one_sent_to_the_backing_record_lands() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("person:homer", "Homer").await;
+
+    let older = s
+        .event_with(
+            "person:homer",
+            "felt content after the plant",
+            json!({ "mood": "content" }),
+            &[],
+        )
+        .await;
+    let newer = s
+        .event_with(
+            "person:homer",
+            "felt queasy after the plant",
+            json!({ "mood": "queasy" }),
+            &[],
+        )
+        .await;
+    let newer_local = newer
+        .rsplit('#')
+        .next()
+        .expect("an address names its record")
+        .to_string();
+
+    // ── the older record: refused, naming the record that holds the value ───
+    let refused = s
+        .refused(
+            "update_fact",
+            json!({ "address": older, "clear_fields": ["mood"] }),
+        )
+        .await;
+    refused.says("mood").says(&newer_local);
+    let kept = s
+        .shape("what Homer holds now", json!({ "subject": "person:homer" }))
+        .await;
+    kept.says("\"mood\":\"queasy\"");
+
+    // ── the record that backs it: the key comes off ─────────────────────────
+    s.call(
+        "update_fact",
+        json!({ "address": newer, "clear_fields": ["mood"] }),
+    )
+    .await;
+    let after = s
+        .shape(
+            "what Homer holds after",
+            json!({ "subject": "person:homer" }),
+        )
+        .await;
+    after.never_says("\"mood\":");
+
+    story.finish().await;
+}
