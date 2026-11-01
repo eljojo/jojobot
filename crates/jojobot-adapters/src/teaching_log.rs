@@ -26,6 +26,33 @@ use crate::fold::teachings::{held_after_contact, held_after_forget};
 
 pub mod codec;
 
+/// **The teaching ledger a boot serves.** It is served from the event log. The
+/// log's connection holds the one-writer lock, so a second process cannot start
+/// beside this one. The old rows seed the first boot's import; and when the
+/// shadow names the teaching family they are also kept current and compared,
+/// which is the default (see the feature registry). One function for the boot and
+/// for the case that boots it with no instance record.
+pub async fn serving(
+    pool: &sqlx::MySqlPool,
+    shadow: Arc<crate::fold::shadow::Shadow>,
+    writer: Writer,
+) -> Result<LoggedTeachings, TeachingError> {
+    let log = Arc::new(
+        DoltLog::open(pool.clone())
+            .await
+            .map_err(|e| TeachingError::Store(format!("the event log is unavailable: {e}")))?,
+    );
+    let marks = crate::dolt::teaching::DoltTeachings::open(pool.clone())
+        .marks()
+        .await?;
+    let ledger = if shadow.watches(crate::fold::shadow::Family::Teachings) {
+        LoggedTeachings::open_shadowed(log, &marks, shadow).await?
+    } else {
+        LoggedTeachings::open(log, &marks).await?
+    };
+    Ok(ledger.with_writer(writer))
+}
+
 #[cfg(test)]
 mod tests;
 

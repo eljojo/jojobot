@@ -256,3 +256,69 @@ async fn feature_registry_reaches_assembly_and_reads_the_legacy_environment() {
             .all(|count| count.family.name() == "referring_to")
     );
 }
+
+/// **A boot with no instance record keeps the legacy teaching rows and compares
+/// them** (the PM's ruling on the default). The registry is read with no instance
+/// record and no legacy environment, the ledger is made by the function the boot
+/// calls, and then a contact, a repeat contact, a second run's contact and a clear
+/// go through the port. The legacy table follows each write, and the shadow
+/// compared each contact and found no disagreement. The registry cases above
+/// assert family names; this one asserts what the family does.
+#[tokio::test]
+async fn a_default_boot_keeps_and_compares_the_legacy_teaching_rows() {
+    use jojobot_adapters::dolt::Dolt;
+    use jojobot_adapters::dolt::teaching::DoltTeachings;
+    use jojobot_adapters::testing::{Scratch, free_port, migrated_database};
+    use jojobot_domain::session::Sid;
+    use jojobot_domain::teaching::Teachings;
+
+    let scratch = Scratch::new("default-shadow-rows");
+    let mut server = Dolt::start(&scratch.0, free_port()).await.unwrap();
+    let pool = migrated_database(&server, "alpha").await.unwrap();
+    let at = |second: i64| jiff::Timestamp::from_second(1_700_000_000 + second).unwrap();
+
+    let (folded, _) = logged(Arc::new(InMemoryMemory::booted()), None).await;
+    let folded = folded.unwrap();
+    let ledger = jojobot_adapters::teaching_log::serving(&pool, folded.shadow(), folded.writer())
+        .await
+        .expect("the ledger opens");
+    assert!(
+        ledger
+            .first_contact(&Sid("homer".into()), "claims", at(1))
+            .await
+            .unwrap()
+    );
+    assert!(
+        !ledger
+            .first_contact(&Sid("homer".into()), "claims", at(2))
+            .await
+            .unwrap()
+    );
+    assert!(
+        ledger
+            .first_contact(&Sid("marge".into()), "mail", at(3))
+            .await
+            .unwrap()
+    );
+    ledger.forget(&Sid("marge".into())).await.unwrap();
+
+    let rows: Vec<(String, String)> = DoltTeachings::open(pool.clone())
+        .marks()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|mark| (mark.sid.0, mark.domain))
+        .collect();
+    assert_eq!(
+        rows,
+        [("homer".to_string(), "claims".to_string())],
+        "the legacy rows follow the log's writes"
+    );
+    let counts = folded.shadow_counts();
+    assert_eq!(counts.len(), 1);
+    assert_eq!(counts[0].family.name(), "teachings");
+    assert_eq!(counts[0].reads, 3, "each contact was compared");
+    assert_eq!(counts[0].disagreements, 0);
+    drop(ledger);
+    server.stop().await;
+}

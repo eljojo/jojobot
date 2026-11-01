@@ -40,7 +40,6 @@ use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::mailboxes::DoltMailboxes;
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::sessions::DoltSessions;
-use jojobot_adapters::dolt::teaching::DoltTeachings;
 use jojobot_adapters::fold::Folded;
 use jojobot_adapters::fold::mail::FoldedMailboxes;
 use jojobot_adapters::fold::sessions::FoldedSessions;
@@ -48,7 +47,6 @@ use jojobot_adapters::owners::MemoryOwners;
 use jojobot_adapters::provisioned::Provisioned;
 use jojobot_adapters::provisioned_boot::ProvisionedBootReader;
 use jojobot_adapters::search::{IndexedMailboxes, IndexedMemory, IndexedSessions, Retrieval};
-use jojobot_adapters::teaching_log::LoggedTeachings;
 use jojobot_domain::clock::Clock;
 use jojobot_domain::mailbox::mention as mailbox_mention;
 use jojobot_domain::mailbox::{Mailboxes, OwnerIndex};
@@ -881,23 +879,10 @@ pub async fn boot_store_observed(
     // one-writer lock, so a second process cannot start beside this one. The old
     // rows seed the first boot's import and, with the teachings shadow on, are
     // kept current and compared.
-    let teaching_log = Arc::new(
-        jojobot_adapters::dolt_log::DoltLog::open(store.pool().clone())
+    let logged_teachings =
+        jojobot_adapters::teaching_log::serving(store.pool(), folded.shadow(), folded.writer())
             .await
-            .map_err(|e| anyhow::anyhow!("EVENT LOG UNAVAILABLE — {e}"))?,
-    );
-    let teaching_marks = DoltTeachings::open(store.pool().clone())
-        .marks()
-        .await
-        .map_err(|e| anyhow::anyhow!("TEACHING ROWS UNREADABLE — {e}"))?;
-    let shadow = folded.shadow();
-    let logged_teachings = if shadow.watches(jojobot_adapters::fold::shadow::Family::Teachings) {
-        LoggedTeachings::open_shadowed(teaching_log, &teaching_marks, shadow).await
-    } else {
-        LoggedTeachings::open(teaching_log, &teaching_marks).await
-    }
-    .map_err(|e| anyhow::anyhow!("TEACHING LEDGER UNAVAILABLE — {e}"))?
-    .with_writer(folded.writer());
+            .map_err(|e| anyhow::anyhow!("TEACHING LEDGER UNAVAILABLE — {e}"))?;
     let teachings: Arc<dyn Teachings> = observation.teachings(Arc::new(logged_teachings));
 
     // **Wrapped in the same decorators the story harness shares** — see this
