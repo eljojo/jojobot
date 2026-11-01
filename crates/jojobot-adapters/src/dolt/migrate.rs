@@ -981,6 +981,8 @@ pub enum MigrateError {
 /// no marker beside it is indistinguishable from one somebody else put there,
 /// and this refuses it rather than adopting it — the marker is what makes
 /// acceptance a fact about this runner instead of a guess about the schema.
+/// **The one named exception is `Leaves::IndexIfMissing`**, which records its
+/// migration without issuing it when the index already stands (TEMPORARY(9.3.10)).
 pub async fn run(pool: &MySqlPool) -> Result<Vec<String>, MigrateError> {
     apply(pool, MIGRATIONS).await
 }
