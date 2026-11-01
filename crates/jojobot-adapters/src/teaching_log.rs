@@ -61,6 +61,10 @@ mod witness_tests;
 
 const REPRESENTATION_VERSION: u32 = 1;
 const READ_BOUND: usize = 256;
+/// Eager recovery after an unknown append: this many tail reads, waiting twice
+/// as long before each as before the one ahead of it.
+const RECOVERY_ATTEMPTS: u32 = 4;
+const RECOVERY_BACKOFF: std::time::Duration = std::time::Duration::from_millis(25);
 
 /// One stored teaching mark, as the legacy rows hold it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -74,6 +78,9 @@ struct Held {
     state: State,
     head: Position,
     shadow: Option<Shadow>,
+    /// The runs of a batch whose append outcome is unknown. Their reads refuse
+    /// until a tail read the log resolves; every other run serves the held state.
+    uncertain: BTreeSet<RunId>,
 }
 
 /// A log that commits legacy-row statements with its batches.
@@ -180,6 +187,7 @@ impl LoggedTeachings {
                 state: State::default(),
                 head: Position::default(),
                 shadow: None,
+                uncertain: BTreeSet::new(),
             })),
         };
         this.fill(marks).await?;
@@ -200,6 +208,7 @@ impl LoggedTeachings {
             held: Arc::new(Mutex::new(Held {
                 state: State::default(),
                 head: Position::default(),
+                uncertain: BTreeSet::new(),
                 shadow: Some(Shadow {
                     log,
                     legacy: marks
@@ -329,6 +338,7 @@ impl LoggedTeachings {
                 .await
                 .map_err(refused)?;
             if batches.is_empty() {
+                held.uncertain.clear();
                 return Ok(());
             }
             for batch in batches {
@@ -378,6 +388,10 @@ impl LoggedTeachings {
             }
             None => self.log.append(held.head, &batch).await,
         };
+        let appended = match appended {
+            Err(LogError::Indeterminate) => Ok(Append::Indeterminate),
+            other => other,
+        };
         match appended.map_err(refused)? {
             Append::Committed(range) => {
                 for event in &events {
@@ -392,7 +406,30 @@ impl LoggedTeachings {
             Append::DefinitelyNotCommitted => Err(TeachingError::Store(
                 "the log did not commit the teaching batch".to_string(),
             )),
-            Append::Indeterminate => Err(TeachingError::Indeterminate),
+            Append::Indeterminate => {
+                held.uncertain
+                    .extend(events.iter().map(|event| match event {
+                        TeachingEvent::Recorded { run, .. } | TeachingEvent::Cleared { run } => {
+                            run.clone()
+                        }
+                    }));
+                self.recover(held).await;
+                Err(TeachingError::Indeterminate)
+            }
+        }
+    }
+
+    /// **Fenced tail recovery, straight after an unknown append.** The log
+    /// answers a tail read only once the outstanding append has an outcome, so a
+    /// read that succeeds settles the uncertain runs ([`Self::catch_up`] clears
+    /// them). When the log cannot say, the runs keep refusing and the next write
+    /// retries; the wait is bounded so the writer's queue is not held for good.
+    async fn recover(&self, held: &mut Held) {
+        for attempt in 0..RECOVERY_ATTEMPTS {
+            if self.catch_up(held, true).await.is_ok() {
+                return;
+            }
+            tokio::time::sleep(RECOVERY_BACKOFF * 2u32.pow(attempt)).await;
         }
     }
 }
@@ -413,7 +450,11 @@ impl Teachings for LoggedTeachings {
     }
 
     async fn has_contact(&self, sid: &Sid, domain: &str) -> Result<bool, TeachingError> {
-        Ok(self.held.lock().await.state.has_contact(&run(sid), domain))
+        let held = self.held.lock().await;
+        if held.uncertain.contains(&run(sid)) {
+            return Err(TeachingError::Indeterminate);
+        }
+        Ok(held.state.has_contact(&run(sid), domain))
     }
 
     async fn forget(&self, sid: &Sid) -> Result<(), TeachingError> {
@@ -423,11 +464,12 @@ impl Teachings for LoggedTeachings {
     }
 
     async fn taught(&self) -> Result<Option<Vec<(Sid, String)>>, TeachingError> {
+        let held = self.held.lock().await;
+        if !held.uncertain.is_empty() {
+            return Err(TeachingError::Indeterminate);
+        }
         Ok(Some(
-            self.held
-                .lock()
-                .await
-                .state
+            held.state
                 .taught()
                 .map(|(run, domain)| (Sid(run.0.clone()), domain.clone()))
                 .collect(),

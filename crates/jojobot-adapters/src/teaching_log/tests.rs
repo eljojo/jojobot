@@ -247,6 +247,73 @@ async fn an_unresolved_append_is_not_answered_and_blocks_the_next_write() {
     );
 }
 
+/// **After an append whose outcome is unknown, the batch's runs refuse to read
+/// and every other run serves.** The refusal lasts until a tail read the log
+/// itself resolves; the next write that resolves it lifts it.
+#[tokio::test]
+async fn an_unresolved_append_makes_its_runs_refuse_and_leaves_the_others_serving() {
+    let log = InMemoryLog::default();
+    let teachings = LoggedTeachings::open(Arc::new(log.clone()), &[])
+        .await
+        .unwrap();
+    teachings
+        .first_contact(&sid("lisa"), "claims", at(0))
+        .await
+        .unwrap();
+    log.inject(Fault::DelayedCommit).await;
+    assert!(matches!(
+        teachings
+            .first_contact(&sid("homer"), "claims", at(1))
+            .await,
+        Err(TeachingError::Indeterminate)
+    ));
+    assert!(matches!(
+        teachings.has_contact(&sid("homer"), "claims").await,
+        Err(TeachingError::Indeterminate)
+    ));
+    assert!(matches!(
+        teachings.taught().await,
+        Err(TeachingError::Indeterminate)
+    ));
+    assert!(teachings.has_contact(&sid("lisa"), "claims").await.unwrap());
+    assert!(!teachings.has_contact(&sid("bart"), "claims").await.unwrap());
+    log.finish_delayed(true).await;
+    teachings
+        .first_contact(&sid("bart"), "claims", at(2))
+        .await
+        .unwrap();
+    assert!(
+        teachings
+            .has_contact(&sid("homer"), "claims")
+            .await
+            .unwrap()
+    );
+    assert_eq!(teachings.taught().await.unwrap().unwrap().len(), 3);
+}
+
+/// **Recovery runs straight after the unknown answer, not at the next write.**
+/// The commit landed and its acknowledgement was lost; no other call follows.
+#[tokio::test]
+async fn an_unresolved_append_is_recovered_without_another_write() {
+    let log = InMemoryLog::default();
+    let teachings = LoggedTeachings::open(Arc::new(log.clone()), &[])
+        .await
+        .unwrap();
+    log.inject(Fault::LostAcknowledgement).await;
+    assert!(matches!(
+        teachings
+            .first_contact(&sid("homer"), "claims", at(0))
+            .await,
+        Err(TeachingError::Indeterminate)
+    ));
+    assert!(
+        teachings
+            .has_contact(&sid("homer"), "claims")
+            .await
+            .unwrap()
+    );
+}
+
 /// A log that keeps the legacy rows as the Dolt log does: each batch's
 /// statements apply with it, and a row inserted twice is refused, as the
 /// table's key refuses it.
