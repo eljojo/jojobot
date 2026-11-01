@@ -945,3 +945,65 @@ async fn unstable_a_capture_is_judged_by_the_kind_the_store_holds_and_not_the_sp
         "nothing was written under the old spelling"
     );
 }
+
+/// **A thing an app creates always carries the app's mark.** The mark rides on the
+/// first claim, which a creation writes only when it sets a key. A creation that
+/// sets nothing is refused and makes nothing, where it used to make a thing no one
+/// could trace to the app. Paired: the same creation with a granted key lands with
+/// the mark.
+#[tokio::test]
+async fn unstable_a_creation_that_sets_nothing_is_refused_and_one_that_sets_a_key_is_marked() {
+    let (app, token) = creator();
+    let served = serve(vec![app], Registry::shipped()).await;
+
+    let (status, refused) = call(
+        &served,
+        &token,
+        "add_entity",
+        json!({"kind": "role", "handle": "kappa", "name": "Kappa", "source": "the maker"}),
+    )
+    .await;
+    assert_eq!(status, 409, "{refused}");
+    assert_eq!(
+        refused["refused"]["refusal_code"], "HandleDeclined",
+        "{refused}"
+    );
+    assert!(
+        refused.to_string().contains("sets"),
+        "the refusal names what to send: {refused}"
+    );
+    // **The entity itself is read**, because a creation with no first claim reads
+    // as empty claims whether the thing was made or not.
+    assert!(
+        served
+            .memory
+            .list_entities(None)
+            .await
+            .expect("the listing reads")
+            .iter()
+            .all(|entity| entity.id.as_str() != "role:kappa"),
+        "a refused creation made nothing"
+    );
+
+    let (status, view) = call(
+        &served,
+        &token,
+        "add_entity",
+        json!({"kind": "role", "handle": "kappa", "name": "Kappa", "source": "the maker",
+               "sets": {"watch_state": "ok"}}),
+    )
+    .await;
+    assert_eq!(status, 200, "{view}");
+    let claims = served
+        .memory
+        .recall(&EntityId("role:kappa".into()))
+        .await
+        .expect("recall");
+    assert!(
+        claims.iter().any(|claim| claim
+            .app_stamp
+            .as_ref()
+            .is_some_and(|s| s.app == "springfield-maker")),
+        "the thing carries the app's mark: {claims:?}"
+    );
+}

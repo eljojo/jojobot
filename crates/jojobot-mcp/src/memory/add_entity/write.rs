@@ -164,6 +164,18 @@ impl Jojobot {
                 }
             },
             (None, None) => {
+                // **An app's mark rides on a first claim, and this arm writes none.**
+                // The thing would carry no writer, run or mark, so it is not made.
+                if actor.app().is_some() {
+                    return Ok(Err(crate::caller::handle_declined(
+                        "add_entity",
+                        crate::answer::WayForward::person(
+                            "A creation by an app sets at least one key, because the app's \
+                             mark is written with the first claim. Send `sets` with a key the \
+                             grant allows.",
+                        ),
+                    )));
+                }
                 // **A bot is measured as the boot it will have, whatever the call
                 // sets.** Its name, aliases and source ride in that boot, and a
                 // creation that sets nothing can still take it over the ceiling.
