@@ -3305,33 +3305,6 @@ async fn a_views_page_renders_its_inputs_as_a_form_and_answers_with_them() {
             .await
             .expect("the status is written");
     }
-    put_entity(
-        &*memory,
-        EntityId("view:my-projects".into()),
-        "My projects",
-        "the operator",
-    )
-    .await;
-    memory
-        .capture(set_on(NewFact {
-            fields: [
-                ("selects".to_string(), "work".to_string()),
-                (
-                    "inputs".to_string(),
-                    "project: kind project, before: date?, size: number?, note: text?".to_string(),
-                ),
-                ("parent".to_string(), "$project".to_string()),
-            ]
-            .into_iter()
-            .collect(),
-            ..NewFact::about(
-                EntityId("view:my-projects".into()),
-                "the work under one project",
-                Date::constant(2026, 3, 5),
-            )
-        }))
-        .await
-        .expect("the question is written");
 
     let board = seeded_board_over(memory).await;
     let (addr, ct, client, cookie) = signed_in_over(board).await;
@@ -3419,24 +3392,6 @@ async fn a_views_page_renders_its_inputs_as_a_form_and_answers_with_them() {
             "{path} is not a refusal: {ignored}"
         );
     }
-
-    // ── each declared type is its own kind of field ─────────────────────────
-    let typed = page("/view:my-projects/".into()).await;
-    for expected in [
-        "name=\"project\" required",
-        "name=\"before\"",
-        "type=\"date\"",
-        "name=\"size\"",
-        "type=\"number\"",
-        "name=\"note\"",
-        "type=\"text\"",
-    ] {
-        assert!(typed.contains(expected), "{expected} is missing: {typed}");
-    }
-    assert!(
-        typed.contains("Fill in the inputs") && !typed.contains("<table id=\"answer\""),
-        "a view with a required input asks for it before it answers: {typed}"
-    );
     ct.cancel();
 }
 

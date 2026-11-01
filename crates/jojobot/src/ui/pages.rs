@@ -2091,6 +2091,8 @@ pub(crate) fn html(body: &str) -> Response {
 }
 
 #[cfg(test)]
+mod inputs_form_tests;
+#[cfg(test)]
 mod linkify_tests;
 #[cfg(test)]
 mod run_row_tests;

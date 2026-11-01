@@ -4,7 +4,7 @@
 use super::*;
 use jojobot_domain::memory::Boot;
 
-fn root(id: &str) -> Entity {
+pub(super) fn root(id: &str) -> Entity {
     let _booted = jojobot_domain::memory::testing::InMemoryMemory::booted();
     let id = EntityId(id.to_string());
     Entity {
