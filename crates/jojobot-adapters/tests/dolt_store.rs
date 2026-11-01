@@ -9417,6 +9417,35 @@ async fn dolt_adoption_moves_every_column_that_names_the_handle() {
         .expect("capture ok")
         .written()
         .expect("lands");
+    // A claim on the drawing that derives from a claim of the view and names the
+    // view in its refs, and a claim of the view that names the drawing in its
+    // refs: the lineage pointer, the refs rows and the refs text the adoption
+    // has to move.
+    let mut tied = NewFact::about(
+        drawing.clone(),
+        "derives from a claim on the view",
+        date(2026, 10, 8),
+    );
+    tied.derived_from = Some(other_on_the_view.address());
+    tied.refs = vec![outlived.clone()];
+    let tied = writer
+        .capture(memory::state(tied))
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("lands");
+    let mut naming_the_drawing = NewFact::about(
+        outlived.clone(),
+        "a claim on the view that names the drawing",
+        date(2026, 10, 8),
+    );
+    naming_the_drawing.refs = vec![drawing.clone()];
+    writer
+        .capture(memory::state(naming_the_drawing))
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("lands");
     for (claim, stands_for) in [
         (&on_the_drawing, on_the_view.address()),
         (&other_on_the_view, plain_on_the_drawing.address()),
@@ -9450,6 +9479,9 @@ async fn dolt_adoption_moves_every_column_that_names_the_handle() {
             ("field_link", "target"),
             ("fact_stands_for", "fact_home"),
             ("fact_stands_for", "source_home"),
+            ("fact", "derived_from"),
+            ("fact_write", "derived_from"),
+            ("fact_event_ref", "fact_home"),
         ] {
             let held: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
                 "SELECT COUNT(*) FROM {table} WHERE {column} = ?"
@@ -9581,12 +9613,50 @@ async fn dolt_adoption_moves_every_column_that_names_the_handle() {
         "the adopted thing's own field link is lost: {pointing:?}"
     );
 
+    // The lineage pointer reads back at the handle the adopted thing wears now.
+    let tied_after = claims_on_the_drawing
+        .iter()
+        .find(|fact| fact.id == tied.id)
+        .expect("the claim is there");
+    assert_eq!(
+        tied_after.derived_from,
+        Some(FactAddress::new(
+            succeeded.clone(),
+            other_on_the_view.id.clone()
+        )),
+        "a claim derived from a claim of the adopted thing serves its handle now"
+    );
+    // The adopted thing's own claim keeps the refs it drew at the drawing.
+    let refs_kept = claims_on_the_view
+        .iter()
+        .find(|fact| fact.content.contains("names the drawing"))
+        .expect("the claim is there");
+    assert_eq!(
+        refs_kept.refs,
+        vec![drawing.clone()],
+        "refs rows filed under the handle's text follow the badge"
+    );
+    // The refs text a write kept names the adopted thing by its key, not by the
+    // handle's text.
+    let refs_text: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM fact_write WHERE refs LIKE ?")
+        .bind(format!("%\"{}\"%", outlived.as_str()))
+        .fetch_one(&pool)
+        .await
+        .expect("counted");
+    assert_eq!(
+        refs_text, 0,
+        "fact_write.refs still holds the handle's text"
+    );
+
     // The substrate: no column holds the text any more.
     for (table, column) in [
         ("field_link", "entity"),
         ("field_link", "target"),
         ("fact_stands_for", "fact_home"),
         ("fact_stands_for", "source_home"),
+        ("fact", "derived_from"),
+        ("fact_write", "derived_from"),
+        ("fact_event_ref", "fact_home"),
     ] {
         let held: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT COUNT(*) FROM {table} WHERE {column} = ?"
