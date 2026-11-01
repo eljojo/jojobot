@@ -108,8 +108,8 @@ impl IndexedMemory {
     /// **The boot path, and only it, reports what the scan saw.** The
     /// consistency report names rows a hand edit left pointing at nothing; it is
     /// a diagnostic about the corpus, so it is worth one reading of the corpus
-    /// and not one per answer. Every read re-scans now, and repeating the report
-    /// on each would bury the reading that is worth having.
+    /// and not one per answer. A read re-scans when its change signal or reload
+    /// state requires it; repeating the report would bury the boot's findings.
     pub async fn rebuild(&self) -> Result<usize, MemoryError> {
         self.rebuild_scanned().await.map(|scan| scan.len())
     }

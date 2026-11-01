@@ -38,7 +38,7 @@
 
 ## One bot, one worker
 
-**Two workers are two bots, not two sessions of one bot.** Where two sessions of one bot do run, **one of them reads the bot's box: the newest.** The older run is fenced from taking delivery and from closing mail, and told so, because two readers of one box each owe what the other took. Addressing one session of a bot directly, by its public run name, is a later step; until then each use case is its own bot.
+**Two workers are two bots, not two sessions of one bot.** Two sessions of one bot share its box. Mail belongs to the bot; the server applies no newest-run fence to delivery or closing. Addressing one session of a bot directly, by its public run name, is a later step; until then each use case is its own bot.
 
 ## What it is not
 

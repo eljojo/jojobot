@@ -1,7 +1,7 @@
 //! `search` — The front door — one ranked list over entities, facts, prose and mail.
 //!
-//! One verb, one file: its arguments, the description a caller reads,
-//! and an entrypoint that chains the systems below it.
+//! Arguments and hit rendering live in child modules. The entrypoint prepares
+//! the query and renders one ranked answer.
 
 use super::*;
 
