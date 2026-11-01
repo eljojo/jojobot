@@ -364,11 +364,24 @@ impl Jojobot {
         bot: &EntityId,
         session: Option<&str>,
     ) -> Result<(), crate::stopped::Stopped> {
-        let carrier = match self.memory.recall(subject).await {
-            Ok(facts) => facts.into_iter().find(|fact| {
-                fact.status == FactStatus::Active && fact.fields.contains_key(attention::DUE_ON)
-            }),
-            Err(e) => {
+        // The clear goes to the record that backs the moment: a thing that moved
+        // its due day has several carriers, and a clear sent to an older one is
+        // refused.
+        let found = async {
+            let backing = self.memory.backing(subject).await?;
+            let Some(held) = backing.get(attention::DUE_ON) else {
+                return Ok(None);
+            };
+            Ok(self.memory.recall(subject).await?.into_iter().find(|fact| {
+                fact.status == FactStatus::Active
+                    && fact.id == held.fact
+                    && fact.fields.contains_key(attention::DUE_ON)
+            }))
+        }
+        .await;
+        let carrier = match found {
+            Ok(carrier) => carrier,
+            Err::<_, jojobot_domain::memory::MemoryError>(e) => {
                 tracing::warn!(error = %e, %subject, "the stored due moment could not be found");
                 return Err(crate::stopped::Stopped::of_memory(&e));
             }

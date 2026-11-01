@@ -4374,6 +4374,64 @@ async fn a_finished_work_item_is_not_owed_and_comes_back_when_it_is_reopened() {
     );
 }
 
+/// **A finished item that moved its due day twice loses the stored moment.** Two
+/// active records carry `due_on` and only the newest backs the value; the clear
+/// goes to that one, whichever order a read lists them in.
+#[tokio::test]
+async fn a_finished_item_that_moved_its_due_day_loses_the_stored_moment() {
+    let jojobot = handler_indexed();
+    ensure(&jojobot, "project:atlas").await;
+    jojobot
+        .add_entity(Parameters(AddEntityArgs {
+            parent: Some("project:atlas".into()),
+            ..add_args("work", "phi", "phi")
+        }))
+        .await
+        .expect("add ok");
+    let mut first = None;
+    for (day, content) in [
+        ("2026-01-01", "wire the shed"),
+        ("2026-02-01", "wire later"),
+    ] {
+        let captured = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                provenance: Some("testimony".into()),
+                sets: Some(
+                    [
+                        ("decide_by".to_string(), day.to_string()),
+                        ("status".to_string(), "now".to_string()),
+                    ]
+                    .into_iter()
+                    .collect(),
+                ),
+                ..capture_args("work:phi", content)
+            },
+        )
+        .await;
+        first.get_or_insert_with(|| address_of(&captured));
+    }
+    assert_eq!(
+        fields_of(&jojobot, "work:phi").await["due_on"],
+        "2026-02-01",
+        "the newer record backs the moment this case takes off",
+    );
+    update_ok(
+        &jojobot,
+        UpdateFactArgs {
+            sets: Some(
+                [("status".to_string(), "done".to_string())]
+                    .into_iter()
+                    .collect(),
+            ),
+            ..update_args(&first.expect("a first capture"))
+        },
+    )
+    .await;
+    let finished = fields_of(&jojobot, "work:phi").await;
+    assert!(finished.get("due_on").is_none(), "{finished}");
+}
+
 /// **The owed read leaves out a finished item whatever it stored.** A work item
 /// written before the mover knew about `done` can hold a stored due moment at
 /// `done`; the read, which finds a thing by that key, must still not return it,
