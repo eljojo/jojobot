@@ -5420,29 +5420,6 @@ async fn a_threads_page_lists_the_claims_that_stand_newest_first() {
     );
 }
 
-/// **A project with nothing under it has no contents box**, where the same page
-/// of a project with children has one. Paired in the same read.
-#[tokio::test]
-async fn a_project_with_nothing_under_it_has_no_contents_box() {
-    let memory = memory_with_a_board().await;
-    put_entity(
-        &*memory,
-        EntityId("project:the-move".into()),
-        "The Move",
-        "the fixture roster",
-    )
-    .await;
-    let board = seeded_board_over(memory).await;
-    let empty = page_over(board, "/project:the-move/").await;
-    assert!(!empty.contains("id=\"contents\""), "{empty}");
-    let full = page_over(
-        seeded_board_over(memory_with_a_board().await).await,
-        "/project:atlas/",
-    )
-    .await;
-    assert!(full.contains("id=\"contents\""), "{full}");
-}
-
 /// **Every page carries a search box, and it asks the search page.** The box is
 /// in the page's own bar, beside the path, so a reader never has to go back to
 /// the root to look something up. A GET form with one field named `q`, so the

@@ -134,6 +134,14 @@ async fn recent_shows_the_newest_ten_and_counts_the_rest() {
     );
 }
 
+/// **A project with nothing under it has no contents box**, where the same
+/// function over a project with children makes one. Paired in the same read.
+#[tokio::test]
+async fn a_project_with_nothing_under_it_has_no_contents_box() {
+    assert_eq!(contents(&[], &HashMap::new()), "");
+    assert!(rendered().await.contains("id=\"contents\""));
+}
+
 /// **Contents lists everything under the project with its kind**, work included.
 #[tokio::test]
 async fn contents_lists_everything_under_the_project_with_its_kind() {
