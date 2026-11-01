@@ -58,6 +58,7 @@ fn question() -> jojobot_query_api::Question {
             facts: true,
             prose: true,
             stood_for: true,
+            counted: false,
             status: None,
         },
         None,

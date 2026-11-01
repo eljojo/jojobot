@@ -9319,6 +9319,7 @@ async fn walked_along(
                 facts: true,
                 prose: false,
                 stood_for: false,
+                counted: false,
                 status: None,
             },
             follow: Some(follow),

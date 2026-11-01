@@ -3785,7 +3785,8 @@ fn children_are_counted_live_and_archived_apart_and_a_folded_one_is_not_counted(
         ChildCounts {
             parent: EntityId("work:sigma".into()),
             live: 0,
-            archived: 0
+            archived: 0,
+            subtree: 0
         },
         "a leaf has none"
     );
@@ -3837,4 +3838,57 @@ fn decisions_read_by_number_when_the_container_numbers_them_and_by_handle_otherw
         ["cabinets-oak", "floor-tile"],
         "a container that numbers nothing reads by handle"
     );
+}
+
+/// **Every thing's children are counted in one pass, with the whole subtree.**
+/// The subtree is the live things reached through live children, so an archived
+/// child hides what sits under it, as a page listing what stands would. A loop in
+/// the parents ends.
+#[test]
+fn every_things_children_and_subtree_are_counted_in_one_pass() {
+    let under = |handle: &str, parent: &str| Entity {
+        parent: Some(EntityId(parent.into())),
+        ..entity(handle, handle)
+    };
+    let archived = Entity {
+        archived: Some(crate::memory::Archived {
+            reason: "no longer part of the plan".into(),
+            at: "2026-10-01T00:00:00Z".parse().expect("a moment"),
+        }),
+        ..under("work:omega", "work:sigma")
+    };
+    let folded = Entity {
+        merged_into: Some(EntityId("work:kappa".into())),
+        ..under("work:tau", "work:sigma")
+    };
+    let all = vec![
+        entity("project:atlas", "atlas"),
+        under("work:sigma", "project:atlas"),
+        under("work:delta", "work:sigma"),
+        under("work:kappa", "work:delta"),
+        archived,
+        under("work:rho", "work:omega"),
+        folded,
+        under("work:eta", "work:theta"),
+        under("work:theta", "work:eta"),
+    ];
+
+    let counts = ChildCounts::all(&all);
+    let of = |handle: &str| {
+        let counted = &counts[&EntityId(handle.into())];
+        (counted.live, counted.archived, counted.subtree)
+    };
+
+    assert_eq!(of("project:atlas"), (1, 0, 3), "sigma, delta, kappa");
+    assert_eq!(
+        of("work:sigma"),
+        (1, 1, 2),
+        "omega is apart, rho under it is hidden"
+    );
+    assert_eq!(of("work:delta"), (1, 0, 1));
+    assert!(
+        !counts.contains_key(&EntityId("work:kappa".into())),
+        "a leaf has none"
+    );
+    assert_eq!(of("work:eta"), (1, 0, 1), "the loop is walked once");
 }

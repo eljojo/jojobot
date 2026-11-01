@@ -726,6 +726,10 @@ pub struct Include {
     /// mark's own address) is still served whole, because elision applies to
     /// the listing rather than to the record.
     pub stood_for: bool,
+    /// **Count what sits under each object it selected, and say when it was last written.**
+    /// Off by default. Each selected object then carries [`Object::children`], taken
+    /// from one pass over the inventory the walk already read.
+    pub counted: bool,
     /// **The status of the records the call lists**, when it asked for one. The
     /// fold of a shape's sources asks [`lists`] with it, so a shape the call
     /// will not list folds nothing out. It applies to the objects the call
@@ -748,6 +752,7 @@ impl Default for Include {
             facts: true,
             prose: false,
             stood_for: false,
+            counted: false,
             status: None,
         }
     }
@@ -1574,6 +1579,10 @@ pub struct Object {
     pub ages: Option<super::FieldAges>,
     /// A failed age read is distinct from a store that recorded no moments.
     pub ages_unreadable: Option<MemoryError>,
+    /// **What sits under this object**, when [`Include::counted`] asked: its live and
+    /// archived children and the live total of its whole subtree. `None` when the
+    /// call did not ask, and when nothing sits under it.
+    pub children: Option<ChildCounts>,
     /// **The thread this object is a standing decision of**, when the read of
     /// that thread put it ahead of the thread. `None` on every other object. It
     /// is what tells a renderer to serve the decision's words whether or not the
@@ -2021,6 +2030,10 @@ pub struct ChildCounts {
     pub live: usize,
     /// Children that were archived.
     pub archived: usize,
+    /// **Every thing that stands anywhere under the parent**: the live children
+    /// and, through them, their own live descendants. An archived child hides
+    /// what sits under it, so the total is what a listing of what stands shows.
+    pub subtree: usize,
 }
 
 impl ChildCounts {
@@ -2031,7 +2044,48 @@ impl ChildCounts {
             parent: parent.clone(),
             live: children.len() - archived,
             archived,
+            subtree: Self::all(all)
+                .get(parent)
+                .map_or(0, |counted| counted.subtree),
         }
+    }
+
+    /// **Every parent's counts from one pass over the inventory.** A parent with no
+    /// child, live or archived, has no entry. The subtree totals come from one walk
+    /// down from each parent over the same children index, so a read of many
+    /// objects costs one pass and not one for each.
+    pub fn all(all: &[Entity]) -> HashMap<EntityId, ChildCounts> {
+        let mut under: HashMap<&EntityId, Vec<&Entity>> = HashMap::new();
+        for entity in all.iter().filter(|e| e.merged_into.is_none()) {
+            if let Some(parent) = &entity.parent {
+                under.entry(parent).or_default().push(entity);
+            }
+        }
+        under
+            .iter()
+            .map(|(parent, children)| {
+                let archived = children.iter().filter(|c| c.archived.is_some()).count();
+                let mut seen: HashSet<&EntityId> = HashSet::from([*parent]);
+                let mut stack: Vec<&Entity> = children.clone();
+                let mut subtree = 0;
+                while let Some(thing) = stack.pop() {
+                    if thing.archived.is_some() || !seen.insert(&thing.id) {
+                        continue;
+                    }
+                    subtree += 1;
+                    stack.extend(under.get(&thing.id).into_iter().flatten().copied());
+                }
+                (
+                    (*parent).clone(),
+                    ChildCounts {
+                        parent: (*parent).clone(),
+                        live: children.len() - archived,
+                        archived,
+                        subtree,
+                    },
+                )
+            })
+            .collect()
     }
 }
 
@@ -2083,6 +2137,7 @@ impl Ctx<'_> {
                 facts: true,
                 prose: false,
                 stood_for: false,
+                counted: false,
                 status: None,
             },
             follow: None,
@@ -2939,6 +2994,7 @@ impl<'a> Ctx<'a> {
             revisions_unreadable: None,
             ages: None,
             ages_unreadable: None,
+            children: None,
             standing_for: None,
             replaced_by: self.replacement_of(id),
         }
@@ -3452,11 +3508,12 @@ where
     // identity's), is taken over entities of the kind selected. A subject is
     // resolved and screened against everything that exists, and a walk reaches
     // any kind, so those two ask for the whole listing, and so does a roots
-    // question, which looks each parent up whatever its kind. Sessions are joined
+    // question, which looks each parent up whatever its kind, and so does a counted
+    // one, whose children are of any kind. Sessions are joined
     // below whatever was listed, and a kind filter drops the ones that are not
     // wanted.
     let listed = match (&query.select.subject, &query.follow) {
-        (None, None) if !query.select.roots => query.select.kind,
+        (None, None) if !query.select.roots && !query.include.counted => query.select.kind,
         _ => None,
     };
     let mut entities = store.list_entities(listed).await?;
@@ -3751,6 +3808,7 @@ where
                     break;
                 }
             }
+            fill_children(&mut objects, &entities, query.include);
             return Ok(Selected {
                 objects,
                 unreadable_scans,
@@ -3894,6 +3952,7 @@ where
             None => fill_ages(store, object).await,
         }
     }
+    fill_children(&mut found.objects, &entities, query.include);
     found.unreadable_scans = unreadable_scans;
     found.subject_children = resolved_subject
         .as_ref()
@@ -3977,6 +4036,18 @@ where
         owner: None,
         unmapped,
     })
+}
+
+/// **Attach each selected object's child counts when the call asked for them.** One pass
+/// over the inventory serves every object. See [`Include::counted`].
+fn fill_children(objects: &mut [Object], entities: &[Entity], include: Include) {
+    if !include.counted {
+        return;
+    }
+    let mut counts = ChildCounts::all(entities);
+    for object in objects {
+        object.children = counts.remove(&object.entity.id);
+    }
 }
 
 /// Attach, to an object and everything it reached, when the store took in what

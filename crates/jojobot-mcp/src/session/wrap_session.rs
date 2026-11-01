@@ -1587,6 +1587,7 @@ mod tests {
                     order: None,
                     facts: None,
                     stood_for: None,
+                    counted: None,
                     review_marks: None,
                     status: None,
                     prose: Some(true),

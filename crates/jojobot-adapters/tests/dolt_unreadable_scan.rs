@@ -55,6 +55,7 @@ async fn a_row_the_store_cannot_scan_is_named_and_the_others_are_served() {
             ..graph::Selection::default()
         },
         include: graph::Include {
+            counted: false,
             facts: false,
             prose: false,
             stood_for: false,

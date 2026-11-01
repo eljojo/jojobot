@@ -357,6 +357,7 @@ impl Jojobot {
             facts: args.facts.unwrap_or(false) || record_keys.is_some(),
             prose: asked_prose || want_charter,
             stood_for: args.stood_for.unwrap_or(false),
+            counted: args.counted.unwrap_or(false),
             status: wanted_status,
         };
         // **The same one clock read as `overdue`, and only when asked.** The

@@ -773,6 +773,13 @@ pub struct RecallArgs {
     /// `kind`. Send `true`; the index of the web UI asks the same.
     #[serde(default)]
     pub(crate) roots: Option<bool>,
+    /// **Count what sits under each object, and say when it was last written.** Off by
+    /// default. Each object of the answer then carries `children` (its live children
+    /// as `count`, its archived ones as `archived`, and every live thing under it as
+    /// `subtree`) and `written_at`, the moment of its newest write of any kind. It
+    /// asks of any selection, and a subject read answers in the same shape.
+    #[serde(default)]
+    pub(crate) counted: Option<bool>,
     /// **What else was recorded around a day.** See [`NearArgs`].
     #[serde(default)]
     pub(crate) near: Option<NearArgs>,
@@ -2394,6 +2401,9 @@ fn object_json(
     {
         let day = frame.day(newest);
         fields.insert("as_of".into(), day.to_string().into());
+        if include.counted {
+            fields.insert("written_at".into(), newest.to_string().into());
+        }
         let older: serde_json::Map<String, serde_json::Value> = ages
             .keys
             .iter()
@@ -2406,6 +2416,18 @@ fn object_json(
         if !older.is_empty() {
             fields.insert("fields_as_of".into(), older.into());
         }
+    }
+    if include.counted
+        && let Some(children) = &object.children
+    {
+        fields.insert(
+            "children".into(),
+            serde_json::json!({
+                "count": children.live,
+                "archived": children.archived,
+                "subtree": children.subtree,
+            }),
+        );
     }
     // **Eliding is never silent.** Without the note an object carrying no
     // `facts` key says both "you did not ask for them" and "there is nothing
@@ -4200,6 +4222,7 @@ impl Jojobot {
                         rendered["children"] = serde_json::json!({
                             "count": children.live,
                             "archived": children.archived,
+                            "subtree": children.subtree,
                             "how_to_list": format!(
                                 "recall with parent: \"{}\" lists the {} that stand; the \
                                  archived ones are left out of that list and counted there \
@@ -4940,6 +4963,7 @@ fn selection_beside_records(args: &RecallArgs, addresses: &[String]) -> Option<&
         overdue,
         unreviewed,
         roots,
+        counted,
         near,
         follow,
         view,
@@ -4974,6 +4998,7 @@ fn selection_beside_records(args: &RecallArgs, addresses: &[String]) -> Option<&
         ("overdue", overdue.is_some()),
         ("unreviewed", unreviewed.is_some()),
         ("roots", roots.is_some()),
+        ("counted", counted.is_some()),
         ("near", near.is_some()),
         ("history", history.is_some()),
         ("history_record", history_record.is_some()),

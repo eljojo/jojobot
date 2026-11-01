@@ -2359,6 +2359,7 @@ Empty answers name what they searched.
 {"/inputSchema/properties/backing":{"default":null,"type":["boolean","null"]}}
 {"/inputSchema/properties/built_on":{"default":null,"type":["string","null"]}}
 {"/inputSchema/properties/charter":{"default":null,"type":["boolean","null"]}}
+{"/inputSchema/properties/counted":{"default":null,"type":["boolean","null"]}}
 {"/inputSchema/properties/details":{"default":null,"type":["boolean","null"]}}
 {"/inputSchema/properties/facts":{"default":null,"type":["boolean","null"]}}
 {"/inputSchema/properties/fields":{"items":{"$ref":"#/$defs/KeyFilterArgs"},"type":["array","null"]}}
@@ -2758,6 +2759,16 @@ of it may be text the software supplies rather than text anybody wrote,
 and a write repeating it comes back blocked. Send what you are writing.
 
 Objects that are not bots carry no charter at all.
+```
+
+#### `recall` — argument `/inputSchema.counted`
+
+```text
+**Count what sits under each object, and say when it was last written.** Off by
+default. Each object of the answer then carries `children` (its live children
+as `count`, its archived ones as `archived`, and every live thing under it as
+`subtree`) and `written_at`, the moment of its newest write of any kind. It
+asks of any selection, and a subject read answers in the same shape.
 ```
 
 #### `recall` — argument `/inputSchema.details`

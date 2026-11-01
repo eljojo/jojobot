@@ -135,6 +135,7 @@ async fn replaced_by<M: Memory>(store: &M, id: EntityId) -> Option<graph::Replac
                 facts: false,
                 prose: false,
                 stood_for: false,
+                counted: false,
                 status: None,
             },
             follow: None,

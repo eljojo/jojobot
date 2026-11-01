@@ -388,6 +388,9 @@ mod quoting_the_operator;
 mod reading_records_by_address;
 #[path = "user_stories/ready.rs"]
 mod ready;
+/// The assistant asks recall to count what sits under each object.
+#[path = "user_stories/recall_counted.rs"]
+mod recall_counted;
 /// A recall that leaves prose out says so once.
 #[path = "user_stories/recall_elisions.rs"]
 mod recall_elisions;
