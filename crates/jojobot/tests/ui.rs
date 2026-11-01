@@ -2454,16 +2454,13 @@ async fn memory_with_views() -> Arc<dyn Memory> {
 
     // The operator's own, beside the two the build ships: one that narrows the
     // same kind to what is late, and one nobody has finished writing.
-    memory
-        .add_entity(NewEntity::new(
-            EntityId("view:my-week".into()),
-            "My Week",
-            "the operator",
-        ))
-        .await
-        .expect("the operator's view is written")
-        .written()
-        .expect("nothing on this board collides with it");
+    put_entity(
+        &*memory,
+        EntityId("view:my-week".into()),
+        "My Week",
+        "the operator",
+    )
+    .await;
     memory
         .capture(set_on(NewFact {
             fields: [
@@ -2482,16 +2479,13 @@ async fn memory_with_views() -> Arc<dyn Memory> {
         .expect("the question is written");
     // A question whose selection finds a loop that is not due, so its answer is
     // empty and the page has something to say about why.
-    memory
-        .add_entity(NewEntity::new(
-            EntityId("view:nothing-owed".into()),
-            "Nothing Owed",
-            "the operator",
-        ))
-        .await
-        .expect("the view is written")
-        .written()
-        .expect("nothing on this board collides with it");
+    put_entity(
+        &*memory,
+        EntityId("view:nothing-owed".into()),
+        "Nothing Owed",
+        "the operator",
+    )
+    .await;
     memory
         .capture(set_on(NewFact {
             fields: [
@@ -2509,16 +2503,13 @@ async fn memory_with_views() -> Arc<dyn Memory> {
         }))
         .await
         .expect("the question is written");
-    memory
-        .add_entity(NewEntity::new(
-            EntityId("view:matches-nothing".into()),
-            "The Empty Shelf",
-            "the operator",
-        ))
-        .await
-        .expect("the view that finds none is written")
-        .written()
-        .expect("nothing on this board collides with it");
+    put_entity(
+        &*memory,
+        EntityId("view:matches-nothing".into()),
+        "The Empty Shelf",
+        "the operator",
+    )
+    .await;
     memory
         .capture(set_on(NewFact {
             fields: [("selects".to_string(), "pet".to_string())]
@@ -2532,16 +2523,13 @@ async fn memory_with_views() -> Arc<dyn Memory> {
         }))
         .await
         .expect("the question is written");
-    memory
-        .add_entity(NewEntity::new(
-            EntityId("view:names-no-kind".into()),
-            "The Sandwich Board",
-            "the operator",
-        ))
-        .await
-        .expect("the view naming no kind is written")
-        .written()
-        .expect("nothing on this board collides with it");
+    put_entity(
+        &*memory,
+        EntityId("view:names-no-kind".into()),
+        "The Sandwich Board",
+        "the operator",
+    )
+    .await;
     memory
         .capture(set_on(NewFact {
             fields: [("selects".to_string(), "sandwich".to_string())]
@@ -2555,30 +2543,24 @@ async fn memory_with_views() -> Arc<dyn Memory> {
         }))
         .await
         .expect("the question is written");
-    memory
-        .add_entity(NewEntity::new(
-            EntityId("view:my-people".into()),
-            "My People",
-            "the operator",
-        ))
-        .await
-        .expect("the half-written view is created")
-        .written()
-        .expect("nothing on this board collides with it");
+    put_entity(
+        &*memory,
+        EntityId("view:my-people".into()),
+        "My People",
+        "the operator",
+    )
+    .await;
 
     // **A view that narrows by a key filter, not only by `selects`.** The
     // three loops above share a kind and a cadence but differ in
     // `counts_from`, so a filter on that key keeps exactly one.
-    memory
-        .add_entity(NewEntity::new(
-            EntityId("view:the-old-loop".into()),
-            "The Old Loop",
-            "the operator",
-        ))
-        .await
-        .expect("the filtered view is created")
-        .written()
-        .expect("nothing on this board collides with it");
+    put_entity(
+        &*memory,
+        EntityId("view:the-old-loop".into()),
+        "The Old Loop",
+        "the operator",
+    )
+    .await;
     memory
         .capture(set_on(NewFact {
             fields: [("selects".to_string(), "rhythm".to_string())]
@@ -2623,16 +2605,13 @@ async fn memory_with_views() -> Arc<dyn Memory> {
     // date the rhythm kind declares, so the comparison is licensed; the order
     // runs against handle order, so a page that ignored it would list the other
     // loop first.
-    memory
-        .add_entity(NewEntity::new(
-            EntityId("view:latest-first".into()),
-            "Latest First",
-            "the operator",
-        ))
-        .await
-        .expect("the expression view is created")
-        .written()
-        .expect("nothing on this board collides with it");
+    put_entity(
+        &*memory,
+        EntityId("view:latest-first".into()),
+        "Latest First",
+        "the operator",
+    )
+    .await;
     memory
         .capture(set_on(NewFact {
             fields: [
@@ -2664,16 +2643,13 @@ async fn memory_with_views() -> Arc<dyn Memory> {
             vec![("status", "next"), ("depends_on", "work:phi")],
         ),
     ] {
-        memory
-            .add_entity(NewEntity::new(
-                EntityId(handle.into()),
-                name,
-                "the fixture roster",
-            ))
-            .await
-            .expect("the work is written")
-            .written()
-            .expect("nothing on this board collides with it");
+        put_entity(
+            &*memory,
+            EntityId(handle.into()),
+            name,
+            "the fixture roster",
+        )
+        .await;
         memory
             .capture(set_on(NewFact {
                 fields: fields
@@ -2691,16 +2667,13 @@ async fn memory_with_views() -> Arc<dyn Memory> {
     }
     // **Two colleagues, one reporting to the other**, for the directory view.
     for (handle, name) in [("bot:lisa", "Lisa"), ("bot:marge", "Marge")] {
-        memory
-            .add_entity(NewEntity::new(
-                EntityId(handle.into()),
-                name,
-                "the fixture roster",
-            ))
-            .await
-            .expect("the colleague is written")
-            .written()
-            .expect("nothing on this board collides with it");
+        put_entity(
+            &*memory,
+            EntityId(handle.into()),
+            name,
+            "the fixture roster",
+        )
+        .await;
     }
     memory
         .capture(set_on(NewFact {
@@ -2742,6 +2715,17 @@ async fn signed_in() -> (SocketAddr, CancellationToken, reqwest::Client, String)
     let client = browser();
     let cookie = log_in(&client, addr, "/").await;
     (addr, ct, client, cookie)
+}
+
+/// **Write one entity to a store and insist it was written**, not blocked: nothing
+/// on these boards collides with a fixture name.
+async fn put_entity(memory: &dyn Memory, id: EntityId, name: &str, source: &str) {
+    memory
+        .add_entity(NewEntity::new(id.clone(), name, source))
+        .await
+        .unwrap_or_else(|error| panic!("{id:?} is written: {error:?}"))
+        .written()
+        .unwrap_or_else(|| panic!("nothing on this board collides with {id:?}"));
 }
 
 /// **[`signed_in`] over a board the case built.**
@@ -3110,16 +3094,13 @@ async fn the_overdue_page_reads_today_in_the_instances_zone() {
             .await
             .expect("the schedule is written");
     }
-    memory
-        .add_entity(NewEntity::new(
-            EntityId("topic:instance".into()),
-            "This instance",
-            "the operator",
-        ))
-        .await
-        .expect("the instance's record is written")
-        .written()
-        .expect("nothing on this board collides with it");
+    put_entity(
+        &*memory,
+        EntityId("topic:instance".into()),
+        "This instance",
+        "the operator",
+    )
+    .await;
     memory
         .capture(set_on(NewFact {
             fields: [("timezone".to_string(), zone.to_string())]
@@ -3166,16 +3147,13 @@ async fn the_overdue_page_reads_today_in_the_instances_zone() {
 async fn the_overdue_page_reads_the_words_the_instance_maps() {
     let memory = memory_with_views().await;
     for (handle, status) in [("project:atlas", "wrapped"), ("project:visa", "adrift")] {
-        memory
-            .add_entity(NewEntity::new(
-                EntityId(handle.into()),
-                handle,
-                "the fixture roster",
-            ))
-            .await
-            .expect("the project is written")
-            .written()
-            .expect("nothing on this board collides with it");
+        put_entity(
+            &*memory,
+            EntityId(handle.into()),
+            handle,
+            "the fixture roster",
+        )
+        .await;
         memory
             .capture(jojobot_domain::memory::testing::contract::state(NewFact {
                 fields: [
@@ -3193,16 +3171,13 @@ async fn the_overdue_page_reads_the_words_the_instance_maps() {
             .await
             .expect("the status is written");
     }
-    memory
-        .add_entity(NewEntity::new(
-            EntityId("topic:instance".into()),
-            "This instance",
-            "the operator",
-        ))
-        .await
-        .expect("the instance's record is written")
-        .written()
-        .expect("nothing on this board collides with it");
+    put_entity(
+        &*memory,
+        EntityId("topic:instance".into()),
+        "This instance",
+        "the operator",
+    )
+    .await;
     memory
         .capture(jojobot_domain::memory::testing::contract::state(NewFact {
             fields: [("status_word/wrapped".to_string(), "done".to_string())]
@@ -3216,16 +3191,13 @@ async fn the_overdue_page_reads_the_words_the_instance_maps() {
         }))
         .await
         .expect("the mapping is written");
-    memory
-        .add_entity(NewEntity::new(
-            EntityId("view:my-projects".into()),
-            "My Projects",
-            "the operator",
-        ))
-        .await
-        .expect("the view is written")
-        .written()
-        .expect("nothing on this board collides with it");
+    put_entity(
+        &*memory,
+        EntityId("view:my-projects".into()),
+        "My Projects",
+        "the operator",
+    )
+    .await;
     memory
         .capture(jojobot_domain::memory::testing::contract::state(NewFact {
             fields: [
@@ -3341,16 +3313,13 @@ async fn recall_body(addr: SocketAddr, arguments: serde_json::Value) -> serde_js
 async fn a_views_page_renders_its_inputs_as_a_form_and_answers_with_them() {
     let memory = memory_with_views().await;
     for (handle, name) in [("project:atlas", "Atlas"), ("project:the-move", "The Move")] {
-        memory
-            .add_entity(NewEntity::new(
-                EntityId(handle.into()),
-                name,
-                "the fixture roster",
-            ))
-            .await
-            .expect("the project is written")
-            .written()
-            .expect("nothing on this board collides with it");
+        put_entity(
+            &*memory,
+            EntityId(handle.into()),
+            name,
+            "the fixture roster",
+        )
+        .await;
     }
     for (handle, parent) in [
         ("work:omega", "project:atlas"),
@@ -3375,16 +3344,13 @@ async fn a_views_page_renders_its_inputs_as_a_form_and_answers_with_them() {
             .await
             .expect("the status is written");
     }
-    memory
-        .add_entity(NewEntity::new(
-            EntityId("view:my-projects".into()),
-            "My projects",
-            "the operator",
-        ))
-        .await
-        .expect("the view is created")
-        .written()
-        .expect("nothing on this board collides with it");
+    put_entity(
+        &*memory,
+        EntityId("view:my-projects".into()),
+        "My projects",
+        "the operator",
+    )
+    .await;
     memory
         .capture(set_on(NewFact {
             fields: [
@@ -3542,16 +3508,13 @@ async fn a_views_page_asks_for_the_type_its_input_names() {
             .await
             .expect("the key is written");
     }
-    memory
-        .add_entity(NewEntity::new(
-            EntityId("view:my-things-of".into()),
-            "My things of a type",
-            "the operator",
-        ))
-        .await
-        .expect("the view is created")
-        .written()
-        .expect("nothing on this board collides with it");
+    put_entity(
+        &*memory,
+        EntityId("view:my-things-of".into()),
+        "My things of a type",
+        "the operator",
+    )
+    .await;
     memory
         .capture(set_on(NewFact {
             fields: [
@@ -3774,16 +3737,13 @@ async fn a_ready_view_over_something_that_is_not_work_cannot_be_run() {
 #[tokio::test]
 async fn a_view_holding_an_empty_type_cannot_be_run_by_the_page_or_the_verb() {
     let memory = memory_with_views().await;
-    memory
-        .add_entity(NewEntity::new(
-            EntityId("view:unscoped".into()),
-            "Unscoped",
-            "the operator",
-        ))
-        .await
-        .expect("the view is created")
-        .written()
-        .expect("nothing on this board collides with it");
+    put_entity(
+        &*memory,
+        EntityId("view:unscoped".into()),
+        "Unscoped",
+        "the operator",
+    )
+    .await;
     memory
         .capture(set_on(NewFact {
             fields: [
@@ -4077,16 +4037,13 @@ async fn a_views_page_shows_the_fields_the_view_shows_as_the_verb_serves_them() 
 async fn a_projects_page_links_to_the_ready_work_of_that_project() {
     let memory = memory_with_views().await;
     for (handle, name) in [("project:atlas", "Atlas"), ("project:the-move", "The Move")] {
-        memory
-            .add_entity(NewEntity::new(
-                EntityId(handle.into()),
-                name,
-                "the fixture roster",
-            ))
-            .await
-            .expect("the project is written")
-            .written()
-            .expect("nothing on this board collides with it");
+        put_entity(
+            &*memory,
+            EntityId(handle.into()),
+            name,
+            "the fixture roster",
+        )
+        .await;
     }
     for (handle, parent) in [
         ("work:omega", "project:atlas"),
@@ -4555,16 +4512,13 @@ async fn a_last_write_is_the_day_it_fell_on_in_the_instances_zone() {
         .expect("one of the widest zones is on another day than UTC");
 
     let memory = memory_for_the_homepage().await;
-    memory
-        .add_entity(NewEntity::new(
-            EntityId("topic:instance".into()),
-            "This instance",
-            "the operator",
-        ))
-        .await
-        .expect("the instance's record is written")
-        .written()
-        .expect("nothing on this board collides with it");
+    put_entity(
+        &*memory,
+        EntityId("topic:instance".into()),
+        "This instance",
+        "the operator",
+    )
+    .await;
     memory
         .capture(set_on(NewFact {
             fields: [("timezone".to_string(), zone.to_string())]
@@ -4616,16 +4570,13 @@ async fn a_last_write_is_the_day_it_fell_on_in_the_instances_zone() {
 /// and a word nobody listed.
 async fn memory_with_a_board() -> Arc<dyn Memory> {
     let memory = memory_with_views().await;
-    memory
-        .add_entity(NewEntity::new(
-            EntityId("project:atlas".into()),
-            "Atlas",
-            "the fixture roster",
-        ))
-        .await
-        .expect("the project is written")
-        .written()
-        .expect("nothing on this board collides with it");
+    put_entity(
+        &*memory,
+        EntityId("project:atlas".into()),
+        "Atlas",
+        "the fixture roster",
+    )
+    .await;
     memory
         .capture(set_on(NewFact {
             fields: [(
@@ -4782,16 +4733,13 @@ async fn a_projects_page_is_a_board_with_a_column_for_each_status_word() {
 /// instance that maps `shipped` to `done`.
 async fn memory_with_a_project_of(project: &str, work: &[(&str, &str)]) -> Arc<dyn Memory> {
     let memory = memory_with_views().await;
-    memory
-        .add_entity(NewEntity::new(
-            EntityId("topic:instance".into()),
-            "This instance",
-            "the operator",
-        ))
-        .await
-        .expect("the instance's record is written")
-        .written()
-        .expect("nothing on this board collides with it");
+    put_entity(
+        &*memory,
+        EntityId("topic:instance".into()),
+        "This instance",
+        "the operator",
+    )
+    .await;
     memory
         .capture(jojobot_domain::memory::testing::contract::state(NewFact {
             fields: [("status_word/shipped".to_string(), "done".to_string())]
@@ -4805,16 +4753,13 @@ async fn memory_with_a_project_of(project: &str, work: &[(&str, &str)]) -> Arc<d
         }))
         .await
         .expect("the mapping is written");
-    memory
-        .add_entity(NewEntity::new(
-            EntityId(project.into()),
-            "The plant",
-            "the fixture roster",
-        ))
-        .await
-        .expect("the project is written")
-        .written()
-        .expect("nothing on this board collides with it");
+    put_entity(
+        &*memory,
+        EntityId(project.into()),
+        "The plant",
+        "the fixture roster",
+    )
+    .await;
     for (handle, word) in work {
         let mut new = NewEntity::new(EntityId((*handle).into()), *handle, "the fixture roster");
         new.parent = Some(EntityId(project.into()));
@@ -5089,16 +5034,13 @@ async fn a_rhythms_page_says_a_calendar_rule_in_words_and_a_loop_with_none_in_a_
 async fn memory_with_a_kitchen_thread() -> Arc<dyn Memory> {
     let memory = memory_with_views().await;
     let day = Date::constant(2026, 3, 5);
-    memory
-        .add_entity(NewEntity::new(
-            EntityId("thread:simpson-kitchen".into()),
-            "The kitchen renovation",
-            "the fixture roster",
-        ))
-        .await
-        .expect("the thread is written")
-        .written()
-        .expect("nothing on this board collides with it");
+    put_entity(
+        &*memory,
+        EntityId("thread:simpson-kitchen".into()),
+        "The kitchen renovation",
+        "the fixture roster",
+    )
+    .await;
     for (handle, name, said) in [
         (
             "decision:cabinets-oak",
@@ -5519,16 +5461,13 @@ async fn a_projects_page_says_what_it_is_what_happened_lately_and_what_sits_in_i
 /// A thread with two claims on different days and a third that was taken back.
 async fn memory_with_a_dated_thread() -> Arc<dyn Memory> {
     let memory = seeded_memory().await;
-    memory
-        .add_entity(NewEntity::new(
-            EntityId("thread:simpson-kitchen".into()),
-            "The kitchen",
-            "the fixture roster",
-        ))
-        .await
-        .expect("the thread is written")
-        .written()
-        .expect("nothing on this board collides with it");
+    put_entity(
+        &*memory,
+        EntityId("thread:simpson-kitchen".into()),
+        "The kitchen",
+        "the fixture roster",
+    )
+    .await;
     for (said, day) in [
         ("The supplier quoted six weeks", Date::constant(2026, 3, 8)),
         (
@@ -5662,16 +5601,13 @@ async fn a_threads_page_lists_the_claims_that_stand_newest_first() {
 #[tokio::test]
 async fn a_project_with_nothing_under_it_has_no_contents_box() {
     let memory = memory_with_a_board().await;
-    memory
-        .add_entity(NewEntity::new(
-            EntityId("project:the-move".into()),
-            "The Move",
-            "the fixture roster",
-        ))
-        .await
-        .expect("the project is written")
-        .written()
-        .expect("nothing on this board collides with it");
+    put_entity(
+        &*memory,
+        EntityId("project:the-move".into()),
+        "The Move",
+        "the fixture roster",
+    )
+    .await;
     let board = seeded_board_over(memory).await;
     let empty = page_over(board, "/project:the-move/").await;
     assert!(!empty.contains("id=\"contents\""), "{empty}");
@@ -6479,16 +6415,13 @@ async fn a_date_key_keeps_its_stored_value_without_a_type_fit_verdict() {
 #[tokio::test]
 async fn a_page_that_maps_status_words_says_when_the_instance_record_cannot_be_read() {
     let inner = memory_with_views().await;
-    inner
-        .add_entity(NewEntity::new(
-            EntityId("project:atlas".into()),
-            "Atlas",
-            "the fixture roster",
-        ))
-        .await
-        .expect("the project is written")
-        .written()
-        .expect("nothing on this board collides with it");
+    put_entity(
+        &*inner,
+        EntityId("project:atlas".into()),
+        "Atlas",
+        "the fixture roster",
+    )
+    .await;
     let mut work = NewEntity::new(EntityId("work:omega".into()), "omega", "the fixture roster");
     work.parent = Some(EntityId("project:atlas".into()));
     inner
