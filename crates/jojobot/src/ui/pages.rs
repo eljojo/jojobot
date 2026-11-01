@@ -296,6 +296,7 @@ pub(crate) async fn node(
     // nothing else**: the question is asked again without it, and the box says
     // which part it could not read.
     let mut status_unreadable: Option<String> = None;
+    let mut recovered_status: Option<Vec<jojobot_domain::memory::FieldWrite>> = None;
     let asked_for_history = entity.kind == EntityKind::WORK;
     let mut answer = match queries
         .ask(
@@ -310,8 +311,8 @@ pub(crate) async fn node(
             | jojobot_query_api::Failed::Readiness(first)
             | jojobot_query_api::Failed::Preparation(_, first),
         ) if asked_for_history => {
-            status_unreadable = Some(first.to_string());
-            match queries
+            let _ = first;
+            let rest = match queries
                 .ask(&jojobot_domain::actor::Actor::Operator, question(false))
                 .await
             {
@@ -321,7 +322,37 @@ pub(crate) async fn node(
                     | jojobot_query_api::Failed::Readiness(error)
                     | jojobot_query_api::Failed::Preparation(_, error),
                 ) => return unreadable(error),
+            };
+            // **The history is asked for on its own to learn whether it was the part
+            // that failed.** A first failure that was something else, and is gone,
+            // is not laid at the history's door.
+            let mut alone = jojobot_query_api::Question::about(
+                entity.id.clone(),
+                None,
+                Some(graph::History {
+                    of: graph::Trace::Key(kinds::STATUS.to_string()),
+                    most: typed::HISTORY_SHOWN,
+                }),
+            );
+            alone.asks.backing = false;
+            match queries
+                .ask(&jojobot_domain::actor::Actor::Operator, alone)
+                .await
+            {
+                Ok(history) => {
+                    recovered_status = history
+                        .selected
+                        .subject_object(&entity.id)
+                        .and_then(|object| object.history)
+                        .map(|kept| kept.writes);
+                }
+                Err(
+                    jojobot_query_api::Failed::Selection(error)
+                    | jojobot_query_api::Failed::Readiness(error)
+                    | jojobot_query_api::Failed::Preparation(_, error),
+                ) => status_unreadable = Some(error.to_string()),
             }
+            rest
         }
         Err(
             jojobot_query_api::Failed::Selection(error)
@@ -355,7 +386,10 @@ pub(crate) async fn node(
     let ages = object.ages.unwrap_or_default();
     let status_writes = match (&status_unreadable, object.history) {
         (Some(error), _) => Err(error.as_str()),
-        (None, history) => Ok(history.map(|kept| kept.writes).unwrap_or_default()),
+        (None, history) => Ok(history
+            .map(|kept| kept.writes)
+            .or(recovered_status)
+            .unwrap_or_default()),
     };
     let held = object.fields;
     let facts = object.facts;

@@ -102,7 +102,7 @@ async fn a_works_status_history_comes_with_the_pages_one_answer() {
         "the unreadable writes are marked: {body}"
     );
     assert!(
-        body.contains("Raise the frame") && !body.contains("id=\"status-history\""),
+        body.contains("<dt>status</dt><dd>now</dd>") && !body.contains("id=\"status-history\""),
         "the rest of the box is drawn and no empty history stands in for the lost one: {body}"
     );
     ct.cancel();
@@ -149,7 +149,10 @@ async fn an_unreadable_backing_marks_its_section_and_leaves_the_page() {
         body.contains("id=\"unreadable-where-the-fields-come-from\""),
         "the lost part is marked: {body}"
     );
-    assert!(body.contains("pitch"), "the fields are still drawn: {body}");
+    assert!(
+        body.contains("?history=pitch\""),
+        "the fields are still drawn: {body}"
+    );
     ct.cancel();
 }
 
