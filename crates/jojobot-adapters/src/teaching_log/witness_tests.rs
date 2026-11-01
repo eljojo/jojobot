@@ -152,3 +152,88 @@ async fn no_legacy_teaching_read_is_made_after_boot() {
     drop(log);
     server.stop().await;
 }
+
+/// **A rollback to the old path and a roll forward, on a real store.** The ledger
+/// runs and is dropped, the old path writes one mark and clears one run in the
+/// same database, and the next boot opens a log that is not empty. The log is
+/// brought to the rows, a first contact on a pair the rows hold answers false
+/// instead of failing on the primary key, and a run the old path cleared is
+/// taught again.
+#[tokio::test]
+async fn a_rollback_and_roll_forward_on_a_real_store_reconciles_and_writes() {
+    let scratch = Scratch::new("teaching-roll-forward");
+    let mut server = Dolt::start(&scratch.0, free_port()).await.unwrap();
+    let pool = migrated_database(&server, "alpha").await.unwrap();
+    let report = Arc::new(crate::fold::shadow::Shadow::named("teachings").unwrap());
+
+    let log = Arc::new(DoltLog::open(pool.clone()).await.unwrap());
+    let marks = DoltTeachings::open(pool.clone()).marks().await.unwrap();
+    let running = LoggedTeachings::open_shadowed(log.clone(), &marks, report.clone())
+        .await
+        .unwrap();
+    for (run, at_second) in [("marge", 1), ("bart", 2)] {
+        assert!(
+            running
+                .first_contact(&sid(run), "claims", at(at_second))
+                .await
+                .unwrap()
+        );
+    }
+    drop(running);
+    drop(log);
+
+    // The old path, with the log away: it writes and clears rows only.
+    let old = DoltTeachings::open(pool.clone());
+    assert!(
+        old.first_contact(&sid("homer"), "mail", at(5))
+            .await
+            .unwrap()
+    );
+    old.forget(&sid("marge")).await.unwrap();
+
+    let log = Arc::new(DoltLog::open(pool.clone()).await.unwrap());
+    let marks = old.marks().await.unwrap();
+    let again = LoggedTeachings::open_shadowed(log.clone(), &marks, report.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        again.taught().await.unwrap().unwrap(),
+        vec![
+            (sid("bart"), "claims".to_string()),
+            (sid("homer"), "mail".to_string())
+        ],
+        "the log holds what the rows hold"
+    );
+    assert!(
+        !again
+            .first_contact(&sid("homer"), "mail", at(6))
+            .await
+            .expect("a pair the rows hold is not a second insert"),
+    );
+    assert!(
+        again
+            .first_contact(&sid("marge"), "claims", at(7))
+            .await
+            .expect("a run the old path cleared is taught again"),
+    );
+    let rows: Vec<(String, String)> = old
+        .marks()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|mark| (mark.sid.0, mark.domain))
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            ("bart".to_string(), "claims".to_string()),
+            ("homer".to_string(), "mail".to_string()),
+            ("marge".to_string(), "claims".to_string()),
+        ],
+        "the rows follow the log again"
+    );
+    assert_eq!(report.counts()[0].disagreements, 0);
+    drop(again);
+    drop(log);
+    server.stop().await;
+}

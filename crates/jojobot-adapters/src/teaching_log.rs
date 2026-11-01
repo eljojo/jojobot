@@ -216,9 +216,76 @@ impl LoggedTeachings {
                     })
                     .collect();
                 this.commit(&mut held, events, at, false).await?;
+            } else if held.head != Position::default() && held.shadow.is_some() {
+                this.reconcile(&mut held, marks).await?;
             }
         }
         Ok(())
+    }
+
+    /// **Make the log hold what the rows hold, for a shadowed boot over a log that
+    /// is not empty.** A rollback to the old path writes and clears rows the log
+    /// never sees, and the roll forward opens the log as it was. A run whose log
+    /// marks are not all in the rows is cleared and recorded again from the rows;
+    /// a mark only the rows hold is recorded with its own time. Without this a
+    /// first contact on such a pair builds an insert the table refuses, on every
+    /// attempt. Runs only with the shadow on: with it off the rows are stale by
+    /// design. Nothing is appended when the two agree.
+    async fn reconcile(&self, held: &mut Held, marks: &[Mark]) -> Result<(), TeachingError> {
+        use std::collections::{BTreeMap, BTreeSet};
+        let mut rows: BTreeMap<&str, BTreeMap<&str, Timestamp>> = BTreeMap::new();
+        for mark in marks {
+            rows.entry(mark.sid.as_str())
+                .or_default()
+                .insert(mark.domain.as_str(), mark.taught_at);
+        }
+        let mut logged: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+        for (run, domain) in held.state.taught() {
+            logged.entry(run.0.as_str()).or_default().insert(domain);
+        }
+        let runs: BTreeSet<&str> = rows.keys().chain(logged.keys()).copied().collect();
+        let mut events = Vec::new();
+        for name in runs {
+            let row = rows.get(name);
+            let in_log = logged.get(name);
+            let log_has_extra = in_log.is_some_and(|domains| {
+                domains
+                    .iter()
+                    .any(|domain| !row.is_some_and(|r| r.contains_key(domain)))
+            });
+            if log_has_extra {
+                events.push(TeachingEvent::Cleared {
+                    run: RunId(name.to_string()),
+                });
+            }
+            for (domain, taught_at) in row.into_iter().flatten() {
+                if log_has_extra || !in_log.is_some_and(|domains| domains.contains(domain)) {
+                    events.push(TeachingEvent::Recorded {
+                        run: RunId(name.to_string()),
+                        domain: domain.to_string(),
+                        taught_at: *taught_at,
+                    });
+                }
+            }
+        }
+        if events.is_empty() {
+            return Ok(());
+        }
+        let at = events
+            .iter()
+            .filter_map(|event| match event {
+                TeachingEvent::Recorded { taught_at, .. } => Some(*taught_at),
+                TeachingEvent::Cleared { .. } => None,
+            })
+            .max()
+            .or_else(|| held.state.history().last().map(|(_, _, at)| *at))
+            .unwrap_or_default();
+        tracing::warn!(
+            events = events.len(),
+            "teaching: the old rows and the log disagree at boot (the old path ran in between); \
+             the log now follows the rows"
+        );
+        self.commit(held, events, at, false).await
     }
 
     /// Apply every committed batch after the held head. A tail whose commit is

@@ -352,12 +352,11 @@ async fn the_shadow_keeps_the_rows_and_agrees() {
 }
 
 /// **A deliberately divergent old set is detected**, with nonzero comparisons.
+/// The boot repairs a divergence it finds, so this one appears after boot: the
+/// old held set loses a mark the log still holds.
 #[tokio::test]
 async fn a_divergent_old_set_is_counted() {
     let log = RowLog::default();
-    LoggedTeachings::open(Arc::new(log.clone()), &[mark("bart", "mail", 1)])
-        .await
-        .unwrap();
     let report = Arc::new(crate::fold::shadow::Shadow::named("teachings").unwrap());
     let teachings = LoggedTeachings::open_shadowed(
         Arc::new(log.clone()),
@@ -367,9 +366,81 @@ async fn a_divergent_old_set_is_counted() {
     .await
     .unwrap();
     teachings
+        .held
+        .lock()
+        .await
+        .shadow
+        .as_mut()
+        .expect("a shadowed ledger")
+        .legacy
+        .clear();
+    teachings
         .first_contact(&sid("homer"), "claims", at(4))
         .await
         .ok();
     let counts = &report.counts()[0];
     assert_eq!((counts.reads, counts.disagreements), (1, 1));
+}
+
+/// **A rollback to the old path and a roll forward leaves the log and the rows
+/// agreeing.** The old path adds a mark and clears a run in the rows only, the
+/// log never sees either, and the next boot opens a log that is not empty. A
+/// first contact on the pair the rows hold and the log lacks must answer false,
+/// not build an insert the table refuses on every attempt.
+#[tokio::test]
+async fn a_rollback_and_roll_forward_reconciles_the_log_with_the_rows() {
+    let log = RowLog::default();
+    let report = Arc::new(crate::fold::shadow::Shadow::named("teachings").unwrap());
+    let first = LoggedTeachings::open_shadowed(Arc::new(log.clone()), &[], report.clone())
+        .await
+        .unwrap();
+    first
+        .first_contact(&sid("marge"), "claims", at(1))
+        .await
+        .unwrap();
+    first
+        .first_contact(&sid("bart"), "claims", at(2))
+        .await
+        .unwrap();
+    drop(first);
+    {
+        let mut rows = log.rows.lock().unwrap();
+        rows.insert(("homer".to_string(), "mail".to_string()), at(5).to_string());
+        rows.retain(|(run, _), _| run != "marge");
+    }
+    let marks: Vec<Mark> = log
+        .rows
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|((run, domain), taught_at)| Mark {
+            sid: sid(run),
+            domain: domain.clone(),
+            taught_at: taught_at.parse().unwrap(),
+        })
+        .collect();
+    let again = LoggedTeachings::open_shadowed(Arc::new(log.clone()), &marks, report.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        again.taught().await.unwrap().unwrap(),
+        vec![
+            (sid("bart"), "claims".to_string()),
+            (sid("homer"), "mail".to_string())
+        ],
+        "the log holds what the rows hold"
+    );
+    assert!(
+        !again
+            .first_contact(&sid("homer"), "mail", at(6))
+            .await
+            .expect("a pair the rows hold is not a second insert"),
+    );
+    assert!(
+        again
+            .first_contact(&sid("marge"), "claims", at(7))
+            .await
+            .expect("a run the old path cleared is taught again"),
+    );
+    assert_eq!(report.counts()[0].disagreements, 0);
 }
