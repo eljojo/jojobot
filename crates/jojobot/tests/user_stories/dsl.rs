@@ -1043,13 +1043,14 @@ impl Story {
             search,
             mailboxes: boxes,
             sessions: sessions_mentioned,
-            teachings: {
-                let ledger = Arc::new(jojobot_adapters::fold::teachings::FoldedTeachings::new(
-                    Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
-                ));
-                ledger.rebuild().await.expect("the ledger loads");
-                ledger
-            },
+            teachings: Arc::new(
+                jojobot_adapters::teaching_log::LoggedTeachings::open(
+                    Arc::new(jojobot_domain::log::testing::InMemoryLog::default()),
+                    &[],
+                )
+                .await
+                .expect("the ledger opens on an empty log"),
+            ),
             requests: Some(requests),
             registry,
             ui: Some(Arc::new(ui)),
