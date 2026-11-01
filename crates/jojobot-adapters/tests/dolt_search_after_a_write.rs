@@ -133,6 +133,7 @@ async fn a_search_after_a_write_costs_what_a_search_after_none_costs() {
         IndexedMemory::new(Arc::new(DoltMemory::open(pool.clone())))
             .expect("the search index opens"),
     );
+    indexed.state().rebuild().await.expect("the fold loads");
     indexed.rebuild().await.expect("the boot scan reads");
     let retrieval = Retrieval::new(indexed.index(), vec![indexed.clone()]);
 
@@ -155,7 +156,10 @@ async fn a_search_after_a_write_costs_what_a_search_after_none_costs() {
         .expect("search ok");
     let (idle_hits, idle) = counted(retrieval.search(&SearchQuery::text("Bart"))).await;
     assert!(names(&idle_hits.expect("search ok"), &bart));
-    assert!(idle > 0, "the instrument counts statements: {idle}");
+    assert_eq!(
+        idle, 0,
+        "a search that finds the fold unchanged reads nothing: {idle}"
+    );
 
     // A write, then the search that follows it.
     indexed
@@ -192,15 +196,13 @@ async fn a_search_after_a_write_costs_what_a_search_after_none_costs() {
         .await
         .expect("the direct edit lands");
     assert!(badge.is_some(), "a created entity is given a badge");
-    let (hand_hits, after_a_hand_edit) =
-        counted(retrieval.search(&SearchQuery::text("Renamed By Hand"))).await;
+    // The fold holds the store as this process wrote it, so a row changed past
+    // the process is seen when the fold reads the store again, as at a start.
+    indexed.state().rebuild().await.expect("the fold loads");
+    let (hand_hits, _) = counted(retrieval.search(&SearchQuery::text("Renamed By Hand"))).await;
     assert!(
         names(&hand_hits.expect("search ok"), &milhouse),
         "an edit made past the application is found"
-    );
-    assert!(
-        after_a_hand_edit > idle,
-        "the search that finds a hand edit reads the store: {after_a_hand_edit} vs {idle}"
     );
 
     store.stop().await;
