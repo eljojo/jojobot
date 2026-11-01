@@ -9471,10 +9471,24 @@ async fn dolt_adoption_moves_every_column_that_names_the_handle() {
         .await
         .expect("the supplied handles are recorded");
 
+    // No writer in the store fills `fact_event_metadata` any more, so the row
+    // the deployed build left in it is filed by hand, under the handle's text.
+    sqlx::query(
+        "INSERT INTO fact_event_metadata (fact_home, fact_id, `key`, value) VALUES (?, ?, ?, ?)",
+    )
+    .bind(outlived.as_str())
+    .bind(on_the_view.id.as_str())
+    .bind("kept")
+    .bind("by the deployed build")
+    .execute(&pool)
+    .await
+    .expect("the event metadata row is filed");
+
     // The shape the deployed build left: the handle's own text in each column.
     let filed_under_the_text: i64 = {
         let mut total = 0;
         for (table, column) in [
+            ("fact_event_metadata", "fact_home"),
             ("field_link", "entity"),
             ("field_link", "target"),
             ("fact_stands_for", "fact_home"),
@@ -9499,6 +9513,28 @@ async fn dolt_adoption_moves_every_column_that_names_the_handle() {
         total
     };
     assert!(filed_under_the_text >= 4);
+    // The JSON columns keep the handle's text inside a list.
+    let json_rows = |column: &'static str, key: String| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(format!(
+                "SELECT COUNT(*) FROM fact_write WHERE {column} LIKE ?"
+            )))
+            .bind(format!("%\"{key}\"%"))
+            .fetch_one(&pool)
+            .await
+            .expect("counted")
+        }
+    };
+    let mut filed_in_json = Vec::new();
+    for column in ["refs", "stands_for"] {
+        let held = json_rows(column, outlived.to_string()).await;
+        assert!(
+            held > 0,
+            "the fixture holds no fact_write.{column} naming the handle's text"
+        );
+        filed_in_json.push((column, held));
+    }
 
     // The new build supplies nothing at that handle. The passes run in the
     // order wiring.rs runs them.
@@ -9512,6 +9548,11 @@ async fn dolt_adoption_moves_every_column_that_names_the_handle() {
         .resolve_stale_pointer_columns()
         .await
         .expect("the pointer rewrite runs");
+    let badge: String = sqlx::query_scalar("SELECT badge FROM entity WHERE id = ?")
+        .bind(outlived.as_str())
+        .fetch_one(&pool)
+        .await
+        .expect("the adopted row wears a badge");
 
     // **Renamed, so the handle's text is free.**
     let succeeded = EntityId("view:contract-expired".into());
@@ -9636,20 +9677,35 @@ async fn dolt_adoption_moves_every_column_that_names_the_handle() {
         vec![drawing.clone()],
         "refs rows filed under the handle's text follow the badge"
     );
-    // The refs text a write kept names the adopted thing by its key, not by the
-    // handle's text.
-    let refs_text: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM fact_write WHERE refs LIKE ?")
-        .bind(format!("%\"{}\"%", outlived.as_str()))
-        .fetch_one(&pool)
-        .await
-        .expect("counted");
+    // The JSON a write kept names the adopted thing by its badge, not by the
+    // handle's text: each row that held the text now holds the badge instead.
+    for (column, was) in filed_in_json {
+        assert_eq!(
+            json_rows(column, outlived.to_string()).await,
+            0,
+            "fact_write.{column} still holds the handle's text"
+        );
+        assert_eq!(
+            json_rows(column, badge.clone()).await,
+            was,
+            "fact_write.{column} does not hold the badge in each row that held the text"
+        );
+    }
+    // The metadata row followed the badge too.
+    let metadata_at_badge: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM fact_event_metadata WHERE fact_home = ?")
+            .bind(&badge)
+            .fetch_one(&pool)
+            .await
+            .expect("counted");
     assert_eq!(
-        refs_text, 0,
-        "fact_write.refs still holds the handle's text"
+        metadata_at_badge, 1,
+        "the metadata row did not follow the badge"
     );
 
     // The substrate: no column holds the text any more.
     for (table, column) in [
+        ("fact_event_metadata", "fact_home"),
         ("field_link", "entity"),
         ("field_link", "target"),
         ("fact_stands_for", "fact_home"),
