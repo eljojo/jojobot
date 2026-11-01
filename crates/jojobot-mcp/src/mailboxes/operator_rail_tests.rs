@@ -5,6 +5,7 @@
 
 use super::operator_rail::{commands, rail};
 use super::testing::*;
+use super::*;
 use jojobot_domain::actor::Actor;
 use jojobot_domain::mailbox::{MessageId, MessageState};
 use jojobot_domain::memory::EntityId;
@@ -170,6 +171,7 @@ async fn reading_the_rail_moves_no_message() {
         .messages(&Actor::Operator)
         .await
         .expect("messages")
+        .messages
         .into_iter()
         .map(|message| message.id.as_str().to_string())
         .collect();
@@ -248,6 +250,7 @@ async fn the_rail_answers_a_bot_only_what_the_chart_lets_it_read_and_the_operato
         .messages(&epsilon)
         .await
         .expect("messages")
+        .messages
         .into_iter()
         .map(|message| message.id.as_str().to_string())
         .collect();
@@ -264,7 +267,11 @@ async fn the_rail_answers_a_bot_only_what_the_chart_lets_it_read_and_the_operato
         );
     }
 
-    let everything = read.messages(&Actor::Operator).await.expect("messages");
+    let everything = read
+        .messages(&Actor::Operator)
+        .await
+        .expect("messages")
+        .messages;
     for name in sent.keys() {
         assert!(
             everything
@@ -278,4 +285,80 @@ async fn the_rail_answers_a_bot_only_what_the_chart_lets_it_read_and_the_operato
         5,
         "the operator reads every box"
     );
+}
+
+/// **A bot reads the mail it wrote into a box beside or above its own, and never
+/// the notes the recipient wrote on it** (rule 139: never up). The rail takes the
+/// notes off, names each message it did that to, and counts the mail it left out.
+/// Paired: the recipient keeps its notes, and a box above the asker is not
+/// answered.
+#[tokio::test]
+async fn the_rail_takes_the_recipients_notes_off_mail_the_asker_wrote() {
+    let jojobot = mailbox_handler();
+    let assistant = owning(&jojobot, "assistant").await;
+    let epsilon_sid = owning(&jojobot, "epsilon").await;
+    let delta_sid = owning(&jojobot, "delta").await;
+    owning(&jojobot, "gamma").await;
+    crate::memory::testing::capture_as(
+        &jojobot,
+        &assistant,
+        crate::memory::capture::CaptureArgs {
+            sets: Some([("reports_to".into(), "bot:epsilon".into())].into()),
+            ..crate::memory::testing::capture_args("bot:gamma", "who manages this bot")
+        },
+    )
+    .await;
+    // Gamma wrote into delta's box (beside it) and into epsilon's (above it);
+    // delta wrote into epsilon's box too, which gamma did not write.
+    let beside = send(&jojobot, "delta", "gamma", "written beside").await;
+    let above = send(&jojobot, "epsilon", "gamma", "written above").await;
+    let strangers = send(&jojobot, "epsilon", "delta", "written by delta").await;
+    for (sent, closer) in [
+        (&beside, &delta_sid),
+        (&above, &epsilon_sid),
+        (&strangers, &epsilon_sid),
+    ] {
+        jojobot
+            .mark_processed(Parameters(MarkProcessedArgs {
+                request_id: None,
+                message_id: sent["id"].as_str().expect("an id").into(),
+                notes: Some("recipient only".into()),
+                sid: Some(closer.clone()),
+                quarantine: None,
+                message_ids: None,
+            }))
+            .await
+            .expect("the recipient closes it");
+    }
+    let id = |sent: &serde_json::Value| MessageId(sent["id"].as_str().expect("an id").to_string());
+    let read = rail(jojobot.memory.clone(), jojobot.mailboxes.clone());
+
+    let as_gamma = read
+        .messages(&Actor::Bot(EntityId("bot:gamma".into())))
+        .await
+        .expect("messages");
+    let held: Vec<(&MessageId, Option<&str>)> = as_gamma
+        .messages
+        .iter()
+        .map(|message| (&message.id, message.notes.as_deref()))
+        .collect();
+    assert_eq!(
+        held,
+        [(&id(&beside), None), (&id(&above), None)],
+        "the author reads what it wrote, without the recipient's notes"
+    );
+    assert_eq!(as_gamma.notes_withheld, [id(&beside), id(&above)]);
+    assert_eq!(as_gamma.left_out, 1, "delta's mail in the box above");
+
+    let as_epsilon = read
+        .messages(&Actor::Bot(EntityId("bot:epsilon".into())))
+        .await
+        .expect("messages");
+    let own = as_epsilon
+        .messages
+        .iter()
+        .find(|message| message.id == id(&strangers))
+        .expect("epsilon reads its own box");
+    assert_eq!(own.notes.as_deref(), Some("recipient only"));
+    assert!(!as_epsilon.notes_withheld.contains(&id(&strangers)));
 }

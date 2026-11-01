@@ -10,10 +10,10 @@ use std::sync::Arc;
 use jojobot_domain::actor::Actor;
 use jojobot_domain::clock::Clock;
 use jojobot_domain::mailbox::visibility::{MessageVisibility, VisibleBoxes, visible_boxes};
-use jojobot_domain::mailbox::{Acting, Mailbox, MailboxError, Mailboxes, Message, MessageId};
+use jojobot_domain::mailbox::{Acting, Mailbox, MailboxError, Mailboxes, MessageId};
 use jojobot_domain::memory::{EntityId, Memory, MemoryError};
 use jojobot_query_api::{
-    MailHandle, MailRail, OperatorIs, OperatorMail, OperatorMailCommands, Refused,
+    MailHandle, MailRail, OperatorIs, OperatorMail, OperatorMailCommands, RailMessages, Refused,
 };
 
 use crate::orientation::instance_zone::operator_of;
@@ -41,22 +41,32 @@ impl MailRail for Rail {
             .collect())
     }
 
-    async fn messages(&self, asker: &Actor) -> Result<Vec<Message>, MailboxError> {
+    async fn messages(&self, asker: &Actor) -> Result<RailMessages, MailboxError> {
         if matches!(asker, Actor::Operator) {
-            return self.mailboxes.scan_messages().await;
+            return Ok(RailMessages {
+                messages: self.mailboxes.scan_messages().await?,
+                ..RailMessages::default()
+            });
         }
         let board = self.mailboxes.list_mailboxes().await?;
         let visible = self.visible_to(asker, &board).await?;
-        Ok(self
-            .mailboxes
-            .scan_messages()
-            .await?
-            .into_iter()
-            .filter(|message| {
-                visible.message(&message.mailbox, Some(&message.sender))
-                    == MessageVisibility::Readable
-            })
-            .collect())
+        let mut read = RailMessages::default();
+        for mut message in self.mailboxes.scan_messages().await? {
+            if visible.message(&message.mailbox, Some(&message.sender))
+                == MessageVisibility::Readable
+            {
+                // **The author of mail into a box it does not read inside never
+                // reads the recipient's notes** (rule 139): the decision search
+                // and read_message make.
+                if !visible.reads_inside(&message.mailbox) && message.notes.take().is_some() {
+                    read.notes_withheld.push(message.id.clone());
+                }
+                read.messages.push(message);
+            } else {
+                read.left_out += 1;
+            }
+        }
+        Ok(read)
     }
 }
 

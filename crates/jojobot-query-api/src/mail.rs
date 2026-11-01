@@ -24,6 +24,16 @@ pub enum OperatorIs {
     Person(EntityId),
 }
 
+/// **The messages the rail answered an asker, and what it left out of them.**
+/// Eliding is never silent: `notes_withheld` names each message whose recipient's
+/// notes were taken off, and `left_out` counts the messages the asker may not read.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct RailMessages {
+    pub messages: Vec<Message>,
+    pub notes_withheld: Vec<MessageId>,
+    pub left_out: usize,
+}
+
 /// **The read side of the mail rail.** Every method moves nothing and marks
 /// nothing.
 #[async_trait::async_trait]
@@ -33,7 +43,7 @@ pub trait MailRail: Send + Sync {
     /// The boxes the asker may read, with their counts and quarantined messages.
     async fn boxes(&self, asker: &Actor) -> Result<Vec<Mailbox>, MailboxError>;
     /// The messages the asker may read, in every state.
-    async fn messages(&self, asker: &Actor) -> Result<Vec<Message>, MailboxError>;
+    async fn messages(&self, asker: &Actor) -> Result<RailMessages, MailboxError>;
 }
 
 /// The handle a page holds for the mail rail.
@@ -55,7 +65,7 @@ impl MailHandle {
         self.0.boxes(asker).await
     }
 
-    pub async fn messages(&self, asker: &Actor) -> Result<Vec<Message>, MailboxError> {
+    pub async fn messages(&self, asker: &Actor) -> Result<RailMessages, MailboxError> {
         self.0.messages(asker).await
     }
 }

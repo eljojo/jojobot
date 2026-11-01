@@ -607,7 +607,7 @@ async fn mailbox_section(mail: &jojobot_query_api::MailHandle, bot: &EntityId) -
     }
 
     let messages = match mail.messages(&jojobot_domain::actor::Actor::Operator).await {
-        Ok(messages) => messages,
+        Ok(read) => read.messages,
         Err(err) => return blind("Mailbox", "the mail rail", &err.to_string()),
     };
 
@@ -724,7 +724,7 @@ async fn operators_mailbox_section(
         }
     };
     let messages = match mail.messages(&jojobot_domain::actor::Actor::Operator).await {
-        Ok(messages) => messages,
+        Ok(read) => read.messages,
         Err(err) => return blind("Mailbox", "the mail rail", &err.to_string()),
     };
     let mut mail: Vec<_> = messages
