@@ -7,7 +7,12 @@ const SPAN_WORDS: &str = "Started the course: six Tuesday evenings, 6 October to
 
 async fn capture_on_project(jojobot: &Jojobot, args: CaptureArgs) -> serde_json::Value {
     ensure(jojobot, "project:backyard-shed").await;
-    json_of(&jojobot.capture(Parameters(args)).await.expect("capture ok"))
+    let receipt = json_of(&jojobot.capture(Parameters(args)).await.expect("capture ok"));
+    assert!(
+        receipt["address"].is_string(),
+        "the capture must land: {receipt}"
+    );
+    receipt
 }
 
 fn taught(receipt: &serde_json::Value) -> bool {
@@ -100,23 +105,19 @@ async fn a_write_with_no_span_leaves_the_line_for_the_next_one() {
     assert!(taught(&span), "{span}");
 }
 
-/// **Either span key is enough to say nothing**: a write sending only one of the
-/// two is not taught the pair.
+/// A start day suppresses the pair. An end without a start is refused before teaching.
 #[tokio::test]
 async fn a_write_that_sent_one_span_key_is_not_taught() {
-    for (at, through) in [(Some("2026-10-06"), None), (None, Some("2026-11-10"))] {
-        let jojobot = handler();
-        let receipt = capture_on_project(
-            &jojobot,
-            CaptureArgs {
-                happened_at: at.map(Into::into),
-                happened_through: through.map(Into::into),
-                ..capture_args("project:backyard-shed", SPAN_WORDS)
-            },
-        )
-        .await;
-        assert!(!taught(&receipt), "{receipt}");
-    }
+    let jojobot = handler();
+    let receipt = capture_on_project(
+        &jojobot,
+        CaptureArgs {
+            happened_at: Some("2026-10-06".into()),
+            ..capture_args("project:backyard-shed", SPAN_WORDS)
+        },
+    )
+    .await;
+    assert!(!taught(&receipt), "{receipt}");
 }
 
 #[test]

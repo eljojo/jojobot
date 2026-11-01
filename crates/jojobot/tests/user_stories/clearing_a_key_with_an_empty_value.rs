@@ -15,6 +15,14 @@ async fn an_empty_value_takes_the_key_off_so_a_bare_key_where_no_longer_finds_th
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
     s.add("person:homer", "Homer").await;
+    s.add("person:marge", "Marge").await;
+    s.event_with(
+        "person:marge",
+        "kept the hat on",
+        json!({ "hat": "cap" }),
+        &[],
+    )
+    .await;
     s.event_with(
         "person:homer",
         "wore a bowler to the plant",
@@ -47,11 +55,11 @@ async fn an_empty_value_takes_the_key_off_so_a_bare_key_where_no_longer_finds_th
             json!({ "kind": "person", "where": "hat" }),
         )
         .await;
-    after.never_says("person:homer");
+    after.says("person:marge").never_says("person:homer");
     let homer = s
         .shape("what Homer holds now", json!({ "subject": "person:homer" }))
         .await;
-    homer.never_says("\"hat\":");
+    homer.says("person:homer").never_says("\"hat\":");
 
     story.finish().await;
 }

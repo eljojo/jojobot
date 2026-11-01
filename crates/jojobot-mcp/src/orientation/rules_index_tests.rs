@@ -81,7 +81,10 @@ async fn off_the_tree_rides_the_boot_of_a_bot_with_unfiled_rules() {
 
 #[tokio::test]
 async fn off_the_tree_is_absent_from_the_boot_of_a_bot_with_no_rules() {
-    let answer = boot(&crate::harness::handler(), "gamma").await;
+    let jojobot = crate::harness::handler();
+    make_bot(&jojobot, "gamma").await;
+    let answer = boot(&jojobot, "gamma").await;
+    assert_eq!(answer["identity"]["bot"]["id"], "bot:gamma", "{answer}");
     assert!(
         answer["identity"]
             .get("attention_rules_off_the_tree")

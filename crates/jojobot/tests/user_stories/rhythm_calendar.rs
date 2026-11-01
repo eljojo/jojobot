@@ -746,6 +746,7 @@ async fn clearing_a_snoozed_calendar_loop_names_the_anchor_and_the_snooze() {
             json!({"address": check_in, "clear_fields": ["counts_from"]}),
         )
         .await;
+    assert_eq!(before.json()["address"], check_in, "{}", before.raw());
     before.never_says("snoozed_until");
     let read = s.recall("rhythm:leap-check").await.json();
     let derived = read["objects"][0]["facts"]

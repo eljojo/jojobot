@@ -193,6 +193,10 @@ async fn a_search_after_an_edit_a_rename_an_archive_a_restore_or_prose_costs_wha
     ))
     .await;
     edited.expect("edits").written().expect("lands");
+    assert!(
+        write > 0,
+        "the statement counter must observe the write: {write}"
+    );
     let (hits, after) = counted(retrieval.search(&SearchQuery::text("Marmalade"))).await;
     assert!(
         names(&hits.expect("search ok"), &pet),

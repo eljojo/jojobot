@@ -199,10 +199,20 @@ async fn feature_registry_skips_missing_fields_and_logs_read_failures_with_shado
 #[tokio::test]
 async fn feature_registry_reaches_assembly_and_reads_the_legacy_environment() {
     if std::env::var("FEATURE_REGISTRY_CHILD").is_err() {
-        assert!(std::process::Command::new(std::env::current_exe().unwrap())
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
             .args(["--exact", "features::tests::feature_registry_reaches_assembly_and_reads_the_legacy_environment", "--nocapture"])
             .env("FEATURE_REGISTRY_CHILD", "1").env(LEGACY_ENV, "referring_to")
-            .status().unwrap().success());
+            .output().unwrap();
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(
+            output.status.success(),
+            "{stdout}\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            stdout.contains("1 passed; 0 failed"),
+            "the child must run its case: {stdout}"
+        );
         return;
     }
     for (setting, expected) in [(None, 1), (Some("off"), 0), (Some("referring_to"), 1)] {
@@ -218,4 +228,18 @@ async fn feature_registry_reaches_assembly_and_reads_the_legacy_environment() {
         assert_eq!(counts.len(), expected);
         assert!(counts.iter().all(|c| c.family.name() == "referring_to"));
     }
+    let (folded, _) = crate::wiring::assemble_memory_with(held(&[]).await, None)
+        .await
+        .unwrap();
+    let counts = folded.shadow_counts();
+    assert_eq!(
+        counts.len(),
+        1,
+        "a present instance with no flag uses the legacy value"
+    );
+    assert!(
+        counts
+            .iter()
+            .all(|count| count.family.name() == "referring_to")
+    );
 }

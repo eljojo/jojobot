@@ -127,6 +127,12 @@ async fn fixture() -> (Arc<dyn Memory>, jojobot_query_api::QueryHandle) {
             Some("project:atlas"),
             vec![("status", "unlisted"), ("depends_on", "work:sigma")],
         ),
+        ("project:beta", None, vec![]),
+        (
+            "work:upsilon",
+            Some("project:beta"),
+            vec![("status", "next")],
+        ),
     ] {
         let mut entity = NewEntity::new(EntityId(handle.into()), handle, "the fixture roster");
         entity.parent = parent.map(|p| EntityId(p.into()));
@@ -236,7 +242,7 @@ async fn view_read_path_inputs_defaults_overrides_days_and_readiness() {
         ViewOutcome::NeedsInputs
     ));
     for (inputs, expected) in [
-        (vec![], vec!["work:tau"]),
+        (vec![], vec!["work:tau", "work:upsilon"]),
         (vec![("project", "project:atlas")], vec!["work:tau"]),
     ] {
         let answer = queries

@@ -1685,6 +1685,13 @@ async fn a_section_is_found_by_its_own_words_and_not_by_the_name_of_its_document
 /// that works.
 #[tokio::test]
 async fn a_heading_captured_onto_a_document_points_to_put_document() {
+    let adds_section = |text: &str| {
+        text.split('.').any(|sentence| {
+            sentence.contains("put_document")
+                && sentence.contains("add")
+                && sentence.contains("section")
+        })
+    };
     let story = Story::begin("bot:gamma").await;
     let session = story.session().await;
     session.add("document:homer", "Fryer manual").await;
@@ -1708,9 +1715,7 @@ async fn a_heading_captured_onto_a_document_points_to_put_document() {
         .await
         .json();
     assert!(
-        captured["hint"]
-            .as_str()
-            .is_some_and(|hint| hint.contains("put_document")),
+        captured["hint"].as_str().is_some_and(adds_section),
         "{captured}"
     );
     let after = session
@@ -1733,13 +1738,24 @@ async fn a_heading_captured_onto_a_document_points_to_put_document() {
         )
         .await;
     placed.says("put_document");
+    assert!(adds_section(
+        placed.json()["how_to_proceed"].as_str().unwrap()
+    ));
     let moved_loose = session
         .refused("update_fact", json!({"address": loose, "after": section}))
         .await;
     moved_loose.says("put_document");
+    assert!(adds_section(
+        moved_loose.json()["how_to_proceed"].as_str().unwrap()
+    ));
     let moved_behind_loose = session
         .refused("update_fact", json!({"address": section, "after": loose}))
         .await;
     moved_behind_loose.says("put_document");
+    assert!(adds_section(
+        moved_behind_loose.json()["how_to_proceed"]
+            .as_str()
+            .unwrap()
+    ));
     story.finish().await;
 }

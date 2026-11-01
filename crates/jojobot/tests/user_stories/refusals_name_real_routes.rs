@@ -136,6 +136,24 @@ async fn a_refused_edges_names_update_fact_for_a_move_and_put_document_for_a_new
     let named = verbs_named(&s, &refused).await;
     assert!(named.iter().any(|verb| verb == "update_fact"), "{named:?}");
     assert!(named.iter().any(|verb| verb == "put_document"), "{named:?}");
+    let refused = refused.json();
+    let advice = refused["how_to_proceed"].as_str().expect("a way forward");
+    let moving = advice
+        .split('.')
+        .find(|sentence| sentence.contains("update_fact"))
+        .unwrap();
+    assert!(
+        moving.contains("after") && !moving.contains("put_document"),
+        "{moving}"
+    );
+    let adding = advice
+        .split('.')
+        .find(|sentence| sentence.contains("put_document"))
+        .unwrap();
+    assert!(
+        adding.contains("add") && adding.contains("section"),
+        "{adding}"
+    );
 
     // The document reads title first, then the opening, before the move.
     let order = |markdown: &str| {

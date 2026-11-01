@@ -1872,8 +1872,8 @@ mod tests {
     /// by digging (`recall … facts: true`), never carried at a cost to the
     /// ceiling every other answer holds to.
     ///
-    /// **13,000, not a rounder or larger number, because today's core alone is
-    /// 10,218 characters** — this charter plus the core plus the fixed cost of
+    /// **12,000 leaves room for the unfiled-rule warning** — this charter
+    /// plus the core plus the fixed cost of
     /// everything else this boot always carries (snapshot, skills, session,
     /// identity metadata) is chosen to clear the 28,000 ceiling with room to
     /// spare, once the rule's reasoning is honestly elided rather than forced
@@ -1897,7 +1897,7 @@ mod tests {
             .set_charter(Parameters(SetCharterArgs {
                 request_id: None,
                 bot: "gamma".into(),
-                prose: "x".repeat(13_000),
+                prose: "x".repeat(12_000),
                 sid: Some(crate::harness::TEST_SID.into()),
             }))
             .await
@@ -1905,19 +1905,11 @@ mod tests {
         capture_ok(
             &jojobot,
             CaptureArgs {
-                details: Some(format!("rule 0 reasoning: {}", "x".repeat(2_000))),
+                details: Some(format!("rule 0 reasoning: {}", "x".repeat(4_000))),
                 // A boot only carries a marked rule (rule 306) — this test is
                 // about charter/details ranking against the ceiling, not
-                // about the cap. It names a purpose, so the boot carries no
-                // off-the-tree warning to spend the ceiling on.
-                fields: Some(
-                    [
-                        ("starred".to_string(), "true".to_string()),
-                        ("purpose".to_string(), "boot".to_string()),
-                    ]
-                    .into_iter()
-                    .collect(),
-                ),
+                // about the cap. The unfiled rule keeps its warning in the floor.
+                fields: Some([("starred".to_string(), "true".to_string())].into()),
                 ..capture_args("bot:gamma", "rule 0")
             },
         )
@@ -1951,9 +1943,13 @@ mod tests {
         let charter = booted["identity"]["charter"]
             .as_str()
             .expect("charter is never dropped by this cut");
-        assert_eq!(charter.chars().count(), 13_000, "{charter:?}");
+        assert_eq!(charter.chars().count(), 12_000, "{charter:?}");
+        assert_eq!(
+            booted["identity"]["attention_rules_off_the_tree"]["count"],
+            1
+        );
 
-        // **The rule's own reasoning has no room left beside a 13,000-character
+        // **The rule's own reasoning has no room left beside a 12,000-character
         // charter and the essay's own core, and it is left at home rather
         // than forced through: elided, marked, and pointed at the dig that
         // reaches it whole.**
@@ -1962,7 +1958,7 @@ mod tests {
         assert_eq!(rules[0]["details_elided"], true, "{rules:?}");
         assert_eq!(
             rules[0]["details_bytes"],
-            "rule 0 reasoning: ".len() + 2_000,
+            "rule 0 reasoning: ".len() + 4_000,
             "{rules:?}"
         );
         assert!(
