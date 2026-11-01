@@ -2911,7 +2911,8 @@ The count of the writes is the answer to how many times: a key a sitting
 records once each time something happens is how you count occurrences. A key
 nobody wrote comes back as no writes, never as a refusal. A long history is
 cut to its newest twenty, saying how many exist and how many it left out;
-`history_most` raises the window.
+`history_most` raises the window. Each write also names its `writer` and
+`run` when those were recorded.
 
 On a session it traces the run's own fields, named focus, timezone,
 stated_day, wrap_window, state, served_chars, charter_told or key, and
@@ -3247,9 +3248,12 @@ any subjects, in one call. Each comes back with its current wording, its
 address and subject, provenance, standing, the day it was recorded and how
 many times it has been written, and none of the writes behind it:
 `history_record` is the door for those. An address that names nothing is
-named as missing and the others are still served. A subject may repeat
-what every address names; facts and details are accepted, and record_keys
-narrows each record. Other selections refuse. A long list stops at the
+named as missing and the others are still served. A subject must spell
+every address's home; a bare person slug is also accepted. Former handles
+and collection/N subjects are not resolved for this comparison. Facts and
+details are accepted, and record_keys narrows each record. Other selections,
+including ticks and ticks_offset, refuse: records reads claims, while those
+arguments ask about a list's ticks. A long list stops at the
 answer ceiling; `not_shown` names the `offset` that reads on.
 ```
 
@@ -3470,7 +3474,8 @@ ahead when you send none) and what is already late, whatever kinds owe
 something: an object past due carries `overdue_by_days`, one not
 yet due `due_in_days`. `view: "board"` takes the `project` it is about and
 lists that project's work ordered by status, each piece with its status,
-what it depends on and its owner. `view: "of-type"` takes a `type` (text)
+what it depends on, its owner and whether it is `finished`. The `board`
+block carries `status_words` and the `done` count. `view: "of-type"` takes a `type` (text)
 and lists the things that answer that declared type, each with the keys it
 lacks; it finds things only, so for a type another kind answers send
 `answers_type` to `recall` directly. `view: "unreviewed"` lists the things

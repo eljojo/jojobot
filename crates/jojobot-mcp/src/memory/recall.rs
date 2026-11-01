@@ -549,7 +549,8 @@ pub struct RecallArgs {
     /// records once each time something happens is how you count occurrences. A key
     /// nobody wrote comes back as no writes, never as a refusal. A long history is
     /// cut to its newest twenty, saying how many exist and how many it left out;
-    /// `history_most` raises the window.
+    /// `history_most` raises the window. Each write also names its `writer` and
+    /// `run` when those were recorded.
     ///
     /// On a session it traces the run's own fields, named focus, timezone,
     /// stated_day, wrap_window, state, served_chars, charter_told or key, and
@@ -605,9 +606,12 @@ pub struct RecallArgs {
     /// address and subject, provenance, standing, the day it was recorded and how
     /// many times it has been written, and none of the writes behind it:
     /// `history_record` is the door for those. An address that names nothing is
-    /// named as missing and the others are still served. A subject may repeat
-    /// what every address names; facts and details are accepted, and record_keys
-    /// narrows each record. Other selections refuse. A long list stops at the
+    /// named as missing and the others are still served. A subject must spell
+    /// every address's home; a bare person slug is also accepted. Former handles
+    /// and collection/N subjects are not resolved for this comparison. Facts and
+    /// details are accepted, and record_keys narrows each record. Other selections,
+    /// including ticks and ticks_offset, refuse: records reads claims, while those
+    /// arguments ask about a list's ticks. A long list stops at the
     /// answer ceiling; `not_shown` names the `offset` that reads on.
     #[serde(default)]
     pub(crate) records: Option<Vec<String>>,
@@ -863,7 +867,8 @@ pub struct RecallArgs {
     /// something: an object past due carries `overdue_by_days`, one not
     /// yet due `due_in_days`. `view: "board"` takes the `project` it is about and
     /// lists that project's work ordered by status, each piece with its status,
-    /// what it depends on and its owner. `view: "of-type"` takes a `type` (text)
+    /// what it depends on, its owner and whether it is `finished`. The `board`
+    /// block carries `status_words` and the `done` count. `view: "of-type"` takes a `type` (text)
     /// and lists the things that answer that declared type, each with the keys it
     /// lacks; it finds things only, so for a type another kind answers send
     /// `answers_type` to `recall` directly. `view: "unreviewed"` lists the things
@@ -4858,13 +4863,8 @@ impl Jojobot {
         addresses: &[String],
     ) -> Result<CallToolResult, McpError> {
         let details_asked = args.details.unwrap_or(false) || args.record_keys.is_some();
-        if let Some(beside) = selection_beside_records(args, addresses) {
-            return memory_declined(
-                "recall",
-                MemoryError::InvalidQuery(format!(
-                    "records disagrees with {beside}: remove {beside} or records"
-                )),
-            );
+        if let Some(refusal) = selection_beside_records(args, addresses) {
+            return memory_declined("recall", MemoryError::InvalidQuery(refusal));
         }
         if addresses.is_empty() {
             return memory_declined(
@@ -4926,9 +4926,9 @@ impl Jojobot {
     }
 }
 
-/// **A conflicting selection beside `records`**, including a subject that
+/// **The refusal for a conflicting selection beside `records`**, including a subject that
 /// disagrees with any valid address. Compatible record shaping stays allowed.
-fn selection_beside_records(args: &RecallArgs, addresses: &[String]) -> Option<&'static str> {
+fn selection_beside_records(args: &RecallArgs, addresses: &[String]) -> Option<String> {
     // **Every field is named here, so a field added to `RecallArgs` does not
     // compile until it is placed**: sent beside `records` and refused, or one of
     // those that belong with it. A list written apart from the struct would
@@ -4958,8 +4958,8 @@ fn selection_beside_records(args: &RecallArgs, addresses: &[String]) -> Option<&
         history_most,
         offset: _,
         limit,
-        ticks: _,
-        ticks_offset: _,
+        ticks,
+        ticks_offset,
         backing,
         built_on,
         values,
@@ -4974,14 +4974,19 @@ fn selection_beside_records(args: &RecallArgs, addresses: &[String]) -> Option<&
         inputs,
         sid: _,
     } = args;
-    let disagrees = subject.as_ref().is_some_and(|subject| {
-        addresses
+    if let Some(subject) = subject
+        && let Some(home) = addresses
             .iter()
             .filter_map(|asked| FactAddress::parse(asked).ok())
-            .any(|address| address.home != EntityId::person(subject))
-    });
+            .map(|address| address.home)
+            .find(|home| home != &EntityId::person(subject))
+    {
+        return Some(format!(
+            "records subject '{subject}' disagrees with address home '{home}': send subject \
+             '{home}' or drop subject"
+        ));
+    }
     [
-        ("subject", disagrees),
         ("kind", kind.is_some()),
         ("parent", parent.is_some()),
         ("answers_type", answers_type.is_some()),
@@ -4998,6 +5003,8 @@ fn selection_beside_records(args: &RecallArgs, addresses: &[String]) -> Option<&
         ("charter", charter.is_some()),
         ("keys", keys.is_some()),
         ("limit", limit.is_some()),
+        ("ticks", ticks.is_some()),
+        ("ticks_offset", ticks_offset.is_some()),
         ("follow", follow.is_some()),
         ("overdue", overdue.is_some()),
         ("unreviewed", unreviewed.is_some()),
@@ -5014,7 +5021,14 @@ fn selection_beside_records(args: &RecallArgs, addresses: &[String]) -> Option<&
         ("held", held.is_some()),
     ]
     .into_iter()
-    .find_map(|(name, sent)| sent.then_some(name))
+    .find_map(|(name, sent)| {
+        sent.then(|| match name {
+            "ticks" | "ticks_offset" => format!(
+                "records reads claims; {name} asks about a list's ticks: remove {name} or records"
+            ),
+            _ => format!("records disagrees with {name}: remove {name} or records"),
+        })
+    })
 }
 
 /// **One record as it stands now**: its newest write, with how many writes it

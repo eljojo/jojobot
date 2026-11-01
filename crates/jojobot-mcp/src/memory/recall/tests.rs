@@ -10217,6 +10217,20 @@ async fn recall_refuses_records_beside_another_selection_or_with_none() {
         shaped["status"] == "blocked" && shaped.to_string().contains("kind"),
         "an argument that shapes another question was dropped without a word: {shaped}"
     );
+    for (ticks, ticks_offset) in [(Some(false), None), (Some(true), None), (None, Some(0))] {
+        let answer = recall_json(
+            &jojobot,
+            RecallArgs {
+                ticks,
+                ticks_offset,
+                ..of_records(&["person:alpha#f1"])
+            },
+        )
+        .await;
+        assert_eq!(answer["status"], "blocked", "{answer}");
+        assert_eq!(answer["wrote"], false, "{answer}");
+        assert!(answer.to_string().contains("ticks"), "{answer}");
+    }
     let empty = recall_json(&jojobot, of_records(&[])).await;
     assert!(
         empty["status"] == "blocked" && empty["wrote"] == false,

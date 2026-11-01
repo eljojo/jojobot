@@ -27,8 +27,7 @@ pub use args::{EdgeFilterArgs, SearchArgs};
 /// carrying one is the only place on the whole surface where a caller could
 /// learn that entities have documents at all, and it is not an address a caller
 /// can use: every verb here is addressed by handle or by fact address.
-/// Internally the id is what orders a hit list; that is the index's business
-/// (`jojobot_adapters::search::tiebreak`) and it stops there.
+/// Ordering is the index's business and stops at this boundary.
 /// **Whether a rendered hit is a claim that still stands.**
 mod render;
 use render::{hit_json, is_an_active_claim, trim_hit};
