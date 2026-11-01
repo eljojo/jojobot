@@ -99,7 +99,8 @@ impl Config {
     ///   computes both ways on every read and compares, counting and logging each
     ///   difference and serving the image. A deprecated, one-release fallback for
     ///   `feature_shadow` on `topic:instance`, read by the feature registry rather
-    ///   than `Config`. The default is off; an unknown family warns and stays off.
+    ///   than `Config`. The teaching ledger is always one of the families unless
+    ///   the value is `off`; an unknown family warns and leaves only that default.
     /// - `JOJOBOT_NTFY_URL` and `JOJOBOT_NTFY_TOPIC` — set both to push the
     ///   operator's mail to their phone through that ntfy server and topic.
     ///   Neither set pushes nothing; one without the other refuses to start.

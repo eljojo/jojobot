@@ -65,12 +65,17 @@ async fn logged(memory: Arc<dyn Memory>, legacy: Option<&str>) -> (anyhow::Resul
 #[tokio::test]
 async fn feature_registry_selects_instance_before_legacy_before_default_and_logs_its_source() {
     for (instance, legacy, expected, source) in [
-        (None, None, "off", "default"),
-        (None, Some("referring_to"), "referring_to", "JOJOBOT_SHADOW"),
+        (None, None, "teachings", "default"),
+        (
+            None,
+            Some("referring_to"),
+            "referring_to,teachings",
+            "JOJOBOT_SHADOW",
+        ),
         (
             Some("referring_to"),
             Some("missing_family"),
-            "referring_to",
+            "referring_to,teachings",
             "instance",
         ),
         (Some("off"), Some("referring_to"), "off", "instance"),
@@ -82,14 +87,12 @@ async fn feature_registry_selects_instance_before_legacy_before_default_and_logs
         let (folded, log) = logged(memory, legacy).await;
         let counts = folded.unwrap().shadow_counts();
         let families: Vec<_> = counts.iter().map(|c| c.family.name()).collect();
-        assert_eq!(
-            families,
-            if expected == "off" {
-                vec![]
-            } else {
-                vec!["referring_to"]
-            }
-        );
+        let wanted: Vec<&str> = if expected == "off" {
+            vec![]
+        } else {
+            expected.split(',').collect()
+        };
+        assert_eq!(families, wanted);
         assert_eq!(
             log.lines()
                 .filter(|line| line
@@ -121,7 +124,7 @@ async fn feature_registry_ignores_unknown_keys_and_disables_unknown_families() {
     ])
     .await;
     let (folded, log) = logged(memory, None).await;
-    assert_eq!(folded.unwrap().shadow_counts().len(), 1);
+    assert_eq!(folded.unwrap().shadow_counts().len(), 2);
     assert!(
         log.lines().any(|line| line.contains("WARN")
             && line.contains("key=\"feature_future\"")
@@ -135,12 +138,13 @@ async fn feature_registry_ignores_unknown_keys_and_disables_unknown_families() {
             Arc::new(InMemoryMemory::booted())
         };
         let (result, log) = logged(memory, (!instance).then_some("missing_family")).await;
-        assert!(
-            result
-                .expect("an unknown family keeps booting")
-                .shadow_counts()
-                .is_empty()
-        );
+        let families: Vec<_> = result
+            .expect("an unknown family keeps booting")
+            .shadow_counts()
+            .iter()
+            .map(|c| c.family.name())
+            .collect();
+        assert_eq!(families, ["teachings"], "the default shadow stays on");
         let warning = log
             .lines()
             .find(|line| line.contains("WARN"))
@@ -153,7 +157,10 @@ async fn feature_registry_ignores_unknown_keys_and_disables_unknown_families() {
         for token in ["missing_family", "key=\"feature_shadow\"", source] {
             assert!(warning.contains(token), "{token}: {log}");
         }
-        assert!(log.lines().any(|line| line.contains("state=off")), "{log}");
+        assert!(
+            log.lines().any(|line| line.contains("state=teachings")),
+            "{log}"
+        );
     }
 }
 
@@ -168,9 +175,11 @@ async fn feature_registry_skips_missing_fields_and_logs_read_failures_with_shado
         let counted = Arc::new(jojobot_adapters::counted::Counted::new(memory));
         counted.fail_fields_of(Some("topic:instance"));
         let (folded, log) = logged(counted.clone(), Some("referring_to")).await;
+        // No record: the legacy value and the teaching ledger. A record that cannot
+        // be read: the default alone.
         assert_eq!(
             folded.unwrap().shadow_counts().len(),
-            usize::from(!exists),
+            if exists { 1 } else { 2 },
             "{log}"
         );
         assert_eq!(
@@ -187,7 +196,7 @@ async fn feature_registry_skips_missing_fields_and_logs_read_failures_with_shado
         }
         counted.set_unreachable(true);
         let (folded, log) = logged(counted, Some("referring_to")).await;
-        assert!(folded.unwrap().shadow_counts().is_empty(), "{log}");
+        assert_eq!(folded.unwrap().shadow_counts().len(), 1, "{log}");
         assert!(
             log.lines()
                 .any(|line| line.contains("WARN") && line.contains("source=\"topic:instance\"")),
@@ -215,7 +224,7 @@ async fn feature_registry_reaches_assembly_and_reads_the_legacy_environment() {
         );
         return;
     }
-    for (setting, expected) in [(None, 1), (Some("off"), 0), (Some("referring_to"), 1)] {
+    for (setting, expected) in [(None, 2), (Some("off"), 0), (Some("referring_to"), 2)] {
         let memory = if let Some(value) = setting {
             held(&[("feature_shadow", value)]).await
         } else {
@@ -226,7 +235,11 @@ async fn feature_registry_reaches_assembly_and_reads_the_legacy_environment() {
             .unwrap();
         let counts = folded.shadow_counts();
         assert_eq!(counts.len(), expected);
-        assert!(counts.iter().all(|c| c.family.name() == "referring_to"));
+        assert!(
+            counts
+                .iter()
+                .all(|c| matches!(c.family.name(), "referring_to" | "teachings"))
+        );
     }
     let (folded, _) = crate::wiring::assemble_memory_with(held(&[]).await, None)
         .await
