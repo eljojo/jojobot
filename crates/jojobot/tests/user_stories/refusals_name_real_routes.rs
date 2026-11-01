@@ -151,7 +151,10 @@ async fn a_refused_edges_names_update_fact_for_a_move_and_put_document_for_a_new
         .find(|sentence| sentence.contains("put_document"))
         .unwrap();
     assert!(
-        adding.contains("add") && adding.contains("section"),
+        adding
+            .split_whitespace()
+            .any(|word| matches!(word, "add" | "adds"))
+            && adding.contains("section"),
         "{adding}"
     );
 

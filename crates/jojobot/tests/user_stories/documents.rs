@@ -1688,7 +1688,9 @@ async fn a_heading_captured_onto_a_document_points_to_put_document() {
     let adds_section = |text: &str| {
         text.split('.').any(|sentence| {
             sentence.contains("put_document")
-                && sentence.contains("add")
+                && sentence
+                    .split_whitespace()
+                    .any(|word| matches!(word, "add" | "adds"))
                 && sentence.contains("section")
         })
     };
@@ -1739,14 +1741,18 @@ async fn a_heading_captured_onto_a_document_points_to_put_document() {
         .await;
     placed.says("put_document");
     assert!(adds_section(
-        placed.json()["how_to_proceed"].as_str().unwrap()
+        placed.json()["how_to_proceed"]
+            .as_str()
+            .expect("a way forward")
     ));
     let moved_loose = session
         .refused("update_fact", json!({"address": loose, "after": section}))
         .await;
     moved_loose.says("put_document");
     assert!(adds_section(
-        moved_loose.json()["how_to_proceed"].as_str().unwrap()
+        moved_loose.json()["how_to_proceed"]
+            .as_str()
+            .expect("a way forward")
     ));
     let moved_behind_loose = session
         .refused("update_fact", json!({"address": section, "after": loose}))
@@ -1755,7 +1761,7 @@ async fn a_heading_captured_onto_a_document_points_to_put_document() {
     assert!(adds_section(
         moved_behind_loose.json()["how_to_proceed"]
             .as_str()
-            .unwrap()
+            .expect("a way forward")
     ));
     story.finish().await;
 }
