@@ -245,15 +245,11 @@ async fn feature_registry_reaches_assembly_and_reads_the_legacy_environment() {
         .await
         .unwrap();
     let counts = folded.shadow_counts();
+    let families: Vec<_> = counts.iter().map(|count| count.family.name()).collect();
     assert_eq!(
-        counts.len(),
-        1,
-        "a present instance with no flag uses the legacy value"
-    );
-    assert!(
-        counts
-            .iter()
-            .all(|count| count.family.name() == "referring_to")
+        families,
+        ["referring_to", "teachings"],
+        "a present instance with no flag uses the legacy value, beside the teaching ledger"
     );
 }
 
