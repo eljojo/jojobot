@@ -158,6 +158,13 @@ pub fn handle(
             Ok(read)
         }
 
+        async fn entities(
+            &self,
+            _asker: &jojobot_domain::actor::Actor,
+        ) -> Result<Vec<jojobot_domain::memory::Entity>, MemoryError> {
+            self.memory.list_entities(None).await
+        }
+
         async fn search(
             &self,
             asker: &jojobot_domain::actor::Actor,
