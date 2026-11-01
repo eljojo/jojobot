@@ -147,3 +147,82 @@ async fn a_merge_or_rename_over_an_unreadable_bot_says_the_floor_was_not_measure
         "the rename landed over an unmeasured floor and said nothing: {unmeasured}"
     );
 }
+
+/// **A bot pushed over the ceiling by the off-the-tree warning can file the rules
+/// the warning names.** Two starred rules name no purpose and the floor is over the
+/// ceiling, with the warning counted in it. Giving one of them a purpose lands,
+/// because the warning is what the filing is meant to remove; a write that makes a
+/// rule itself longer is refused on the same bot.
+#[tokio::test]
+async fn a_bot_over_the_ceiling_by_the_warning_can_still_file_its_rules() {
+    use jojobot_domain::memory::{EntityId, NewFact};
+    let jojobot = crate::mailboxes::testing::mailbox_handler();
+    a_bot_at_the_brink(&jojobot, "gamma").await;
+    let bot = EntityId("bot:gamma".into());
+    // **Written past the guard, as a store written before the guard holds it.**
+    let mut second = NewFact::about(
+        bot.clone(),
+        "a second rule that names no purpose",
+        jiff::civil::Date::constant(2026, 3, 10),
+    );
+    second.fields = [("starred".to_string(), "true".to_string())].into();
+    jojobot
+        .memory
+        .capture(second)
+        .await
+        .expect("the rule is written");
+    let budget = jojobot_domain::text::BOOT_ANSWER.budget;
+    let floor = jojobot
+        .boot_floors_of_bots(&crate::memory::reads_left::ReadsLeft::default())
+        .await
+        .into_iter()
+        .find(|(held, _)| held == &bot)
+        .expect("the bot's floor is measured")
+        .1;
+    assert!(
+        floor > budget,
+        "the floor is not over the ceiling, so the case proves nothing: {floor} of {budget}"
+    );
+    let held = jojobot.memory.recall(&bot).await.expect("the bot's claims");
+    let address_of = |content: &str| {
+        held.iter()
+            .find(|fact| fact.content == content)
+            .unwrap_or_else(|| panic!("no claim says {content}"))
+            .address()
+            .to_string()
+    };
+    let update = |args: crate::memory::update_fact::UpdateFactArgs| {
+        let jojobot = &jojobot;
+        async move {
+            json_of(
+                &jojobot
+                    .update_fact(Parameters(crate::memory::update_fact::UpdateFactArgs {
+                        sid: Some(writing_as(jojobot)),
+                        ..args
+                    }))
+                    .await
+                    .expect("update answers"),
+            )
+        }
+    };
+
+    let growing = update(crate::memory::update_fact::UpdateFactArgs {
+        content: Some("x".repeat(3000)),
+        provenance: Some("inference".into()),
+        ..update_args(&address_of("a second rule that names no purpose"))
+    })
+    .await;
+    assert_eq!(
+        growing["status"], "blocked",
+        "a write that grows a rule landed over the ceiling: {growing}"
+    );
+    let filing = update(crate::memory::update_fact::UpdateFactArgs {
+        fields: Some([("purpose".to_string(), "boot".to_string())].into()),
+        ..update_args(&address_of("a second rule that names no purpose"))
+    })
+    .await;
+    assert_ne!(
+        filing["status"], "blocked",
+        "the filing the warning asks for was refused: {filing}"
+    );
+}

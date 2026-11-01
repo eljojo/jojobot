@@ -685,17 +685,61 @@ impl Jojobot {
         if !starred && seats.is_none() {
             return None;
         }
+        let filing = Self::only_files(&held[at], &edited);
+        let current = held.clone();
         held[at] = edited;
         // An edit keeps the stamp the record already has, so it holds none back.
-        self.refuses_a_boot_floor_over(
-            &address.home,
-            &held,
-            seats.map(String::as_str),
-            None,
-            0,
-            reads,
-        )
-        .await
+        let refused = self
+            .refuses_a_boot_floor_over(
+                &address.home,
+                &held,
+                seats.map(String::as_str),
+                None,
+                0,
+                reads,
+            )
+            .await;
+        // **Filing a rule is the repair the boot asks for, so a bot the ceiling
+        // already holds over can do it.** The off-the-tree warning is inside the
+        // floor and is removed only when the last rule is filed, while each filing
+        // adds the purpose to the boot's index: every write but the last grows a
+        // floor that is already over, and the bot could never reach the last one.
+        // A bot under the ceiling is judged as before, and so is every other edit.
+        if refused.is_some()
+            && filing
+            && self
+                .is_over_the_ceiling(&address.home, &current, reads)
+                .await
+        {
+            return None;
+        }
+        refused
+    }
+
+    /// **Whether an edit changes nothing of a rule but giving it a purpose** it
+    /// did not name before.
+    fn only_files(before: &Fact, after: &Fact) -> bool {
+        let mut without = after.fields.clone();
+        without.remove("purpose");
+        let mut earlier = before.fields.clone();
+        earlier.remove("purpose");
+        jojobot_domain::memory::seats::is_unfiled(before)
+            && !jojobot_domain::memory::seats::is_unfiled(after)
+            && earlier == without
+            && before.content == after.content
+            && before.details == after.details
+            && before.status == after.status
+    }
+
+    /// **Whether the boot of `bot` is over the ceiling as it stands**, for the
+    /// claims it holds now. A floor that cannot be measured is not over.
+    async fn is_over_the_ceiling(&self, bot: &EntityId, held: &[Fact], reads: &ReadsLeft) -> bool {
+        let Some(seats) = self.seats_read(bot, reads).await else {
+            return false;
+        };
+        self.boot_floor_if(bot, &rules_in_force(held), seats, None, None, None)
+            .await
+            .is_some_and(|floor| floor.total > jojobot_domain::text::BOOT_ANSWER.budget)
     }
 }
 
