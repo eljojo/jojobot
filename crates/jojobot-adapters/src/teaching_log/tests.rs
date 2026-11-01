@@ -5,11 +5,11 @@ use jojobot_domain::teaching::{DOMAIN_WIDTH, TeachingError};
 
 use super::*;
 
-fn at(second: i64) -> Timestamp {
+pub(super) fn at(second: i64) -> Timestamp {
     Timestamp::from_second(1_700_000_000 + second).expect("a moment")
 }
 
-fn sid(name: &str) -> Sid {
+pub(super) fn sid(name: &str) -> Sid {
     Sid(name.to_string())
 }
 

@@ -27,6 +27,9 @@ pub mod codec;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+mod witness_tests;
+
 const REPRESENTATION_VERSION: u32 = 1;
 const READ_BOUND: usize = 256;
 
@@ -193,7 +196,7 @@ impl LoggedTeachings {
         let this = self;
         {
             let mut held = this.held.lock().await;
-            this.catch_up(&mut held).await?;
+            this.catch_up(&mut held, false).await?;
             if held.head == Position::default() && !marks.is_empty() {
                 let mut ordered = marks.to_vec();
                 ordered.sort_by(|a, b| (&a.sid, &a.domain).cmp(&(&b.sid, &b.domain)));
@@ -218,7 +221,11 @@ impl LoggedTeachings {
 
     /// Apply every committed batch after the held head. A tail whose commit is
     /// unresolved is an error, so a write never prepares on a stale head.
-    async fn catch_up(&self, held: &mut Held) -> Result<(), TeachingError> {
+    ///
+    /// After boot, `moves_old` also moves the shadow's old held set: a commit
+    /// whose answer was lost landed its legacy rows with the batch, so the old
+    /// set follows what the log holds. At boot the old set comes from the rows.
+    async fn catch_up(&self, held: &mut Held, moves_old: bool) -> Result<(), TeachingError> {
         loop {
             let batches = self
                 .log
@@ -230,8 +237,11 @@ impl LoggedTeachings {
             }
             for batch in batches {
                 for member in batch.members() {
-                    held.state
-                        .apply(&codec::decode(member).map_err(unreadable)?);
+                    let event = codec::decode(member).map_err(unreadable)?;
+                    held.state.apply(&event);
+                    if let Some(shadow) = held.shadow.as_mut().filter(|_| moves_old) {
+                        shadow.follow(&event);
+                    }
                 }
                 held.head = batch.range().last;
             }
@@ -332,7 +342,7 @@ impl Teachings for LoggedTeachings {
 impl LoggedTeachings {
     async fn contact(&self, sid: &Sid, domain: &str, at: Timestamp) -> Result<bool, TeachingError> {
         let mut held = self.held.lock().await;
-        self.catch_up(&mut held).await?;
+        self.catch_up(&mut held, true).await?;
         let prepared = held
             .state
             .first_contact(&run(sid), domain, at)
@@ -348,7 +358,7 @@ impl LoggedTeachings {
 
     async fn clear(&self, sid: &Sid) -> Result<(), TeachingError> {
         let mut held = self.held.lock().await;
-        self.catch_up(&mut held).await?;
+        self.catch_up(&mut held, true).await?;
         let prepared = held.state.forget(&run(sid));
         if !prepared.events.is_empty() {
             // A clear has no source time of its own; the newest mark's time

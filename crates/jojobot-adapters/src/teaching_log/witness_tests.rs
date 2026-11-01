@@ -1,0 +1,154 @@
+//! **No read of the old teaching rows after boot.** A recording proxy sits in
+//! front of a real Dolt. The ledger boots through it, then a contact, a repeat
+//! contact, a check, a clear and a recovery after a lost acknowledgement are
+//! made with the shadow on. Any statement that reads `session_teaching` fails
+//! the case.
+
+use std::sync::{Arc, Mutex};
+
+use jojobot_domain::log::testing::{Fault, FaultLog};
+use sqlx::mysql::MySqlPoolOptions;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
+
+use super::tests::{at, sid};
+use super::*;
+use crate::dolt::Dolt;
+use crate::dolt::teaching::DoltTeachings;
+use crate::dolt_log::DoltLog;
+use crate::testing::{Scratch, free_port, migrated_database};
+
+type Seen = Arc<Mutex<Vec<String>>>;
+
+async fn packet(reader: &mut (impl AsyncRead + Unpin)) -> std::io::Result<Vec<u8>> {
+    let mut header = [0; 4];
+    reader.read_exact(&mut header).await?;
+    let length = u32::from_le_bytes([header[0], header[1], header[2], 0]) as usize;
+    let mut bytes = vec![0; 4 + length];
+    bytes[..4].copy_from_slice(&header);
+    reader.read_exact(&mut bytes[4..]).await?;
+    Ok(bytes)
+}
+
+/// Forward every connection to `upstream` and record the text of each query or
+/// prepared statement the client sends.
+fn recording_proxy(listener: tokio::net::TcpListener, upstream: u16, seen: Seen) {
+    tokio::spawn(async move {
+        while let Ok((client, _)) = listener.accept().await {
+            let seen = seen.clone();
+            tokio::spawn(async move {
+                let Ok(server) = tokio::net::TcpStream::connect(("127.0.0.1", upstream)).await
+                else {
+                    return;
+                };
+                let (mut from_client, mut to_client) = client.into_split();
+                let (mut from_server, mut to_server) = server.into_split();
+                let requests = async move {
+                    loop {
+                        let bytes = packet(&mut from_client).await?;
+                        // 0x03 is COM_QUERY and 0x16 is COM_STMT_PREPARE.
+                        if matches!(bytes.get(4), Some(0x03 | 0x16)) {
+                            seen.lock()
+                                .unwrap()
+                                .push(String::from_utf8_lossy(&bytes[5..]).into_owned());
+                        }
+                        to_server.write_all(&bytes).await?;
+                    }
+                    #[allow(unreachable_code)]
+                    Ok::<(), std::io::Error>(())
+                };
+                let replies = async move {
+                    tokio::io::copy(&mut from_server, &mut to_client).await?;
+                    Ok::<(), std::io::Error>(())
+                };
+                let _ = tokio::try_join!(requests, replies);
+            });
+        }
+    });
+}
+
+fn reads_old_rows(statement: &str) -> bool {
+    let lower = statement.to_ascii_lowercase();
+    lower.contains("session_teaching") && lower.contains("select")
+}
+
+#[tokio::test]
+async fn no_legacy_teaching_read_is_made_after_boot() {
+    let scratch = Scratch::new("teaching-no-other-read");
+    let mut server = Dolt::start(&scratch.0, free_port()).await.unwrap();
+    let direct = migrated_database(&server, "alpha").await.unwrap();
+    sqlx::query(
+        "INSERT INTO session_teaching (sid, domain, taught_at) VALUES ('homer', 'claims', '2026-01-01T00:00:00Z')",
+    )
+    .execute(&direct)
+    .await
+    .unwrap();
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let seen: Seen = Arc::default();
+    recording_proxy(listener, direct.connect_options().get_port(), seen.clone());
+    let through =
+        MySqlPoolOptions::new().connect_lazy_with((*direct.connect_options()).clone().port(port));
+
+    let log = Arc::new(DoltLog::open(through.clone()).await.unwrap());
+    let marks = DoltTeachings::open(through).marks().await.unwrap();
+    let report = Arc::new(crate::fold::shadow::Shadow::named("teachings").unwrap());
+    let teachings = LoggedTeachings::open_shadowed(log.clone(), &marks, report.clone())
+        .await
+        .unwrap();
+    assert_eq!(marks.len(), 1, "boot read the old row for the import");
+    seen.lock().unwrap().clear();
+
+    assert!(
+        teachings
+            .first_contact(&sid("marge"), "mail", at(1))
+            .await
+            .unwrap()
+    );
+    assert!(
+        !teachings
+            .first_contact(&sid("marge"), "mail", at(2))
+            .await
+            .unwrap()
+    );
+    assert!(
+        teachings
+            .has_contact(&sid("homer"), "claims")
+            .await
+            .unwrap()
+    );
+    log.inject(Fault::LostAcknowledgement).await;
+    assert!(
+        teachings
+            .first_contact(&sid("bart"), "mail", at(3))
+            .await
+            .is_err()
+    );
+    // The next call recovers from the log's tail and finds the lost commit.
+    assert!(
+        !teachings
+            .first_contact(&sid("bart"), "mail", at(4))
+            .await
+            .unwrap()
+    );
+    teachings.forget(&sid("marge")).await.unwrap();
+    assert!(!teachings.has_contact(&sid("marge"), "mail").await.unwrap());
+
+    let statements = seen.lock().unwrap().clone();
+    assert!(
+        statements
+            .iter()
+            .any(|s| s.contains("INSERT INTO event_log")),
+        "the proxy saw the log's writes: {statements:?}"
+    );
+    let offending: Vec<_> = statements.iter().filter(|s| reads_old_rows(s)).collect();
+    assert!(
+        offending.is_empty(),
+        "legacy reads after boot: {offending:?}"
+    );
+    assert_eq!(report.counts()[0].disagreements, 0);
+    drop(teachings);
+    drop(log);
+    server.stop().await;
+}
