@@ -50,6 +50,7 @@ pub enum Infra {
     Killed,
     NetworkFetch,
     TargetPruned,
+    NoOutput,
 }
 
 impl Infra {
@@ -60,6 +61,7 @@ impl Infra {
             Infra::Killed => "killed",
             Infra::NetworkFetch => "network-fetch",
             Infra::TargetPruned => "target-pruned",
+            Infra::NoOutput => "no-output",
         }
     }
 }
@@ -424,9 +426,18 @@ pub fn read(text: &str, exit_ok: bool, not_run: usize) -> Verdict {
     // What the lines before the first suite said: a build that ran out of disk.
     let preamble = parsed.preamble.iter().find_map(|line| infra_of(line));
     let red: Vec<Suite> = suites.into_iter().filter(Suite::red).collect();
-    let infra = red.iter().find_map(Suite::seen_infra).or(preamble);
+    // **A job that failed and wrote nothing is the runner's loss**, never a cancel:
+    // a cancelled job writes no file at all.
+    let silent_failure = text.trim().is_empty() && !exit_ok;
+    let infra = red
+        .iter()
+        .find_map(Suite::seen_infra)
+        .or(preamble)
+        .or(silent_failure.then_some(Infra::NoOutput));
     let code_red = red.iter().any(Suite::code_red);
-    let overall = if text.trim().is_empty() && red.is_empty() {
+    let overall = if silent_failure {
+        Overall::Infra
+    } else if text.trim().is_empty() && red.is_empty() {
         Overall::NoVerdict
     } else if code_red {
         Overall::Red
@@ -624,7 +635,7 @@ mod tests {
                 "report_touched_first"
             ]
         );
-        assert_eq!(verdict.red[0].failures.len(), 22, "{:?}", verdict.red[0]);
+        assert_eq!(verdict.red[0].failures.len(), 22, "{}", brief(&verdict));
         assert_eq!(verdict.red[1].failures.len(), 1);
         assert_eq!(verdict.red[2].failures.len(), 2);
         assert!(verdict.red.iter().all(|s| s.infra.is_none()));
@@ -689,7 +700,7 @@ mod tests {
     fn a_run_whose_only_red_suite_ran_out_of_disk_is_infra() {
         let only_disk = &DISK_FULL[DISK_FULL.find("     Running tests/user_stories").unwrap()..];
         let verdict = read(only_disk, false, 0);
-        assert_eq!(names(&verdict), ["user_stories"], "{only_disk}");
+        assert_eq!(names(&verdict), ["user_stories"], "{}", brief(&verdict));
         assert_eq!(verdict.overall, Overall::Infra);
         assert_eq!(verdict.infra, Some(Infra::DiskFull));
     }
@@ -857,7 +868,7 @@ mod tests {
         let text = include_str!("../tests/fixtures/timed-failures.txt");
         let verdict = read(text, false, 0);
         assert_eq!(verdict.overall, Overall::Red);
-        assert_eq!(verdict.red.len(), 1, "{:?}", verdict.red);
+        assert_eq!(verdict.red.len(), 1, "{}", brief(&verdict));
         assert_eq!(verdict.red[0].failed, 13);
         assert_eq!(verdict.red[0].failures.len(), 13);
     }
@@ -898,12 +909,29 @@ mod tests {
         }
     }
 
-    /// **A log with nothing in it proves nothing.**
+    /// **A log with nothing in it proves nothing, and a job that failed with no
+    /// text is the runner's loss.** A clean exit with no text is no verdict; a
+    /// failed one is infra of the class `no-output`, never a cancel.
     #[test]
-    fn an_empty_log_is_no_verdict_whatever_the_exit_status() {
+    fn an_empty_log_is_no_verdict_after_a_clean_exit_and_infra_after_a_failed_one() {
         assert_eq!(read("", true, 0).overall, Overall::NoVerdict);
-        assert_eq!(read("", false, 0).overall, Overall::NoVerdict);
         assert_eq!(read("\n\n", true, 0).overall, Overall::NoVerdict);
+        for text in ["", "\n\n"] {
+            let verdict = read(text, false, 0);
+            assert_eq!(verdict.overall, Overall::Infra);
+            assert_eq!(verdict.infra, Some(Infra::NoOutput));
+        }
+    }
+
+    /// **The names and counts of a verdict**, for an assertion message. A message
+    /// never prints a whole fixture: a failed run of these cases would carry the
+    /// fixture's machine reason, and the verdict of that run would read it as one.
+    fn brief(verdict: &Verdict) -> String {
+        verdict
+            .red
+            .iter()
+            .map(|suite| format!("{} {}/{}\n", suite.name, suite.failed, suite.failures.len()))
+            .collect()
     }
 
     /// **A build that did not compile is red, and not infra.**
