@@ -268,6 +268,80 @@ async fn a_search_after_a_write_finds_it_without_scanning_the_store() {
     );
 }
 
+/// **Hits whose text scores differ by float noise alone are served by the day,
+/// through the real index.** Two claims with the same words score alike, bit for bit,
+/// so the case states the noise it wants (the older claim scores a millionth higher)
+/// and the page must settle it: the newer claim comes first. Paired in one read with a
+/// claim that matches the word three times and is the oldest of the three, which a real
+/// gap in score keeps first, so a page that ignored the scores would not pass.
+#[tokio::test]
+async fn hits_whose_scores_differ_by_float_noise_alone_are_served_by_the_day() {
+    let (_fake, store, retrieval) = an_index_over_the_fake().await;
+    let (older, newer, stronger) = (
+        EntityId::person("person:alpha"),
+        EntityId::person("person:beta"),
+        EntityId::person("person:gamma"),
+    );
+    for (who, name, said, day) in [
+        (
+            &older,
+            "Alpha",
+            "keeps a pot of marmalade",
+            date(2026, 1, 5),
+        ),
+        (
+            &newer,
+            "Beta",
+            "keeps a pot of marmalade",
+            date(2026, 3, 15),
+        ),
+        (
+            &stronger,
+            "Gamma",
+            "marmalade marmalade marmalade",
+            date(2025, 1, 1),
+        ),
+    ] {
+        store
+            .add_entity(NewEntity::new(who.clone(), name, "user-named"))
+            .await
+            .expect("adds")
+            .written()
+            .expect("lands");
+        store
+            .capture(NewFact::about(who.clone(), said, day))
+            .await
+            .expect("captures")
+            .written()
+            .expect("lands");
+    }
+
+    // The days are encoded in calendar order: 2026-03-01 is 120_260_301.
+    let _noise = super::ranked::ScoreNoise::apply(|score, day| {
+        if day < 120_260_301 {
+            score * 1.000_001
+        } else {
+            score
+        }
+    });
+    let hits = retrieval
+        .search(&SearchQuery::text("marmalade"))
+        .await
+        .expect("search answers");
+    let order: Vec<&EntityId> = hits
+        .iter()
+        .filter_map(|hit| match hit {
+            Hit::Fact { subject, .. } => Some(&subject.id),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        order,
+        [&stronger, &newer, &older],
+        "the real gap leads, then the later day wins over a millionth of score: {hits:?}"
+    );
+}
+
 /// **A change the writes did not make is found, by a scan, while the fold holds
 /// no image.** A row staged past the writes stands for an edit made directly
 /// against the real tables. A second writer is not part of the design: once the

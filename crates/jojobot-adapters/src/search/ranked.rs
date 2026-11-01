@@ -8,6 +8,50 @@ use tantivy::{DocAddress, DocSet, SegmentReader};
 type Score = relevance::Rank;
 type RankedMatch = (Score, DocAddress, Payload);
 
+/// A noise a test asks for: the score and the day of the claim in, the score out.
+#[cfg(test)]
+type Noise = fn(f32, u64) -> f32;
+
+#[cfg(test)]
+thread_local! {
+    /// The float noise a test asks for on the text score of a document, by the day of
+    /// its claim.
+    static SCORE_NOISE: std::cell::Cell<Option<Noise>> = const { std::cell::Cell::new(None) };
+}
+
+/// **The text score, with the noise a test asked for.** The index scores two documents
+/// with the same words alike, bit for bit, so no case can get float noise out of it; a
+/// case states the noise it wants and the page must settle it. Without a test, the score
+/// is read as it is.
+#[cfg(test)]
+fn noised(score: f32, day: u64) -> f32 {
+    SCORE_NOISE.with(|noise| noise.get().map_or(score, |apply| apply(score, day)))
+}
+
+#[cfg(not(test))]
+fn noised(score: f32, _day: u64) -> f32 {
+    score
+}
+
+/// Applies `noise` to every text score on this thread until it is dropped.
+#[cfg(test)]
+pub(crate) struct ScoreNoise;
+
+#[cfg(test)]
+impl ScoreNoise {
+    pub(crate) fn apply(noise: Noise) -> ScoreNoise {
+        SCORE_NOISE.with(|held| held.set(Some(noise)));
+        ScoreNoise
+    }
+}
+
+#[cfg(test)]
+impl Drop for ScoreNoise {
+    fn drop(&mut self) {
+        SCORE_NOISE.with(|held| held.set(None));
+    }
+}
+
 impl FullTextIndex {
     /// Rank and count in the same index walk; only the bounded winners load payloads.
     fn collect(
@@ -100,11 +144,12 @@ impl FullTextIndex {
                     }
                 }
                 locations.sort_unstable_by_key(|(_, at)| *at);
+                let day_of_doc = day.get_val(doc);
                 relevance::rank(
                     priority.get_val(doc),
                     &locations,
-                    score,
-                    day.get_val(doc),
+                    noised(score, day_of_doc),
+                    day_of_doc,
                     clock_chosen,
                 )
             }
