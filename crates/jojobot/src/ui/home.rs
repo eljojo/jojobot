@@ -44,19 +44,80 @@ impl Sort {
     }
 }
 
-/// **When each thing was last written**: the newest moment any claim on it was
-/// taken in. A thing nobody has written a claim on has none.
-async fn last_writes(state: &AppState) -> Result<HashMap<EntityId, Timestamp>, MemoryError> {
-    Ok(state
-        .memory
-        .scan()
-        .await?
-        .into_iter()
-        .filter_map(|doc| {
-            let newest = doc.facts.iter().filter_map(|fact| fact.inserted_at).max()?;
-            Some((doc.entity?.id, newest))
-        })
-        .collect())
+/// **What recall counts for every thing that stands**: the newest write of any
+/// kind on it (`written_at`) and how much stands under it (`children`). Both come
+/// from one counted question, so the page works out neither.
+struct Counted {
+    written: HashMap<EntityId, Timestamp>,
+    inside: HashMap<EntityId, Inside>,
+}
+
+/// **One counted question for each selection**, merged: a question with no
+/// selection is refused, so a page names the roots and the kinds it lists.
+async fn counted(
+    queries: &jojobot_query_api::QueryHandle,
+    selections: Vec<jojobot_query_api::Selection>,
+) -> Result<Counted, MemoryError> {
+    let mut counted = Counted {
+        written: HashMap::new(),
+        inside: HashMap::new(),
+    };
+    for select in selections {
+        counted.merge(counted_by(queries, select).await?);
+    }
+    Ok(counted)
+}
+
+impl Counted {
+    fn merge(&mut self, other: Counted) {
+        self.written.extend(other.written);
+        self.inside.extend(other.inside);
+    }
+}
+
+async fn counted_by(
+    queries: &jojobot_query_api::QueryHandle,
+    select: jojobot_query_api::Selection,
+) -> Result<Counted, MemoryError> {
+    let asked = jojobot_query_api::Question::new(
+        select,
+        jojobot_query_api::Include {
+            facts: false,
+            prose: false,
+            stood_for: false,
+            counted: true,
+            status: None,
+        },
+        None,
+        None,
+    );
+    let answer = queries
+        .ask(&jojobot_domain::actor::Actor::Operator, asked)
+        .await
+        .map_err(|failed| match failed {
+            jojobot_query_api::Failed::Selection(error)
+            | jojobot_query_api::Failed::Readiness(error)
+            | jojobot_query_api::Failed::Preparation(_, error) => error,
+        })?;
+    let mut counted = Counted {
+        written: HashMap::new(),
+        inside: HashMap::new(),
+    };
+    for object in answer.selected.objects {
+        if let Some(newest) = object.ages.and_then(|ages| ages.newest) {
+            counted.written.insert(object.entity.id.clone(), newest);
+        }
+        if let Some(children) = object.children {
+            counted.inside.insert(
+                object.entity.id,
+                Inside {
+                    direct: children.live,
+                    all: children.subtree,
+                },
+            );
+        }
+    }
+    Ok(counted)
 }
 
 /// **The things that stand**: not archived, not folded into another. Every
@@ -126,7 +187,7 @@ fn ordered<'a>(
 fn listing(
     id: &str,
     things: &[&Entity],
-    inside: &HashMap<&EntityId, Inside>,
+    inside: &HashMap<EntityId, Inside>,
     written: &HashMap<EntityId, Timestamp>,
     by_id: &HashMap<&EntityId, &Entity>,
     day_of: DayOf<'_>,
@@ -181,29 +242,6 @@ impl Inside {
             self.direct.to_string()
         }
     }
-}
-
-/// Each thing's count of what stands under it. A thing counts once for every
-/// ancestor, and a loop in the parents is walked once.
-fn inside_of<'a>(standing: &[&'a Entity]) -> HashMap<&'a EntityId, Inside> {
-    let by_id: HashMap<&EntityId, &Entity> = standing.iter().map(|e| (&e.id, *e)).collect();
-    let mut inside: HashMap<&EntityId, Inside> = HashMap::new();
-    for entity in standing {
-        let Some(parent) = &entity.parent else {
-            continue;
-        };
-        inside.entry(parent).or_default().direct += 1;
-        let mut seen: std::collections::HashSet<&EntityId> = std::collections::HashSet::new();
-        let mut above = Some(parent);
-        while let Some(ancestor) = above {
-            if !seen.insert(ancestor) {
-                break;
-            }
-            inside.entry(ancestor).or_default().all += 1;
-            above = by_id.get(ancestor).and_then(|e| e.parent.as_ref());
-        }
-    }
-    inside
 }
 
 /// The sort links for a listing's heading.
@@ -295,10 +333,8 @@ pub async fn body(
     entities: &[Entity],
     sort: &Sort,
 ) -> Result<String, MemoryError> {
-    let written = last_writes(state).await?;
     let by_id: HashMap<&EntityId, &Entity> = entities.iter().map(|e| (&e.id, e)).collect();
     let standing = standing(entities);
-    let inside = inside_of(&standing);
 
     let day_of = day_of_in_the_instance_zone(state, queries).await;
     let mut kinds: BTreeMap<&str, Vec<&Entity>> = BTreeMap::new();
@@ -308,6 +344,15 @@ pub async fn body(
             .or_default()
             .push(entity);
     }
+    let mut asked = vec![jojobot_query_api::Selection {
+        roots: true,
+        ..Default::default()
+    }];
+    asked.extend(kinds.values().map(|members| jojobot_query_api::Selection {
+        kind: Some(members[0].kind),
+        ..Default::default()
+    }));
+    let Counted { written, inside } = counted(queries, asked).await?;
     let mut boxes: Vec<String> = kinds
         .iter()
         .map(|(kind, members)| kind_box(kind, members, &written, &by_id, &day_of))
@@ -358,11 +403,18 @@ pub(crate) async fn kind_page(
     if members.is_empty() {
         return pages::not_found();
     }
-    let written = match last_writes(&state).await {
-        Ok(written) => written,
+    let Counted { written, inside } = match counted(
+        &queries,
+        vec![jojobot_query_api::Selection {
+            kind: Some(members[0].kind),
+            ..Default::default()
+        }],
+    )
+    .await
+    {
+        Ok(counted) => counted,
         Err(err) => return pages::unreadable(err),
     };
-    let inside = inside_of(&standing);
     let day_of = day_of_in_the_instance_zone(&state, &queries).await;
     let here = format!("{KIND_PATH}{}/", pages::escape(&kind));
     let members = ordered(members, &written, sort.by_write());
