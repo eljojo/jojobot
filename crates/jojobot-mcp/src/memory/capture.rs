@@ -257,9 +257,11 @@ pub struct CaptureArgs {
     /// `recorded_by`) is never a property of the thing and is refused here by name.
     /// The keys that make a thing fall due act on it only when sent here. A list
     /// key (`depends_on`) changes by its items with `sets_add` and `sets_remove`:
-    /// its whole value sent here replaces what another session added. A key
-    /// comes off the thing again with `update_fact`'s `clear_fields` on the
-    /// claim that carries it. Setting `status` to `now` on work your bot owns
+    /// its whole value sent here replaces what another session added. A blank
+    /// value takes its key off the thing, and so does `update_fact`'s
+    /// `clear_fields` on the claim that carries it. A view's declaration keys
+    /// (`selects`, `answers_type`, `follow_shape`, `follow_relation`,
+    /// `follow_direction`, `follow_fits_type`) keep a blank. Setting `status` to `now` on work your bot owns
     /// also points your bot's `working_on` at it.
     /// A write whose status words could not be read from `topic:instance` still lands, and its receipt carries `instance_unread`, naming under `not_worked_out` what it left undone. A note the receipt would have carried and a failed read kept from it is named the same way, under `reads_left`.
     ///

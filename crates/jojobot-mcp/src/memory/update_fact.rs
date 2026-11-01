@@ -214,10 +214,9 @@ pub struct UpdateFactArgs {
     /// `sets_add` in one call, the removals are applied first.
     #[serde(default)]
     pub(crate) sets_remove: Option<std::collections::BTreeMap<String, String>>,
-    /// **Fields to remove**, by key. Its own argument rather than an empty
-    /// value in `fields`: an empty value is a value somebody wrote, and
-    /// setting a key to nothing and taking the key off the claim are two
-    /// different edits.
+    /// **Fields to remove**, by key. A blank value in `fields` takes the key off
+    /// the thing too, but the claim keeps the blank; this argument takes the key
+    /// off the claim as well. A view's declaration keys keep a blank.
     ///
     /// **It takes the key off the thing as well as off the claim**, whichever
     /// bag holds it, so this is the way to take a key off a thing. Send it to

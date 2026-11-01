@@ -886,9 +886,11 @@ the claim (`read_from`, `read_ref`, `starred`, `subject`, `purpose`,
 `recorded_by`) is never a property of the thing and is refused here by name.
 The keys that make a thing fall due act on it only when sent here. A list
 key (`depends_on`) changes by its items with `sets_add` and `sets_remove`:
-its whole value sent here replaces what another session added. A key
-comes off the thing again with `update_fact`'s `clear_fields` on the
-claim that carries it. Setting `status` to `now` on work your bot owns
+its whole value sent here replaces what another session added. A blank
+value takes its key off the thing, and so does `update_fact`'s
+`clear_fields` on the claim that carries it. A view's declaration keys
+(`selects`, `answers_type`, `follow_shape`, `follow_relation`,
+`follow_direction`, `follow_fits_type`) keep a blank. Setting `status` to `now` on work your bot owns
 also points your bot's `working_on` at it.
 A write whose status words could not be read from `topic:instance` still lands, and its receipt carries `instance_unread`, naming under `not_worked_out` what it left undone. A note the receipt would have carried and a failed read kept from it is named the same way, under `reads_left`.
 
@@ -2878,7 +2880,9 @@ the other question the same data answers — every time the key was
 written — and **the count of the writes is the answer to "how many
 times"**. Ask it of `weight` and you get what a thing has weighed over
 the years; ask it of a key a sitting records once each time it happens
-and you get how often.
+and you get how often. A write that took the key off the thing comes
+back with no value; a blank write comes back with the blank as its value,
+and it took the key off the thing all the same.
 
 Omit it and no history comes back at all, which is the normal read: a
 caller who wants the value wants one value. A key nobody has written
@@ -4705,10 +4709,9 @@ un-retract.
 #### `update_fact` — argument `/inputSchema.clear_fields`
 
 ```text
-**Fields to remove**, by key. Its own argument rather than an empty
-value in `fields`: an empty value is a value somebody wrote, and
-setting a key to nothing and taking the key off the claim are two
-different edits.
+**Fields to remove**, by key. A blank value in `fields` takes the key off
+the thing too, but the claim keeps the blank; this argument takes the key
+off the claim as well. A view's declaration keys keep a blank.
 
 **It takes the key off the thing as well as off the claim**, whichever
 bag holds it, so this is the way to take a key off a thing. Send it to

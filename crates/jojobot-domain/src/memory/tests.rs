@@ -1437,6 +1437,26 @@ fn a_folded_backing_carries_the_app_that_recorded_the_value() {
     assert_eq!(backing["unit"].recorded_by, None);
 }
 
+/// **A blank write takes the key off, and its backing goes with the value.** The
+/// fold holds no value for a blank, so the backing names no source for it: one
+/// rule, asked of the same function. A view's declaration key is the exception
+/// and keeps the blank it was given, so it keeps its backing.
+#[test]
+fn a_blank_write_takes_the_backing_off_with_the_key() {
+    let backing = folded_backing(
+        &[
+            wrote("mood", 1, Some("calm")),
+            wrote("mood", 2, Some("  ")),
+            wrote("tone", 1, Some("flat")),
+            wrote("selects", 1, Some("")),
+        ],
+        &[],
+    );
+    assert!(!backing.contains_key("mood"), "{backing:?}");
+    assert!(backing.contains_key("tone"), "{backing:?}");
+    assert!(backing.contains_key("selects"), "{backing:?}");
+}
+
 /// **Only the build declares a key that describes its record** (rule 360). A
 /// type a caller declares is refused over it, and the same field in a shipped
 /// type is taken: a bot that could declare it could make any key stop folding

@@ -4699,8 +4699,9 @@ pub fn folded_backing(
             backing.remove(&write.key);
             continue;
         }
-        match &write.value {
-            // A clear is a write, and it takes the backing off with the value.
+        match types::held_value(write) {
+            // A clear is a write, and so is a blank: each takes the backing off
+            // with the value, as the fold takes the key off.
             None => {
                 backing.remove(&write.key);
             }

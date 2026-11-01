@@ -533,7 +533,9 @@ pub struct RecallArgs {
     /// written — and **the count of the writes is the answer to "how many
     /// times"**. Ask it of `weight` and you get what a thing has weighed over
     /// the years; ask it of a key a sitting records once each time it happens
-    /// and you get how often.
+    /// and you get how often. A write that took the key off the thing comes
+    /// back with no value; a blank write comes back with the blank as its value,
+    /// and it took the key off the thing all the same.
     ///
     /// Omit it and no history comes back at all, which is the normal read: a
     /// caller who wants the value wants one value. A key nobody has written

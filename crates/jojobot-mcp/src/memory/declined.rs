@@ -1125,10 +1125,9 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                 "Nothing was written: {e}. Send '{missing}' in `sets` in the same call, as a \
                  number of days, or '{}' in `sets`, as a calendar rule such as \
                  FREQ=MONTHLY;BYMONTHDAY=1 (the rhythms skill has examples). To switch the \
-                 schedule off, call update_fact with clear_fields naming '{}': it is the one \
-                 verb that clears a key, and on capture, add_entity or update_entity the way \
-                 through is to send the cadence. A loop with no schedule at all is allowed and \
-                 needs neither.",
+                 schedule off, call update_fact with clear_fields naming '{}'. On capture, \
+                 add_entity or update_entity the way through is to send the cadence. A loop \
+                 with no schedule at all is allowed and needs neither.",
                 jojobot_domain::attention::RRULE,
                 jojobot_domain::attention::ADVANCES_FROM,
             ),
