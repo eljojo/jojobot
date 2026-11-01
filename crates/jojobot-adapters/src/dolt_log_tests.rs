@@ -312,3 +312,24 @@ async fn the_marks_come_back_with_their_times() {
     drop(log);
     server.stop().await;
 }
+
+/// **A stored time that cannot be read names its row.** The import never invents a
+/// time, so the boot stops; the error says which run and domain to repair.
+#[tokio::test]
+async fn an_unreadable_taught_at_names_its_run_and_domain() {
+    let (_scratch, mut server, pool, log) = fixture().await;
+    sqlx::query(
+        "INSERT INTO session_teaching (sid, domain, taught_at) VALUES ('homer', 'claims', 'not a time')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let said = crate::dolt::teaching::DoltTeachings::open(pool.clone())
+        .marks()
+        .await
+        .expect_err("a time that does not parse stops the import")
+        .to_string();
+    assert!(said.contains("homer") && said.contains("claims"), "{said}");
+    drop(log);
+    server.stop().await;
+}

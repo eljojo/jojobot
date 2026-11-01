@@ -40,7 +40,10 @@ impl DoltTeachings {
         rows.into_iter()
             .map(|(sid, domain, taught_at)| {
                 let taught_at = taught_at.parse().map_err(|e| {
-                    TeachingError::Store(format!("a stored teaching time is unreadable: {e}"))
+                    TeachingError::Store(format!(
+                        "the stored teaching time of run {sid:?} for domain {domain:?} is \
+                         unreadable, so the teaching rows cannot be imported: {e}"
+                    ))
                 })?;
                 Ok(crate::teaching_log::Mark {
                     sid: Sid(sid),
