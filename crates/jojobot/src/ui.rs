@@ -440,6 +440,41 @@ mod tests {
         );
     }
 
+    /// The `Origin` must equal the configured origin exactly; with none, the
+    /// `Referer` must sit UNDER it, so a longer port or host that merely starts
+    /// like the origin is another origin; with neither, the request is refused.
+    #[test]
+    fn a_request_is_ours_by_its_origin_or_else_by_a_referer_under_it() {
+        let ui = a_ui();
+        let sent = |origin: Option<&str>, referer: Option<&str>| {
+            let mut headers = axum::http::HeaderMap::new();
+            if let Some(origin) = origin {
+                headers.insert(header::ORIGIN, origin.parse().unwrap());
+            }
+            if let Some(referer) = referer {
+                headers.insert(header::REFERER, referer.parse().unwrap());
+            }
+            ui.same_origin(&headers)
+        };
+        assert!(sent(Some("https://jojobot.test"), None));
+        assert!(!sent(Some("https://elsewhere.example"), None));
+        assert!(!sent(Some("https://jojobot.test.elsewhere.example"), None));
+        // An Origin that is present decides alone: a good Referer cannot rescue it.
+        assert!(!sent(
+            Some("https://elsewhere.example"),
+            Some("https://jojobot.test/")
+        ));
+        assert!(sent(None, Some("https://jojobot.test")));
+        assert!(sent(None, Some("https://jojobot.test/person:lisa/")));
+        assert!(!sent(None, Some("https://jojobot.test:8443/person:lisa/")));
+        assert!(!sent(
+            None,
+            Some("https://jojobot.test.elsewhere.example/person:lisa/")
+        ));
+        assert!(!sent(None, Some("https://elsewhere.example/")));
+        assert!(!sent(None, None));
+    }
+
     /// A UI whose issuer is never reached — every assertion below stops at the
     /// pending table, which is filled before a browser goes anywhere.
     fn a_ui() -> Ui {
