@@ -23,6 +23,10 @@ macro_rules! deaths_beyond_the_last_release {
 }
 
 // Each named pair restores the deployed fixture and interrupts its new migration.
+// Once the deployed ledger holds every migration, the pairs below are removed and
+// `deaths_beyond_the_last_release!` is invoked with none; nothing then calls this
+// function, and the allow keeps that release from failing on dead code.
+#[allow(dead_code)]
 async fn a_death_inside_one_migration(version: &str, how: Interruption) {
     use jojobot_adapters::dolt::migrate::{leave_interrupted, shipped_versions};
     assert!(
