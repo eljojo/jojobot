@@ -214,26 +214,24 @@ async fn did(room: &Surface, sid: &str, verb: &str, mut args: serde_json::Value)
     room.call(verb, args).await
 }
 
-/// The address of the record on `subject` whose content carries `needle` —
-/// the same helper `year_room.rs` uses to find a furniture record's own
-/// address before editing it.
-async fn address_of(room: &Surface, subject: &str, needle: &str) -> String {
+/// The keys that make the piano's loop a schedule.
+const PIANO_SCHEDULE: [&str; 3] = ["advances_from", "counts_from", "cadence_days"];
+
+/// The address of the claim that backs each of `keys` on `subject`, read from
+/// the thing's own backing.
+async fn backing_of_each(room: &Surface, subject: &str, keys: [&str; 3]) -> Vec<(String, String)> {
     let read = room
-        .call("recall", json!({"subject": subject, "facts": true}))
+        .call("recall", json!({"subject": subject, "backing": true}))
         .await;
     let parsed: serde_json::Value = serde_json::from_str(&read).expect("the read is json");
-    parsed["objects"][0]["facts"]
-        .as_array()
-        .expect("the records behind the fields")
-        .iter()
-        .find(|fact| {
-            fact["content"]
+    keys.iter()
+        .map(|key| {
+            let claim = parsed["objects"][0]["fields_backing"][key]["claim"]
                 .as_str()
-                .is_some_and(|said| said.contains(needle))
+                .unwrap_or_else(|| panic!("no claim backs {key} on {subject}: {read}"));
+            (format!("{subject}#{claim}"), key.to_string())
         })
-        .and_then(|fact| fact["address"].as_str())
-        .unwrap_or_else(|| panic!("no record on {subject} says {needle:?}: {read}"))
-        .to_string()
+        .collect()
 }
 
 async fn archive(surface: &Surface, sid: &str, handle: &str, reason: &str) {
@@ -1565,17 +1563,21 @@ async fn later_december(room: &Surface, sid: &str) {
     // leaves the thing "half-built" — matched, but `schedule_of` fails to
     // read it — which reads as `Due::Unreadable`, loudly OVERDUE, worse than
     // before. This is the exact trap the room's own December 15 lock names.
-    // All three have to go together for the carrier to stop matching at all
-    // and fall through to `Due::Never`.
-    let piano_address =
-        address_of(room, "rhythm:sit-at-the-piano", "at least once a fortnight").await;
-    did(
-        room,
-        sid,
-        "update_fact",
-        json!({"address": piano_address, "clear_fields": ["cadence_days", "advances_from", "counts_from"]}),
-    )
-    .await;
+    // All three have to go for the carrier to stop matching at all, the cadence
+    // last so no step leaves a schedule without one, and fall through to
+    // `Due::Never`.
+    // **A clear goes to the claim that backs the key**: the piano's check-ins
+    // wrote newer values of these keys, so the furnished record is not the one
+    // the thing holds, and a clear sent to it is refused.
+    for (address, key) in backing_of_each(room, "rhythm:sit-at-the-piano", PIANO_SCHEDULE).await {
+        did(
+            room,
+            sid,
+            "update_fact",
+            json!({"address": address, "clear_fields": [key]}),
+        )
+        .await;
+    }
     archive(room, sid, "person:hugo", "not real to me").await;
 }
 

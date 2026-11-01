@@ -997,20 +997,34 @@ const PIANO_CADENCE_FRAGMENT: &str = "the piano's loop still carries a cadence";
 /// the schedule rather than dropping the loop would write it: the record the
 /// room furnished holds the cadence, so that is the record edited.
 async fn clear_the_piano_cadence(surface: &Surface, sid: &str) {
-    let answer = as_the_occupant(
-        surface,
-        sid,
-        "update_fact",
-        json!({
-            "address": "rhythm:sit-at-the-piano#f1",
-            "clear_fields": ["cadence_days", "advances_from", "counts_from"],
-        }),
-    )
-    .await;
-    assert!(
-        !answer.contains("\"status\":\"blocked\""),
-        "the sitting's own write was refused: {answer}"
-    );
+    // A clear goes to the claim that backing names for the key, the cadence
+    // last so no step leaves a schedule without one.
+    let read = surface
+        .call(
+            "recall",
+            json!({"subject": "rhythm:sit-at-the-piano", "backing": true}),
+        )
+        .await;
+    let parsed: serde_json::Value = serde_json::from_str(&read).expect("the read is json");
+    for key in ["advances_from", "counts_from", "cadence_days"] {
+        let claim = parsed["objects"][0]["fields_backing"][key]["claim"]
+            .as_str()
+            .unwrap_or_else(|| panic!("no claim backs {key}: {read}"));
+        let answer = as_the_occupant(
+            surface,
+            sid,
+            "update_fact",
+            json!({
+                "address": format!("rhythm:sit-at-the-piano#{claim}"),
+                "clear_fields": [key],
+            }),
+        )
+        .await;
+        assert!(
+            !answer.contains("\"status\":\"blocked\""),
+            "the sitting's own write was refused: {answer}"
+        );
+    }
 }
 
 #[tokio::test]
