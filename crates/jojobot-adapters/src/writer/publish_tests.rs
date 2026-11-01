@@ -291,3 +291,72 @@ async fn two_submitted_jobs_never_run_at_the_same_time() {
         "two jobs were in flight together"
     );
 }
+
+/// Logs when a delivery starts and ends, and suspends between the two for
+/// several polls, where the index's own subscriber suspends on its re-reads.
+struct Suspending(Arc<Mutex<Vec<String>>>);
+
+#[async_trait]
+impl Subscriber for Suspending {
+    async fn changed(&self, changes: &[Change]) {
+        let Some(Change::MailPosition(n)) = changes.first() else {
+            return;
+        };
+        self.0.lock().expect("log").push(format!("start {n}"));
+        for _ in 0..5 {
+            tokio::task::yield_now().await;
+        }
+        self.0.lock().expect("log").push(format!("end {n}"));
+    }
+}
+
+/// **A delivery that suspends still ends before its caller is answered and before
+/// the next job starts.** The first job publishes and returns; the second is
+/// submitted while the first delivery is suspended. The log must read the whole
+/// first delivery, then the second job, then the second delivery, and the first
+/// caller must see its delivery ended when `run` returns.
+#[tokio::test]
+async fn a_delivery_that_suspends_ends_before_the_caller_is_answered_and_the_next_job_starts() {
+    let writer = Writer::default();
+    let log = Arc::new(Mutex::new(Vec::new()));
+    writer.subscribe(Arc::new(Suspending(log.clone())));
+
+    let first = tokio::spawn({
+        let (writer, log) = (writer.clone(), log.clone());
+        async move {
+            let inner = writer.clone();
+            writer
+                .run(async move { inner.publish(Change::MailPosition(1)) })
+                .await;
+            log.lock().expect("log").clone()
+        }
+    });
+    while writer.submitted_jobs() < 1 {
+        tokio::task::yield_now().await;
+    }
+    let second = tokio::spawn({
+        let (writer, log) = (writer.clone(), log.clone());
+        async move {
+            let inner = writer.clone();
+            writer
+                .run(async move {
+                    log.lock().expect("log").push("job 2".into());
+                    inner.publish(Change::MailPosition(2));
+                })
+                .await;
+        }
+    });
+    let seen_by_first_caller = first.await.expect("first job");
+    second.await.expect("second job");
+
+    assert_eq!(
+        seen_by_first_caller[..2],
+        ["start 1", "end 1"],
+        "the first caller was answered before its delivery ended"
+    );
+    assert_eq!(
+        *log.lock().expect("log"),
+        ["start 1", "end 1", "job 2", "start 2", "end 2"],
+        "the second job started, or its delivery began, inside the first delivery"
+    );
+}
