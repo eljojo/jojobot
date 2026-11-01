@@ -161,11 +161,14 @@ pub(crate) fn off_the_tree(in_force: &[Fact]) -> Option<serde_json::Value> {
     (count > 0).then(|| {
         serde_json::json!({
             "count": count,
-            "warning": "Rules in force that name no purpose branch: this bot is not fully on \
-                        its rules tree, and its charter's branches cannot load them.",
-            "how_to_fix": "Give each of these rules a `purpose` naming the branch its charter \
-                           loads it by. A bot whose charter names no branches needs a root \
-                           charter first: ask whoever writes its charter.",
+            "warning": "Rules in force that name no `purpose`: a charter loads rules by the \
+                        purposes it names, so these are never loaded by it.",
+            "how_to_fix": "List them with recall on this bot, facts true, status active: the \
+                           unfiled ones carry no `purpose`. Give each a `purpose` with \
+                           update_fact, fields {purpose: the area it covers}; start_here skill: \
+                           organizing teaches purposes and the index rule that names them. A bot \
+                           whose charter names no purposes to load needs its charter changed: \
+                           ask whoever writes it.",
         })
     })
 }

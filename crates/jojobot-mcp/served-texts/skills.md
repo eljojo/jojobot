@@ -636,8 +636,10 @@ things: the rules that bind on every turn, and one index rule that says where
 the rest are and when to load them.
 
 Give every other rule a `purpose`, a short name for the area it covers, and
-start its words with the moment it applies. Your boot shows the start of each
-rule it did not carry, so the moment is what you see:
+start its words with the moment it applies. The purpose is what a charter loads
+a rule by: a rule with none is never reached by the purposes the charter names.
+Your boot shows the start of each rule it did not carry, so the moment is what
+you see:
 
     capture  subject: "bot:gamma"  content: "Before you write to the operator, give every clock in the operator's own zone"  fields: {"purpose": "operator"}
 

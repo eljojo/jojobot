@@ -77,6 +77,19 @@ async fn off_the_tree_rides_the_boot_of_a_bot_with_unfiled_rules() {
             "{key} is one readable line: {identity}"
         );
     }
+    // **The fix names what a bot can reach**: the skill that teaches filing, and
+    // the call that lists the rules the count means.
+    let fix = identity["attention_rules_off_the_tree"]["how_to_fix"]
+        .as_str()
+        .expect("how_to_fix is text");
+    assert!(
+        fix.contains("organizing") && fix.contains("recall"),
+        "the fix names the skill and the call: {fix}"
+    );
+    assert!(
+        !fix.contains("root"),
+        "the fix speaks no word the surface never teaches: {fix}"
+    );
 }
 
 #[tokio::test]

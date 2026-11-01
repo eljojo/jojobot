@@ -402,7 +402,7 @@ async fn every_full_refusal_names_the_organizing_skill() {
     assert!(listed.contains(&"organizing"), "{listed:?}");
     let organizing = body_of(&story, "organizing").await;
     assert!(organizing.starts_with("# organizing\n"), "{organizing}");
-    assert_eq!(organizing.len(), 4888, "the shipped text, whole");
+    assert_eq!(organizing.len(), 5004, "the shipped text, whole");
 
     let names_it = |refusal: &Value| {
         assert!(

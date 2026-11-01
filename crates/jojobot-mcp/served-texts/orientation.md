@@ -439,14 +439,15 @@ the `kind` argument of add_entity lists the kinds you can create
 #### Named boot with unfiled rules — `.identity.attention_rules_off_the_tree.warning`
 
 ```text
-Rules in force that name no purpose branch: this bot is not fully on its rules tree, and its charter's branches cannot load them.
+Rules in force that name no `purpose`: a charter loads rules by the purposes it names, so these are never loaded by it.
 ```
 
 #### Named boot with unfiled rules — `.identity.attention_rules_off_the_tree.how_to_fix`
 
 ```text
-Give each of these rules a `purpose` naming the branch its charter loads it by.
-A bot whose charter names no branches needs a root charter first: ask whoever writes its charter.
+List them with recall on this bot, facts true, status active: the unfiled ones carry no `purpose`.
+Give each a `purpose` with update_fact, fields {purpose: the area it covers}; start_here skill: organizing teaches purposes and the index rule that names them.
+A bot whose charter names no purposes to load needs its charter changed: ask whoever writes it.
 ```
 
 ### Unseated rule whose label exceeds one line
