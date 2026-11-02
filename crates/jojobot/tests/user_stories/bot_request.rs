@@ -196,6 +196,52 @@ async fn a_manager_asks_for_a_bot_and_only_its_app_reports_on_it() {
     story.finish().await;
 }
 
+/// **Taking a spec key off a request changes the spec, so it raises the
+/// generation, and no one takes the generation off.** The app reconciles on the
+/// generation, so a change it cannot see would leave the bot unchanged.
+#[tokio::test]
+async fn clearing_a_spec_key_raises_the_generation_and_the_generation_stays() {
+    let story = Story::begin("bot:marge").await;
+    let marge = story.session().await;
+    marge
+        .call(
+            "add_entity",
+            json!({"kind": "bot", "handle": "homer", "name": "Homer",
+                   "source": "user-named", "sets": {"reports_to": "bot:marge"}}),
+        )
+        .await;
+    marge.add("machine:theta", "Theta").await;
+    let created = marge
+        .call("add_entity", creating(spec("bot:homer", "machine:theta")))
+        .await;
+    let address = created.field("address");
+    let generation = || async {
+        let read = marge
+            .call("recall", json!({"subject": "bot-request:alpha"}))
+            .await;
+        read.json()["objects"][0]["fields"]["generation"].clone()
+    };
+    assert_eq!(generation().await, "1");
+
+    marge
+        .call(
+            "update_fact",
+            json!({"address": &address, "clear_fields": ["machine"]}),
+        )
+        .await;
+    assert_eq!(generation().await, "2", "a cleared spec key is a change");
+
+    marge
+        .refused(
+            "update_fact",
+            json!({"address": &address, "clear_fields": ["generation"]}),
+        )
+        .await
+        .says("\"wrote\":false");
+    assert_eq!(generation().await, "2", "the generation is still held");
+    story.finish().await;
+}
+
 /// **A manager sends a `reports_to` beside the target, and the target's own
 /// chain still judges the request.** Marge manages homer and not lisa. She names
 /// homer as the manager and lisa as the target, so the request is asked for a

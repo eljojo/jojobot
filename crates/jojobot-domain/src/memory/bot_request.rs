@@ -117,14 +117,19 @@ pub fn next_generation(
     subject: &super::EntityId,
     held: &std::collections::BTreeMap<String, String>,
     written: &std::collections::BTreeMap<String, String>,
+    cleared: &[String],
 ) -> Option<String> {
     if !is_request(subject) {
         return None;
     }
     let changes = SPEC_KEYS.iter().any(|key| {
-        written
+        let sets_another = written
             .get(*key)
-            .is_some_and(|value| held.get(*key).map(|now| now.trim()) != Some(value.trim()))
+            .is_some_and(|value| held.get(*key).map(|now| now.trim()) != Some(value.trim()));
+        // A spec key taken off while the request holds a value for it is a change too.
+        let takes_off = cleared.iter().any(|gone| gone == key)
+            && held.get(*key).is_some_and(|now| !now.trim().is_empty());
+        sets_another || takes_off
     });
     changes.then(|| {
         let now = held

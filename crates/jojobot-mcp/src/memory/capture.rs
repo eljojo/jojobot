@@ -1343,9 +1343,12 @@ impl Jojobot {
                 Ok(held) => held,
                 Err(e) => return memory_declined("capture", e).map(Err),
             };
-            if let Some(next) =
-                jojobot_domain::memory::bot_request::next_generation(&subject, &held, &reaching)
-            {
+            if let Some(next) = jojobot_domain::memory::bot_request::next_generation(
+                &subject,
+                &held,
+                &reaching,
+                &[],
+            ) {
                 fields.insert(
                     jojobot_domain::memory::bot_request::GENERATION.to_string(),
                     next,

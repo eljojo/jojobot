@@ -402,7 +402,10 @@ impl Jojobot {
                         Err(e) => return memory_declined("update_entity", e),
                     };
                     if let Some(next) = jojobot_domain::memory::bot_request::next_generation(
-                        &handle, &held, &fields,
+                        &handle,
+                        &held,
+                        &fields,
+                        &[],
                     ) {
                         fields.insert(
                             jojobot_domain::memory::bot_request::GENERATION.to_string(),

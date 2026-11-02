@@ -328,6 +328,7 @@ impl Jojobot {
                     &creating,
                     &Default::default(),
                     &fields,
+                    &[],
                 ) {
                     fields.insert(
                         jojobot_domain::memory::bot_request::GENERATION.to_string(),

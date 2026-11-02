@@ -719,8 +719,16 @@ impl Jojobot {
         // copy is refused here, on the key alone.
         if jojobot_domain::memory::bot_request::is_request(&address.home) {
             let generation = jojobot_domain::memory::bot_request::GENERATION;
-            if let Some(sent) = fields.get(generation) {
-                let own = [(generation.to_string(), sent.clone())].into();
+            // **A clear of the generation is a write of it**: the next spec write
+            // would start the count again.
+            let sent = fields.get(generation).cloned().or_else(|| {
+                cleared
+                    .iter()
+                    .any(|key| key == generation)
+                    .then(String::new)
+            });
+            if let Some(sent) = sent {
+                let own = [(generation.to_string(), sent)].into();
                 if let Some(refused) = self
                     .refuses_an_unlicensed_key(
                         "update_fact",
@@ -742,6 +750,7 @@ impl Jojobot {
                 &address.home,
                 &held,
                 &reaching,
+                &cleared,
             ) {
                 fields.insert(generation.to_string(), next);
                 derived.insert(generation.to_string());
