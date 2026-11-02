@@ -15,7 +15,7 @@ case " $* " in
   *" --list "*) echo 'some::test::name: test'; exit 0 ;;
 esac
 case "$1" in
-  test) echo 'test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s'; exit 0 ;;
+  test) echo "${SCCACHE_SERVER_UDS:-unset}" >> "$(dirname "$0")/child-uds"; echo 'test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s'; exit 0 ;;
   *) exit 0 ;;
 esac
 "#;
@@ -35,7 +35,9 @@ fn stand_in(dir: &std::path::Path, before: &str, after: &str) -> std::path::Path
     let path = dir.join("sccache");
     let script = format!(
         r#"#!/bin/sh
+echo "$* uds=${{SCCACHE_SERVER_UDS:-unset}}" >> "$(dirname "$0")/calls"
 case " $* " in
+  *" --stop-server "*) exit 0 ;;
   *" --show-stats --stats-format json "*) ;;
   *) echo "unexpected arguments: $*" >&2; exit 64 ;;
 esac
@@ -80,7 +82,8 @@ fn run_check(dir: &std::path::Path, sccache: Option<&std::path::Path>) -> (bool,
         .env("TMPDIR", dir)
         .env("CARGO", &cargo)
         .env("BAR_HISTORY_DIR", dir.join("history"))
-        .env_remove("JOJOBOT_SCCACHE");
+        .env_remove("JOJOBOT_SCCACHE")
+        .env_remove("SCCACHE_SERVER_UDS");
     if let Some(path) = sccache {
         command.env("JOJOBOT_SCCACHE", path);
     }
@@ -151,6 +154,88 @@ fn sccache_that_cannot_answer_does_not_move_the_exit_code() {
     assert!(green, "{stdout}");
     assert!(
         sccache_line(&stdout).starts_with("sccache: hit rate not read"),
+        "{stdout}"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
+fn lines_of(path: std::path::PathBuf) -> Vec<String> {
+    fs::read_to_string(path)
+        .unwrap_or_default()
+        .lines()
+        .map(String::from)
+        .collect()
+}
+
+/// **The run counts on a server of its own**, so a compile another run or job
+/// makes on the same host is never in its totals: the stats reads and the build
+/// children name one socket, and that server is stopped when the run ends.
+#[test]
+fn sccache_the_run_reads_a_server_its_own_children_compile_on() {
+    let dir = scratch("private");
+    let sccache = stand_in(&dir, &stats(0, 0), &stats(8, 2));
+    let (green, stdout) = run_check(&dir, Some(&sccache));
+    assert!(green, "{stdout}");
+    let calls = lines_of(dir.join("calls"));
+    let socket = calls
+        .first()
+        .and_then(|call| call.split("uds=").nth(1))
+        .unwrap_or_else(|| panic!("no call: {calls:?}"))
+        .to_string();
+    assert!(socket.ends_with("sccache.sock"), "{calls:?}");
+    assert_eq!(calls.len(), 3, "two reads and one stop: {calls:?}");
+    assert!(
+        calls
+            .iter()
+            .all(|call| call.ends_with(&format!("uds={socket}"))),
+        "every call names the one socket: {calls:?}"
+    );
+    assert!(calls[2].contains("--stop-server"), "{calls:?}");
+    let children = lines_of(dir.join("child-uds"));
+    assert!(!children.is_empty(), "no build child ran");
+    assert!(
+        children.iter().all(|child| *child == socket),
+        "a build child compiled on another server: {children:?} against {socket}"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// **A server the environment already names is the job's own** (the CI job
+/// wrapper starts one per job), so the run uses it as named and leaves it to
+/// the wrapper to stop.
+#[test]
+fn sccache_a_server_the_job_already_names_is_used_as_named() {
+    let dir = scratch("named");
+    let sccache = stand_in(&dir, &stats(0, 0), &stats(8, 2));
+    let named = dir.join("job.sock");
+    let cargo = dir.join("cargo");
+    support::write_executable(&cargo, FAKE_CARGO);
+    let output = support::output_fenced(
+        Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
+            .arg("check")
+            .current_dir(&dir)
+            .env("TMPDIR", &dir)
+            .env("CARGO", &cargo)
+            .env("BAR_HISTORY_DIR", dir.join("history"))
+            .env("JOJOBOT_SCCACHE", &sccache)
+            .env("SCCACHE_SERVER_UDS", &named),
+    )
+    .expect("run bar check");
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    assert!(output.status.success(), "{stdout}");
+    let want = format!("uds={}", named.display());
+    let calls = lines_of(dir.join("calls"));
+    assert_eq!(calls.len(), 2, "two reads and no stop: {calls:?}");
+    assert!(calls.iter().all(|call| call.ends_with(&want)), "{calls:?}");
+    assert!(
+        lines_of(dir.join("child-uds"))
+            .iter()
+            .all(|child| *child == named.display().to_string()),
+        "children keep the job's server"
+    );
+    assert_eq!(
+        sccache_line(&stdout),
+        "sccache: hit rate 80% (8 hits, 2 misses)",
         "{stdout}"
     );
     let _ = fs::remove_dir_all(&dir);

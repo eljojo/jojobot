@@ -233,6 +233,7 @@ impl RunRoot {
             .join(jojobot_bar::sweep::run_root_name(std::process::id(), nanos));
         fs::create_dir_all(&root).ok()?;
         RUN_ROOT.set(root.clone()).ok()?;
+        jojobot_bar::sccache_stats::use_private_server(&root);
         Some(RunRoot(root))
     }
 }
@@ -253,6 +254,7 @@ impl Drop for RunRoot {
 /// otherwise run that bar on this run's binaries and fail to read the manifest.
 fn in_the_run_root(command: &mut Command) -> &mut Command {
     command.env_remove(BUNDLE_VARIABLE);
+    jojobot_bar::sccache_stats::on_this_runs_server(command);
     match RUN_ROOT.get() {
         Some(root) => command.env("TMPDIR", root),
         None => command,
@@ -1434,9 +1436,11 @@ fn run_check(known: &KnownReds, level: Level) -> std::io::Result<ExitCode> {
     // after the phases because it never changes the verdict, and a reader
     // takes the verdict first. The size check is not here: it is a phase.
     print!("{}", roster_report());
+    let cache_after = jojobot_bar::sccache_stats::read();
+    jojobot_bar::sccache_stats::stop_this_runs_server();
     print!(
         "{}",
-        jojobot_bar::sccache_stats::line(cache_before, jojobot_bar::sccache_stats::read())
+        jojobot_bar::sccache_stats::line(cache_before, cache_after)
     );
     Ok(code)
 }
