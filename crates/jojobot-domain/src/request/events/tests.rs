@@ -272,3 +272,84 @@ fn ledger_events_import_each_legacy_row_shape_without_inventing_completion() {
     assert_eq!(state.history().len(), 3);
     assert_eq!(State::replay(state.history()).unwrap(), state);
 }
+
+/// A completion replayed after the receipt fill must not take the receipt back.
+#[test]
+fn ledger_events_keep_a_filled_receipt_when_completion_replays() {
+    let first = commit(1);
+    let key = first.request.key.clone();
+    let events = [
+        LedgerEvent::RequestCommitted(first.clone()),
+        LedgerEvent::RequestReceiptRecorded {
+            key: key.clone(),
+            receipt: "receipt-one".into(),
+        },
+        LedgerEvent::RequestCompleted {
+            commit: first,
+            required_parts: Vec::new(),
+        },
+    ];
+    let state = State::replay(&events).unwrap();
+    assert_eq!(
+        state
+            .lookup(&key.actor, &key.id, at(0))
+            .unwrap()
+            .receipt
+            .as_deref(),
+        Some("receipt-one")
+    );
+}
+
+/// Parts answer in written_at order, then by name, and only while unexpired.
+#[test]
+fn ledger_events_order_parts_by_time_then_name_and_hide_expired_ones() {
+    let timed = |name: &str, written: i64, expires: i64| Part {
+        written_at: at(written),
+        expires_at: at(expires),
+        ..part(name)
+    };
+    let mut state = State::default();
+    for part in [
+        timed("b-late", 5, 20),
+        timed("z-early", 1, 20),
+        timed("a-tie", 5, 20),
+        timed("m-short", 3, 8),
+    ] {
+        state
+            .apply(&LedgerEvent::RequestPartCommitted(part))
+            .unwrap();
+    }
+    let key = request(1).key;
+    let names = |when| {
+        state
+            .parts(&key.actor, &key.id, when)
+            .iter()
+            .map(|part| part.name.clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(names(at(0)), ["z-early", "m-short", "a-tie", "b-late"]);
+    assert_eq!(names(at(8)), ["z-early", "m-short", "a-tie", "b-late"]);
+    assert_eq!(names(at(9)), ["z-early", "a-tie", "b-late"]);
+}
+
+/// An expiry or a receipt that arrives before its commit changes nothing; the
+/// log order decides, so a later commit stands unexpired and unfilled.
+#[test]
+fn ledger_events_ignore_expiry_and_receipt_that_precede_their_commit() {
+    let first = commit(1);
+    let key = first.request.key.clone();
+    let mut state = State::default();
+    state
+        .apply(&LedgerEvent::RequestExpired { key: key.clone() })
+        .unwrap();
+    state
+        .apply(&LedgerEvent::RequestReceiptRecorded {
+            key: key.clone(),
+            receipt: "early".into(),
+        })
+        .unwrap();
+    state
+        .apply(&LedgerEvent::RequestCommitted(first.clone()))
+        .unwrap();
+    assert_eq!(state.lookup(&key.actor, &key.id, at(0)), Some(&first));
+}

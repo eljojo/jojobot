@@ -231,10 +231,12 @@ impl State {
                     .insert(part.name.clone(), part.clone());
             }
             LedgerEvent::RequestCommitted(commit) => {
-                self.requests
-                    .entry(commit.request.key.clone())
-                    .or_default()
-                    .committed = Some(commit.clone());
+                let held = self.requests.entry(commit.request.key.clone()).or_default();
+                // A commit replayed after the fill must not take the receipt back.
+                let filled = held.committed.as_ref().and_then(|old| old.receipt.clone());
+                let mut commit = commit.clone();
+                commit.receipt = commit.receipt.or(filled);
+                held.committed = Some(commit);
             }
             LedgerEvent::RequestReceiptRecorded { key, receipt } => {
                 if let Some(commit) = self
