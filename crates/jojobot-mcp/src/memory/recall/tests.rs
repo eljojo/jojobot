@@ -6357,7 +6357,7 @@ async fn a_thing_a_recall_returned_is_a_thing_a_later_creation_is_asked_about() 
         &jojobot
             .add_entity(Parameters(AddEntityArgs {
                 sid: Some(sid),
-                ..add_args("place", "wharf-road", "Wharf Road")
+                ..add_args("place", "wonder-road", "Wharf Road")
             }))
             .await
             .expect("add ok"),

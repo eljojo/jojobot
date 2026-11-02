@@ -3291,7 +3291,7 @@ mod tests {
                     &jojobot
                         .add_entity(Parameters(AddEntityArgs {
                             sid: Some(sid),
-                            ..add_args("place", "wharf-road", "Wharf Road")
+                            ..add_args("place", "wonder-road", "Wharf Road")
                         }))
                         .await
                         .expect("add ok"),
@@ -3319,7 +3319,7 @@ mod tests {
                 &jojobot
                     .add_entity(Parameters(AddEntityArgs {
                         sid: Some(sid),
-                        ..add_args("place", "far-country", "Wharf Lane")
+                        ..add_args("place", "wonder-lane", "Wharf Lane")
                     }))
                     .await
                     .expect("add ok"),
