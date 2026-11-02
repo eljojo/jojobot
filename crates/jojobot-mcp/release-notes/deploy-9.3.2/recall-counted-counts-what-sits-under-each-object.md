@@ -5,7 +5,7 @@ miss: A bot that wants a count or a last-write moment lists the children and cou
 
 ## What you can now do
 
-`recall` takes a boolean `counted`, off by default. With it true, every object carries `children` (`count` of live children, `archived`, and `subtree`, every live thing under it) and `written_at`, the moment of its newest write. A read of one subject carries `children` without it.
+`recall` takes a boolean `counted`, off by default. With it true, every object that has something under it carries `children` (`count` of live children, `archived`, and `subtree`, every live thing under it), and a thing with nothing under it carries none. An object also carries `written_at`, the moment of its newest write, where the store has one. A read of one subject carries `children` without it, for a parent.
 
 ## Example
 
