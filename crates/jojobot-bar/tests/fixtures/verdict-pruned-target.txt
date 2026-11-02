@@ -1,7 +1,7 @@
    Compiling idna v1.1.0
    Compiling ref-cast-impl v1.0.27
-error: extern location for proc_macro2 does not exist: /var/lib/gitea-runner/alpha/cargo-target/debug/deps/libproc_macro2-4c61773e15c8cab1.rlib
-  --> /var/lib/gitea-runner/alpha/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ref-cast-impl-1.0.27/src/lib.rs:10:5
+error: extern location for proc_macro2 does not exist: /tmp/target/debug/deps/libproc_macro2-4c61773e15c8cab1.rlib
+  --> /tmp/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ref-cast-impl-1.0.27/src/lib.rs:10:5
    |
 10 | use proc_macro2::{Ident, Span, TokenStream as TokenStream2, TokenTree};
    |     ^^^^^^^^^^^

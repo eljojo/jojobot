@@ -39,10 +39,10 @@
    Compiling tantivy v0.26.2
    Compiling sqlx v0.9.0
    Compiling rrule v0.14.0
-   Compiling jojobot-domain v0.1.0 (/var/lib/gitea-runner/maggie1/.cache/act/bfe550fc36e4a761/hostexecutor/crates/jojobot-domain)
-   Compiling jojobot-adapters v0.1.0 (/var/lib/gitea-runner/maggie1/.cache/act/bfe550fc36e4a761/hostexecutor/crates/jojobot-adapters)
+   Compiling jojobot-domain v0.1.0 (/tmp/.cache/act/bfe550fc36e4a761/hostexecutor/crates/jojobot-domain)
+   Compiling jojobot-adapters v0.1.0 (/tmp/.cache/act/bfe550fc36e4a761/hostexecutor/crates/jojobot-adapters)
     Finished `test` profile [optimized + debuginfo] target(s) in 4m 44s
-     Running unittests src/lib.rs (/var/lib/gitea-runner/maggie1/cargo-target/debug/deps/jojobot_adapters-4060c326a7a6bd03)
+     Running unittests src/lib.rs (/tmp/target/debug/deps/jojobot_adapters-4060c326a7a6bd03)
 
 running 457 tests
 test dolt::memory::tests::a_claim_under_the_folded_thing_that_no_event_lists_is_named_and_readable ... FAILED <1.053s>
@@ -480,9 +480,9 @@ test result: FAILED. 435 passed; 22 failed; 0 ignored; 0 measured; 0 filtered ou
 error: test failed, to rerun pass `-p jojobot-adapters --lib`
 error: 1 target failed:
     `-p jojobot-adapters --lib`
-   Compiling jojobot-domain v0.1.0 (/var/lib/gitea-runner/runner1/.cache/act/cc476b9ae969162b/hostexecutor/crates/jojobot-domain)
+   Compiling jojobot-domain v0.1.0 (/tmp/.cache/act/cc476b9ae969162b/hostexecutor/crates/jojobot-domain)
     Finished `test` profile [optimized + debuginfo] target(s) in 1.33s
-     Running tests/fixture_roster.rs (/var/lib/gitea-runner/runner1/cargo-target/debug/deps/fixture_roster-a598209ae7d2b428)
+     Running tests/fixture_roster.rs (/tmp/target/debug/deps/fixture_roster-a598209ae7d2b428)
 
 running 25 tests
 test ordinary_carries_no_name_the_workspace_has_stopped_using ... FAILED <0.278s>
@@ -507,7 +507,7 @@ error: test failed, to rerun pass `-p jojobot-domain --test fixture_roster`
 error: 1 target failed:
     `-p jojobot-domain --test fixture_roster`
     Finished `test` profile [optimized + debuginfo] target(s) in 0.15s
-     Running tests/report_touched_first.rs (/var/lib/gitea-runner/alpha/cargo-target/debug/deps/report_touched_first-16a05d1cf51839a2)
+     Running tests/report_touched_first.rs (/tmp/target/debug/deps/report_touched_first-16a05d1cf51839a2)
 
 running 4 tests
 test the_fallback_range_is_the_merge_base_with_origin_main_when_there_is_no_local_main ... FAILED <0.605s>

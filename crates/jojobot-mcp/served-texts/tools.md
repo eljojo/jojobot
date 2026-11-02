@@ -2770,8 +2770,9 @@ Objects that are not bots carry no charter at all.
 default. Each object that has something under it then carries `children` (its
 live children as `count`, its archived ones as `archived`, and every live thing
 under it as `subtree`); a thing with nothing under it carries none. Each object
-carries `written_at`, the moment of its newest write of any kind. It asks of any
-selection, and a subject read answers in the same shape.
+the store has a write moment for carries `written_at`, the moment of its newest
+write of any kind. It asks of any selection, and a subject read answers in the
+same shape.
 ```
 
 #### `recall` — argument `/inputSchema.details`

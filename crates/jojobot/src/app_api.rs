@@ -389,7 +389,8 @@ mod tests {
 
     /// **An unavailable store never tells an app to resend a write blind.** A write
     /// that was taken may have landed before the store failed, so the answer says
-    /// to read and see before sending it again; a read keeps the plain advice.
+    /// so, tells an app with a read grant to read first and an app without one that
+    /// a resend may be a duplicate; a read keeps the plain advice.
     #[test]
     fn an_unavailable_write_may_have_landed_and_an_unavailable_read_may_be_resent() {
         let read = unavailable_text("recall");

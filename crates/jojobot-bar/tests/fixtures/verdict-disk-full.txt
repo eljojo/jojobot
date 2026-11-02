@@ -1,6 +1,6 @@
-   Compiling jojobot-domain v0.1.0 (/var/lib/gitea-runner/runner1/.cache/act/cc476b9ae969162b/hostexecutor/crates/jojobot-domain)
+   Compiling jojobot-domain v0.1.0 (/tmp/.cache/act/cc476b9ae969162b/hostexecutor/crates/jojobot-domain)
     Finished `test` profile [optimized + debuginfo] target(s) in 1.33s
-     Running tests/fixture_roster.rs (/var/lib/gitea-runner/runner1/cargo-target/debug/deps/fixture_roster-a598209ae7d2b428)
+     Running tests/fixture_roster.rs (/tmp/target/debug/deps/fixture_roster-a598209ae7d2b428)
 
 running 25 tests
 test ordinary_carries_no_name_the_workspace_has_stopped_using ... FAILED <0.278s>
@@ -25,7 +25,7 @@ error: test failed, to rerun pass `-p jojobot-domain --test fixture_roster`
 error: 1 target failed:
     `-p jojobot-domain --test fixture_roster`
     Finished `test` profile [optimized + debuginfo] target(s) in 0.15s
-     Running tests/report_touched_first.rs (/var/lib/gitea-runner/alpha/cargo-target/debug/deps/report_touched_first-16a05d1cf51839a2)
+     Running tests/report_touched_first.rs (/tmp/target/debug/deps/report_touched_first-16a05d1cf51839a2)
 
 running 4 tests
 test the_fallback_range_is_the_merge_base_with_origin_main_when_there_is_no_local_main ... FAILED <0.605s>
@@ -92,7 +92,7 @@ test result: FAILED. 2 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; 
 error: test failed, to rerun pass `-p jojobot-bar --test report_touched_first`
 error: 1 target failed:
     `-p jojobot-bar --test report_touched_first`
-     Running tests/user_stories.rs (/var/lib/gitea-runner/runner1/cargo-target/debug/deps/user_stories-3f9c0a1d27be4c55)
+     Running tests/user_stories.rs (/tmp/target/debug/deps/user_stories-3f9c0a1d27be4c55)
 
 running 3 tests
 
