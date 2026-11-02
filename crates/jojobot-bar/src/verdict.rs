@@ -71,9 +71,10 @@ impl Infra {
 /// debug form that `unwrap` prints. The
 /// second is the line the allocator prints before a process aborts. The third
 /// and fourth are how cargo names a binary that a signal ended. The next three
-/// are cargo's lines for a registry it could not reach, and the last is the
-/// compiler's line for a library of a cleared target directory.
-const INFRA_TEXT: [(&str, Infra); 9] = [
+/// are cargo's lines for a registry it could not reach, and the last three are
+/// the compiler's, cargo's and the linker's lines for files of a cleared target
+/// directory.
+const INFRA_TEXT: [(&str, Infra); 11] = [
     ("No space left on device (os error 28)", Infra::DiskFull),
     ("code: 28, kind: StorageFull", Infra::DiskFull),
     ("memory allocation of ", Infra::OutOfMemory),
@@ -84,6 +85,10 @@ const INFRA_TEXT: [(&str, Infra); 9] = [
     ("Could not resolve host", Infra::NetworkFetch),
     // The compiler naming a library of a target directory the runner cleared.
     ("extern location for ", Infra::TargetPruned),
+    // Cargo writing into a fingerprint directory that is gone, and the linker
+    // opening a library that is gone.
+    ("could not parse/generate dep info", Infra::TargetPruned),
+    ("rlib: No such file or directory", Infra::TargetPruned),
 ];
 
 /// **A warning is never a reason.** Cargo prints "spurious network error" while it
@@ -975,6 +980,18 @@ mod tests {
     #[test]
     fn a_pruned_target_directory_is_infra() {
         let text = include_str!("../tests/fixtures/verdict-pruned-target.txt");
+        let verdict = read(text, false, 0);
+        assert_eq!(verdict.overall, Overall::Infra);
+        assert_eq!(verdict.infra, Some(Infra::TargetPruned));
+    }
+
+    /// **Files that vanish from a target directory during a build are the runner's
+    /// loss.** The fixture is the excerpt of a real run's report log: cargo cannot
+    /// write a dep-info file into a fingerprint directory that is gone, and the
+    /// linker then cannot open library after library. No lint rule was broken.
+    #[test]
+    fn target_files_that_vanish_during_a_build_are_infra() {
+        let text = include_str!("../tests/fixtures/verdict-target-files-vanished.txt");
         let verdict = read(text, false, 0);
         assert_eq!(verdict.overall, Overall::Infra);
         assert_eq!(verdict.infra, Some(Infra::TargetPruned));
