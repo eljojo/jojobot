@@ -134,7 +134,7 @@ pub enum LogError {
     Conflict,
     #[error("{}", crate::request::INDETERMINATE_WRITE)]
     Indeterminate,
-    #[error("jojobot could not access its recorded writes; read before writing again")]
+    #[error("jojobot could not access its recorded writes: {0}; read before writing again")]
     Store(String),
 }
 
@@ -175,4 +175,18 @@ pub trait LogStore: Send + Sync {
 
     async fn load_snapshot(&self) -> Result<Option<ValidatedSnapshot>, LogError>;
     async fn store_snapshot(&self, snapshot: &ValidatedSnapshot) -> Result<(), LogError>;
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_store_error_keeps_its_cause_in_display() {
+        let cause = "alpha";
+        let shown = super::LogError::Store(cause.into()).to_string();
+        assert!(shown.contains(cause), "{shown}");
+        assert_ne!(
+            shown, cause,
+            "the cause needs the failed operation's context"
+        );
+    }
 }
