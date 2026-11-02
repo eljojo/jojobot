@@ -800,7 +800,9 @@ nobody can read.
 ```text
 The entity the edge points at, as `kind:slug`. **It must already exist**,
 exactly as `subject` must — an edge into a node nobody else references is
-how a cross-entity question quietly starts coming back empty.
+how a cross-entity question quietly starts coming back empty. **A list
+entry whose `content` mentions exactly one thing links it without
+`object`; send `object` when it mentions several.**
 ```
 
 #### `capture` — argument `/inputSchema.provenance`

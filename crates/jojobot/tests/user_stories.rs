@@ -270,6 +270,8 @@ mod list_linked;
 /// A moved list entry holds its place until it is next ticked.
 #[path = "user_stories/list_moves.rs"]
 mod list_moves;
+#[path = "user_stories/list_named_card.rs"]
+mod list_named_card;
 /// Entries that hold one order key read by claim number.
 #[path = "user_stories/list_order_ties.rs"]
 mod list_order_ties;

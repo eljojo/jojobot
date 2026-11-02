@@ -196,7 +196,9 @@ pub struct CaptureArgs {
     pub(crate) shape: Option<String>,
     /// The entity the edge points at, as `kind:slug`. **It must already exist**,
     /// exactly as `subject` must — an edge into a node nobody else references is
-    /// how a cross-entity question quietly starts coming back empty.
+    /// how a cross-entity question quietly starts coming back empty. **A list
+    /// entry whose `content` mentions exactly one thing links it without
+    /// `object`; send `object` when it mentions several.**
     #[serde(default)]
     pub(crate) object: Option<String>,
     /// **The claim this one was derived from**, as its address
@@ -963,6 +965,25 @@ impl Jojobot {
         crate::answer::note_postcondition(&mut body, line);
         self.note_reach_and_hint(&mut body, &fact, &own_sent, &sets_named)
             .await;
+        if fact.edge.is_none()
+            && jojobot_domain::memory::entries::is_entry(&fact)
+            && let jojobot_domain::memory::entries::Named::Several(things) =
+                jojobot_domain::memory::entries::named_in(&fact.content, &fact.subject)
+        {
+            crate::answer::note_hint(
+                &mut body,
+                format!(
+                    "This entry names {} things, so it links none of them. Send `object` with \
+                     the one it is about ({}) and the list shows its state.",
+                    things.len(),
+                    things
+                        .iter()
+                        .map(|thing| thing.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            );
+        }
         if fact.subject.as_str().starts_with("document:")
             && fact.content.trim_start().starts_with('#')
             && body.get("hint").is_none()
