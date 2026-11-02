@@ -753,6 +753,8 @@ pub const ORDINARY: &[&str] = &[
     "topic:marge-baking",
     "place:contract-wonder-road",
     "place:contract-wonder-wharf",
+    "place:wonder-lane",
+    "place:wonder-road",
     "thread:forwarded-line",
     "thread:contract-ceiling-unwritten",
     "thread:milhouse-moves",
