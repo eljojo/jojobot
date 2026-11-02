@@ -1,3 +1,4 @@
+mod bot_request_rows;
 mod clear_backing;
 mod contract_parts_tests;
 mod reference_kinds;
@@ -759,7 +760,7 @@ fn the_ceilings_a_bot_does_not_write_about_itself_are_declared_in_the_one_table(
     );
     assert_eq!(OPERATOR, "operator");
     assert_eq!(INSTANCE_RECORD, "topic:instance");
-    assert_eq!(GUARDED_KEYS.len(), 8);
+    assert_eq!(GUARDED_KEYS.len(), 18);
 }
 
 /// **The assistant is exempt from the writers' rule on a record ceiling, and

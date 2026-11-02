@@ -2798,7 +2798,21 @@ impl DoltMemory {
         subject: &EntityId,
         named: Option<EntityId>,
     ) -> Result<jojobot_domain::memory::Lineage, MemoryError> {
-        let above = self.chain_above_in(tx, subject).await?;
+        // The subject's fold before this write, with its links served.
+        let fold = match self.resolve(tx, subject).await? {
+            Some((key, _)) => {
+                let held = self.held_by(tx, &key).await?;
+                self.with_manager_rendered(tx, &held).await?
+            }
+            None => Default::default(),
+        };
+        // **A request is judged by its target's chain**, not its own.
+        let above = self
+            .chain_above_in(
+                tx,
+                &jojobot_domain::memory::bot_request::chain_start(subject, &fold),
+            )
+            .await?;
         let above_named = match &named {
             Some(manager) => self.chain_above_in(tx, manager).await?,
             None => Vec::new(),
@@ -2810,13 +2824,7 @@ impl DoltMemory {
             false
         };
         // The guarded keys the subject holds now, off its fold before this write.
-        let holds = match self.resolve(tx, subject).await? {
-            Some((key, _)) => {
-                let held = self.held_by(tx, &key).await?;
-                jojobot_domain::memory::held_guarded_keys(&held)
-            }
-            None => Default::default(),
-        };
+        let holds = jojobot_domain::memory::held_guarded_keys(&fold);
         // The bots that head the chart, read only when the subject holds a key
         // only the head may change.
         let heads = if jojobot_domain::memory::heads_wanted(&holds) {
@@ -2941,8 +2949,7 @@ impl DoltMemory {
         for key in &keys {
             // **A record that once carried a guarded key is the setting of it**,
             // however the key stands now, so the write is read from the substrate.
-            let guarded: Vec<&str> = jojobot_domain::memory::GUARDED_KEYS
-                .iter()
+            let guarded: Vec<&str> = jojobot_domain::memory::ceiling_keys()
                 .map(|rule| rule.key)
                 .collect();
             let marks = vec!["?"; guarded.len()].join(", ");

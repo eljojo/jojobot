@@ -1731,7 +1731,19 @@ impl InMemoryMemory {
         subject: &EntityId,
         named: Option<EntityId>,
     ) -> super::super::Lineage {
-        let above = self.chain_above_among(facts, subject);
+        // The subject's fold before this write, with its links served.
+        let fold = match self.storage_key(subject) {
+            Some(key) => self.with_manager_served(&super::super::folded_fields(
+                &self.writes_on(&key, facts),
+                &self.declarations(),
+            )),
+            None => Default::default(),
+        };
+        // **A request is judged by its target's chain**, not its own.
+        let above = self.chain_above_among(
+            facts,
+            &super::super::bot_request::chain_start(subject, &fold),
+        );
         let above_named = match &named {
             Some(manager) => self.chain_above_among(facts, manager),
             None => Vec::new(),
@@ -1740,13 +1752,7 @@ impl InMemoryMemory {
         let has_reports =
             above.is_empty() && named.is_some() && self.has_reports_among(facts, subject);
         // The guarded keys the subject holds now, off its fold before this write.
-        let holds = match self.storage_key(subject) {
-            Some(key) => super::super::held_guarded_keys(&super::super::folded_fields(
-                &self.writes_on(&key, facts),
-                &self.declarations(),
-            )),
-            None => Default::default(),
-        };
+        let holds = super::super::held_guarded_keys(&fold);
         // The bots that head the chart, read only when the subject holds a key
         // only the head may change.
         let heads = if super::super::heads_wanted(&holds) {
@@ -1820,9 +1826,7 @@ impl InMemoryMemory {
                 .iter()
                 .filter(|write| {
                     write.entity == key
-                        && super::super::GUARDED_KEYS
-                            .iter()
-                            .any(|rule| rule.key == write.key)
+                        && super::super::ceiling_keys().any(|rule| rule.key == write.key)
                 })
                 .map(|write| write.fact.clone()),
         );

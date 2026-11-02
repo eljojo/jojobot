@@ -395,6 +395,22 @@ impl Jojobot {
                     fields.insert(key.clone(), moment);
                     derived.insert(key);
                 }
+                // **A write of a bot request's spec raises its generation.**
+                if jojobot_domain::memory::bot_request::is_request(&handle) {
+                    let held = match self.memory.fields(&handle).await {
+                        Ok(held) => held,
+                        Err(e) => return memory_declined("update_entity", e),
+                    };
+                    if let Some(next) = jojobot_domain::memory::bot_request::next_generation(
+                        &handle, &held, &fields,
+                    ) {
+                        fields.insert(
+                            jojobot_domain::memory::bot_request::GENERATION.to_string(),
+                            next,
+                        );
+                        derived.insert(jojobot_domain::memory::bot_request::GENERATION.to_string());
+                    }
+                }
                 // **The label stays on the record** (it is neither a setting nor
                 // derived), so it never reaches the thing.
                 if marks_only {

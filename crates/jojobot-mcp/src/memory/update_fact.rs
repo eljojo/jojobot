@@ -714,6 +714,39 @@ impl Jojobot {
             attention::DueMove::Cleared => clears_due_on = true,
             attention::DueMove::Unchanged => {}
         }
+        // **A write of a bot request's spec raises its generation.** The store's
+        // check of the edit leaves the generation to jojobot, so a caller's own
+        // copy is refused here, on the key alone.
+        if jojobot_domain::memory::bot_request::is_request(&address.home) {
+            let generation = jojobot_domain::memory::bot_request::GENERATION;
+            if let Some(sent) = fields.get(generation) {
+                let own = [(generation.to_string(), sent.clone())].into();
+                if let Some(refused) = self
+                    .refuses_an_unlicensed_key(
+                        "update_fact",
+                        &address.home,
+                        true,
+                        &caller.bot,
+                        &own,
+                    )
+                    .await?
+                {
+                    return Ok(refused);
+                }
+            }
+            let held = match self.memory.fields(&address.home).await {
+                Ok(held) => held,
+                Err(e) => return memory_declined("update_fact", e),
+            };
+            if let Some(next) = jojobot_domain::memory::bot_request::next_generation(
+                &address.home,
+                &held,
+                &reaching,
+            ) {
+                fields.insert(generation.to_string(), next);
+                derived.insert(generation.to_string());
+            }
+        }
         // **A write by defrag stamps the thing in the same act**, as a key on the
         // thing riding this record.
         if let Some((key, moment)) = self.review_stamp(&caller.bot) {

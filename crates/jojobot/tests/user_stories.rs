@@ -238,6 +238,9 @@ mod two_shared_words;
 #[path = "user_stories/waiting_on_work.rs"]
 mod waiting_on_work;
 
+/// A manager asks for a bot by a request only its bound app reports on.
+#[path = "user_stories/bot_request.rs"]
+mod bot_request;
 #[path = "user_stories/bulk_capture_notes.rs"]
 mod bulk_capture_notes;
 /// A bulk capture delivers every note its items earned, once.

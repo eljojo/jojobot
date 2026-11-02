@@ -321,6 +321,20 @@ impl Jojobot {
                     fields.insert(key.clone(), moment);
                     derived.insert(key);
                 }
+                // **A bot request is born at generation 1** once it sets any of its
+                // spec; the key is jojobot's, and the licence check above refused
+                // a caller's own copy.
+                if let Some(next) = jojobot_domain::memory::bot_request::next_generation(
+                    &creating,
+                    &Default::default(),
+                    &fields,
+                ) {
+                    fields.insert(
+                        jojobot_domain::memory::bot_request::GENERATION.to_string(),
+                        next,
+                    );
+                    derived.insert(jojobot_domain::memory::bot_request::GENERATION.to_string());
+                }
                 // **Work created at `now` by the bot that owns it points the bot at
                 // it**, as a capture or an edit of work does.
                 moves_to_now = self.moves_to_now(&fields, &set_keys).await;

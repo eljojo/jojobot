@@ -415,6 +415,12 @@ async fn capture(call: Call) -> Answer {
         kind,
         keys: args.sets.iter().flatten().map(|(k, _)| k.clone()).collect(),
         to_operator: false,
+        // **Read for a request only**: the status keys are the bound app's.
+        // A read that fails binds nobody, so a status write is refused.
+        bound_app: handler.memory.fields(&subject).await.ok().and_then(|held| {
+            held.get(jojobot_domain::memory::bot_request::BOUND_APP)
+                .cloned()
+        }),
     };
     if let Err(answer) = call.permit(&operation) {
         return answer;
@@ -453,6 +459,7 @@ async fn add_entity(call: Call) -> Answer {
         // function runs no licence check for an app.
         keys: args.sets.iter().flatten().map(|(k, _)| k.clone()).collect(),
         to_operator: false,
+        bound_app: None,
     };
     if let Err(answer) = call.permit(&operation) {
         return answer;
@@ -488,6 +495,7 @@ async fn post_message(call: Call) -> Answer {
         kind: None,
         keys: Vec::new(),
         to_operator: recipient.to_the_operator,
+        bound_app: None,
     };
     if let Err(answer) = call.permit(&operation) {
         return answer;

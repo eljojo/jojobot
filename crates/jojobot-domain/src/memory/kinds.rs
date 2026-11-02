@@ -28,7 +28,7 @@ use super::EntityKind;
 /// change is that the set is data. What makes the shipped ones different from any
 /// other kind is not the compiler: it is that a seed writes them at every
 /// startup and a caller cannot redeclare one.
-pub const SHIPPED: [&str; 24] = [
+pub const SHIPPED: [&str; 25] = [
     "person",
     "project",
     "place",
@@ -53,6 +53,7 @@ pub const SHIPPED: [&str; 24] = [
     "list",
     "usage",
     "trip",
+    "bot-request",
 ];
 
 /// **The statuses a `work` thing or a `project` holds**, in the order work

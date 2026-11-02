@@ -171,6 +171,9 @@ pub struct Operation {
     pub keys: Vec<String>,
     /// Whether a message is for the operator's box.
     pub to_operator: bool,
+    /// **The `bound_app` the subject holds now**, for a write on an existing bot
+    /// request. The status of a request is written by that app alone.
+    pub bound_app: Option<String>,
 }
 
 /// **The one check for an app's call.** Does the app's grant cover it?
@@ -225,7 +228,30 @@ pub fn permit(app: &AppPrincipal, call: &Operation) -> Result<(), AppError> {
                 ));
             }
         }
+        let on_a_request = call
+            .kind
+            .is_some_and(|kind| kind.as_token() == crate::memory::bot_request::KIND);
         for key in &call.keys {
+            // **A bot request's keys are judged by who the request binds.** The
+            // status is the bound app's and the spec is a manager's, so no grant
+            // widens either.
+            if on_a_request {
+                if crate::memory::bot_request::STATUS_KEYS.contains(&key.as_str()) {
+                    if call.bound_app.as_deref() != Some(app.id.as_str()) {
+                        return outside(format!(
+                            "the key {key:?} is the status of a bot request, which only the app \
+                             named in its bound_app writes"
+                        ));
+                    }
+                } else if crate::memory::bot_request::SPEC_KEYS.contains(&key.as_str())
+                    || key == crate::memory::bot_request::GENERATION
+                {
+                    return outside(format!(
+                        "the key {key:?} is the spec of a bot request, which only a manager \
+                         above its target writes"
+                    ));
+                }
+            }
             if let Some(why) = key_never_granted(key) {
                 return outside(format!("the key {key:?} is {why} and no app may set it"));
             }
@@ -314,6 +340,7 @@ mod tests {
             kind,
             keys: keys.iter().map(|s| s.to_string()).collect(),
             to_operator: false,
+            bound_app: None,
         }
     }
 
@@ -322,6 +349,57 @@ mod tests {
             AppError::OutsideGrant(why) => why,
             other => panic!("not an outside-the-grant refusal: {other:?}"),
         }
+    }
+
+    /// **A bot request's status is written by the app it binds and by no other,
+    /// and its spec by no app.** The same words on any other kind are ordinary
+    /// keys, judged by the grant alone.
+    #[test]
+    fn a_request_status_is_the_bound_apps_and_its_spec_no_apps() {
+        let request = Some(EntityKind::BOT_REQUEST);
+        let granted = app(vec![op(
+            "capture",
+            &["bot-request"],
+            &["observed_state", "desired", "generation"],
+        )]);
+        let id = granted.id.to_string();
+        let mut status = call(
+            "capture",
+            &["subject", "sets"],
+            request,
+            &["observed_state"],
+        );
+        status.bound_app = Some(id.clone());
+        assert_eq!(
+            permit(&granted, &status),
+            Ok(()),
+            "the bound app writes status"
+        );
+        status.bound_app = Some("someone-else".into());
+        assert!(refusal(permit(&granted, &status)).contains("bound_app"));
+        status.bound_app = None;
+        assert!(refusal(permit(&granted, &status)).contains("bound_app"));
+        for key in ["desired", "generation"] {
+            let mut spec = call("capture", &["subject", "sets"], request, &[key]);
+            spec.bound_app = Some(id.clone());
+            assert!(
+                refusal(permit(&granted, &spec)).contains("manager"),
+                "{key}"
+            );
+        }
+        // The same words on another kind are ordinary keys, judged by the grant.
+        let machine = app(vec![op(
+            "capture",
+            &["machine"],
+            &["desired", "observed_state"],
+        )]);
+        let other = call(
+            "capture",
+            &["subject", "sets"],
+            Some(EntityKind::MACHINE),
+            &["desired", "observed_state"],
+        );
+        assert_eq!(permit(&machine, &other), Ok(()));
     }
 
     #[test]

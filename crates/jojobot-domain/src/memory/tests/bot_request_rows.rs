@@ -1,0 +1,134 @@
+//! **The rows of the one permission check that guard a bot request** (rules
+//! 525, 579, 731). Each case asks `refuses_unlicensed_write` as the stores do,
+//! with the chart a store would have read.
+
+use std::collections::BTreeMap;
+
+use crate::memory::bot_request::{
+    BOUND_APP, DESIRED, GENERATION, MACHINE, MODEL, OBSERVED_GENERATION, OBSERVED_STATE, TARGET_BOT,
+};
+use crate::memory::{EntityId, Lineage, MemoryError, refuses_unlicensed_write};
+
+fn handle(text: &str) -> EntityId {
+    EntityId(text.into())
+}
+
+fn writing(keys: &[&str]) -> BTreeMap<String, String> {
+    keys.iter()
+        .map(|key| (key.to_string(), "x".to_string()))
+        .collect()
+}
+
+/// A request for homer, whose chain is homer then marge.
+const REQUEST: &str = "bot-request:theta";
+
+fn created_for_homer() -> Lineage {
+    Lineage {
+        creating: true,
+        named: Some(handle("bot:homer")),
+        above_named: vec![handle("bot:marge")],
+        ..Lineage::default()
+    }
+}
+
+fn held_for_homer() -> Lineage {
+    Lineage {
+        above: vec![handle("bot:marge")],
+        holds: [TARGET_BOT.to_string()].into(),
+        ..Lineage::default()
+    }
+}
+
+fn refused(caller: &str, keys: &[&str], lineage: &Lineage) -> Option<(String, Vec<String>)> {
+    match refuses_unlicensed_write(
+        &handle(REQUEST),
+        &handle(caller),
+        &writing(keys),
+        Some(lineage),
+    ) {
+        Some(MemoryError::KeyNotYours { key, allowed, .. }) => Some((key, allowed)),
+        Some(other) => panic!("a different refusal: {other:?}"),
+        None => None,
+    }
+}
+
+/// **A request is created by a bot above its target and by nobody else**, and
+/// the refusal names who may.
+#[test]
+fn a_request_is_created_by_a_bot_above_its_target() {
+    let spec = [TARGET_BOT, DESIRED, MACHINE, MODEL, BOUND_APP];
+    let lineage = created_for_homer();
+    assert_eq!(
+        refused("bot:marge", &spec, &lineage),
+        None,
+        "marge is above homer"
+    );
+    let (_, allowed) = refused("bot:bart", &spec, &lineage).expect("bart is not above homer");
+    assert_eq!(
+        allowed,
+        vec!["bot:marge".to_string()],
+        "the refusal names who may"
+    );
+    assert!(
+        refused("bot:homer", &spec, &lineage).is_some(),
+        "the target does not ask for itself"
+    );
+}
+
+/// **Every spec key is judged on an edit, and the target is fixed after
+/// creation.**
+#[test]
+fn a_spec_edit_is_a_bot_above_the_target_and_the_target_never_moves() {
+    let lineage = held_for_homer();
+    for key in [DESIRED, MACHINE, MODEL, BOUND_APP] {
+        assert_eq!(refused("bot:marge", &[key], &lineage), None, "{key}: marge");
+        assert!(
+            refused("bot:bart", &[key], &lineage).is_some(),
+            "{key}: bart"
+        );
+        assert!(
+            refused("bot:homer", &[key], &lineage).is_some(),
+            "{key}: homer"
+        );
+    }
+    for caller in ["bot:marge", "bot:bart", "bot:homer"] {
+        assert!(
+            refused(caller, &[TARGET_BOT], &lineage).is_some(),
+            "{caller} cannot move the target"
+        );
+    }
+}
+
+/// **A bot writes no status key and no generation, whoever it is.** Marge
+/// manages homer and is still refused; only the bound app writes status, and
+/// the app path is judged by `permit`.
+#[test]
+fn no_bot_writes_a_status_key_or_the_generation() {
+    let lineage = held_for_homer();
+    for key in [OBSERVED_STATE, OBSERVED_GENERATION, GENERATION] {
+        for caller in ["bot:marge", "bot:bart", "bot:homer"] {
+            assert!(
+                refused(caller, &[key], &lineage).is_some(),
+                "{caller} wrote {key}"
+            );
+        }
+    }
+}
+
+/// **The same words are ordinary keys on anything that is not a request.** A
+/// machine's `model` is nobody's business here.
+#[test]
+fn the_request_keys_guard_nothing_off_a_request() {
+    for subject in ["machine:theta", "thing:theta", "bot:homer"] {
+        assert!(
+            refuses_unlicensed_write(
+                &handle(subject),
+                &handle("bot:bart"),
+                &writing(&[MODEL, MACHINE, DESIRED, OBSERVED_STATE, GENERATION]),
+                Some(&Lineage::default()),
+            )
+            .is_none(),
+            "{subject}"
+        );
+    }
+}

@@ -7,7 +7,7 @@
 //! widens a ceiling, and the lineage each store reads inside a write. Two answers
 //! in two layers would let a refusal name a route its own gate then refuses.
 
-use crate::memory::{EntityId, Fact, FactId, FactStatus, GUARDED_KEYS, capacity};
+use crate::memory::{EntityId, Fact, FactId, FactStatus, capacity, ceiling_keys};
 
 /// **The records of a thing that ever carried a guarded key**, from the writes a
 /// store keeps of each guarded key: each write names the record that carried it,
@@ -28,7 +28,7 @@ pub fn settings_among(
 pub fn fills(fact: &Fact, settings: &std::collections::BTreeSet<FactId>) -> bool {
     fact.status == FactStatus::Active
         && !capacity::takes_no_slot(&fact.fields)
-        && !GUARDED_KEYS.iter().any(|rule| fact.sets.contains(rule.key))
+        && !ceiling_keys().any(|rule| fact.sets.contains(rule.key))
         && !settings.contains(&fact.id)
 }
 

@@ -1335,6 +1335,24 @@ impl Jojobot {
             fields.insert(key.clone(), moment);
             derived.insert(key);
         }
+        // **A write of a bot request's spec raises its generation**, worked out
+        // from what the request holds. The key is jojobot's: the licence check
+        // above refused a caller's own copy.
+        if jojobot_domain::memory::bot_request::is_request(&subject) {
+            let held = match self.memory.fields(&subject).await {
+                Ok(held) => held,
+                Err(e) => return memory_declined("capture", e).map(Err),
+            };
+            if let Some(next) =
+                jojobot_domain::memory::bot_request::next_generation(&subject, &held, &reaching)
+            {
+                fields.insert(
+                    jojobot_domain::memory::bot_request::GENERATION.to_string(),
+                    next,
+                );
+                derived.insert(jojobot_domain::memory::bot_request::GENERATION.to_string());
+            }
+        }
         // **A capture can only ADD fields to a record**: `NewFact` has no
         // clear_fields of its own. So when the write moves the thing out of owing
         // anything, the stored moment is taken off by the same `clear_fields` an
@@ -1981,7 +1999,13 @@ impl Jojobot {
         subject: &EntityId,
         named: Option<EntityId>,
     ) -> Result<jojobot_domain::memory::Lineage, MemoryError> {
-        let above = self.chain_above(subject).await?;
+        let held = self.memory.fields(subject).await?;
+        // **A request is judged by its target's chain**, not its own.
+        let above = self
+            .chain_above(&jojobot_domain::memory::bot_request::chain_start(
+                subject, &held,
+            ))
+            .await?;
         let above_named = match &named {
             Some(manager) => self.chain_above(manager).await?,
             None => Vec::new(),
@@ -1992,7 +2016,7 @@ impl Jojobot {
         } else {
             false
         };
-        let holds = jojobot_domain::memory::held_guarded_keys(&self.memory.fields(subject).await?);
+        let holds = jojobot_domain::memory::held_guarded_keys(&held);
         let heads = if jojobot_domain::memory::heads_wanted(&holds) {
             self.chart_heads().await?
         } else {

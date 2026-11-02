@@ -232,7 +232,7 @@ fn key_shape_ok(key: &str) -> bool {
 /// read what, and a key that makes a thing fall due would put the app's words
 /// into what the operator is owed.
 pub fn key_never_granted(key: &str) -> Option<&'static str> {
-    if crate::memory::GUARDED_KEYS.iter().any(|g| g.key == key) {
+    if crate::memory::ceiling_keys().any(|g| g.key == key) {
         return Some("a guarded key");
     }
     if crate::memory::reserved_key(key) {

@@ -1914,6 +1914,29 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                             allowed.join(" or ")
                         ),
                     },
+                    // **A bot request's spec is its manager's**, and the target
+                    // never moves once the request is made.
+                    jojobot_domain::memory::MayWrite::RequestSpec => match allowed.is_empty() {
+                        true => format!(
+                            "Nothing was written: {e}. Make a new request for the bot instead: \
+                         the target_bot of '{subject}' is fixed, and a request whose target has \
+                         no manager recorded has no writer."
+                        ),
+                        false => format!(
+                            "Nothing was written: {e}. Ask {} to write '{key}' on '{subject}'.",
+                            allowed.join(" or ")
+                        ),
+                    },
+                    // **The status is the bound app's, and the generation is
+                    // jojobot's.** No bot is the way forward.
+                    jojobot_domain::memory::MayWrite::RequestStatus => format!(
+                        "Nothing was written: {e}. Only the app named in the bound_app of \
+                         '{subject}' writes '{key}', through its own grant."
+                    ),
+                    jojobot_domain::memory::MayWrite::RequestGeneration => format!(
+                        "Nothing was written: {e}. Change the spec of '{subject}' and jojobot \
+                         raises '{key}' itself."
+                    ),
                     jojobot_domain::memory::MayWrite::Ancestor
                     | jojobot_domain::memory::MayWrite::Superior => match allowed.is_empty() {
                         // **Nobody may make this write**: it names no bot as the

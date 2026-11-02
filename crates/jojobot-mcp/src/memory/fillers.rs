@@ -117,7 +117,7 @@ impl Jojobot {
         // **A record that once carried a guarded key is the setting of it**,
         // however the key stands now, so each key's writes are read.
         let mut ever = Vec::new();
-        for rule in jojobot_domain::memory::GUARDED_KEYS {
+        for rule in jojobot_domain::memory::ceiling_keys() {
             for write in self.memory.history(subject, rule.key).await? {
                 ever.push(write.fact.local);
             }

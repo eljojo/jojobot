@@ -44,6 +44,7 @@ pub const KINDS: &[&str] = &[
     "list",
     "usage",
     "trip",
+    "bot-request",
 ];
 
 /// Every explicitly listed handle, for the CI audits of the catalog.

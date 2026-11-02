@@ -29,6 +29,7 @@ pub use typed_guard::{guard_fit, validate_edge, validate_resolved_edge};
 
 pub mod authorship;
 pub mod boot_reader;
+pub mod bot_request;
 pub mod capacity;
 pub mod claim_walk;
 pub mod document;
@@ -274,10 +275,14 @@ impl EntityKind {
     /// either place.
     pub const TRIP: EntityKind = EntityKind("trip");
 
+    /// **A manager's request for a bot to run**, whose status only the app bound
+    /// to it writes. See [`bot_request`].
+    pub const BOT_REQUEST: EntityKind = EntityKind(bot_request::KIND);
+
     /// **The kinds the software ships**, in the order they are seeded and
     /// listed. Not "every kind there is": that is [`kinds::all`], which answers
     /// from what this process loaded.
-    pub const ALL: [EntityKind; 24] = [
+    pub const ALL: [EntityKind; 25] = [
         EntityKind::PERSON,
         EntityKind::PROJECT,
         EntityKind::PLACE,
@@ -302,6 +307,7 @@ impl EntityKind {
         EntityKind::LIST,
         EntityKind::USAGE,
         EntityKind::TRIP,
+        EntityKind::BOT_REQUEST,
     ];
 
     /// **Whether things of this kind are computed at the read and held in no
@@ -2437,6 +2443,16 @@ pub enum MayWrite {
         /// The handle of the one record this applies to.
         on: &'static str,
     },
+    /// **On a bot request: only a bot above its target, and the target never
+    /// moves.** On anything else the key is nobody's business, because the same
+    /// word may mean something else there ([`bot_request`]).
+    RequestSpec,
+    /// **On a bot request: no bot.** The app named in the request's
+    /// `bound_app` writes it, through its own grant ([`bot_request`]).
+    RequestStatus,
+    /// **On a bot request: nobody.** jojobot works it out from each write of the
+    /// spec ([`bot_request`]).
+    RequestGeneration,
 }
 
 /// **A key the build guards, and who may write it.** The table is the build's
@@ -2500,7 +2516,7 @@ pub const INSTANCE_RECORD: &str = "topic:instance";
 /// superior. And who the operator is:
 /// named by any bot while nobody is, changed afterwards only by the head of the
 /// chart.
-pub const GUARDED_KEYS: [GuardedKey; 8] = [
+pub const GUARDED_KEYS: [GuardedKey; 18] = [
     GuardedKey {
         key: THOUGHT_CAPACITY,
         may: MayWrite::WritersSuperior,
@@ -2535,6 +2551,46 @@ pub const GUARDED_KEYS: [GuardedKey; 8] = [
             on: INSTANCE_RECORD,
         },
     },
+    GuardedKey {
+        key: bot_request::TARGET_BOT,
+        may: MayWrite::RequestSpec,
+    },
+    GuardedKey {
+        key: bot_request::DESIRED,
+        may: MayWrite::RequestSpec,
+    },
+    GuardedKey {
+        key: bot_request::MACHINE,
+        may: MayWrite::RequestSpec,
+    },
+    GuardedKey {
+        key: bot_request::MODEL,
+        may: MayWrite::RequestSpec,
+    },
+    GuardedKey {
+        key: bot_request::BOUND_APP,
+        may: MayWrite::RequestSpec,
+    },
+    GuardedKey {
+        key: bot_request::GENERATION,
+        may: MayWrite::RequestGeneration,
+    },
+    GuardedKey {
+        key: bot_request::OBSERVED_STATE,
+        may: MayWrite::RequestStatus,
+    },
+    GuardedKey {
+        key: bot_request::OBSERVED_GENERATION,
+        may: MayWrite::RequestStatus,
+    },
+    GuardedKey {
+        key: bot_request::RUNTIME_REF,
+        may: MayWrite::RequestStatus,
+    },
+    GuardedKey {
+        key: bot_request::LAST_RESULT,
+        may: MayWrite::RequestStatus,
+    },
 ];
 
 /// **Whether a fold, served as handles, names `subject` as its manager.** The
@@ -2543,6 +2599,18 @@ pub const GUARDED_KEYS: [GuardedKey; 8] = [
 pub fn reports_to(fold: &BTreeMap<String, String>, subject: &EntityId) -> bool {
     fold.get(REPORTS_TO)
         .is_some_and(|manager| manager.trim() == subject.as_str())
+}
+
+/// **The guarded keys that bind a ceiling or the chart on every kind**, which
+/// are all of them but the rows that guard a bot request. Those mean something
+/// on a request alone, so a record that sets one is no setting of a ceiling.
+pub fn ceiling_keys() -> impl Iterator<Item = &'static GuardedKey> {
+    GUARDED_KEYS.iter().filter(|rule| {
+        !matches!(
+            rule.may,
+            MayWrite::RequestSpec | MayWrite::RequestStatus | MayWrite::RequestGeneration
+        )
+    })
 }
 
 /// **The bots that have written a thought into `thread`**, read off the claims
@@ -2674,9 +2742,15 @@ pub fn chart_wanted(
                     | MayWrite::Superior
                     | MayWrite::HeadOnceHeld { .. }
                     | MayWrite::WritersSuperior
+                    | MayWrite::RequestSpec
             )
         })
-        .then(|| written.get(REPORTS_TO).and_then(|value| manager_in(value)))
+        .then(|| {
+            written
+                .get(REPORTS_TO)
+                .or_else(|| written.get(bot_request::TARGET_BOT))
+                .and_then(|value| manager_in(value))
+        })
 }
 
 /// **The guarded keys a fold holds now**: a key with a value that is not blank.
@@ -2741,7 +2815,7 @@ pub fn folded_into(
 /// and a licence is judged on handles, so two folds are only comparable once both
 /// are served. Without it a resend of the value a key holds reads as a change,
 /// because the stored fold names an id and the patch names the handle.
-pub const SERVED_KEYS: [&str; 2] = [REPORTS_TO, OPERATOR];
+pub const SERVED_KEYS: [&str; 3] = [REPORTS_TO, OPERATOR, bot_request::TARGET_BOT];
 
 /// **The id a stored field value names**, with the mention mark taken off. A
 /// store keeps the permanent id of the entity a field names, bare under a key
@@ -2842,6 +2916,8 @@ fn licensed(
             subject.as_str() != on
                 || lineage.is_some_and(|l| !l.holds.contains(key) || l.heads.contains(caller))
         }
+        MayWrite::RequestSpec => bot_request::spec_licensed(key, subject, caller, lineage),
+        MayWrite::RequestStatus | MayWrite::RequestGeneration => !bot_request::is_request(subject),
         MayWrite::Superior => {
             let Some(l) = lineage else {
                 return Err(Why::NotLicensed);
@@ -2896,6 +2972,7 @@ fn who_may_write(may: MayWrite, key: &str, subject: &EntityId, lineage: Managers
                     .map(str::to_string),
             )
             .collect(),
+        (MayWrite::RequestSpec, Some(l)) => bot_request::who_may_spec(key, l),
         (MayWrite::Superior, Some(l)) if !l.above.is_empty() => names(&l.above),
         // The head of a chart places itself, so it is the one the refusal names.
         (MayWrite::Superior, Some(l)) if l.has_reports && l.named.is_some() => {
@@ -2958,6 +3035,21 @@ fn who_may(may: MayWrite, subject: &str, allowed: &[String]) -> String {
             "none of the bots that write into '{subject}' may write it, only a bot above one of \
              them: {}",
             bots()
+        ),
+        MayWrite::RequestSpec if allowed.is_empty() => format!(
+            "no bot is recorded above the target of '{subject}' to write it, and the target_bot \
+             of a request is fixed once the request exists"
+        ),
+        MayWrite::RequestSpec => format!(
+            "only a bot above the target of '{subject}' may write it: {}",
+            bots()
+        ),
+        MayWrite::RequestStatus => format!(
+            "no bot writes it: only the app named in the bound_app of '{subject}' does, through \
+             its own grant"
+        ),
+        MayWrite::RequestGeneration => format!(
+            "no one writes it: jojobot works it out from each write of the spec of '{subject}'"
         ),
         MayWrite::Ancestor | MayWrite::Superior if allowed.is_empty() => {
             format!("no bot is recorded above '{subject}' to write it")
@@ -3112,6 +3204,10 @@ pub fn refuses_unlicensed_change_by(
 ) -> Option<MemoryError> {
     table
         .iter()
+        // **The generation moves with every change of a request's spec**, written
+        // by jojobot in the same edit, so the fold changing is not a caller's
+        // write of it. A caller's own copy is refused by the verb before the edit.
+        .filter(|rule| rule.may != MayWrite::RequestGeneration)
         .filter(|rule| before.get(rule.key) != after.get(rule.key))
         .find_map(|rule| {
             licensed(rule.may, rule.key, subject, caller, lineage)
