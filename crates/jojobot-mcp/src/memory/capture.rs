@@ -966,6 +966,7 @@ impl Jojobot {
         self.note_reach_and_hint(&mut body, &fact, &own_sent, &sets_named)
             .await;
         if fact.edge.is_none()
+            && body.get("hint").is_none()
             && jojobot_domain::memory::entries::is_entry(&fact)
             && let jojobot_domain::memory::entries::Named::Several(things) =
                 jojobot_domain::memory::entries::named_in(&fact.content, &fact.subject)

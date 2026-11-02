@@ -99,3 +99,45 @@ async fn a_step_naming_two_cards_draws_none_and_an_object_wins() {
     );
     story.finish().await;
 }
+
+/// **A step that names two cards and also sends a key its list reads as an own
+/// field earns two hints, and the receipt keeps the earlier one.** Paired with a
+/// step that earns only the several-things hint, which still gets it.
+#[tokio::test]
+async fn a_second_hint_keeps_the_first() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    a_list_on_the_trip(&s, "checklist", json!({"tick": "sink"})).await;
+    work(&s, "pour-the-slab", "now").await;
+    work(&s, "frame-the-walls", "next").await;
+
+    let both = s
+        .call(
+            "capture",
+            json!({"subject": "list:checklist", "provenance": "testimony",
+                   "content": "carry @work:pour-the-slab before @work:frame-the-walls",
+                   "fields": {"tick": "leave"}}),
+        )
+        .await;
+    let hint = both.json()["hint"].as_str().unwrap_or_default().to_string();
+    assert!(
+        hint.contains("tick"),
+        "the earlier hint, about the key that belongs in sets, stays: {}",
+        both.raw()
+    );
+
+    let only = s
+        .call(
+            "capture",
+            json!({"subject": "list:checklist", "provenance": "testimony",
+                   "content": "carry @work:pour-the-slab after @work:frame-the-walls"}),
+        )
+        .await;
+    let hint = only.json()["hint"].as_str().unwrap_or_default().to_string();
+    assert!(
+        hint.contains("work:pour-the-slab") && hint.contains("work:frame-the-walls"),
+        "a step with no earlier hint still names both cards: {}",
+        only.raw()
+    );
+    story.finish().await;
+}
