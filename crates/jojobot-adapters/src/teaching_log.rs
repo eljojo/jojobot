@@ -161,7 +161,19 @@ pub struct LoggedTeachings {
     /// **The pairs the ledger holds for runs whose reads are certain**, readable
     /// without the held mutex, which covers log I/O. A pair here is answered
     /// before the writer queue; see [`LoggedTeachings::publish`].
-    known: Arc<std::sync::RwLock<BTreeSet<(String, String)>>>,
+    known: Arc<std::sync::RwLock<Known>>,
+    /// The shadow's report, so a contact answered from `known` is compared with
+    /// the old path as every other contact is.
+    report: Option<Arc<crate::fold::shadow::Shadow>>,
+}
+
+/// What a first contact reads without the held mutex.
+#[derive(Default)]
+struct Known {
+    /// The log's pairs for runs whose reads are certain.
+    log: BTreeSet<(String, String)>,
+    /// The old path's pairs, when a shadow runs.
+    legacy: BTreeSet<(String, String)>,
 }
 
 fn run(sid: &Sid) -> RunId {
@@ -194,6 +206,7 @@ impl LoggedTeachings {
                 uncertain: BTreeSet::new(),
             })),
             known: Arc::default(),
+            report: None,
         };
         this.fill(marks).await?;
         Ok(this)
@@ -210,6 +223,7 @@ impl LoggedTeachings {
         let this = Self {
             writer: Writer::default(),
             log: log.clone(),
+            report: Some(report.clone()),
             held: Arc::new(Mutex::new(Held {
                 state: State::default(),
                 head: Position::default(),
@@ -366,16 +380,22 @@ impl LoggedTeachings {
     /// through the writer and meets the refusal. Called wherever the held state
     /// or the uncertain runs change, with the held mutex taken.
     fn publish(&self, held: &Held) {
-        let known = held
+        let log = held
             .state
             .taught()
             .filter(|(run, _)| !held.uncertain.contains(run))
             .map(|(run, domain)| (run.0.clone(), domain.clone()))
             .collect();
+        let legacy = held
+            .shadow
+            .iter()
+            .flat_map(|shadow| shadow.legacy.iter())
+            .map(|(sid, domain)| (sid.as_str().to_string(), domain.clone()))
+            .collect();
         *self
             .known
             .write()
-            .expect("the known pairs are not poisoned") = known;
+            .expect("the known pairs are not poisoned") = Known { log, legacy };
     }
 
     /// Append the events as one batch and apply them from the appended value.
@@ -470,13 +490,20 @@ impl Teachings for LoggedTeachings {
     ) -> Result<bool, TeachingError> {
         // **A pair already held writes nothing**, so it neither waits behind an
         // unrelated write on the shared writer nor reads the log's tail.
-        let held_already = self
-            .known
-            .read()
-            .expect("the known pairs are not poisoned")
-            .contains(&(sid.as_str().to_string(), domain.to_string()));
-        if held_already {
-            return Ok(false);
+        let pair = (sid.as_str().to_string(), domain.to_string());
+        {
+            let known = self.known.read().expect("the known pairs are not poisoned");
+            if known.log.contains(&pair) {
+                if let Some(report) = &self.report {
+                    report.compared_teaching(
+                        sid.as_str(),
+                        domain,
+                        true,
+                        known.legacy.contains(&pair),
+                    );
+                }
+                return Ok(false);
+            }
         }
         let this = self.clone();
         let (sid, domain) = (sid.clone(), domain.to_string());
