@@ -3195,6 +3195,13 @@ pub async fn run_all_mentioning<M: Memory + ?Sized, B: Memory + ?Sized>(
     rehandles: &dyn Rehandles,
 ) {
     a_mention_is_stored_as_a_badge_and_read_back_as_a_handle(mentioning, bare).await;
+    super::list_entry_edge::a_list_entry_naming_one_thing_draws_a_connection_edge(mentioning).await;
+    super::list_entry_edge::a_list_entry_naming_two_things_draws_no_edge(mentioning).await;
+    super::list_entry_edge::a_list_entry_with_an_object_keeps_it(mentioning).await;
+    super::list_entry_edge::a_claim_that_is_not_a_list_entry_draws_no_edge_from_its_words(
+        mentioning,
+    )
+    .await;
     a_mention_inside_a_multi_line_details_is_a_link(mentioning, bare).await;
     a_mention_follows_a_thing_that_is_rehandled(mentioning, bare, rehandles).await;
     a_mention_of_a_folded_thing_renders_as_its_survivor(mentioning, bare).await;

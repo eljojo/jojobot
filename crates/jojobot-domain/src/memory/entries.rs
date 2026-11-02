@@ -159,6 +159,40 @@ pub fn is_entry(fact: &Fact) -> bool {
     is_placed(fact) && fact.home.kind() == Some(EntityKind::LIST)
 }
 
+/// **Whether a claim about to be written is a new entry of a list**: it sits on a
+/// list and carries the order key the server mints.
+pub fn is_new_entry(fact: &super::NewFact) -> bool {
+    fact.subject.kind() == Some(EntityKind::LIST) && fact.fields.contains_key(document::ORDER)
+}
+
+/// **What the words of a new list entry name.** Distinct things, in the order they
+/// were written, and never the list itself.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Named {
+    Nothing,
+    One(EntityId),
+    Several(Vec<EntityId>),
+}
+
+/// **The thing a new list entry's words name, when they name exactly one.** An
+/// entry that names one thing draws a connection edge to it, so a list shows the
+/// state of a card its step names and a walk from the card reaches the step. Two
+/// or more things draw none, because the words do not say which the step is
+/// about; the caller sends `object` then. `list` is the list the entry is on.
+pub fn named_in(words: &str, list: &EntityId) -> Named {
+    let mut found: Vec<EntityId> = Vec::new();
+    for handle in super::mention::named(words) {
+        if handle != *list && !found.contains(&handle) {
+            found.push(handle);
+        }
+    }
+    match found.len() {
+        0 => Named::Nothing,
+        1 => Named::One(found.remove(0)),
+        _ => Named::Several(found),
+    }
+}
+
 /// **The open entries of a list, in order.** A claim on the list that is
 /// active and carries an order key. Ordered by that key, then by the claim's
 /// number, so two entries that ever carried one key still read in a fixed order.

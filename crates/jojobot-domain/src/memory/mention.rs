@@ -1234,12 +1234,24 @@ impl super::Memory for Mentioning {
         self.bind_where(&mut fields, &known, &fact.subject).await?;
         let (content, details) =
             resolved_words(&fact.content, fact.details.as_deref(), &known).map_err(unloaded)?;
+        // **A new list entry that names one thing is about it**: the edge is drawn
+        // from the words the author wrote, and an object the caller sent wins.
+        let edge = match (&fact.edge, super::entries::is_new_entry(&fact)) {
+            (None, true) => match super::entries::named_in(&fact.content, &fact.subject) {
+                super::entries::Named::One(object) => {
+                    Some(super::Edge::new(super::EdgeShape::Connection, object))
+                }
+                _ => None,
+            },
+            _ => fact.edge.clone(),
+        };
         let written = self
             .inner
             .capture(super::NewFact {
                 fields,
                 content,
                 details,
+                edge,
                 drop_because: roster::resolved_reason(fact.drop_because.as_deref(), &known)?,
                 ..fact
             })
