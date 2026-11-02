@@ -66,6 +66,35 @@ pub async fn a_clear_on_an_older_claim_is_refused_and_one_on_the_backing_claim_t
         "the newer value survived the refused clear: {held:?}"
     );
 
+    // This record names no setting: its mood is a Stays write, so its clear
+    // cannot touch the newer setting even though both keys have the same name.
+    let own = capture(
+        store,
+        NewFact {
+            fields: mood("rested"),
+            ..NewFact::about(thing.clone(), "a label on this record", date(2026, 10, 3))
+        },
+    )
+    .await;
+    assert!(!own.reaching.contains("mood"), "the label stays: {own:?}");
+    let cleared = edit(store, &own.address(), clear()).await;
+    assert!(!cleared.fields.contains_key("mood"), "{cleared:?}");
+    assert_eq!(store.fields(&thing).await.expect("fields read"), held);
+
+    // The resulting status is Archived, so no write of this record folds.
+    let archived = edit(
+        store,
+        &older.address(),
+        FactPatch {
+            status: Some(FactStatus::Archived),
+            ..clear()
+        },
+    )
+    .await;
+    assert_eq!(archived.status, FactStatus::Archived);
+    assert!(!archived.fields.contains_key("mood"), "{archived:?}");
+    assert_eq!(store.fields(&thing).await.expect("fields read"), held);
+
     edit(store, &newer.address(), clear()).await;
     let held = store.fields(&thing).await.expect("fields read");
     assert!(

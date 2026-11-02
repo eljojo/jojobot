@@ -3733,10 +3733,10 @@ pub fn writes_of(
 /// value. It is refused, naming the claim that backs the value
 /// ([`MemoryError::ClearsAnOlderWrite`]).
 ///
-/// It judges only a clear that is a write ([`writes_of`]: the addressed record
-/// carries the key), only a key that folds as the newest write (a counter has no
-/// single backing claim), and not a key the same patch sets again, which leaves
-/// the value it asked for. One function, called from both stores.
+/// It judges only an active record's clear that reaches the thing: the held
+/// write class is already projected in [`Fact::reaching`]. Only a key that folds
+/// as the newest write has one backing claim, and a key the same patch sets
+/// again leaves the value it asked for. One function, called from both stores.
 pub fn guard_clear_backing(
     writes: &[KeyWrite],
     edited: &Fact,
@@ -3744,9 +3744,15 @@ pub fn guard_clear_backing(
     carried: &BTreeMap<String, String>,
     declared: &[types::DeclaredType],
 ) -> Result<(), MemoryError> {
+    if edited.status != FactStatus::Active {
+        return Ok(());
+    }
     let backing = folded_backing(writes, declared);
     for key in patch.clear_fields.iter().map(|key| key.trim()) {
-        if !carried.contains_key(key) || patch.fields.keys().any(|set| set.trim() == key) {
+        if !carried.contains_key(key)
+            || !edited.reaching.contains(key)
+            || patch.fields.keys().any(|set| set.trim() == key)
+        {
             continue;
         }
         if let Some(held) = backing.get(key)
