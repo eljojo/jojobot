@@ -7,12 +7,10 @@
 # A file over `cap` lines is red, of any kind: a new one is refused. A file over
 # 2000 lines and not red is yellow, and warns when it is new or grew. The cap only
 # falls. `test_file_bytes` is the byte limit of an added file under a tests
-# directory (rule 661) and only falls too. `step` is the step of the series that
-# the next change is made in.
+# directory (rule 661) and only falls too.
 #
 # A red file that grew against the base is named by the check and not refused
 # (rule 741). The report of the change gives the reason it had to grow.
 
 cap = 5000
 test_file_bytes = 100000
-step = "9.3.1"

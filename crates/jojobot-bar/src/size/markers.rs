@@ -1,7 +1,8 @@
 //! **Owned markers.** A temporary path names the step that retires it. A GAP
 //! marker or a tripwire in the user stories names the work item that owns the
 //! missing capability, by handle, or says it is an invariant. The bar lists
-//! both and refuses what names no owner or names a step already passed.
+//! both and refuses what names no owner, or a temporary path that retires at or
+//! before the release being cut.
 //! A legacy reader and its planted upgrade row name the same case. Removing
 //! either side leaves an orphan that the bar lists and refuses.
 
@@ -35,21 +36,23 @@ fn names_an_owner(text: &str) -> bool {
         })
 }
 
-/// Offences in one file. `step` is the step the series is at.
-pub fn offences_in(path: &str, text: &str, step: Option<&str>) -> Vec<String> {
+/// Offences in one file. `release` is the release being cut, none outside a
+/// release gate: a marker is then only checked for being a step.
+pub fn offences_in(path: &str, text: &str, release: Option<&str>) -> Vec<String> {
     let lines: Vec<&str> = text.lines().collect();
     let mut found = Vec::new();
     let stories = path.starts_with(STORIES);
-    let now = step.and_then(steps);
+    let cutting = release.and_then(steps);
     for (at, line) in lines.iter().enumerate() {
         let place = format!("{path}:{}", at + 1);
         if let Some((_, rest)) = line.split_once(&temporary()) {
             let named = rest.split(')').next().unwrap_or("");
-            match (steps(named), &now) {
+            match (steps(named), &cutting) {
                 (None, _) => found.push(format!("{place}: the step '{named}' is not a step")),
-                (Some(own), Some(now)) if own < *now => {
-                    found.push(format!("{place}: retiring step {named} is past"))
-                }
+                (Some(own), Some(cutting)) if own <= *cutting => found.push(format!(
+                    "{place}: retiring step {named} is at or before release {}",
+                    release.unwrap_or_default()
+                )),
                 _ => {}
             }
         }
@@ -130,7 +133,14 @@ fn legacy_markers(
 }
 
 /// Every tracked file's offences, for the files the bar already measured.
-pub fn scan(files: &[Measured], step: Option<&str>) -> Result<Vec<String>, String> {
+/// A release that is no step is refused here, naming it, so it cannot let a
+/// marker through.
+pub fn scan(files: &[Measured], release: Option<&str>) -> Result<Vec<String>, String> {
+    if let Some(release) = release.filter(|release| steps(release).is_none()) {
+        return Err(format!(
+            "BAR_RELEASE '{release}' is not a step, as 9.3.3 is"
+        ));
+    }
     let mut found = Vec::new();
     let mut pairs = BTreeMap::new();
     for file in files {
@@ -140,7 +150,7 @@ pub fn scan(files: &[Measured], step: Option<&str>) -> Result<Vec<String>, Strin
         }
         let text = std::fs::read_to_string(&file.path)
             .map_err(|e| format!("{}: could not be read: {e}", file.path))?;
-        found.extend(offences_in(&file.path, &text, step));
+        found.extend(offences_in(&file.path, &text, release));
         legacy_markers(&file.path, &text, &mut pairs, &mut found);
     }
     for (case, pair) in pairs {
@@ -244,12 +254,48 @@ mod tests {
         );
     }
 
+    /// **A marker retiring at the release being cut, or before it, is refused.**
+    /// Step order is numeric per part and a prefix sorts first.
     #[test]
-    fn a_temporary_marker_fails_only_past_its_step() {
+    fn a_temporary_marker_is_refused_at_or_before_the_release_being_cut() {
         let m = |s: &str| format!("// {}{s}): x\n", temporary());
-        let run = |s: &str| offences_in("a.rs", &m(s), Some("9.3.1"));
-        assert!(run("9.3.1").is_empty() && run("9.3.10").is_empty());
-        assert_eq!(run("9.3.0").len(), 1);
-        assert_eq!(run("soon").len(), 1);
+        let refused = |release: Option<&str>, s: &str| offences_in("a.rs", &m(s), release).len();
+        for (release, marker, expected) in [
+            ("9.3.3", "9.3.2", 1),
+            ("9.3.3", "9.3.3", 1),
+            ("9.3.3", "9.3.4", 0),
+            ("9.3.3", "9.3.10", 0),
+            ("9.3.2.1", "9.3.2", 1),
+            ("9.3.2.1", "9.3.3", 0),
+        ] {
+            assert_eq!(
+                refused(Some(release), marker),
+                expected,
+                "release {release}, marker {marker}"
+            );
+        }
+        assert_eq!(refused(None, "9.3.0"), 0, "no release");
+        assert_eq!(refused(None, "soon"), 1, "no release, not a step");
+        assert_eq!(refused(Some("9.3.3"), "soon"), 1, "a release, not a step");
+    }
+
+    /// **A release of one part is a step, and orders after every longer step
+    /// that starts with a smaller part.** The order is numeric per part, never
+    /// the order of the text.
+    #[test]
+    fn a_one_part_release_is_a_step_and_orders_after_9_3_10() {
+        let m = |s: &str| format!("// {}{s}): x\n", temporary());
+        assert!(scan(&[], Some("10")).is_ok());
+        assert_eq!(offences_in("a.rs", &m("9.3.10"), Some("10")).len(), 1);
+        assert!(offences_in("a.rs", &m("10"), Some("9.3.10")).is_empty());
+        assert_eq!(offences_in("a.rs", &m("10"), Some("10")).len(), 1);
+    }
+
+    #[test]
+    fn a_release_that_is_no_step_fails_the_scan_and_names_the_value() {
+        let error = scan(&[], Some("soon")).expect_err("not a step");
+        assert!(error.contains("soon"), "{error}");
+        assert!(scan(&[], Some("9.3.3")).is_ok());
+        assert!(scan(&[], None).is_ok());
     }
 }

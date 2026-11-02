@@ -93,6 +93,11 @@ fn bar(dir: &Path, verb: &str, base: Option<&str>) -> Ran {
 }
 
 fn bar_with(dir: &Path, args: &[&str], base: Option<&str>) -> Ran {
+    bar_released(dir, args, base, None)
+}
+
+/// The same, with `BAR_RELEASE` set to the release being cut when one is given.
+fn bar_released(dir: &Path, args: &[&str], base: Option<&str>, release: Option<&str>) -> Ran {
     let fake_cargo = write_fake_cargo_always_green(dir);
     let mut command = Command::new(env!("CARGO_BIN_EXE_jojobot-bar"));
     command
@@ -102,10 +107,14 @@ fn bar_with(dir: &Path, args: &[&str], base: Option<&str>) -> Ran {
         .env("CARGO", &fake_cargo)
         .env("BAR_HISTORY_DIR", dir.join("history"))
         .env_remove("SIZE_BASE")
+        .env_remove("BAR_RELEASE")
         .env_remove("GITHUB_ACTIONS")
         .env_remove("GITHUB_BASE_REF");
     if let Some(base) = base {
         command.env("SIZE_BASE", base);
+    }
+    if let Some(release) = release {
+        command.env("BAR_RELEASE", release);
     }
     let output = support::output_fenced(&mut command).expect("run bar");
     Ran {
@@ -215,18 +224,8 @@ fn a_lowered_base_cap_in_the_current_format_still_only_falls() {
     let mut mismatches = Vec::new();
     for (cap, expected) in [(2000, 0), (3000, 0), (4000, 1), (5000, 1)] {
         let dir = repo(&format!("lowered-base-cap-{cap}"));
-        let base = commit_files(
-            &dir,
-            &[(
-                "size-ratchet.toml",
-                "cap = 3000\nstep = \"9.3.1\"\n".to_string(),
-            )],
-        );
-        fs::write(
-            dir.join("size-ratchet.toml"),
-            format!("cap = {cap}\nstep = \"9.3.1\"\n"),
-        )
-        .unwrap();
+        let base = commit_files(&dir, &[("size-ratchet.toml", "cap = 3000\n".to_string())]);
+        fs::write(dir.join("size-ratchet.toml"), format!("cap = {cap}\n")).unwrap();
         let ran = bar(&dir, "size", Some(&base));
         let raised = Offence::CapRaised {
             base: 3000,
@@ -1121,37 +1120,70 @@ fn make_static_refuses_unreadable_cargo_metadata() {
 /// **The owned markers are judged through the bar.** The marker texts are built
 /// here so this file never matches its own scan.
 #[test]
-fn a_past_step_a_bare_gap_and_a_step_gone_back_are_red_through_the_bar() {
-    let temporary = ["TEMPO", "RARY(9.3.1): x\n"].concat();
+fn a_marker_at_the_release_and_a_bare_gap_are_red_through_the_bar() {
+    let temporary = ["TEMPO", "RARY(9.3.2): x\n"].concat();
     let gap = ["// GA", "P — x\n"].concat();
     let stories = "crates/jojobot/tests/user_stories/x.rs";
     let dir = repo("markers");
+    let base = commit_files(&dir, &[("size-ratchet.toml", ratchet(""))]);
+    let red = |files: &[(&str, String)], release: Option<&str>| {
+        let head = commit_files(&dir, files);
+        let ran = bar_released(&dir, &["check"], Some(&base), release);
+        assert_ne!(ran.code, Some(0), "{head}: {}", ran.stdout);
+        ran.stdout
+    };
+    let at = red(&[("a.rs", format!("// {temporary}"))], Some("9.3.2"));
+    assert!(
+        at.contains("a.rs:1") && at.contains("release 9.3.2"),
+        "{at}"
+    );
+    let bare = red(&[(stories, gap.clone())], Some("9.3.3"));
+    assert!(bare.contains(&format!("{stories}:1")), "{bare}");
+    commit_files(&dir, &[(stories, gap.replace("x", "work:q-1001 —"))]);
+    let after = bar_released(&dir, &["check"], Some(&base), Some("9.3.1"));
+    assert!(
+        !after.stdout.contains("a.rs:1") && !after.stdout.contains(stories),
+        "a marker after the release, and an owned gap, are not offences: {}",
+        after.stdout
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// **A release that is no step is red and named**, so it cannot hide a marker.
+#[test]
+fn a_release_that_is_no_step_is_red_through_the_bar() {
+    let dir = repo("release-garbled");
+    let base = commit_files(&dir, &[("size-ratchet.toml", ratchet(""))]);
+    commit_files(&dir, &[("a.rs", "fn a() {}\n".into())]);
+    let ran = bar_released(&dir, &["check"], Some(&base), Some("soon"));
+    assert_ne!(ran.code, Some(0), "{}", ran.stdout);
+    assert!(ran.stdout.contains("'soon'"), "{}", ran.stdout);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// **The step key is gone**: the branch drops it with no offence, and a branch
+/// that writes it again is refused by name.
+#[test]
+fn the_retired_step_key_is_dropped_freely_and_refused_when_written_again() {
+    let dir = repo("step-retired");
     let base = commit_files(
         &dir,
         &[("size-ratchet.toml", ratchet("step = \"9.3.2\"\n"))],
     );
-    let red = |files: &[(&str, String)]| {
-        let head = commit_files(&dir, files);
-        let ran = bar(&dir, "check", Some(&base));
-        assert_ne!(ran.code, Some(0), "{head}: {}", ran.stdout);
-        ran.stdout
-    };
-    let past = red(&[("a.rs", format!("// {temporary}"))]);
-    assert!(past.contains("a.rs:1"), "{past}");
-    let bare = red(&[(stories, gap.clone())]);
-    assert!(bare.contains(&format!("{stories}:1")), "{bare}");
-    commit_files(&dir, &[(stories, gap.replace("x", "work:q-1001 —"))]);
-    let owned = bar(&dir, "check", Some(&base));
-    assert!(
-        owned.stdout.contains("a.rs:1"),
-        "only the past step is left"
+    commit_files(&dir, &[("size-ratchet.toml", ratchet(""))]);
+    let dropped = bar(&dir, "size", Some(&base));
+    assert_eq!(dropped.code, Some(0), "{}", dropped.stdout);
+    commit_files(
+        &dir,
+        &[("size-ratchet.toml", ratchet("step = \"9.3.2\"\n"))],
     );
-    assert!(!owned.stdout.contains(stories), "{}", owned.stdout);
-    let back = red(&[
-        ("a.rs", "fn a() {}\n".into()),
-        ("size-ratchet.toml", ratchet("step = \"9.3.1\"\n")),
-    ]);
-    assert!(back.contains("step went back"), "{back}");
+    let again = bar(&dir, "size", Some(&base));
+    assert_ne!(again.code, Some(0), "{}", again.stdout);
+    assert!(
+        again.stdout.contains("unknown key step"),
+        "{}",
+        again.stdout
+    );
     let _ = fs::remove_dir_all(&dir);
 }
 
@@ -1163,51 +1195,6 @@ fn a_named_base_that_does_not_resolve_is_red_through_the_bar() {
     let ran = bar(&dir, "check", Some("no-such-revision"));
     assert_ne!(ran.code, Some(0), "{}", ran.stdout);
     assert!(size_line(&ran.stdout).starts_with("size: unknown"));
-    let _ = fs::remove_dir_all(&dir);
-}
-
-/// **A step cannot be dropped to get past the rule.** The base holds a step and a
-/// marker retires at it; the branch deletes the step line.
-#[test]
-fn a_deleted_step_is_red_through_the_bar() {
-    let temporary = ["TEMPO", "RARY(9.3.1): x\n"].concat();
-    let dir = repo("step-deleted");
-    let base = commit_files(
-        &dir,
-        &[("size-ratchet.toml", ratchet("step = \"9.3.2\"\n"))],
-    );
-    commit_files(
-        &dir,
-        &[
-            ("size-ratchet.toml", ratchet("")),
-            ("a.rs", format!("// {temporary}")),
-        ],
-    );
-    let ran = bar(&dir, "check", Some(&base));
-    assert_ne!(ran.code, Some(0), "{}", ran.stdout);
-    assert!(ran.stdout.contains("step"), "{}", ran.stdout);
-    let _ = fs::remove_dir_all(&dir);
-}
-
-/// **A step that is no step is refused at the parse**, so it cannot hide a marker.
-#[test]
-fn a_garbled_step_is_red_through_the_bar() {
-    let temporary = ["TEMPO", "RARY(9.3.1): x\n"].concat();
-    let dir = repo("step-garbled");
-    let base = commit_files(
-        &dir,
-        &[("size-ratchet.toml", ratchet("step = \"9.3.2\"\n"))],
-    );
-    commit_files(
-        &dir,
-        &[
-            ("size-ratchet.toml", ratchet("step = \"soon\"\n")),
-            ("a.rs", format!("// {temporary}")),
-        ],
-    );
-    let ran = bar(&dir, "check", Some(&base));
-    assert_ne!(ran.code, Some(0), "{}", ran.stdout);
-    assert!(ran.stdout.contains("step must be"), "{}", ran.stdout);
     let _ = fs::remove_dir_all(&dir);
 }
 

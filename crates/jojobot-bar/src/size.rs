@@ -35,8 +35,8 @@ use crate::Summary;
 
 mod markers;
 
-/// The checked-in file, at the repo root. It holds the cap, the byte limit of an
-/// added test file and the step.
+/// The checked-in file, at the repo root. It holds the cap and the byte limit of
+/// an added test file.
 pub const RATCHET_FILE: &str = "size-ratchet.toml";
 
 /// A file over this many lines is red.
@@ -54,6 +54,10 @@ pub const ORANGE: usize = 3000;
 /// checkout may not hold.
 pub const BASE_VARIABLE: &str = "SIZE_BASE";
 
+/// The release being cut, such as `9.3.3`, set by the release gate and unset
+/// everywhere else. A temporary marker that retires at or before it is red.
+pub const RELEASE_VARIABLE: &str = "BAR_RELEASE";
+
 /// The branch a pull request targets, as a runner sets it.
 pub const BASE_REF_VARIABLE: &str = "GITHUB_BASE_REF";
 
@@ -67,8 +71,6 @@ pub struct Limits {
     pub cap: usize,
     /// Byte limit for added test paths, never higher than rule 661's 100 KB.
     pub test_file_bytes: usize,
-    /// The step of the series that a change is made in, such as `9.3.1`.
-    pub step: Option<String>,
 }
 
 impl Limits {
@@ -76,19 +78,18 @@ impl Limits {
         Limits {
             cap: CEILING,
             test_file_bytes: TEST_FILE_BYTES,
-            step: None,
         }
     }
 
-    /// **Read the file's text.** `cap = N`, `test_file_bytes = N` and `step = "X"`.
+    /// **Read the file's text.** `cap = N` and `test_file_bytes = N`.
     /// Every refusal names the line it is about.
     pub fn parse(text: &str) -> Result<Limits, String> {
         Self::read(text, false)
     }
 
     /// The same read for the file as it stood at the base: the `[[file]]` entries of
-    /// the list this replaces and the `[[raise]]` entries of rule 704 are skipped,
-    /// not refused. Only a file with those legacy tables has its old yellow cap
+    /// the list this replaces, the `[[raise]]` entries of rule 704 and the `step`
+    /// key are skipped, not refused. Only a file with those legacy tables has its old yellow cap
     /// read as the ceiling; a current-format cap keeps its value.
     fn parse_base(text: &str) -> Result<Limits, String> {
         Self::read(text, true)
@@ -96,7 +97,6 @@ impl Limits {
 
     fn read(text: &str, lenient: bool) -> Result<Limits, String> {
         let mut cap = None;
-        let mut step = None;
         let mut test_file_bytes = None;
         let mut skipping = false;
         for (index, raw) in text.lines().enumerate() {
@@ -126,24 +126,8 @@ impl Limits {
                     }
                     cap = Some(whole(key, value, number)?);
                 }
-                "step" => {
-                    if step.is_some() {
-                        return Err(format!("line {number}: step is given twice"));
-                    }
-                    let quoted = value
-                        .strip_prefix('"')
-                        .and_then(|rest| rest.strip_suffix('"'))
-                        .filter(|inner| markers::steps(inner).is_some());
-                    step = Some(
-                        quoted
-                            .ok_or_else(|| {
-                                format!(
-                                    "line {number}: step must be dotted numbers in double quotes, as 9.3.1"
-                                )
-                            })?
-                            .to_string(),
-                    );
-                }
+                // The key the file held before the release gate named its release.
+                "step" if lenient => {}
                 "test_file_bytes" => {
                     if test_file_bytes.is_some() {
                         return Err(format!("line {number}: test_file_bytes is given twice"));
@@ -167,7 +151,6 @@ impl Limits {
         Ok(Limits {
             cap,
             test_file_bytes: test_file_bytes.unwrap_or(TEST_FILE_BYTES),
-            step,
         })
     }
 }
@@ -287,7 +270,7 @@ pub enum Offence {
         path: String,
         now: usize,
     },
-    /// An owned marker names no owner, or a step that is past.
+    /// An owned marker names no owner, or a step at or before the release being cut.
     Marker(String),
 }
 
@@ -355,16 +338,6 @@ pub fn judge(limits: &Limits, files: &[Measured], base: &Base) -> Verdict {
             base: was.cap,
             now: limits.cap,
         });
-    }
-    let step = |limits: &Limits| limits.step.as_deref().and_then(markers::steps);
-    match (step(was), step(limits)) {
-        (Some(then), Some(now)) if now < then => verdict.offences.push(Offence::Marker(format!(
-            "{RATCHET_FILE}: step went back from {then:?} to {now:?}. The step only moves forward."
-        ))),
-        (Some(then), None) => verdict.offences.push(Offence::Marker(format!(
-            "{RATCHET_FILE}: the step {then:?} at the base is missing. The step only moves forward."
-        ))),
-        _ => {}
     }
     for file in files.iter().filter(|file| file.lines > YELLOW) {
         let before = lines_at_base(changes.followed.get(&file.path), file.lines);
@@ -805,7 +778,10 @@ pub fn phase(summary: &mut Summary) {
     };
     let base = read_base();
     let mut verdict = judge(&limits, &files, &base);
-    let owned = markers::scan(&files, limits.step.as_deref());
+    let release = std::env::var(RELEASE_VARIABLE)
+        .ok()
+        .filter(|value| !value.is_empty());
+    let owned = markers::scan(&files, release.as_deref());
     match test_file_offences(&limits, &base).and_then(|own| Ok((own, owned?))) {
         Ok((offences, found)) => {
             verdict.offences.extend(offences);
@@ -1119,11 +1095,7 @@ mod tests {
             ("cap = x\n", "line 1: cap must be a whole number"),
             ("cap = 1999\n", "cap may not be under 2000"),
             ("cap = 5000\ncap = 4000\n", "line 2: cap is given twice"),
-            ("step = 9.3.1\n", "line 1: step must be dotted numbers"),
-            (
-                "step = \"9.3.1\"\nstep = \"9.3.2\"\n",
-                "line 2: step is given twice",
-            ),
+            ("step = \"9.3.1\"\n", "line 1: unknown key step"),
             ("path = \"a.rs\"\n", "line 1: unknown key path"),
             ("[[file]]\n", "line 1: unknown table [[file]]"),
             ("[[raise]]\n", "line 1: unknown table [[raise]]"),
@@ -1256,7 +1228,6 @@ mod tests {
         let was = Limits {
             test_file_bytes: 90_000,
             cap: 4000,
-            ..Limits::empty()
         };
         let verdict = judge(&Limits::empty(), &[], &known(&[], was));
         assert_eq!(

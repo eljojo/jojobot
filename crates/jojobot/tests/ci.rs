@@ -874,12 +874,15 @@ fn release_gate_dispatch_adds_two_independent_checks_only_when_requested() {
     let dispatch = lines_under(&on, "workflow_dispatch:", 2).join("\n");
     let input = lines_under(&dispatch, "release:", 6);
     assert!(
-        input.iter().any(|l| l.trim() == "type: boolean"),
+        input.iter().any(|l| l.trim() == "type: string"),
         "{input:?}"
     );
+    assert!(input.iter().any(|l| l.trim() == "default: ''"), "{input:?}");
+    let gates = lines_under(&lines_under(&yaml, "jobs:", 0).join("\n"), "static:", 2).join("\n");
+    let gate = lines_under(&gates, "- name: Build-free gates", 6).join("\n");
     assert!(
-        input.iter().any(|l| l.trim() == "default: false"),
-        "{input:?}"
+        gate.contains("BAR_RELEASE: ${{ forgejo.event_name == 'workflow_dispatch' && forgejo.event.inputs.release || '' }}"),
+        "the static gate hands the release to the bar: {gate}"
     );
     let jobs = lines_under(&yaml, "jobs:", 0).join("\n");
     let names: Vec<_> = jobs
@@ -902,10 +905,10 @@ fn release_gate_dispatch_adds_two_independent_checks_only_when_requested() {
         .lines()
         .find(|l| l.starts_with("  BAR_WORKFLOW_JOBS:"))
         .unwrap();
-    assert!(banner.contains("forgejo.event_name == 'workflow_dispatch' && forgejo.event.inputs.release == 'true' && 'static, build, check, rooms, year, nix-build, flake-check' || 'static, build, check, rooms, year'"), "{banner}");
+    assert!(banner.contains("forgejo.event_name == 'workflow_dispatch' && forgejo.event.inputs.release != '' && 'static, build, check, rooms, year, nix-build, flake-check' || 'static, build, check, rooms, year'"), "{banner}");
     for name in ["nix-build", "flake-check"] {
         let job = lines_under(&jobs, &format!("{name}:"), 2).join("\n");
-        assert!(job.lines().any(|l| l == "    if: ${{ forgejo.event_name == 'workflow_dispatch' && forgejo.event.inputs.release == 'true' }}"), "{job}");
+        assert!(job.lines().any(|l| l == "    if: ${{ forgejo.event_name == 'workflow_dispatch' && forgejo.event.inputs.release != '' }}"), "{job}");
         assert!(
             job.lines().any(|l| l == "    needs: static")
                 && !job.lines().any(|l| l.starts_with("    continue-on-error:")),

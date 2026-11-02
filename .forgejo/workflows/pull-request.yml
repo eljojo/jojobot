@@ -26,9 +26,9 @@ on:
   workflow_dispatch:
     inputs:
       release:
-        description: Also build the deploy package and check the flake
-        type: boolean
-        default: false
+        description: The release being cut, such as 9.3.3. Also builds the deploy package, checks the flake and refuses a temporary path that retires at or before it. Empty is no release.
+        type: string
+        default: ''
 
 # The newest head wins. A newer push to the same pull request cancels the older
 # run, started or not, because a superseded head's verdict is about code nobody
@@ -50,7 +50,7 @@ env:
   JOJOBOT_METRICS_JOB: ${{ forgejo.job }}
   JOJOBOT_BUILD_METRICS_FILE: target/bar/metrics-${{ forgejo.run_id }}-${{ forgejo.job }}.jsonl
   CI_ROOT: /tmp/jojobot-ci/${{ forgejo.run_id }}
-  BAR_WORKFLOW_JOBS: ${{ forgejo.event_name == 'workflow_dispatch' && forgejo.event.inputs.release == 'true' && 'static, build, check, rooms, year, nix-build, flake-check' || 'static, build, check, rooms, year' }}
+  BAR_WORKFLOW_JOBS: ${{ forgejo.event_name == 'workflow_dispatch' && forgejo.event.inputs.release != '' && 'static, build, check, rooms, year, nix-build, flake-check' || 'static, build, check, rooms, year' }}
 
 # The bundle holds binaries of one architecture, and the label `nix` also names
 # an aarch64 host. The build and every job that runs the bundle use
@@ -73,6 +73,8 @@ jobs:
         with:
           fetch-depth: 0
       - name: Build-free gates
+        env:
+          BAR_RELEASE: ${{ forgejo.event_name == 'workflow_dispatch' && forgejo.event.inputs.release || '' }}
         run: |
           mkdir -p target/bar
           status=0
@@ -338,7 +340,7 @@ jobs:
 
   nix-build:
     needs: static
-    if: ${{ forgejo.event_name == 'workflow_dispatch' && forgejo.event.inputs.release == 'true' }}
+    if: ${{ forgejo.event_name == 'workflow_dispatch' && forgejo.event.inputs.release != '' }}
     runs-on: nix
     timeout-minutes: 130
     steps:
@@ -368,7 +370,7 @@ jobs:
 
   flake-check:
     needs: static
-    if: ${{ forgejo.event_name == 'workflow_dispatch' && forgejo.event.inputs.release == 'true' }}
+    if: ${{ forgejo.event_name == 'workflow_dispatch' && forgejo.event.inputs.release != '' }}
     runs-on: nix
     timeout-minutes: 130
     steps:
