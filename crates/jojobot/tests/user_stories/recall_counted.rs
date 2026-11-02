@@ -23,6 +23,14 @@ fn object<'a>(answer: &'a Value, handle: &str) -> &'a Value {
         .unwrap_or_else(|| panic!("{handle} is in the answer: {answer}"))
 }
 
+/// The instant an object says its newest write happened.
+fn instant(object: &Value) -> jiff::Timestamp {
+    object["written_at"]
+        .as_str()
+        .and_then(|at| at.parse().ok())
+        .unwrap_or_else(|| panic!("written_at is an instant: {object}"))
+}
+
 #[tokio::test]
 async fn a_counted_selection_says_what_sits_under_each_object_and_when_it_was_written() {
     let story = Story::begin("bot:otto").await;
@@ -42,6 +50,7 @@ async fn a_counted_selection_says_what_sits_under_each_object_and_when_it_was_wr
         json!({"handle": GONE_CARD, "reason": "story: one child goes"}),
     )
     .await;
+    let before_the_capture = jiff::Timestamp::now();
     s.call(
         "capture",
         json!({"subject": CHILD_CARD, "content": "The card was written to.",
@@ -49,6 +58,7 @@ async fn a_counted_selection_says_what_sits_under_each_object_and_when_it_was_wr
                "fields": {"read_from": "the story", "read_ref": "a capture"}}),
     )
     .await;
+    let after_the_capture = jiff::Timestamp::now();
 
     let plain = s.call("recall", json!({"roots": true})).await.json();
     let board = object(&plain, BOARD);
@@ -68,7 +78,11 @@ async fn a_counted_selection_says_what_sits_under_each_object_and_when_it_was_wr
         board["children"]["subtree"], 2,
         "the card and the card under it stand; the archived one does not: {board}"
     );
-    assert!(board["written_at"].is_string(), "{board}");
+    let board_written = instant(board);
+    assert!(
+        board_written < before_the_capture,
+        "the board was last written before the capture: {board}"
+    );
 
     // A browse of one kind still counts children of other kinds: the board is a
     // project and its cards are work.
@@ -91,5 +105,15 @@ async fn a_counted_selection_says_what_sits_under_each_object_and_when_it_was_wr
     assert_eq!(card["children"]["subtree"], 1, "{card}");
     let leaf = object(&by_kind, CHILD_CARD);
     assert!(leaf.get("children").is_none(), "a leaf has none: {leaf}");
-    assert!(leaf["written_at"].is_string(), "{leaf}");
+    let leaf_written = instant(leaf);
+    assert!(
+        before_the_capture <= leaf_written && leaf_written <= after_the_capture,
+        "the leaf's instant is its capture's, not its creation: {leaf} (taken between \
+         {before_the_capture} and {after_the_capture})"
+    );
+    assert!(
+        board_written < leaf_written,
+        "a later write to the leaf does not move the board's instant: {board} against {leaf}"
+    );
+    story.finish().await;
 }

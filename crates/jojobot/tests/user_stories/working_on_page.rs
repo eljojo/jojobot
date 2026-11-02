@@ -229,3 +229,59 @@ async fn a_declaration_kept_before_write_origins_still_links_its_session() {
         .says(&link);
     story.finish().await;
 }
+
+/// **The origin-loss switch changes what the store serves, so the story above
+/// proves the fallback and not a switch that did nothing.** The same served read
+/// of the declaration's history names the run before the switch and names none
+/// after it, and the page links the session both times.
+#[tokio::test]
+async fn the_origin_loss_switch_changes_what_the_store_serves() {
+    let (story, store) = Story::begin_over_a_store_that_can_go_away("bot:otto").await;
+    let otto = story.session().await;
+    otto.add("project:atlas", "Atlas").await;
+    otto.add_under("project:atlas", "work:sigma", "Sigma").await;
+    otto.call(
+        "journal",
+        json!({"entry": "picked up sigma", "working_on": "work:sigma"}),
+    )
+    .await;
+    let run = otto.run().to_string();
+    otto.call("wrap_session", json!({"story": "done for now"}))
+        .await;
+
+    let reader = story.session().await;
+    let reads_the_history = async || {
+        reader
+            .call(
+                "recall",
+                json!({"subject": "bot:otto", "history": "working_on"}),
+            )
+            .await
+            .json()
+    };
+    let before = reads_the_history().await;
+    let write = &before["objects"][0]["history"]["writes"][0];
+    assert_eq!(
+        write["run"], run,
+        "before the switch the store names the run that wrote it: {before}"
+    );
+
+    store.forgets_who_made_its_key_writes();
+    story.the_store_changed_underneath().await;
+    let after = reads_the_history().await;
+    let write = &after["objects"][0]["history"]["writes"][0];
+    assert!(
+        write.get("run").is_none() && write.get("writer").is_none(),
+        "after the switch the store names neither run nor writer: {after}"
+    );
+    assert_eq!(
+        write["value"], before["objects"][0]["history"]["writes"][0]["value"],
+        "…and it is the same write: {after}"
+    );
+    story
+        .page("project:atlas/work:sigma")
+        .await
+        .section("working-on-past")
+        .says(&format!("#session-{run}"));
+    story.finish().await;
+}

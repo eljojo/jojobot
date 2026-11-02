@@ -105,6 +105,19 @@ async fn a_controller_reads_a_working_card_records_what_it_saw_pages_the_operato
         status, 403,
         "a key it was not granted is refused: {refused}"
     );
+    let role = s
+        .call("recall", json!({"subject": "role:alpha"}))
+        .await
+        .json();
+    let held = &role["objects"][0]["fields"];
+    assert!(
+        held.get("holder").is_none(),
+        "the refused key was not written: {role}"
+    );
+    assert_eq!(
+        held["watch_state"], "ok",
+        "the granted key is still the one that landed: {role}"
+    );
 
     // ── 3. it pages the operator, and the page is in the operator's box ─────
     let (status, page) = story
@@ -117,6 +130,11 @@ async fn a_controller_reads_a_working_card_records_what_it_saw_pages_the_operato
     assert_eq!(status, 200, "{page}");
     assert!(page["id"].is_string(), "the page has an id: {page}");
     assert_eq!(page["mailbox"], "person-homer", "{page}");
+    assert_eq!(
+        story.operators_mail("person:homer").await,
+        [("gate".to_string(), "The gate is open.".to_string())],
+        "the page is in the operator's box, read the way the operator's page reads it"
+    );
 
     // ── 4. it reads the shelf, and when a waiting card's status was written ─
     for (card, name) in [
@@ -126,6 +144,7 @@ async fn a_controller_reads_a_working_card_records_what_it_saw_pages_the_operato
     ] {
         s.add(card, name).await;
     }
+    let before_the_statuses = jiff::Timestamp::now();
     for (card, status, depends_on) in [
         ("work:lambda", "queued", None),
         ("work:delta", "queued", Some("work:lambda")),
@@ -142,6 +161,7 @@ async fn a_controller_reads_a_working_card_records_what_it_saw_pages_the_operato
         )
         .await;
     }
+    let after_the_statuses = jiff::Timestamp::now();
     let (status, shelf) = story
         .app_calls(
             &token,
@@ -170,11 +190,14 @@ async fn a_controller_reads_a_working_card_records_what_it_saw_pages_the_operato
         .await;
     assert_eq!(status, 200, "{waiting}");
     let written_at = &waiting["objects"][0]["fields_backing"]["status"]["written_at"];
+    let written_at: jiff::Timestamp = written_at
+        .as_str()
+        .and_then(|at| at.parse().ok())
+        .unwrap_or_else(|| panic!("the waiting card says when its status was written: {waiting}"));
     assert!(
-        written_at
-            .as_str()
-            .is_some_and(|at| at.parse::<jiff::Timestamp>().is_ok()),
-        "the waiting card says when its status was written: {waiting}"
+        before_the_statuses <= written_at && written_at <= after_the_statuses,
+        "the instant is the status write's, taken between {before_the_statuses} and \
+         {after_the_statuses}, not the card's creation or a constant: {written_at}"
     );
     story.finish().await;
 }
