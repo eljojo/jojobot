@@ -6,12 +6,12 @@ narrows: true
 
 ## What you can now do
 
-A `clear_fields` sent to a claim that carries the key but does not back it is refused, and the refusal names the claim that does back it by its full address, `kind:slug#fN`. Before, the clear landed on the older claim, took the key off the thing, and erased the newer value another claim held.
+A `clear_fields` sent to a claim that carries the key but does not back it is refused, and the refusal names the claim that does back it by its full address, `kind:slug#fN`. Before, the clear landed and erased the newer value another claim held.
 
 ## Example
 
-Homer's `mood` was written as `content` on one claim and later as `queasy` on a newer one. A `clear_fields` of `mood` sent to the older claim is refused, naming the newer claim's address. The same clear sent to that address lands.
+A `clear_fields` of Homer's `mood` sent to its older claim is refused, naming the newer claim's address. Sent there, it lands.
 
 ## What to do
 
-Before you clear a key, `recall` the thing with `backing: true` and the key in `keys`: the key names the claim that backs it. Send `clear_fields` to that claim's full address. Sending the same clear again to the claim the refusal named as older meets the same refusal. A counter key has no single backing claim: `history` on the key lists the claims that wrote it.
+Before you clear a key, `recall` the thing with `backing: true` and the key in `keys`, and send `clear_fields` to the claim it names. A counter key has no single backing claim: `history` lists its writers.

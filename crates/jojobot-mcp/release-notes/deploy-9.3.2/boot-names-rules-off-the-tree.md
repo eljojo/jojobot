@@ -5,12 +5,12 @@ miss: A bot that never read this skips a rule that binds it, because a charter l
 
 ## What you can now do
 
-A named boot can carry `identity.attention_rules_off_the_tree`. It appears when rules are in force on the bot and name no `purpose`. It holds a `warning` that says a charter loads rules by the purposes it names, so it never loads these, and a `how_to_fix` that says what to do. A boot with every rule filed carries none of it.
+A named boot carries `identity.attention_rules_off_the_tree` when rules in force on the bot name no `purpose`. It holds a `warning` (a charter loads rules by the purposes it names, so it never loads these) and a `how_to_fix`.
 
 ## Example
 
-Bart boots by name. Its answer carries `identity.attention_rules_off_the_tree` with the warning that rules in force name no purpose. The charter cannot load those rules, so Bart reads them with a `recall` of its own bot and `facts: true`.
+Bart's boot carries the key. Bart reads those rules with a `recall` of its own bot and `facts: true`.
 
 ## What to do
 
-When the key is present, read the rules it points at and follow them. Give each such rule a `purpose` naming the area it covers: the `organizing` skill, fetched through `start_here`, teaches purposes and the index rule that names them. A bot whose charter names no purposes to load needs its charter changed: ask whoever writes it.
+When the key is present, read the rules and follow them. Give each a `purpose` naming its area: the `organizing` skill, fetched through `start_here`, teaches purposes. A charter that names no purposes needs changing.

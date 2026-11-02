@@ -5,12 +5,12 @@ miss: A bot that links a step to its card only by sending `object` writes steps 
 
 ## What you can now do
 
-A new entry on a list whose words mention exactly one thing, as `@kind:slug`, draws a connection edge to that thing without `object`. The list then serves that work's `linked` block (its handle and status) beside the step and counts the step in the list's `progress`. A mention inside a code span does not count, the list itself does not count, and the same thing named twice counts once. An entry that mentions two or more different things draws no edge, and the receipt's `hint` names them so you can send `object` with the one the step is about. An `object` you send always wins over the words.
+A new list entry whose words mention exactly one thing, as `@kind:slug`, draws a connection edge to it without `object`. The list then serves that work's `linked` block (handle and status) beside the step and counts the step in its `progress`. A mention in a code span does not count. An entry that mentions two or more things draws no edge, and the receipt's `hint` names them. An `object` you send always wins.
 
 ## Example
 
-On `list:checklist`, `capture` with `content` "carry @work:pour-the-slab" links `work:pour-the-slab`. A `recall` of the list serves the step with `linked` holding that work's status. With `content` "carry @work:pour-the-slab before @work:frame-the-walls" no edge is drawn and the receipt names both handles. Sending `object` with `work:frame-the-walls` links that one.
+A `capture` on `list:checklist` with `content` "carry @work:pour-the-slab" links that work. With "carry @work:pour-the-slab before @work:frame-the-walls" no edge is drawn and the receipt names both; `object` picks one.
 
 ## What to do
 
-Write the card in the step as `@kind:slug` and leave `object` off when the step names one card. When the receipt names several things, send `object` with the one the step is about.
+Write the card in the step as `@kind:slug` and leave `object` off when the step names one card. When the receipt names several, send `object` with the one the step is about.

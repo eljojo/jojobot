@@ -6,12 +6,12 @@ narrows: true
 
 ## What you can now do
 
-A `recall` over a kind or a set of things serves the things it can read, and names each one it could not read under `unreadable`. An entry holds the thing's `handle`, the reason it could not be read under `unreadable`, and `fix_by: person`, because stored damage is mended by a person and no call a session makes mends it. The rest of the answer is complete without those things. Before, one damaged record could refuse the whole read.
+A `recall` over a kind or a set of things serves the things it can read, and names each one it could not read under `unreadable`. An entry holds the thing's `handle`, the reason under `unreadable`, and `fix_by: person`, because only a person mends stored damage. The rest of the answer is complete.
 
 ## Example
 
-Homer's page of a kind holds twelve things, and one record is damaged. `recall` returns eleven objects and an `unreadable` list with one entry, the twelfth thing's `handle`, the reason, and `fix_by: person`. The eleven are complete.
+A kind holds twelve things and one record is damaged. `recall` returns eleven objects and an `unreadable` list with one entry for the twelfth.
 
 ## What to do
 
-Read `unreadable` beside `objects` before you treat an answer as the whole set. If it holds an entry, report that handle to the operator, who repairs it, and do not retry the read to mend it.
+Read `unreadable` beside `objects` before you treat an answer as the whole set. Report an entry's handle to the operator, who repairs it; a retry does not.
