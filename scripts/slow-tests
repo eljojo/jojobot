@@ -14,11 +14,11 @@ compile time is not in it. A case that more than one job ran is counted once, wi
 the longest time any job saw and the job that saw it. The forge keeps an artifact
 for seven days, so an older run reads as expired.
 
-`--newest-main` takes the run itself: the newest successful pull-request run (the
-run of a pull request to main, which is the one run that describes what is
-deployed, rule 759) that stopped in the last seven days. With none, the last line
-says nothing was counted, and no other run is read in its place: a branch run never
-stands for main.
+`--newest-main` takes the run itself: the newest successful run of a pull request into
+main, the one that describes what is deployed (rule 759), that stopped in the last seven
+days. With none, the last line
+says nothing was counted, and no other run is read in its place: a branch run, or a
+run of a pull request into a deploy branch, never stands for main.
 
 Each case over the bound is printed, slowest first, as
 `<seconds>s  <job>  <case>`, and the last line is
@@ -108,10 +108,20 @@ def artifact_logs(wr, run):
     return logs, expired
 
 
+def base_branch(run):
+    """The branch a pull-request run's pull request targets, from the run's event payload
+    (`pull_request.base.ref`), or None when the payload does not say. The pull-request
+    workflow also runs for pull requests into deploy-* branches."""
+    try:
+        return json.loads(run["event_payload"])["pull_request"]["base"]["ref"]
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
 def newest_main(wr, now):
-    """The id of the newest successful pull-request run that stopped within the week
-    before `now`, or None. Only the pull-request workflow's runs of a pull request
-    count; a push to a branch is not one."""
+    """The id of the newest successful run of a pull request into main that stopped within
+    the week before `now`, or None. A push to a branch is not one, and neither is a pull
+    request into a deploy branch."""
     held = []
     for run in wr.runs_of(event="pull_request", status="success"):
         stopped = datetime.datetime.fromisoformat(run["stopped"])
@@ -119,6 +129,7 @@ def newest_main(wr, now):
             run.get("workflow_id") == "pull-request.yml"
             and (run.get("event") or run.get("trigger_event")) == "pull_request"
             and run.get("status") == "success"
+            and base_branch(run) == "main"
             and now - WEEK <= stopped <= now
         ):
             held.append((stopped, run["id"]))

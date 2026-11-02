@@ -88,7 +88,7 @@ fn stand(jobs: Vec<Logs>) -> String {
 
 /// A run as the forge lists it: the keys the tool reads, with the values the real
 /// list carried for a pull-request run and for a push run.
-fn listed_run(id: u64, event: &str, status: &str, hours_ago: u64) -> serde_json::Value {
+fn listed_run(id: u64, event: &str, base: &str, status: &str, hours_ago: u64) -> serde_json::Value {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .expect("a clock")
@@ -118,6 +118,12 @@ fn listed_run(id: u64, event: &str, status: &str, hours_ago: u64) -> serde_json:
         "trigger_event": event,
         "status": status,
         "stopped": stopped,
+        // The forge keeps the event payload as JSON text; a push has no pull request in it.
+        "event_payload": if event == "push" {
+            json!({ "ref": "refs/heads/dev-work" }).to_string()
+        } else {
+            json!({ "action": "opened", "pull_request": { "base": { "ref": base, "label": base } } }).to_string()
+        },
     })
 }
 
@@ -298,16 +304,18 @@ mod slow_tests {
 
     #[test]
     fn the_newest_successful_pull_request_run_of_the_week_is_the_one_read() {
-        // Newer runs that are not it: a push run, a dispatched run of the same workflow, a failed pull-request run. Older: a
+        // Newer runs that are not it: a push run, a dispatched run of the same workflow,
+        // a pull request into a deploy branch, a failed pull-request run. Older: a
         // pull-request run of the week, and one past the week.
         let api = stand_with_runs(
             vec![logs("check", log_with(&[(ALPHA, "75.3")]))],
             json!([
-                listed_run(800, "push", "success", 1),
-                listed_run(790, "workflow_dispatch", "success", 1),
-                listed_run(750, "pull_request", "failure", 2),
-                listed_run(700, "pull_request", "success", 5),
-                listed_run(650, "pull_request", "success", 48),
+                listed_run(800, "push", "main", "success", 1),
+                listed_run(790, "workflow_dispatch", "main", "success", 1),
+                listed_run(780, "pull_request", "deploy-9.3", "success", 1),
+                listed_run(750, "pull_request", "main", "failure", 2),
+                listed_run(700, "pull_request", "main", "success", 5),
+                listed_run(650, "pull_request", "main", "success", 48),
             ]),
         );
         let (code, out, err) = slow(Some(&api), &["--newest-main"]);
@@ -326,8 +334,9 @@ mod slow_tests {
         let api = stand_with_runs(
             vec![logs("check", log_with(&[(ALPHA, "75.3")]))],
             json!([
-                listed_run(700, "push", "success", 1),
-                listed_run(650, "pull_request", "success", 24 * 9),
+                listed_run(700, "push", "main", "success", 1),
+                listed_run(690, "pull_request", "deploy-9.3", "success", 2),
+                listed_run(650, "pull_request", "main", "success", 24 * 9),
             ]),
         );
         let (code, out, err) = slow(Some(&api), &["--newest-main"]);
