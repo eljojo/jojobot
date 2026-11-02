@@ -14,7 +14,6 @@ use jojobot_domain::memory::{
     Entity, EntityId, EntityKind, Fact, FieldAges, FieldBacking, graph, kinds, mention, readiness,
 };
 use jojobot_domain::text;
-use jojobot_mcp::memory::view_run;
 use jojobot_query_api::OperatorIs;
 use jojobot_query_api::left_out;
 
@@ -585,27 +584,35 @@ pub(crate) async fn node(
 /// working on now is the value the handle serves on the bot: the gate masks a
 /// stale one, so a field that is there is live.
 async fn declarations_through(
-    state: &AppState,
     queries: &jojobot_query_api::QueryHandle,
     known: &[Entity],
     bots: &[EntityId],
     of: &std::collections::BTreeSet<EntityId>,
-) -> (Vec<jojobot_mcp::memory::working_on::Declaration>, bool) {
+) -> (Vec<jojobot_query_api::Declaration>, bool) {
     use jojobot_domain::memory::graph::{History, Trace};
     use jojobot_domain::memory::kinds::WORKING_ON;
-    use jojobot_mcp::memory::working_on::{BotWrites, declarations_from};
+    use jojobot_query_api::{BotWrites, declarations_from};
 
     let mut read = Vec::new();
     let mut incomplete = false;
     for bot in bots {
-        let asked = jojobot_query_api::Question::about(
-            bot.clone(),
-            None,
-            Some(History {
-                of: Trace::Key(WORKING_ON.to_string()),
-                most: usize::MAX,
+        // **The bot's runs ride the same question**, because the run of a write is
+        // named by one of them; a bot whose runs cannot be read still lists its
+        // declarations, with no run name.
+        let asked = jojobot_query_api::Question {
+            runs: Some(jojobot_query_api::RunsAsk {
+                bot: Some(bot.clone()),
+                ..Default::default()
             }),
-        );
+            ..jojobot_query_api::Question::about(
+                bot.clone(),
+                None,
+                Some(History {
+                    of: Trace::Key(WORKING_ON.to_string()),
+                    most: usize::MAX,
+                }),
+            )
+        };
         let answered = match queries
             .ask(&jojobot_domain::actor::Actor::Operator, asked)
             .await
@@ -615,6 +622,10 @@ async fn declarations_through(
                 incomplete = true;
                 continue;
             }
+        };
+        let runs = match answered.runs {
+            Some(Ok(read)) => read.summaries,
+            _ => Vec::new(),
         };
         let Some(object) = answered
             .selected
@@ -628,20 +639,18 @@ async fn declarations_through(
             .history
             .map(|history| history.writes)
             .unwrap_or_default();
-        read.push((bot, writes, object.fields.get(WORKING_ON).cloned()));
+        read.push((bot, writes, object.fields.get(WORKING_ON).cloned(), runs));
     }
     let bots: Vec<BotWrites<'_>> = read
         .iter()
-        .map(|(bot, writes, live_on)| BotWrites {
+        .map(|(bot, writes, live_on, runs)| BotWrites {
             bot,
             writes,
             live_on: live_on.as_deref(),
+            runs,
         })
         .collect();
-    (
-        declarations_from(&*state.sessions, known, &bots, of).await,
-        incomplete,
-    )
+    (declarations_from(known, &bots, of), incomplete)
 }
 
 /// **Who is working on this piece of work now, and who has been**, for a piece
@@ -680,8 +689,7 @@ async fn working_on_section(
         .filter(|e| e.kind == EntityKind::BOT && e.merged_into.is_none())
         .map(|e| e.id.clone())
         .collect();
-    let (declarations, incomplete) =
-        declarations_through(state, queries, entities, &bots, &under).await;
+    let (declarations, incomplete) = declarations_through(queries, entities, &bots, &under).await;
 
     let day_of = home::day_of_in_the_instance_zone(state, queries).await;
     let link = |id: &EntityId| match by_id.get(id) {
@@ -1428,18 +1436,18 @@ pub(crate) async fn answer_named_view_with(
         )
         .await
         .map_err(|error| match error {
-            view_run::Failed::Preparation("the former handles", error) => {
+            jojobot_query_api::Failed::Preparation("the former handles", error) => {
                 former_or_blind(Err(error)).expect_err("the read failed")
             }
-            view_run::Failed::Preparation(part, error) => {
+            jojobot_query_api::Failed::Preparation(part, error) => {
                 blind("What this view answers", part, &error.to_string())
             }
-            view_run::Failed::Selection(error) => blind(
+            jojobot_query_api::Failed::Selection(error) => blind(
                 "What this view answers",
                 "the records it selects",
                 &error.to_string(),
             ),
-            view_run::Failed::Readiness(error) => blind(
+            jojobot_query_api::Failed::Readiness(error) => blind(
                 "What this view answers",
                 "the work it depends on",
                 &error.to_string(),
@@ -1508,7 +1516,7 @@ pub(crate) struct Answered {
     shown: Vec<String>,
     /// What the ticks of each found object come to, one to an object: a list's
     /// read, and nothing for an object that is no list.
-    ticks: Vec<view_run::TickCell>,
+    ticks: Vec<jojobot_query_api::TickCell>,
 }
 
 /// **The page of a view**: its answer, or the words saying why it has none.
@@ -1554,7 +1562,7 @@ fn answer_table(answer: &Answered, by_id: &HashMap<&EntityId, &Entity>) -> Strin
     // two values `recall` gives the same lists.
     let lists = ticks
         .iter()
-        .any(|cell| !matches!(cell, view_run::TickCell::NotAList));
+        .any(|cell| !matches!(cell, jojobot_query_api::TickCell::NotAList));
     if lists {
         out.push_str("<th>Ticked</th><th>Last ticked</th>");
     }
@@ -1568,18 +1576,18 @@ fn answer_table(answer: &Answered, by_id: &HashMap<&EntityId, &Entity>) -> Strin
             // **A list whose records could not be read says so in both cells**,
             // where a list nobody ticked leaves them empty.
             let (ticked, last) = match &read {
-                view_run::TickCell::Read(r) => {
+                jojobot_query_api::TickCell::Read(r) => {
                     (escape(&r.ticked_in_words()), escape(&r.last_ticked_day()))
                 }
                 // **The cell says what to do**: the read is retried by loading the
                 // page again, and the server log names the list when it stays.
-                view_run::TickCell::Unreadable => (
+                jojobot_query_api::TickCell::Unreadable => (
                     "unreadable: load the page again; if it stays, the server log names \
                      this list"
                         .to_string(),
                     "unreadable".to_string(),
                 ),
-                view_run::TickCell::NotAList => (String::new(), String::new()),
+                jojobot_query_api::TickCell::NotAList => (String::new(), String::new()),
             };
             cells.push(ticked);
             cells.push(last);
@@ -1594,7 +1602,7 @@ fn answer_table(answer: &Answered, by_id: &HashMap<&EntityId, &Entity>) -> Strin
 /// **The lines a view's page ends with when its questions left things out**, one
 /// for what is owed and one for what is ready. The count and the call that lists
 /// what was left out are the ones `recall` serves, built by the same functions.
-fn left_out_lines(narrowed: &view_run::Narrowed, ask: Option<readiness::Ask>) -> String {
+fn left_out_lines(narrowed: &jojobot_query_api::Narrowed, ask: Option<readiness::Ask>) -> String {
     let mut out = String::new();
     let because = narrowed
         .owed
@@ -2216,8 +2224,8 @@ mod tests {
                 ticks: walked
                     .iter()
                     .map(|object| match object.entity.id.as_str() {
-                        "list:errands" => super::view_run::TickCell::Unreadable,
-                        _ => super::view_run::TickCell::NotAList,
+                        "list:errands" => jojobot_query_api::TickCell::Unreadable,
+                        _ => jojobot_query_api::TickCell::NotAList,
                     })
                     .collect(),
             },

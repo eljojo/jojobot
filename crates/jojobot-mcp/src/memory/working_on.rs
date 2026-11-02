@@ -234,88 +234,7 @@ async fn working_on_record_of(
         .map(|f| f.address()))
 }
 
-/// **One time a session declared what its bot is working on**, read from the
-/// history of the bot's one working-on record.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Declaration {
-    /// The bot that declared it.
-    pub bot: EntityId,
-    /// The thing it declared.
-    pub on: EntityId,
-    /// The public name of the run that declared it, when that can be read.
-    pub run: Option<String>,
-    /// When the store took the declaration in, when it recorded one.
-    pub at: Option<jiff::Timestamp>,
-    /// Whether this is the declaration the bot is working on NOW: the one
-    /// [`working_on_of`] shows. Every other is a past one.
-    pub live: bool,
-}
-
-/// **One bot's side of the declarations question**: every write of its
-/// `working_on`, oldest first, and what it is working on NOW (the value the gate
-/// shows, and `None` when the gate shows none).
-pub struct BotWrites<'a> {
-    pub bot: &'a EntityId,
-    pub writes: &'a [jojobot_domain::memory::FieldWrite],
-    pub live_on: Option<&'a str>,
-}
-
-/// **Every declaration by these bots that points at a thing in `of`**, live or
-/// past, oldest first for each bot.
-///
-/// Whether a declaration is live is the gate's answer and nothing else (rule
-/// 498): the caller passes the value [`working_on_of`] shows, and the bot's
-/// newest write is live when it points at that value. Nothing here looks at a
-/// session's state. The run of a write is read through the session port, and a
-/// run no card answers to leaves it empty.
-pub async fn declarations_from(
-    sessions: &dyn Sessions,
-    known: &[jojobot_domain::memory::Entity],
-    bots: &[BotWrites<'_>],
-    of: &BTreeSet<EntityId>,
-) -> Vec<Declaration> {
-    let mut found = Vec::new();
-    for BotWrites {
-        bot,
-        writes,
-        live_on,
-    } in bots
-    {
-        let newest = writes.len().saturating_sub(1);
-        for (at, write) in writes.iter().enumerate() {
-            // **A write of a key that names a thing is kept as that thing's
-            // permanent id**, behind the mark that says it is a link, so a stored
-            // value is turned back into the handle the thing wears now.
-            let Some(on) = write.value.as_deref().map(|stored| {
-                let badge = stored
-                    .strip_prefix(jojobot_domain::memory::mention::MARK)
-                    .unwrap_or(stored);
-                jojobot_domain::memory::entity_wearing(badge, known)
-                    .map_or_else(|| EntityId(stored.to_string()), |thing| thing.id.clone())
-            }) else {
-                continue;
-            };
-            if !of.contains(&on) {
-                continue;
-            }
-            let run = match &write.run {
-                Some(id) => match sessions.run_named(id).await {
-                    Ok(Some(summary)) => summary.sid.map(|sid| sid.as_str().to_string()),
-                    _ => None,
-                },
-                None => None,
-            };
-            found.push(Declaration {
-                bot: (*bot).clone(),
-                live: at == newest && *live_on == Some(on.as_str()),
-                on,
-                run,
-                at: write.written_at,
-            });
-        }
-    }
-    found
-}
+pub use jojobot_query_api::{BotWrites, Declaration, declarations_from};
 
 /// **The bots whose stored `working_on` is not shown**, for any surface that
 /// holds the two ports.
@@ -448,17 +367,17 @@ mod tests {
             .expect("the history reads");
         let known = memory.list_entities(None).await.expect("the index reads");
 
+        let runs = sessions.summaries_of(&bot).await.expect("the runs read");
         let found = declarations_from(
-            &sessions,
             &known,
             &[BotWrites {
                 bot: &bot,
                 writes: &writes,
                 live_on: None,
+                runs: &runs,
             }],
             &BTreeSet::from([work.clone()]),
-        )
-        .await;
+        );
 
         assert_eq!(found.len(), 1, "{found:?}");
         assert_eq!(found[0].run.as_deref(), Some("s001"), "{found:?}");
@@ -499,17 +418,20 @@ mod tests {
             .expect("the history reads");
         let known = memory.list_entities(None).await.expect("the index reads");
 
+        let runs = InMemorySessions::default()
+            .summaries_of(&bot)
+            .await
+            .expect("the runs read");
         let found = declarations_from(
-            &InMemorySessions::default(),
             &known,
             &[BotWrites {
                 bot: &bot,
                 writes: &writes,
                 live_on: Some(work.as_str()),
+                runs: &runs,
             }],
             &BTreeSet::from([work.clone()]),
-        )
-        .await;
+        );
 
         assert_eq!(found.len(), 1, "{found:?}");
         assert_eq!((&found[0].bot, &found[0].on), (&bot, &work));

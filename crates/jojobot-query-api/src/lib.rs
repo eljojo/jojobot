@@ -8,6 +8,7 @@ mod question;
 mod recalled;
 mod runs;
 mod search;
+mod working_on;
 
 #[cfg(doctest)]
 #[path = "boundary.rs"]
@@ -30,6 +31,7 @@ pub use question::{Asks, Question, Readiness, ViewRequest, parse_date};
 pub use recalled::{RecalledObject, RecalledView};
 pub use runs::{Runs, RunsAsk, RunsFailed, may_read_runs};
 pub use search::{SearchQuestion, Searched};
+pub use working_on::{BotWrites, Declaration, declarations_from};
 
 use std::sync::Arc;
 

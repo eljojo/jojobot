@@ -765,3 +765,53 @@ async fn a_read_with_no_bot_counts_and_the_served_days_are_those_of_the_runs_ret
         "the days served are those of the run returned, not of another bot's"
     );
 }
+
+/// **A work page names the run that declared it, read through the query handle
+/// and not the sessions port.** The write keeps the run's public name; the card
+/// the bot's runs hold answers to it. A page that was given no runs would list the
+/// declaration with no session link.
+#[tokio::test]
+async fn a_work_page_names_the_run_that_declared_it() {
+    use jojobot_domain::memory::{NewEntity, NewFact};
+    use support::ui_board::{seeded_board_over, seeded_memory, spawn_jojobot_over};
+    let memory = seeded_memory().await;
+    let work = EntityId("work:sigma".into());
+    memory
+        .add_entity(NewEntity::new(work.clone(), "Sigma", "the fixture roster"))
+        .await
+        .expect("the work is written");
+    let board = seeded_board_over(memory.clone()).await;
+    let mut declared = NewFact::about(
+        EntityId("bot:otto".into()),
+        jojobot_domain::memory::review::WORKING_ON_RECORD,
+        jiff::civil::Date::constant(2026, 3, 10),
+    );
+    declared.fields = [(
+        jojobot_domain::memory::kinds::WORKING_ON.to_string(),
+        work.as_str().to_string(),
+    )]
+    .into();
+    declared.sets = [jojobot_domain::memory::kinds::WORKING_ON.to_string()].into();
+    declared.session = Some("pt1x".to_string());
+    memory
+        .capture(declared)
+        .await
+        .expect("the declaration is written");
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+
+    let page = read(&client, addr, "/work:sigma/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+
+    assert!(
+        page.contains("#session-pt1x\">pt1x</a>"),
+        "the declaring run is linked on the work page: {page}"
+    );
+    ct.cancel();
+}

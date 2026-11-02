@@ -86,7 +86,7 @@ pub(crate) async fn day_of_in_the_instance_zone(
         .ask(&jojobot_domain::actor::Actor::Operator, asked)
         .await
     {
-        Ok(answered) => jojobot_mcp::orientation::instance_zone::frame_of_fields(
+        Ok(answered) => jojobot_query_api::words::frame_of_fields(
             &answered
                 .selected
                 .objects
