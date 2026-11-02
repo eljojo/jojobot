@@ -67,12 +67,22 @@ pub(crate) const SHIPPED: &[(&str, &str)] = &[
         include_str!("../release-notes/deploy-9.3.2/boot-names-rules-off-the-tree.md"),
     ),
     (
+        "checklist-entry-naming-one-card-links-it",
+        include_str!("../release-notes/deploy-9.3.2/checklist-entry-naming-one-card-links-it.md"),
+    ),
+    (
         "clear-goes-to-the-claim-that-backs-the-key",
         include_str!("../release-notes/deploy-9.3.2/clear-goes-to-the-claim-that-backs-the-key.md"),
     ),
     (
         "key-history-names-writer-and-run",
         include_str!("../release-notes/deploy-9.3.2/key-history-names-writer-and-run.md"),
+    ),
+    (
+        "recall-counted-counts-what-sits-under-each-object",
+        include_str!(
+            "../release-notes/deploy-9.3.2/recall-counted-counts-what-sits-under-each-object.md"
+        ),
     ),
     (
         "recall-names-an-unreadable-thing",
