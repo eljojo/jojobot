@@ -186,6 +186,32 @@ fn stand_with_runs(jobs: Vec<Logs>, runs: serde_json::Value) -> String {
     addr
 }
 
+/// A forge that answers `answer(path)` with a status and a body: one that fails
+/// where the real one does, which `stand` cannot.
+fn stand_by(answer: impl Fn(&str) -> (u16, String) + Send + 'static) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("a local port");
+    let addr = format!(
+        "http://{}{REPO}",
+        listener.local_addr().expect("an address")
+    );
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            let mut request = [0u8; 4096];
+            let read = stream.read(&mut request).unwrap_or(0);
+            let text = String::from_utf8_lossy(&request[..read]).to_string();
+            let path = text.split_whitespace().nth(1).unwrap_or_default();
+            let (code, body) = answer(path.strip_prefix(REPO).unwrap_or(""));
+            let _ = write!(
+                stream,
+                "HTTP/1.1 {code} X\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+        }
+    });
+    addr
+}
+
 fn tool() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/slow-tests")
 }
@@ -312,6 +338,62 @@ mod slow_tests {
         assert_eq!(
             out.lines().last(),
             Some("slow tests over 60 s: not counted (run #700: every job's logs have expired)"),
+            "{out}"
+        );
+    }
+
+    /// The weekly step runs the reader before `make size`, so every way the forge can
+    /// fail to give logs ends in the same last line and exit 0.
+    #[test]
+    fn a_forge_that_errors_leaves_the_count_not_counted() {
+        let list_fails = stand_by(|_| (500, "boom".into()));
+        let (code, out, err) = slow(Some(&list_fails), &["700"]);
+        assert_eq!(code, 0, "{out}{err}");
+        assert!(
+            out.lines()
+                .last()
+                .is_some_and(|line| line.starts_with("slow tests over 60 s: not counted (run #700")),
+            "an artifact list that fails: {out}{err}"
+        );
+
+        let zip_fails = stand_by(|path| {
+            if path == "/actions/runs/700/artifacts" {
+                (
+                    200,
+                    json!([{"id": 9000, "name": "bar-logs-check", "expired": false}]).to_string(),
+                )
+            } else {
+                (500, "boom".into())
+            }
+        });
+        let (code, out, err) = slow(Some(&zip_fails), &["700"]);
+        assert_eq!(code, 0, "{out}{err}");
+        assert!(
+            out.lines()
+                .last()
+                .is_some_and(|line| line.starts_with("slow tests over 60 s: not counted (run #700")),
+            "an artifact download that fails: {out}{err}"
+        );
+
+        let runs_fail = stand_by(|_| (500, "boom".into()));
+        let (code, out, err) = slow(Some(&runs_fail), &["--newest-main"]);
+        assert_eq!(code, 0, "{out}{err}");
+        assert!(
+            out.lines()
+                .last()
+                .is_some_and(|line| line.starts_with("slow tests over 60 s: not counted (")),
+            "a run list that fails: {out}{err}"
+        );
+    }
+
+    #[test]
+    fn a_run_that_kept_no_bar_logs_is_not_counted() {
+        let api = stand(vec![]);
+        let (code, out, err) = slow(Some(&api), &["700"]);
+        assert_eq!(code, 0, "{out}{err}");
+        assert_eq!(
+            out.lines().last(),
+            Some("slow tests over 60 s: not counted (run #700: the run kept no bar logs)"),
             "{out}"
         );
     }
