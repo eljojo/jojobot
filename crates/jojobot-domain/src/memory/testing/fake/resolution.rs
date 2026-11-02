@@ -69,11 +69,18 @@ impl InMemoryMemory {
 
     pub(super) fn guard_fit_resolved(
         &self,
+        thing: &EntityId,
+        facts: &[Fact],
         kind: &str,
         before: &std::collections::BTreeMap<String, String>,
         after: &std::collections::BTreeMap<String, String>,
         declared: &[crate::memory::types::DeclaredType],
     ) -> Result<(), MemoryError> {
+        let open = if crate::memory::done_gate::moves_to_done(kind, before, after) {
+            self.open_entries_hung_on(thing, facts)
+        } else {
+            Vec::new()
+        };
         let mut resolved = std::collections::BTreeMap::new();
         for (_, items) in crate::memory::reference_field_values(after, declared) {
             for item in items {
@@ -85,7 +92,48 @@ impl InMemoryMemory {
                 }
             }
         }
-        crate::memory::guard_fit_resolved(kind, before, after, declared, &resolved)
+        crate::memory::guard_fit_resolved(kind, before, after, declared, &resolved, &open)
+    }
+
+    /// **The open entries of the live lists hung on a thing**, read off the
+    /// claims given, as the real store reads them inside its own write.
+    fn open_entries_hung_on(&self, thing: &EntityId, facts: &[Fact]) -> Vec<String> {
+        let declared = self.declarations();
+        let hung: Vec<(std::collections::BTreeMap<String, String>, Vec<Fact>)> = self
+            .known()
+            .iter()
+            .filter(|e| {
+                e.kind == EntityKind::LIST
+                    && e.parent.as_ref() == Some(thing)
+                    && e.merged_into.is_none()
+                    && e.archived.is_none()
+            })
+            .map(|list| {
+                let key = match &list.badge {
+                    Some(badge) => EntityId(badge.clone()),
+                    None => list.id.clone(),
+                };
+                let fields = crate::memory::folded_fields(&self.writes_on(&key, facts), &declared);
+                let claims = facts
+                    .iter()
+                    .filter(|f| f.home == key)
+                    // **Served under the handle**, as a read serves them: an
+                    // entry is a claim on a thing of kind list, and a badge
+                    // carries no kind to say so.
+                    .map(|f| Fact {
+                        home: list.id.clone(),
+                        subject: list.id.clone(),
+                        ..self.projected(f)
+                    })
+                    .collect();
+                (fields, claims)
+            })
+            .collect();
+        let lists: Vec<crate::memory::done_gate::HungList<'_>> = hung
+            .iter()
+            .map(|(fields, facts)| crate::memory::done_gate::HungList { fields, facts })
+            .collect();
+        crate::memory::done_gate::open_entries_of(&lists)
     }
 
     /// **What a handle is stored as, and what it is called today, together.**

@@ -2198,6 +2198,7 @@ impl DoltMemory {
         let after = stood_after_capture(&held, &stored, &declared);
         self.guard_fit_resolved(
             tx,
+            &stored.home,
             subject_kind.as_token(),
             &folded_fields(&held, &declared),
             &after,
@@ -5695,6 +5696,7 @@ impl Memory for DoltMemory {
             .await?;
         self.guard_fit_resolved(
             &mut tx,
+            &fact.home,
             kind.as_token(),
             &served_before,
             &served_after,

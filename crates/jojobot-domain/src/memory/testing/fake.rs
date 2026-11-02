@@ -3249,6 +3249,8 @@ impl Memory for InMemoryMemory {
         let governs = self.kind_keys_of(subject_entity.kind.as_token());
         let after = super::super::stood_after_capture(&writes, &stored, &declared);
         self.guard_fit_resolved(
+            &subject_entity.id,
+            &facts,
             subject_entity.kind.as_token(),
             &super::super::folded_fields(&writes, &declared),
             &after,
@@ -4125,7 +4127,7 @@ impl Memory for InMemoryMemory {
         // **Off the entity resolved above, never off `home`** — that is a
         // badge now, and a badge carries no kind token to parse.
         let governs = self.kind_keys_of(kind.as_token());
-        self.guard_fit_resolved(kind.as_token(), &before, &after, &governs)?;
+        self.guard_fit_resolved(&handle, &facts, kind.as_token(), &before, &after, &governs)?;
         // **A rule a type declares for its claims**, judged on the record's own
         // fields before the edit and as it leaves them, beside the real store's
         // copy. The engine's own records are exempt.

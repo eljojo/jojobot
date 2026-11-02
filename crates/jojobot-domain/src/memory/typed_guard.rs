@@ -8,7 +8,7 @@ pub fn guard_fit(
     after: &BTreeMap<String, String>,
     declared: &[types::DeclaredType],
 ) -> Result<(), MemoryError> {
-    guard_fit_resolved(kind, before, after, declared, &BTreeMap::new())
+    guard_fit_resolved(kind, before, after, declared, &BTreeMap::new(), &[])
 }
 
 /// Validate an edge before it is written: the object's id grammar, then the

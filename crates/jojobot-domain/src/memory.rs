@@ -32,6 +32,7 @@ pub mod boot_reader;
 pub mod capacity;
 pub mod claim_walk;
 pub mod document;
+pub mod done_gate;
 pub mod entitlement;
 pub mod entries;
 mod field_writes;
@@ -3953,6 +3954,7 @@ pub fn guard_fit_resolved(
     after: &BTreeMap<String, String>,
     declared: &[types::DeclaredType],
     resolved: &BTreeMap<EntityId, EntityId>,
+    open_entries: &[String],
 ) -> Result<(), MemoryError> {
     // **The prefix as written, never the parsed kind.** A handle whose kind the
     // set never loaded still names one, and a guard that went quiet on an
@@ -4062,6 +4064,12 @@ pub fn guard_fit_resolved(
             ),
             value: value.clone(),
         });
+    }
+    // **A thing is not finished with an entry still open on a list hung on it.**
+    // The store gathers `open_entries` only for a write that moves the thing to
+    // done ([`done_gate::moves_to_done`]), so any other write arrives with none.
+    if !open_entries.is_empty() && done_gate::moves_to_done(kind, before, after) {
+        return Err(done_gate::refusal(open_entries));
     }
     // **A shipped status word cannot be given another meaning, and a word is
     // mapped only to a shipped one.** The instance maps its own words with

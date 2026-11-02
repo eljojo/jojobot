@@ -15,6 +15,7 @@ pub mod blank_required;
 pub mod chart_head;
 pub mod clear_backing;
 pub mod columns_blank;
+pub mod done_open_entries;
 pub mod drop_session;
 pub mod holders;
 pub mod key_writer;

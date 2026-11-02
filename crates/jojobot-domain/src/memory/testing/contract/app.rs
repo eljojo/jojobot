@@ -316,5 +316,9 @@ pub async fn run_all_app<M: Memory>(store: &M) {
     super::clear_backing::a_clear_on_an_older_claim_is_refused_and_one_on_the_backing_claim_takes_the_key_off(store).await;
     super::columns_blank::an_empty_columns_list_is_the_default_and_a_short_one_is_refused(store)
         .await;
+    super::done_open_entries::done_is_refused_while_a_checklist_has_an_open_entry(store).await;
+    super::done_open_entries::a_queue_blocks_done_and_a_rotation_never_does(store).await;
+    super::done_open_entries::an_edit_to_done_is_refused_and_only_the_transition_is_checked(store)
+        .await;
     an_app_event_lands_once_and_a_retry_writes_nothing(store).await;
 }
