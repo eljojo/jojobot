@@ -3423,6 +3423,32 @@ pub mod contract {
         );
     }
 
+    /// **A scan of every message names the replacement on the replaced one.** A
+    /// reader that weighs what waits in `new` from a scan, and not from a
+    /// delivery, tells a replaced message from a waiting one by this link alone.
+    /// The replacement carries none, so a scan that set it on both would hide a
+    /// box's only waiting message.
+    pub async fn a_scan_names_the_replacement_on_the_replaced_message(store: &dyn Mailboxes) {
+        create(store, "inbox").await;
+        let a = post(store, "inbox", "alpha", "ship it on friday", 0).await;
+        let b = superseding(store, "inbox", "alpha", "ship it on monday", 1, &a.id)
+            .await
+            .expect("post ok")
+            .written()
+            .expect("a replacement of the sender's own message is written");
+        let scanned = store.scan_messages().await.expect("scan_messages ok");
+        let link_of = |id: &MessageId| {
+            scanned
+                .iter()
+                .find(|m| &m.id == id)
+                .unwrap_or_else(|| panic!("the scan holds {id:?}"))
+                .superseded_by
+                .clone()
+        };
+        assert_eq!(link_of(&a.id), Some(b.id.clone()), "the replaced one");
+        assert_eq!(link_of(&b.id), None, "the replacement");
+    }
+
     /// **A post may replace only the sender's own message, in the box it goes
     /// to, once.** Each refusal names its reason and writes nothing; the id that
     /// names nothing is the same miss a reply to nothing is.
@@ -3918,6 +3944,7 @@ pub mod contract {
         a_message_whose_replacement_was_set_aside_is_delivered(&fresh().await).await;
         a_replaced_message_the_reader_already_has_is_still_delivered(&fresh().await).await;
         a_replaced_message_is_readable_by_id_on_request(&fresh().await).await;
+        a_scan_names_the_replacement_on_the_replaced_message(&fresh().await).await;
         a_replacement_is_refused_unless_it_is_the_senders_own_in_the_same_box(&fresh().await).await;
         simultaneous_replacements_of_one_message_land_exactly_one(&fresh().await).await;
         a_messages_history_keeps_each_change_of_state_in_order(&fresh().await).await;

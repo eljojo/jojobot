@@ -1271,6 +1271,16 @@ async fn unstable_a_capture_on_a_handle_nothing_wears_is_refused_without_candida
 
 /// A message left in a box, sent at a moment the case names.
 async fn leave(served: &Served, bot: &str, sent_at: &str) {
+    leave_replacing(served, bot, sent_at, None).await;
+}
+
+/// A message that may replace an earlier one of the same sender in the box.
+async fn leave_replacing(
+    served: &Served,
+    bot: &str,
+    sent_at: &str,
+    supersedes: Option<jojobot_domain::mailbox::MessageId>,
+) -> jojobot_domain::mailbox::MessageId {
     served
         .mailboxes
         .post_message(jojobot_domain::mailbox::NewMessage {
@@ -1280,12 +1290,15 @@ async fn leave(served: &Served, bot: &str, sent_at: &str) {
             sender: "gamma".into(),
             sent_at: sent_at.parse().expect("a moment"),
             in_reply_to: None,
-            supersedes: None,
+            supersedes,
             sender_mail_waiting_at_send: None,
             posted_by_session: None,
         })
         .await
-        .expect("the post lands");
+        .expect("the post lands")
+        .written()
+        .expect("the box exists")
+        .id
 }
 
 async fn open_box(served: &Served, name: &str, owner: &str) {
@@ -1350,5 +1363,28 @@ async fn unstable_mailbox_counts_outside_the_grant_is_refused_naming_what_the_ap
     assert!(
         why.contains("mailbox_counts") && why.contains("recall"),
         "{refused}"
+    );
+}
+
+/// **A replaced message waits in no one's `new`**: the count and the age are the
+/// newer message's, not the one it replaced.
+#[tokio::test]
+async fn unstable_mailbox_counts_reads_a_replacing_message_and_not_the_one_it_replaced() {
+    let (app, token) = enrolled("springfield-watch", vec![op("mailbox_counts", &[], &[])]);
+    let served = serve(vec![app], Registry::shipped()).await;
+    open_box(&served, "alpha", "bot:alpha").await;
+    let older = leave_replacing(&served, "alpha", "2026-03-05T09:00:00Z", None).await;
+    leave_replacing(&served, "alpha", "2026-03-05T10:00:00Z", Some(older)).await;
+
+    let (status, counted) = call(&served, &token, "mailbox_counts", json!({})).await;
+    assert_eq!(status, 200, "{counted}");
+    let row = counted
+        .as_array()
+        .and_then(|rows| rows.iter().find(|row| row["bot"] == "bot:alpha"))
+        .unwrap_or_else(|| panic!("a row for the box: {counted}"));
+    assert_eq!(row["new"], 1, "only the newer message waits: {counted}");
+    assert_eq!(
+        row["oldest_new_sent_at"], "2026-03-05T10:00:00Z",
+        "the age is the newer message's: {counted}"
     );
 }
