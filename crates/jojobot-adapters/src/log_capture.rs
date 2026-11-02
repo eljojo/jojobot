@@ -90,8 +90,10 @@ pub(crate) fn log_sink() -> &'static Captured {
             .expect("only this sink installs a global subscriber");
         // **Records from the `log` crate reach the sink too**, as they do in a
         // served binary: tantivy logs through `log`, and without this bridge a
-        // test would see none of what the index warns about.
-        tracing_log::LogTracer::init().expect("only this sink installs the log bridge");
+        // test would see none of what the index warns about. The bridge is
+        // once per process and the same whoever installs it, so one a logging
+        // test installed first is no failure.
+        let _ = tracing_log::LogTracer::init();
         captured
     })
 }
@@ -119,5 +121,41 @@ mod tests {
             .expect("the sink takes it");
         assert_eq!(sink.text(), "a migration failed");
         ECHOED.with(|echoed| assert_eq!(*echoed.borrow(), "a migration failed"));
+    }
+
+    /// **The bridge is process-wide, so a sink asked for after another test
+    /// installed it must still work.** The case runs in a child process of its
+    /// own (the test binary re-run with `--exact`): in the shared process
+    /// whichever test installs the bridge first decides the outcome, and the
+    /// case would prove nothing.
+    #[test]
+    fn the_sink_takes_a_log_bridge_that_is_already_installed() {
+        if std::env::var("LOG_BRIDGE_CHILD").is_err() {
+            let name = "log_capture::tests::the_sink_takes_a_log_bridge_that_is_already_installed";
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", name, "--nocapture"])
+                .env("LOG_BRIDGE_CHILD", "1")
+                .output()
+                .unwrap();
+            let stdout = String::from_utf8(output.stdout).unwrap();
+            assert!(
+                output.status.success(),
+                "{stdout}\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(
+                stdout.contains("1 passed; 0 failed"),
+                "the child must run its case: {stdout}"
+            );
+            return;
+        }
+        tracing_log::LogTracer::init().expect("the child installs the bridge first");
+        let sink = log_sink();
+        tracing_log::log::warn!("a warning sent through the log crate");
+        assert!(
+            sink.text().contains("a warning sent through the log crate"),
+            "{}",
+            sink.text()
+        );
     }
 }
