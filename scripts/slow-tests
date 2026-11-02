@@ -1,0 +1,131 @@
+#!/usr/bin/env python3
+"""**Print the cases a run's logs show over a bound, and how many there are.**
+
+    scripts/slow-tests RUN_ID [--over SECONDS]
+
+RUN_ID is the number `scripts/wait-run` prints after `run #`. A job's own log on
+the forge holds only the bar's verdict block; the case lines are in the logs the
+job uploads as its `bar-logs-<job>` artifact. The tool lists the run's artifacts
+and reads each live `bar-logs-*` one the way `scripts/wait-run` reads the forge
+(its WAIT_RUN_API, no credential), and takes every `test NAME ... ok <12.3s>` line
+the report-time flag makes the harness print. The time is the case's own, so
+compile time is not in it. A case that more than one job ran is counted once, with
+the longest time any job saw and the job that saw it. The forge keeps an artifact
+for seven days, so an older run reads as expired.
+
+Each case over the bound is printed, slowest first, as
+`<seconds>s  <job>  <case>`, and the last line is
+`slow tests over <bound> s: <count> (run #<id>)`. The bound is 60 seconds unless
+`--over` names another (rule 651). A job whose artifact holds no timed case line,
+or has expired, is named, because a count that skipped it would read low.
+
+Exit code: 0 the run was read, 1 no artifact held a timed case line (the count
+would say nothing), 4 no API root, or the run is not on the forge.
+"""
+import argparse
+import importlib.machinery
+import importlib.util
+import io
+import json
+import os
+import re
+import sys
+import urllib.request
+import zipfile
+
+BOUND_SECONDS = 60.0
+TIMED = re.compile(r"^test (\S+) \.\.\. (?:ok|FAILED) <(\d+(?:\.\d+)?)s>$")
+
+
+def wait_run():
+    """scripts/wait-run as a module, so the forge is read the way it reads it."""
+    path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "wait-run")
+    loader = importlib.machinery.SourceFileLoader("wait_run", path)
+    spec = importlib.util.spec_from_loader("wait_run", loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
+
+
+def timed_cases(log):
+    """Every (case, seconds) the log's lines say, in the order printed."""
+    found = []
+    for line in log.splitlines():
+        hit = TIMED.match(line.strip())
+        if hit:
+            found.append((hit.group(1), float(hit.group(2))))
+    return found
+
+
+def slowest(jobs, bound):
+    """The cases over `bound` across (job name, log) pairs: one entry for each case, with
+    its longest time and the job that saw it, slowest first; and the jobs that held no
+    timed line."""
+    over = {}
+    silent = []
+    for name, log in jobs:
+        cases = timed_cases(log)
+        if not cases:
+            silent.append(name)
+        for case, seconds in cases:
+            if seconds > bound and seconds > over.get(case, (0.0, ""))[0]:
+                over[case] = (seconds, name)
+    rows = sorted(over.items(), key=lambda row: (-row[1][0], row[0]))
+    return [(seconds, job, case) for case, (seconds, job) in rows], silent
+
+
+def artifact_logs(wr, run):
+    """(job name, log text) for each live `bar-logs-*` artifact of the run, and the names of
+    the jobs whose artifact has expired."""
+    listed = json.loads(wr.fetch(f"/actions/runs/{run}/artifacts"))
+    logs, expired = [], []
+    for artifact in listed:
+        name = artifact["name"]
+        if not name.startswith("bar-logs-"):
+            continue
+        name = name[len("bar-logs-"):]
+        if artifact.get("expired"):
+            expired.append(name)
+            continue
+        url = f"{wr.API}/actions/artifacts/{artifact['id']}/zip"
+        with urllib.request.urlopen(url, timeout=60) as answer:
+            archive = zipfile.ZipFile(io.BytesIO(answer.read()))
+        text = "\n".join(
+            archive.read(entry).decode("utf-8", "replace")
+            for entry in archive.namelist()
+            if entry.endswith(".log")
+        )
+        logs.append((name, text))
+    return logs, expired
+
+
+def main():
+    ask = argparse.ArgumentParser(description="Cases a Forgejo run's logs show over a bound.")
+    ask.add_argument("run", help="the run's number, as scripts/wait-run prints it after run #")
+    ask.add_argument("--over", type=float, default=BOUND_SECONDS, help="seconds (default %(default)s)")
+    args = ask.parse_args()
+    wr = wait_run()
+    if not wr.API:
+        print("WAIT_RUN_API is not set: set it to the repository's API root", file=sys.stderr)
+        sys.exit(4)
+    try:
+        logs, expired = artifact_logs(wr, args.run)
+    except wr.Gone as err:
+        print(f"the forge has nothing at {err}", file=sys.stderr)
+        sys.exit(4)
+    rows, silent = slowest(logs, args.over)
+    for seconds, job, case in rows:
+        print(f"{seconds:.1f}s  {job}  {case}")
+    for name in silent:
+        print(f"no timed case line in the logs of the {name} job")
+    for name in expired:
+        print(f"the logs of the {name} job have expired")
+    if len(silent) == len(logs):
+        print("no job's logs hold a timed case line: the count says nothing", file=sys.stderr)
+        sys.exit(1)
+    bound = f"{args.over:g}"
+    print(f"slow tests over {bound} s: {len(rows)} (run #{args.run})")
+
+
+if __name__ == "__main__":
+    main()

@@ -168,6 +168,7 @@ test-server_day_stated
 test-serving_line_under_an_inherited_log_filter
 test-single_store_per_process
 test-size_report
+test-slow_tests
 test-spares_lock
 test-spawn_gate
 test-standing_gate
