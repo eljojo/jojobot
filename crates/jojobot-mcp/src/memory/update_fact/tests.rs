@@ -4687,6 +4687,7 @@ fn the_claim_that_a_correction_is_safe_names_testimony_as_its_exception() {
 async fn clear_fields_on_the_carrying_record_takes_a_key_off_the_thing() {
     let jojobot = handler();
     ensure(&jojobot, "project:atlas").await;
+    ensure(&jojobot, "bot:gamma").await;
     jojobot
         .add_entity(Parameters(AddEntityArgs {
             parent: Some("project:atlas".into()),
@@ -4698,11 +4699,11 @@ async fn clear_fields_on_the_carrying_record_takes_a_key_off_the_thing() {
         &jojobot,
         CaptureArgs {
             sets: Some(
-                [("waiting_on".to_string(), "project:atlas".to_string())]
+                [("waiting_on".to_string(), "bot:gamma".to_string())]
                     .into_iter()
                     .collect(),
             ),
-            ..capture_args("work:phi", "blocked on the atlas")
+            ..capture_args("work:phi", "blocked on gamma")
         },
     )
     .await;
@@ -4720,7 +4721,7 @@ async fn clear_fields_on_the_carrying_record_takes_a_key_off_the_thing() {
     )
     .await;
     let held = fields_of(&jojobot, "work:phi").await;
-    assert_eq!(held["waiting_on"], "project:atlas", "{held}");
+    assert_eq!(held["waiting_on"], "bot:gamma", "{held}");
     assert_eq!(held["status"], "waiting", "{held}");
 
     update_ok(
@@ -4747,10 +4748,16 @@ async fn clear_fields_on_the_carrying_record_takes_a_key_off_the_thing() {
             .await
             .expect("recall ok"),
     );
+    // The value is kept as the badge the handle resolves to, so the history shows
+    // that a value was held and then cleared, not the handle's spelling.
+    let writes = &history["objects"][0]["history"]["writes"];
     assert!(
-        history.to_string().contains("project:atlas"),
+        writes[0]["value"]
+            .as_str()
+            .is_some_and(|held| !held.is_empty()),
         "the key's history keeps the value it held: {history}"
     );
+    assert_eq!(writes[1]["cleared"], true, "…and then the clear: {history}");
 }
 
 /// **An edit of a claim's words names the claim and the size of the words on

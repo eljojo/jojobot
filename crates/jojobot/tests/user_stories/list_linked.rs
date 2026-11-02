@@ -149,11 +149,10 @@ async fn the_linked_verdict_is_the_one_the_ready_view_gives() {
         Some("work:pour-the-slab"),
     )
     .await;
-    work(&s, "work:order-the-lumber", "next", None).await;
     work(&s, "work:lay-the-tiles", "waiting", None).await;
     s.call(
         "update_entity",
-        json!({"handle": "work:lay-the-tiles", "sets": {"waiting_on": "work:order-the-lumber"}}),
+        json!({"handle": "work:lay-the-tiles", "sets": {"waiting_on": "bot:gamma"}}),
     )
     .await;
     entry_about(
