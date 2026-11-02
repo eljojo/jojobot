@@ -158,6 +158,7 @@ test-runtime_room_paths
 test-sabotage
 test-sabotage_gate
 test-sabotage_probe
+test-sccache_hit_rate
 test-sccache_stable_tmp
 test-scratch_placement
 test-seen_question

@@ -24,6 +24,7 @@ pub mod metrics;
 pub mod occupancy;
 mod reading;
 mod recording;
+pub mod sccache_stats;
 pub mod scratch;
 pub mod size;
 pub mod static_checks;

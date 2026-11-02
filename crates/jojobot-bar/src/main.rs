@@ -1426,6 +1426,7 @@ fn jobs_for(level: Level, all: Vec<Vec<String>>) -> (Vec<Vec<String>>, String) {
 }
 
 fn run_check(known: &KnownReds, level: Level) -> std::io::Result<ExitCode> {
+    let cache_before = jojobot_bar::sccache_stats::read();
     let code = run_check_phases(known, level)?;
     // **Printed after the verdict, and unconditionally.** A standing duty
     // gets a mechanism rather than diligence (rule 235) — this runs whichever
@@ -1433,6 +1434,10 @@ fn run_check(known: &KnownReds, level: Level) -> std::io::Result<ExitCode> {
     // after the phases because it never changes the verdict, and a reader
     // takes the verdict first. The size check is not here: it is a phase.
     print!("{}", roster_report());
+    print!(
+        "{}",
+        jojobot_bar::sccache_stats::line(cache_before, jojobot_bar::sccache_stats::read())
+    );
     Ok(code)
 }
 
