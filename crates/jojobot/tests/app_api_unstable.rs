@@ -1330,12 +1330,12 @@ async fn unstable_a_granted_mailbox_counts_reads_each_bots_new_count_and_oldest_
     assert_eq!(status, 200, "{counted}");
     assert_eq!(
         counted,
-        json!([
-            {"bot": "bot:alpha", "new": 2, "oldest_new_sent_at": "2026-03-05T09:00:00Z"},
-            {"bot": "bot:assistant", "new": 0, "oldest_new_sent_at": null},
-            {"bot": "bot:beta", "new": 1, "oldest_new_sent_at": "2026-03-05T11:00:00Z"},
-        ]),
-        "a person's box is not listed, an empty box has no age, and a row carries nothing but the three keys"
+        json!({"boxes": [
+            {"bot": "bot:alpha", "new": 2, "quarantined": 0, "oldest_new_sent_at": "2026-03-05T09:00:00Z"},
+            {"bot": "bot:assistant", "new": 0, "quarantined": 0, "oldest_new_sent_at": null},
+            {"bot": "bot:beta", "new": 1, "quarantined": 0, "oldest_new_sent_at": "2026-03-05T11:00:00Z"},
+        ]}),
+        "a person's box is not listed, an empty box has no age, and a row carries nothing but its four keys"
     );
 
     // **Nothing moved**: the same two boxes still hold the same messages at `new`.
@@ -1378,7 +1378,7 @@ async fn unstable_mailbox_counts_reads_a_replacing_message_and_not_the_one_it_re
 
     let (status, counted) = call(&served, &token, "mailbox_counts", json!({})).await;
     assert_eq!(status, 200, "{counted}");
-    let row = counted
+    let row = counted["boxes"]
         .as_array()
         .and_then(|rows| rows.iter().find(|row| row["bot"] == "bot:alpha"))
         .unwrap_or_else(|| panic!("a row for the box: {counted}"));
@@ -1387,4 +1387,35 @@ async fn unstable_mailbox_counts_reads_a_replacing_message_and_not_the_one_it_re
         row["oldest_new_sent_at"], "2026-03-05T10:00:00Z",
         "the age is the newer message's: {counted}"
     );
+}
+
+/// **A box whose only mail is quarantined reads the way `counts_only` reads it**:
+/// nothing in `new`, and the quarantined card counted beside it. The row comes out
+/// of the rendering `read_mailbox` uses, so the two cannot disagree.
+#[tokio::test]
+async fn unstable_mailbox_counts_says_how_many_cards_of_a_box_were_quarantined() {
+    let (app, token) = enrolled("springfield-watch", vec![op("mailbox_counts", &[], &[])]);
+    let served = serve(vec![app], Registry::shipped()).await;
+    open_box(&served, "alpha", "bot:alpha").await;
+    let only = leave_replacing(&served, "alpha", "2026-03-05T09:00:00Z", None).await;
+    served
+        .mailboxes
+        .quarantine(
+            &only,
+            &jojobot_domain::mailbox::MailboxName("alpha".into()),
+            "a fixture's reason",
+            jojobot_domain::mailbox::Acting::unnamed(jiff::Timestamp::UNIX_EPOCH),
+        )
+        .await
+        .expect("the message is quarantined");
+
+    let (status, counted) = call(&served, &token, "mailbox_counts", json!({})).await;
+    assert_eq!(status, 200, "{counted}");
+    let row = counted["boxes"]
+        .as_array()
+        .and_then(|rows| rows.iter().find(|row| row["bot"] == "bot:alpha"))
+        .unwrap_or_else(|| panic!("a row for the box: {counted}"));
+    assert_eq!(row["new"], 0, "{counted}");
+    assert_eq!(row["quarantined"], 1, "{counted}");
+    assert!(row["oldest_new_sent_at"].is_null(), "{counted}");
 }

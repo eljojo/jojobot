@@ -12,7 +12,7 @@ use super::dsl::Story;
 const APP: &str = "springfield-watch";
 
 fn row_of<'a>(counted: &'a serde_json::Value, bot: &str) -> &'a serde_json::Value {
-    counted
+    counted["boxes"]
         .as_array()
         .and_then(|rows| rows.iter().find(|row| row["bot"] == bot))
         .unwrap_or_else(|| panic!("a row for {bot}: {counted}"))
@@ -53,8 +53,8 @@ async fn a_controller_sees_a_bot_has_mail_waiting_then_sees_it_taken() {
     assert!(row["oldest_new_sent_at"].is_string(), "{waiting}");
     assert_eq!(
         row.as_object().map(|keys| keys.len()),
-        Some(3),
-        "a row says whose box, how many and since when, and nothing of the mail: {row}"
+        Some(4),
+        "a row says whose box, how many wait, how many cards were quarantined and since when, and nothing of the mail: {row}"
     );
 
     // ── 3. reading the counts moved nothing: the bot still has the mail ─────

@@ -526,13 +526,26 @@ pub struct BoxWaiting {
     pub bot: String,
     /// How many messages wait in `new`.
     pub new: usize,
+    /// How many cards of the box could not be read as messages, the number
+    /// `read_mailbox` with `counts_only` reports beside the counts.
+    pub quarantined: usize,
     /// When the oldest of them was sent, or null for an empty `new`.
     pub oldest_new_sent_at: Option<String>,
 }
 
+/// **What `mailbox_counts` served**: the rows under a named key, so the answer can
+/// gain a key without breaking a caller.
+#[derive(Debug, Serialize)]
+pub struct BoxesWaiting {
+    /// One row for each bot's box, by bot.
+    pub boxes: Vec<BoxWaiting>,
+}
+
 /// **`mailbox_counts`: what is waiting in each bot's box, read and nothing moved.**
-/// The counts are the ones `read_mailbox` with `counts_only` reports; the age is
-/// read off the messages without a delivery. A person's box is not listed. It
+/// The numbers are read out of `wire::mailbox_json`, the rendering `read_mailbox`
+/// with `counts_only` answers with, so the two cannot disagree about a box. The
+/// age is read off the messages without a delivery, which is a scan of every
+/// message that `counts_only` does not make. A person's box is not listed. It
 /// reads current state and is not a feed (rule 724).
 async fn mailbox_counts(call: Call) -> Answer {
     let operation = Operation {
@@ -554,23 +567,28 @@ async fn mailbox_counts(call: Call) -> Answer {
     let mut rows: Vec<BoxWaiting> = boxes
         .iter()
         .filter(|held| !held.is_private())
-        .map(|held| BoxWaiting {
-            bot: held.owner.as_str().to_string(),
-            new: held.counts.new,
-            oldest_new_sent_at: messages
-                .iter()
-                .filter(|m| {
-                    m.mailbox == held.name
-                        && m.state == jojobot_domain::mailbox::MessageState::New
-                        && m.superseded_by.is_none()
-                })
-                .map(|m| m.sent_at)
-                .min()
-                .map(|at| at.to_string()),
+        .map(|held| {
+            let counted = crate::mailboxes::wire::mailbox_json(held);
+            let number = |at: &serde_json::Value| at.as_u64().unwrap_or_default() as usize;
+            BoxWaiting {
+                bot: held.owner.as_str().to_string(),
+                new: number(&counted["counts"]["new"]),
+                quarantined: number(&counted["quarantined"]["count"]),
+                oldest_new_sent_at: messages
+                    .iter()
+                    .filter(|m| {
+                        m.mailbox == held.name
+                            && m.state == jojobot_domain::mailbox::MessageState::New
+                            && m.superseded_by.is_none()
+                    })
+                    .map(|m| m.sent_at)
+                    .min()
+                    .map(|at| at.to_string()),
+            }
         })
         .collect();
     rows.sort_by(|a, b| a.bot.cmp(&b.bot));
-    done(&rows)
+    done(&BoxesWaiting { boxes: rows })
 }
 
 /// **`set_charter` is in the registry and no app can be granted it**: a charter
