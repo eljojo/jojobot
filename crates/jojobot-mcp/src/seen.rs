@@ -414,34 +414,10 @@ mod tests {
         );
     }
 
-    /// **Of the things that share a word, the one sharing the most is asked
-    /// about, and the most recently shown breaks a tie.**
+    /// **Of the things that share the most words, the one asked about is the one
+    /// shown most recently.** The ranking by count is the case below.
     #[test]
     fn the_thing_sharing_the_most_words_is_the_one_asked_about() {
-        let mut ledger = Ledger::default();
-        ledger.record(
-            "s1",
-            vec![
-                place("place:contract-atlas", "Old Evergreen Terrace"),
-                place("place:bet", "Evergreen Park"),
-            ],
-        );
-        let noticed = ledger
-            .consult(
-                "s1",
-                &Creation {
-                    handle: "place:springfield-mall",
-                    kind: "place",
-                    name: "Evergreen Terrace Bridge",
-                    aliases: &[],
-                    parent: None,
-                },
-                &|_| true,
-            )
-            .expect("a thing shared words with the creation");
-        assert_eq!(noticed.handle, "place:contract-atlas", "{noticed:?}");
-
-        // A tie goes to the more recently shown.
         let mut ledger = Ledger::default();
         ledger.record("s2", vec![place("place:contract-atlas", "Quiet Wharf")]);
         ledger.record("s2", vec![place("place:bet", "Quiet Wharf")]);
@@ -459,6 +435,37 @@ mod tests {
             )
             .expect("a thing shared a word");
         assert_eq!(noticed.handle, "place:bet", "{noticed:?}");
+    }
+
+    /// **More shared words beat a more recent showing.** Both things share the bar
+    /// of two words with the creation; the one sharing three was shown first and the
+    /// one sharing two was shown last, and the first is asked about.
+    #[test]
+    fn more_shared_words_beat_a_more_recently_shown_thing() {
+        let mut ledger = Ledger::default();
+        ledger.record(
+            "s1",
+            vec![place(
+                "place:contract-atlas",
+                "Old Evergreen Terrace Bridge",
+            )],
+        );
+        ledger.record("s1", vec![place("place:bet", "Evergreen Terrace Park")]);
+        let noticed = ledger
+            .consult(
+                "s1",
+                &Creation {
+                    handle: "place:springfield-mall",
+                    kind: "place",
+                    name: "Evergreen Terrace Bridge",
+                    aliases: &[],
+                    parent: None,
+                },
+                &|_| true,
+            )
+            .expect("a thing shared words with the creation");
+        assert_eq!(noticed.handle, "place:contract-atlas", "{noticed:?}");
+        assert_eq!(noticed.words.len(), 3, "{noticed:?}");
     }
 
     /// **Forgetting a session empties what it was shown and what it was asked
