@@ -193,3 +193,39 @@ async fn a_bot_that_only_wrote_to_the_work_is_absent() {
         .never_says("bot:assistant");
     story.finish().await;
 }
+
+/// **A declaration the store kept before it pointed each write at its claim
+/// write still links its session**, as it did on 9.3.1.3. The page reads such a
+/// write with no run, so the run comes from the declaration's own claim history.
+/// The pair is the same page before the origins are lost, which links the run.
+#[tokio::test]
+async fn a_declaration_kept_before_write_origins_still_links_its_session() {
+    let (story, store) = Story::begin_over_a_store_that_can_go_away("bot:otto").await;
+    let otto = story.session().await;
+    otto.add("project:atlas", "Atlas").await;
+    otto.add_under("project:atlas", "work:sigma", "Sigma").await;
+    otto.call(
+        "journal",
+        json!({"entry": "picked up sigma", "working_on": "work:sigma"}),
+    )
+    .await;
+    let run = otto.run().to_string();
+    otto.call("wrap_session", json!({"story": "done for now"}))
+        .await;
+
+    let link = format!("#session-{run}");
+    story
+        .page("project:atlas/work:sigma")
+        .await
+        .section("working-on-past")
+        .says(&link);
+
+    store.forgets_who_made_its_key_writes();
+    story.the_store_changed_underneath().await;
+    story
+        .page("project:atlas/work:sigma")
+        .await
+        .section("working-on-past")
+        .says(&link);
+    story.finish().await;
+}

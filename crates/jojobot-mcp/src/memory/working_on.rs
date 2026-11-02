@@ -313,8 +313,101 @@ pub(crate) fn hidden_note(bots: &BTreeSet<EntityId>) -> String {
 mod tests {
     use super::*;
     use jojobot_domain::memory::testing::InMemoryMemory;
+    use jojobot_domain::memory::{ClaimWrite, FieldWrite};
     use jojobot_domain::session::testing::InMemorySessions;
     use jojobot_domain::session::{NewSession, Sid};
+
+    /// **A declaration the store kept before it pointed each write at its claim
+    /// write** takes its run from the declaration's own claim chain; a chain that
+    /// does not line up with the writes names none. The writes are read from a
+    /// fresh store and their origin is taken off, as an older row reads.
+    #[tokio::test]
+    async fn a_declaration_with_no_stored_origin_takes_its_run_from_its_claim_chain() {
+        let memory = InMemoryMemory::booted();
+        let sessions = InMemorySessions::default();
+        let bot = EntityId("bot:otto".to_string());
+        let work = EntityId("work:sigma".to_string());
+        for (handle, name) in [("bot:otto", "Otto"), ("work:sigma", "Sigma")] {
+            memory
+                .add_entity(jojobot_domain::memory::NewEntity::new(
+                    EntityId(handle.to_string()),
+                    name,
+                    "the fixture roster",
+                ))
+                .await
+                .expect("the entity is written")
+                .written()
+                .expect("nothing collides with it");
+        }
+        sessions
+            .begin(NewSession {
+                bot: bot.clone(),
+                sid: Sid("s001".to_string()),
+                focus: "an older run".to_string(),
+                started_at: jiff::Timestamp::UNIX_EPOCH,
+                timezone: None,
+                started_on: None,
+                id: None,
+                key_hash: None,
+            })
+            .await
+            .expect("the run begins");
+        let mut declared = NewFact::about(bot.clone(), RECORD, jiff::civil::date(2026, 3, 1));
+        declared.fields = [(WORKING_ON.to_string(), work.as_str().to_string())].into();
+        declared.sets = [WORKING_ON.to_string()].into();
+        declared.session = Some("s001".to_string());
+        memory
+            .capture(declared)
+            .await
+            .expect("the declaration is written");
+        let mut writes = memory
+            .history(&bot, WORKING_ON)
+            .await
+            .expect("the history reads");
+        let pointed = writes.clone();
+        for write in &mut writes {
+            write.run = None;
+            write.writer = None;
+        }
+        let chain = memory
+            .claim_history(&writes[0].fact)
+            .await
+            .expect("the claim chain reads");
+        let known = memory.list_entities(None).await.expect("the index reads");
+        let runs = sessions.summaries_of(&bot).await.expect("the runs read");
+        let of = BTreeSet::from([work.clone()]);
+        let run_of = |writes: &[FieldWrite], record: &[ClaimWrite]| {
+            let found = declarations_from(
+                &known,
+                &[BotWrites {
+                    bot: &bot,
+                    writes,
+                    live_on: None,
+                    runs: &runs,
+                    record,
+                }],
+                &of,
+            );
+            assert_eq!(found.len(), 1, "{found:?}");
+            found[0].run.clone()
+        };
+
+        assert_eq!(run_of(&writes, &chain).as_deref(), Some("s001"));
+        assert_eq!(run_of(&writes, &[]), None, "a chain not read names none");
+        let longer: Vec<ClaimWrite> = chain.iter().chain(&chain).cloned().collect();
+        assert_eq!(
+            run_of(&writes, &longer),
+            None,
+            "a chain longer than the writes does not line up with them"
+        );
+        let mut elsewhere = pointed.clone();
+        elsewhere[0].run = Some("s001".to_string());
+        assert_eq!(
+            run_of(&elsewhere, &[]),
+            Some("s001".to_string()),
+            "a stored origin is read as before"
+        );
+    }
 
     /// **A declaration made by a run whose card id is not its name lists that
     /// run.** The write keeps the run's public name; the store minted this card's
@@ -375,6 +468,7 @@ mod tests {
                 writes: &writes,
                 live_on: None,
                 runs: &runs,
+                record: &[],
             }],
             &BTreeSet::from([work.clone()]),
         );
@@ -429,6 +523,7 @@ mod tests {
                 writes: &writes,
                 live_on: Some(work.as_str()),
                 runs: &runs,
+                record: &[],
             }],
             &BTreeSet::from([work.clone()]),
         );

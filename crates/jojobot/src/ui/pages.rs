@@ -641,18 +641,65 @@ async fn declarations_through(
             .history
             .map(|history| history.writes)
             .unwrap_or_default();
-        read.push((bot, writes, object.fields.get(WORKING_ON).cloned(), runs));
+        // **A write the store kept with no origin reads its run off the
+        // declaration's claim chain**, so the chain is asked for only then.
+        let record = match writes.first() {
+            Some(first) if writes.iter().any(|write| write.run.is_none()) => {
+                declaration_record(queries, bot, &first.fact).await
+            }
+            _ => Vec::new(),
+        };
+        read.push((
+            bot,
+            writes,
+            object.fields.get(WORKING_ON).cloned(),
+            runs,
+            record,
+        ));
     }
     let bots: Vec<BotWrites<'_>> = read
         .iter()
-        .map(|(bot, writes, live_on, runs)| BotWrites {
+        .map(|(bot, writes, live_on, runs, record)| BotWrites {
             bot,
             writes,
             live_on: live_on.as_deref(),
             runs,
+            record,
         })
         .collect();
     (declarations_from(known, &bots, of), incomplete)
+}
+
+/// **The whole write chain of a bot's working-on record**, empty when it cannot be
+/// read: a run is then left unnamed rather than guessed.
+async fn declaration_record(
+    queries: &jojobot_query_api::QueryHandle,
+    bot: &EntityId,
+    record: &jojobot_domain::memory::FactAddress,
+) -> Vec<jojobot_domain::memory::ClaimWrite> {
+    use jojobot_domain::memory::graph::{History, Trace};
+    let asked = jojobot_query_api::Question::about(
+        bot.clone(),
+        None,
+        Some(History {
+            of: Trace::Record(record.clone()),
+            most: usize::MAX,
+        }),
+    );
+    let Ok(answered) = queries
+        .ask(&jojobot_domain::actor::Actor::Operator, asked)
+        .await
+    else {
+        return Vec::new();
+    };
+    answered
+        .selected
+        .objects
+        .into_iter()
+        .find(|object| object.entity.id == *bot)
+        .and_then(|object| object.record_history)
+        .map(|chain| chain.writes)
+        .unwrap_or_default()
 }
 
 /// **Who is working on this piece of work now, and who has been**, for a piece

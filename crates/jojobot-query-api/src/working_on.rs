@@ -4,7 +4,7 @@
 
 use std::collections::BTreeSet;
 
-use jojobot_domain::memory::{Entity, EntityId, FieldWrite};
+use jojobot_domain::memory::{ClaimWrite, Entity, EntityId, FieldWrite};
 use jojobot_domain::session::SessionSummary;
 
 /// **One time a session declared what its bot is working on**, read from the
@@ -33,6 +33,10 @@ pub struct BotWrites<'a> {
     pub writes: &'a [FieldWrite],
     pub live_on: Option<&'a str>,
     pub runs: &'a [SessionSummary],
+    /// **The whole write chain of the one record that carries `writes`**, read by
+    /// the caller, or empty when it was not read. Only a write the store kept
+    /// with no origin reads its run from it (see [`declarations_from`]).
+    pub record: &'a [ClaimWrite],
 }
 
 /// **Every declaration by these bots that points at a thing in `of`**, live or
@@ -43,6 +47,13 @@ pub struct BotWrites<'a> {
 /// is live when it points at that value. Nothing here looks at a session's state.
 /// The run of a write is the bot's run it names, found by the one rule of
 /// [`jojobot_domain::session::run_named`]; a run no card answers to leaves it empty.
+///
+/// **A write with no stored origin** (one a build kept before the store pointed
+/// each write at its claim write) takes its run from the declaration's own claim
+/// chain, the way 9.3.1.3 read it: only when every write is of one record and
+/// that record's chain has as many writes, so the nth write is the nth claim
+/// write. When the two do not line up, nothing is claimed. This is for the
+/// declaration record alone; field history in general never invents an origin.
 pub fn declarations_from(
     known: &[Entity],
     bots: &[BotWrites<'_>],
@@ -54,6 +65,7 @@ pub fn declarations_from(
         writes,
         live_on,
         runs,
+        record,
     } in bots
     {
         let newest = writes.len().saturating_sub(1);
@@ -76,6 +88,7 @@ pub fn declarations_from(
             let run = write
                 .run
                 .as_deref()
+                .or_else(|| legacy_run(writes, record, at))
                 .and_then(|stored| jojobot_domain::session::run_named::find_among(runs, stored))
                 .and_then(|summary| summary.sid.as_ref())
                 .map(|sid| sid.as_str().to_string());
@@ -89,4 +102,15 @@ pub fn declarations_from(
         }
     }
     found
+}
+
+/// **The session that made write `at`, read off the record's claim chain**, when
+/// the chain is known to line up with the writes: one record carries them all and
+/// its chain is as long as they are.
+fn legacy_run<'a>(writes: &[FieldWrite], record: &'a [ClaimWrite], at: usize) -> Option<&'a str> {
+    let first = writes.first()?;
+    if record.len() != writes.len() || writes.iter().any(|write| write.fact != first.fact) {
+        return None;
+    }
+    record.get(at)?.session.as_deref()
 }
