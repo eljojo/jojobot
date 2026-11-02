@@ -169,10 +169,11 @@ impl Jojobot {
                 if actor.app().is_some() {
                     return Ok(Err(crate::caller::handle_declined(
                         "add_entity",
-                        crate::answer::WayForward::person(
+                        crate::answer::WayForward::from(
                             "A creation by an app sets at least one key, because the app's \
                              mark is written with the first claim. Send `sets` with a key the \
-                             grant allows.",
+                             grant allows."
+                                .to_string(),
                         ),
                     )));
                 }

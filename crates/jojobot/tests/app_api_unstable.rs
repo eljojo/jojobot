@@ -1095,6 +1095,38 @@ async fn unstable_a_creation_that_sets_nothing_is_refused_and_one_that_sets_a_ke
     );
 }
 
+/// **A creation that sets nothing is a refusal the app fixes itself.** It carries
+/// `fix_by: change`, because sending a key the grant allows lands the same call,
+/// and `person` would tell a caller that routes on the word to wait on an operator.
+/// Paired: the same creation with a granted key lands, so the word is not on every
+/// creation.
+#[tokio::test]
+async fn unstable_a_creation_that_sets_nothing_is_marked_fix_by_change() {
+    let (app, token) = creator();
+    let served = serve(vec![app], Registry::shipped()).await;
+
+    let (status, refused) = call(
+        &served,
+        &token,
+        "add_entity",
+        json!({"kind": "role", "handle": "lambda", "name": "Lambda", "source": "the maker"}),
+    )
+    .await;
+    assert_eq!(status, 409, "{refused}");
+    assert_eq!(refused["refused"]["fix_by"], "change", "{refused}");
+
+    let (status, landed) = call(
+        &served,
+        &token,
+        "add_entity",
+        json!({"kind": "role", "handle": "lambda", "name": "Lambda", "source": "the maker",
+               "sets": {"watch_state": "ok"}}),
+    )
+    .await;
+    assert_eq!(status, 200, "{landed}");
+    assert!(landed["refused"].is_null(), "{landed}");
+}
+
 /// **A caller's mistake is a 422 that says what was wrong, never a 503 that asks
 /// for the same call again.** One case per verb that parses its input: a bad day
 /// on a capture, a kind that is no kind on a recall, and a handle that spells a
