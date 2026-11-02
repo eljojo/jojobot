@@ -22,7 +22,16 @@ async fn a_work_item_with_a_list<M: Memory>(
     slug: &str,
     tick: &str,
 ) -> (EntityId, EntityId) {
-    let work = EntityId(format!("work:{slug}"));
+    a_thing_with_a_list(store, EntityId(format!("work:{slug}")), slug, tick).await
+}
+
+/// `thing` with a list hung on it. `tick` is the list's setting.
+async fn a_thing_with_a_list<M: Memory>(
+    store: &M,
+    work: EntityId,
+    slug: &str,
+    tick: &str,
+) -> (EntityId, EntityId) {
     add(
         store,
         NewEntity::new(work.clone(), slug, "contract-fixture"),
@@ -206,4 +215,107 @@ pub async fn an_edit_to_done_is_refused_and_only_the_transition_is_checked<M: Me
     );
     capture(store, status(&work, "done")).await;
     capture(store, status(&work, "now")).await;
+}
+
+/// **A project is held to the gate like a work item**: refused done while an
+/// entry is open, naming it, and done once the entry is ticked.
+pub async fn a_project_is_refused_done_like_a_work_item<M: Memory>(store: &M) {
+    let slug = "contract-done-project";
+    let (project, list) =
+        a_thing_with_a_list(store, EntityId(format!("project:{slug}")), slug, "sink").await;
+    let entry = an_entry(store, &list, "open step", "m").await;
+
+    let message = refusal_text(
+        store
+            .capture(status(&project, "done"))
+            .await
+            .expect_err("a project with an open entry is refused done"),
+    );
+    assert!(message.contains(&entry.address().to_string()), "{message}");
+    assert!(
+        !store
+            .fields(&project)
+            .await
+            .expect("reads")
+            .contains_key("status"),
+        "a refused write leaves no status"
+    );
+
+    a_tick(store, &list, &entry, "done").await;
+    capture(store, status(&project, "done")).await;
+    assert_eq!(
+        store.fields(&project).await.expect("reads")["status"],
+        "done"
+    );
+}
+
+/// **A list archived, and a list folded into another, are no longer part of the
+/// thing**, so their open entries do not block done. Beside each, the same thing
+/// with a live open list is refused, so the pass is the list leaving and not the
+/// gate being off.
+pub async fn a_list_archived_or_folded_away_does_not_block_done<M: Memory>(store: &M) {
+    let (kept, kept_list) = a_work_item_with_a_list(store, "contract-done-live", "sink").await;
+    let live = an_entry(store, &kept_list, "live step", "m").await;
+    let message = refusal_text(
+        store
+            .capture(status(&kept, "done"))
+            .await
+            .expect_err("a live list's open entry blocks done"),
+    );
+    assert!(message.contains(&live.address().to_string()), "{message}");
+
+    let (shelved, shelved_list) =
+        a_work_item_with_a_list(store, "contract-done-archived", "sink").await;
+    an_entry(store, &shelved_list, "archived step", "m").await;
+    refusal_text(
+        store
+            .capture(status(&shelved, "done"))
+            .await
+            .expect_err("the list blocks done while it is live"),
+    );
+    store
+        .archive_entity(&shelved_list, "no longer needed", None)
+        .await
+        .expect("the list is archived");
+    capture(store, status(&shelved, "done")).await;
+    assert_eq!(
+        store.fields(&shelved).await.expect("reads")["status"],
+        "done"
+    );
+
+    let (folded_from, folded_list) =
+        a_work_item_with_a_list(store, "contract-done-folded", "sink").await;
+    an_entry(store, &folded_list, "folded step", "m").await;
+    let survivor = EntityId("list:contract-done-survivor".into());
+    add(
+        store,
+        NewEntity::new(
+            survivor.clone(),
+            "contract-done-survivor",
+            "contract-fixture",
+        ),
+    )
+    .await;
+    refusal_text(
+        store
+            .capture(status(&folded_from, "done"))
+            .await
+            .expect_err("the list blocks done until it is folded away"),
+    );
+    store
+        .merge(
+            &folded_list,
+            &survivor,
+            None,
+            date(2026, 11, 2),
+            &other_caller(),
+            None,
+        )
+        .await
+        .expect("the list is folded into another");
+    capture(store, status(&folded_from, "done")).await;
+    assert_eq!(
+        store.fields(&folded_from).await.expect("reads")["status"],
+        "done"
+    );
 }
