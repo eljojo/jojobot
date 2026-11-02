@@ -50,10 +50,10 @@ pub async fn a_clear_on_an_older_claim_is_refused_and_one_on_the_backing_claim_t
         .await;
     match refused {
         Err(MemoryError::ClearsAnOlderWrite {
+            address,
             key,
             backing,
             backing_address,
-            ..
         }) => {
             assert_eq!(key, "mood");
             assert_eq!(
@@ -61,10 +61,16 @@ pub async fn a_clear_on_an_older_claim_is_refused_and_one_on_the_backing_claim_t
                 newer.id.as_str(),
                 "the refusal names the backing claim"
             );
+            // The domain error carries the storage form of the home, which a store may
+            // keep as a badge; the MCP arm maps it to the handle. Both addresses must share
+            // that form and differ only in the local id.
             assert_eq!(
                 backing_address,
-                newer.address().to_string(),
-                "the refusal names the backing claim by the address update_fact takes"
+                format!(
+                    "{}#{backing}",
+                    address.rsplit_once('#').expect("a full address").0
+                ),
+                "the refusal names the backing claim by a full address of the same home"
             );
         }
         other => panic!("a clear on the older claim must be refused, got {other:?}"),
