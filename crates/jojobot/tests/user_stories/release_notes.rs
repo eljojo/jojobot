@@ -1,8 +1,9 @@
 //! "I was away for a deploy. Did anyone tell me what changed?"
 //!
 //! **jojobot tells each bot itself.** A change bots can use ships with a note, and
-//! when the server starts it leaves ONE message in each bot's box listing the
-//! notes that box has not been sent, from the system sender and not from a bot. A
+//! when the server starts it leaves messages in each bot's box listing the
+//! notes that box has not been sent, as many as the notes need and each holding
+//! whole notes, from the system sender and not from a bot. A
 //! restart sends nothing twice; an archived bot is told nothing; a bot with a
 //! manager is told who to ask, and a bot without one is not told of one.
 //!
@@ -70,41 +71,80 @@ fn ids_named(body: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// **A message holds every shipped note once, in the shape a note has.** One
-/// title line, one `For:` line and the three sections for each note, and the
-/// last line names each of them once. The words of a note are not pinned: a note
-/// may be reworded, and the shape and the ids may not move.
-fn holds_every_shipped_note_once(who: &str, body: &str) {
-    let named = ids_named(body);
+/// **The messages of a start hold every shipped note once, in the shape a note
+/// has.** One title line, one `For:` line and the three sections for each note,
+/// and the last line of each message names its notes, every note once across
+/// all the messages. The words of a note are not pinned: a note may be
+/// reworded, and the shape and the ids may not move.
+fn holds_every_shipped_note_once(who: &str, bodies: &[String]) {
+    let named: Vec<String> = bodies.iter().flat_map(|body| ids_named(body)).collect();
     let mut sorted = named.clone();
     sorted.sort();
     sorted.dedup();
     assert_eq!(
         sorted.len(),
         named.len(),
-        "a note is named twice in {who}'s message: {body}"
+        "a note is named twice in {who}'s messages: {bodies:?}"
     );
     let shipped = shipped_note_ids();
     assert_eq!(
         sorted, shipped,
-        "{who}'s message names the notes this build ships: {body}"
+        "{who}'s messages name the notes this build ships: {bodies:?}"
     );
-    let lines = |prefix: &str| body.lines().filter(|line| line.starts_with(prefix)).count();
+    let lines = |prefix: &str| {
+        bodies
+            .iter()
+            .flat_map(|body| body.lines())
+            .filter(|line| line.starts_with(prefix))
+            .count()
+    };
     assert_eq!(
         lines("# "),
         named.len(),
-        "a title for each note in {who}'s message"
+        "a title for each note in {who}'s messages"
     );
     assert_eq!(
         lines("For: "),
         named.len(),
-        "a For line for each note in {who}'s message"
+        "a For line for each note in {who}'s messages"
     );
     assert_eq!(
         lines("## "),
         3 * named.len(),
-        "three sections for each note in {who}'s message"
+        "three sections for each note in {who}'s messages"
     );
+}
+
+/// **The bodies of the messages a start left**, every one from the system and
+/// not from a bot, and at least one. A delivery leaves out a body that does not
+/// fit under the answer ceiling and says to ask for it by id, so a body left
+/// out is read the way a bot reads it, with `read_message`.
+async fn system_bodies(who: &str, reader: &Session, answer: &Value) -> Vec<String> {
+    let messages = delivered(answer);
+    assert!(!messages.is_empty(), "{who} is sent the notes: {answer}");
+    let mut bodies = Vec::new();
+    for message in messages {
+        assert_eq!(
+            message["sender"], "jojobot",
+            "from the system, not a bot: {message}"
+        );
+        let body = match message["body"].as_str() {
+            Some(body) => body.to_string(),
+            None => {
+                assert_eq!(message["body_elided"], true, "{who}'s message: {message}");
+                let whole = reader
+                    .call("read_message", json!({"message_id": message["id"]}))
+                    .await
+                    .json();
+                whole["body"]
+                    .as_str()
+                    .unwrap_or_else(|| panic!("{who}'s whole message has a body: {whole}"))
+                    .to_string()
+            }
+        };
+        bodies.push(body);
+    }
+    bodies
 }
 
 /// The messages in a delivery, and the delivery's own answer for a failure to quote.
@@ -136,7 +176,7 @@ async fn an_old_bot(story: &Story, slug: &str, name: &str) {
 }
 
 #[tokio::test]
-async fn a_bot_holds_one_message_from_the_system_listing_what_shipped_and_who_to_ask() {
+async fn a_bot_holds_messages_from_the_system_listing_what_shipped_and_who_to_ask() {
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
     an_old_bot(&story, "moe", "Moe").await;
@@ -165,38 +205,35 @@ async fn a_bot_holds_one_message_from_the_system_listing_what_shipped_and_who_to
     let moe = later.as_bot("bot:moe").await;
     let first = moe.call("read_mailbox", json!({})).await.json();
     let messages = delivered(&first);
-    assert_eq!(messages.len(), 1, "exactly one message: {first}");
+    let moes = system_bodies("Moe", &moe, &first).await;
+    holds_every_shipped_note_once("Moe", &moes);
+    for body in &moes {
+        assert!(
+            body.contains("@bot:marge"),
+            "Moe is told the name of Moe's manager, as a mention: {body}"
+        );
+    }
     let note = &messages[0];
-    assert_eq!(
-        note["sender"], "jojobot",
-        "from the system, not a bot: {note}"
-    );
-    let moes = note["body"].as_str().expect("a body");
-    holds_every_shipped_note_once("Moe", moes);
-    assert!(
-        moes.contains("@bot:marge"),
-        "Moe is told the name of Moe's manager, as a mention: {moes}"
-    );
-    moe.call(
-        "mark_processed",
-        json!({"message_id": note["id"], "notes": "read"}),
-    )
-    .await;
+    for message in messages {
+        moe.call(
+            "mark_processed",
+            json!({"message_id": message["id"], "notes": "read"}),
+        )
+        .await;
+    }
 
     // ── Marge has no manager and so no line naming one; she is sent her own ──
     let marge = later.as_bot("bot:marge").await;
     let marges_box = marge.call("read_mailbox", json!({})).await.json();
-    let messages = delivered(&marges_box);
-    assert_eq!(messages.len(), 1, "Marge's own: {marges_box}");
-    assert_eq!(messages[0]["sender"], "jojobot");
-    let marges = messages[0]["body"]
-        .as_str()
-        .unwrap_or_else(|| panic!("Marge's message has a body: {}", messages[0]));
-    holds_every_shipped_note_once("Marge", marges);
-    assert!(
-        !marges.contains("@bot:"),
-        "Marge has no manager, so no mention of one: {marges}"
-    );
+    let marges = system_bodies("Marge", &marge, &marges_box).await;
+    let marges_count = marges.len();
+    holds_every_shipped_note_once("Marge", &marges);
+    for body in &marges {
+        assert!(
+            !body.contains("@bot:"),
+            "Marge has no manager, so no mention of one: {body}"
+        );
+    }
 
     // ── an archived bot is told nothing ─────────────────────────────────────
     assert_eq!(box_as::counts_as(&later, "bot:bart").await, (0, 0, 0));
@@ -244,14 +281,14 @@ async fn a_bot_holds_one_message_from_the_system_listing_what_shipped_and_who_to
     let again = later.restarted().await;
     assert_eq!(
         box_as::counts_as(&again, "bot:moe").await,
-        (0, 0, 1),
-        "Moe's note is processed and nothing new arrived"
+        (0, 0, messages.len()),
+        "Moe's notes are processed and nothing new arrived"
     );
     let after_two_starts = again.restarted().await;
     assert_eq!(
         box_as::counts_as(&after_two_starts, "bot:marge").await,
-        (1, 1, 0),
-        "Marge holds the note Marge read and Moe's reply, and nothing arrived at either start"
+        (1, marges_count, 0),
+        "Marge holds the notes Marge read and Moe's reply, and nothing arrived at either start"
     );
     after_two_starts.finish().await;
 }
@@ -266,14 +303,17 @@ async fn a_quarantined_note_is_told_and_never_sent_again() {
     let later = story.restarted().await;
     let gamma = later.as_bot("bot:gamma").await;
     let delivered = gamma.call("read_mailbox", json!({})).await.json();
+    system_bodies("gamma", &gamma, &delivered).await;
     let messages = delivered["messages"].as_array().expect("messages");
-    assert_eq!(messages.len(), 1, "gamma is sent the note: {delivered}");
-    gamma
-        .call(
-            "mark_processed",
-            json!({"message_id": messages[0]["id"], "quarantine": "not for me"}),
-        )
-        .await;
+    let sent = messages.len();
+    for message in messages {
+        gamma
+            .call(
+                "mark_processed",
+                json!({"message_id": message["id"], "quarantine": "not for me"}),
+            )
+            .await;
+    }
     an_old_bot(&later, "delta", "Delta").await;
 
     let again = later.restarted().await;
@@ -284,8 +324,8 @@ async fn a_quarantined_note_is_told_and_never_sent_again() {
     );
     assert_eq!(
         box_as::counts_as(&again, "bot:delta").await,
-        (1, 0, 0),
-        "a box that never had the note is sent one"
+        (sent, 0, 0),
+        "a box that never had the notes is sent them"
     );
     // **Told, as well as not sent**: the quarantined note stays in the ledger on
     // the bot. A box that merely lost the message would show the same empty
@@ -331,7 +371,9 @@ async fn a_bot_made_now_is_told_every_shipped_note_and_sent_none() {
 
     let later = story.restarted().await;
     assert_eq!(box_as::counts_as(&later, "bot:delta").await, (0, 0, 0));
-    assert_eq!(box_as::counts_as(&later, "bot:gamma").await, (1, 0, 0));
+    let (gammas, read, processed) = box_as::counts_as(&later, "bot:gamma").await;
+    assert!(gammas >= 1, "the older bot is sent its notes");
+    assert_eq!((read, processed), (0, 0), "and nothing else");
     let delta = later.as_bot("bot:delta").await;
     assert_eq!(
         told_ids(&delta, "bot:delta").await,
@@ -963,19 +1005,21 @@ async fn a_bot_that_uses_none_of_the_features_reads_the_problem_each_note_solves
     let later = story.restarted().await;
     let moe = later.as_bot("bot:moe").await;
     let delivery = moe.call("read_mailbox", json!({})).await.json();
-    let messages = delivered(&delivery);
-    assert_eq!(messages.len(), 1, "exactly one message: {delivery}");
-    let body = messages[0]["body"].as_str().expect("a body");
+    let bodies = system_bodies("moe", &moe, &delivery).await;
 
-    holds_every_shipped_note_once("moe", body);
-    let reach: Vec<&str> = body
-        .lines()
+    holds_every_shipped_note_once("moe", &bodies);
+    let reach: Vec<&str> = bodies
+        .iter()
+        .flat_map(|body| body.lines())
         .filter_map(|line| line.strip_prefix("Reach for it when: "))
         .collect();
     assert_eq!(
         reach.len(),
-        ids_named(body).len(),
-        "a Reach for it when line for each note: {body}"
+        bodies
+            .iter()
+            .map(|body| ids_named(body).len())
+            .sum::<usize>(),
+        "a Reach for it when line for each note: {bodies:?}"
     );
     assert!(
         reach.iter().all(|line| !line.trim().is_empty()),
@@ -994,9 +1038,13 @@ async fn a_bot_that_uses_none_of_the_features_reads_the_problem_each_note_solves
         !cut_a_call.is_empty(),
         "the build ships a note that cuts a call"
     );
-    let first = ids_named(body).into_iter().next().expect("a first note");
+    let first = ids_named(&bodies[0])
+        .into_iter()
+        .next()
+        .expect("a first note");
     assert!(
         cut_a_call.contains(&first),
-        "a note that cuts a call comes first: {body}"
+        "a note that cuts a call comes first: {}",
+        bodies[0]
     );
 }

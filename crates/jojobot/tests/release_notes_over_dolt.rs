@@ -82,18 +82,36 @@ async fn over_the_real_store_a_start_sends_the_notes_and_the_next_start_sends_no
             .expect("the box opens");
     }
 
-    // ── the first start sends one message to each box ───────────────────────
+    // ── the first start sends every note to each box ────────────────────────
+    // The notes together are more than one message holds, so a start sends as
+    // many messages as it takes; each names its notes on its last line and the
+    // ledger is every one of those lines together.
     send_unsent_notes(&memory, &mailboxes, &Clock::default()).await;
     let first = from_the_system(&mailboxes, "homer").await;
-    assert_eq!(first.len(), 1, "one message from the system");
-    let ledger = ledger_line(&first[0].body).to_string();
-    assert!(
-        ledger.starts_with("Notes: ") && ledger.len() > "Notes: ".len(),
-        "the message names its notes on its last line: {}",
-        first[0].body
+    assert!(!first.is_empty(), "messages from the system");
+    for message in &first {
+        let line = ledger_line(&message.body);
+        assert!(
+            line.starts_with("Notes: ") && line.len() > "Notes: ".len(),
+            "the message names its notes on its last line: {}",
+            message.body
+        );
+    }
+    let ledger = format!(
+        "Notes: {}",
+        first
+            .iter()
+            .filter_map(|message| ledger_line(&message.body).strip_prefix("Notes: "))
+            .collect::<Vec<_>>()
+            .join(", ")
     );
+    let messages_each = first.len();
     for slug in ["marge", "lisa"] {
-        assert_eq!(from_the_system(&mailboxes, slug).await.len(), 1, "{slug}");
+        assert_eq!(
+            from_the_system(&mailboxes, slug).await.len(),
+            messages_each,
+            "{slug}"
+        );
     }
     // **The record on the bot, read back from the real store**: the key a start
     // wrote with `sets` is held by the thing, and lists the notes the message
@@ -125,7 +143,7 @@ async fn over_the_real_store_a_start_sends_the_notes_and_the_next_start_sends_no
     for slug in ["homer", "marge", "lisa"] {
         assert_eq!(
             from_the_system(&mailboxes, slug).await.len(),
-            1,
+            messages_each,
             "{slug} was sent nothing again"
         );
     }

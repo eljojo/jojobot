@@ -59,6 +59,10 @@ pub(crate) struct Note {
 /// fails for it.
 pub(crate) const SHIPPED: &[(&str, &str)] = &[
     (
+        "a-plan-names-what-it-could-not-read",
+        include_str!("../release-notes/deploy-9.3.2.1/a-plan-names-what-it-could-not-read.md"),
+    ),
+    (
         "blank-value-takes-the-key-off",
         include_str!("../release-notes/deploy-9.3.2/blank-value-takes-the-key-off.md"),
     ),
@@ -77,6 +81,10 @@ pub(crate) const SHIPPED: &[(&str, &str)] = &[
     (
         "key-history-names-writer-and-run",
         include_str!("../release-notes/deploy-9.3.2/key-history-names-writer-and-run.md"),
+    ),
+    (
+        "mail-to-the-operator-shows-to-its-writer",
+        include_str!("../release-notes/deploy-9.3.2.1/mail-to-the-operator-shows-to-its-writer.md"),
     ),
     (
         "recall-counted-counts-what-sits-under-each-object",
@@ -273,7 +281,7 @@ pub(crate) fn parse(id: &str, text: &str) -> Result<Note, String> {
     // **A title its own mail would refuse is refused here**, where the case over
     // the shipped notes reads it: posted, it would fail at every start and no bot
     // would ever be told.
-    jojobot_domain::mailbox::validate_subject(Some(&subject(&[&note])))
+    jojobot_domain::mailbox::validate_subject(Some(&subject(&[&note], Some((99, 99)))))
         .map_err(|why| format!("note '{id}' has a title its own mail refuses: {why}"))?;
     Ok(note)
 }
@@ -324,11 +332,16 @@ fn message_body(notes: &[&Note], manager: Option<&str>) -> String {
     body
 }
 
-/// The subject of a message that carries these notes.
-fn subject(notes: &[&Note]) -> String {
-    match notes {
+/// The subject of a message that carries these notes. A start that sends several
+/// messages numbers them, so two with the same count of notes can be told apart.
+fn subject(notes: &[&Note], part: Option<(usize, usize)>) -> String {
+    let subject = match notes {
         [only] => format!("What changed: {}", only.title),
         _ => format!("What changed: {} notes", notes.len()),
+    };
+    match part {
+        Some((at, of)) => format!("{subject} ({at} of {of})"),
+        None => subject,
     }
 }
 
@@ -508,7 +521,7 @@ pub(crate) async fn send_from(
         };
         let ledger = ledger_of(&fields);
         let mut told = told(ledger.as_ref(), mailed.get(mailbox.name.as_str()));
-        // A note that narrows a call comes first, so a message cut to fit keeps it.
+        // A note that narrows a call comes first, so it leads the first message.
         let mut unsent: Vec<&Note> = notes
             .iter()
             .filter(|note| !told.contains(&note.id))
@@ -519,10 +532,10 @@ pub(crate) async fn send_from(
             continue;
         }
         let manager = fields.get(REPORTS_TO).cloned();
-        let compose = |count: usize| NewMessage {
+        let compose = |batch: &[&Note], part: Option<(usize, usize)>| NewMessage {
             mailbox: mailbox.name.clone(),
-            body: message_body(&unsent[..count], manager.as_deref()),
-            subject: Some(subject(&unsent[..count])),
+            body: message_body(batch, manager.as_deref()),
+            subject: Some(subject(batch, part)),
             sender: SYSTEM_SENDER.to_string(),
             sent_at: clock.now(),
             in_reply_to: None,
@@ -530,35 +543,56 @@ pub(crate) async fn send_from(
             sender_mail_waiting_at_send: None,
             posted_by_session: None,
         };
-        // As many whole notes as one message can be handed whole; the rest wait
-        // for the next start.
-        let mut count = unsent.len();
-        while count > 0
-            && crate::mailboxes::post_message::body_room_beyond(&compose(count)).is_some()
-        {
-            count -= 1;
-        }
-        if count == 0 {
-            tracing::warn!(bot = %bot.id, note = %unsent[0].id, "no release notes sent — the first note is longer than a message can be");
-            continue;
-        }
-        // **A post that does not land names the notes it carried**, so the line
-        // says which note to fix as well as why.
-        let carried = unsent[..count]
-            .iter()
-            .map(|note| note.id.as_str())
-            .collect::<Vec<_>>()
-            .join(",");
-        match mailboxes.post_message(compose(count)).await {
-            Ok(Guarded::Written(_)) => {
-                tracing::info!(bot = %bot.id, notes = count, "release notes sent");
-                told.extend(unsent[..count].iter().map(|note| note.id.clone()));
+        // **Every unsent note is sent at this start**, in as many messages as it
+        // takes, each holding as many whole notes as one message can be handed
+        // whole. A note longer than any message is skipped with a warning and the
+        // rest are still sent. A batch is measured with the widest part its
+        // subject can carry, because the part counts against the room and is not
+        // known until every batch is planned.
+        let mut batches: Vec<&[&Note]> = Vec::new();
+        let mut rest: &[&Note] = &unsent;
+        while !rest.is_empty() {
+            let mut count = rest.len();
+            while count > 0
+                && crate::mailboxes::post_message::body_room_beyond(&compose(
+                    &rest[..count],
+                    Some((99, 99)),
+                ))
+                .is_some()
+            {
+                count -= 1;
             }
-            Ok(_) => {
-                tracing::warn!(bot = %bot.id, notes = %carried, "release notes not sent — the post was blocked")
+            if count == 0 {
+                tracing::warn!(bot = %bot.id, note = %rest[0].id, "no release note sent — the note is longer than a message can be");
+                rest = &rest[1..];
+                continue;
             }
-            Err(e) => {
-                tracing::warn!(bot = %bot.id, notes = %carried, error = %e, "release notes not sent — the post failed")
+            batches.push(&rest[..count]);
+            rest = &rest[count..];
+        }
+        let parts = batches.len();
+        for (at, batch) in batches.iter().enumerate() {
+            // **A post that does not land names the notes it carried**, so the line
+            // says which note to fix as well as why.
+            let carried = batch
+                .iter()
+                .map(|note| note.id.as_str())
+                .collect::<Vec<_>>()
+                .join(",");
+            let part = (parts > 1).then_some((at + 1, parts));
+            match mailboxes.post_message(compose(batch, part)).await {
+                Ok(Guarded::Written(_)) => {
+                    tracing::info!(bot = %bot.id, notes = batch.len(), "release notes sent");
+                    told.extend(batch.iter().map(|note| note.id.clone()));
+                }
+                Ok(_) => {
+                    tracing::warn!(bot = %bot.id, notes = %carried, "release notes not sent — the post was blocked");
+                    break;
+                }
+                Err(e) => {
+                    tracing::warn!(bot = %bot.id, notes = %carried, error = %e, "release notes not sent — the post failed");
+                    break;
+                }
             }
         }
         keep_ledger(memory, &bot.id, ledger.as_ref(), &told, day).await;
@@ -785,13 +819,16 @@ mod tests {
         assert!(!homers[1].body.contains("Homer's list can be ticked"));
     }
 
-    /// **A bot far behind is sent as many whole notes as one message can be handed
-    /// whole**, and the rest at the next start.
+    /// **One start sends every unsent note, in as many messages as it takes.** The
+    /// notes together are more than one message can be handed whole, so the start
+    /// leaves two or more messages, each within the room a message has, each
+    /// listing the whole notes it carries; together they carry every note, none in
+    /// two; the ledger records all of them; and the next start sends nothing.
     #[tokio::test]
-    async fn notes_that_do_not_fit_one_message_wait_for_the_next_start() {
+    async fn a_start_sends_every_unsent_note_in_as_many_messages_as_it_takes() {
         let (memory, concrete) = ports();
         let mailboxes: Arc<dyn Mailboxes> = concrete;
-        a_bot(&memory, &mailboxes, "homer").await;
+        let homer = a_bot(&memory, &mailboxes, "homer").await;
         let long = |title: &str| {
             format!(
                 "title: {title}\nfor: every bot\nreach_for_it_when: you send a note nobody reads\nmiss: Nothing.\n\n## What you can now do\n\n{}\n\n## Example\n\nA line.\n\n## What to do\n\nRead it.",
@@ -802,28 +839,150 @@ mod tests {
         let all: Vec<(&str, &str)> = vec![("a", a.as_str()), ("b", b.as_str()), ("c", c.as_str())];
 
         pass(&all, &memory, &mailboxes).await;
-        let first = from_the_system(&mailboxes, "homer").await;
-        assert_eq!(first.len(), 1);
-        let sent = listed(&first[0].body);
+        let messages = from_the_system(&mailboxes, "homer").await;
         assert!(
-            !sent.is_empty() && sent.len() < 3,
-            "whole notes that fit, not all: {sent:?}"
+            messages.len() >= 2,
+            "the notes together do not fit one message, so a start sends several: {}",
+            messages.len()
         );
-
-        pass(&all, &memory, &mailboxes).await;
-        pass(&all, &memory, &mailboxes).await;
-        let every: BTreeSet<String> = from_the_system(&mailboxes, "homer")
-            .await
+        for message in &messages {
+            let new = NewMessage {
+                mailbox: message.mailbox.clone(),
+                body: message.body.clone(),
+                subject: message.subject.clone(),
+                sender: message.sender.clone(),
+                sent_at: message.sent_at,
+                in_reply_to: None,
+                supersedes: None,
+                sender_mail_waiting_at_send: None,
+                posted_by_session: None,
+            };
+            assert!(
+                crate::mailboxes::post_message::body_room_beyond(&new).is_none(),
+                "a message holds only what a message can be handed whole"
+            );
+            assert!(!listed(&message.body).is_empty(), "each lists its notes");
+        }
+        let every: Vec<String> = messages
             .iter()
             .flat_map(|message| listed(&message.body))
             .collect();
-        assert_eq!(every.len(), 3, "each note arrives, once: {every:?}");
+        assert_eq!(
+            every.iter().collect::<BTreeSet<_>>(),
+            BTreeSet::from([&"a".to_string(), &"b".to_string(), &"c".to_string()]),
+            "every note arrives: {every:?}"
+        );
+        assert_eq!(every.len(), 3, "and none twice: {every:?}");
+        let fields = memory.fields(&homer).await.expect("the bot reads");
+        assert_eq!(
+            ledger_of(&fields),
+            Some(BTreeSet::from(["a".into(), "b".into(), "c".into()])),
+            "the ledger records every note the start sent"
+        );
+        let subjects: BTreeSet<_> = messages.iter().map(|m| m.subject.clone()).collect();
+        assert_eq!(
+            subjects.len(),
+            messages.len(),
+            "two messages of one start can be told apart: {subjects:?}"
+        );
+
+        pass(&all, &memory, &mailboxes).await;
+        assert_eq!(
+            from_the_system(&mailboxes, "homer").await.len(),
+            messages.len(),
+            "the next start sends none"
+        );
+    }
+
+    /// **A batch filled to the last character of the room still fits with the part in
+    /// its subject.** Two notes are cut to the longest the room holds under the
+    /// subject a single message would carry; a third forces a second message, so
+    /// the first carries `(1 of 2)`. The suffix counts against the room, and a
+    /// message over it is one a reader is handed with its body left out.
+    #[tokio::test]
+    async fn a_batch_filled_to_the_room_still_fits_with_the_part_in_its_subject() {
+        let (memory, concrete) = ports();
+        let mailboxes: Arc<dyn Mailboxes> = concrete;
+        a_bot(&memory, &mailboxes, "homer").await;
+        let note = |filler: &str, title: &str| {
+            format!(
+                "title: {title}\nfor: every bot\nreach_for_it_when: you send a note nobody reads\nmiss: Nothing.\n\n## What you can now do\n\n{filler}\n\n## Example\n\nA line.\n\n## What to do\n\nRead it."
+            )
+        };
+        let (first, third) = (
+            note(&"word ".repeat(2_000), "First"),
+            note(&"word ".repeat(2_000), "Third"),
+        );
+        // The longest filler for the second note with which the first two, sent
+        // as one message with no part in its subject, are still handed whole.
+        let fits = |filler: usize| {
+            let second = note(&"x".repeat(filler), "Second");
+            let notes = [
+                parse("a", &first).expect("the first parses"),
+                parse("b", &second).expect("the second parses"),
+            ];
+            let both: Vec<&Note> = notes.iter().collect();
+            let probe = NewMessage {
+                mailbox: MailboxName("homer".to_string()),
+                body: message_body(&both, None),
+                subject: Some(subject(&both, None)),
+                sender: SYSTEM_SENDER.to_string(),
+                sent_at: Clock::default().now(),
+                in_reply_to: None,
+                supersedes: None,
+                sender_mail_waiting_at_send: None,
+                posted_by_session: None,
+            };
+            crate::mailboxes::post_message::body_room_beyond(&probe).is_none()
+        };
+        let (mut low, mut high) = (0usize, 40_000usize);
+        assert!(fits(low) && !fits(high), "the search brackets the room");
+        while high - low > 1 {
+            let mid = (low + high) / 2;
+            if fits(mid) {
+                low = mid;
+            } else {
+                high = mid;
+            }
+        }
+        let second = note(&"x".repeat(low), "Second");
+
+        pass(
+            &[("a", &first), ("b", &second), ("c", &third)],
+            &memory,
+            &mailboxes,
+        )
+        .await;
         let messages = from_the_system(&mailboxes, "homer").await;
-        let total: usize = messages
+        assert!(messages.len() >= 2, "a third note forces a second message");
+        for message in &messages {
+            let posted = NewMessage {
+                mailbox: message.mailbox.clone(),
+                body: message.body.clone(),
+                subject: message.subject.clone(),
+                sender: message.sender.clone(),
+                sent_at: message.sent_at,
+                in_reply_to: None,
+                supersedes: None,
+                sender_mail_waiting_at_send: None,
+                posted_by_session: None,
+            };
+            assert!(
+                crate::mailboxes::post_message::body_room_beyond(&posted).is_none(),
+                "a message holds only what a reader can be handed whole, subject included: {:?}",
+                message.subject
+            );
+        }
+        let every: Vec<String> = messages
             .iter()
-            .map(|message| listed(&message.body).len())
-            .sum();
-        assert_eq!(total, 3, "and none twice");
+            .flat_map(|message| listed(&message.body))
+            .collect();
+        assert_eq!(
+            every.iter().collect::<BTreeSet<_>>(),
+            BTreeSet::from([&"a".to_string(), &"b".to_string(), &"c".to_string()]),
+            "every note arrives: {every:?}"
+        );
+        assert_eq!(every.len(), 3, "and none twice: {every:?}");
     }
 
     /// **What `future` logs**, as the formatter writes it. A case is a
@@ -985,7 +1144,7 @@ mod tests {
         let boxes = mailboxes.list_mailboxes().await.expect("the boxes list");
         assert!(
             boxes.iter().all(|held| held.name.as_str() != "moe"),
-            "no box was made for him"
+            "no box was made for moe"
         );
     }
 
@@ -1345,12 +1504,12 @@ mod tests {
             .map(|(id, text)| parse(id, text).unwrap_or_else(|why| panic!("{why}")))
             .collect();
         for note in &notes {
-            let alone = subject(&[note]);
+            let alone = subject(&[note], Some((99, 99)));
             jojobot_domain::mailbox::validate_subject(Some(&alone))
                 .unwrap_or_else(|why| panic!("note '{}' under {alone:?}: {why}", note.id));
         }
         let all: Vec<&Note> = notes.iter().collect();
-        let together = subject(&all);
+        let together = subject(&all, Some((99, 99)));
         jojobot_domain::mailbox::validate_subject(Some(&together))
             .unwrap_or_else(|why| panic!("the notes together under {together:?}: {why}"));
     }
@@ -1367,7 +1526,8 @@ mod tests {
         // The most a title can hold: what a subject may hold, less what the
         // subject adds around the title.
         let positive = parse("tick", ONE).expect("the positive");
-        let around = subject(&[&positive]).chars().count() - positive.title.chars().count();
+        let around =
+            subject(&[&positive], Some((99, 99))).chars().count() - positive.title.chars().count();
         let room = 120 - around;
         assert!(
             parse("tick", &titled(&"d".repeat(room))).is_ok(),

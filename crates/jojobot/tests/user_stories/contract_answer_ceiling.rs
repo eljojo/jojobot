@@ -727,14 +727,25 @@ async fn a_box_past_the_ceiling_is_taken_whole_and_the_answer_stays_under_it() {
 
 /// "I start a fresh install and my box already holds a note from jojobot beside the reports. Does the delivery still fit?"
 ///
-/// **A box measured exactly as a fresh binary leaves it, with the release note
+/// **A box measured exactly as a fresh binary leaves it, with the release notes
 /// still `new`, is taken whole and the answer stays under the ceiling.** The
-/// note is one more message in the box, so the box holds one more than the
-/// reports the world posted. Each of them is carried or named exactly once, and
-/// the box counts say all were taken.
+/// notes are messages in the box, as many as the system left, so the box holds
+/// that many more than the reports the world posted. Each of them is carried or
+/// named exactly once, and the box counts say all were taken.
 #[tokio::test]
 async fn a_box_holding_the_unhandled_release_note_is_taken_whole_under_the_ceiling() {
+    use jojobot_domain::mailbox::Mailboxes;
     let world = unhandled_notes_world().await;
+    let notes = world
+        ._story
+        .mail_store()
+        .sent_by(&[jojobot_mcp::release_notes::SYSTEM_SENDER])
+        .await
+        .expect("the system's mail reads")
+        .into_iter()
+        .filter(|note| note.mailbox.0 == "otto")
+        .count();
+    assert!(notes >= 1, "the system left otto its notes");
 
     let before = world
         .otto
@@ -743,8 +754,8 @@ async fn a_box_holding_the_unhandled_release_note_is_taken_whole_under_the_ceili
         .json();
     assert_eq!(
         before["counts"]["new"],
-        MESSAGES + 1,
-        "the box holds the posted reports and the note jojobot left: {before}"
+        MESSAGES + notes,
+        "the box holds the posted reports and the notes jojobot left: {before}"
     );
 
     let delivery = world.otto.call("read_mailbox", json!({})).await;
@@ -769,8 +780,8 @@ async fn a_box_holding_the_unhandled_release_note_is_taken_whole_under_the_ceili
     accounted.dedup();
     assert_eq!(
         accounted.len(),
-        MESSAGES + 1,
-        "every message, the note too, is carried or named once: {body}"
+        MESSAGES + notes,
+        "every message, the notes too, is carried or named once: {body}"
     );
     let posted: Vec<&String> = world.messages.iter().map(|(id, _)| id).collect();
     for id in &posted {
@@ -782,7 +793,7 @@ async fn a_box_holding_the_unhandled_release_note_is_taken_whole_under_the_ceili
         .await
         .json();
     assert_eq!(counted["counts"]["new"], 0, "{counted}");
-    assert_eq!(counted["counts"]["read"], MESSAGES + 1, "{counted}");
+    assert_eq!(counted["counts"]["read"], MESSAGES + notes, "{counted}");
 }
 
 /// "I send one short note while fifty reports wait. Does the reply bury my receipt?"
