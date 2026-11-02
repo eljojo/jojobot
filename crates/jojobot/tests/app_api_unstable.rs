@@ -70,6 +70,8 @@ struct Served {
 struct AgesFail {
     inner: InMemoryMemory,
     failing: Arc<AtomicBool>,
+    /// The handle whose document scan fails, as a damaged record's does.
+    unscannable: Option<&'static str>,
 }
 
 #[jojobot_domain::forward(jojobot_domain::forward_memory, via = inner)]
@@ -80,16 +82,27 @@ impl Memory for AgesFail {
         }
         self.inner.field_ages(entity).await
     }
+
+    async fn scan_entity(
+        &self,
+        entity: &EntityId,
+    ) -> Result<Option<jojobot_domain::memory::search::DocScan>, MemoryError> {
+        if self.unscannable == Some(entity.as_str()) {
+            return Err(MemoryError::Store("scan unavailable".into()));
+        }
+        self.inner.scan_entity(entity).await
+    }
 }
 
 async fn serve(apps: Vec<AppPrincipal>, registry: Registry) -> Served {
-    serve_over(apps, registry, Arc::new(AtomicBool::new(false))).await
+    serve_over(apps, registry, Arc::new(AtomicBool::new(false)), None).await
 }
 
 async fn serve_over(
     apps: Vec<AppPrincipal>,
     registry: Registry,
     ages_failing: Arc<AtomicBool>,
+    unscannable: Option<&'static str>,
 ) -> Served {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -100,6 +113,7 @@ async fn serve_over(
         AgesFail {
             inner: InMemoryMemory::booted().knowing(supplied.clone()),
             failing: ages_failing,
+            unscannable,
         },
         supplied,
     ));
@@ -572,6 +586,56 @@ async fn unstable_a_granted_recall_reads_a_card_by_handle_and_by_status() {
     );
 }
 
+/// **An app's recall names a card whose record cannot be read and serves the rest**,
+/// as the bots' recall does (rule 130): the damaged card is not among the objects,
+/// it is under `unreadable` with the reason and `fix_by: person`, and the readable
+/// card beside it is there. A recall that dropped the damaged card without a word
+/// would tell the watcher of the shelf a partial list is whole.
+#[tokio::test]
+async fn unstable_a_recall_names_a_card_it_could_not_read_and_serves_the_rest() {
+    let (app, token) = reader();
+    let served = serve_over(
+        vec![app],
+        Registry::shipped(),
+        Arc::new(AtomicBool::new(false)),
+        Some("work:sigma"),
+    )
+    .await;
+    work_with_status(&served, "work:omega", "Mow the lawn", "now").await;
+    work_with_status(&served, "work:sigma", "Paint the fence", "now").await;
+
+    let (status, answer) = call(
+        &served,
+        &token,
+        "recall",
+        json!({"kind": "work", "where": "status = now"}),
+    )
+    .await;
+    assert_eq!(status, 200, "{answer}");
+    let handles: Vec<&str> = answer["objects"]
+        .as_array()
+        .expect("objects")
+        .iter()
+        .filter_map(|o| o["handle"].as_str())
+        .collect();
+    assert_eq!(handles, ["work:omega"], "{answer}");
+    let named = &answer["unreadable"];
+    assert_eq!(named.as_array().map(Vec::len), Some(1), "{answer}");
+    assert_eq!(named[0]["handle"], "work:sigma", "{answer}");
+    assert_eq!(named[0]["fix_by"], "person", "{answer}");
+    assert!(
+        named[0]["unreadable"]
+            .as_str()
+            .is_some_and(|why| why.contains("scan unavailable")),
+        "{answer}"
+    );
+
+    // Negative: a read that meets nothing damaged carries no `unreadable` key.
+    let (status, whole) = call(&served, &token, "recall", json!({"subject": "work:omega"})).await;
+    assert_eq!(status, 200, "{whole}");
+    assert!(whole.get("unreadable").is_none(), "{whole}");
+}
+
 #[tokio::test]
 async fn unstable_a_recall_outside_the_grant_is_refused_naming_it() {
     let (app, token) = watcher();
@@ -821,7 +885,7 @@ async fn unstable_backing_names_the_instant_of_the_claim_that_set_the_key() {
 async fn unstable_backing_is_unavailable_when_the_age_read_fails() {
     let (app, token) = reader();
     let failing = Arc::new(AtomicBool::new(false));
-    let served = serve_over(vec![app], Registry::shipped(), failing.clone()).await;
+    let served = serve_over(vec![app], Registry::shipped(), failing.clone(), None).await;
     work_with_status(&served, "work:omega", "Mow the lawn", "waiting").await;
     let ask = json!({"subject": "work:omega", "backing": true});
 

@@ -1244,7 +1244,7 @@ fn history_json(history: &graph::KeyHistory) -> serde_json::Value {
 /// `list_runs` names a run it could not read: `unreadable` holds the reason and
 /// `fix_by: person`, because stored damage is repaired by a person and no call a
 /// session makes mends it.
-pub(super) fn unreadable_things_json(unreadable: &[(EntityId, MemoryError)]) -> serde_json::Value {
+pub(crate) fn unreadable_things_json(unreadable: &[(EntityId, MemoryError)]) -> serde_json::Value {
     unreadable
         .iter()
         .map(|(handle, why)| {

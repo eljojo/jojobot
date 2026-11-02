@@ -387,6 +387,10 @@ fn served_with_verdicts(view: &jojobot_query_api::RecalledView) -> serde_json::V
     if let Some(marker) = crate::memory::left_out::ready_left_out(view.ready_left_out, None) {
         body["ready_left_out"] = marker;
     }
+    // **A thing the read could not read is named**, by the function the bots' recall uses.
+    if !view.unreadable.is_empty() {
+        body["unreadable"] = crate::memory::recall::unreadable_things_json(&view.unreadable);
+    }
     crate::memory::ready::fit_under_ceiling(&mut body);
     body
 }

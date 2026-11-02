@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 
-use jojobot_domain::memory::{MemoryError, graph};
+use jojobot_domain::memory::{EntityId, MemoryError, graph};
 use serde_json::{Value, json};
 
 use crate::{Answered, Verdict};
@@ -38,6 +38,10 @@ pub struct RecalledView {
     /// How many pieces of work the ready question left out: the ones that are
     /// not ready, which the list does not carry. Zero when the call did not ask.
     pub ready_left_out: usize,
+    /// **The things the read could not read, each with why.** They are not in
+    /// `objects`: the same rule the bots' recall uses took them out
+    /// ([`graph::take_unreadable`]), so a damaged record is named and never silently absent.
+    pub unreadable: Vec<(EntityId, MemoryError)>,
 }
 
 impl RecalledView {
@@ -51,16 +55,25 @@ impl RecalledView {
         only_keys: Option<&[String]>,
         limit: usize,
     ) -> Result<RecalledView, MemoryError> {
-        let held = answered.selected.objects.len();
+        let mut selected = answered.selected;
         let mut backed = answered.backing;
-        // The verdicts are aligned with the objects the question kept.
-        let (mut verdicts, ready_left_out) = match answered.narrowed.ready {
-            Some(pass) => (pass.verdicts.into_iter(), pass.left_out),
-            None => (Vec::new().into_iter(), 0),
+        // The verdicts are aligned with the objects the question kept, so each is
+        // tied to its object before any object is taken out.
+        let (verdicts, ready_left_out) = match answered.narrowed.ready {
+            Some(pass) => (pass.verdicts, pass.left_out),
+            None => (Vec::new(), 0),
         };
+        let mut verdicts: BTreeMap<EntityId, Verdict> = selected
+            .objects
+            .iter()
+            .map(|object| object.entity.id.clone())
+            .zip(verdicts)
+            .collect();
+        let unreadable = graph::take_unreadable(&mut selected.objects, &selected.unreadable_scans);
+        let held = selected.objects.len();
         let kept = |key: &String| only_keys.is_none_or(|keep| keep.contains(key));
         let mut objects = Vec::new();
-        for object in answered.selected.objects.into_iter().take(limit) {
+        for object in selected.objects.into_iter().take(limit) {
             let backing = match backed.remove(&object.entity.id) {
                 None => None,
                 Some(read) => {
@@ -83,7 +96,7 @@ impl RecalledView {
             };
             let mut fields = object.fields;
             fields.retain(|key, _| kept(key));
-            let verdict = verdicts.next();
+            let verdict = verdicts.remove(&object.entity.id);
             objects.push(RecalledObject {
                 handle: object.entity.id.to_string(),
                 name: object.entity.name,
@@ -97,6 +110,7 @@ impl RecalledView {
             left_out: held - objects.len(),
             objects,
             ready_left_out,
+            unreadable,
         })
     }
 
