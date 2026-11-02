@@ -14,7 +14,14 @@ use crate::teaching::{
 #[derive(Debug, Clone, serde::Deserialize, schemars::JsonSchema)]
 pub struct AddEntityArgs {
     /// One of `person`, `project`, `place`, `event`, `work`, `thing`, `org`,
-    /// `topic`, `bot`, `pet`, `rhythm`, `promise`, `machine`, `view`, `thread`, `decision`, `role`, `voucher` and `challenge` (issued by the engine, never created here), `document`, `list`, `trip`.
+    /// `topic`, `bot`, `pet`, `rhythm`, `promise`, `machine`, `view`, `thread`, `decision`, `role`, `voucher` and `challenge` (issued by the engine, never created here), `document`, `list`, `trip`, `bot-request`.
+    ///
+    /// **A `bot-request` asks for a bot to run.** Its spec keys, set in `sets`, are
+    /// `target_bot` (the bot, fixed once the request exists), `desired`, `machine`,
+    /// `model` and `bound_app` (the app that reports on it). Only a bot above the
+    /// target writes the spec; jojobot raises `generation` on each change of it, and
+    /// only the bound app writes `observed_state`, `observed_generation`,
+    /// `runtime_ref` and `last_result`.
     ///
     /// **A `list` is an ordered set of short entries on the thing it is about** — a
     /// checklist, a queue, a rotation. Make it with `parent` set to that thing, then

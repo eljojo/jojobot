@@ -811,6 +811,8 @@ pub(crate) fn type_name(kind: EntityKind) -> &'static str {
         "list" => "ItemList",
         // schema.org's own word for a journey with two ends.
         "trip" => "Trip",
+        // A request for a bot to run has no schema.org word, so the plain one.
+        "bot-request" => "BotRequest",
         // **A kind the software never heard of has no word waiting for it.**
         // The set of kinds is data, so a store may hold one this build has no
         // opinion about, and the honest answer is the caller's own token
@@ -958,6 +960,7 @@ mod tests {
             (EntityKind::DOCUMENT, "document", "DigitalDocument"),
             (EntityKind::LIST, "list", "ItemList"),
             (EntityKind::TRIP, "trip", "Trip"),
+            (EntityKind::BOT_REQUEST, "bot-request", "BotRequest"),
         ];
         assert_eq!(
             table.len(),
