@@ -86,7 +86,9 @@ const INFRA_TEXT: [(&str, Infra); 11] = [
     // The compiler naming a library of a target directory the runner cleared.
     ("extern location for ", Infra::TargetPruned),
     // Cargo writing into a fingerprint directory that is gone, and the linker
-    // opening a library that is gone.
+    // opening a library that is gone. The runner's pruner does this to a busy slot
+    // once its volume is at 90%: the job dies with missing files in its target
+    // directory, not with a full-disk error.
     ("could not parse/generate dep info", Infra::TargetPruned),
     ("rlib: No such file or directory", Infra::TargetPruned),
 ];
