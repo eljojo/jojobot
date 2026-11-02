@@ -19,12 +19,11 @@ use axum::{
 use jiff::Timestamp;
 use jojobot_domain::memory::{Entity, EntityId, MemoryError};
 
-use crate::AppState;
-use crate::ui::pages::NodeState;
-use crate::ui::{org, pages, shell, tree};
+use crate::PageState;
+use crate::{org, pages, shell, tree};
 
 /// Where the page of a kind lives: `/ui/kind/<kind>/`. It is no entity's path,
-/// so the gate knows the prefix ([`crate::ui::require_browser`]).
+/// so the gate knows the prefix ([`crate::require_browser`]).
 pub const KIND_PATH: &str = "/ui/kind/";
 
 /// The most a kind's box shows of its members.
@@ -132,7 +131,7 @@ fn standing(entities: &[Entity]) -> Vec<&Entity> {
 type DayOf<'a> = &'a dyn Fn(Timestamp) -> String;
 
 pub(crate) async fn day_of_in_the_instance_zone(
-    state: &AppState,
+    state: &PageState,
     queries: &jojobot_query_api::QueryHandle,
 ) -> impl Fn(Timestamp) -> String + use<> {
     // **The instance's record is asked of the query handle** like any other thing,
@@ -294,7 +293,7 @@ fn kind_box(
 /// **The box of what is due**, from the due view run as its page runs it. A view
 /// that cannot be run puts its words in the box instead.
 async fn due_box(
-    state: &AppState,
+    state: &PageState,
     queries: &jojobot_query_api::QueryHandle,
     by_id: &HashMap<&EntityId, &Entity>,
 ) -> String {
@@ -328,7 +327,7 @@ async fn due_box(
 /// **Everything the homepage lists**: the roots, the kind boxes and the due box,
 /// or the page that says the store could not be read.
 pub async fn body(
-    state: &AppState,
+    state: &PageState,
     queries: &jojobot_query_api::QueryHandle,
     entities: &[Entity],
     sort: &Sort,
@@ -378,14 +377,11 @@ pub async fn body(
 /// `/ui/kind/<kind>/` — every thing of one kind that stands, in the shell. A kind
 /// nothing holds has no page.
 pub(crate) async fn kind_page(
-    State(NodeState {
-        app: state,
-        queries,
-        ..
-    }): State<NodeState>,
+    State(state): State<PageState>,
     Path(kind): Path<String>,
     Query(sort): Query<Sort>,
 ) -> Response {
+    let queries = state.queries.clone();
     let entities = match queries
         .entity_index(&jojobot_domain::actor::Actor::Operator)
         .await

@@ -16,7 +16,7 @@ use jojobot_domain::memory::search::Hit;
 use jojobot_domain::memory::{EntityId, MemoryError};
 use jojobot_query_api::{Failed, QueryHandle, SearchQuestion};
 
-use crate::ui::{pages, shell};
+use crate::{pages, shell};
 
 /// Where the box sends its words.
 pub const PATH: &str = "/ui/search";
@@ -32,7 +32,7 @@ pub struct Asked {
 const CLAIM_CHARS: usize = 160;
 
 pub(crate) async fn results(
-    State(node): State<pages::NodeState>,
+    State(node): State<crate::PageState>,
     Query(asked): Query<Asked>,
 ) -> Response {
     let queries = node.queries;

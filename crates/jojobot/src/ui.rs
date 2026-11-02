@@ -17,16 +17,7 @@
 //! configured, and it cannot be configured without an issuer
 //! ([`crate::config`]).
 
-pub mod document;
-pub mod home;
 pub mod login;
-pub mod mail;
-pub mod org;
-pub mod pages;
-pub mod search;
-pub mod shell;
-pub mod tree;
-pub mod typed;
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -44,6 +35,7 @@ use jojobot_domain::handle::draw;
 use crate::AppState;
 use crate::auth::{IssuerEndpoints, Validator};
 use crate::config::{UiConfig, origin_of};
+use jojobot_ui::{encode_component, refuse};
 
 /// The cookie naming a logged-in browser. Its value is a drawn handle and
 /// nothing else: the session itself lives in this process, so the cookie can be
@@ -259,24 +251,10 @@ impl Ui {
         browsers.contains_key(token)
     }
 
-    /// **Whether a state-changing request came from this UI's own origin.**
-    ///
-    /// The session cookie is `SameSite=Lax`, so a cross-site POST arrives
-    /// without it; this is the second check, for a client that sends the cookie
-    /// anyway. The `Origin` header must equal the configured origin exactly, or,
-    /// when a client sends none, the `Referer` must sit under it. A request with
-    /// neither is refused: a browser sends `Origin` on a POST, so a request
-    /// without one is not a browser acting for a person on this page.
-    pub(crate) fn same_origin(&self, headers: &axum::http::HeaderMap) -> bool {
-        let text = |name: header::HeaderName| headers.get(name).and_then(|v| v.to_str().ok());
-        if let Some(origin) = text(header::ORIGIN) {
-            return origin == self.origin;
-        }
-        text(header::REFERER).is_some_and(|referer| {
-            referer
-                .strip_prefix(self.origin.as_str())
-                .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
-        })
+    /// The origin this UI is served at. The pages check a state-changing
+    /// request against it ([`jojobot_ui::same_origin`]).
+    pub(crate) fn origin(&self) -> &str {
+        &self.origin
     }
 
     /// **Whether the allowlist admits exactly one person.** A UI session carries
@@ -318,23 +296,6 @@ fn pkce_challenge(verifier: &str) -> String {
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest)
 }
 
-/// Percent-encode one query-string value. Everything outside the unreserved set
-/// is escaped, so a redirect URI with a scheme and slashes survives the trip.
-/// The one encoder of this module: the login, the authorize URL and a view's
-/// address ([`shell::view_url`]) all use it.
-pub(crate) fn encode_component(value: &str) -> String {
-    let mut out = String::with_capacity(value.len());
-    for byte in value.bytes() {
-        match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
-                out.push(byte as char)
-            }
-            other => out.push_str(&format!("%{other:02X}")),
-        }
-    }
-    out
-}
-
 /// The value of one cookie in a `Cookie` header.
 fn cookie_value<'a>(header: &'a str, name: &str) -> Option<&'a str> {
     header.split(';').map(str::trim).find_map(|pair| {
@@ -364,12 +325,12 @@ pub async fn require_browser(State(state): State<AppState>, req: Request, next: 
     // is filed at a well-formed path stays behind the gate.
     let path = req.uri().path();
     if path != "/"
-        && path != org::PATH
-        && path != search::PATH
-        && !path.starts_with(home::KIND_PATH)
-        && tree::segments(path).is_none()
+        && path != jojobot_ui::org::PATH
+        && path != jojobot_ui::search::PATH
+        && !path.starts_with(jojobot_ui::home::KIND_PATH)
+        && jojobot_ui::tree::segments(path).is_none()
     {
-        return pages::not_found();
+        return jojobot_ui::pages::not_found();
     }
 
     let logged_in = req
@@ -408,16 +369,6 @@ pub async fn require_session(State(state): State<AppState>, req: Request, next: 
     )
 }
 
-/// A refusal a person reads, rather than a JSON body a program would.
-pub fn refuse(status: StatusCode, message: &str) -> Response {
-    (
-        status,
-        [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
-        pages::plain_page("jojobot", message),
-    )
-        .into_response()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -438,41 +389,6 @@ mod tests {
             encode_component("https://jojobot.test/ui/callback"),
             "https%3A%2F%2Fjojobot.test%2Fui%2Fcallback"
         );
-    }
-
-    /// The `Origin` must equal the configured origin exactly; with none, the
-    /// `Referer` must sit UNDER it, so a longer port or host that merely starts
-    /// like the origin is another origin; with neither, the request is refused.
-    #[test]
-    fn a_request_is_ours_by_its_origin_or_else_by_a_referer_under_it() {
-        let ui = a_ui();
-        let sent = |origin: Option<&str>, referer: Option<&str>| {
-            let mut headers = axum::http::HeaderMap::new();
-            if let Some(origin) = origin {
-                headers.insert(header::ORIGIN, origin.parse().unwrap());
-            }
-            if let Some(referer) = referer {
-                headers.insert(header::REFERER, referer.parse().unwrap());
-            }
-            ui.same_origin(&headers)
-        };
-        assert!(sent(Some("https://jojobot.test"), None));
-        assert!(!sent(Some("https://elsewhere.example"), None));
-        assert!(!sent(Some("https://jojobot.test.elsewhere.example"), None));
-        // An Origin that is present decides alone: a good Referer cannot rescue it.
-        assert!(!sent(
-            Some("https://elsewhere.example"),
-            Some("https://jojobot.test/")
-        ));
-        assert!(sent(None, Some("https://jojobot.test")));
-        assert!(sent(None, Some("https://jojobot.test/person:lisa/")));
-        assert!(!sent(None, Some("https://jojobot.test:8443/person:lisa/")));
-        assert!(!sent(
-            None,
-            Some("https://jojobot.test.elsewhere.example/person:lisa/")
-        ));
-        assert!(!sent(None, Some("https://elsewhere.example/")));
-        assert!(!sent(None, None));
     }
 
     /// A UI whose issuer is never reached — every assertion below stops at the

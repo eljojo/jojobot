@@ -30,7 +30,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use jojobot_domain::memory::{Entity, EntityId};
 use pulldown_cmark::{CowStr, Event, HeadingLevel, Options, Parser, Tag, TagEnd, TextMergeStream};
 
-use crate::ui::pages::{escape, linkify};
+use crate::pages::{escape, linkify};
 
 /// The prefix of every heading's `id`, so none can collide with an id the page
 /// itself uses.

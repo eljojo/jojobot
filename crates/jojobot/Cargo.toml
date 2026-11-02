@@ -17,6 +17,7 @@ room-harness = ["jojobot-mcp/room-harness"]
 # resource are all runtime configuration.
 [dependencies]
 jojobot-query-api.workspace = true
+jojobot-ui.workspace = true
 jojobot-mcp.workspace = true
 jojobot-domain.workspace = true
 jojobot-adapters.workspace = true
@@ -39,17 +40,12 @@ sha2 = "0.10"
 base64 = "0.22"
 thiserror.workspace = true
 anyhow.workspace = true
-# The page that runs a view compares a due day to the server's clock, and a day
-# here is the domain's civil date.
+# A day here is the domain's civil date.
 jiff.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 # The request log wraps a response's body to see when it ends or is dropped.
 http-body = "1"
-# A document's page is its markdown rendered as HTML. A CommonMark event stream
-# is what lets the page decide each event, so raw HTML, images and link targets
-# are rewritten before anything is written out. Only the HTML writer is used.
-pulldown-cmark = { version = "0.13.4", default-features = false, features = ["html"] }
 # The metrics listener writes the text a Prometheus scraper reads. This is the
 # Prometheus project's own client, and its label sets are typed, so a label is a
 # field the code names and never a value a caller sends.

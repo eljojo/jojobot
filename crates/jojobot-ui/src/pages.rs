@@ -17,8 +17,7 @@ use jojobot_domain::text;
 use jojobot_query_api::OperatorIs;
 use jojobot_query_api::left_out;
 
-use crate::AppState;
-use crate::ui::{encode_component, home, org, shell, tree, typed};
+use crate::{PageState, encode_component, home, org, shell, tree, typed};
 
 /// `/` — the index of the roots: every entity that sits under nothing.
 ///
@@ -27,13 +26,10 @@ use crate::ui::{encode_component, home, org, shell, tree, typed};
 /// for: a page of everything jojobot knows is the silting the tree exists to
 /// stop.
 pub(crate) async fn index(
-    State(NodeState {
-        app: state,
-        queries,
-        ..
-    }): State<NodeState>,
+    State(state): State<PageState>,
     axum::extract::Query(sort): axum::extract::Query<home::Sort>,
 ) -> Response {
+    let queries = state.queries.clone();
     let entities = match queries
         .entity_index(&jojobot_domain::actor::Actor::Operator)
         .await
@@ -166,15 +162,6 @@ fn left_out_line(id: &str, left: usize, what: &str, where_read: &str) -> String 
     )
 }
 
-/// The composition root supplies the read boundary beside the state used by
-/// page groups that have not moved yet.
-#[derive(Clone)]
-pub(crate) struct NodeState {
-    pub app: AppState,
-    pub queries: jojobot_query_api::QueryHandle,
-    pub mail: jojobot_query_api::MailHandle,
-}
-
 /// `/{path}` — one node: what sits below it, and the facts held there.
 ///
 /// **The path is the entity's ancestry, so there is one URL per entity.** A
@@ -182,15 +169,12 @@ pub(crate) struct NodeState {
 /// live, and the browser is sent to where it does — a second URL serving the
 /// same node is how two readers come to disagree about where something is.
 pub(crate) async fn node(
-    State(NodeState {
-        app: state,
-        queries,
-        mail,
-    }): State<NodeState>,
+    State(state): State<PageState>,
     Path(path): Path<String>,
     axum::extract::Query(asked): axum::extract::Query<NodeQuery>,
     axum::extract::RawQuery(raw_query): axum::extract::RawQuery,
 ) -> Response {
+    let (queries, mail) = (state.queries.clone(), state.mail.clone());
     let Some(handles) = tree::segments(&path) else {
         return not_found();
     };
@@ -455,7 +439,7 @@ pub(crate) async fn node(
     // **A document's page shows the document**, above everything that is the
     // record-level view of it. The text is the one `read_document` serves.
     if entity.kind == EntityKind::DOCUMENT {
-        generic.push_str(&crate::ui::document::block(
+        generic.push_str(&crate::document::block(
             &entity.name,
             held.get("one_liner").map(String::as_str),
             &jojobot_query_api::words::live_text(&facts),
@@ -709,7 +693,7 @@ async fn declaration_record(
 /// declaration is live is the one gate's answer ([`working_on_of`]); a bot that
 /// only wrote to the work is not here, because only a declaration counts.
 async fn working_on_section(
-    state: &AppState,
+    state: &PageState,
     queries: &jojobot_query_api::QueryHandle,
     entity: &Entity,
     entities: &[Entity],
@@ -910,27 +894,23 @@ async fn mailbox_section(mail: &jojobot_query_api::MailHandle, bot: &EntityId) -
 /// subject, so with any other number of people admitted, anyone who logs in
 /// would read the operator's mail; the section says so instead.
 async fn operators_mailbox_section(
-    state: &AppState,
+    state: &PageState,
     mail: &jojobot_query_api::MailHandle,
     operator: &EntityId,
 ) -> String {
-    if !state
-        .ui
-        .as_ref()
-        .is_some_and(|ui| ui.admits_exactly_one_person())
-    {
+    if !state.admits_exactly_one_person {
         return format!(
             "<h2>Mailbox</h2>\n<p id=\"mailbox-withheld\">{}</p>\n",
-            escape(crate::ui::mail::WITHHELD)
+            escape(crate::mail::WITHHELD)
         );
     }
-    let held = match crate::ui::mail::operators_box(mail, operator).await {
-        crate::ui::mail::OperatorsBox::The(held) => held,
-        crate::ui::mail::OperatorsBox::None => {
+    let held = match crate::mail::operators_box(mail, operator).await {
+        crate::mail::OperatorsBox::The(held) => held,
+        crate::mail::OperatorsBox::None => {
             return "<h2>Mailbox</h2>\n<p>Nobody has written to this person yet.</p>\n".to_string();
         }
         // **Damage, said and not picked from**: the verbs refuse it the same way.
-        crate::ui::mail::OperatorsBox::Several(names) => {
+        crate::mail::OperatorsBox::Several(names) => {
             return format!(
                 "<h2>Mailbox</h2>\n<p id=\"mailbox-damaged\">{}</p>\n",
                 escape(&jojobot_query_api::words::operator_owns_several_boxes(
@@ -938,7 +918,7 @@ async fn operators_mailbox_section(
                 ))
             );
         }
-        crate::ui::mail::OperatorsBox::Unreadable => {
+        crate::mail::OperatorsBox::Unreadable => {
             return blind("Mailbox", "the mail rail", "the board could not be read");
         }
     };
@@ -1469,7 +1449,7 @@ fn how_known(facts: &[Fact], backing: &BTreeMap<String, FieldBacking>, key: &str
 /// nothing owned. There is no session behind a browser, and the access rule is
 /// the absence of an argument rather than a check on one.
 pub(crate) async fn answer_named_view_with(
-    state: &AppState,
+    state: &PageState,
     queries: &jojobot_query_api::QueryHandle,
     handle: &str,
     sent: &BTreeMap<String, String>,
@@ -1547,7 +1527,7 @@ pub(crate) async fn answer_named_view_with(
 /// it: its definition is read from the view's own record and the answer is the
 /// one `recall` of the view gives. The page text of why not when it cannot run.
 pub(crate) async fn answer_named_view(
-    state: &AppState,
+    state: &PageState,
     queries: &jojobot_query_api::QueryHandle,
     handle: &str,
 ) -> Result<Answered, String> {
@@ -1570,7 +1550,7 @@ pub(crate) struct Answered {
 
 /// **The page of a view**: its answer, or the words saying why it has none.
 async fn view_section(
-    state: &AppState,
+    state: &PageState,
     queries: &jojobot_query_api::QueryHandle,
     view: &EntityId,
     by_id: &HashMap<&EntityId, &Entity>,
@@ -2039,7 +2019,7 @@ fn relation(fact: &Fact, by_id: &HashMap<&EntityId, &Entity>) -> String {
 /// a path that is not a handle path is missing whether or not anybody is
 /// logged in.
 pub fn not_found() -> Response {
-    crate::ui::refuse(
+    crate::refuse(
         StatusCode::NOT_FOUND,
         "No entity has that handle. Nothing is filed at this path.",
     )
@@ -2099,7 +2079,7 @@ pub(crate) async fn instance_fields(
 
 pub(crate) fn unreadable(err: jojobot_domain::memory::MemoryError) -> Response {
     tracing::warn!(error = %err, "the listing could not read the store");
-    crate::ui::refuse(
+    crate::refuse(
         StatusCode::BAD_GATEWAY,
         "jojobot could not read its own store, so this page would be empty rather than accurate.",
     )
@@ -2237,6 +2217,9 @@ mod tests {
     /// come from a real walk of a store holding two lists, so the row is the shape
     /// a page is handed. **Paired**: the row beside it is no list's, and its cells
     /// stay empty, so the word is not written into every row.
+    // TEMPORARY(9.3.8): seeds the in-memory store through the `Memory` port; the port
+    // leaves with 9.3.8, and so does this allow.
+    #[allow(clippy::disallowed_types)]
     #[tokio::test]
     async fn the_table_of_a_view_marks_a_list_it_could_not_read() {
         use jojobot_domain::memory::testing::InMemoryMemory;

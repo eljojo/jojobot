@@ -1,6 +1,10 @@
 //! The box of a rhythm: how often it comes round, when it was last checked in,
 //! when it falls due next and how late it is.
 
+// TEMPORARY(9.3.8): this case seeds the in-memory store through the `Memory` port to
+// get the records a page is handed. The port leaves with 9.3.8, and so does this allow.
+#![allow(clippy::disallowed_types)]
+
 use super::*;
 use jojobot_domain::memory::testing::InMemoryMemory;
 use jojobot_domain::memory::{Memory, NewEntity};

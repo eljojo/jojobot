@@ -27,24 +27,15 @@ use axum::{
 };
 use jojobot_domain::mailbox::{Mailbox, MessageId};
 use jojobot_domain::memory::EntityId;
-use jojobot_query_api::{MailHandle, OperatorMailCommands, Refused};
+use jojobot_query_api::{MailHandle, Refused};
 use serde::Deserialize;
 
-use crate::AppState;
-use crate::ui::refuse;
+use crate::{PageState, refuse, same_origin};
 
 /// What the page says in place of the box, and what both actions answer with,
 /// when the allowlist does not admit exactly one person.
 pub(crate) const WITHHELD: &str =
     "This instance admits more than one person, so the operator's private mail is not shown here.";
-
-/// **The state the two actions hold**: the session gate's state, and the one
-/// handle through which a page changes mail.
-#[derive(Clone)]
-pub struct MailState {
-    pub app: AppState,
-    pub commands: OperatorMailCommands,
-}
 
 /// **The box the operator owns, as the verbs resolve it**: one, none, several or
 /// unreadable are four answers, and a caller never picks one of several
@@ -96,12 +87,11 @@ pub struct Opened {
 /// **What the page itself checks before it asks the command**: the allowlist
 /// admits one person and the request came from this UI's own origin. Who the
 /// operator is and whether the message is theirs is the command's to judge.
-fn gate(state: &AppState, headers: &HeaderMap) -> Option<Response> {
-    let ui = state.ui.as_ref().expect("the action mounted without a UI");
-    if !ui.admits_exactly_one_person() {
+fn gate(state: &PageState, headers: &HeaderMap) -> Option<Response> {
+    if !state.admits_exactly_one_person {
         return Some(refuse(StatusCode::FORBIDDEN, WITHHELD));
     }
-    if !ui.same_origin(headers) {
+    if !same_origin(&state.origin, headers) {
         return Some(refuse(
             StatusCode::FORBIDDEN,
             "That request did not come from this page, so nothing was changed.",
@@ -161,14 +151,14 @@ fn answer(refused: Refused, failed: &str) -> Response {
 /// (`new` to `read`), leave the rest of the box where it is, and land the
 /// operator back on their page.
 pub async fn open(
-    State(MailState { app, commands }): State<MailState>,
+    State(state): State<PageState>,
     headers: HeaderMap,
     Form(form): Form<Opened>,
 ) -> Response {
-    if let Some(refusal) = gate(&app, &headers) {
+    if let Some(refusal) = gate(&state, &headers) {
         return refusal;
     }
-    match commands.open(&MessageId(form.id)).await {
+    match state.commands.open(&MessageId(form.id)).await {
         Ok(operator) => Redirect::to(&format!("/{}/", operator.as_str())).into_response(),
         Err(refused) => answer(refused, "open that message"),
     }
@@ -177,11 +167,11 @@ pub async fn open(
 /// `POST /ui/mail/processed` — mark one message in the operator's box
 /// processed, with an optional note, and land the operator back on their page.
 pub async fn processed(
-    State(MailState { app, commands }): State<MailState>,
+    State(state): State<PageState>,
     headers: HeaderMap,
     Form(form): Form<Processed>,
 ) -> Response {
-    if let Some(refusal) = gate(&app, &headers) {
+    if let Some(refusal) = gate(&state, &headers) {
         return refusal;
     }
     let note = form
@@ -189,7 +179,11 @@ pub async fn processed(
         .as_deref()
         .map(str::trim)
         .filter(|note| !note.is_empty());
-    match commands.mark_processed(&MessageId(form.id), note).await {
+    match state
+        .commands
+        .mark_processed(&MessageId(form.id), note)
+        .await
+    {
         Ok(operator) => Redirect::to(&format!("/{}/", operator.as_str())).into_response(),
         Err(refused) => answer(refused, "mark that message processed"),
     }

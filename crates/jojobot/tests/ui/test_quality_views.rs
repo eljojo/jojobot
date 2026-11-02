@@ -69,7 +69,7 @@ async fn a_view_with_a_blank_selects_is_refused_and_one_that_selects_a_kind_list
         known: Vec::new(),
     }
     .to_string();
-    let reason = jojobot::ui::pages::escape(
+    let reason = jojobot_ui::pages::escape(
         resolver
             .split_once(". ")
             .map_or(resolver.as_str(), |(head, _)| head),

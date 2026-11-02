@@ -11,7 +11,7 @@
 //! markup it built, and a second escape here would turn the second into the
 //! first.
 
-use crate::ui::pages::escape;
+use crate::pages::escape;
 
 /// The stylesheet of every page: the approved mockup's, unchanged. Indigo is
 /// structure, vermilion is live, and detail sits behind a ▸ that the
@@ -41,7 +41,7 @@ pub fn search_form(words: &str) -> String {
         "<form class=\"find\" action=\"{}\" method=\"get\">\
          <input name=\"q\" value=\"{}\" placeholder=\"search everything\" \
          aria-label=\"search everything\"></form>",
-        crate::ui::search::PATH,
+        crate::search::PATH,
         escape(words),
     )
 }
@@ -84,9 +84,9 @@ pub fn view_url(view: &str, inputs: &[(&str, &str)]) -> String {
     let mut url = format!("/{view}/");
     for (index, (name, value)) in inputs.iter().enumerate() {
         url.push(if index == 0 { '?' } else { '&' });
-        url.push_str(&crate::ui::encode_component(name));
+        url.push_str(&crate::encode_component(name));
         url.push('=');
-        url.push_str(&crate::ui::encode_component(value));
+        url.push_str(&crate::encode_component(value));
     }
     url
 }

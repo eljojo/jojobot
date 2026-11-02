@@ -1,5 +1,9 @@
 //! The rest of a project's page: what it is, what happened lately, what sits in it.
 
+// TEMPORARY(9.3.8): this case seeds the in-memory store through the `Memory` port to
+// get the records a page is handed. The port leaves with 9.3.8, and so does this allow.
+#![allow(clippy::disallowed_types)]
+
 use super::*;
 use jojobot_domain::memory::testing::InMemoryMemory;
 use jojobot_domain::memory::{Memory, NewEntity, NewFact, Provenance};

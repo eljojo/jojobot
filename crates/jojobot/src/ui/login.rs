@@ -19,7 +19,8 @@ use axum::{
 use serde::Deserialize;
 
 use crate::AppState;
-use crate::ui::{Ui, refuse};
+use crate::ui::Ui;
+use jojobot_ui::refuse;
 
 /// `/ui/login` — start a login. `next` is where to land afterwards.
 #[derive(Debug, Deserialize)]

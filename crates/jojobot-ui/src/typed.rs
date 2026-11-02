@@ -12,8 +12,8 @@ use jojobot_domain::attention;
 use jojobot_domain::memory::graph::Object;
 use jojobot_domain::memory::{Entity, EntityId, Fact, FactStatus, FieldBacking, kinds};
 
-use crate::AppState;
-use crate::ui::{pages, shell, tree};
+use crate::PageState;
+use crate::{pages, shell, tree};
 
 /// The view a project's board is read from.
 const BOARD_VIEW: &str = "view:board";
@@ -35,7 +35,7 @@ fn linked(handle: &str, by_id: &HashMap<&EntityId, &Entity>) -> String {
 /// them a column for each word its work holds that nobody listed, so no piece of
 /// work is dropped. A card names the work and says what it needs and who owns it.
 pub async fn board(
-    state: &AppState,
+    state: &PageState,
     queries: &jojobot_query_api::QueryHandle,
     project: &Entity,
     _held: &BTreeMap<String, String>,
@@ -189,7 +189,7 @@ pub fn work(
 /// when it falls due next, and how late it is. The due day is the query API's mark,
 /// the one `recall` serves a bot, and today is the day in the instance's zone.
 pub async fn rhythm(
-    state: &AppState,
+    state: &PageState,
     queries: &jojobot_query_api::QueryHandle,
     rhythm: &Entity,
     held: &BTreeMap<String, String>,

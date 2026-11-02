@@ -270,31 +270,29 @@ fn build_app_with(
     // configured without an issuer. That is the whole of the no-bypass rule:
     // there is no build, flag or environment in which these pages answer without
     // a login, because without a login they are not routes at all.
-    let ui_router = state.ui.is_some().then(|| {
+    let ui_router = state.ui.as_ref().map(|ui| {
+        let pages = jojobot_ui::PageState {
+            queries: jojobot_mcp::memory::view_run::handle(
+                state.memory.clone(),
+                state.sessions.clone(),
+                state.search.clone(),
+            ),
+            mail: jojobot_mcp::mailboxes::operator_rail::rail(
+                state.memory.clone(),
+                state.mailboxes.clone(),
+            ),
+            commands: jojobot_mcp::mailboxes::operator_rail::commands(
+                state.memory.clone(),
+                state.mailboxes.clone(),
+                state.clock,
+            ),
+            clock: state.clock,
+            admits_exactly_one_person: ui.admits_exactly_one_person(),
+            origin: ui.origin().to_string(),
+        };
         Router::new()
-            .merge(
-                Router::new()
-                    .route("/", get(ui::pages::index))
-                    .route(ui::org::PATH, get(ui::org::chart))
-                    .route("/ui/kind/{kind}/", get(ui::home::kind_page))
-                    .route(ui::search::PATH, get(ui::search::results))
-                    .route("/{*path}", get(ui::pages::node))
-                    .with_state(ui::pages::NodeState {
-                        app: state.clone(),
-                        queries: jojobot_mcp::memory::view_run::handle(
-                            state.memory.clone(),
-                            state.sessions.clone(),
-                            state.search.clone(),
-                        ),
-                        mail: jojobot_mcp::mailboxes::operator_rail::rail(
-                            state.memory.clone(),
-                            state.mailboxes.clone(),
-                        ),
-                    }),
-            )
-            .route_layer(axum::middleware::from_fn_with_state(
-                state.clone(),
-                ui::require_browser,
+            .merge(jojobot_ui::pages_router(pages.clone()).route_layer(
+                axum::middleware::from_fn_with_state(state.clone(), ui::require_browser),
             ))
             // The login is outside the gate. A gate over the way in has nowhere
             // to send anybody.
@@ -303,26 +301,9 @@ fn build_app_with(
             // **The actions the UI has**, behind a session of its own gate:
             // the listing's gate answers a path that is no entity with "not
             // found" before it asks about a login, and an action is no entity.
-            .merge(
-                Router::new()
-                    .route("/ui/mail/open", axum::routing::post(ui::mail::open))
-                    .route(
-                        "/ui/mail/processed",
-                        axum::routing::post(ui::mail::processed),
-                    )
-                    .with_state(ui::mail::MailState {
-                        app: state.clone(),
-                        commands: jojobot_mcp::mailboxes::operator_rail::commands(
-                            state.memory.clone(),
-                            state.mailboxes.clone(),
-                            state.clock,
-                        ),
-                    })
-                    .route_layer(axum::middleware::from_fn_with_state(
-                        state.clone(),
-                        ui::require_session,
-                    )),
-            )
+            .merge(jojobot_ui::actions_router(pages).route_layer(
+                axum::middleware::from_fn_with_state(state.clone(), ui::require_session),
+            ))
     });
 
     let mut app = Router::new()

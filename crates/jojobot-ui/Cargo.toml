@@ -1,0 +1,28 @@
+[package]
+name = "jojobot-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+# The browser pages. **The one data dependency is the query API** (and the
+# domain's value types): a page that reaches for the store does not build. The
+# server crate builds every handle and the login gate; nothing here builds one.
+[dependencies]
+jojobot-query-api.workspace = true
+jojobot-domain.workspace = true
+axum.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+jiff.workspace = true
+tracing.workspace = true
+# A document's page is its markdown rendered as HTML. A CommonMark event stream
+# is what lets the page decide each event, so raw HTML, images and link targets
+# are rewritten before anything is written out. Only the HTML writer is used.
+pulldown-cmark = { version = "0.13.4", default-features = false, features = ["html"] }
+
+[dev-dependencies]
+tokio.workspace = true
+jojobot-domain = { workspace = true, features = ["testing"] }
+# A search case stands a stub in for the query handle's trait.
+async-trait.workspace = true

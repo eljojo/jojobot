@@ -1,0 +1,6 @@
+# TEMPORARY(9.3.8): a page reads through the query handle and names no store
+# port. The ports stay in the domain until 9.3.8 removes them (rule 682); this
+# list is deleted in the same change.
+disallowed-types = [
+    { path = "jojobot_domain::memory::Memory", reason = "a page reads through jojobot_query_api::QueryHandle, never the store" },
+]

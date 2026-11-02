@@ -9,6 +9,7 @@ lib-jojobot-mcp
 lib-jojobot-ports
 lib-jojobot-query-api
 lib-jojobot-roster
+lib-jojobot-ui
 test-adoption_frozen
 test-adoption_room
 test-agency_room

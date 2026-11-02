@@ -11,11 +11,11 @@ use axum::{extract::State, http::StatusCode, response::Response};
 use jojobot_domain::memory::{Entity, EntityId};
 use jojobot_query_api::{Failed, QueryHandle};
 
-use crate::AppState;
-use crate::ui::{pages, shell};
+use crate::PageState;
+use crate::{pages, shell};
 
 /// The address of the org chart. It is no entity's path, so the gate knows it
-/// by name ([`crate::ui::require_browser`]).
+/// by name ([`crate::require_browser`]).
 pub const PATH: &str = "/ui/org/";
 
 /// The view the chart is read from.
@@ -29,7 +29,7 @@ pub struct Colleague {
 
 /// **Every bot the colleagues view lists**, or the page text saying why it could
 /// not be run.
-async fn colleagues(state: &AppState, queries: &QueryHandle) -> Result<Vec<Colleague>, String> {
+async fn colleagues(state: &PageState, queries: &QueryHandle) -> Result<Vec<Colleague>, String> {
     let answered =
         pages::answer_named_view_with(state, queries, VIEW, &std::collections::BTreeMap::new())
             .await?;
@@ -167,7 +167,7 @@ fn link(colleague: &Colleague, paths: &HashMap<EntityId, String>) -> String {
 /// **The org chart section of a bot's page**: the chain it reports through, a
 /// link to the whole chart, and the bots that report to it. A bot that reports
 /// to nobody is a chain of one, which is a root and not an error.
-pub async fn bot_section(state: &AppState, queries: &QueryHandle, bot: &EntityId) -> String {
+pub async fn bot_section(state: &PageState, queries: &QueryHandle, bot: &EntityId) -> String {
     let all = match colleagues(state, queries).await {
         Ok(all) => all,
         Err(page) => return page,
@@ -212,13 +212,8 @@ pub async fn bot_section(state: &AppState, queries: &QueryHandle, bot: &EntityId
 }
 
 /// `/ui/org/` — every bot, each under the bot it reports to.
-pub(crate) async fn chart(
-    State(pages::NodeState {
-        app: state,
-        queries,
-        ..
-    }): State<pages::NodeState>,
-) -> Response {
+pub(crate) async fn chart(State(state): State<PageState>) -> Response {
+    let queries = state.queries.clone();
     let content = match colleagues(&state, &queries).await {
         Err(page) => page,
         Ok(all) => {
@@ -228,7 +223,7 @@ pub(crate) async fn chart(
                 Ok(by_id) => by_id,
                 Err(failed) => {
                     tracing::warn!(error = %reason(failed), "the org chart could not read where the bots live");
-                    return crate::ui::refuse(
+                    return crate::refuse(
                         StatusCode::BAD_GATEWAY,
                         "jojobot could not read where its bots live, so this page would be empty rather than accurate.",
                     );

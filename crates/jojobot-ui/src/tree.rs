@@ -254,7 +254,7 @@ mod tests {
     fn the_page_links_old_prose_and_not_a_fresh_miss() {
         let alpha = entity("person:alpha", None);
         let by_id: HashMap<&EntityId, &Entity> = [(&alpha.id, &alpha)].into_iter().collect();
-        let page = crate::ui::pages::linkify(
+        let page = crate::pages::linkify(
             "see @person:alpha/999 (no such handle) and @person:alpha/2",
             &by_id,
         );
@@ -276,15 +276,14 @@ mod tests {
         let alpha = entity("person:alpha", None);
         let by_id: HashMap<&EntityId, &Entity> = [(&alpha.id, &alpha)].into_iter().collect();
         for digits in ["007", "0", "99999999999999999999999"] {
-            let page =
-                crate::ui::pages::linkify(&format!("see @person:alpha/{digits} now"), &by_id);
+            let page = crate::pages::linkify(&format!("see @person:alpha/{digits} now"), &by_id);
             assert_eq!(page.matches("<a href").count(), 1, "{page}");
             assert!(
                 page.contains(">@person:alpha</a>/") && page.contains(&format!("/{digits} now")),
                 "{page}"
             );
         }
-        let miss = crate::ui::pages::linkify("see @person:alpha/999 (no such handle) now", &by_id);
+        let miss = crate::pages::linkify("see @person:alpha/999 (no such handle) now", &by_id);
         assert_eq!(miss.matches("<a href").count(), 0, "{miss}");
     }
 }

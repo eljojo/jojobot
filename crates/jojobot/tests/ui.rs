@@ -3982,7 +3982,7 @@ async fn the_org_chart_page_folds_every_reporting_line_into_one_tree() {
             .and_then(|depth| depth.parse().ok())
             .expect("a depth is a number")
     };
-    // The depth rules are the forest's own (src/ui/org.rs); the page carries them.
+    // The depth rules are the forest's own (crates/jojobot-ui/src/org.rs); the page carries them.
     assert_eq!(depth_of("bot:rho"), 0, "{chart}");
     assert_eq!(depth_of("bot:upsilon"), 2, "{chart}");
     // The chart is in a box of the grid, and a bot's page links to it.
@@ -4900,7 +4900,7 @@ async fn a_typed_page_keeps_the_generic_sections_behind_one_closed_fold() {
 /// **A project's page carries what it is, what happened lately and what sits in
 /// it.** The wiring only: the three boxes are on the page of a project that holds
 /// an owner, a claim and a thing. What each box shows is `project_rest`'s own rule
-/// (src/ui/typed.rs), checked beside it.
+/// (crates/jojobot-ui/src/typed.rs), checked beside it.
 #[tokio::test]
 async fn a_projects_page_carries_what_it_is_what_happened_lately_and_what_sits_in_it() {
     let memory = memory_with_a_board().await;
@@ -5203,7 +5203,7 @@ async fn an_empty_search_says_when_the_index_has_not_caught_up() {
         .as_str()
         .unwrap_or_else(|| panic!("the verb reports the index as behind: {verb}"));
     assert!(
-        behind.contains(&jojobot::ui::pages::escape(note)),
+        behind.contains(&jojobot_ui::pages::escape(note)),
         "the page carries the verb's coverage note: {note:?} in {behind}"
     );
     ct.cancel();
