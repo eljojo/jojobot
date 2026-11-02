@@ -165,7 +165,7 @@ async fn a_pick_up_by_name_forgets_what_the_run_was_shown_and_a_wrap_code_reopen
     let delta = story.as_bot("bot:delta").await;
     delta.call("list_entities", json!({"kind": "place"})).await;
     let (_, reopened) = reopen_by_code(&story, &delta, "delta").await;
-    create(&reopened, "place:wharf-road", "Wharf Road")
+    create(&reopened, "place:wharf-road", "Wonder Road")
         .await
         .says("place:wonder-wharf")
         .says(ASKED);
@@ -179,7 +179,7 @@ async fn a_pick_up_by_name_forgets_what_the_run_was_shown_and_a_wrap_code_reopen
     // The positive the absence rests on: once it is shown the places, the same
     // creation beside them is asked about like any session's.
     taker.call("list_entities", json!({"kind": "place"})).await;
-    create(&taker, "place:moes", "Wonder Moes")
+    create(&taker, "place:contract-wonder-road", "Wharf Moes")
         .await
         .says(ASKED);
 

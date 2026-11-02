@@ -316,12 +316,12 @@ async fn a_compaction_report_forgets_what_the_run_was_shown() {
         .call("start_here", json!({"compacted": true}))
         .await;
 
-    create(&reporter, "wonder-road", "Wonder Road")
+    create(&reporter, "wharf-road", "Wonder Road")
         .await
         .never_says(ASKED);
     // The positive the absence rests on: the run that did not report is asked
     // about the place it was shown, beside the same word.
-    create(&other, "wonder-lane", "Wonder Lane")
+    create(&other, "wharf-lane", "Wonder Lane")
         .await
         .says(ASKED);
 
