@@ -2767,10 +2767,11 @@ Objects that are not bots carry no charter at all.
 
 ```text
 **Count what sits under each object, and say when it was last written.** Off by
-default. Each object of the answer then carries `children` (its live children
-as `count`, its archived ones as `archived`, and every live thing under it as
-`subtree`) and `written_at`, the moment of its newest write of any kind. It
-asks of any selection, and a subject read answers in the same shape.
+default. Each object that has something under it then carries `children` (its
+live children as `count`, its archived ones as `archived`, and every live thing
+under it as `subtree`); a thing with nothing under it carries none. Each object
+carries `written_at`, the moment of its newest write of any kind. It asks of any
+selection, and a subject read answers in the same shape.
 ```
 
 #### `recall` — argument `/inputSchema.details`

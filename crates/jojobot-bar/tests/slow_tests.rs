@@ -94,7 +94,7 @@ fn listed_run(id: u64, event: &str, base: &str, status: &str, hours_ago: u64) ->
         .expect("a clock")
         .as_secs();
     let then = now - hours_ago * 3600;
-    // Civil date from days since 1970 (Hinnant's algorithm), in UTC.
+    // Civil date from days since 1970 (the days-to-civil method), in UTC.
     let (days, rest) = ((then / 86_400) as i64, then % 86_400);
     let z = days + 719_468;
     let era = z / 146_097;

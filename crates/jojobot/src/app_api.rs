@@ -335,13 +335,15 @@ pub async fn unstable_operation(
 
 /// **What an app is told when the store could not take its call.** A read can be
 /// sent again. A write may have landed before the store failed, so the app is
-/// told to read first: a resend of a landed write is a duplicate.
+/// told it may have landed: an app with a read grant reads first, and one without
+/// cannot tell, so a resend may be a duplicate.
 fn unavailable_text(operation: &str) -> &'static str {
     match operation {
         "recall" => "the store could not take the call; send the same call again",
         _ => {
-            "the store could not take the call, and the write may have landed; read to see \
-             whether it did before sending it again"
+            "the store could not take the call, and the write may have landed; an app \
+             holding a read grant reads to see whether it did before sending it again, and \
+             an app without one cannot tell, so a resend may be a duplicate"
         }
     }
 }
