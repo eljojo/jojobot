@@ -209,6 +209,7 @@ impl Registry {
             .with(Entry::new("capture", capture))
             .with(Entry::new("add_entity", add_entity))
             .with(Entry::new("post_message", post_message))
+            .with(Entry::new("mailbox_counts", mailbox_counts))
             .with(Entry::new("set_charter", set_charter))
     }
 
@@ -514,6 +515,62 @@ async fn post_message(call: Call) -> Answer {
         Ok(Err(refused)) => refusal(&refused),
         Err(e) => mistaken(e),
     }
+}
+
+/// **One bot's box as `mailbox_counts` serves it**: whose box, how many messages
+/// wait in `new`, and when the oldest of them was sent. No id, subject, sender or
+/// body, so counts and an age are the whole exposure (rules 91, 139).
+#[derive(Debug, Serialize)]
+pub struct BoxWaiting {
+    /// The bot the box belongs to.
+    pub bot: String,
+    /// How many messages wait in `new`.
+    pub new: usize,
+    /// When the oldest of them was sent, or null for an empty `new`.
+    pub oldest_new_sent_at: Option<String>,
+}
+
+/// **`mailbox_counts`: what is waiting in each bot's box, read and nothing moved.**
+/// The counts are the ones `read_mailbox` with `counts_only` reports; the age is
+/// read off the messages without a delivery. A person's box is not listed. It
+/// reads current state and is not a feed (rule 724).
+async fn mailbox_counts(call: Call) -> Answer {
+    let operation = Operation {
+        name: "mailbox_counts".into(),
+        args_sent: call.args_sent(),
+        ..Operation::default()
+    };
+    if let Err(answer) = call.permit(&operation) {
+        return answer;
+    }
+    let boxes = match call.handler.mailboxes.list_mailboxes().await {
+        Ok(boxes) => boxes,
+        Err(e) => return unavailable(e),
+    };
+    let messages = match call.handler.mailboxes.scan_messages().await {
+        Ok(messages) => messages,
+        Err(e) => return unavailable(e),
+    };
+    let mut rows: Vec<BoxWaiting> = boxes
+        .iter()
+        .filter(|held| !held.is_private())
+        .map(|held| BoxWaiting {
+            bot: held.owner.as_str().to_string(),
+            new: held.counts.new,
+            oldest_new_sent_at: messages
+                .iter()
+                .filter(|m| {
+                    m.mailbox == held.name
+                        && m.state == jojobot_domain::mailbox::MessageState::New
+                        && m.superseded_by.is_none()
+                })
+                .map(|m| m.sent_at)
+                .min()
+                .map(|at| at.to_string()),
+        })
+        .collect();
+    rows.sort_by(|a, b| a.bot.cmp(&b.bot));
+    done(&rows)
 }
 
 /// **`set_charter` is in the registry and no app can be granted it**: a charter

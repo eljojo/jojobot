@@ -1268,3 +1268,87 @@ async fn unstable_a_capture_on_a_handle_nothing_wears_is_refused_without_candida
     .await;
     assert_eq!(status, 200, "{landed}");
 }
+
+/// A message left in a box, sent at a moment the case names.
+async fn leave(served: &Served, bot: &str, sent_at: &str) {
+    served
+        .mailboxes
+        .post_message(jojobot_domain::mailbox::NewMessage {
+            mailbox: jojobot_domain::mailbox::MailboxName(bot.into()),
+            body: "A body no counts read may carry.".into(),
+            subject: Some("A subject no counts read may carry".into()),
+            sender: "gamma".into(),
+            sent_at: sent_at.parse().expect("a moment"),
+            in_reply_to: None,
+            supersedes: None,
+            sender_mail_waiting_at_send: None,
+            posted_by_session: None,
+        })
+        .await
+        .expect("the post lands");
+}
+
+async fn open_box(served: &Served, name: &str, owner: &str) {
+    served
+        .mailboxes
+        .create_mailbox(
+            &jojobot_domain::mailbox::MailboxName(name.into()),
+            &EntityId(owner.into()),
+            None,
+        )
+        .await
+        .expect("a box opens");
+}
+
+#[tokio::test]
+async fn unstable_a_granted_mailbox_counts_reads_each_bots_new_count_and_oldest_age_and_moves_nothing()
+ {
+    let (app, token) = enrolled("springfield-watch", vec![op("mailbox_counts", &[], &[])]);
+    let served = serve(vec![app], Registry::shipped()).await;
+    open_box(&served, "alpha", "bot:alpha").await;
+    open_box(&served, "beta", "bot:beta").await;
+    open_box(&served, "homer", "person:homer").await;
+    leave(&served, "alpha", "2026-03-05T10:00:00Z").await;
+    leave(&served, "alpha", "2026-03-05T09:00:00Z").await;
+    leave(&served, "beta", "2026-03-05T11:00:00Z").await;
+    leave(&served, "homer", "2026-03-05T08:00:00Z").await;
+
+    let (status, counted) = call(&served, &token, "mailbox_counts", json!({})).await;
+    assert_eq!(status, 200, "{counted}");
+    assert_eq!(
+        counted,
+        json!([
+            {"bot": "bot:alpha", "new": 2, "oldest_new_sent_at": "2026-03-05T09:00:00Z"},
+            {"bot": "bot:assistant", "new": 0, "oldest_new_sent_at": null},
+            {"bot": "bot:beta", "new": 1, "oldest_new_sent_at": "2026-03-05T11:00:00Z"},
+        ]),
+        "a person's box is not listed, an empty box has no age, and a row carries nothing but the three keys"
+    );
+
+    // **Nothing moved**: the same two boxes still hold the same messages at `new`.
+    let boxes = served.mailboxes.list_mailboxes().await.expect("lists");
+    let waiting = |name: &str| {
+        boxes
+            .iter()
+            .find(|held| held.name.as_str() == name)
+            .map(|held| (held.counts.new, held.counts.read))
+    };
+    assert_eq!(waiting("alpha"), Some((2, 0)));
+    assert_eq!(waiting("beta"), Some((1, 0)));
+}
+
+#[tokio::test]
+async fn unstable_mailbox_counts_outside_the_grant_is_refused_naming_what_the_app_may_call() {
+    let (app, token) = reader();
+    let served = serve(vec![app], Registry::shipped()).await;
+    open_box(&served, "alpha", "bot:alpha").await;
+    leave(&served, "alpha", "2026-03-05T10:00:00Z").await;
+
+    let (status, refused) = call(&served, &token, "mailbox_counts", json!({})).await;
+    assert_eq!(status, 403, "{refused}");
+    let why = refused["error"].as_str().unwrap();
+    assert!(
+        why.contains("mailbox_counts") && why.contains("recall"),
+        "{refused}"
+    );
+}

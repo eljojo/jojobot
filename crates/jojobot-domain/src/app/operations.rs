@@ -286,6 +286,19 @@ mod tests {
         AppPrincipal::from_spec(&spec(operations), &hash_token(&mint_token())).expect("a grant")
     }
 
+    /// `mailbox_counts` is a read that takes no argument: a call that sends one is
+    /// refused naming it, and the bare call is permitted.
+    #[test]
+    fn mailbox_counts_takes_no_argument() {
+        let reader = app(vec![op("mailbox_counts", &[], &[])]);
+        assert!(permit(&reader, &call("mailbox_counts", &[], None, &[])).is_ok());
+        let sent = refusal(permit(
+            &reader,
+            &call("mailbox_counts", &["bot"], None, &[]),
+        ));
+        assert!(sent.contains("bot"), "{sent}");
+    }
+
     fn watcher() -> AppPrincipal {
         app(vec![
             op("recall", &[], &[]),
@@ -425,6 +438,7 @@ mod tests {
             op("capture", &[], &["k"]),
             op("capture", &["role"], &["runs_out"]),
             op("recall", &["role"], &[]),
+            op("mailbox_counts", &["role"], &[]),
             op("Dance!", &[], &[]),
         ] {
             assert!(
