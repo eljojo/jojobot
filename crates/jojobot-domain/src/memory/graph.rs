@@ -2037,24 +2037,45 @@ pub struct ChildCounts {
 }
 
 impl ChildCounts {
+    /// One parent's counts: only its own descent is walked.
     fn of(all: &[Entity], parent: &EntityId) -> ChildCounts {
-        let children = super::children_in(all, parent);
-        let archived = children.iter().filter(|c| c.archived.is_some()).count();
+        let under = Self::index(all);
+        let children = under.get(parent).map_or(&[][..], Vec::as_slice);
         ChildCounts {
-            parent: parent.clone(),
-            live: children.len() - archived,
-            archived,
-            subtree: Self::all(all)
-                .get(parent)
-                .map_or(0, |counted| counted.subtree),
+            subtree: Self::walk(parent, children, &under),
+            ..Self::counts_of(parent, children)
         }
     }
 
     /// **Every parent's counts from one pass over the inventory.** A parent with no
-    /// child, live or archived, has no entry. The subtree totals come from one walk
-    /// down from each parent over the same children index, so a read of many
-    /// objects costs one pass and not one for each.
+    /// child, live or archived, has no entry. The subtree totals come from one
+    /// post-order sum over the children index, so a read of many objects costs one
+    /// pass and not one for each.
     pub fn all(all: &[Entity]) -> HashMap<EntityId, ChildCounts> {
+        let under = Self::index(all);
+        let mut memo = HashMap::new();
+        let mut visiting = HashSet::new();
+        under
+            .iter()
+            .map(|(parent, children)| {
+                let subtree = Self::total(parent, &under, &mut memo, &mut visiting)
+                    // A parent whose descent meets a loop has no sum: its own
+                    // walk ends the loop with a seen-set.
+                    .unwrap_or_else(|| Self::walk(parent, children, &under));
+                (
+                    (*parent).clone(),
+                    ChildCounts {
+                        subtree,
+                        ..Self::counts_of(parent, children)
+                    },
+                )
+            })
+            .collect()
+    }
+
+    /// The children of each parent, by the parent's handle. A thing folded into
+    /// another is a child of nothing.
+    fn index(all: &[Entity]) -> HashMap<&EntityId, Vec<&Entity>> {
         let mut under: HashMap<&EntityId, Vec<&Entity>> = HashMap::new();
         for entity in all.iter().filter(|e| e.merged_into.is_none()) {
             if let Some(parent) = &entity.parent {
@@ -2062,30 +2083,68 @@ impl ChildCounts {
             }
         }
         under
-            .iter()
-            .map(|(parent, children)| {
-                let archived = children.iter().filter(|c| c.archived.is_some()).count();
-                let mut seen: HashSet<&EntityId> = HashSet::from([*parent]);
-                let mut stack: Vec<&Entity> = children.clone();
-                let mut subtree = 0;
-                while let Some(thing) = stack.pop() {
-                    if thing.archived.is_some() || !seen.insert(&thing.id) {
-                        continue;
-                    }
-                    subtree += 1;
-                    stack.extend(under.get(&thing.id).into_iter().flatten().copied());
-                }
-                (
-                    (*parent).clone(),
-                    ChildCounts {
-                        parent: (*parent).clone(),
-                        live: children.len() - archived,
-                        archived,
-                        subtree,
-                    },
-                )
-            })
-            .collect()
+    }
+
+    /// The direct counts of a parent, with the subtree left for the caller.
+    fn counts_of(parent: &EntityId, children: &[&Entity]) -> ChildCounts {
+        let archived = children.iter().filter(|c| c.archived.is_some()).count();
+        ChildCounts {
+            parent: parent.clone(),
+            live: children.len() - archived,
+            archived,
+            subtree: 0,
+        }
+    }
+
+    /// **The live things under a node, summed from its children's totals.** Each
+    /// thing has one parent, so the subtrees of siblings do not overlap: a node's
+    /// total is its live children plus their totals, kept per node. `None` when the
+    /// descent meets a loop, where the sum has no end.
+    fn total<'a>(
+        node: &'a EntityId,
+        under: &HashMap<&'a EntityId, Vec<&'a Entity>>,
+        memo: &mut HashMap<&'a EntityId, Option<usize>>,
+        visiting: &mut HashSet<&'a EntityId>,
+    ) -> Option<usize> {
+        if let Some(done) = memo.get(node) {
+            return *done;
+        }
+        if !visiting.insert(node) {
+            return None;
+        }
+        let mut total = Some(0);
+        for child in under
+            .get(node)
+            .into_iter()
+            .flatten()
+            .filter(|c| c.archived.is_none())
+        {
+            let below = Self::total(&child.id, under, memo, visiting);
+            total = total.zip(below).map(|(sum, below)| sum + 1 + below);
+        }
+        visiting.remove(node);
+        memo.insert(node, total);
+        total
+    }
+
+    /// **The live things anywhere under one parent**, walked down from it with a
+    /// seen-set so a loop ends. An archived child hides what sits under it.
+    fn walk(
+        parent: &EntityId,
+        children: &[&Entity],
+        under: &HashMap<&EntityId, Vec<&Entity>>,
+    ) -> usize {
+        let mut seen: HashSet<&EntityId> = HashSet::from([parent]);
+        let mut stack: Vec<&Entity> = children.to_vec();
+        let mut subtree = 0;
+        while let Some(thing) = stack.pop() {
+            if thing.archived.is_some() || !seen.insert(&thing.id) {
+                continue;
+            }
+            subtree += 1;
+            stack.extend(under.get(&thing.id).into_iter().flatten().copied());
+        }
+        subtree
     }
 }
 

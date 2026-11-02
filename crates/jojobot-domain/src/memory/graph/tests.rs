@@ -3871,6 +3871,7 @@ fn every_things_children_and_subtree_are_counted_in_one_pass() {
         folded,
         under("work:eta", "work:theta"),
         under("work:theta", "work:eta"),
+        under("work:iota", "work:theta"),
     ];
 
     let counts = ChildCounts::all(&all);
@@ -3890,5 +3891,19 @@ fn every_things_children_and_subtree_are_counted_in_one_pass() {
         !counts.contains_key(&EntityId("work:kappa".into())),
         "a leaf has none"
     );
-    assert_eq!(of("work:eta"), (1, 0, 1), "the loop is walked once");
+    assert_eq!(
+        of("work:eta"),
+        (1, 0, 2),
+        "the loop is walked once: theta, and iota under it"
+    );
+    assert_eq!(
+        of("work:theta"),
+        (2, 0, 2),
+        "eta and iota, and eta's own child theta is the start"
+    );
+    assert_eq!(
+        ChildCounts::of(&all, &EntityId("work:sigma".into())),
+        counts[&EntityId("work:sigma".into())],
+        "one parent read alone counts what the pass counts"
+    );
 }
