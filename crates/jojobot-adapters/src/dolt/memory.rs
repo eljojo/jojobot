@@ -5641,8 +5641,9 @@ impl Memory for DoltMemory {
                     .with_manager_rendered(&mut tx, &folded_fields(&held, &declared))
                     .await?;
                 let after = jojobot_domain::memory::fold_after_field_edits(&before, &patch);
-                let lineage = match jojobot_domain::memory::chart_wanted_by_change(&before, &after)
-                {
+                let lineage = match jojobot_domain::memory::chart_wanted_by_change(
+                    &handle, &before, &after,
+                ) {
                     Some(named) => Some(self.lineage_in(&mut tx, &handle, named).await?),
                     None => None,
                 };
@@ -5744,11 +5745,14 @@ impl Memory for DoltMemory {
         // domain crate for why the fold rather than the raw patch.
         let chart_before = self.with_manager_rendered(&mut tx, &before_fold).await?;
         let chart_after = self.with_manager_rendered(&mut tx, &after_fold).await?;
-        let lineage =
-            match jojobot_domain::memory::chart_wanted_by_change(&chart_before, &chart_after) {
-                Some(named) => Some(self.lineage_in(&mut tx, &handle, named).await?),
-                None => None,
-            };
+        let lineage = match jojobot_domain::memory::chart_wanted_by_change(
+            &handle,
+            &chart_before,
+            &chart_after,
+        ) {
+            Some(named) => Some(self.lineage_in(&mut tx, &handle, named).await?),
+            None => None,
+        };
         if let Some(err) = jojobot_domain::memory::refuses_unlicensed_change(
             &handle,
             caller,
@@ -6403,11 +6407,14 @@ impl Memory for DoltMemory {
         );
         let chart_before = self.with_manager_rendered(&mut tx, &before_fold).await?;
         let chart_after = self.with_manager_rendered(&mut tx, &after_fold).await?;
-        let lineage =
-            match jojobot_domain::memory::chart_wanted_by_change(&chart_before, &chart_after) {
-                Some(named) => Some(self.lineage_in(&mut tx, &handle, named).await?),
-                None => None,
-            };
+        let lineage = match jojobot_domain::memory::chart_wanted_by_change(
+            &handle,
+            &chart_before,
+            &chart_after,
+        ) {
+            Some(named) => Some(self.lineage_in(&mut tx, &handle, named).await?),
+            None => None,
+        };
         if let Some(err) = jojobot_domain::memory::refuses_unlicensed_change(
             &handle,
             caller,

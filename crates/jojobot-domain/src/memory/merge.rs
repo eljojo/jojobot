@@ -141,7 +141,7 @@ pub async fn refuses_merge_guards<R: MergeReads + ?Sized>(
     reads: &mut R,
 ) -> Result<(), MemoryError> {
     let carried = reads.carried().await?;
-    let (lineage, duplicate_lineage) = match needs_the_chart(&carried) {
+    let (lineage, duplicate_lineage) = match needs_the_chart(fold.survivor, &carried) {
         Some(named) => (
             Some(reads.lineage(named).await?),
             Some(reads.lineage_of(fold.folded).await?),

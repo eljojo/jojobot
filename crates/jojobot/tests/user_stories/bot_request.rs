@@ -188,3 +188,37 @@ async fn a_manager_asks_for_a_bot_and_only_its_app_reports_on_it() {
     .await;
     story.finish().await;
 }
+
+/// **A manager sends a `reports_to` beside the target, and the target's own
+/// chain still judges the request.** Marge manages homer and not lisa. She names
+/// homer as the manager and lisa as the target, so the request is asked for a
+/// bot nobody above her authorised. Bart manages lisa and makes the same write.
+#[tokio::test]
+async fn naming_a_manager_beside_the_target_does_not_change_who_judges_it() {
+    let story = Story::begin("bot:marge").await;
+    let marge = story.session().await;
+    marge.add("bot:bart", "Bart").await;
+    marge.add("machine:theta", "Theta").await;
+    let bart = story.as_bot("bot:bart").await;
+    for (by, handle, name, boss) in [
+        (&marge, "homer", "Homer", "bot:marge"),
+        (&bart, "lisa", "Lisa", "bot:bart"),
+    ] {
+        by.call(
+            "add_entity",
+            json!({"kind": "bot", "handle": handle, "name": name,
+                   "source": "user-named", "sets": {"reports_to": boss}}),
+        )
+        .await;
+    }
+    let mut asked = spec("bot:lisa", "machine:theta");
+    asked["reports_to"] = json!("bot:homer");
+
+    marge
+        .refused("add_entity", creating(asked.clone()))
+        .await
+        .says("\"wrote\":false")
+        .says("bot:bart");
+    bart.call("add_entity", creating(asked)).await;
+    story.finish().await;
+}

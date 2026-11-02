@@ -4050,7 +4050,7 @@ impl Memory for InMemoryMemory {
                     &self.declarations(),
                 ));
                 let after = super::super::fold_after_field_edits(&before, &patch);
-                let lineage = super::super::chart_wanted_by_change(&before, &after)
+                let lineage = super::super::chart_wanted_by_change(&handle, &before, &after)
                     .map(|named| self.lineage_among(&facts, &handle, named));
                 return Err(super::super::refuses_unlicensed_change(
                     &handle,
@@ -4170,7 +4170,7 @@ impl Memory for InMemoryMemory {
             self.with_manager_served(&before),
             self.with_manager_served(&after),
         );
-        let lineage = super::super::chart_wanted_by_change(&before, &after)
+        let lineage = super::super::chart_wanted_by_change(&handle, &before, &after)
             .map(|named| self.lineage_among(&facts, &handle, named));
         if let Some(err) = super::super::refuses_unlicensed_change(
             &handle,
@@ -4737,7 +4737,7 @@ impl Memory for InMemoryMemory {
             self.with_manager_served(&before_fold),
             self.with_manager_served(&after_fold),
         );
-        let lineage = super::super::chart_wanted_by_change(&before_fold, &after_fold)
+        let lineage = super::super::chart_wanted_by_change(&handle, &before_fold, &after_fold)
             .map(|named| self.lineage_among(&facts, &handle, named));
         if let Some(err) = super::super::refuses_unlicensed_change(
             &handle,

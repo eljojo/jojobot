@@ -2731,6 +2731,7 @@ pub fn manager_in(value: &str) -> Option<EntityId> {
 /// the manager it names, if it names one. `Some` means the caller has to build
 /// a [`Lineage`] before asking; `None` means none of the keys here need one.
 pub fn chart_wanted(
+    subject: &EntityId,
     keys: &[&GuardedKey],
     written: &BTreeMap<String, String>,
 ) -> Option<Option<EntityId>> {
@@ -2746,10 +2747,16 @@ pub fn chart_wanted(
             )
         })
         .then(|| {
-            written
-                .get(REPORTS_TO)
-                .or_else(|| written.get(bot_request::TARGET_BOT))
-                .and_then(|value| manager_in(value))
+            // **A request has no manager of its own, so the bot it names is its
+            // target and nothing else**: a `reports_to` beside it would pick the
+            // chain that judges the target.
+            let named = match bot_request::is_request(subject) {
+                true => written.get(bot_request::TARGET_BOT),
+                false => written
+                    .get(REPORTS_TO)
+                    .or_else(|| written.get(bot_request::TARGET_BOT)),
+            };
+            named.and_then(|value| manager_in(value))
         })
 }
 
@@ -2773,14 +2780,18 @@ pub fn heads_wanted(holds: &std::collections::BTreeSet<String>) -> bool {
 }
 
 /// **Whether a write naming `fields` needs the chart read first.**
-pub fn needs_the_chart(fields: &BTreeMap<String, String>) -> Option<Option<EntityId>> {
-    chart_wanted(&guarded_keys_in(fields), fields)
+pub fn needs_the_chart(
+    subject: &EntityId,
+    fields: &BTreeMap<String, String>,
+) -> Option<Option<EntityId>> {
+    chart_wanted(subject, &guarded_keys_in(fields), fields)
 }
 
 /// **Whether a change to the fold needs the chart read first**: some key whose
 /// relation needs it is a key the change touches. The manager named is the one
 /// the fold will hold afterwards.
 pub fn chart_wanted_by_change(
+    subject: &EntityId,
     before: &BTreeMap<String, String>,
     after: &BTreeMap<String, String>,
 ) -> Option<Option<EntityId>> {
@@ -2788,7 +2799,7 @@ pub fn chart_wanted_by_change(
         .iter()
         .filter(|rule| before.get(rule.key) != after.get(rule.key))
         .collect();
-    chart_wanted(&touched, after)
+    chart_wanted(subject, &touched, after)
 }
 
 /// **The things folded into `survivor`, directly or through other folds.** Their

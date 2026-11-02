@@ -1923,7 +1923,7 @@ impl Jojobot {
         };
         let sent = fields;
         let fields = &changing;
-        let lineage = match jojobot_domain::memory::needs_the_chart(fields) {
+        let lineage = match jojobot_domain::memory::needs_the_chart(&ceiling_subject, fields) {
             Some(named) => {
                 let read = if exists {
                     self.chart_around(&ceiling_subject, named).await
