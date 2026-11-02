@@ -1329,8 +1329,11 @@ mod tests {
         let other_kind = created(&jojobot, &sid, "thing", "kettle", "Wharf Kettle").await;
         assert!(!teaches(&other_kind, "place:wonder-wharf"), "{other_kind}");
 
-        // The same kind, a shared word, and the thing was shown: asked.
-        let asked = created(&jojobot, &sid, "place", "wharf-road", "Wharf Road").await;
+        // The same kind, two shared words (one in the name, one in the handle),
+        // and the thing was shown: asked. One shared word alone is not.
+        let single = created(&jojobot, &sid, "place", "harbour", "Harbour Wharf").await;
+        assert!(!teaches(&single, "place:wonder-wharf"), "{single}");
+        let asked = created(&jojobot, &sid, "place", "wonder-road", "Wharf Road").await;
         assert!(
             teaches(&asked, "place:wonder-wharf")
                 && teaches(&asked, "merge_entities")
@@ -1339,7 +1342,7 @@ mod tests {
         );
 
         // Asked about once: a second creation beside the same thing is not.
-        let again = created(&jojobot, &sid, "place", "wharf-lane", "Wharf Lane").await;
+        let again = created(&jojobot, &sid, "place", "wonder-lane", "Wharf Lane").await;
         assert!(
             !teaches(&again, "place:wonder-wharf"),
             "the same thing was asked about twice: {again}",
@@ -1370,7 +1373,7 @@ mod tests {
             &sid,
             "work",
             "tau",
-            "Tau with batter and kwikmart",
+            "Tau with batter and kwikmart donutcart",
         )
         .await;
         assert_eq!(kept["id"], "work:tau", "{kept}");
@@ -1383,10 +1386,12 @@ mod tests {
             "a creation sharing only common words was asked about a shown thing: {common}",
         );
 
-        let rare = created(&jojobot, &sid, "work", "phi", "Phi kwikmart").await;
-        assert_eq!(rare["id"], "work:phi", "{rare}");
+        let rare = created(&jojobot, &sid, "work", "kwikmart-phi", "Phi donutcart").await;
+        assert_eq!(rare["id"], "work:kwikmart-phi", "{rare}");
         assert!(
-            teaches(&rare, "work:tau") && teaches(&rare, "'kwikmart'"),
+            teaches(&rare, "work:tau")
+                && teaches(&rare, "'kwikmart'")
+                && teaches(&rare, "'donutcart'"),
             "a creation sharing a rare word with a shown thing was not asked: {rare}",
         );
 
@@ -1395,10 +1400,17 @@ mod tests {
         // asked about. A count that included the creation itself would make
         // three of them common and stay silent.
         browsed(&jojobot, &sid, "work").await;
-        let third = created(&jojobot, &sid, "work", "omicron", "Omicron kwikmart").await;
-        assert_eq!(third["id"], "work:omicron", "{third}");
+        let third = created(
+            &jojobot,
+            &sid,
+            "work",
+            "kwikmart-omicron",
+            "Omicron donutcart",
+        )
+        .await;
+        assert_eq!(third["id"], "work:kwikmart-omicron", "{third}");
         assert!(
-            teaches(&third, "work:phi"),
+            teaches(&third, "work:kwikmart-phi"),
             "a word with two other carriers stopped counting: {third}",
         );
     }
@@ -1452,11 +1464,11 @@ mod tests {
         let quiet = created_under(
             &jojobot,
             &sid,
-            ("work", "atlas-kwik-e-mart", "Kwik E Mart"),
+            ("work", "atlas-donut-mart", "Kwik E Mart"),
             Some("project:atlas"),
         )
         .await;
-        assert_eq!(quiet["id"], "work:atlas-kwik-e-mart", "it landed: {quiet}");
+        assert_eq!(quiet["id"], "work:atlas-donut-mart", "it landed: {quiet}");
         assert!(
             !teaches(&quiet, "work:atlas-x-donut-stand"),
             "the parent's own word was asked about: {quiet}",
@@ -1467,7 +1479,7 @@ mod tests {
         let asked = created_under(
             &jojobot,
             &sid,
-            ("work", "atlas-donut-cart", "Donut Cart"),
+            ("work", "atlas-donut-stand-cart", "Donut Cart"),
             Some("project:atlas"),
         )
         .await;
@@ -1481,7 +1493,7 @@ mod tests {
         let rootless = created_under(
             &jojobot,
             &sid,
-            ("work", "atlas-kwik-e-mart", "Kwik E Mart"),
+            ("work", "atlas-donut-mart", "Kwik E Mart"),
             None,
         )
         .await;
@@ -1513,13 +1525,13 @@ mod tests {
 
         // The positive the negative rests on: the session that read them is asked.
         let asked_of_the_reader =
-            created(&jojobot, &reader, "place", "wharf-road", "Wharf Road").await;
+            created(&jojobot, &reader, "place", "wonder-road", "Wharf Road").await;
         assert!(
             teaches(&asked_of_the_reader, "place:wonder-wharf"),
             "the session that read the places was not asked: {asked_of_the_reader}",
         );
         let asked_of_the_writer =
-            created(&jojobot, &writer, "place", "wharf-lane", "Wharf Lane").await;
+            created(&jojobot, &writer, "place", "wonder-lane", "Wharf Lane").await;
         assert!(
             !teaches(&asked_of_the_writer, "place:wonder-wharf"),
             "a thing this session never saw was asked about: {asked_of_the_writer}",
@@ -1573,7 +1585,7 @@ mod tests {
         // The merging session was shown all three, then folds the first.
         browsed(&jojobot, &merger, "thing").await;
         merged(&jojobot, &merger, "thing:teapot", "thing:piano").await;
-        let asked = created(&jojobot, &merger, "thing", "battery", "Mill Lane Cross").await;
+        let asked = created(&jojobot, &merger, "thing", "pond-cross", "Mill Lane Cross").await;
         assert!(
             teaches(&asked, "thing:canoe"),
             "the unmerged thing it was shown is no longer asked about: {asked}",
@@ -1593,7 +1605,14 @@ mod tests {
             }))
             .await
             .expect("recall ok");
-        let asked = created(&jojobot, &reader, "thing", "backup-drive", "Pond Quay").await;
+        let asked = created(
+            &jojobot,
+            &reader,
+            "thing",
+            "backup-drive",
+            "Pond Canoe Quay",
+        )
+        .await;
         // **A live thing the reader was shown, and not one in particular.** The
         // survivor carries the folded handle's name as an alias, so it shares as
         // many words with the creation as the canoe does, and the one shown most

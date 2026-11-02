@@ -18,8 +18,8 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use jojobot_domain::memory::EntityKind;
 use jojobot_domain::memory::words::words;
+use jojobot_domain::memory::{EntityKind, likeness};
 
 /// **How many things one session remembers having been shown.** The oldest
 /// shown goes first. Real sittings were shown a median of 7 distinct things and
@@ -73,14 +73,14 @@ pub(crate) enum Version {
 /// entities one session remembers having been shown.
 pub(crate) const MAX_HELD_PER_SESSION: usize = 2 * MAX_SHOWN_PER_SESSION;
 
-/// What a creation is asked about: the thing shown, how long ago, and the word
+/// What a creation is asked about: the thing shown, how long ago, and the words
 /// the two share.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Noticed {
     pub(crate) handle: String,
     pub(crate) name: String,
     pub(crate) calls_ago: u64,
-    pub(crate) word: String,
+    pub(crate) words: Vec<String>,
 }
 
 #[derive(Debug, Default)]
@@ -244,7 +244,7 @@ impl Ledger {
         incoming.extend(aliases.iter().flat_map(|alias| words(alias)));
         let parents_words = parent.map(|p| words(p.split_once(':').map_or(p, |(_, slug)| slug)));
 
-        let mut best: Option<(usize, usize, &Shown, String)> = None;
+        let mut best: Option<(usize, usize, &Shown, Vec<String>)> = None;
         for (at, (shown, _)) in session.shown.iter().enumerate() {
             if shown.kind != kind || session.asked.contains(&shown.handle) {
                 continue;
@@ -262,24 +262,31 @@ impl Ledger {
                 .filter(|word| own_parent_words.is_none_or(|parents| !parents.contains(*word)))
                 .filter(|word| is_rare(word))
                 .collect();
-            let Some(word) = shared.first() else {
+            // **The bar is the creation-time name screen's**: one shared word is a
+            // family name or a category, and asking about it trains a bot to skip hints.
+            if shared.len() < likeness::SHARED_WORDS_NEEDED {
                 continue;
-            };
+            }
             let better = match &best {
                 None => true,
                 Some((count, seen_at, _, _)) => (shared.len(), at) > (*count, *seen_at),
             };
             if better {
-                best = Some((shared.len(), at, shown, (*word).clone()));
+                best = Some((
+                    shared.len(),
+                    at,
+                    shown,
+                    shared.iter().map(|word| (*word).clone()).collect(),
+                ));
             }
         }
-        let (_, at, shown, word) = best?;
+        let (_, at, shown, words) = best?;
         let calls_ago = session.calls.saturating_sub(session.shown[at].1);
         let noticed = Noticed {
             handle: shown.handle.clone(),
             name: shown.name.clone(),
             calls_ago,
-            word,
+            words,
         };
         session.asked.insert(noticed.handle.clone());
         Some(noticed)
@@ -299,18 +306,22 @@ pub(crate) struct Creation<'a> {
 
 impl Noticed {
     /// **The question, in the words the receipt carries.** It names the thing
-    /// shown and how long ago, the word the two share, the verb that folds one
+    /// shown and how long ago, the words the two share, the verb that folds one
     /// into the other, and what the archive verb would leave behind. It asks;
     /// nothing was refused.
     pub(crate) fn question(&self, created: &str) -> String {
         format!(
-            "This session was shown {} ({}) {} ago, and {created} shares the word '{}' with it. \
+            "This session was shown {} ({}) {} ago, and {created} shares the words {} with it. \
              If they are the same thing, merge_entities folds one into the other. \
              archive_entity would leave its claims where they are.",
             self.handle,
             self.name,
             crate::answer::counted(self.calls_ago as usize, "call", "calls"),
-            self.word,
+            self.words
+                .iter()
+                .map(|word| format!("'{word}'"))
+                .collect::<Vec<_>>()
+                .join(" and "),
         )
     }
 }
@@ -432,15 +443,15 @@ mod tests {
 
         // A tie goes to the more recently shown.
         let mut ledger = Ledger::default();
-        ledger.record("s2", vec![place("place:contract-atlas", "Aaa Wharf")]);
-        ledger.record("s2", vec![place("place:bet", "Bbb Wharf")]);
+        ledger.record("s2", vec![place("place:contract-atlas", "Quiet Wharf")]);
+        ledger.record("s2", vec![place("place:bet", "Quiet Wharf")]);
         let noticed = ledger
             .consult(
                 "s2",
                 &Creation {
                     handle: "place:wharf-road",
                     kind: "place",
-                    name: "Wharf Road",
+                    name: "Quiet Wharf Road",
                     aliases: &[],
                     parent: None,
                 },
@@ -462,7 +473,7 @@ mod tests {
                 &Creation {
                     handle: "place:wharf-road",
                     kind: "place",
-                    name: "Wharf Road",
+                    name: "Wonder Wharf Road",
                     aliases: &[],
                     parent: None,
                 },
@@ -630,7 +641,11 @@ mod tests {
             )
             .expect("a sibling that shares a word the parent does not give is asked about");
         assert_eq!(asked.handle, "work:atlas-x-donut-stand");
-        assert_eq!(asked.word, "donut", "the word shared is not the parent's");
+        assert_eq!(
+            asked.words,
+            ["donut", "stand"],
+            "the words shared are not the parent's"
+        );
     }
 
     /// **Two siblings that share a word the parent does not give are asked
@@ -662,7 +677,7 @@ mod tests {
             )
             .expect("two siblings sharing leaf and preview are asked about");
         assert_eq!(asked.handle, "work:atlas-x-donut-stand");
-        assert_ne!(asked.word, "atlas", "{asked:?}");
+        assert_eq!(asked.words, ["donut", "stand"], "{asked:?}");
     }
 
     /// **A thing under another parent, or under none, shares the word with the
@@ -674,7 +689,7 @@ mod tests {
             let mut ledger = Ledger::default();
             ledger.record(
                 "s1",
-                vec![work("work:atlas-x-donut-stand", "X Donut Stand", parent)],
+                vec![work("work:atlas-x-donut-stand", "X Donut Mart", parent)],
             );
             ledger
         };
@@ -694,14 +709,14 @@ mod tests {
         // The shown thing is under another parent.
         let asked = created(&mut shown(Some("project:the-shed")), Some("project:atlas"))
             .expect("another parent: asked");
-        assert_eq!(asked.word, "atlas");
+        assert_eq!(asked.words, ["atlas", "mart"]);
         // The creation is under none.
         let asked = created(&mut shown(Some("project:atlas")), None).expect("no parent: asked");
-        assert_eq!(asked.word, "atlas");
+        assert_eq!(asked.words, ["atlas", "mart"]);
         // The shown thing is under none.
         let asked =
             created(&mut shown(None), Some("project:atlas")).expect("shown under none: asked");
-        assert_eq!(asked.word, "atlas");
+        assert_eq!(asked.words, ["atlas", "mart"]);
     }
 
     /// **The parent is read off the shape a read answer actually carries.** The
@@ -778,7 +793,7 @@ mod tests {
                 &Creation {
                     handle: &format!("place:{}", "driftwood-pier"),
                     kind: "place",
-                    name: "Driftwood Pier",
+                    name: "Driftwood Wharf",
                     aliases: &[],
                     parent: None,
                 },
@@ -788,11 +803,53 @@ mod tests {
         let asked = consult(&survivor(&["Old Driftwood"]))
             .expect("a creation sharing a word with a folded name is asked about");
         assert_eq!(asked.handle, "place:wonder-wharf");
-        assert_eq!(asked.word, "driftwood");
+        assert_eq!(asked.words, ["driftwood", "wharf"]);
         assert_eq!(
             consult(&survivor(&[])),
             None,
-            "without the folded name there is no word shared"
+            "without the folded name only 'wharf' is shared"
+        );
+    }
+
+    /// **One shared rare word asks nothing; two ask, and a word the store calls
+    /// common does not count towards the two.** The bar is the one the creation-time
+    /// name screen uses, `SHARED_WORDS_NEEDED`.
+    #[test]
+    fn a_single_shared_rare_word_asks_nothing() {
+        let consult = |name: &str, handle: &str, rare: &dyn Fn(&str) -> bool| {
+            let mut ledger = Ledger::default();
+            ledger.record(
+                "s1",
+                vec![place("place:wonder-wharf", "Old Driftwood Wharf")],
+            );
+            ledger.consult(
+                "s1",
+                &Creation {
+                    handle,
+                    kind: "place",
+                    name,
+                    aliases: &[],
+                    parent: None,
+                },
+                rare,
+            )
+        };
+        assert_eq!(
+            consult("Driftwood Bridge", "place:springfield-mall", &|_| true),
+            None,
+            "one shared rare word is a family name or a category, not a repeat"
+        );
+        let asked = consult("Driftwood Wharf Annex", "place:springfield-mall", &|_| true)
+            .expect("two shared rare words still ask");
+        assert_eq!(asked.handle, "place:wonder-wharf", "{asked:?}");
+        assert_eq!(
+            consult(
+                "Driftwood Wharf Annex",
+                "place:springfield-mall",
+                &|word| word != "wharf"
+            ),
+            None,
+            "a word the store calls common does not count towards the two"
         );
     }
 }

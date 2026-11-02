@@ -43,7 +43,7 @@ async fn a_creation_beside_a_thing_shown_three_calls_ago_says_so() {
         &surface
             .call(
                 "add_entity",
-                json!({"kind": "place", "handle": "wharf-road", "name": "Wharf Road",
+                json!({"kind": "place", "handle": "wharf-road", "name": "Wonder Road",
                        "source": "user-named", "sid": sid}),
             )
             .await,
@@ -136,7 +136,7 @@ async fn a_creation_beside_a_sibling_is_asked_about_its_own_words_and_not_the_pa
 
     let asked = created(
         "work",
-        "atlas-donut-shop",
+        "atlas-donut-stand-shop",
         "Donut Shop",
         json!("project:atlas"),
     )
