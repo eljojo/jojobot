@@ -805,6 +805,52 @@ fn a_done_line_key_wins_over_the_falsify_key() {
     );
 }
 
+/// **A `done_line` that holds a clause wins over a `falsify` that holds a different
+/// one.** A reading that takes `done_line` only when `falsify` has no clause would
+/// pass the case above. Here both keys carry a clause and the head meets only the
+/// `done_line`'s.
+#[test]
+fn a_done_line_wins_over_a_falsify_with_its_own_clause() {
+    let repo = repository();
+    let api = stand(green(&repo));
+    let text = report(&as_pairs(&facts_only(&repo)));
+    let mut held =
+        card_falsifying("git rev-list --count HEAD prints 9; done when it prints exactly 3");
+    held["done_line"] = json!("git rev-list --count HEAD prints 9; done when it prints exactly 2");
+    let (code, out, err) = check_card(&repo, &api, &text, Some(&held));
+    assert_eq!(code, 0, "{out}\n{err}");
+    assert!(done_line(&out).starts_with("pass"), "{out}");
+}
+
+/// **The refusal names the key the done line was read from.** A `done_line` with no
+/// clause is refused naming `done_line`, even where `falsify` holds a clause; a card
+/// with no `done_line` whose `falsify` has none is refused naming `falsify`.
+#[test]
+fn an_unrunnable_done_line_names_the_key_it_came_from() {
+    let repo = repository();
+    let api = stand(green(&repo));
+    let text = report(&as_pairs(&facts_only(&repo)));
+    let mut held =
+        card_falsifying("git rev-list --count HEAD prints 9; done when it prints exactly 2");
+    held["done_line"] = json!("git rev-list --count HEAD prints 9");
+    let (code, out, _) = check_card(&repo, &api, &text, Some(&held));
+    assert_eq!(code, 1, "{out}");
+    let line = done_line(&out);
+    assert!(
+        line.starts_with("FAIL") && line.contains("done_line") && !line.contains("falsify"),
+        "{line}"
+    );
+
+    let bare = card_falsifying("git grep -n card -- scripts/check-report");
+    let (code, out, _) = check_card(&repo, &api, &text, Some(&bare));
+    assert_eq!(code, 1, "{out}");
+    let line = done_line(&out);
+    assert!(
+        line.contains("falsify") && !line.contains("done_line"),
+        "{line}"
+    );
+}
+
 /// **A card whose FALSIFY states no done line is refused as unrunnable.** The clause
 /// is required, so a card without it cannot be carried. A header with no card holds
 /// no DONE line.

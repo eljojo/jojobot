@@ -185,12 +185,12 @@ DONE_COMPARES = {
 }
 
 
-def done_says(falsify, commit):
+def done_says(falsify, commit, key="falsify"):
     """Whether the checkout meets the done line in a card's FALSIFY, and the reason.
     It runs only where HEAD is `commit`, the head the report names."""
     clause = DONE_CLAUSE.search(falsify)
     if clause is None:
-        return False, "unrunnable: the card's falsify has no `done when it prints [comparison] N` clause"
+        return False, f"unrunnable: the card's {key} has no `done when it prints [comparison] N` clause"
     wanted = DONE_PRINTS.match(clause.group(1).strip())
     command = falsify[: clause.start()].split(" prints ", 1)[0].strip()
     if wanted is None or not command:
@@ -417,12 +417,13 @@ def main():
     text = sys.stdin.read()
     header = header_of(text)
     review = header.get("REVIEW")
-    card_falsify = None
+    card_falsify, done_key = None, "falsify"
     if args and not review:
         with open(args[1]) as handle:
             card = json.load(handle)
         header = with_card(header, card)
-        card_falsify = card_value(card, ("done_line", "falsify")) or ""
+        done_key = next((key for key in ("done_line", "falsify") if card_value(card, (key,))), "falsify")
+        card_falsify = card_value(card, (done_key,)) or ""
     if not wr.API and not (review and not any(key in header for key in KEYS)):
         print("WAIT_RUN_API is not set: set it to the repository's API root", file=sys.stderr)
         sys.exit(4)
@@ -497,7 +498,7 @@ def main():
             "the function, string or key",
         )
     if card_falsify is not None:
-        results["DONE"] = done_says(card_falsify, commit)
+        results["DONE"] = done_says(card_falsify, commit, done_key)
     if re.fullmatch(r"(?i)none\W*", header.get("RETIRES", "")):
         results["RETIRES"] = (False, "none needs its reason")
     if re.search(r"^net lines by area since \S+", text, re.M) and re.search(r"total; source plus tests", text):
