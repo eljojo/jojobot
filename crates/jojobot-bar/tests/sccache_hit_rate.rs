@@ -200,6 +200,95 @@ fn sccache_the_run_reads_a_server_its_own_children_compile_on() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+const LOOP_CARGO: &str = r#"#!/bin/sh
+echo "${SCCACHE_SERVER_UDS:-unset}" >> "$(dirname "$0")/child-uds"
+case " $* " in
+  *" --list "*)
+    case " $* " in
+      *" --ignored "*) ;;
+      *) echo 'alpha::first: test' ;;
+    esac
+    exit 0 ;;
+esac
+case "$1" in
+  test) echo 'test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s'; exit 0 ;;
+  *) exit 0 ;;
+esac
+"#;
+
+/// A normal `bar narrow` run, with the stand-in sccache and an optional server
+/// the environment names.
+fn run_narrow(tag: &str, named: Option<&str>) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(jojobot_bar::scratch::name(&format!(
+        "jojobot-bar-sccache-narrow-{tag}"
+    )));
+    fs::create_dir_all(&dir).expect("scratch dir");
+    support::loop_repository(&dir);
+    let cargo = dir.join("cargo");
+    support::write_loop_cargo(&cargo, LOOP_CARGO);
+    let sccache = stand_in(&dir, &stats(0, 0), &stats(0, 0));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_jojobot-bar"));
+    command
+        .args(["narrow", "--crate", "jojobot-bar", "--filter", "alpha"])
+        .current_dir(&dir)
+        .env("TMPDIR", &dir)
+        .env("CARGO", &cargo)
+        .env("JOJOBOT_SCCACHE", &sccache)
+        .env_remove("SCCACHE_SERVER_UDS");
+    if let Some(socket) = named {
+        command.env("SCCACHE_SERVER_UDS", socket);
+    }
+    let output = support::output_fenced(&mut command).expect("run bar narrow");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    dir
+}
+
+/// **Every target that starts a private server stops it**, narrow among them:
+/// the run root and its socket go away at the end, and a server left running
+/// would idle for two hours with nothing able to reach it.
+#[test]
+fn sccache_owned_server_stops_for_narrow() {
+    let dir = run_narrow("owned", None);
+    // A read-only call (the format check) is not routed to the server and logs
+    // `unset`; every call that names one names the same.
+    let children: Vec<String> = lines_of(dir.join("child-uds"))
+        .into_iter()
+        .filter(|child| child != "unset")
+        .collect();
+    let socket = children.first().expect("a build child ran").clone();
+    assert!(socket.ends_with("sccache.sock"), "{children:?}");
+    assert!(
+        children.iter().all(|child| *child == socket),
+        "{children:?}"
+    );
+    let stops: Vec<String> = lines_of(dir.join("calls"))
+        .into_iter()
+        .filter(|call| call.contains("--stop-server"))
+        .collect();
+    assert_eq!(
+        stops,
+        vec![format!("--stop-server uds={socket}")],
+        "one stop, on the socket the children used"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A server the environment names belongs to whoever named it.
+#[test]
+fn sccache_a_named_server_is_not_stopped_by_narrow() {
+    let dir = run_narrow("named", Some("/nonexistent/job.sock"));
+    let calls = lines_of(dir.join("calls"));
+    assert!(
+        calls.iter().all(|call| !call.contains("--stop-server")),
+        "{calls:?}"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// **A server the environment already names is the job's own** (the CI job
 /// wrapper starts one per job), so the run uses it as named and leaves it to
 /// the wrapper to stop.

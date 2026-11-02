@@ -241,6 +241,8 @@ impl RunRoot {
 impl Drop for RunRoot {
     fn drop(&mut self) {
         use std::os::unix::fs::PermissionsExt;
+        // Every target that made this root made the server, so every target stops it.
+        jojobot_bar::sccache_stats::stop_this_runs_server();
         // A fixture that left a directory nobody may write cannot be emptied.
         let _ = fs::set_permissions(&self.0, fs::Permissions::from_mode(0o755));
         let _ = fs::remove_dir_all(&self.0);
@@ -1437,7 +1439,6 @@ fn run_check(known: &KnownReds, level: Level) -> std::io::Result<ExitCode> {
     // takes the verdict first. The size check is not here: it is a phase.
     print!("{}", roster_report());
     let cache_after = jojobot_bar::sccache_stats::read();
-    jojobot_bar::sccache_stats::stop_this_runs_server();
     print!(
         "{}",
         jojobot_bar::sccache_stats::line(cache_before, cache_after)
