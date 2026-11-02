@@ -11,6 +11,18 @@ impl Story {
         jojobot::wiring::fill_memory(&self.memory_fold, &self.memory_index).await;
     }
 
+    /// **A message in a box the store cannot read**, planted past the served
+    /// surface and then seen by the server, as a restart would see it: the card
+    /// is quarantined, so no verb lists it and a count reports it.
+    pub async fn mail_is_unreadable_in(&self, mailbox: &str, id: &str) {
+        self.mail.quarantine_by_damage(
+            &jojobot_domain::mailbox::MailboxName(mailbox.to_string()),
+            &jojobot_domain::mailbox::MessageId(id.to_string()),
+            "its row on the page cannot be read",
+        );
+        self.the_store_changed_underneath().await;
+    }
+
     /// Damage the fixture's run read, invalidating the image as a failed refresh
     /// does, or repair it and restore the image. No boot changes the run's state.
     pub async fn the_run_read_is_unreadable(&self, run: &str, unreadable: bool) {

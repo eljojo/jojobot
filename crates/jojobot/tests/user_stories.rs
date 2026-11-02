@@ -246,6 +246,8 @@ mod bulk_review_mark;
 /// A bot is told when another identity rewrites its charter.
 #[path = "user_stories/charter_changed.rs"]
 mod charter_changed;
+#[path = "user_stories/declare_type_needs_a_session.rs"]
+mod declare_type_needs_a_session;
 #[path = "user_stories/folded_mail_texts.rs"]
 mod folded_mail_texts;
 /// "If the person changes in the meantime, show me what's updated."
@@ -294,6 +296,8 @@ mod list_progress;
 /// A list write's receipt does not blame the caller for the keys the server minted.
 #[path = "user_stories/list_receipts.rs"]
 mod list_receipts;
+#[path = "user_stories/list_sent_unreadable_elsewhere.rs"]
+mod list_sent_unreadable_elsewhere;
 /// A tick that changes nothing is refused, and an unknown tick setting is too.
 #[path = "user_stories/list_tick_edges.rs"]
 mod list_tick_edges;
@@ -404,6 +408,10 @@ mod recall_elisions;
 /// The assistant asks recall for the roots of the tree.
 #[path = "user_stories/recall_roots.rs"]
 mod recall_roots;
+#[path = "user_stories/recall_unreadable.rs"]
+mod recall_unreadable;
+#[path = "user_stories/receipt_to_a_person.rs"]
+mod receipt_to_a_person;
 #[path = "user_stories/receipts.rs"]
 mod receipts;
 #[path = "user_stories/refusal_words.rs"]

@@ -107,6 +107,9 @@ pub struct Blindable {
     /// Writes of a key read back with no run and no writer, as writes made before
     /// the store pointed each write at the claim write behind it do.
     unoriginated: std::sync::atomic::AtomicBool,
+    /// The handle whose one-document read fails, as a damaged record's does. See
+    /// [`Blindable::damages_the_record_of`].
+    damaged: std::sync::Mutex<Option<String>>,
     /// The next read of one document waits here, once armed. See
     /// [`Blindable::holds_the_next_document_read`].
     document_gate: std::sync::Mutex<Option<Arc<DocumentGate>>>,
@@ -143,8 +146,16 @@ impl Blindable {
             corpus_blind: std::sync::atomic::AtomicBool::new(false),
             unstamped: std::sync::atomic::AtomicBool::new(false),
             unoriginated: std::sync::atomic::AtomicBool::new(false),
+            damaged: std::sync::Mutex::new(None),
             document_gate: std::sync::Mutex::new(None),
         }
+    }
+
+    /// **The record of one thing cannot be read from here on**, as a damaged row
+    /// cannot: the read of that one document fails and every other answers. The
+    /// story asks through the served surface and jojobot works out what to say.
+    pub fn damages_the_record_of(&self, handle: &str) {
+        *self.damaged.lock().expect("the damage is not poisoned") = Some(handle.to_string());
     }
 
     /// **The next read of one document waits until the gate is released.** The
@@ -259,6 +270,17 @@ impl jojobot_domain::memory::Memory for Blindable {
         if self.blind.load(std::sync::atomic::Ordering::Acquire) {
             return Err(jojobot_domain::memory::MemoryError::Store(
                 "the store cannot be read".into(),
+            ));
+        }
+        if self
+            .damaged
+            .lock()
+            .expect("the damage is not poisoned")
+            .as_deref()
+            == Some(entity.as_str())
+        {
+            return Err(jojobot_domain::memory::MemoryError::Store(
+                "the record cannot be read".into(),
             ));
         }
         let gate = self
