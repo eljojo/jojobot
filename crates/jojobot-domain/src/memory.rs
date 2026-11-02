@@ -3048,8 +3048,8 @@ fn who_may(may: MayWrite, subject: &str, allowed: &[String]) -> String {
             bots()
         ),
         MayWrite::RequestSpec if allowed.is_empty() => format!(
-            "no bot is recorded above the target of '{subject}' to write it, and the target_bot \
-             of a request is fixed once the request exists"
+            "no bot is recorded above the target of '{subject}' to write it, or the request \
+             already holds its target_bot, which is fixed once set"
         ),
         MayWrite::RequestSpec => format!(
             "only a bot above the target of '{subject}' may write it: {}",

@@ -86,6 +86,13 @@ async fn a_manager_asks_for_a_bot_and_only_its_app_reports_on_it() {
         .await
         .says("\"wrote\":false");
 
+    // ── 2b. a target with no manager on the chart has no writer, whoever asks ─
+    marge
+        .refused("add_entity", creating(spec("bot:marge", "machine:theta")))
+        .await
+        .says("\"wrote\":false")
+        .says("KeyNotYours");
+
     // ── 3. the manager above the target asks for the bot ───────────────────
     marge
         .call("add_entity", creating(spec("bot:homer", "machine:theta")))

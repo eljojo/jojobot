@@ -1918,9 +1918,10 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                     // never moves once the request is made.
                     jojobot_domain::memory::MayWrite::RequestSpec => match allowed.is_empty() {
                         true => format!(
-                            "Nothing was written: {e}. Make a new request for the bot instead: \
-                         the target_bot of '{subject}' is fixed, and a request whose target has \
-                         no manager recorded has no writer."
+                            "Nothing was written: {e}. The target_bot of a request is fixed once it \
+                         is set, so a request that holds one stays with it. For any other write, \
+                         name a target_bot that has a manager recorded, or place that bot under \
+                         a manager first: a request whose target has no manager has no writer."
                         ),
                         false => format!(
                             "Nothing was written: {e}. Ask {} to write '{key}' on '{subject}'.",
