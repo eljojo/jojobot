@@ -47,8 +47,26 @@ pub fn open_entries_of(lists: &[HungList<'_>]) -> Vec<String> {
 /// The refusal for a write that would finish a thing with these entries open.
 pub fn refusal(open: &[String]) -> MemoryError {
     MemoryError::InvalidFact(format!(
-        "this cannot be set done while a list on it has open entries: {}. Tick each entry done, \
-         or drop it with a reason, then set done again",
+        "this cannot be set done while a list on it has open entries: {}. Clear each with capture \
+         on its list: tick {{entry: the address, act: done}}, or act: dropped with the reason as \
+         content; then set done again",
         open.join(", ")
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::refusal;
+
+    #[test]
+    fn the_done_refusal_names_capture_with_tick_and_each_entry() {
+        let entries = ["list:alpha#f1".to_owned(), "list:beta#f2".to_owned()];
+        let message = refusal(&entries).to_string();
+        for entry in &entries {
+            assert!(message.contains(entry), "missing entry {entry}: {message}");
+        }
+        for argument in ["capture", "tick", "act"] {
+            assert!(message.contains(argument), "missing {argument}: {message}");
+        }
+    }
 }
