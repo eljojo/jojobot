@@ -1272,6 +1272,45 @@ async fn unstable_a_near_name_creation_is_refused_without_candidates_or_an_overr
     assert_eq!(status, 200, "{landed}");
 }
 
+/// An app that creates a handle already in use is refused without the thing that
+/// wears it as a candidate and without an override, and the same creation under a
+/// free handle lands.
+#[tokio::test]
+async fn unstable_an_exact_handle_collision_serves_no_candidates_and_no_override_token() {
+    let (app, token) = scribe();
+    let served = serve(vec![app], Registry::shipped()).await;
+    let (status, created) = call(
+        &served,
+        &token,
+        "add_entity",
+        json!({"kind": "role", "handle": "lambda", "name": "Kappa", "source": "the scribe",
+               "sets": {"watch_state": "ok"}}),
+    )
+    .await;
+    assert_eq!(status, 200, "{created}");
+
+    let (status, refused) = call(
+        &served,
+        &token,
+        "add_entity",
+        json!({"kind": "role", "handle": "lambda", "name": "Kappa", "source": "the scribe",
+               "sets": {"watch_state": "ok"}}),
+    )
+    .await;
+    assert_a_closed_refusal("add_entity", status, &refused, "HandleTaken");
+    assert_eq!(refused["refused"]["attempted"], "role:lambda", "{refused}");
+
+    let (status, landed) = call(
+        &served,
+        &token,
+        "add_entity",
+        json!({"kind": "role", "handle": "sigma", "name": "Sigma", "source": "the scribe",
+               "sets": {"watch_state": "ok"}}),
+    )
+    .await;
+    assert_eq!(status, 200, "{landed}");
+}
+
 /// An app that writes to a handle nothing wears, one letter from an unreadable
 /// thing's, is refused without that name, and the same write to a thing that is
 /// there lands.
