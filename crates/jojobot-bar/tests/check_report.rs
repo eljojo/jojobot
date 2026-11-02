@@ -778,6 +778,33 @@ fn a_done_line_run_in_another_checkout_than_the_head_is_refused() {
     );
 }
 
+/// **The card's `done_line` key is the done line when it is present, and `falsify`
+/// may then hold prose.** A line's report writes `falsify`, so the PM's runnable
+/// clause lives in its own key. Paired: a `done_line` the head misses fails with the
+/// number, and a card with no `done_line` still reads its clause from `falsify`.
+#[test]
+fn a_done_line_key_wins_over_the_falsify_key() {
+    let repo = repository();
+    let api = stand(green(&repo));
+    let text = report(&as_pairs(&facts_only(&repo)));
+    let mut held = card_falsifying("git grep -n card -- scripts/check-report prints the lines");
+    held["done_line"] = json!("git rev-list --count HEAD prints 9; done when it prints exactly 2");
+    let (code, out, err) = check_card(&repo, &api, &text, Some(&held));
+    assert_eq!(code, 0, "{out}\n{err}");
+    assert!(done_line(&out).starts_with("pass"), "{out}");
+
+    held["done_line"] = json!("git rev-list --count HEAD prints 9; done when it prints exactly 3");
+    let (code, out, _) = check_card(&repo, &api, &text, Some(&held));
+    assert_eq!(code, 1, "{out}");
+    assert!(done_line(&out).contains("printed 2"), "{out}");
+
+    let (code, out, err) = check_card(&repo, &api, &text, Some(&card()));
+    assert_eq!(
+        code, 0,
+        "no done_line reads falsify as before: {out}\n{err}"
+    );
+}
+
 /// **A card whose FALSIFY states no done line is refused as unrunnable.** The clause
 /// is required, so a card without it cannot be carried. A header with no card holds
 /// no DONE line.

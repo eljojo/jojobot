@@ -27,7 +27,7 @@ says which one.
 
 **The card's own keys.** `--card FILE` names a JSON file holding the card's fields as
 `recall` returns them under `fields` for one item, made with `recall` subject
-work:q-CARD keys [owner_module, retires, falsify, review, self_review]. OWNER,
+work:q-CARD keys [owner_module, retires, falsify, review, self_review, done_line]. OWNER,
 RETIRES, FALSIFY and SELF-REVIEW that the header lacks are taken from `owner_module`,
 `retires`, `falsify` and `self_review` (then `review`, unless it is `none`), and are
 checked exactly as a header value is. A header value wins over the card's. The card
@@ -56,7 +56,9 @@ With no INVENTORY line the whole range is owed, as above. In review mode the
 four keys above are checked when the header holds them and are not demanded: a
 review is identified by its range. A report with no REVIEW line is checked as before.
 
-**The card's done line.** With `--card`, a card whose `falsify` holds a clause
+**The card's done line.** With `--card`, the clause is read from `done_line` when
+that key holds a value, which only the PM writes, and from `falsify` otherwise, which a
+line's report overwrites. A card whose `done_line` or `falsify` holds a clause
 `done when it prints [under|over|at most|at least|exactly] N` has a done line. The
 command is the text before the first ` prints `. It runs through `bash -o pipefail -c` in the
 current checkout, so `HEAD` is the head being landed, and its output must be one
@@ -420,7 +422,7 @@ def main():
         with open(args[1]) as handle:
             card = json.load(handle)
         header = with_card(header, card)
-        card_falsify = card_value(card, ("falsify",)) or ""
+        card_falsify = card_value(card, ("done_line", "falsify")) or ""
     if not wr.API and not (review and not any(key in header for key in KEYS)):
         print("WAIT_RUN_API is not set: set it to the repository's API root", file=sys.stderr)
         sys.exit(4)
