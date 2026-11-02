@@ -20,4 +20,5 @@ jobs:
         run: |
           mkdir -p target/bar
           curl -fsS "${{ forgejo.server_url }}/api/v1/repos/${{ forgejo.repository }}/actions/tasks" -o target/bar/tasks.json
-          nix develop -c make size SIZE_ARGS="--weekly --tasks target/bar/tasks.json"
+          WAIT_RUN_API="${{ forgejo.server_url }}/api/v1/repos/${{ forgejo.repository }}" nix develop -c scripts/slow-tests --newest-main > target/bar/slow.txt
+          nix develop -c make size SIZE_ARGS="--weekly --tasks target/bar/tasks.json --slow target/bar/slow.txt"

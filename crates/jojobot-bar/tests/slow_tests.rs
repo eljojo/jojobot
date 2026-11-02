@@ -83,6 +83,45 @@ fn zip_of(logs: &Logs) -> Vec<u8> {
 /// A forge holding one run, number 700: its artifacts, `bar-logs-<job>` for each of
 /// `jobs` and one more that is not a bar log.
 fn stand(jobs: Vec<Logs>) -> String {
+    stand_with_runs(jobs, json!([]))
+}
+
+/// A run as the forge lists it: the keys the tool reads, with the values the real
+/// list carried for a pull-request run and for a push run.
+fn listed_run(id: u64, event: &str, status: &str, hours_ago: u64) -> serde_json::Value {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("a clock")
+        .as_secs();
+    let then = now - hours_ago * 3600;
+    // Civil date from days since 1970 (Hinnant's algorithm), in UTC.
+    let (days, rest) = ((then / 86_400) as i64, then % 86_400);
+    let z = days + 719_468;
+    let era = z / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    let stopped = format!(
+        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}+00:00",
+        rest / 3600,
+        rest % 3600 / 60,
+        rest % 60
+    );
+    json!({
+        "id": id,
+        "workflow_id": if event == "push" { "push.yml" } else { "pull-request.yml" },
+        "event": event,
+        "trigger_event": event,
+        "status": status,
+        "stopped": stopped,
+    })
+}
+
+fn stand_with_runs(jobs: Vec<Logs>, runs: serde_json::Value) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").expect("a local port");
     let addr = format!(
         "http://{}{REPO}",
@@ -97,7 +136,12 @@ fn stand(jobs: Vec<Logs>) -> String {
             let text = String::from_utf8_lossy(&request[..read]).to_string();
             let path = text.split_whitespace().nth(1).unwrap_or_default();
             let rest = path.strip_prefix(REPO).unwrap_or("");
-            let (code, body): (u16, Vec<u8>) = if rest == "/actions/runs/700/artifacts" {
+            let (code, body): (u16, Vec<u8>) = if rest.starts_with("/actions/runs?") {
+                (
+                    200,
+                    json!({ "workflow_runs": runs }).to_string().into_bytes(),
+                )
+            } else if rest == "/actions/runs/700/artifacts" {
                 let mut list: Vec<_> = jobs
                     .iter()
                     .enumerate()
@@ -250,6 +294,60 @@ mod slow_tests {
         assert_eq!(code, 1, "{out}{err}");
         assert!(!out.contains("slow tests over"), "{out}");
         assert!(err.contains("the count says nothing"), "{err}");
+    }
+
+    #[test]
+    fn the_newest_successful_pull_request_run_of_the_week_is_the_one_read() {
+        // Newer runs that are not it: a push run, a dispatched run of the same workflow, a failed pull-request run. Older: a
+        // pull-request run of the week, and one past the week.
+        let api = stand_with_runs(
+            vec![logs("check", log_with(&[(ALPHA, "75.3")]))],
+            json!([
+                listed_run(800, "push", "success", 1),
+                listed_run(790, "workflow_dispatch", "success", 1),
+                listed_run(750, "pull_request", "failure", 2),
+                listed_run(700, "pull_request", "success", 5),
+                listed_run(650, "pull_request", "success", 48),
+            ]),
+        );
+        let (code, out, err) = slow(Some(&api), &["--newest-main"]);
+        assert_eq!(code, 0, "{out}{err}");
+        assert_eq!(
+            out.lines().last(),
+            Some("slow tests over 60 s: 1 (run #700)"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn a_week_with_no_successful_pull_request_run_counts_nothing_and_reads_no_other_run() {
+        // The push run holds artifacts no one may read in its place: id 700 is the only
+        // run the stand-in has logs for, and it is a push run.
+        let api = stand_with_runs(
+            vec![logs("check", log_with(&[(ALPHA, "75.3")]))],
+            json!([
+                listed_run(700, "push", "success", 1),
+                listed_run(650, "pull_request", "success", 24 * 9),
+            ]),
+        );
+        let (code, out, err) = slow(Some(&api), &["--newest-main"]);
+        assert_eq!(code, 0, "{out}{err}");
+        assert_eq!(
+            out.lines().collect::<Vec<_>>(),
+            vec![
+                "slow tests over 60 s: not counted (no successful pull-request run in the last 7 days)"
+            ],
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn a_run_and_the_newest_main_flag_are_asked_one_at_a_time() {
+        let api = stand(vec![]);
+        let (code, _, _) = slow(Some(&api), &["700", "--newest-main"]);
+        assert_eq!(code, 2);
+        let (code, _, _) = slow(Some(&api), &[]);
+        assert_eq!(code, 2);
     }
 
     #[test]

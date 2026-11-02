@@ -1415,3 +1415,64 @@ fn the_weekly_number_prints_runner_occupancy_from_the_forges_task_records() {
     );
     let _ = fs::remove_dir_all(&dir);
 }
+
+/// **The weekly number carries the slow-test count the reader printed.** The bar
+/// reaches no forge: it prints the last line of the file `scripts/slow-tests
+/// --newest-main` wrote, which names the run it counted or says nothing was
+/// counted. Without the file the line says it was not read, and a file that holds
+/// no line is a refusal and not a zero.
+#[test]
+fn the_weekly_number_prints_the_slow_test_count_from_the_readers_file() {
+    let dir = repo("slow-count");
+    for (path, text) in [
+        ("size-ratchet.toml", ratchet("")),
+        ("crates/jojobot-mcp/served-texts/tools.md", "t".repeat(40)),
+        ("CLAUDE.md", "c".repeat(40)),
+    ] {
+        commit_files(&dir, &[(path, text)]);
+    }
+    let line_of = |args: &[&str]| {
+        let weekly = bar_with(&dir, args, None);
+        let line = weekly
+            .stdout
+            .lines()
+            .find(|line| line.starts_with("slow tests"))
+            .map(str::to_string);
+        (weekly.code, line)
+    };
+
+    let counted = dir.join("counted.txt");
+    fs::write(
+        &counted,
+        "75.3s  check  alpha::case\nslow tests over 60 s: 1 (run #700)\n",
+    )
+    .unwrap();
+    let counted = counted.to_str().unwrap().to_string();
+    assert_eq!(
+        line_of(&["size", "--weekly", "--slow", &counted]),
+        (
+            Some(0),
+            Some("slow tests over 60 s: 1 (run #700)".to_string())
+        )
+    );
+
+    let none = dir.join("none.txt");
+    fs::write(
+        &none,
+        "slow tests over 60 s: not counted (no successful pull-request run in the last 7 days)\n",
+    )
+    .unwrap();
+    let (code, line) = line_of(&["size", "--weekly", "--slow", none.to_str().unwrap()]);
+    assert_eq!(code, Some(0));
+    assert!(line.unwrap().contains("not counted"));
+
+    let (code, line) = line_of(&["size", "--weekly"]);
+    assert_eq!(code, Some(0));
+    assert!(line.unwrap().starts_with("slow tests: not read"));
+
+    let empty = dir.join("empty.txt");
+    fs::write(&empty, "").unwrap();
+    let (code, _) = line_of(&["size", "--weekly", "--slow", empty.to_str().unwrap()]);
+    assert_eq!(code, Some(1));
+    let _ = fs::remove_dir_all(&dir);
+}

@@ -932,7 +932,9 @@ fn boot_load_line() -> Result<String, String> {
 pub fn run(args: &[String]) -> std::io::Result<std::process::ExitCode> {
     use std::process::ExitCode;
     let usage = || {
-        eprintln!("usage: bar size [--weekly [--tasks FILE] | --net [--reason-file FILE]]");
+        eprintln!(
+            "usage: bar size [--weekly [--tasks FILE] [--slow FILE] | --net [--reason-file FILE]]"
+        );
         Ok(ExitCode::from(2))
     };
     let fail = |message: String| {
@@ -951,11 +953,15 @@ pub fn run(args: &[String]) -> std::io::Result<std::process::ExitCode> {
             })
         }
         [weekly, rest @ ..] if weekly == "--weekly" => {
-            let tasks = match rest {
-                [] => None,
-                [flag, file] if flag == "--tasks" => Some(file),
-                _ => return usage(),
-            };
+            let (mut tasks, mut slow) = (None, None);
+            let mut rest = rest.iter();
+            while let Some(flag) = rest.next() {
+                match (flag.as_str(), rest.next()) {
+                    ("--tasks", Some(file)) if tasks.is_none() => tasks = Some(file),
+                    ("--slow", Some(file)) if slow.is_none() => slow = Some(file),
+                    _ => return usage(),
+                }
+            }
             let limits = match load(Path::new(RATCHET_FILE)) {
                 Ok(limits) => limits,
                 Err(e) => return fail(e),
@@ -997,6 +1003,23 @@ pub fn run(args: &[String]) -> std::io::Result<std::process::ExitCode> {
                     .map_err(|e| format!("{file}: {e}"))
                     .and_then(|text| crate::occupancy::weekly_line(&text))
                 {
+                    Ok(line) => println!("{line}"),
+                    Err(e) => return fail(e),
+                },
+            }
+            match slow {
+                None => println!(
+                    "slow tests: not read (pass --slow FILE, the output of scripts/slow-tests --newest-main)"
+                ),
+                Some(file) => match std::fs::read_to_string(file)
+                    .map_err(|e| format!("{file}: {e}"))
+                    .and_then(|text| {
+                        text.lines()
+                            .rev()
+                            .find(|line| !line.trim().is_empty())
+                            .map(str::to_string)
+                            .ok_or_else(|| format!("{file}: holds no line"))
+                    }) {
                     Ok(line) => println!("{line}"),
                     Err(e) => return fail(e),
                 },

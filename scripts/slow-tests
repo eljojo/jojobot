@@ -2,6 +2,7 @@
 """**Print the cases a run's logs show over a bound, and how many there are.**
 
     scripts/slow-tests RUN_ID [--over SECONDS]
+    scripts/slow-tests --newest-main [--over SECONDS]
 
 RUN_ID is the number `scripts/wait-run` prints after `run #`. A job's own log on
 the forge holds only the bar's verdict block; the case lines are in the logs the
@@ -13,6 +14,12 @@ compile time is not in it. A case that more than one job ran is counted once, wi
 the longest time any job saw and the job that saw it. The forge keeps an artifact
 for seven days, so an older run reads as expired.
 
+`--newest-main` takes the run itself: the newest successful pull-request run (the
+run of a pull request to main, which is the one run that describes what is
+deployed, rule 759) that stopped in the last seven days. With none, the last line
+says nothing was counted, and no other run is read in its place: a branch run never
+stands for main.
+
 Each case over the bound is printed, slowest first, as
 `<seconds>s  <job>  <case>`, and the last line is
 `slow tests over <bound> s: <count> (run #<id>)`. The bound is 60 seconds unless
@@ -23,6 +30,7 @@ Exit code: 0 the run was read, 1 no artifact held a timed case line (the count
 would say nothing), 4 no API root, or the run is not on the forge.
 """
 import argparse
+import datetime
 import importlib.machinery
 import importlib.util
 import io
@@ -34,6 +42,7 @@ import urllib.request
 import zipfile
 
 BOUND_SECONDS = 60.0
+WEEK = datetime.timedelta(days=7)
 TIMED = re.compile(r"^test (\S+) \.\.\. (?:ok|FAILED) <(\d+(?:\.\d+)?)s>$")
 
 
@@ -99,15 +108,48 @@ def artifact_logs(wr, run):
     return logs, expired
 
 
+def newest_main(wr, now):
+    """The id of the newest successful pull-request run that stopped within the week
+    before `now`, or None. Only the pull-request workflow's runs of a pull request
+    count; a push to a branch is not one."""
+    held = []
+    for run in wr.runs_of(event="pull_request", status="success"):
+        stopped = datetime.datetime.fromisoformat(run["stopped"])
+        if (
+            run.get("workflow_id") == "pull-request.yml"
+            and (run.get("event") or run.get("trigger_event")) == "pull_request"
+            and run.get("status") == "success"
+            and now - WEEK <= stopped <= now
+        ):
+            held.append((stopped, run["id"]))
+    return max(held)[1] if held else None
+
+
 def main():
     ask = argparse.ArgumentParser(description="Cases a Forgejo run's logs show over a bound.")
-    ask.add_argument("run", help="the run's number, as scripts/wait-run prints it after run #")
+    ask.add_argument("run", nargs="?",
+                     help="the run's number, as scripts/wait-run prints it after run #")
+    ask.add_argument("--newest-main", action="store_true",
+                     help="read the newest successful pull-request run of the last week")
     ask.add_argument("--over", type=float, default=BOUND_SECONDS, help="seconds (default %(default)s)")
     args = ask.parse_args()
     wr = wait_run()
     if not wr.API:
         print("WAIT_RUN_API is not set: set it to the repository's API root", file=sys.stderr)
         sys.exit(4)
+    if bool(args.run) == args.newest_main:
+        ask.error("name a run or --newest-main, not both and not neither")
+    bound = f"{args.over:g}"
+    if args.newest_main:
+        try:
+            args.run = newest_main(wr, datetime.datetime.now(datetime.timezone.utc))
+        except wr.Gone as err:
+            print(f"the forge has nothing at {err}", file=sys.stderr)
+            sys.exit(4)
+        if args.run is None:
+            print(f"slow tests over {bound} s: not counted "
+                  "(no successful pull-request run in the last 7 days)")
+            return
     try:
         logs, expired = artifact_logs(wr, args.run)
     except wr.Gone as err:
@@ -123,7 +165,6 @@ def main():
     if len(silent) == len(logs):
         print("no job's logs hold a timed case line: the count says nothing", file=sys.stderr)
         sys.exit(1)
-    bound = f"{args.over:g}"
     print(f"slow tests over {bound} s: {len(rows)} (run #{args.run})")
 
 
