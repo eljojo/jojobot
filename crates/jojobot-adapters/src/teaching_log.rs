@@ -158,6 +158,10 @@ pub struct LoggedTeachings {
     writer: Writer,
     log: Arc<dyn LogStore>,
     held: Arc<Mutex<Held>>,
+    /// **The pairs the ledger holds for runs whose reads are certain**, readable
+    /// without the held mutex, which covers log I/O. A pair here is answered
+    /// before the writer queue; see [`LoggedTeachings::publish`].
+    known: Arc<std::sync::RwLock<BTreeSet<(String, String)>>>,
 }
 
 fn run(sid: &Sid) -> RunId {
@@ -189,6 +193,7 @@ impl LoggedTeachings {
                 shadow: None,
                 uncertain: BTreeSet::new(),
             })),
+            known: Arc::default(),
         };
         this.fill(marks).await?;
         Ok(this)
@@ -218,6 +223,7 @@ impl LoggedTeachings {
                     report,
                 }),
             })),
+            known: Arc::default(),
         };
         this.fill(marks).await?;
         Ok(this)
@@ -339,6 +345,7 @@ impl LoggedTeachings {
                 .map_err(refused)?;
             if batches.is_empty() {
                 held.uncertain.clear();
+                self.publish(held);
                 return Ok(());
             }
             for batch in batches {
@@ -352,6 +359,23 @@ impl LoggedTeachings {
                 held.head = batch.range().last;
             }
         }
+    }
+
+    /// **Publish the pairs a first contact may answer without the writer.** A run
+    /// whose append outcome is unknown is left out, so its contact still goes
+    /// through the writer and meets the refusal. Called wherever the held state
+    /// or the uncertain runs change, with the held mutex taken.
+    fn publish(&self, held: &Held) {
+        let known = held
+            .state
+            .taught()
+            .filter(|(run, _)| !held.uncertain.contains(run))
+            .map(|(run, domain)| (run.0.clone(), domain.clone()))
+            .collect();
+        *self
+            .known
+            .write()
+            .expect("the known pairs are not poisoned") = known;
     }
 
     /// Append the events as one batch and apply them from the appended value.
@@ -401,6 +425,7 @@ impl LoggedTeachings {
                     }
                 }
                 held.head = range.last;
+                self.publish(held);
                 Ok(())
             }
             Append::DefinitelyNotCommitted => Err(TeachingError::Store(
@@ -413,6 +438,7 @@ impl LoggedTeachings {
                             run.clone()
                         }
                     }));
+                self.publish(held);
                 self.recover(held).await;
                 Err(TeachingError::Indeterminate)
             }
@@ -442,6 +468,16 @@ impl Teachings for LoggedTeachings {
         domain: &str,
         at: Timestamp,
     ) -> Result<bool, TeachingError> {
+        // **A pair already held writes nothing**, so it neither waits behind an
+        // unrelated write on the shared writer nor reads the log's tail.
+        let held_already = self
+            .known
+            .read()
+            .expect("the known pairs are not poisoned")
+            .contains(&(sid.as_str().to_string(), domain.to_string()));
+        if held_already {
+            return Ok(false);
+        }
         let this = self.clone();
         let (sid, domain) = (sid.clone(), domain.to_string());
         self.writer

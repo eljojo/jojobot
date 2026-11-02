@@ -161,6 +161,164 @@ async fn writer_recovery_a_known_teaching_read_passes_a_pending_write() {
     );
 }
 
+/// A log that counts its tail reads, so a case can tell a contact that reread the
+/// tail from one that did not.
+#[derive(Default)]
+struct ReadCountingLog {
+    log: jojobot_domain::log::testing::InMemoryLog,
+    tail_reads: AtomicUsize,
+}
+
+#[async_trait]
+impl jojobot_domain::log::LogStore for ReadCountingLog {
+    async fn append(
+        &self,
+        head: jojobot_domain::log::Position,
+        batch: &jojobot_domain::log::SealedBatch,
+    ) -> Result<jojobot_domain::log::Append, jojobot_domain::log::LogError> {
+        self.log.append(head, batch).await
+    }
+
+    async fn read_from(
+        &self,
+        position: jojobot_domain::log::Position,
+        bound: usize,
+    ) -> Result<Vec<jojobot_domain::log::SealedBatch>, jojobot_domain::log::LogError> {
+        self.tail_reads.fetch_add(1, Ordering::SeqCst);
+        self.log.read_from(position, bound).await
+    }
+
+    async fn load_snapshot(
+        &self,
+    ) -> Result<Option<jojobot_domain::log::ValidatedSnapshot>, jojobot_domain::log::LogError> {
+        self.log.load_snapshot().await
+    }
+
+    async fn store_snapshot(
+        &self,
+        snapshot: &jojobot_domain::log::ValidatedSnapshot,
+    ) -> Result<(), jojobot_domain::log::LogError> {
+        self.log.store_snapshot(snapshot).await
+    }
+}
+
+/// The same rule on the ledger boot serves. A pair the ledger holds is answered
+/// without the writer queue and without a tail read, while an unrelated write
+/// owns the writer. **Paired**: a pair not held waits behind that write and is
+/// recorded once it ends.
+#[tokio::test]
+async fn writer_recovery_a_known_teaching_read_passes_a_pending_write_on_the_served_ledger() {
+    use crate::teaching_log::{LoggedTeachings, Mark};
+    let log = Arc::new(ReadCountingLog::default());
+    let writer = crate::writer::Writer::default();
+    let control = Sid("betaqq".into());
+    let marks = [Mark {
+        sid: control.clone(),
+        domain: "claims".into(),
+        taught_at: Timestamp::UNIX_EPOCH,
+    }];
+    let ledger = LoggedTeachings::open(log.clone(), &marks)
+        .await
+        .expect("the ledger opens")
+        .with_writer(writer.clone());
+
+    // An unrelated write owns the writer until the case lets it go.
+    let (started, release) = (Arc::new(Notify::new()), Arc::new(Notify::new()));
+    let unrelated = {
+        let (writer, started, release) = (writer.clone(), started.clone(), release.clone());
+        tokio::spawn(async move {
+            writer
+                .run(async move {
+                    started.notify_one();
+                    release.notified().await;
+                })
+                .await
+        })
+    };
+    started.notified().await;
+
+    let (jobs, tail_reads) = (
+        writer.submitted_jobs(),
+        log.tail_reads.load(Ordering::SeqCst),
+    );
+    let known = ledger.first_contact(&control, "claims", Timestamp::UNIX_EPOCH);
+    tokio::pin!(known);
+    std::future::poll_fn(|cx| {
+        assert!(
+            matches!(known.as_mut().poll(cx), std::task::Poll::Ready(Ok(false))),
+            "a known teaching read queued behind an unrelated write"
+        );
+        std::task::Poll::Ready(())
+    })
+    .await;
+    assert_eq!(writer.submitted_jobs(), jobs, "a known contact took a turn");
+    assert_eq!(
+        log.tail_reads.load(Ordering::SeqCst),
+        tail_reads,
+        "a known contact reread the log"
+    );
+
+    // A pair the ledger does not hold waits for the writer.
+    let fresh = Sid("alphaq".into());
+    let new_pair = ledger.first_contact(&fresh, "claims", Timestamp::UNIX_EPOCH);
+    tokio::pin!(new_pair);
+    std::future::poll_fn(|cx| {
+        assert!(
+            new_pair.as_mut().poll(cx).is_pending(),
+            "a new teaching ran past the writer"
+        );
+        std::task::Poll::Ready(())
+    })
+    .await;
+    release.notify_one();
+    unrelated.await.expect("the unrelated write ends");
+    assert!(new_pair.await.expect("the new teaching is recorded"));
+}
+
+/// A run whose append is unresolved still refuses on the served ledger, even for
+/// a pair it held before; a run the ledger holds with certainty is answered
+/// beside it.
+#[tokio::test]
+async fn writer_recovery_an_unresolved_teaching_refuses_beside_a_known_pair_on_the_served_ledger() {
+    use crate::teaching_log::LoggedTeachings;
+    use jojobot_domain::log::testing::{Fault, FaultLog, InMemoryLog};
+    let log = InMemoryLog::default();
+    let ledger = LoggedTeachings::open(Arc::new(log.clone()), &[])
+        .await
+        .expect("the ledger opens");
+    let (lisa, marge) = (Sid("lisaqq".into()), Sid("margeq".into()));
+    for run in [&lisa, &marge] {
+        assert!(
+            ledger
+                .first_contact(run, "claims", Timestamp::UNIX_EPOCH)
+                .await
+                .expect("the run is taught")
+        );
+    }
+    log.inject(Fault::DelayedCommit).await;
+    assert!(matches!(
+        ledger
+            .first_contact(&lisa, "kitchen", Timestamp::UNIX_EPOCH)
+            .await,
+        Err(TeachingError::Indeterminate)
+    ));
+    // Lisa held `claims` before, and still refuses: her run is unresolved.
+    assert!(
+        ledger
+            .first_contact(&lisa, "claims", Timestamp::UNIX_EPOCH)
+            .await
+            .is_err(),
+        "an unresolved run was answered as held"
+    );
+    // Marge is held with certainty and is answered.
+    assert!(
+        !ledger
+            .first_contact(&marge, "claims", Timestamp::UNIX_EPOCH)
+            .await
+            .expect("marge is answered"),
+    );
+}
+
 /// Opening a held box with no new messages moves nothing. The read keeps its
 /// fast path while a different rail's write is still awaiting its commit reply.
 #[tokio::test]
