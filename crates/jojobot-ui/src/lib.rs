@@ -129,14 +129,65 @@ mod tests {
     /// query API and the domain's value types are the only way in.
     #[test]
     fn the_manifest_names_no_store_crate() {
-        let forbidden = ["jojobot", "jojobot-adapters", "jojobot-mcp", "sqlx"];
+        // Spelled in two parts, so a text search of this crate for a store crate's
+        // name finds a real use and not this list.
+        let mut forbidden: Vec<String> = ["", "-adapters", "-mcp"]
+            .iter()
+            .map(|tail| format!("jojobot{tail}"))
+            .collect();
+        forbidden.push(["sql", "x"].concat());
         let named: Vec<&str> = include_str!("../Cargo.toml")
             .lines()
             .filter(|line| !line.starts_with(['#', '[', ' ']))
             .filter_map(|line| line.split(['=', '.', ' ']).next())
-            .filter(|name| forbidden.contains(name))
+            .filter(|name| forbidden.iter().any(|bad| bad == name))
             .collect();
         assert!(named.is_empty(), "the manifest names {named:?}");
+    }
+
+    /// **Every public trait the domain exports is either a store port this crate's
+    /// lint list forbids, or named here as no store.** A new port fails this case
+    /// until it is listed, so the boundary cannot fall behind the domain.
+    #[test]
+    fn every_public_domain_trait_is_forbidden_to_a_page_or_named_as_no_store() {
+        // A trait that sends or helps and holds no store. TEMPORARY(9.3.8) with the list.
+        const NO_STORE: [&str; 5] = ["Carrier", "Nudge", "Notifier", "Lookup", "ServedWrite"];
+        fn traits_in(dir: &std::path::Path, found: &mut Vec<String>) {
+            for entry in std::fs::read_dir(dir).expect("the domain source reads") {
+                let path = entry.expect("an entry").path();
+                if path.to_string_lossy().contains("testing") {
+                    continue;
+                }
+                if path.is_dir() {
+                    traits_in(&path, found);
+                } else if path.extension().is_some_and(|ext| ext == "rs") {
+                    let text = std::fs::read_to_string(&path).expect("a source file reads");
+                    found.extend(text.lines().filter_map(|line| {
+                        let name = line.trim_start().strip_prefix("pub trait ")?;
+                        let end = name.find(|c: char| !c.is_alphanumeric() && c != '_');
+                        Some(name[..end.unwrap_or(name.len())].to_string())
+                    }));
+                }
+            }
+        }
+        let mut exported = Vec::new();
+        let domain = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../jojobot-domain/src");
+        traits_in(&domain, &mut exported);
+        assert!(
+            exported.len() > 10,
+            "the scan finds the domain's traits: {exported:?}"
+        );
+        let listed = include_str!("../clippy.toml");
+        let missing: Vec<&String> = exported
+            .iter()
+            .filter(|name| {
+                !NO_STORE.contains(&name.as_str()) && !listed.contains(&format!("::{name}\""))
+            })
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "name each in clippy.toml, or in NO_STORE if it holds no store: {missing:?}"
+        );
     }
 
     /// The `Origin` must equal the configured origin exactly; with none, the
