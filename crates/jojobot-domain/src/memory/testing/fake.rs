@@ -4420,11 +4420,36 @@ impl Memory for InMemoryMemory {
             let (mut held_served, mut after_served) = (held.clone(), served.clone());
             self.compose_reference_fields(&mut held_served);
             self.compose_reference_fields(&mut after_served);
-            super::super::guard_fit(
+            // **The done rule, asked of the state the merge leaves**: a list is hung
+            // on the survivor when its parent ends at the survivor once this merge
+            // counts, so the lists the fold moves under it are read too.
+            let open = if super::super::done_gate::moves_to_done(
+                survivor.kind_token(),
+                &held_served,
+                &after_served,
+            ) {
+                let mut merges_after = self.merges.lock().expect("fake mutex poisoned").clone();
+                merges_after.push(StoredMerge {
+                    folded: folded_key.clone(),
+                    survivor: survivor_key.clone(),
+                    merged_at: self.clock().now(),
+                    session: None,
+                    claims: moved.clone(),
+                });
+                // A list names its parent by handle; the merges are kept by key.
+                self.open_entries_hung_on(&held_facts, &|parent| {
+                    self.resolve(parent)
+                        .is_some_and(|(key, _)| ended_at(&merges_after, key) == survivor_key)
+                })
+            } else {
+                Vec::new()
+            };
+            self.guard_fit_with_open(
                 survivor.kind_token(),
                 &held_served,
                 &after_served,
                 &self.kind_keys_of(survivor.kind_token()),
+                &open,
             )?;
             self.guards_numbering(
                 &super::super::numbered::Change {

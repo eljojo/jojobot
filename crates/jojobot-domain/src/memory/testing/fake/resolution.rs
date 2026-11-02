@@ -77,10 +77,23 @@ impl InMemoryMemory {
         declared: &[crate::memory::types::DeclaredType],
     ) -> Result<(), MemoryError> {
         let open = if crate::memory::done_gate::moves_to_done(kind, before, after) {
-            self.open_entries_hung_on(thing, facts)
+            self.open_entries_hung_on(facts, &|parent| parent == thing)
         } else {
             Vec::new()
         };
+        self.guard_fit_with_open(kind, before, after, declared, &open)
+    }
+
+    /// **The guard with the open entries already gathered**, for a write that
+    /// asks them of a state it has not stored yet (a merge).
+    pub(super) fn guard_fit_with_open(
+        &self,
+        kind: &str,
+        before: &std::collections::BTreeMap<String, String>,
+        after: &std::collections::BTreeMap<String, String>,
+        declared: &[crate::memory::types::DeclaredType],
+        open: &[String],
+    ) -> Result<(), MemoryError> {
         let mut resolved = std::collections::BTreeMap::new();
         for (_, items) in crate::memory::reference_field_values(after, declared) {
             for item in items {
@@ -92,19 +105,24 @@ impl InMemoryMemory {
                 }
             }
         }
-        crate::memory::guard_fit_resolved(kind, before, after, declared, &resolved, &open)
+        crate::memory::guard_fit_resolved(kind, before, after, declared, &resolved, open)
     }
 
     /// **The open entries of the live lists hung on a thing**, read off the
     /// claims given, as the real store reads them inside its own write.
-    fn open_entries_hung_on(&self, thing: &EntityId, facts: &[Fact]) -> Vec<String> {
+    /// `hung_on` says whether a list's parent is the thing.
+    pub(super) fn open_entries_hung_on(
+        &self,
+        facts: &[Fact],
+        hung_on: &dyn Fn(&EntityId) -> bool,
+    ) -> Vec<String> {
         let declared = self.declarations();
         let hung: Vec<(std::collections::BTreeMap<String, String>, Vec<Fact>)> = self
             .known()
             .iter()
             .filter(|e| {
                 e.kind == EntityKind::LIST
-                    && e.parent.as_ref() == Some(thing)
+                    && e.parent.as_ref().is_some_and(hung_on)
                     && e.merged_into.is_none()
                     && e.archived.is_none()
             })

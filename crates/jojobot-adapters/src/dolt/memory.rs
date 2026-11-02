@@ -41,7 +41,7 @@ use jojobot_domain::memory::{
     FactAddress, FactId, FactPatch, FactStatus, FieldAges, FieldWrite, FormerHandle, Guarded,
     KeyWrite, Memory, MemoryError, Merge, NewEntity, NewFact, Provenance, Receipt, Retraction,
     Standing, WriteSummary, apply_entity_patch, apply_fact_patch, folded_ages, folded_fields,
-    guard, guard_fit,
+    guard,
     kinds::{self, NotAKind},
     merge_account,
     must::judge,
@@ -6239,12 +6239,19 @@ impl Memory for DoltMemory {
             .await?;
         self.compose_reference_fields(&mut tx, &mut served_after)
             .await?;
-        guard_fit(
+        // **The done rule has one site**: the guard capture and update_fact use, so a
+        // merge that would leave the survivor at done is refused for an open entry on
+        // a list it holds or a list the fold moved under it (the merge event is
+        // already written, so the survivor serves the duplicate's children).
+        self.guard_fit_resolved(
+            &mut tx,
+            &survivor_key,
             survivor.kind_token(),
             &served_before,
             &served_after,
             &governs,
-        )?;
+        )
+        .await?;
         if let Some(refusal) = numbering.refuses(&jojobot_domain::memory::numbered::Change {
             holds: vec![(survivor_handle.clone(), survivor_after)],
             leaves: vec![folded_handle.clone()],

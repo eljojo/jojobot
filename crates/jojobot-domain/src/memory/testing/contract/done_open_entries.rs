@@ -59,6 +59,17 @@ async fn a_thing_with_a_list<M: Memory>(
     (work, list)
 }
 
+/// A work item with no list.
+async fn a_bare_work_item<M: Memory>(store: &M, slug: &str) -> EntityId {
+    let work = EntityId(format!("work:{slug}"));
+    add(
+        store,
+        NewEntity::new(work.clone(), slug, "contract-fixture"),
+    )
+    .await;
+    work
+}
+
 /// An entry written the way `capture` writes one: the claim carries an order key.
 async fn an_entry<M: Memory>(store: &M, list: &EntityId, words: &str, order: &str) -> Fact {
     capture(
@@ -317,5 +328,86 @@ pub async fn a_list_archived_or_folded_away_does_not_block_done<M: Memory>(store
     assert_eq!(
         store.fields(&folded_from).await.expect("reads")["status"],
         "done"
+    );
+}
+
+/// **A merge that would leave the survivor at done is held to the same rule.**
+/// The duplicate says done and folds onto a survivor that holds no status, so the
+/// fold moves it to done whatever the order of the two writes; an open entry on a list the survivor holds, or on one the fold moves
+/// under it, refuses the merge and names the entry, and nothing of the fold lands.
+/// **Paired**: once every entry is ticked the same merge lands and the survivor
+/// serves done.
+pub async fn a_merge_that_would_finish_work_with_an_open_entry_is_refused<M: Memory>(store: &M) {
+    // The survivor's own list holds the open entry.
+    let (keep, keep_list) =
+        a_work_item_with_a_list(store, "contract-merge-gate-keep", "sink").await;
+    let open = an_entry(store, &keep_list, "still to do", "m").await;
+    let twin = a_bare_work_item(store, "contract-merge-gate-twin").await;
+    capture(store, status(&twin, "done")).await;
+
+    let message = refusal_text(
+        store
+            .merge(
+                &twin,
+                &keep,
+                Some("one card under two names"),
+                date(2026, 11, 2),
+                &other_caller(),
+                None,
+            )
+            .await
+            .expect_err("the merge would finish work with an open entry"),
+    );
+    assert!(message.contains(&open.address().to_string()), "{message}");
+    assert!(
+        !store
+            .fields(&keep)
+            .await
+            .expect("reads")
+            .contains_key("status"),
+        "a refused merge leaves the survivor as it was"
+    );
+
+    a_tick(store, &keep_list, &open, "done").await;
+    store
+        .merge(
+            &twin,
+            &keep,
+            Some("one card under two names"),
+            date(2026, 11, 2),
+            &other_caller(),
+            None,
+        )
+        .await
+        .expect("with every entry ticked the same merge lands");
+    assert_eq!(store.fields(&keep).await.expect("reads")["status"], "done");
+
+    // The open entry sits on a list the fold moves under the survivor.
+    let alive = a_bare_work_item(store, "contract-merge-gate-alive").await;
+    let (dup, dup_list) = a_work_item_with_a_list(store, "contract-merge-gate-dup", "sink").await;
+    capture(store, status(&dup, "done")).await;
+    let moved = an_entry(store, &dup_list, "moved step", "m").await;
+
+    let message = refusal_text(
+        store
+            .merge(
+                &dup,
+                &alive,
+                Some("one card under two names"),
+                date(2026, 11, 2),
+                &other_caller(),
+                None,
+            )
+            .await
+            .expect_err("a list the fold moves under the survivor blocks done too"),
+    );
+    assert!(message.contains(&moved.address().to_string()), "{message}");
+    assert!(
+        !store
+            .fields(&alive)
+            .await
+            .expect("reads")
+            .contains_key("status"),
+        "a refused merge leaves the survivor as it was"
     );
 }

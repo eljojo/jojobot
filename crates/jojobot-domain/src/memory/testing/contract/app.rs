@@ -322,6 +322,8 @@ pub async fn run_all_app<M: Memory>(store: &M) {
         .await;
     super::done_open_entries::a_project_is_refused_done_like_a_work_item(store).await;
     super::done_open_entries::a_list_archived_or_folded_away_does_not_block_done(store).await;
+    super::done_open_entries::a_merge_that_would_finish_work_with_an_open_entry_is_refused(store)
+        .await;
     super::reference_kinds::waiting_on_naming_work_is_refused_toward_depends_on(store).await;
     super::reference_kinds::a_reference_naming_two_kinds_keeps_both_and_one_kind_keeps_its_spelling(store).await;
     an_app_event_lands_once_and_a_retry_writes_nothing(store).await;
