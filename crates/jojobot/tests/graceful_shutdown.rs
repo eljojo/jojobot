@@ -507,12 +507,13 @@ fn a_stop_during_the_release_notes_ends_the_send_and_no_note_is_sent_twice() {
     let mut whole = start("jojobot-notes-whole");
     whole.wait_for_line("release notes pass finished", STOP_PATIENCE);
     whole.stopped();
-    let expected = notes_sent(&whole.seen);
+    let first = notes_sent(&whole.seen);
     assert!(
-        !expected.is_empty(),
+        !first.is_empty(),
         "a fresh instance sends its bots the release notes. What it said:\n{}",
         whole.seen.join("\n")
     );
+    let (expected, _) = starts_until_nothing_is_left(first, whole.take_state());
 
     // **The cut**: the stop comes with the serving line, and the log must show it
     // landed inside the notes pass. A parent descheduled between the serving line
@@ -535,27 +536,35 @@ fn a_stop_during_the_release_notes_ends_the_send_and_no_note_is_sent_twice() {
     );
     let state = cut.take_state();
 
-    // **The next start finishes it**, and the one after has nothing to send.
-    let mut next = start_over(state);
-    next.wait_for_line("release notes pass finished", STOP_PATIENCE);
-    next.stopped();
-    let mut sent = notes_sent(&cut.seen);
-    for (bot, count) in notes_sent(&next.seen) {
-        *sent.entry(bot).or_default() += count;
-    }
+    // **The starts after it finish it**, up to the start that has nothing to send.
+    let (sent, _) = starts_until_nothing_is_left(notes_sent(&cut.seen), state);
     assert_eq!(
         sent, expected,
-        "the notes sent across the stop and the next start are not the whole, once each"
+        "the notes sent across the stop and the starts after it are not the whole, once each"
     );
-    let state = next.take_state();
-    let mut last = start_over(state);
-    last.wait_for_line("release notes pass finished", STOP_PATIENCE);
-    last.stopped();
-    assert!(
-        notes_sent(&last.seen).is_empty(),
-        "a start after the notes were all sent sent some again: {:?}",
-        notes_sent(&last.seen)
-    );
+}
+
+/// **Start over `state` until a start sends no note, and add up what the starts
+/// sent** to `sent`. One message carries as many whole notes as fit, so an
+/// instance that holds more notes than one message takes needs more than one start
+/// to be told them all; the start that sends none is the proof that none is left.
+fn starts_until_nothing_is_left(
+    mut sent: std::collections::BTreeMap<String, u64>,
+    mut state: Scratch,
+) -> (std::collections::BTreeMap<String, u64>, Scratch) {
+    loop {
+        let mut run = start_over(state);
+        run.wait_for_line("release notes pass finished", STOP_PATIENCE);
+        run.stopped();
+        let more = notes_sent(&run.seen);
+        state = run.take_state();
+        if more.is_empty() {
+            return (sent, state);
+        }
+        for (bot, count) in more {
+            *sent.entry(bot).or_default() += count;
+        }
+    }
 }
 
 /// **A stream still open when the drain window ends is cut at the window, and

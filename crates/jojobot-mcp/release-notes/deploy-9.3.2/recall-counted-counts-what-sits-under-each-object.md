@@ -5,7 +5,7 @@ miss: A bot that wants a count or a last-write moment lists the children and cou
 
 ## What you can now do
 
-`recall` takes a boolean `counted`, off by default. With it true, every object of the answer carries `children` and `written_at`. `children` holds `count` (its live children), `archived` (its archived children) and `subtree` (every live thing under it). `written_at` is the moment of the newest write of any kind on the object. A subject read answers in the same shape. A call that does not send `counted` gets neither.
+`recall` takes a boolean `counted`, off by default. With it true, every object of the answer carries `children` and `written_at`. `children` holds `count` (its live children), `archived` (its archived children) and `subtree` (every live thing under it). `written_at` is the moment of the newest write of any kind on the object. A read of one subject that has things under it carries `children` whether or not you send `counted`, with a `how_to_list` pointer beside the counts. A list or kind read gets `children` and `written_at` on its objects only when you send `counted`.
 
 ## Example
 
