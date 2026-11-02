@@ -314,6 +314,58 @@ async fn an_unresolved_append_is_recovered_without_another_write() {
     );
 }
 
+/// A log whose append commits and then answers `Err(LogError::Indeterminate)`,
+/// the way the Dolt log does when its session loses the connection: the
+/// in-memory log answers `Ok(Append::Indeterminate)` for every unknown outcome
+/// and never takes this path.
+#[derive(Clone, Default)]
+struct ErrLog(InMemoryLog);
+
+#[async_trait::async_trait]
+impl LogStore for ErrLog {
+    async fn append(&self, head: Position, batch: &SealedBatch) -> Result<Append, LogError> {
+        self.0.append(head, batch).await?;
+        Err(LogError::Indeterminate)
+    }
+    async fn read_from(
+        &self,
+        position: Position,
+        bound: usize,
+    ) -> Result<Vec<SealedBatch>, LogError> {
+        self.0.read_from(position, bound).await
+    }
+    async fn load_snapshot(&self) -> Result<Option<ValidatedSnapshot>, LogError> {
+        self.0.load_snapshot().await
+    }
+    async fn store_snapshot(&self, snapshot: &ValidatedSnapshot) -> Result<(), LogError> {
+        self.0.store_snapshot(snapshot).await
+    }
+}
+
+/// **An append that answers with the error is recovered like one that answers
+/// with the unknown outcome.** The commit landed and the answer was lost as an
+/// error; no other call follows. Paired with the case above, which loses the
+/// acknowledgement as `Ok(Append::Indeterminate)`: both read the commit back.
+#[tokio::test]
+async fn an_append_that_errs_indeterminate_is_recovered() {
+    let teachings = LoggedTeachings::open(Arc::new(ErrLog::default()), &[])
+        .await
+        .unwrap();
+    assert!(matches!(
+        teachings
+            .first_contact(&sid("homer"), "claims", at(0))
+            .await,
+        Err(TeachingError::Indeterminate)
+    ));
+    assert!(
+        teachings
+            .has_contact(&sid("homer"), "claims")
+            .await
+            .unwrap(),
+        "the commit that landed is read back, not served as 'not taught'"
+    );
+}
+
 /// A log that keeps the legacy rows as the Dolt log does: each batch's
 /// statements apply with it, and a row inserted twice is refused, as the
 /// table's key refuses it.
