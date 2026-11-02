@@ -208,10 +208,10 @@ impl Ledger {
     /// **Ask, once, about the thing this creation sits beside.**
     ///
     /// The thing must be of the same kind, must have been shown to this session
-    /// by a read, and must share a word with the creation. Of the things that
-    /// qualify, the one sharing the most words is asked about, the most recently
-    /// shown breaking a tie. A thing this session was already asked about is
-    /// passed over, so the question is never repeated.
+    /// by a read, and must share [`likeness::SHARED_WORDS_NEEDED`] rare words with
+    /// the creation. Of the things that qualify, the one sharing the most words is
+    /// asked about, the most recently shown breaking a tie. A thing this session
+    /// was already asked about is passed over, so the question is never repeated.
     ///
     /// **A word counts only when `is_rare` says so.** The caller answers it from
     /// the store's own counts for the kind ([`jojobot_domain::memory::words::Rarity`]),
