@@ -67,19 +67,31 @@ impl DoltMemory {
         let bare = Self::folds_without_an_event(tx).await?;
         let mut hung = Vec::new();
         for child in self.children_served_under(tx, thing, &bare).await? {
-            let live: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM entity
+            // **The claims are keyed by the badge, and an entry is a claim on a
+            // thing of kind list**, which only the handle says: so the list is
+            // read by its key and its claims are served under its handle.
+            let key: Option<String> = sqlx::query_scalar(
+                "SELECT COALESCE(badge, id) FROM entity
                  WHERE id = ? AND kind = 'list' AND archived_reason IS NULL",
             )
             .bind(child.as_str())
-            .fetch_one(&mut **tx)
+            .fetch_optional(&mut **tx)
             .await
             .map_err(store)?;
-            if live == 0 {
+            let Some(key) = key.map(EntityId) else {
                 continue;
-            }
-            let fields = self.held_by(tx, &child).await?;
-            let facts = self.facts_of(tx, &child).await?;
+            };
+            let fields = self.held_by(tx, &key).await?;
+            let facts: Vec<Fact> = self
+                .facts_of(tx, &key)
+                .await?
+                .into_iter()
+                .map(|fact| Fact {
+                    home: child.clone(),
+                    subject: child.clone(),
+                    ..fact
+                })
+                .collect();
             hung.push((fields, facts));
         }
         let lists: Vec<jojobot_domain::memory::done_gate::HungList<'_>> = hung
