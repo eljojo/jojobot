@@ -264,6 +264,9 @@ mod list_bulk_due;
 /// One item of a list key added or taken off without resending the rest.
 #[path = "user_stories/list_delta.rs"]
 mod list_delta;
+/// A work item is not set done while a list hung on it has an open entry.
+#[path = "user_stories/list_done_gate.rs"]
+mod list_done_gate;
 /// A linked list entry shows the state of the work it points at.
 #[path = "user_stories/list_linked.rs"]
 mod list_linked;
