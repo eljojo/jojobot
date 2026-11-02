@@ -248,11 +248,12 @@ impl Jojobot {
         // **Damage in a box this caller cannot see is counted and never shown.**
         // A message that cannot be read has no readable sender, so one of these
         // may be the caller's own; the count is all that can be said without
-        // naming a box, an id or a sender.
+        // naming a box, an id or a sender. **It is over every box the caller cannot
+        // see, whatever `to` names**: filtered to the named box, the number would
+        // say whether that box is the damaged one.
         let unreadable_elsewhere: usize = board
             .iter()
             .filter(|_| !operator_unopened)
-            .filter(|b| only.is_none_or(|name| b.name.as_str() == name))
             .filter(|b| {
                 b.is_private() || visible.message(&b.name, None) != MessageVisibility::Readable
             })
@@ -921,6 +922,58 @@ mod tests {
         );
         assert_eq!(body["unreadable_elsewhere"]["count"], 0, "{body}");
         assert_eq!(body["unreadable"][0]["ids"][0], "4212", "{body}");
+    }
+
+    /// **Naming a box the caller cannot see does not say whether that box is the
+    /// damaged one.** The count of damage out of sight is over every box the
+    /// caller cannot see, whatever `to` names, so the answer for a damaged box
+    /// and for a clean one is the same number. **Paired** with the read that
+    /// names no box, which counts the one damaged message: a count of zero
+    /// everywhere cannot pass.
+    #[tokio::test]
+    async fn naming_a_box_never_says_that_box_is_damaged() {
+        let boxes = Arc::new(InMemoryMailboxes::knowing_any_owner());
+        let jojobot = with_mailboxes(boxes.clone());
+        for name in ["pm", "marge", "bart"] {
+            make_box(&jojobot, name).await;
+        }
+        boxes.quarantine_by_damage(
+            &MailboxName("marge".into()),
+            &MessageId("4213".into()),
+            "its row on the page cannot be read — a state or a sender has been edited past parsing",
+        );
+        let count_naming = async |to: Option<&str>| {
+            let body = json_of(
+                &jojobot
+                    .list_sent(Parameters(ListSentArgs {
+                        limit: None,
+                        offset: None,
+                        sender: None,
+                        to: to.map(str::to_string),
+                        include_bodies: None,
+                        sid: Some(as_bot(&jojobot, "pm")),
+                    }))
+                    .await
+                    .expect("list_sent ok"),
+            );
+            body["unreadable_elsewhere"]["count"].clone()
+        };
+
+        assert_eq!(
+            count_naming(None).await,
+            1,
+            "the damaged message is counted"
+        );
+        assert_eq!(
+            count_naming(Some("bot:marge")).await,
+            1,
+            "naming the damaged box counts what naming no box counts"
+        );
+        assert_eq!(
+            count_naming(Some("bot:bart")).await,
+            1,
+            "naming the clean box counts it too, so the number says nothing of the box named"
+        );
     }
 
     /// Ids are minted as decimal counters, so ordering them as text puts `9`
