@@ -893,8 +893,8 @@ value takes its key off the thing, except on a key a declared type holds
 as a list, which an emptied list leaves holding an empty list, and on a
 view's declaration keys (`selects`, `answers_type`, `follow_shape`,
 `follow_relation`, `follow_direction`, `follow_fits_type`), which keep a
-blank. `update_fact`'s `clear_fields` on the claim that carries a key
-takes it off whatever it holds. Setting `status` to `now` on work your bot owns
+blank. `update_fact`'s `clear_fields` on the claim that backs a key
+(`recall` with `backing: true` names it) takes the key off the thing. Setting `status` to `now` on work your bot owns
 also points your bot's `working_on` at it.
 A write whose status words could not be read from `topic:instance` still lands, and its receipt carries `instance_unread`, naming under `not_worked_out` what it left undone. A note the receipt would have carried and a failed read kept from it is named the same way, under `reads_left`.
 
