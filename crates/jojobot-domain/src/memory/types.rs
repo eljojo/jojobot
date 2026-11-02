@@ -538,6 +538,69 @@ impl Origin {
     }
 }
 
+/// **The kinds a reference may point at**: one or more, in the order the
+/// declaration names them, and never none.
+///
+/// One kind is spelled as it always was (`place`), so a declaration stored
+/// before a key could name several reads back unchanged. Several are joined by
+/// [`Kinds::SEPARATOR`] (`bot|person`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Kinds(Vec<EntityKind>);
+
+impl Kinds {
+    /// What separates the kinds of a set in the declaration's token.
+    pub const SEPARATOR: char = '|';
+
+    /// A reference narrowed to one kind.
+    pub fn one(kind: EntityKind) -> Kinds {
+        Kinds(vec![kind])
+    }
+
+    /// A reference narrowed to a set of kinds, or nothing for an empty set.
+    pub fn any_of(kinds: &[EntityKind]) -> Option<Kinds> {
+        let mut named: Vec<EntityKind> = Vec::new();
+        for kind in kinds {
+            if !named.contains(kind) {
+                named.push(*kind);
+            }
+        }
+        (!named.is_empty()).then_some(Kinds(named))
+    }
+
+    /// Whether a value of this kind may sit under the key.
+    pub fn contains(&self, kind: EntityKind) -> bool {
+        self.0.contains(&kind)
+    }
+
+    /// The kinds, in the order the declaration names them.
+    pub fn all(&self) -> &[EntityKind] {
+        &self.0
+    }
+
+    /// The first kind, which is the whole set when it names one.
+    pub fn first(&self) -> EntityKind {
+        self.0[0]
+    }
+
+    /// The set as the declaration spells it.
+    pub fn as_token(&self) -> String {
+        self.0
+            .iter()
+            .map(|kind| kind.as_token())
+            .collect::<Vec<_>>()
+            .join(&Kinds::SEPARATOR.to_string())
+    }
+
+    /// The set a token names, or nothing when any part names no kind.
+    pub fn of_token(token: &str) -> Option<Kinds> {
+        let kinds = token
+            .split(Kinds::SEPARATOR)
+            .map(|part| EntityKind::from_token(part.trim()))
+            .collect::<Option<Vec<_>>>()?;
+        Kinds::any_of(&kinds)
+    }
+}
+
 /// One key of a type, what it holds, and how its writes fold.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Field {
@@ -554,7 +617,7 @@ pub struct Field {
     /// `None` is a reference to anything jojobot knows, and it is what a
     /// declaration that says nothing means: naming a kind NARROWS the key, so
     /// the unnarrowed reference stays the default (rule 62).
-    pub points_at: Option<EntityKind>,
+    pub points_at: Option<Kinds>,
     /// How the writes of this key come down to one value. [`Fold::Newest`]
     /// unless the declaration says otherwise.
     pub folds: Fold,
@@ -687,7 +750,16 @@ impl Field {
     /// this key holds a handle, but which kind of thing is on the other end.
     pub fn pointing_at(key: &str, kind: EntityKind) -> Field {
         Field {
-            points_at: Some(kind),
+            points_at: Some(Kinds::one(kind)),
+            ..Field::new(key, ValueType::Reference)
+        }
+    }
+
+    /// A reference narrowed to any of a set of kinds. An empty set narrows
+    /// nothing.
+    pub fn pointing_at_any(key: &str, kinds: &[EntityKind]) -> Field {
+        Field {
+            points_at: Kinds::any_of(kinds),
             ..Field::new(key, ValueType::Reference)
         }
     }
@@ -722,8 +794,8 @@ impl Field {
     /// store column and a served field that disagreed about the spelling would
     /// lose the kind on the first round trip.
     pub fn holds_token(&self) -> String {
-        let held = match self.points_at {
-            Some(kind) => format!("{}:{}", self.holds.as_token(), kind.as_token()),
+        let held = match &self.points_at {
+            Some(kinds) => format!("{}:{}", self.holds.as_token(), kinds.as_token()),
             None => self.holds.as_token().to_string(),
         };
         if self.list {
@@ -784,10 +856,10 @@ impl Field {
                 if ValueType::of_token(holds)? != ValueType::Reference {
                     return None;
                 }
-                Some(Field::pointing_at(
-                    key,
-                    EntityKind::from_token(kind.trim())?,
-                ))
+                Some(Field {
+                    points_at: Some(Kinds::of_token(kind)?),
+                    ..Field::new(key, ValueType::Reference)
+                })
             }
         }
     }
@@ -837,7 +909,7 @@ pub struct Mistyped {
     /// wrong with a value that IS a handle — a reader looking at
     /// `pet:santas-little-helper` under a key wanting a place needs the kind to
     /// see the mistake at all.
-    pub(crate) points_at: Option<EntityKind>,
+    pub(crate) points_at: Option<Kinds>,
     /// The values the key is narrowed to, when the declaration names a set.
     /// Carried for the reason `points_at` is: a closed set holds text, so a
     /// reader told the key wants text is looking at a value that IS text and
@@ -870,8 +942,8 @@ impl Mistyped {
         if self.declared == ValueType::Period {
             return "a day (YYYY-MM-DD) or an ISO week (YYYY-Www)".to_string();
         }
-        match self.points_at {
-            Some(kind) => format!("{}:{}", self.declared.as_token(), kind.as_token()),
+        match &self.points_at {
+            Some(kinds) => format!("{}:{}", self.declared.as_token(), kinds.as_token()),
             None => self.declared.as_token().to_string(),
         }
     }
@@ -1042,7 +1114,7 @@ impl DeclaredType {
                 self.fields
                     .iter()
                     .map(|f| Field {
-                        points_at: f.points_at,
+                        points_at: f.points_at.clone(),
                         folds: f.folds,
                         required: f.required,
                         list: f.list,
@@ -1074,7 +1146,7 @@ impl DeclaredType {
                         mistyped.push(Mistyped {
                             key: field.key.clone(),
                             declared: field.holds,
-                            points_at: field.points_at,
+                            points_at: field.points_at.clone(),
                             one_of: field.one_of.clone(),
                             value: value.clone(),
                             required: field.required,
@@ -2122,7 +2194,7 @@ mod tests {
         assert_eq!(found.mistyped[0].key, "venue");
         assert_eq!(
             found.mistyped[0].points_at,
-            Some(EntityKind::PLACE),
+            Some(Kinds::one(EntityKind::PLACE)),
             "the reader is told which kind the key wanted, which `reference` \
              alone cannot say: {found:?}",
         );
@@ -2153,7 +2225,7 @@ mod tests {
             Field::pointing_at("venue", EntityKind::PLACE),
             Field::listing("came_with", ValueType::Reference),
             Field {
-                points_at: Some(EntityKind::PLACE),
+                points_at: Some(Kinds::one(EntityKind::PLACE)),
                 ..Field::listing("venues", ValueType::Reference)
             },
             Field::new("away", ValueType::DateRange),

@@ -17,7 +17,7 @@ use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::testing::{free_port, start_unhurried};
-use jojobot_domain::memory::types::{DeclaredType, Field, Origin, ValueType};
+use jojobot_domain::memory::types::{DeclaredType, Field, Kinds, Origin, ValueType};
 use jojobot_domain::memory::{
     Boot, EntityId, EntityKind, FactPatch, Memory, NewEntity, NewFact, Provenance, graph, kinds,
 };
@@ -605,7 +605,9 @@ async fn a_seed_over_a_callers_type_with_a_reference_key_still_finishes() {
         "promise",
         vec![
             Field {
-                points_at: Some(EntityKind::from_token("person").expect("a shipped kind")),
+                points_at: Some(Kinds::one(
+                    EntityKind::from_token("person").expect("a shipped kind"),
+                )),
                 ..Field::new("owed_to", ValueType::Reference)
             },
             Field::new("due", ValueType::Date),
@@ -976,7 +978,7 @@ async fn a_list_key_holds_none_one_or_many_and_a_span_is_one_value() {
             vec![
                 Field::required("away", ValueType::DateRange),
                 Field {
-                    points_at: Some(EntityKind::PERSON),
+                    points_at: Some(Kinds::one(EntityKind::PERSON)),
                     ..Field::listing("came_with", ValueType::Reference)
                 },
             ],

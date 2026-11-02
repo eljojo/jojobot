@@ -37,8 +37,8 @@ pub fn marked_field_links(
     Some(links)
 }
 
-fn bare_reference_name(key: &str, item: &str, points_at: Option<EntityKind>) -> MemoryError {
-    let kind = points_at.map_or("kind", EntityKind::as_token);
+fn bare_reference_name(key: &str, item: &str, points_at: Option<&types::Kinds>) -> MemoryError {
+    let kind = points_at.map_or("kind", |kinds| kinds.first().as_token());
     MemoryError::InvalidFact(format!(
         "'{key}' holds a reference, but '{item}' is a bare name. \
          Write the full handle '{kind}:{item}'."
@@ -62,7 +62,10 @@ pub fn lone_reference_names<'a>(
                 .iter()
                 .filter_map(|d| d.field(key))
                 .find(|f| f.holds == types::ValueType::Reference)?;
-            Some((item, bare_reference_name(key, item, field.points_at)))
+            Some((
+                item,
+                bare_reference_name(key, item, field.points_at.as_ref()),
+            ))
         })
         .collect()
 }

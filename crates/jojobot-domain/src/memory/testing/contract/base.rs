@@ -13631,18 +13631,18 @@ pub async fn a_reference_keeps_the_kind_it_points_at<M: Memory>(store: &M) {
         .find(|t| t.name == "contract-stay")
         .expect("the store holds the type it just took");
     assert_eq!(
-        held.field("venue").and_then(|f| f.points_at),
-        Some(EntityKind::PLACE),
+        held.field("venue").and_then(|f| f.points_at.clone()),
+        Some(Kinds::one(EntityKind::PLACE)),
         "the narrowing came back off the store: {held:?}",
     );
     assert_eq!(
-        held.field("part_of").and_then(|f| f.points_at),
-        Some(EntityKind::PROJECT),
+        held.field("part_of").and_then(|f| f.points_at.clone()),
+        Some(Kinds::one(EntityKind::PROJECT)),
         "…and so did the one naming the longest kind, which is the token a cell sized for \
          the others cannot hold: {held:?}",
     );
     assert_eq!(
-        held.field("booked_by").and_then(|f| f.points_at),
+        held.field("booked_by").and_then(|f| f.points_at.clone()),
         None,
         "…and a reference that named no kind is still any handle: {held:?}",
     );

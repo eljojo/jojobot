@@ -4000,13 +4000,28 @@ pub fn guard_fit_resolved(
                 let bad = types::Mistyped {
                     key: field.key.clone(),
                     declared: field.holds,
-                    points_at: field.points_at,
+                    points_at: field.points_at.clone(),
                     one_of: field.one_of.clone(),
                     value: value.clone(),
                     required: field.required,
                 };
+                let instead = declaration
+                    .fields
+                    .iter()
+                    .filter(|other| {
+                        other.key != field.key
+                            && other.list
+                            && other.holds == types::ValueType::Reference
+                            && other.accepts_with_kind(value, &|item| {
+                                let id = EntityId(item.trim().to_string());
+                                resolved.get(&id).unwrap_or(&id).kind()
+                            })
+                    })
+                    .map(|other| other.key.clone())
+                    .collect::<Box<[String]>>();
                 return Err(MemoryError::BreaksType {
                     name: declaration.name.clone(),
+                    instead,
                     key: bad.key.clone(),
                     wanted: bad.wanted(),
                     value: bad.value,
@@ -4057,6 +4072,7 @@ pub fn guard_fit_resolved(
     {
         return Err(MemoryError::BreaksType {
             name: kind.to_string(),
+            instead: Box::default(),
             key: kinds::COLUMNS.to_string(),
             wanted: format!(
                 "a list holding every one of {}",
@@ -4097,6 +4113,7 @@ pub fn guard_fit_resolved(
             if !kinds::WORK_STATUSES.contains(&value.trim()) {
                 return Err(MemoryError::BreaksType {
                     name: kind.to_string(),
+                    instead: Box::default(),
                     key: key.clone(),
                     wanted: format!("one of {}", kinds::WORK_STATUSES.join(", ")),
                     value: value.clone(),
@@ -4112,6 +4129,7 @@ pub fn guard_fit_resolved(
     {
         return Err(MemoryError::BreaksType {
             name: kind.to_string(),
+            instead: Box::default(),
             value: after.get(&key).cloned().unwrap_or_default(),
             key,
             wanted,
@@ -5815,6 +5833,9 @@ pub enum MemoryError {
     BreaksType {
         /// The type the thing would stop fitting.
         name: String,
+        /// The other keys of the same type that would take this value, so the
+        /// refusal can name where it belongs. Empty when none would.
+        instead: Box<[String]>,
         /// The key whose value the type refuses.
         key: String,
         /// What the key was declared to hold, as the declaration spells it —

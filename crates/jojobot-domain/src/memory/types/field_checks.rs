@@ -40,9 +40,9 @@ impl Field {
         {
             return false;
         }
-        match self.points_at {
+        match &self.points_at {
             None => true,
-            Some(kind) => kind_of(value) == Some(kind),
+            Some(kinds) => kind_of(value).is_some_and(|kind| kinds.contains(kind)),
         }
     }
 }

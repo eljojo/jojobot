@@ -1,5 +1,6 @@
 mod clear_backing;
 mod contract_parts_tests;
+mod reference_kinds;
 
 use super::testing::{InMemoryMemory, WithoutBuiltOn, contract};
 use super::*;

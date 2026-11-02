@@ -277,7 +277,7 @@ pub fn keys_of(token: &str) -> Vec<super::types::Field> {
         "work" => vec![
             status_key(),
             Field::new("owner", ValueType::Reference),
-            Field::new("waiting_on", ValueType::Reference),
+            Field::pointing_at_any("waiting_on", &[EntityKind::BOT, EntityKind::PERSON]),
             Field::listing("depends_on", ValueType::Reference),
             Field::new("commit", ValueType::Text),
             Field::new("verified_by", ValueType::Text),
@@ -924,7 +924,9 @@ mod tests {
         assert_eq!(reports_to.holds, ValueType::Reference, "{reports_to:?}");
         assert_eq!(
             reports_to.points_at,
-            Some(crate::memory::EntityKind::BOT),
+            Some(super::super::types::Kinds::one(
+                crate::memory::EntityKind::BOT
+            )),
             "a manager is another bot: {reports_to:?}"
         );
         assert!(!reports_to.list, "a bot reports to one: {reports_to:?}");
@@ -971,7 +973,9 @@ mod tests {
         assert_eq!(operator.holds, ValueType::Reference, "{operator:?}");
         assert_eq!(
             operator.points_at,
-            Some(crate::memory::EntityKind::PERSON),
+            Some(super::super::types::Kinds::one(
+                crate::memory::EntityKind::PERSON
+            )),
             "the operator is a person: {operator:?}"
         );
         assert!(!operator.list, "an instance has one operator: {operator:?}");

@@ -235,6 +235,8 @@ mod supplied_search;
 mod supplied_sets;
 #[path = "user_stories/two_shared_words.rs"]
 mod two_shared_words;
+#[path = "user_stories/waiting_on_work.rs"]
+mod waiting_on_work;
 
 #[path = "user_stories/bulk_capture_notes.rs"]
 mod bulk_capture_notes;

@@ -2,7 +2,7 @@ use super::*;
 use crate::memory::graph;
 use crate::memory::mention;
 use crate::memory::search::{EdgeFilter, HeldField, Hit, Search, SearchQuery};
-use crate::memory::types::{DeclaredType, Field, Origin, ValueType};
+use crate::memory::types::{DeclaredType, Field, Kinds, Origin, ValueType};
 use crate::memory::{Boot, Edge, EdgeShape, FACTS_HEADER, FactStatus, Provenance, RETRACTS};
 use jiff::civil::{Date, date};
 
@@ -44,6 +44,7 @@ pub mod operator_key;
 pub mod parts;
 pub mod receipt;
 pub mod record_capacity;
+pub mod reference_kinds;
 pub mod review_stamp;
 pub mod role_claims;
 #[cfg(test)]
@@ -90,6 +91,7 @@ pub use operator_key::*;
 pub use parts::*;
 pub use receipt::*;
 pub use record_capacity::*;
+pub use reference_kinds::*;
 pub use review_stamp::*;
 pub use role_claims::*;
 pub use rules_index::*;

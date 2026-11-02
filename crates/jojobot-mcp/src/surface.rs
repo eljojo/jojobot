@@ -3250,8 +3250,8 @@ fn no_agent_facing_text_says_a_kind_holds_a_thing_to_nothing() {
         let fields = kinds::keys_of(token);
         let sample = |field: &jojobot_domain::memory::types::Field| -> String {
             use jojobot_domain::memory::types::ValueType;
-            match (&field.holds, field.points_at) {
-                (_, Some(kind)) => format!("{}:alpha", kind.as_token()),
+            match (&field.holds, &field.points_at) {
+                (_, Some(kinds)) => format!("{}:alpha", kinds.first().as_token()),
                 (ValueType::Date, _) => "2026-01-01".to_string(),
                 (ValueType::Number, _) => "1".to_string(),
                 _ => "alpha".to_string(),

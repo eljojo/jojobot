@@ -1262,6 +1262,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             ref name,
             ref key,
             ref wanted,
+            ref instead,
             ..
         } => Ok(blocked_body(
             "MemoryDeclinedArms",
@@ -1272,7 +1273,19 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                  holding {wanted} — sending the same value again will not change the answer. \
                  Write a value that holds {wanted}, or say what you meant under a key of your \
                  own: adding keys is never refused, and only the keys a type names are held to \
-                 what it declared."
+                 what it declared.{}",
+                if instead.is_empty() {
+                    String::new()
+                } else {
+                    format!(
+                        " This value fits {} on a '{name}': send it there.",
+                        instead
+                            .iter()
+                            .map(|other| format!("`{other}`"))
+                            .collect::<Vec<_>>()
+                            .join(" or ")
+                    )
+                }
             ),
         )),
         // **A shipped word means itself, so the way forward is a word of the
@@ -2948,6 +2961,7 @@ pub(crate) mod tests {
                 "BreaksType",
                 MemoryError::BreaksType {
                     name: s("journey"),
+                    instead: Box::default(),
                     key: s("starts"),
                     wanted: s("date"),
                     value: s("soon"),
