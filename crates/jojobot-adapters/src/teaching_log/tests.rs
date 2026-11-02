@@ -484,15 +484,17 @@ async fn a_divergent_old_set_is_counted() {
     )
     .await
     .unwrap();
-    teachings
-        .held
-        .lock()
-        .await
-        .shadow
-        .as_mut()
-        .expect("a shadowed ledger")
-        .legacy
-        .clear();
+    {
+        let mut held = teachings.held.lock().await;
+        held.shadow
+            .as_mut()
+            .expect("a shadowed ledger")
+            .legacy
+            .clear();
+        // The contact below is answered from the published pairs, which carry the
+        // old set: the clear is published as every real change of that set is.
+        teachings.publish(&held);
+    }
     teachings
         .first_contact(&sid("homer"), "claims", at(4))
         .await
