@@ -129,7 +129,6 @@ async fn a_request_the_room_refused_in_the_second_sitting_is_named_with_that_pha
         "the refusal is named for the sitting that caused it: {phase}",
     );
     assert_eq!(*refused, 1, "one refused request was sent");
-    assert!(!results.held(), "a probed grader must never pass a run");
     let rendered = results.rendered(None);
     assert!(
         rendered.contains("[FAILED] grader route — 1 refused calls during Phase 2"),
@@ -148,5 +147,33 @@ async fn the_same_run_with_no_probe_records_no_refusal() {
     assert!(
         !results.rendered(None).contains("grader route"),
         "the verdict names a grader route nobody probed",
+    );
+}
+
+/// **The refusal is the only thing that keeps a probed run from holding.** The
+/// stand-in agent changes nothing in the room, so `held()` is false on every run
+/// of this file whatever the refusals say. Here the room is given a change by
+/// hand, and the one thing left against holding is the recorded refusal: the run
+/// does not hold with it, and holds with it cleared.
+#[tokio::test]
+async fn a_refusal_is_the_only_cause_of_a_failed_hold() {
+    let mut results = run_probing_at(Some(2)).await;
+    assert!(
+        !results.harness_refusals.is_empty(),
+        "the probe was recorded: {:?}",
+        results.harness_refusals,
+    );
+    results.after = format!("{} and a change", results.before);
+    assert!(
+        results.the_room_changed(),
+        "the room has a change, so it is not what holds the run off"
+    );
+    assert!(!results.held(), "a probed grader must never pass a run");
+
+    results.harness_refusals.clear();
+    assert!(
+        results.held(),
+        "with the refusal cleared nothing else holds this run off: {}",
+        results.rendered(None),
     );
 }
