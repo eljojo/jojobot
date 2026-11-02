@@ -335,8 +335,12 @@ async fn recall(call: Call) -> Answer {
         Ok(Err(refused)) => return refusal(&refused),
         Err(e) => return mistaken(e),
     };
-    let queries = crate::memory::view_run::handle(handler.memory.clone(), handler.sessions.clone());
-    let answered = match queries.ask(question).await {
+    let queries = crate::memory::view_run::handle(
+        handler.memory.clone(),
+        handler.sessions.clone(),
+        handler.search.clone(),
+    );
+    let answered = match queries.ask(&call.actor(), question).await {
         Ok(answered) => answered,
         Err(
             jojobot_query_api::Failed::Selection(why) | jojobot_query_api::Failed::Readiness(why),
@@ -351,6 +355,11 @@ async fn recall(call: Call) -> Answer {
                 }
                 other => unavailable(other),
             };
+        }
+        // **A part of the answer that could not be prepared is the store's**, and
+        // the same call can be sent again.
+        Err(jojobot_query_api::Failed::Preparation(part, why)) => {
+            return unavailable(format!("{part}: {why}"));
         }
     };
     match jojobot_query_api::RecalledView::of(answered, only_keys.as_deref(), limit) {
