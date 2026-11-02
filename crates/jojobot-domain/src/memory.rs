@@ -3300,7 +3300,20 @@ pub fn refuses_merge_carrying_by(
     }
     let mut barred: Vec<&GuardedKey> = Vec::new();
     for rule in table.iter().filter(|rule| carried.contains_key(rule.key)) {
-        match licensed(rule.may, rule.key, survivor, caller, lineage) {
+        // **A request's own keys are judged on the request**, whatever the
+        // survivor is: a survivor that is no request licenses them for anyone,
+        // so a spec would land on it unjudged. The generation and the status
+        // are nobody's, which refuses the fold of a request for every caller.
+        let on_the_request = bot_request::is_request(duplicate)
+            && matches!(
+                rule.may,
+                MayWrite::RequestSpec | MayWrite::RequestStatus | MayWrite::RequestGeneration
+            );
+        let (judged, chart) = match on_the_request {
+            true => (duplicate, duplicate_lineage),
+            false => (survivor, lineage),
+        };
+        match licensed(rule.may, rule.key, judged, caller, chart) {
             Ok(()) => {}
             // A merge that would invert the chart is the chart's own refusal.
             Err(why @ Why::Cycle(_)) => return Some(refusal(why, rule, survivor, lineage)),

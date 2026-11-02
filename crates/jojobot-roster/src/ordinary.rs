@@ -1678,4 +1678,10 @@ pub const ORDINANCES: &[&str] = &[
     "bot:contract-request-manager",
     "bot:contract-request-target",
     "bot:contract-request-outsider",
+    "bot-request:contract-swallow-ask",
+    "topic:contract-swallow-survivor",
+    "topic:contract-swallow-note",
+    "bot:contract-swallow-manager",
+    "bot:contract-swallow-target",
+    "bot:contract-swallow-outsider",
 ];

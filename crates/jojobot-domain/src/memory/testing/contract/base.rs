@@ -19552,6 +19552,7 @@ macro_rules! all_cases {
         $m!(a_merge_cannot_fold_a_bot_into_one_that_sits_below_it($store));
         $m!(the_head_of_a_chart_places_itself($store));
         $m!(a_bot_requests_spec_is_judged_by_the_chain_above_its_target($store));
+        $m!(a_bot_request_is_not_folded_into_another_thing($store));
         $m!(the_operator_is_named_by_any_bot_and_changed_only_by_the_head_of_the_chart($store));
         $m!(a_threads_ceiling_is_set_only_above_the_bots_that_write_into_it($store));
         $m!(a_threads_ageing_is_set_only_above_the_bots_that_write_into_it($store));

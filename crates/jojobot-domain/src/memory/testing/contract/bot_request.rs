@@ -156,3 +156,75 @@ pub async fn a_bot_requests_spec_is_judged_by_the_chain_above_its_target<M: Memo
         .written()
         .expect("nothing blocks it");
 }
+
+/// **A request's spec does not move onto another thing by a merge.** The
+/// survivor of a merge is no request, so the keys of the spec would land
+/// unjudged; the merge is refused for every caller, the manager included.
+/// **Paired**: two ordinary records fold with the same words.
+pub async fn a_bot_request_is_not_folded_into_another_thing<M: Memory>(store: &M) {
+    let request = EntityId("bot-request:contract-swallow-ask".into());
+    let survivor = EntityId("topic:contract-swallow-survivor".into());
+    let note = EntityId("topic:contract-swallow-note".into());
+    let manager = EntityId("bot:contract-swallow-manager".into());
+    let target = EntityId("bot:contract-swallow-target".into());
+    let outsider = EntityId("bot:contract-swallow-outsider".into());
+    for (id, name) in [
+        (&request, "Swallow Ask"),
+        (&survivor, "Swallow Survivor"),
+        (&note, "Swallow Note"),
+        (&manager, "Swallow Manager"),
+        (&target, "Swallow Target"),
+        (&outsider, "Swallow Outsider"),
+    ] {
+        add(store, NewEntity::new(id.clone(), name, "contract-fixture")).await;
+    }
+    let fields = |pairs: &[(&str, &str)]| -> std::collections::BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    };
+    capture(
+        store,
+        state(NewFact {
+            fields: fields(&[(crate::memory::REPORTS_TO, manager.as_str())]),
+            ..NewFact::about(
+                target.clone(),
+                "target reports to manager",
+                date(2026, 10, 1),
+            )
+        }),
+    )
+    .await;
+    capture(
+        store,
+        state(NewFact {
+            fields: fields(&[(TARGET_BOT, target.as_str()), (DESIRED, "running")]),
+            ..NewFact::about(request.clone(), "the target should run", date(2026, 10, 2))
+        }),
+    )
+    .await;
+    capture(
+        store,
+        state(NewFact {
+            fields: fields(&[(DESIRED, "x"), (OBSERVED_STATE, "y")]),
+            ..NewFact::about(note.clone(), "an ordinary record", date(2026, 10, 3))
+        }),
+    )
+    .await;
+
+    for who in [&outsider, &manager] {
+        let err = store
+            .merge(&request, &survivor, None, date(2026, 10, 4), who, None)
+            .await
+            .expect_err("a request is not folded into another thing");
+        assert!(
+            matches!(err, MemoryError::MergeCarriesGuardedKeys { .. }),
+            "{who}: {err:?}"
+        );
+    }
+    store
+        .merge(&note, &survivor, None, date(2026, 10, 4), &outsider, None)
+        .await
+        .expect("an ordinary record folds with the same words");
+}
