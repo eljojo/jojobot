@@ -94,13 +94,15 @@ const SOMEBODY_KINDS: [&str; 4] = ["person", "pet", "place", "org"];
 const SYNTHETIC_PREFIXES: [&str; 1] = ["contract-"];
 
 /// **Why a handle is allowed on ORDINARY without a synthetic prefix.** There are
-/// three reasons, and each is a fact about the test or the fixture that cannot
-/// be changed by renaming the handle.
+/// four reasons, and each is a fact about the test, the fixture or the history
+/// that cannot be changed by renaming the handle.
 const NEAR_MISS: &str = "a test measures how close this handle is to another, and a prefix would change \
                          the distance";
 const ROOM_PLACEHOLDER: &str = "a room's furniture and its document name this handle, and a model \
                                 creates it under that name";
 const RECORDED: &str = "a recorded store holds this handle, and the store is frozen";
+const PUSHED_MESSAGE: &str = "a commit message on the release trunk quotes this handle, and a pushed message is \
+                               not rewritten; the entry leaves when a deploy tag moves the boundary past it";
 
 /// **The person, pet, place and organisation handles on ORDINARY that carry no
 /// synthetic prefix, each with its reason.** An entry earns its place by being
@@ -139,6 +141,8 @@ const EXEMPT: &[(&str, &str)] = &[
     ("person:upgrade-fixture-person", RECORDED),
     ("place:upgrade-fixture-place", RECORDED),
     ("person:pointer-migration-subject", RECORDED),
+    ("place:wonder-lane", PUSHED_MESSAGE),
+    ("place:wonder-road", PUSHED_MESSAGE),
 ];
 
 /// **The handles on `ordinary` that name somebody and say nothing that shows
