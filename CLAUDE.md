@@ -19,7 +19,10 @@ sessions that boot *from jojobot* instead of from files.
 jojobot runs as exactly one process, and every write passes through it. That
 is why the whole fold is held in memory and every read is answered from it
 alone; each write updates the store and the fold in the same step, so the
-fold is always current. **No read goes to the store.** ⚠️ A second writer of
+fold is always current. **Once the fold is filled, no read goes to the
+store**; the exceptions are named in the code: before the first fill, or
+after a refresh that failed, a read falls through to the store, slower and
+still correct. ⚠️ A second writer of
 any kind — another worker, a restore, a migration tool, a person running SQL
 — makes the memory copy silently wrong. (Decision log 292.)
 
@@ -33,8 +36,8 @@ inside it: a hand-off task, an example, a report that will become a commit
 message is covered the moment it is written. Fixture names come from the
 fictional roster — characters from the Simpsons, South Park, Family Guy or
 Bob's Burgers, plus greek letters —
-`crates/jojobot-domain/tests/fixture_roster.rs` is the allowlist and the
-test bar enforces it. The near-miss screen matches on containment, a known
+the shared catalog in the `jojobot-roster` crate is the allowlist, and
+`crates/jojobot-domain/tests/fixture_roster.rs` is the test that enforces it. The near-miss screen matches on containment, a known
 nickname, and two or more shared rare words, so a new handle is refused when
 an existing one is a prefix of it — qualifying a name already on the roster is
 the way to trip it, and so is a second fixture sharing two words with the first
@@ -325,12 +328,13 @@ A session here starts at jojobot, not at these files. The whole protocol:
   first failure, so its count is coverage** — a red run names each suite's verdict instead of
   leaving a reader to guess which parts ran. **A dev line never runs `make
   check`, `make report`, a whole suite, the real-store suites, the upgrade gate,
-  `make prepush` or `nix build` locally:** between edits it runs its own cases
+  `make nix-build` or `make flake-check` locally:** between edits it runs its own cases
   (`make narrow CRATE=<crate> [FILTER=<substring>]`), a suite only when it
   expects that suite to fail or is debugging a red, then pushes its branch and
   cites that branch run by id and sha. The full bar runs once per change, at
-  the carry (rules 501, 622). **In CI a job that goes red cancels its sibling
-  jobs**, so a cancelled job in a red run is unproven, never passed.
+  the carry (rules 501, 622). **In CI a job that goes red stops its sibling
+  jobs** (`scripts/stop-with-siblings`: exit 75, "stopped: <job> failed
+  first"), so a stopped job in a red run is unproven, never passed.
 - **The size ratchet** (`size-ratchet.toml`, checked by `bar size`): a file over
   `cap` lines (5,000) is red and a new one is refused; over 2,000 is yellow and
   warns. **Any file may grow when the change honestly needs it, with the reason
@@ -343,11 +347,11 @@ A session here starts at jojobot, not at these files. The whole protocol:
   runs them**: a push to a `devN-work` branch runs `make report` (the check,
   less the slow jobs its recorded history lets go) and `make rooms` beside it,
   so a defect where two cards meet shows at the dev's report, and a pull request to
-  `main` runs `check`, then `rooms` and `year` — the three checks `main`
-  requires, so renaming a job drops a requirement. Every run keeps
-  `target/bar/*.log`. `make prepush` is release QA and runs only in the forge's `prepush`
-  workflow, dispatched on the exact head, never on a dev host: the
-  bar, the real store, the rooms, the year room, `nix build` and `nix flake check`, reporting every step. **A slice that
+  `main` runs `static` and `build`, then `check`, `rooms` and `year` side by
+  side — the three checks `main` requires, so renaming a job drops a requirement. Every run keeps
+  `target/bar/*.log`. Release QA is `pull-request.yml` dispatched on the exact head with `release`
+  set, never on a dev host: the pull request's jobs plus `make nix-build` and
+  `make flake-check`, reporting every step. **A slice that
   touches a room's document, a room's test file or the exercise harness cites
   the `make rooms` job of its branch run in its report** — the bar alone
   cannot see it, and the rooms run in CI, not locally. **`make check` and `make rooms` run their test binaries
