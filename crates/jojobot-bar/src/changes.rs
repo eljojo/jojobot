@@ -3,7 +3,7 @@
 
 use std::process::Command;
 
-use crate::{PUSH_BASE_VARIABLE, is_a_revision};
+use crate::{PUSH_BASE_VARIABLE, is_a_revision, size};
 
 /// One `git` invocation, stdout as text. Empty on any failure — a caller
 /// missing `origin/main` or running outside a repo gets nothing to report
@@ -50,17 +50,16 @@ pub fn changed_paths() -> Option<(String, Vec<String>)> {
 
 /// The roster gate must distinguish a missing base from a failed path listing.
 pub fn checked_changed_paths() -> std::io::Result<Option<(String, Vec<String>)>> {
-    // **The ref the branch is measured against.** `main` unless `BAR_DEV_BASE`
-    // names another: a branch built on a release line holds that line's own
-    // commits, and against `main` they read as the branch's changes.
-    let base_ref = std::env::var("BAR_DEV_BASE")
-        .ok()
-        .filter(|name| !name.is_empty())
-        .or_else(|| {
-            std::env::var("SIZE_BASE")
-                .ok()
-                .filter(|name| !name.is_empty())
-        })
+    // **The ref the branch is measured against**, chosen here and nowhere else.
+    // `BAR_DEV_BASE` names it outright, and so does a `SIZE_BASE` other than the
+    // bare `main`. Otherwise, off CI, it is the remote line the branch was cut
+    // from, the size gate's own choice: a branch built on a release line holds
+    // that line's own commits, and against `main` they read as the branch's
+    // changes. With no such line it is `main`.
+    let named = |name: &str| std::env::var(name).ok().filter(|value| !value.is_empty());
+    let base_ref = named("BAR_DEV_BASE")
+        .or_else(|| named("SIZE_BASE").filter(|value| value != "main"))
+        .or_else(|| (!size::in_ci()).then(size::remote_line).flatten())
         .unwrap_or_else(|| "main".to_string());
     let mut base = git_stdout(&["merge-base", &base_ref, "HEAD"]);
     // **The forge's checkout holds `origin/main` and no local `main`**, so the

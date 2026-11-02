@@ -133,7 +133,7 @@ snapshot: ## Rewrite the checked-in files of every text a model reads
 # Set JOJOBOT_DEV_METRICS_URL to opt dev and narrow into build SLO samples.
 # It is off by default; a metrics push never changes the command's exit code.
 dev: ## The dev bar: format, build, and the tests and lint of what the branch touched
-	CARGO=$(CARGO) SIZE_BASE=$(or $(SIZE_BASE),$(BASE),main) $(if $(BASE),BAR_DEV_BASE=$(BASE),) $(BUILD_GUARD) python3 scripts/build-metrics run dev -- $(CARGO) run -q --locked -p jojobot-bar -- dev
+	CARGO=$(CARGO) $(if $(or $(SIZE_BASE),$(BASE)),SIZE_BASE=$(or $(SIZE_BASE),$(BASE)),) $(if $(BASE),BAR_DEV_BASE=$(BASE),) $(BUILD_GUARD) python3 scripts/build-metrics run dev -- $(CARGO) run -q --locked -p jojobot-bar -- dev
 
 # **The inner loop, scoped to one crate.** Run it between edits.
 #

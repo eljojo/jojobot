@@ -730,3 +730,99 @@ fn a_file_the_history_calls_slow_is_skipped_and_named() {
     );
     let _ = fs::remove_dir_all(&repo);
 }
+
+/// **Commit one change to a package's source** and name the commit `message`.
+fn commit_change(repo: &Path, package: &str, message: &str) {
+    fs::write(
+        repo.join("crates").join(package).join("src/lib.rs"),
+        format!("// {message}\n"),
+    )
+    .expect("edit");
+    git(repo, &["commit", "-q", "-a", "-m", message]);
+}
+
+/// **Name a commit as a remote-tracking line**, the way the forge's fetch does.
+fn remote_line(repo: &Path, name: &str, at: &str) {
+    git(
+        repo,
+        &["update-ref", &format!("refs/remotes/forgejo/{name}"), at],
+    );
+}
+
+/// **The base of a branch is chosen once, and it is the release trunk the branch
+/// is cut from.** One table: a branch over a trunk, a branch on `main` beside a
+/// stale trunk, a branch over two nested trunks, an explicit base, and a
+/// checkout on CI. Each row names the packages the run tests, which is the scope
+/// the base decides.
+#[test]
+fn the_default_base_is_the_release_trunk_the_branch_is_cut_from() {
+    // A trunk, three commits over it.
+    let repo = repository();
+    git(&repo, &["switch", "-q", "-c", "trunk"]);
+    commit_change(&repo, "jojobot-domain", "the trunk's own change");
+    remote_line(&repo, "em-933-carry", "HEAD");
+    git(&repo, &["switch", "-q", "-c", "work"]);
+    for step in ["one", "two", "three"] {
+        commit_change(&repo, "jojobot-bar", step);
+    }
+    let over_trunk = dev(&repo);
+    assert_eq!(over_trunk.exit, Some(0), "{}", over_trunk.stdout);
+    assert_eq!(
+        over_trunk.packages_tested(),
+        ["jojobot-bar"],
+        "a branch over a trunk is measured against it: {:?}",
+        over_trunk.calls
+    );
+    // Paired: the same checkout on CI keeps the base it had, `main`.
+    let on_ci = dev_run(&repo, &[], &[("GITHUB_ACTIONS", "true")]);
+    assert_eq!(
+        on_ci.packages_tested(),
+        ["jojobot-bar", "jojobot-domain"],
+        "{:?}",
+        on_ci.calls
+    );
+    let _ = fs::remove_dir_all(&repo);
+
+    // A branch on `main`, beside a trunk that `main` has long passed.
+    let repo = repository();
+    remote_line(&repo, "em-old-carry", "HEAD");
+    commit_change(&repo, "jojobot-domain", "main moved on");
+    remote_line(&repo, "main", "HEAD");
+    git(&repo, &["switch", "-q", "-c", "work"]);
+    commit_change(&repo, "jojobot-bar", "work");
+    let on_main = dev(&repo);
+    assert_eq!(
+        on_main.packages_tested(),
+        ["jojobot-bar"],
+        "a branch on main is measured against main: {:?}",
+        on_main.calls
+    );
+    let _ = fs::remove_dir_all(&repo);
+
+    // Two nested trunks: the nearer one is the base.
+    let repo = repository();
+    git(&repo, &["switch", "-q", "-c", "outer"]);
+    commit_change(&repo, "jojobot-domain", "the outer trunk");
+    remote_line(&repo, "em-outer-carry", "HEAD");
+    git(&repo, &["switch", "-q", "-c", "inner"]);
+    commit_change(&repo, "jojobot-ports", "the inner trunk");
+    remote_line(&repo, "em-inner-carry", "HEAD");
+    git(&repo, &["switch", "-q", "-c", "work"]);
+    commit_change(&repo, "jojobot-bar", "work");
+    let nested = dev(&repo);
+    assert_eq!(
+        nested.packages_tested(),
+        ["jojobot-bar"],
+        "the nearer trunk is the base: {:?}",
+        nested.calls
+    );
+    // Paired: an explicit base still wins over the nearer trunk.
+    let named = dev_based_on(&repo, "forgejo/em-outer-carry");
+    assert_eq!(
+        named.packages_tested(),
+        ["jojobot-bar", "jojobot-ports"],
+        "{:?}",
+        named.calls
+    );
+    let _ = fs::remove_dir_all(&repo);
+}
