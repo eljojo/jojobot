@@ -3762,6 +3762,8 @@ pub fn guard_clear_backing(
                 address: edited.address().to_string(),
                 key: key.to_string(),
                 backing: held.fact.as_str().to_string(),
+                backing_address: FactAddress::new(edited.home.clone(), held.fact.clone())
+                    .to_string(),
             });
         }
     }
@@ -6402,9 +6404,10 @@ pub enum MemoryError {
     /// TEMPORARY(9.3.3): a clear becomes an event about one claim's write, the fold
     /// picks the newest remaining write, and the key leaves only when none remains.
     #[error(
-        "'{key}' is held by the claim {backing}, and {address} wrote an older value of it. A \
-         clear sent to {address} would take '{key}' off the thing and erase the newer value \
-         {backing} holds. Clear it on {backing}, or write a new value of '{key}'"
+        "'{key}' is held by the claim {backing_address}, and {address} wrote an older value of \
+         it. A clear sent to {address} would take '{key}' off the thing and erase the newer \
+         value {backing_address} holds. Send the clear to {backing_address} (the address \
+         argument of update_fact), or write a new value of '{key}'"
     )]
     ClearsAnOlderWrite {
         /// The claim the clear was sent to.
@@ -6413,6 +6416,8 @@ pub enum MemoryError {
         key: String,
         /// The local id of the claim that backs the value the thing holds.
         backing: String,
+        /// The full address (`kind:slug#fN`) of that claim, the form update_fact takes.
+        backing_address: String,
     },
     /// **An open claim was asked to be settled with no receipt.** Settling
     /// moves standing and never provenance, and what makes the move honest is

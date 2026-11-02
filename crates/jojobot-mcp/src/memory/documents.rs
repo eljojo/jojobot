@@ -766,6 +766,24 @@ impl Jojobot {
         ))
     }
 
+    /// **An address as text, with its home under the handle the thing wears now.**
+    /// A store files a claim under the thing's badge, and the caller sends the
+    /// handle. Text that is no address, or a home no thing wears as a badge, is
+    /// kept as sent.
+    pub(crate) async fn served_text(&self, text: &str) -> String {
+        // **Split by hand**: a badge has no kind, so it is no address to parse.
+        let Some((home, local)) = text.rsplit_once('#') else {
+            return text.to_string();
+        };
+        let Ok(known) = self.memory.list_entities(None).await else {
+            return text.to_string();
+        };
+        match jojobot_domain::memory::entity_wearing(home, &known) {
+            Some(thing) => format!("{}#{local}", thing.id),
+            None => text.to_string(),
+        }
+    }
+
     /// **Plan the move of the section at `address` behind the section `after`
     /// names.** Both have to be live sections of the same document. A section
     /// moves with the chunks that carry it on, and lands behind the target's own

@@ -49,12 +49,22 @@ pub async fn a_clear_on_an_older_claim_is_refused_and_one_on_the_backing_claim_t
         .update_fact(&older.address(), clear(), &other_caller())
         .await;
     match refused {
-        Err(MemoryError::ClearsAnOlderWrite { key, backing, .. }) => {
+        Err(MemoryError::ClearsAnOlderWrite {
+            key,
+            backing,
+            backing_address,
+            ..
+        }) => {
             assert_eq!(key, "mood");
             assert_eq!(
                 backing,
                 newer.id.as_str(),
                 "the refusal names the backing claim"
+            );
+            assert_eq!(
+                backing_address,
+                newer.address().to_string(),
+                "the refusal names the backing claim by the address update_fact takes"
             );
         }
         other => panic!("a clear on the older claim must be refused, got {other:?}"),

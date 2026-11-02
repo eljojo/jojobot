@@ -201,11 +201,6 @@ async fn a_clear_sent_to_an_older_record_is_refused_and_one_sent_to_the_backing_
             &[],
         )
         .await;
-    let newer_local = newer
-        .rsplit('#')
-        .next()
-        .expect("an address names its record")
-        .to_string();
 
     // ── the older record: refused, naming the record that holds the value ───
     let refused = s
@@ -214,7 +209,8 @@ async fn a_clear_sent_to_an_older_record_is_refused_and_one_sent_to_the_backing_
             json!({ "address": older, "clear_fields": ["mood"] }),
         )
         .await;
-    refused.says("mood").says(&newer_local);
+    // The way forward is the full address update_fact takes, not a bare id.
+    refused.says("mood").says(&newer);
     let kept = s
         .shape("what Homer holds now", json!({ "subject": "person:homer" }))
         .await;

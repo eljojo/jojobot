@@ -199,7 +199,9 @@ pub struct RecallArgs {
     /// and also answers `plan`: its `from` and `to` days, what falls `due` in
     /// them, what is `overdue` (fell due before `from` and is still owed, with
     /// `overdue_by_days` at `from`) and which of that work is `ready`, worked out
-    /// at the read by the due and ready views' own passes and stored nowhere. An
+    /// at the read by the due and ready views' own passes and stored nowhere. A
+    /// thing the plan could not read is left out of it and named under the plan's
+    /// `unreadable`, so a plan without that key is complete. An
     /// entry carried from another plan (capture it with `derived_from` naming the
     /// old entry) reads `carried_from`, and the old entry reads `carried_to`; it
     /// stays as it was. It is the list's own read, so no `facts` are needed for it.

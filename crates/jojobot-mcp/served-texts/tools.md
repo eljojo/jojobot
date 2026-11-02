@@ -3341,7 +3341,9 @@ entries link work also answers `progress`**: `done` out of `of` pieces of linked
 and also answers `plan`: its `from` and `to` days, what falls `due` in
 them, what is `overdue` (fell due before `from` and is still owed, with
 `overdue_by_days` at `from`) and which of that work is `ready`, worked out
-at the read by the due and ready views' own passes and stored nowhere. An
+at the read by the due and ready views' own passes and stored nowhere. A
+thing the plan could not read is left out of it and named under the plan's
+`unreadable`, so a plan without that key is complete. An
 entry carried from another plan (capture it with `derived_from` naming the
 old entry) reads `carried_from`, and the old entry reads `carried_to`; it
 stays as it was. It is the list's own read, so no `facts` are needed for it.
@@ -4735,7 +4737,9 @@ keep a blank, so this argument is how they come off.
 **It takes the key off the thing as well as off the claim**, whichever
 bag holds it, so this is the way to take a key off a thing. Send it to
 the active claim that carries the key: `recall` the thing with
-`backing` true and the key names that claim. A counter key names none,
+`backing` true and the key names that claim. A clear sent to a claim that
+carries the key but does not back it is refused, naming the claim that does.
+A counter key names none,
 because its total has no single claim behind it: `recall` with
 `history` set to the key lists the claims that wrote it, oldest first,
 and `history_most` widens the list when its count says more exist.

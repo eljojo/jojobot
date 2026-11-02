@@ -222,7 +222,9 @@ pub struct UpdateFactArgs {
     /// **It takes the key off the thing as well as off the claim**, whichever
     /// bag holds it, so this is the way to take a key off a thing. Send it to
     /// the active claim that carries the key: `recall` the thing with
-    /// `backing` true and the key names that claim. A counter key names none,
+    /// `backing` true and the key names that claim. A clear sent to a claim that
+    /// carries the key but does not back it is refused, naming the claim that does.
+    /// A counter key names none,
     /// because its total has no single claim behind it: `recall` with
     /// `history` set to the key lists the claims that wrote it, oldest first,
     /// and `history_most` widens the list when its count says more exist.
@@ -1059,6 +1061,24 @@ impl Jojobot {
                     guard.stale = true;
                 }
                 return memory_declined("update_fact", e);
+            }
+            // **The refusal names its claims under the handle the thing wears now**,
+            // the form `address` takes, and not under the key the store files them.
+            Err(MemoryError::ClearsAnOlderWrite {
+                address,
+                key,
+                backing,
+                backing_address,
+            }) => {
+                return memory_declined(
+                    "update_fact",
+                    MemoryError::ClearsAnOlderWrite {
+                        address: self.served_text(&address).await,
+                        key,
+                        backing,
+                        backing_address: self.served_text(&backing_address).await,
+                    },
+                );
             }
             Err(e) => return super::must_override::declined_or_lifted("update_fact", e, &slot),
         };
