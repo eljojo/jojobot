@@ -655,6 +655,10 @@ pub struct RecallArgs {
     /// records, and on a run named with `history` its changes or wordings. The answer ceiling can make a part shorter, never longer, and
     /// `not_shown` names the `offset` that reads on. At least 1; omit it and a
     /// part holds whatever fits.
+    ///
+    /// A read of several things serves the readable ones and names any it could
+    /// not read under `unreadable`, each with the reason and `fix_by: person`;
+    /// the rest of the answer is complete without them.
     #[serde(default)]
     #[schemars(range(min = 1))]
     pub(crate) limit: Option<u32>,
@@ -2697,10 +2701,7 @@ impl Jojobot {
                        reason and an address that history_record reads with no subject \
                        (records reads several). An app's claim carries a server-set \
                        `recorded_by` {app, grant, received_at}, not the describing key; \
-                       archive and re-capture it, never rewrite it. A read of several \
-                       things serves the readable ones and names any it could not read \
-                       under `unreadable`, each with the reason and `fix_by: person`; the rest \
-                       of the answer is complete without them. WHICH EDGES: follow {shape or relation, direction, depth, \
+                       archive and re-capture it, never rewrite it. WHICH EDGES: follow {shape or relation, direction, depth, \
                        keeping, fits_type}, and the answer nests. Unlike search, recall \
                        returns claims of EVERY status unless you pass `status`. Your own past \
                        runs are kind session. AN ANSWER STOPS AT THE CEILING, never \

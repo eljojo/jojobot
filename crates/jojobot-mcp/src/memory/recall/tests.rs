@@ -4774,10 +4774,12 @@ fn an_unscoped_follow_names_mention_and_ref_on_the_verbs_own_description() {
     );
 }
 
-/// **recall's served description names the `unreadable` key an answer can
-/// carry**, with `fix_by`, so a bot that reads no refusal as "this is everything"
-/// learns an answer may leave a damaged thing out. The key is the wire's own
-/// (`unreadable_things_json`), so the needle is an identifier.
+/// **recall's served text names the `unreadable` key an answer can carry**, with
+/// `fix_by`, so a bot that reads no refusal as "this is everything" learns an
+/// answer may leave a damaged thing out. The key is the wire's own
+/// (`unreadable_things_json`), so the needle is an identifier. It is said on the
+/// `limit` argument, not in the description: the description is at the length
+/// clients read before they cut it (`no_description_passes_the_length_clients_cut_at`).
 #[test]
 fn recalls_description_names_the_unreadable_key_and_its_fix_by() {
     let tools = Jojobot::tool_router().list_all();
@@ -4785,10 +4787,14 @@ fn recalls_description_names_the_unreadable_key_and_its_fix_by() {
         .iter()
         .find(|t| t.name.as_ref() == "recall")
         .expect("recall is a tool");
-    let described = recall.description.as_deref().unwrap_or_default();
+    let served = format!(
+        "{}\n{}",
+        recall.description.as_deref().unwrap_or_default(),
+        serde_json::to_string(&*recall.input_schema).expect("the schema serializes")
+    );
     assert!(
-        described.contains("`unreadable`") && described.contains("fix_by"),
-        "recall's description does not name the unreadable key: {described}"
+        served.contains("`unreadable`") && served.contains("fix_by"),
+        "recall's description and arguments do not name the unreadable key: {served}"
     );
 }
 
