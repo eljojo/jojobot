@@ -1673,4 +1673,9 @@ pub const ORDINANCES: &[&str] = &[
     "bot:contract-identity-folded",
     "bot:contract-identity-survivor",
     "thing:contract-identity-folded-home",
+    "bot-request:contract-request-ask",
+    "topic:contract-request-plain",
+    "bot:contract-request-manager",
+    "bot:contract-request-target",
+    "bot:contract-request-outsider",
 ];
