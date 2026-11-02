@@ -294,6 +294,29 @@ mod slow_tests {
     }
 
     #[test]
+    fn an_expired_only_run_is_not_counted() {
+        // A pull-request run up to seven days old is read, and the forge keeps its
+        // artifacts seven days: a run near the edge has only expired ones. The weekly
+        // step must go on to print the size, so this is a line, not an exit 1.
+        let mut check = logs("check", log_with(&[(ALPHA, "75.3")]));
+        check.expired = true;
+        let mut rooms = logs("rooms", log_with(&[(BETA, "99.0")]));
+        rooms.expired = true;
+        let api = stand(vec![check, rooms]);
+        let (code, out, err) = slow(Some(&api), &["700"]);
+        assert_eq!(code, 0, "{out}{err}");
+        assert!(
+            out.contains("the logs of the check job have expired"),
+            "{out}"
+        );
+        assert_eq!(
+            out.lines().last(),
+            Some("slow tests over 60 s: not counted (run #700: every job's logs have expired)"),
+            "{out}"
+        );
+    }
+
+    #[test]
     fn a_run_whose_logs_hold_no_timed_line_says_the_count_would_mean_nothing() {
         let api = stand(vec![logs("static", "verdict: GREEN\n".into())]);
         let (code, out, err) = slow(Some(&api), &["700"]);

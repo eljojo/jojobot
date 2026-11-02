@@ -26,8 +26,9 @@ Each case over the bound is printed, slowest first, as
 `--over` names another (rule 651). A job whose artifact holds no timed case line,
 or has expired, is named, because a count that skipped it would read low.
 
-Exit code: 0 the run was read, 1 no artifact held a timed case line (the count
-would say nothing), 4 no API root, or the run is not on the forge.
+Exit code: 0 the run was read, or every artifact had expired (the last line says
+nothing was counted, so the weekly step goes on to print the size), 1 no live artifact
+held a timed case line (the count would say nothing), 4 no API root, or the run is not on the forge.
 """
 import argparse
 import datetime
@@ -173,6 +174,11 @@ def main():
         print(f"no timed case line in the logs of the {name} job")
     for name in expired:
         print(f"the logs of the {name} job have expired")
+    if not logs and expired:
+        # The weekly step runs this before `make size`; an exit here would lose the size.
+        print(f"slow tests over {bound} s: not counted "
+              f"(run #{args.run}: every job's logs have expired)")
+        return
     if len(silent) == len(logs):
         print("no job's logs hold a timed case line: the count says nothing", file=sys.stderr)
         sys.exit(1)
