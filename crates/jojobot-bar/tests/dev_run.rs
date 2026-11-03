@@ -524,6 +524,23 @@ fn a_diff_that_touches_no_package_is_refused() {
     let _ = fs::remove_dir_all(&repo);
 }
 
+/// **An own-crates run over a diff that touches no package has nothing to run and
+/// passes.** The forge runs the job on every push the docs lane does not skip, and
+/// a scripts-only or workflow-only push has no crate; a red there would be a
+/// verdict about nothing. Paired with the case above: the plain run still refuses.
+#[test]
+fn an_own_crates_run_over_a_diff_with_no_package_passes_and_runs_nothing() {
+    let repo = repository();
+    fs::write(repo.join("Makefile"), "all:\n\t@true\n").expect("edit");
+    let ran = dev_run(&repo, &[], &[("BAR_OWN_CRATES", "1")]);
+    assert_eq!(ran.exit, Some(0), "{}", ran.stdout);
+    assert!(ran.stdout.contains("verdict: GREEN"), "{}", ran.stdout);
+    assert!(ran.stdout.contains("Makefile"), "{}", ran.stdout);
+    assert!(ran.packages_tested().is_empty(), "{:?}", ran.calls);
+    assert!(ran.clippy_calls().is_empty(), "{:?}", ran.calls);
+    let _ = fs::remove_dir_all(&repo);
+}
+
 /// **A branch that changed nothing has nothing to run, and says so.** The loop
 /// is run from habit, on main as often as on a branch, and a refusal there reads
 /// as a failure. Nothing is built or tested and the exit is zero; the line names

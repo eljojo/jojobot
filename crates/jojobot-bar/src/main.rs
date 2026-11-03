@@ -1132,18 +1132,27 @@ fn run_dev(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
     let selected = dev::selected_packages(&touched, &workspace);
     let left_out = dev::dependents_left_out(&selected, &workspace);
     if selected.is_empty() {
-        summary.phase_failed(
-            "scope",
-            &format!(
-                "the diff touches no package ({}) — nothing would run",
-                dev::outside_line(&touched.outside)
-            ),
+        // The forge's own-crates job runs on every push; a push with no crate in
+        // it has nothing to run, which is an answer there and a question here.
+        let nothing = jojobot_bar::changes::own_crates();
+        let line = format!(
+            "the diff touches no package ({}) — nothing would run",
+            dev::outside_line(&touched.outside)
         );
+        if nothing {
+            summary.phase_ok("scope", &line);
+        } else {
+            summary.phase_failed("scope", &line);
+        }
         summary.phase_skipped("build");
         summary.phase_skipped("test");
         summary.phase_skipped("lint");
         finish(&mut summary, &log_path);
-        return Ok(ExitCode::from(2));
+        return Ok(if nothing {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::from(2)
+        });
     }
     let named = |set: &std::collections::BTreeSet<String>| {
         set.iter().cloned().collect::<Vec<_>>().join(", ")
