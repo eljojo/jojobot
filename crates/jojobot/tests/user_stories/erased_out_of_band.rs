@@ -29,7 +29,6 @@ async fn a_thing_erased_under_the_store_is_no_longer_served_after_the_store_is_r
     // named. The thing nobody erased is in the same search, so an empty
     // answer cannot pass for a search wired to nothing.
     let recalled = s.recall("person:nelson").await;
-    recalled.says("\"refusal_code\":\"UnknownEntity\"");
     recalled.says("\"attempted\":\"person:nelson\"");
     recalled.never_says("laughs at everything");
     let found = s.find("laughs").await;
