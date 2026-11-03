@@ -152,15 +152,17 @@ async fn packet(reader: &mut (impl AsyncRead + Unpin)) -> std::io::Result<Vec<u8
     Ok(bytes)
 }
 
-#[tokio::test]
-async fn dolt_log_contract_native_dropped_commit_reply_recovers_exactly_once() {
-    let (_scratch, mut server, pool, first) = fixture().await;
-    drop(first);
+/// **A proxy that holds back the server's answer to the first COMMIT it sees**
+/// and drops the connection, after the server has committed: the caller does not
+/// learn that its commit landed. Returns the proxy's port, a signal that the
+/// answer was dropped, and the proxy task.
+pub(crate) async fn lost_commit_reply_proxy(
+    upstream: u16,
+) -> (u16, Arc<tokio::sync::Notify>, tokio::task::JoinHandle<()>) {
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
         .await
         .unwrap();
     let port = listener.local_addr().unwrap().port();
-    let upstream = pool.connect_options().get_port();
     let once = Arc::new(std::sync::atomic::AtomicBool::new(true));
     let dropped = Arc::new(tokio::sync::Notify::new());
     let signal = dropped.clone();
@@ -204,6 +206,14 @@ async fn dolt_log_contract_native_dropped_commit_reply_recovers_exactly_once() {
             });
         }
     });
+    (port, dropped, proxy)
+}
+
+#[tokio::test]
+async fn dolt_log_contract_native_dropped_commit_reply_recovers_exactly_once() {
+    let (_scratch, mut server, pool, first) = fixture().await;
+    drop(first);
+    let (port, dropped, proxy) = lost_commit_reply_proxy(pool.connect_options().get_port()).await;
     let source =
         MySqlPoolOptions::new().connect_lazy_with((*pool.connect_options()).clone().port(port));
     let log = DoltLog::open(source).await.unwrap();

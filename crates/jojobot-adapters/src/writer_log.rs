@@ -93,6 +93,9 @@ impl WriterLog {
     }
 }
 
+#[cfg(test)]
+mod tests;
+
 #[async_trait::async_trait]
 impl LogStore for WriterLog {
     async fn append(&self, head: Position, batch: &SealedBatch) -> Result<Append, LogError> {

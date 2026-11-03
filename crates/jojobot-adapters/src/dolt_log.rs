@@ -609,4 +609,4 @@ impl FaultLog for DoltLog {
 
 #[cfg(test)]
 #[path = "dolt_log_tests.rs"]
-mod tests;
+pub(crate) mod tests;
