@@ -189,6 +189,17 @@ async fn a_manager_asks_for_a_bot_and_only_its_app_reports_on_it() {
         )
         .await;
     assert_ne!(refused, 200, "{body}");
+    // The refused write left the request as it was: the spec the manager set,
+    // the generation it raised, read back.
+    let (_, unchanged) = story.app_calls(&token, "recall", bound_to_the_app()).await;
+    assert_eq!(
+        unchanged["objects"][0]["fields"]["desired"], "stopped",
+        "{unchanged}"
+    );
+    assert_eq!(
+        unchanged["objects"][0]["fields"]["generation"], "2",
+        "{unchanged}"
+    );
     bart.call(
         "capture",
         json!({"subject": "bot-request:alpha", "content": "A note from a bystander."}),

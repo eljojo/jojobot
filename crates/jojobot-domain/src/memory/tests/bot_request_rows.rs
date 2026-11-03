@@ -77,6 +77,46 @@ fn a_request_is_created_by_a_bot_above_its_target() {
     );
 }
 
+/// **Each spec key is judged alone on a creation.** Five keys in one write are
+/// refused when any one is, so a key a store forgot to judge hides behind the
+/// others; sent alone, each key is licensed for the bot above the target and
+/// for nobody else.
+#[test]
+fn each_spec_key_alone_is_judged_on_a_creation() {
+    let lineage = created_for_homer();
+    for key in [TARGET_BOT, DESIRED, MACHINE, MODEL, BOUND_APP] {
+        assert_eq!(refused("bot:marge", &[key], &lineage), None, "{key}: marge");
+        for caller in ["bot:bart", "bot:homer"] {
+            assert!(
+                refused(caller, &[key], &lineage).is_some(),
+                "{key}: {caller}"
+            );
+        }
+    }
+}
+
+/// **A creation that carries a status key or the generation is refused for
+/// everybody**, the bot above the target included: the status is the bound
+/// app's and the generation is jojobot's, and a new request has neither yet.
+#[test]
+fn a_creation_carrying_a_status_key_or_the_generation_is_refused() {
+    let lineage = created_for_homer();
+    for key in [
+        "observed_state",
+        "observed_generation",
+        "runtime_ref",
+        "last_result",
+        "generation",
+    ] {
+        for caller in ["bot:marge", "bot:bart", "bot:homer"] {
+            assert!(
+                refused(caller, &[TARGET_BOT, key], &lineage).is_some(),
+                "{caller} created a request carrying {key}"
+            );
+        }
+    }
+}
+
 /// **Every spec key is judged on an edit, and the target is fixed after
 /// creation.**
 #[test]
