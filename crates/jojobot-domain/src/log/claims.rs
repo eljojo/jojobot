@@ -509,7 +509,7 @@ pub mod import;
 mod indexes;
 mod prepare;
 pub use indexes::Located;
-pub use prepare::{Admitted, CaptureRequest, Draft, Refusal, prepare};
+pub use prepare::{Admitted, CaptureRequest, Draft, Refusal, Route, prepare};
 
 #[cfg(test)]
 mod tests;

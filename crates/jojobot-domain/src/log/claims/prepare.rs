@@ -6,10 +6,11 @@
 //! **The order of refusal is part of the rule.** A request with two faults is
 //! told the first, so a caller that fixes it meets the second. The order is:
 //!
-//! 1. the write alone: a setting with no value, a describing key set on a thing;
-//! 2. the subject, then the edge's object, then the refs, then the objects a
+//! 1. the guards only the verb applies: a role's lease field;
+//! 2. the write alone: a setting with no value, a describing key set on a thing;
+//! 3. the subject, then the edge's object, then the refs, then the objects a
 //!    reference field names, then the claim the write is derived from;
-//! 3. the number a container's member asks for, when another member holds it.
+//! 4. the number a container's member asks for, when another member holds it.
 //!
 //! The write is judged first because it needs no object: it is a fault of the
 //! request, and a store that named a missing subject first would leave the
@@ -24,6 +25,15 @@ use crate::app::AppStamp;
 use crate::memory::{
     self, FactStatus, MemoryError, Provenance, Standing, WriteClass, types::DeclaredType,
 };
+
+/// **Which door the request came through.** The verb is the caller-facing
+/// surface; the engine writes its own records, and some of them carry keys the
+/// verb refuses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Route {
+    Verb,
+    Engine,
+}
 
 /// **What the caller decided about the claim itself**, as opposed to where it
 /// goes. [`prepare`] copies these into the claim and decides the rest.
@@ -49,6 +59,7 @@ pub struct CaptureRequest {
     /// The identity the claim takes. The caller mints it: the state holds no
     /// counter for it.
     pub record: RecordId,
+    pub route: Route,
     pub subject: String,
     pub draft: Draft,
     /// The edge's shape and the spelling of the object it points at.
@@ -67,6 +78,11 @@ pub struct CaptureRequest {
 /// fault the order above meets.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Refusal {
+    /// A role's lease field named through the verb. The boot door owns it.
+    RoleFieldGuarded {
+        role: String,
+        key: String,
+    },
     /// The write is malformed on its own. Carries the words the caller reads.
     Malformed(String),
     UnknownSubject(String),
@@ -106,6 +122,16 @@ pub fn prepare(
     declared: &[DeclaredType],
     request: &CaptureRequest,
 ) -> Result<Admitted, Refusal> {
+    // The guards only the verb applies come first: they read the request's own
+    // words and need no object. The engine's routes write a role's lease fields.
+    if request.route == Route::Verb
+        && let Some(MemoryError::RoleFieldGuarded { role, key }) = memory::refuses_role_fields(
+            &memory::EntityId(request.subject.clone()),
+            request.fields.keys(),
+        )
+    {
+        return Err(Refusal::RoleFieldGuarded { role, key });
+    }
     // The write alone, before any object is looked up.
     let classes = memory::classes_for_write(
         &BTreeMap::new(),

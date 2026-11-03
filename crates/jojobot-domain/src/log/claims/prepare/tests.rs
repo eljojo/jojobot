@@ -4,7 +4,7 @@ use super::super::tests::{
     apply, archived, body, claim, created, day, object, record, replay, write,
 };
 use super::super::{ClaimEvent, ObjectBody, State};
-use super::{CaptureRequest, Draft, Refusal, prepare};
+use super::{CaptureRequest, Draft, Refusal, Route, prepare};
 use crate::memory::numbered::NUMBERS_BY;
 use crate::memory::types::{DeclaredType, Field, ValueType};
 use crate::memory::{FactStatus, Provenance, Standing};
@@ -42,6 +42,7 @@ fn world() -> (State, Vec<DeclaredType>) {
 fn request(subject: &str) -> CaptureRequest {
     CaptureRequest {
         record: record("new"),
+        route: Route::Verb,
         subject: subject.to_string(),
         draft: Draft {
             content: "a claim".to_string(),
@@ -322,5 +323,49 @@ fn a_member_cannot_take_a_number_a_taken_back_claim_held() {
         prepare(&state, &declared, &numbering("m1", "4")),
         retired,
         "another member"
+    );
+}
+
+/// **A role's lease fields belong to the boot door.** The verb is refused them
+/// before any object is looked up; the engine's own routes write them.
+#[test]
+fn a_role_lease_field_is_refused_on_the_verb_and_not_on_the_engine() {
+    let (state, declared) = world();
+    let leased = |route, subject: &str, extra: Option<&str>| CaptureRequest {
+        route,
+        fields: BTreeMap::from([("holder".into(), "x".into())]),
+        sets: extra.map(|key| key.to_string()).into_iter().collect(),
+        ..request(subject)
+    };
+    let refused = Err(Refusal::RoleFieldGuarded {
+        role: "alpha".into(),
+        key: "holder".into(),
+    });
+    assert_eq!(
+        prepare(&state, &declared, &leased(Route::Verb, "role:alpha", None)),
+        refused,
+        "on a role that nobody has made"
+    );
+    assert_eq!(
+        prepare(
+            &state,
+            &declared,
+            &leased(Route::Verb, "role:alpha", Some("absent"))
+        ),
+        refused,
+        "before a malformed write"
+    );
+    assert_eq!(
+        prepare(
+            &state,
+            &declared,
+            &leased(Route::Engine, "role:alpha", None)
+        ),
+        Err(Refusal::UnknownSubject("role:alpha".into())),
+        "the engine's route skips the guard"
+    );
+    assert!(
+        prepare(&state, &declared, &leased(Route::Verb, "alpha", None)).is_ok(),
+        "a key named holder on a thing that is no role"
     );
 }
