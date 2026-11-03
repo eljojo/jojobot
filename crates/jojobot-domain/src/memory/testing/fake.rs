@@ -834,6 +834,39 @@ impl InMemoryMemory {
             .push(entity);
     }
 
+    /// **Delete a thing and everything written on it, under the store**, as a
+    /// person running SQL by hand does: the row, its claims and their writes go,
+    /// and nothing in this process hears of it. A fold or an index filled before
+    /// still serves the thing until it is filled again.
+    ///
+    /// **It is for standing up damage, never for convenience.** No verb deletes
+    /// a thing; a case about the refill meeting a store that lost one enters the
+    /// state the way it arose.
+    pub fn delete_entity_past_the_guard(&self, handle: &EntityId) {
+        let mut rows = self.entities.lock().expect("fake mutex poisoned");
+        let row = rows
+            .iter()
+            .find(|e| &e.id == handle)
+            .expect("the thing to delete is there");
+        let home = match &row.badge {
+            Some(badge) => EntityId(badge.clone()),
+            None => row.id.clone(),
+        };
+        rows.retain(|e| &e.id != handle);
+        self.facts
+            .lock()
+            .expect("fake mutex poisoned")
+            .retain(|f| f.home != home);
+        self.writes
+            .lock()
+            .expect("fake mutex poisoned")
+            .retain(|w| w.entity != home);
+        self.claim_writes
+            .lock()
+            .expect("fake mutex poisoned")
+            .retain(|(held, _, _)| held != &home);
+    }
+
     /// **From now on an app's event lands and the fold then fails to refresh.**
     /// The write is stored and a repeat of its attempt answers its receipt; the
     /// call answers [`MemoryError::FoldBehind`] with what landed.

@@ -168,6 +168,9 @@ mod entitlements;
 /// A thing's own writes: what it was called before, and which run changed it.
 #[path = "user_stories/entity_history.rs"]
 mod entity_history;
+/// A thing erased under the store is no longer served once the store is read again.
+#[path = "user_stories/erased_out_of_band.rs"]
+mod erased_out_of_band;
 /// The first claim on a bot made with settings is found by a default search.
 #[path = "user_stories/first_claim_found.rs"]
 mod first_claim_found;

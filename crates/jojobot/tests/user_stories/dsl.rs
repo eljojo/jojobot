@@ -158,6 +158,14 @@ impl Blindable {
         *self.damaged.lock().expect("the damage is not poisoned") = Some(handle.to_string());
     }
 
+    /// **A thing is deleted under the store**, past the server, which still
+    /// holds it until the store is read again
+    /// ([`Story::the_store_changed_underneath`]).
+    pub fn deletes_the_thing(&self, handle: &str) {
+        self.inner
+            .delete_entity_past_the_guard(&jojobot_domain::memory::EntityId(handle.to_string()));
+    }
+
     /// **The next read of one document waits until the gate is released.** The
     /// read is the one the image makes after a write, so the write has landed in
     /// the store and is not yet in the image.
