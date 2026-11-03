@@ -967,10 +967,6 @@ fn assert_indexes_equal_a_recomputation(state: &State, merges: u64, context: &st
             want,
             "{context}: highest claim {name}"
         );
-        for held in state.records.values() {
-            let address = format!("{name}#{}", held.claim.label);
-            let _ = address;
-        }
     }
     // The numbering: a member is under a container when the walk up by parent
     // meets it, and holds a number when the fold says so.
@@ -1044,24 +1040,37 @@ fn assert_indexes_equal_a_recomputation(state: &State, merges: u64, context: &st
                 .get(spelling)
                 .map(|object| state.survivor(object).clone())
         });
-        for held in state.records.values() {
-            let address = format!("{spelling}#{}", held.claim.label);
-            let want = home.as_ref().and_then(|home| {
-                let mut found = state.records.iter().filter(|(_, other)| {
-                    &state.survivor(&other.claim.home).clone() == home
-                        && other.claim.label == held.claim.label
-                });
-                let first = found.next()?;
-                found.next().is_none().then(|| Located {
-                    record: first.0.clone(),
-                    home: home.clone(),
+        // A label no claim holds names nothing, whatever the spelling.
+        let labels: BTreeSet<&str> = state
+            .records
+            .values()
+            .map(|held| held.claim.label.as_str())
+            .chain(["f9999"])
+            .collect();
+        for label in labels {
+            let address = format!("{spelling}#{label}");
+            let mut holders: Vec<Located> = home
+                .iter()
+                .flat_map(|home| {
+                    state
+                        .records
+                        .iter()
+                        .filter(move |(_, other)| {
+                            &state.survivor(&other.claim.home).clone() == home
+                                && other.claim.label == label
+                        })
+                        .map(move |(id, _)| Located {
+                            record: id.clone(),
+                            home: home.clone(),
+                        })
                 })
-            });
-            let got = state.claim_at(&address);
+                .collect();
             // Two claims on one label of one home are a state no writer makes.
-            if want.is_some() || home.is_none() {
-                assert_eq!(got, want, "{context}: {address}");
+            if holders.len() > 1 {
+                continue;
             }
+            let want = holders.pop();
+            assert_eq!(state.claim_at(&address), want, "{context}: {address}");
         }
     }
 }
