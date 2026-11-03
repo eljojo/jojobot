@@ -1332,6 +1332,8 @@ async fn the_logged_marks(pool: &sqlx::MySqlPool) -> Vec<jojobot_adapters::teach
 #[tokio::test]
 async fn ageing_a_store_moves_its_teaching_log_with_its_rows() {
     use jojobot_adapters::dolt::teaching::DoltTeachings;
+    use jojobot_adapters::dolt_log::DoltLog;
+    use jojobot_domain::log::{LogStore, Position};
     let scratch = Scratch::new("gate-ageing-log");
     let server = Dolt::start(&scratch.0, free_port())
         .await
@@ -1340,7 +1342,29 @@ async fn ageing_a_store_moves_its_teaching_log_with_its_rows() {
         .await
         .expect("a migrated database");
     seed_the_teaching_marks_through_the_log(&pool).await;
+    let log = DoltLog::open(pool.clone()).await.expect("the log opens");
+    let before = log
+        .read_from(Position(0), 100_000)
+        .await
+        .expect("the seeded batches read");
+    assert!(!before.is_empty(), "the seed wrote a batch");
     age_the_recording(&pool, 6).await;
+    let after = log
+        .read_from(Position(0), 100_000)
+        .await
+        .expect("the aged batches read");
+    assert_eq!(after.len(), before.len(), "every batch remains");
+    for (original, aged) in before.iter().zip(&after) {
+        assert_eq!(aged.header().batch_id, original.header().batch_id);
+        assert_eq!(
+            original
+                .header()
+                .append_time_utc
+                .duration_since(aged.header().append_time_utc),
+            jiff::SignedDuration::from_hours(6),
+            "the batch header moves with its events"
+        );
+    }
     let rows = DoltTeachings::open(pool.clone())
         .marks()
         .await
