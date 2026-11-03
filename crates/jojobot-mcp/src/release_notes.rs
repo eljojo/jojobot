@@ -59,14 +59,14 @@ pub(crate) struct Note {
 /// fails for it.
 pub(crate) const SHIPPED: &[(&str, &str)] = &[
     (
-        "a-plan-names-what-it-could-not-read",
-        include_str!("../release-notes/deploy-9.3.2.1/a-plan-names-what-it-could-not-read.md"),
-    ),
-    (
         "a-manager-asks-for-a-bot-with-a-request-record",
         include_str!(
             "../release-notes/deploy-9.3.2.1/a-manager-asks-for-a-bot-with-a-request-record.md"
         ),
+    ),
+    (
+        "a-plan-names-what-it-could-not-read",
+        include_str!("../release-notes/deploy-9.3.2.1/a-plan-names-what-it-could-not-read.md"),
     ),
     (
         "blank-value-takes-the-key-off",
