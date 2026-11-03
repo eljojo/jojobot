@@ -381,6 +381,8 @@ fn ci_crate_selection_takes_the_base_the_branch_is_cut_from() {
             Command::new("sh")
                 .args(["-c", &step])
                 .env("PATH", &path)
+                // The job running this case has its own base set.
+                .env_remove("BAR_SELECT_BASE")
                 .env("GITHUB_ENV", &env_file),
         )
         .unwrap();
