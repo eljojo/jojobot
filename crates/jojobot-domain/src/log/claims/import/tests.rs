@@ -1,0 +1,570 @@
+use std::collections::BTreeMap;
+
+use jiff::Timestamp;
+
+use super::*;
+use crate::log::claims::State;
+use crate::log::claims::tests::{body, claim, key, object};
+use crate::memory::{FactId, FactStatus, KeyWrite, RETRACTS};
+
+fn at(second: i64) -> Option<Timestamp> {
+    Some(Timestamp::from_second(1_800_000_000 + second).unwrap())
+}
+
+fn entity(id: &str, handle: &str) -> EntityRow {
+    let made = body("person", handle);
+    EntityRow {
+        key: object(id),
+        handle: handle.into(),
+        kind: made.kind.0,
+        name: made.name,
+        source: made.source,
+        boot: None,
+        parent: None,
+        aliases: Vec::new(),
+        crm: None,
+        prose: String::new(),
+        badge: None,
+        archived: None,
+        taken_in: None,
+    }
+}
+
+fn write_of(ordinal: u64, content: &str, run: Option<&str>, stamp: i64) -> FactWriteRow {
+    FactWriteRow {
+        ordinal,
+        claim: claim("f1", "k1", content, 1),
+        run: run.map(String::from),
+        bot: None,
+        run_bot: None,
+        written_at: at(stamp),
+    }
+}
+
+fn fact(home: &str, local: &str, writes: Vec<FactWriteRow>) -> FactRow {
+    let head = writes
+        .last()
+        .map(|last| last.claim.clone())
+        .unwrap_or_else(|| claim(local, home, "head", 1));
+    FactRow {
+        home: object(home),
+        local: local.into(),
+        head,
+        writes,
+    }
+}
+
+fn set(
+    entity: &str,
+    k: &str,
+    ordinal: u64,
+    value: &str,
+    local: &str,
+    pointer: Option<u64>,
+) -> FieldWriteRow {
+    FieldWriteRow {
+        entity: object(entity),
+        key: key(k),
+        ordinal,
+        class: WriteClass::Sets,
+        write: FieldValue::Set(value.into()),
+        fact_home: object(entity),
+        fact_local: local.into(),
+        fact_write_ordinal: pointer,
+        written_at: at(ordinal as i64 * 10),
+        targets: Vec::new(),
+    }
+}
+
+fn state_of(rows: &Rows) -> State {
+    State::replay(&import(rows))
+}
+
+fn stream<'a>(state: &'a State, subject: &str, k: &str) -> &'a [super::super::Write] {
+    state
+        .streams
+        .get(&(object(subject), key(k)))
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+}
+
+/// Entity and alias rows: the object, its spelling and its source moment.
+#[test]
+fn an_entity_row_becomes_an_object_answering_to_its_handle() {
+    let mut row = entity("k1", "person:homer");
+    row.aliases = vec!["Homie".into()];
+    row.crm = Some("crm-7".into());
+    row.taken_in = at(5);
+    let events = import(&Rows {
+        entities: vec![row],
+        ..Rows::default()
+    });
+    assert_eq!(events[0].imported_source_time, at(5));
+    let state = State::replay(&events);
+    assert_eq!(state.resolve("person:homer"), Some(&object("k1")));
+    let held = state.object(&object("k1")).unwrap();
+    assert_eq!(held.aliases, vec!["Homie".to_string()]);
+    assert_eq!(held.metadata.get("crm").map(String::as_str), Some("crm-7"));
+    assert!(!held.archived);
+}
+
+/// An entity row with no moment stays without one.
+#[test]
+fn an_entity_row_with_no_moment_arrives_with_none() {
+    let events = import(&Rows {
+        entities: vec![entity("k1", "person:homer")],
+        ..Rows::default()
+    });
+    assert!(
+        events
+            .iter()
+            .all(|event| event.imported_source_time.is_none())
+    );
+}
+
+/// A renamed handle: the new spelling answers, the former one is remembered.
+#[test]
+fn a_renamed_handle_keeps_its_former_spelling() {
+    let rows = Rows {
+        entities: vec![entity("k1", "person:marge")],
+        former_handles: vec![FormerHandleRow {
+            former: "person:homer".into(),
+            object: object("k1"),
+            ordinal: 1,
+        }],
+        ..Rows::default()
+    };
+    let state = state_of(&rows);
+    assert_eq!(state.resolve("person:marge"), Some(&object("k1")));
+    assert_eq!(state.resolve("person:homer"), None);
+    assert_eq!(
+        state.retired_addresses.get("person:homer"),
+        Some(&object("k1"))
+    );
+}
+
+/// An archived entity row stays archived, with its reason.
+#[test]
+fn an_archived_entity_keeps_its_reason_and_moment() {
+    let mut row = entity("k1", "person:homer");
+    row.archived = Some(("duplicate".into(), at(9).unwrap()));
+    let state = state_of(&Rows {
+        entities: vec![row],
+        ..Rows::default()
+    });
+    let held = state.object(&object("k1")).unwrap();
+    assert!(held.archived);
+    assert_eq!(
+        held.metadata.get("archived_reason").map(String::as_str),
+        Some("duplicate")
+    );
+}
+
+/// An edited claim: each write keeps its own run and its own writer.
+#[test]
+fn an_edited_claim_keeps_each_writes_own_run() {
+    let mut first = write_of(1, "first", Some("run-a"), 1);
+    first.bot = Some(EntityId("bot:lisa".into()));
+    let second = write_of(2, "second", Some("run-b"), 2);
+    let rows = Rows {
+        entities: vec![entity("k1", "person:homer")],
+        facts: vec![fact("k1", "f1", vec![first, second])],
+        field_writes: vec![
+            set("k1", "mood", 1, "calm", "f1", Some(1)),
+            set("k1", "mood", 2, "loud", "f1", Some(2)),
+        ],
+        ..Rows::default()
+    };
+    let state = state_of(&rows);
+    let writes = stream(&state, "k1", "mood");
+    assert_eq!(writes[0].run, Some(RunId("run-a".into())));
+    assert_eq!(
+        writes[0].writer,
+        Some(Actor::Bot(EntityId("bot:lisa".into())))
+    );
+    assert_eq!(writes[1].run, Some(RunId("run-b".into())));
+    assert_eq!(writes[1].writer, None);
+    let record = state.record(&record_id(&object("k1"), "f1")).unwrap();
+    assert_eq!(record.claim.content, "second");
+    assert_eq!(record.revisions, 1);
+}
+
+/// A write with no pointer to its claim write has no writer and no run, even
+/// when its claim has both.
+#[test]
+fn a_write_with_no_pointer_has_no_run_though_its_claim_has_one() {
+    let rows = Rows {
+        entities: vec![entity("k1", "person:homer")],
+        facts: vec![fact(
+            "k1",
+            "f1",
+            vec![write_of(1, "only", Some("run-a"), 1)],
+        )],
+        field_writes: vec![set("k1", "mood", 1, "calm", "f1", None)],
+        ..Rows::default()
+    };
+    let state = state_of(&rows);
+    let writes = stream(&state, "k1", "mood");
+    assert_eq!(writes[0].run, None);
+    assert_eq!(writes[0].writer, None);
+}
+
+/// An unstamped claim and an unstamped write stay unstamped.
+#[test]
+fn an_unstamped_claim_and_write_get_no_moment() {
+    let mut write = set("k1", "mood", 1, "calm", "f1", None);
+    write.written_at = None;
+    let rows = Rows {
+        entities: vec![entity("k1", "person:homer")],
+        facts: vec![fact("k1", "f1", Vec::new())],
+        field_writes: vec![write],
+        ..Rows::default()
+    };
+    let events = import(&rows);
+    assert!(
+        events
+            .iter()
+            .all(|event| event.imported_source_time.is_none())
+    );
+    let state = State::replay(&events);
+    assert_eq!(stream(&state, "k1", "mood")[0].written_at, None);
+}
+
+/// A head row that no write explains arrives as one more revision with no stamp.
+#[test]
+fn a_head_that_differs_from_its_last_write_is_one_unstamped_revision() {
+    let mut row = fact("k1", "f1", vec![write_of(1, "written", Some("run-a"), 1)]);
+    row.head.content = "edited in the row".into();
+    let events = import(&Rows {
+        entities: vec![entity("k1", "person:homer")],
+        facts: vec![row],
+        ..Rows::default()
+    });
+    let last = events.last().unwrap();
+    assert!(matches!(last.payload, ClaimEvent::RecordRevised { .. }));
+    assert_eq!((last.imported_source_time, last.run.clone()), (None, None));
+}
+
+/// A cleared key leaves the thing without it, and the clear stays a write.
+#[test]
+fn a_cleared_key_is_a_write_that_takes_the_key_off() {
+    let mut clear = set("k1", "mood", 2, "", "f1", Some(1));
+    clear.write = FieldValue::Clear;
+    let rows = Rows {
+        entities: vec![entity("k1", "person:homer")],
+        facts: vec![fact("k1", "f1", vec![write_of(1, "x", None, 1)])],
+        field_writes: vec![set("k1", "mood", 1, "calm", "f1", Some(1)), clear],
+        ..Rows::default()
+    };
+    let state = state_of(&rows);
+    assert_eq!(stream(&state, "k1", "mood").len(), 2);
+    assert!(state.fields(&object("k1"), &[]).is_empty());
+}
+
+fn with_status(mut row: FactRow, status: FactStatus) -> FactRow {
+    row.head.status = status;
+    for write in &mut row.writes {
+        write.claim.status = status;
+    }
+    row
+}
+
+/// An archived claim and a retraction: their writes stay in the stream, and the
+/// thing does not hold what they set.
+#[test]
+fn an_archived_and_a_retracted_claim_stay_but_do_not_fold() {
+    let rows = Rows {
+        entities: vec![entity("k1", "person:homer")],
+        facts: vec![
+            with_status(
+                fact("k1", "f1", vec![write_of(1, "a", None, 1)]),
+                FactStatus::Archived,
+            ),
+            with_status(
+                fact("k1", "f2", vec![write_of(1, "b", None, 2)]),
+                FactStatus::Archived,
+            ),
+        ],
+        field_writes: vec![
+            set("k1", "mood", 1, "calm", "f1", Some(1)),
+            set("k1", RETRACTS, 1, "k1/f1", "f2", Some(1)),
+        ],
+        ..Rows::default()
+    };
+    let state = state_of(&rows);
+    assert_eq!(stream(&state, "k1", RETRACTS).len(), 1);
+    assert!(state.fields(&object("k1"), &[]).is_empty());
+}
+
+/// A numbered member taken back: its number is still a write on the stream.
+#[test]
+fn a_numbered_member_taken_back_keeps_its_number_write() {
+    let rows = Rows {
+        entities: vec![entity("k1", "person:homer")],
+        facts: vec![with_status(
+            fact("k1", "f1", vec![write_of(1, "n", None, 1)]),
+            FactStatus::Archived,
+        )],
+        field_writes: vec![set("k1", "num", 1, "7", "f1", Some(1))],
+        ..Rows::default()
+    };
+    let state = state_of(&rows);
+    assert_eq!(
+        stream(&state, "k1", "num")[0].write,
+        FieldValue::Set("7".into())
+    );
+    assert!(state.fields(&object("k1"), &[]).is_empty());
+}
+
+fn merged_pair() -> Rows {
+    let survivor_write = write_of(1, "ours", Some("run-s"), 1);
+    let mut folded_write = write_of(1, "theirs", Some("run-f"), 2);
+    folded_write.claim.home = object("k1");
+    folded_write.claim.label = "f9".into();
+    Rows {
+        entities: vec![entity("k1", "person:homer"), entity("k2", "person:marge")],
+        // The merge gave the folded thing's claim `f9` under the survivor.
+        facts: vec![
+            fact("k1", "f1", vec![survivor_write]),
+            fact("k1", "f9", vec![folded_write]),
+        ],
+        field_writes: vec![
+            set("k1", "mood", 1, "ours", "f1", Some(1)),
+            FieldWriteRow {
+                written_at: at(100),
+                ..set("k2", "mood", 1, "theirs", "f1", Some(1))
+            },
+        ],
+        merges: vec![MergeRow {
+            no: 1,
+            folded: object("k2"),
+            survivor: object("k1"),
+            claims: vec![("f1".into(), "f9".into())],
+        }],
+        ..Rows::default()
+    }
+}
+
+/// A merged pair: the folded thing's write is interleaved by the ledger's rule,
+/// and its spelling answers to the survivor.
+#[test]
+fn a_merged_pair_arrives_interleaved_under_the_survivor() {
+    let state = state_of(&merged_pair());
+    let writes = stream(&state, "k1", "mood");
+    assert_eq!(
+        writes.iter().map(|w| w.ordinal).collect::<Vec<_>>(),
+        vec![1, 2]
+    );
+    assert_eq!(writes[1].run, Some(RunId("run-f".into())));
+    assert_eq!(state.resolve("person:marge"), Some(&object("k1")));
+    assert!(stream(&state, "k2", "mood").is_empty());
+    assert_eq!(state.fields(&object("k1"), &[])["mood"], "theirs");
+}
+
+/// A folded write of a claim the merge did not map is left out, as the claim is.
+#[test]
+fn a_folded_write_of_an_unmapped_claim_is_left_out() {
+    let mut rows = merged_pair();
+    rows.merges[0].claims.clear();
+    let events = import(&rows);
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event.payload, ClaimEvent::FieldWritten { .. }))
+            .count(),
+        1
+    );
+}
+
+/// The spelling of a claim's identity is stored on the log and nothing outside
+/// this process declares it.
+#[test]
+fn a_claim_identity_is_its_home_and_local_id() {
+    assert_eq!(record_id(&object("k1"), "f3"), RecordId("k1/f3".into()));
+    assert_eq!(EVENT_KIND, "claim");
+}
+
+struct Dice(u64);
+
+impl Dice {
+    fn roll(&mut self, below: usize) -> usize {
+        self.0 = self
+            .0
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        ((self.0 >> 33) as usize) % below
+    }
+}
+
+/// Rows drawn the way the store makes them: claims are edited, some are
+/// archived, key writes point at a claim write or at none.
+fn drawn(dice: &mut Dice) -> Rows {
+    let keys = ["mood", "num", "colour"];
+    let mut rows = Rows::default();
+    let handles = ["person:homer", "person:marge", "person:bart"];
+    for (n, id) in ["k1", "k2", "k3"].iter().enumerate() {
+        rows.entities.push(entity(id, handles[n]));
+        let claims = 1 + dice.roll(3);
+        for c in 0..claims {
+            let local = format!("f{}", c + 1);
+            let mut writes = Vec::new();
+            for e in 0..1 + dice.roll(2) {
+                let mut w = write_of(
+                    e as u64 + 1,
+                    &format!("c{n}{c}{e}"),
+                    Some(&format!("run-{n}{c}{e}")),
+                    dice.roll(50) as i64,
+                );
+                w.claim.home = object(id);
+                w.claim.label = local.clone();
+                if dice.roll(4) == 0 {
+                    w.claim.status = FactStatus::Archived;
+                }
+                writes.push(w);
+            }
+            rows.facts.push(fact(id, &local, writes));
+        }
+        let mut ordinals: BTreeMap<&str, u64> = BTreeMap::new();
+        for _ in 0..dice.roll(6) {
+            let k = keys[dice.roll(keys.len())];
+            let ordinal = ordinals.entry(k).and_modify(|o| *o += 1).or_insert(1);
+            let mut w = set(
+                id,
+                k,
+                *ordinal,
+                &format!("v{}", dice.roll(9)),
+                "f1",
+                Some(1),
+            );
+            w.written_at = if dice.roll(5) == 0 {
+                None
+            } else {
+                at(dice.roll(50) as i64)
+            };
+            if dice.roll(5) == 0 {
+                w.write = FieldValue::Clear;
+            }
+            if dice.roll(5) == 0 {
+                w.fact_write_ordinal = None;
+            }
+            rows.field_writes.push(w);
+        }
+    }
+    rows
+}
+
+/// The fold as the store reads it: the stored writes of a thing, joined to the
+/// head of their claim, handed to the one fold. It reads rows and never events.
+fn folded_over(rows: &Rows, thing: &str) -> BTreeMap<String, String> {
+    let mut writes = Vec::new();
+    for write in rows
+        .field_writes
+        .iter()
+        .filter(|w| w.entity == object(thing))
+    {
+        let Some(fact) = rows
+            .facts
+            .iter()
+            .find(|f| f.home == write.fact_home && f.local == write.fact_local)
+        else {
+            continue;
+        };
+        if !crate::memory::reaches_the_thing(write.class) {
+            continue;
+        }
+        let origin = fact
+            .writes
+            .iter()
+            .find(|held| Some(held.ordinal) == write.fact_write_ordinal)
+            .map(origin_of);
+        let by = write_origin::written_by(origin, fact.head.app.as_ref());
+        writes.push(KeyWrite {
+            key: write.key.0.clone(),
+            ordinal: write.ordinal,
+            value: match &write.write {
+                FieldValue::Set(v) => Some(v.clone()),
+                FieldValue::Clear => None,
+            },
+            fact: FactId(fact.head.label.clone()),
+            status: fact.head.status,
+            provenance: fact.head.provenance,
+            standing: fact.head.standing,
+            note: fact.head.details.clone(),
+            recorded_by: by.recorded_by,
+            writer: by.writer,
+            run: by.run,
+            written_at: write.written_at,
+        });
+    }
+    crate::memory::folded_fields(&writes, &[])
+}
+
+/// Mapping the rows and applying the events gives the folded fields the fold
+/// gives over the rows themselves, for every drawn row set.
+#[test]
+fn mapped_rows_fold_to_what_the_rows_fold_to() {
+    for seed in 0..80u64 {
+        let mut dice = Dice(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
+        let rows = drawn(&mut dice);
+        let state = state_of(&rows);
+        for thing in ["k1", "k2", "k3"] {
+            assert_eq!(
+                state.fields(&object(thing), &[]),
+                folded_over(&rows, thing),
+                "seed {seed} thing {thing}"
+            );
+        }
+        // The histories: each write keeps the run, writer and moment its row names.
+        for write in &rows.field_writes {
+            let fact = rows
+                .facts
+                .iter()
+                .find(|f| f.home == write.fact_home && f.local == write.fact_local)
+                .unwrap();
+            let origin = fact
+                .writes
+                .iter()
+                .find(|held| Some(held.ordinal) == write.fact_write_ordinal)
+                .map(origin_of);
+            let by = write_origin::written_by(origin, fact.head.app.as_ref());
+            let kept = stream(&state, &write.entity.0, &write.key.0)
+                .iter()
+                .find(|held| held.ordinal == write.ordinal)
+                .unwrap();
+            assert_eq!(
+                (&kept.run, &kept.writer, kept.written_at),
+                (&by.run.map(RunId), &by.writer, write.written_at),
+                "seed {seed} {:?} {}",
+                write.key,
+                write.ordinal
+            );
+        }
+    }
+}
+
+/// No stamp exists in the output that was not in the input.
+#[test]
+fn no_stamp_is_invented() {
+    for seed in 0..80u64 {
+        let mut dice = Dice(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
+        let rows = drawn(&mut dice);
+        let given: Vec<Timestamp> = rows
+            .field_writes
+            .iter()
+            .filter_map(|w| w.written_at)
+            .chain(
+                rows.facts
+                    .iter()
+                    .flat_map(|f| f.writes.iter().filter_map(|w| w.written_at)),
+            )
+            .chain(rows.entities.iter().filter_map(|e| e.taken_in))
+            .collect();
+        for event in import(&rows) {
+            if let Some(stamp) = event.imported_source_time {
+                assert!(given.contains(&stamp), "seed {seed}: {stamp} not a row's");
+            }
+            assert_eq!(event.written_at, None);
+            assert_eq!(event.occurred_at, None);
+        }
+    }
+}
