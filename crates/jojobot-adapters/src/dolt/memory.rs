@@ -1788,6 +1788,372 @@ impl DoltMemory {
         }))
     }
 
+    /// **A merge in a transaction its caller owns.** The caller commits it only
+    /// when this answers `Ok`. [`merge`](Memory::merge) is that, and so is the
+    /// merge that writes a claim in the same act.
+    #[allow(clippy::too_many_arguments)]
+    async fn merge_in(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        folded: &EntityId,
+        survivor: &EntityId,
+        reason: Option<&str>,
+        date: Date,
+        caller: &EntityId,
+        session: Option<&str>,
+    ) -> Result<Merge, MemoryError> {
+        // **Wrong by kind alone, before either side's existence is even
+        // asked.** A fold naming a session steps past the same three things
+        // any other memory write onto its handle would.
+        validate_write_subject(folded)?;
+        validate_write_subject(survivor)?;
+        if folded == survivor {
+            return Err(MemoryError::NothingToMerge {
+                attempted: folded.to_string(),
+            });
+        }
+        // **Rows only, deliberately** — a fold marks a stored row, and a
+        // build-supplied record has none to mark. The same exception
+        // `rename_entity`'s own existence check reads off.
+        let index = self.index(tx).await?;
+        // **Everything is decided before anything is written.** A fold writes
+        // rows in several tables, so a refusal discovered half-way through is
+        // the one outcome this must not produce. The sides are judged by the one
+        // function every store asks.
+        match jojobot_domain::memory::merge::refuses_merge_sides(folded, survivor, &index) {
+            Some(jojobot_domain::memory::merge::SideRefusal::Missing(side)) => {
+                let supplied = self.supplied.record_for(&side).is_some();
+                let nearest = if supplied {
+                    Vec::new()
+                } else {
+                    let known = self.extend_with_supplied(tx, index.clone()).await?;
+                    self.nearest(tx, &side, &known).await?
+                };
+                return Err(jojobot_domain::memory::merge::missing_side(
+                    &side, supplied, nearest,
+                ));
+            }
+            Some(jojobot_domain::memory::merge::SideRefusal::Refused(refused)) => {
+                return Err(refused);
+            }
+            None => {}
+        }
+        // **A document merges only into another document**, decided before
+        // anything is written.
+        if let Some(refused) =
+            jojobot_domain::memory::document::refuses_a_merge_of_a_document_and_a_thing(
+                folded, survivor,
+            )
+        {
+            return Err(refused);
+        }
+        let account = merge_account(folded, survivor, reason, date)?;
+        let standing = standing_of(&account);
+
+        // **Both sides resolved to their storage keys once, up front.** Every
+        // statement below that touches `entity` or `fact_home` names the KEY,
+        // never the raw handle — a claim's home is the badge now, not the
+        // handle, and a statement by the handle would silently match nothing.
+        let (folded_key, folded_handle) = self.resolve(tx, folded).await?.expect("checked above");
+        let (survivor_key, survivor_handle) =
+            self.resolve(tx, survivor).await?.expect("checked above");
+
+        // **The guards of a fold run in the one order the domain keeps**, over
+        // what this store reads inside this transaction, so no write can land
+        // between a question and the move.
+        jojobot_domain::memory::merge::refuses_merge_guards(
+            &jojobot_domain::memory::merge::Fold {
+                caller,
+                folded: &folded_handle,
+                survivor: &survivor_handle,
+                survivor_named: survivor,
+            },
+            &mut DoltFoldReads {
+                store: self,
+                tx,
+                folded_key: &folded_key,
+                survivor_key: &survivor_key,
+                survivor_handle: &survivor_handle,
+            },
+        )
+        .await?;
+
+        // **The numbered collections the fold reaches, read before it writes**,
+        // and what the survivor held, for the floor of its kind.
+        // What was under the duplicate is served under the survivor.
+        let folded_subtree = self
+            .subtree_holding(tx, &folded_handle, &folded_key)
+            .await?;
+        let children_moved: Vec<_> = folded_subtree.into_iter().skip(1).collect();
+        let numbering = self
+            .numbering_reach(
+                tx,
+                &jojobot_domain::memory::numbered::Change {
+                    holds: vec![(survivor_handle.clone(), Default::default())],
+                    leaves: vec![folded_handle.clone()],
+                    moved: children_moved.clone(),
+                    ..Default::default()
+                },
+                Some(&survivor_handle),
+            )
+            .await?;
+        let survivor_before = self.held_by(tx, &survivor_key).await?;
+        // **A merge appends its event and moves no row.** The claims, their
+        // writes, the field writes, the pointers other records hold at the
+        // folded thing and its children all stay under the key they were stored
+        // under; every read serves them as the survivor's through the event. A
+        // fact id is local to the doc that holds it, so both sides own an `f1`:
+        // the event gives each claim the folded thing serves an id that is free
+        // on the survivor, and the survivor serves the claim under it.
+        let moving: Vec<FactId> = {
+            let mut served = self.facts_projected(tx, &folded_key).await?;
+            served.sort_by_key(|fact| fact.id.ordinal());
+            served.into_iter().map(|fact| fact.id).collect()
+        };
+        let rehomed = moving.len();
+        // The account of the merge, written below, takes the id after the last
+        // claim's: the event that holds the map is appended after the account.
+        let mut minted = Self::mint_many(tx, &survivor_key, moving.len() + 1).await?;
+        let account_id = minted.pop().expect("one more id than claims was asked for");
+        let address_map: Vec<(String, String)> = moving
+            .iter()
+            .zip(&minted)
+            .map(|(was, now)| (was.as_str().to_string(), now.as_str().to_string()))
+            .collect();
+
+        let record = Fact {
+            app_stamp: None,
+            written_by_another: false,
+            sets: Default::default(),
+            // Unclassed keys of an engine-written record are own fields that reach.
+            reaching: account.fields.keys().cloned().collect(),
+            field_links: Default::default(),
+            id: account_id,
+            home: survivor_key.clone(),
+            subject: survivor_key.clone(),
+            content: account.content,
+            details: account.details,
+            provenance: account.provenance,
+            standing,
+            status: account.status,
+            recorded_at: account.recorded_at,
+            happened_at: account.happened_at,
+            happened_through: account.happened_through,
+            edge: account.edge,
+            fields: account.fields,
+            refs: account.refs,
+            derived_from: account.derived_from,
+            stands_for: Vec::new(),
+            inserted_at: Some(self.clock.now()),
+            stale_after: None,
+            receipt: None,
+        };
+        let claim_write = Self::write_fact(tx, &record, &self.clock, session, None).await?;
+        Self::append_writes(
+            tx,
+            &record.home,
+            &record.id,
+            written_keys(&record),
+            &self.clock,
+            &Default::default(),
+            claim_write,
+        )
+        .await?;
+
+        // **Two documents become one: the folded sections follow the survivor's
+        // last section, and each chunk names its heading's new id.** Written in
+        // this transaction, before the event is appended, while the folded records
+        // are still served at the addresses they were made under. The placement is
+        // the domain's; this writes what it says.
+        if jojobot_domain::memory::entries::places_its_records(folded.kind()) {
+            let claims: Vec<(FactId, FactId)> =
+                moving.iter().cloned().zip(minted.iter().cloned()).collect();
+            let survivor_records = self.facts_projected(tx, &survivor_key).await?;
+            let folded_records = self.facts_projected(tx, &folded_key).await?;
+            let placed = if folded.kind() == Some(EntityKind::LIST) {
+                jojobot_domain::memory::entries::append_after(&survivor_records, &folded_records)
+            } else {
+                jojobot_domain::memory::document::append_after(
+                    &survivor_records,
+                    &folded_records,
+                    &claims,
+                )
+            }
+            .map_err(|e| {
+                MemoryError::InvalidFact(format!("the folded sections cannot be placed: {e}"))
+            })?;
+            // **A folded list's ticks name their entries by the new ids**, the
+            // ids the merge gave the entries on the survivor.
+            let ticks = if folded.kind() == Some(EntityKind::LIST) {
+                jojobot_domain::memory::entries::ticks_following(&folded_records, &claims)
+            } else {
+                Vec::new()
+            };
+            for tick in ticks {
+                let Some(mut record) = folded_records
+                    .iter()
+                    .find(|fact| fact.id == tick.fact)
+                    .cloned()
+                else {
+                    continue;
+                };
+                record.home = folded_key.clone();
+                record.subject = folded_key.clone();
+                self.lower_pointers(tx, &mut record, &folded_key).await?;
+                let on_disk = self.as_stored(tx, &record).await?;
+                let classes = self.held_classes(tx, &folded_key, &tick.fact).await?;
+                let claim_write =
+                    Self::write_fact(tx, &on_disk, &self.clock, session, None).await?;
+                Self::append_writes(
+                    tx,
+                    &on_disk.home,
+                    &on_disk.id,
+                    vec![(
+                        jojobot_domain::memory::entries::TICK_ENTRY.to_string(),
+                        Some(tick.entry),
+                    )],
+                    &self.clock,
+                    &classes,
+                    claim_write,
+                )
+                .await?;
+            }
+            for place in placed {
+                let Some(mut record) = folded_records
+                    .iter()
+                    .find(|fact| fact.id == place.fact)
+                    .cloned()
+                else {
+                    continue;
+                };
+                // The record as it is served has its pointers in handle form; it
+                // is written back in the form it is stored in.
+                record.home = folded_key.clone();
+                record.subject = folded_key.clone();
+                self.lower_pointers(tx, &mut record, &folded_key).await?;
+                let on_disk = self.as_stored(tx, &record).await?;
+                let classes = self.held_classes(tx, &folded_key, &place.fact).await?;
+                let mut wrote = vec![(
+                    jojobot_domain::memory::document::ORDER.to_string(),
+                    Some(place.order),
+                )];
+                if let Some(head) = place.continues {
+                    wrote.push((
+                        jojobot_domain::memory::document::CONTINUES.to_string(),
+                        Some(head),
+                    ));
+                }
+                let claim_write =
+                    Self::write_fact(tx, &on_disk, &self.clock, session, None).await?;
+                Self::append_writes(
+                    tx,
+                    &on_disk.home,
+                    &on_disk.id,
+                    wrote,
+                    &self.clock,
+                    &classes,
+                    claim_write,
+                )
+                .await?;
+            }
+        }
+
+        // **The merge as an appended event**, in the transaction that makes it:
+        // who was folded into whom, when, in which run, and where each claim
+        // went. Nothing reads it to decide anything about the fold itself.
+        append_merge_event(
+            tx,
+            &folded_key,
+            &survivor_key,
+            self.clock.now().to_string(),
+            session,
+            &address_map,
+        )
+        .await?;
+
+        // **Each child the fold serves under the survivor gets a version that
+        // says so**, naming the run, because the child's own row is not
+        // rewritten and its history would otherwise show no move.
+        let bare = Self::folds_without_an_event(tx).await?;
+        for child in self.children_served_under(tx, &folded_key, &bare).await? {
+            append_entity_version(tx, &child, Some(&survivor_key), &self.clock, session).await?;
+        }
+
+        // **The folded row stays and starts forwarding.** Written last, so a
+        // failure anywhere above rolls back a row that still says it is a thing
+        // rather than one pointing at a fold that did not happen.
+        sqlx::query("UPDATE entity SET merged_into = ? WHERE id = ?")
+            .bind(survivor.as_str())
+            .bind(folded.as_str())
+            .execute(&mut **tx)
+            .await
+            .map_err(store)?;
+        // **One row, not one per entity the sweep above touched.** The log
+        // exists to answer "has anything changed", never "which entity" —
+        // see the migration's own doc — so a single write here is enough to
+        // make a merge visible to it, whatever the sweep's fan-out was.
+        append_entity_write(tx, folded, &self.clock, session).await?;
+
+        // **The survivor now serves what the duplicate held, so the floor of its
+        // kind and the numbering are asked of that state.** A refusal here drops
+        // the transaction and nothing of the fold lands.
+        let survivor_after = self.held_by(tx, &survivor_key).await?;
+        let governs = Self::kind_keys_in(tx, survivor.kind_token()).await?;
+        // **Judged as handles, as an edit is**: a reference key holds the id of
+        // what it names, which is no handle and breaks the key's type.
+        let (mut served_before, mut served_after) =
+            (survivor_before.clone(), survivor_after.clone());
+        self.compose_reference_fields(tx, &mut served_before)
+            .await?;
+        self.compose_reference_fields(tx, &mut served_after).await?;
+        // **The done rule has one site**: the guard capture and update_fact use, so a
+        // merge that would leave the survivor at done is refused for an open entry on
+        // a list it holds or a list the fold moved under it (the merge event is
+        // already written, so the survivor serves the duplicate's children).
+        self.guard_fit_resolved(
+            tx,
+            &survivor_key,
+            survivor.kind_token(),
+            &served_before,
+            &served_after,
+            &governs,
+        )
+        .await?;
+        if let Some(refusal) = numbering.refuses(&jojobot_domain::memory::numbered::Change {
+            holds: vec![(survivor_handle.clone(), survivor_after)],
+            leaves: vec![folded_handle.clone()],
+            moved: children_moved,
+            ..Default::default()
+        }) {
+            return Err(refusal);
+        }
+
+        // **Read back rather than reconstructed.** The fold may have moved the
+        // survivor's own row — a folded parent is re-pointed above — so the
+        // answer is what the store now holds and not what this call assembled.
+        let survived = self
+            .index(tx)
+            .await?
+            .into_iter()
+            .find(|e| &e.id == survivor)
+            .ok_or_else(|| MemoryError::UnknownEntity {
+                attempted: survivor.to_string(),
+                nearest: Vec::new(),
+            })?;
+        // **Served under the handle, stored under the key.**
+        let served_record = Fact {
+            home: survivor_handle.clone(),
+            subject: survivor_handle,
+            ..record
+        };
+        Ok(Merge {
+            survivor: survived,
+            folded: folded.clone(),
+            record: served_record,
+            rehomed,
+        })
+    }
+
     /// **A retraction in a transaction its caller owns.** The caller commits it
     /// only when this answers `Ok`. [`retract`](Memory::retract) is that, and so
     /// is the retraction that writes a claim in the same act.
@@ -6190,361 +6556,10 @@ impl Memory for DoltMemory {
         caller: &EntityId,
         session: Option<&str>,
     ) -> Result<Merge, MemoryError> {
-        // **Wrong by kind alone, before either side's existence is even
-        // asked.** A fold naming a session steps past the same three things
-        // any other memory write onto its handle would.
-        validate_write_subject(folded)?;
-        validate_write_subject(survivor)?;
-        if folded == survivor {
-            return Err(MemoryError::NothingToMerge {
-                attempted: folded.to_string(),
-            });
-        }
         let mut tx = self.pool.begin().await.map_err(store)?;
-        // **Rows only, deliberately** — a fold marks a stored row, and a
-        // build-supplied record has none to mark. The same exception
-        // `rename_entity`'s own existence check reads off.
-        let index = self.index(&mut tx).await?;
-        // **Everything is decided before anything is written.** A fold writes
-        // rows in several tables, so a refusal discovered half-way through is
-        // the one outcome this must not produce. The sides are judged by the one
-        // function every store asks.
-        match jojobot_domain::memory::merge::refuses_merge_sides(folded, survivor, &index) {
-            Some(jojobot_domain::memory::merge::SideRefusal::Missing(side)) => {
-                let supplied = self.supplied.record_for(&side).is_some();
-                let nearest = if supplied {
-                    Vec::new()
-                } else {
-                    let known = self.extend_with_supplied(&mut tx, index.clone()).await?;
-                    self.nearest(&mut tx, &side, &known).await?
-                };
-                return Err(jojobot_domain::memory::merge::missing_side(
-                    &side, supplied, nearest,
-                ));
-            }
-            Some(jojobot_domain::memory::merge::SideRefusal::Refused(refused)) => {
-                return Err(refused);
-            }
-            None => {}
-        }
-        // **A document merges only into another document**, decided before
-        // anything is written.
-        if let Some(refused) =
-            jojobot_domain::memory::document::refuses_a_merge_of_a_document_and_a_thing(
-                folded, survivor,
-            )
-        {
-            return Err(refused);
-        }
-        let account = merge_account(folded, survivor, reason, date)?;
-        let standing = standing_of(&account);
-
-        // **Both sides resolved to their storage keys once, up front.** Every
-        // statement below that touches `entity` or `fact_home` names the KEY,
-        // never the raw handle — a claim's home is the badge now, not the
-        // handle, and a statement by the handle would silently match nothing.
-        let (folded_key, folded_handle) =
-            self.resolve(&mut tx, folded).await?.expect("checked above");
-        let (survivor_key, survivor_handle) = self
-            .resolve(&mut tx, survivor)
-            .await?
-            .expect("checked above");
-
-        // **The guards of a fold run in the one order the domain keeps**, over
-        // what this store reads inside this transaction, so no write can land
-        // between a question and the move.
-        jojobot_domain::memory::merge::refuses_merge_guards(
-            &jojobot_domain::memory::merge::Fold {
-                caller,
-                folded: &folded_handle,
-                survivor: &survivor_handle,
-                survivor_named: survivor,
-            },
-            &mut DoltFoldReads {
-                store: self,
-                tx: &mut tx,
-                folded_key: &folded_key,
-                survivor_key: &survivor_key,
-                survivor_handle: &survivor_handle,
-            },
-        )
-        .await?;
-
-        // **The numbered collections the fold reaches, read before it writes**,
-        // and what the survivor held, for the floor of its kind.
-        // What was under the duplicate is served under the survivor.
-        let folded_subtree = self
-            .subtree_holding(&mut tx, &folded_handle, &folded_key)
+        let merged = self
+            .merge_in(&mut tx, folded, survivor, reason, date, caller, session)
             .await?;
-        let children_moved: Vec<_> = folded_subtree.into_iter().skip(1).collect();
-        let numbering = self
-            .numbering_reach(
-                &mut tx,
-                &jojobot_domain::memory::numbered::Change {
-                    holds: vec![(survivor_handle.clone(), Default::default())],
-                    leaves: vec![folded_handle.clone()],
-                    moved: children_moved.clone(),
-                    ..Default::default()
-                },
-                Some(&survivor_handle),
-            )
-            .await?;
-        let survivor_before = self.held_by(&mut tx, &survivor_key).await?;
-        // **A merge appends its event and moves no row.** The claims, their
-        // writes, the field writes, the pointers other records hold at the
-        // folded thing and its children all stay under the key they were stored
-        // under; every read serves them as the survivor's through the event. A
-        // fact id is local to the doc that holds it, so both sides own an `f1`:
-        // the event gives each claim the folded thing serves an id that is free
-        // on the survivor, and the survivor serves the claim under it.
-        let moving: Vec<FactId> = {
-            let mut served = self.facts_projected(&mut tx, &folded_key).await?;
-            served.sort_by_key(|fact| fact.id.ordinal());
-            served.into_iter().map(|fact| fact.id).collect()
-        };
-        let rehomed = moving.len();
-        // The account of the merge, written below, takes the id after the last
-        // claim's: the event that holds the map is appended after the account.
-        let mut minted = Self::mint_many(&mut tx, &survivor_key, moving.len() + 1).await?;
-        let account_id = minted.pop().expect("one more id than claims was asked for");
-        let address_map: Vec<(String, String)> = moving
-            .iter()
-            .zip(&minted)
-            .map(|(was, now)| (was.as_str().to_string(), now.as_str().to_string()))
-            .collect();
-
-        let record = Fact {
-            app_stamp: None,
-            written_by_another: false,
-            sets: Default::default(),
-            // Unclassed keys of an engine-written record are own fields that reach.
-            reaching: account.fields.keys().cloned().collect(),
-            field_links: Default::default(),
-            id: account_id,
-            home: survivor_key.clone(),
-            subject: survivor_key.clone(),
-            content: account.content,
-            details: account.details,
-            provenance: account.provenance,
-            standing,
-            status: account.status,
-            recorded_at: account.recorded_at,
-            happened_at: account.happened_at,
-            happened_through: account.happened_through,
-            edge: account.edge,
-            fields: account.fields,
-            refs: account.refs,
-            derived_from: account.derived_from,
-            stands_for: Vec::new(),
-            inserted_at: Some(self.clock.now()),
-            stale_after: None,
-            receipt: None,
-        };
-        let claim_write = Self::write_fact(&mut tx, &record, &self.clock, session, None).await?;
-        Self::append_writes(
-            &mut tx,
-            &record.home,
-            &record.id,
-            written_keys(&record),
-            &self.clock,
-            &Default::default(),
-            claim_write,
-        )
-        .await?;
-
-        // **Two documents become one: the folded sections follow the survivor's
-        // last section, and each chunk names its heading's new id.** Written in
-        // this transaction, before the event is appended, while the folded records
-        // are still served at the addresses they were made under. The placement is
-        // the domain's; this writes what it says.
-        if jojobot_domain::memory::entries::places_its_records(folded.kind()) {
-            let claims: Vec<(FactId, FactId)> =
-                moving.iter().cloned().zip(minted.iter().cloned()).collect();
-            let survivor_records = self.facts_projected(&mut tx, &survivor_key).await?;
-            let folded_records = self.facts_projected(&mut tx, &folded_key).await?;
-            let placed = if folded.kind() == Some(EntityKind::LIST) {
-                jojobot_domain::memory::entries::append_after(&survivor_records, &folded_records)
-            } else {
-                jojobot_domain::memory::document::append_after(
-                    &survivor_records,
-                    &folded_records,
-                    &claims,
-                )
-            }
-            .map_err(|e| {
-                MemoryError::InvalidFact(format!("the folded sections cannot be placed: {e}"))
-            })?;
-            // **A folded list's ticks name their entries by the new ids**, the
-            // ids the merge gave the entries on the survivor.
-            let ticks = if folded.kind() == Some(EntityKind::LIST) {
-                jojobot_domain::memory::entries::ticks_following(&folded_records, &claims)
-            } else {
-                Vec::new()
-            };
-            for tick in ticks {
-                let Some(mut record) = folded_records
-                    .iter()
-                    .find(|fact| fact.id == tick.fact)
-                    .cloned()
-                else {
-                    continue;
-                };
-                record.home = folded_key.clone();
-                record.subject = folded_key.clone();
-                self.lower_pointers(&mut tx, &mut record, &folded_key)
-                    .await?;
-                let on_disk = self.as_stored(&mut tx, &record).await?;
-                let classes = self.held_classes(&mut tx, &folded_key, &tick.fact).await?;
-                let claim_write =
-                    Self::write_fact(&mut tx, &on_disk, &self.clock, session, None).await?;
-                Self::append_writes(
-                    &mut tx,
-                    &on_disk.home,
-                    &on_disk.id,
-                    vec![(
-                        jojobot_domain::memory::entries::TICK_ENTRY.to_string(),
-                        Some(tick.entry),
-                    )],
-                    &self.clock,
-                    &classes,
-                    claim_write,
-                )
-                .await?;
-            }
-            for place in placed {
-                let Some(mut record) = folded_records
-                    .iter()
-                    .find(|fact| fact.id == place.fact)
-                    .cloned()
-                else {
-                    continue;
-                };
-                // The record as it is served has its pointers in handle form; it
-                // is written back in the form it is stored in.
-                record.home = folded_key.clone();
-                record.subject = folded_key.clone();
-                self.lower_pointers(&mut tx, &mut record, &folded_key)
-                    .await?;
-                let on_disk = self.as_stored(&mut tx, &record).await?;
-                let classes = self.held_classes(&mut tx, &folded_key, &place.fact).await?;
-                let mut wrote = vec![(
-                    jojobot_domain::memory::document::ORDER.to_string(),
-                    Some(place.order),
-                )];
-                if let Some(head) = place.continues {
-                    wrote.push((
-                        jojobot_domain::memory::document::CONTINUES.to_string(),
-                        Some(head),
-                    ));
-                }
-                let claim_write =
-                    Self::write_fact(&mut tx, &on_disk, &self.clock, session, None).await?;
-                Self::append_writes(
-                    &mut tx,
-                    &on_disk.home,
-                    &on_disk.id,
-                    wrote,
-                    &self.clock,
-                    &classes,
-                    claim_write,
-                )
-                .await?;
-            }
-        }
-
-        // **The merge as an appended event**, in the transaction that makes it:
-        // who was folded into whom, when, in which run, and where each claim
-        // went. Nothing reads it to decide anything about the fold itself.
-        append_merge_event(
-            &mut tx,
-            &folded_key,
-            &survivor_key,
-            self.clock.now().to_string(),
-            session,
-            &address_map,
-        )
-        .await?;
-
-        // **Each child the fold serves under the survivor gets a version that
-        // says so**, naming the run, because the child's own row is not
-        // rewritten and its history would otherwise show no move.
-        let bare = Self::folds_without_an_event(&mut tx).await?;
-        for child in self
-            .children_served_under(&mut tx, &folded_key, &bare)
-            .await?
-        {
-            append_entity_version(&mut tx, &child, Some(&survivor_key), &self.clock, session)
-                .await?;
-        }
-
-        // **The folded row stays and starts forwarding.** Written last, so a
-        // failure anywhere above rolls back a row that still says it is a thing
-        // rather than one pointing at a fold that did not happen.
-        sqlx::query("UPDATE entity SET merged_into = ? WHERE id = ?")
-            .bind(survivor.as_str())
-            .bind(folded.as_str())
-            .execute(&mut *tx)
-            .await
-            .map_err(store)?;
-        // **One row, not one per entity the sweep above touched.** The log
-        // exists to answer "has anything changed", never "which entity" —
-        // see the migration's own doc — so a single write here is enough to
-        // make a merge visible to it, whatever the sweep's fan-out was.
-        append_entity_write(&mut tx, folded, &self.clock, session).await?;
-
-        // **The survivor now serves what the duplicate held, so the floor of its
-        // kind and the numbering are asked of that state.** A refusal here drops
-        // the transaction and nothing of the fold lands.
-        let survivor_after = self.held_by(&mut tx, &survivor_key).await?;
-        let governs = Self::kind_keys_in(&mut tx, survivor.kind_token()).await?;
-        // **Judged as handles, as an edit is**: a reference key holds the id of
-        // what it names, which is no handle and breaks the key's type.
-        let (mut served_before, mut served_after) =
-            (survivor_before.clone(), survivor_after.clone());
-        self.compose_reference_fields(&mut tx, &mut served_before)
-            .await?;
-        self.compose_reference_fields(&mut tx, &mut served_after)
-            .await?;
-        // **The done rule has one site**: the guard capture and update_fact use, so a
-        // merge that would leave the survivor at done is refused for an open entry on
-        // a list it holds or a list the fold moved under it (the merge event is
-        // already written, so the survivor serves the duplicate's children).
-        self.guard_fit_resolved(
-            &mut tx,
-            &survivor_key,
-            survivor.kind_token(),
-            &served_before,
-            &served_after,
-            &governs,
-        )
-        .await?;
-        if let Some(refusal) = numbering.refuses(&jojobot_domain::memory::numbered::Change {
-            holds: vec![(survivor_handle.clone(), survivor_after)],
-            leaves: vec![folded_handle.clone()],
-            moved: children_moved,
-            ..Default::default()
-        }) {
-            return Err(refusal);
-        }
-
-        // **Read back rather than reconstructed.** The fold may have moved the
-        // survivor's own row — a folded parent is re-pointed above — so the
-        // answer is what the store now holds and not what this call assembled.
-        let survived = self
-            .index(&mut tx)
-            .await?
-            .into_iter()
-            .find(|e| &e.id == survivor)
-            .ok_or_else(|| MemoryError::UnknownEntity {
-                attempted: survivor.to_string(),
-                nearest: Vec::new(),
-            })?;
-        // **Served under the handle, stored under the key.**
-        let served_record = Fact {
-            home: survivor_handle.clone(),
-            subject: survivor_handle,
-            ..record
-        };
         super::requests::commit(tx, &self.clock, || {
             serde_json::json!({
                 "folded": folded.to_string(),
@@ -6554,12 +6569,67 @@ impl Memory for DoltMemory {
         })
         .await
         .map_err(store)?;
-        Ok(Merge {
-            survivor: survived,
-            folded: folded.clone(),
-            record: served_record,
-            rehomed,
-        })
+        Ok(merged)
+    }
+
+    /// **The merge and its companion claim in one transaction.** A refusal or a
+    /// block of the claim returns before the commit, so the merge is never stored
+    /// without it.
+    async fn merge_with_claim(
+        &self,
+        folded: &EntityId,
+        survivor: &EntityId,
+        reason: Option<&str>,
+        date: Date,
+        caller: &EntityId,
+        claim: NewFact,
+    ) -> Result<Guarded<(Merge, Fact)>, MemoryError> {
+        validate_new_fact(&claim)?;
+        let session = claim.session.clone();
+        let mut tx = self.pool.begin().await.map_err(store)?;
+        let merged = self
+            .merge_in(
+                &mut tx,
+                folded,
+                survivor,
+                reason,
+                date,
+                caller,
+                session.as_deref(),
+            )
+            .await?;
+        // **The same thing, by whichever spelling it is named.**
+        let same_thing = match self.resolve(&mut tx, &claim.subject).await? {
+            Some((_, handle)) => handle == merged.survivor.id,
+            None => false,
+        };
+        if !same_thing {
+            return Err(MemoryError::InvalidFact(format!(
+                "the claim is about {}, and the thing merged into is {}",
+                claim.subject, merged.survivor.id
+            )));
+        }
+        match self.capture_in(&mut tx, claim).await? {
+            Guarded::Written(fact) => {
+                super::requests::commit(tx, &self.clock, || {
+                    serde_json::json!({
+                        "folded": folded.to_string(),
+                        "survivor": survivor.to_string(),
+                    })
+                    .to_string()
+                })
+                .await
+                .map_err(store)?;
+                Ok(Guarded::Written((merged, fact)))
+            }
+            Guarded::Blocked {
+                attempted,
+                candidates,
+            } => Ok(Guarded::Blocked {
+                attempted,
+                candidates,
+            }),
+        }
     }
 
     async fn retract(

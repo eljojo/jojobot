@@ -720,3 +720,74 @@ async fn archiving_a_claim_of_a_request_carries_the_next_generation() {
     );
     story.finish().await;
 }
+
+/// **A merge that brings a spec key onto a request changes its folded spec, so
+/// the merge carries the next generation on a live claim.** The duplicate was
+/// written after the request, so its `desired` and `model` win; the merge leaves
+/// a spec no number named and the number goes from 1 to 2. A merge that brings no
+/// spec key leaves the spec as it was and carries none.
+#[tokio::test]
+async fn merging_a_spec_onto_a_request_carries_the_next_generation() {
+    let story = Story::begin("bot:marge").await;
+    let marge = story.session().await;
+    marge
+        .call(
+            "add_entity",
+            json!({"kind": "bot", "handle": "homer", "name": "Homer",
+                   "source": "user-named", "sets": {"reports_to": "bot:marge"}}),
+        )
+        .await;
+    marge.add("machine:theta", "Theta").await;
+    marge
+        .call("add_entity", creating(spec("bot:homer", "machine:theta")))
+        .await;
+    let read = || async {
+        let read = marge
+            .call("recall", json!({"subject": "bot-request:alpha"}))
+            .await;
+        let fields = read.json()["objects"][0]["fields"].clone();
+        (
+            fields["generation"].clone(),
+            fields["desired"].clone(),
+            fields["model"].clone(),
+        )
+    };
+    assert_eq!(
+        read().await,
+        ("1".into(), "running".into(), "model-a".into())
+    );
+    marge
+        .call(
+            "add_entity",
+            json!({"kind": "topic", "handle": "tarps", "name": "Tarps",
+                   "source": "user-named",
+                   "sets": {"desired": "stopped", "model": "model-b"}}),
+        )
+        .await;
+    marge.add("topic:pegs", "Pegs").await;
+
+    marge
+        .call(
+            "merge_entities",
+            json!({"duplicate": "topic:tarps", "survivor": "bot-request:alpha"}),
+        )
+        .await;
+    assert_eq!(
+        read().await,
+        ("2".into(), "stopped".into(), "model-b".into()),
+        "the merge made a new spec, and the number names it",
+    );
+
+    marge
+        .call(
+            "merge_entities",
+            json!({"duplicate": "topic:pegs", "survivor": "bot-request:alpha"}),
+        )
+        .await;
+    assert_eq!(
+        read().await,
+        ("2".into(), "stopped".into(), "model-b".into()),
+        "a merge that brings no spec key carries no number",
+    );
+    story.finish().await;
+}

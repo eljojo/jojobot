@@ -398,6 +398,22 @@ impl Memory for Observed<dyn Memory> {
         )
         .await
     }
+    async fn merge_with_claim(
+        &self,
+        folded: &EntityId,
+        survivor: &EntityId,
+        reason: Option<&str>,
+        date: Date,
+        caller: &EntityId,
+        claim: NewFact,
+    ) -> Result<Guarded<(Merge, Fact)>, MemoryError> {
+        self.result(
+            Operation::Memory(MemoryOperation::MergeWithClaim),
+            self.inner
+                .merge_with_claim(folded, survivor, reason, date, caller, claim),
+        )
+        .await
+    }
     async fn set_prose(
         &self,
         entity: &EntityId,

@@ -59,6 +59,7 @@ operations!(MemoryOperation {
     RetractWithClaim => "retract_with_claim",
     UpdateFactWithClaim => "update_fact_with_claim",
     Merge => "merge",
+    MergeWithClaim => "merge_with_claim",
     SetProse => "set_prose",
     Scan => "scan",
     ScanEntity => "scan_entity",

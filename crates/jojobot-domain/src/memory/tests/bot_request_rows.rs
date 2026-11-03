@@ -518,3 +518,161 @@ fn the_spec_a_withdrawal_leaves_is_read_from_the_history() {
         "a write of an archived claim does not count",
     );
 }
+
+/// **The spec a merge leaves is read from the two histories placed by the moment
+/// each write was made**, the rule the merge itself places writes by: the newer
+/// write of a key wins, the survivor's wins a tie, a write with no moment is older
+/// than any that has one, and a write of an archived claim does not count.
+#[test]
+fn the_spec_a_merge_leaves_is_read_from_both_histories() {
+    use crate::memory::{FactAddress, FactId, FactStatus, FieldWrite, Provenance, Standing};
+    let at = |second: i64| jiff::Timestamp::from_second(1_800_000_000 + second).expect("a moment");
+    let write =
+        |home: &str, fact: &str, value: Option<&str>, moment: Option<i64>, status: FactStatus| {
+            FieldWrite {
+                written_at: moment.map(at),
+                value: value.map(String::from),
+                fact: FactAddress::new(handle(home), FactId(fact.into())),
+                recorded_at: Default::default(),
+                status,
+                provenance: Provenance::Inference,
+                standing: Standing::Open,
+                note: None,
+                recorded_by: None,
+                writer: None,
+                run: None,
+            }
+        };
+    let history = |pairs: Vec<(&str, Vec<FieldWrite>)>| -> BTreeMap<String, Vec<FieldWrite>> {
+        pairs
+            .into_iter()
+            .map(|(key, writes)| (key.to_string(), writes))
+            .collect()
+    };
+    let held = |pairs: &[(&str, &str)]| -> BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    };
+    let active = FactStatus::Active;
+    let spec = super::super::bot_request::spec_merging;
+    let survivor = history(vec![
+        (
+            DESIRED,
+            vec![write(REQUEST, "f1", Some("running"), Some(10), active)],
+        ),
+        (
+            MODEL,
+            vec![write(REQUEST, "f1", Some("alpha"), Some(10), active)],
+        ),
+    ]);
+
+    let newer = history(vec![
+        (
+            DESIRED,
+            vec![write(
+                "topic:scrapbook",
+                "f1",
+                Some("stopped"),
+                Some(20),
+                active,
+            )],
+        ),
+        (
+            MACHINE,
+            vec![write(
+                "topic:scrapbook",
+                "f1",
+                Some("machine:theta"),
+                Some(5),
+                active,
+            )],
+        ),
+    ]);
+    assert_eq!(
+        spec(&survivor, &newer),
+        held(&[
+            (DESIRED, "stopped"),
+            (MODEL, "alpha"),
+            (MACHINE, "machine:theta"),
+        ]),
+        "a newer write of the folded thing wins, and a key only it wrote arrives",
+    );
+
+    let older = history(vec![
+        (
+            DESIRED,
+            vec![write(
+                "topic:scrapbook",
+                "f1",
+                Some("stopped"),
+                Some(5),
+                active,
+            )],
+        ),
+        (
+            MODEL,
+            vec![write(
+                "topic:scrapbook",
+                "f2",
+                Some("beta"),
+                Some(10),
+                active,
+            )],
+        ),
+    ]);
+    assert_eq!(
+        spec(&survivor, &older),
+        held(&[(DESIRED, "running"), (MODEL, "alpha")]),
+        "an older write loses, and a write at the same moment loses to the survivor's",
+    );
+
+    let unstamped = history(vec![(
+        DESIRED,
+        vec![write(
+            "topic:scrapbook",
+            "f1",
+            Some("stopped"),
+            None,
+            active,
+        )],
+    )]);
+    assert_eq!(
+        spec(&survivor, &unstamped),
+        held(&[(DESIRED, "running"), (MODEL, "alpha")]),
+        "a write with no moment is older than a stamped one",
+    );
+
+    let archived = history(vec![(
+        DESIRED,
+        vec![write(
+            "topic:scrapbook",
+            "f1",
+            Some("stopped"),
+            Some(20),
+            FactStatus::Archived,
+        )],
+    )]);
+    assert_eq!(
+        spec(&survivor, &archived),
+        held(&[(DESIRED, "running"), (MODEL, "alpha")]),
+        "a write of an archived claim does not count",
+    );
+
+    let cleared = history(vec![(
+        MODEL,
+        vec![write("topic:scrapbook", "f1", None, Some(20), active)],
+    )]);
+    assert_eq!(
+        spec(&survivor, &cleared),
+        held(&[(DESIRED, "running")]),
+        "a newer clear leaves the key off the spec",
+    );
+
+    assert_eq!(
+        spec(&survivor, &BTreeMap::new()),
+        held(&[(DESIRED, "running"), (MODEL, "alpha")]),
+        "a duplicate that wrote no spec key leaves the spec as it was",
+    );
+}

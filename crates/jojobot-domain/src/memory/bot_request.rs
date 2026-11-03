@@ -245,3 +245,67 @@ pub fn spec_withdrawing(
         })
         .collect()
 }
+
+/// **A write of a spec key, placed for [`super::merge::interleave`].** The
+/// history of a key carries no key and no place of its own, so the key it was
+/// read under and its position in that history ride beside it.
+#[derive(Clone)]
+struct KeyedWrite {
+    key: String,
+    place: i64,
+    write: super::FieldWrite,
+}
+
+impl super::merge::ServedWrite for KeyedWrite {
+    fn at(&self) -> (&str, i64, Option<jiff::Timestamp>, &str) {
+        (
+            &self.key,
+            self.place,
+            self.write.written_at,
+            self.write.fact.local.as_str(),
+        )
+    }
+    fn place(&mut self, ordinal: i64, _fact: Option<&str>) {
+        self.place = ordinal;
+    }
+}
+
+/// **The spec a request holds once another thing is merged into it.** The
+/// survivor serves each spec key as the interleave of its own writes and the
+/// folded thing's, by the moment each was written ([`super::merge::interleave`],
+/// the rule the merge itself places writes by), so the survivor's write wins a
+/// tie. Each key then reads its newest active write, as [`spec_withdrawing`]
+/// does for one claim taken out. Read before the merge so the number it makes can
+/// be written with it.
+pub fn spec_merging(
+    survivor: &std::collections::BTreeMap<String, Vec<super::FieldWrite>>,
+    folded: &std::collections::BTreeMap<String, Vec<super::FieldWrite>>,
+) -> std::collections::BTreeMap<String, String> {
+    let keyed = |history: &std::collections::BTreeMap<String, Vec<super::FieldWrite>>,
+                 key: &str| {
+        history
+            .get(key)
+            .into_iter()
+            .flatten()
+            .enumerate()
+            .map(|(place, write)| KeyedWrite {
+                key: key.to_string(),
+                place: place as i64,
+                write: write.clone(),
+            })
+            .collect::<Vec<_>>()
+    };
+    SPEC_KEYS
+        .iter()
+        .filter_map(|key| {
+            let newest = super::merge::interleave(keyed(folded, key), keyed(survivor, key))
+                .into_iter()
+                .rfind(|(_, kept)| kept.write.status == super::FactStatus::Active)?
+                .1
+                .write
+                .value?;
+            let newest = newest.trim();
+            (!newest.is_empty()).then(|| (key.to_string(), newest.to_string()))
+        })
+        .collect()
+}

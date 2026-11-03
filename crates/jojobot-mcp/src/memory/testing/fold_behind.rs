@@ -100,6 +100,26 @@ impl Memory for FoldBehindMemory {
             .await?;
         Err(fold_behind(Landed::Merge(Box::new(done))))
     }
+    // **A merge and its claim in one act land, and the fold behind them never
+    // confirms**, the shape `merge` has here.
+    async fn merge_with_claim(
+        &self,
+        folded: &EntityId,
+        survivor: &EntityId,
+        reason: Option<&str>,
+        date: jiff::civil::Date,
+        caller: &EntityId,
+        claim: NewFact,
+    ) -> Result<Guarded<(jojobot_domain::memory::Merge, Fact)>, MemoryError> {
+        match self
+            .0
+            .merge_with_claim(folded, survivor, reason, date, caller, claim)
+            .await?
+        {
+            Guarded::Written((done, _)) => Err(fold_behind(Landed::Merge(Box::new(done)))),
+            blocked => Ok(blocked),
+        }
+    }
     // **A thing and its claim in one act land, and the fold behind them never
     // confirms**, the shape `capture` has here: the trait's default would refuse the
     // act, which no store does.

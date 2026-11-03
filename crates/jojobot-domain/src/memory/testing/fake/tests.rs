@@ -483,3 +483,41 @@ async fn a_wrapper_that_does_not_forward_the_edit_with_a_claim_refuses_it() {
         "nothing was archived and nothing was written: {held:?}"
     );
 }
+
+/// **The same for a merge with a claim**: the default refuses and nothing lands.
+#[tokio::test]
+async fn a_wrapper_that_does_not_forward_the_merge_with_a_claim_refuses_it() {
+    let store = std::sync::Arc::new(InMemoryMemory::booted());
+    let survivor = thing(&store, "person:lisa", "Lisa").await;
+    let duplicate = thing(&store, "person:maggie", "Maggie").await;
+    say(&store, &duplicate, "a note on the duplicate").await;
+    let wrapper = crate::memory::testing::WithoutBuiltOn(store.clone());
+    let refused = wrapper
+        .merge_with_claim(
+            &duplicate,
+            &survivor,
+            None,
+            date(2026, 6, 3),
+            &survivor,
+            NewFact::about(survivor.clone(), "said again", date(2026, 6, 3)),
+        )
+        .await;
+    assert!(
+        matches!(refused, Err(MemoryError::InvalidFact(_))),
+        "the default refuses: {refused:?}"
+    );
+    let held = store.recall(&survivor).await.expect("recall reads");
+    assert!(
+        held.iter().all(|fact| fact.content != "said again"),
+        "nothing was merged and nothing was written: {held:?}"
+    );
+    assert!(
+        store
+            .list_entities(None)
+            .await
+            .expect("lists")
+            .iter()
+            .all(|entity| entity.merged_into.is_none()),
+        "no thing was merged away"
+    );
+}

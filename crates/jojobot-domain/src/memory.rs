@@ -6901,6 +6901,37 @@ pub trait Memory: Send + Sync {
         ))
     }
 
+    /// **Merge one thing into another and write a claim about the survivor, in
+    /// one act.** [`merge`](Memory::merge) with a companion claim, run as a capture
+    /// runs it. If any guard of the merge or of the claim refuses, **nothing is
+    /// written**: the merge is taken back with the claim. The companion is about
+    /// the survivor; any other subject is [`MemoryError::InvalidFact`].
+    ///
+    /// A merge that changes a bot request's folded spec carries the next
+    /// generation on this claim, so the number lands with the merge that made the
+    /// spec it names. Answers the merge first and the companion second. **The
+    /// merge is made in the session the claim names** ([`NewFact::session`]), so
+    /// the act has one.
+    ///
+    /// **A store that cannot do this refuses loudly rather than merging and then
+    /// capturing**, for the reason
+    /// [`add_entity_with_first_claim`](Memory::add_entity_with_first_claim) does.
+    // TEMPORARY(9.3.3): prepare in the one writer batches the act and its number.
+    async fn merge_with_claim(
+        &self,
+        folded: &EntityId,
+        survivor: &EntityId,
+        reason: Option<&str>,
+        date: Date,
+        caller: &EntityId,
+        claim: NewFact,
+    ) -> Result<Guarded<(Merge, Fact)>, MemoryError> {
+        let _ = (folded, survivor, reason, date, caller, claim);
+        Err(MemoryError::InvalidFact(
+            "this store cannot merge two things and write a claim in one act".into(),
+        ))
+    }
+
     /// **What a numbered collection adds to a read of it**: the key its members
     /// are numbered by and the number the next member takes (the largest held,
     /// archived members included, plus one). `None` for a thing that numbers

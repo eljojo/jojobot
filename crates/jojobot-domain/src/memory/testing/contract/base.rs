@@ -19618,6 +19618,7 @@ macro_rules! all_cases {
         $m!(a_retraction_and_its_generation_claim_land_as_one_act($store));
         $m!(a_retraction_under_a_former_handle_carries_its_generation_claim($store));
         $m!(an_archive_and_its_generation_claim_land_as_one_act($store));
+        $m!(a_merge_and_its_generation_claim_land_as_one_act($store));
         $m!(the_operator_is_named_by_any_bot_and_changed_only_by_the_head_of_the_chart($store));
         $m!(a_threads_ceiling_is_set_only_above_the_bots_that_write_into_it($store));
         $m!(a_threads_ageing_is_set_only_above_the_bots_that_write_into_it($store));

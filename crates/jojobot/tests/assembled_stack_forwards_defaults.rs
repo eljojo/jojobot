@@ -802,5 +802,36 @@ async fn the_stack_the_binary_builds_answers_what_the_layer_beneath_implements()
         "the outermost port reads the edit and its claim as one act: {beside:?}"
     );
 
+    // ── merge_with_claim: implemented by the store, beneath every layer ──
+    let duplicate = created(&**indexed, "thing:contract-fusion-stack", "Fusion Stack").await;
+    let (merged, beside) = indexed
+        .merge_with_claim(
+            &duplicate,
+            &piano,
+            None,
+            date(2026, 10, 4),
+            &piano,
+            NewFact {
+                fields: fields(&[("pair_note", "fourth")]),
+                sets: fields(&[("pair_note", "fourth")]).into_keys().collect(),
+                ..NewFact::about(piano.clone(), "the note, merged", date(2026, 10, 4))
+            },
+        )
+        .await
+        .expect("the stack merges two things and writes a claim")
+        .written()
+        .expect("nothing blocks it");
+    assert_eq!(merged.folded, duplicate);
+    assert_eq!(
+        indexed
+            .fields(&piano)
+            .await
+            .expect("fields")
+            .get("pair_note")
+            .map(String::as_str),
+        Some("fourth"),
+        "the outermost port reads the merge and its claim as one act: {beside:?}"
+    );
+
     server.stop().await;
 }

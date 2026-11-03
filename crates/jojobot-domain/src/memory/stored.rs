@@ -263,6 +263,15 @@ pub trait StoredMemory: Send + Sync {
         caller: &EntityId,
         session: Option<&str>,
     ) -> Result<Stored<super::Merge>, super::MemoryError>;
+    async fn merge_with_claim(
+        &self,
+        folded: &EntityId,
+        survivor: &EntityId,
+        reason: Option<&str>,
+        date: jiff::civil::Date,
+        caller: &EntityId,
+        claim: super::NewFact,
+    ) -> Result<Stored<super::Guarded<(super::Merge, super::Fact)>>, super::MemoryError>;
     async fn set_prose(
         &self,
         entity: &EntityId,
@@ -566,6 +575,20 @@ impl StoredMemory for Unrendered {
     ) -> Result<Stored<super::Merge>, super::MemoryError> {
         self.0
             .merge(folded, survivor, reason, date, caller, session)
+            .await
+            .map(Stored::new)
+    }
+    async fn merge_with_claim(
+        &self,
+        folded: &EntityId,
+        survivor: &EntityId,
+        reason: Option<&str>,
+        date: jiff::civil::Date,
+        caller: &EntityId,
+        claim: super::NewFact,
+    ) -> Result<Stored<super::Guarded<(super::Merge, super::Fact)>>, super::MemoryError> {
+        self.0
+            .merge_with_claim(folded, survivor, reason, date, caller, claim)
             .await
             .map(Stored::new)
     }

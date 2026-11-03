@@ -617,6 +617,120 @@ pub async fn an_archive_and_its_generation_claim_land_as_one_act<M: Memory>(stor
     );
 }
 
+/// **A merge and the claim that carries the new number land as one act.** An
+/// ordinary note that holds a `model` is merged into a request that never wrote
+/// one, so the merge changes the folded spec whichever side wrote last, and the
+/// claim written beside it names 2. A companion claim a guard refuses takes the
+/// merge back with it: the note is not merged and the request holds no model.
+pub async fn a_merge_and_its_generation_claim_land_as_one_act<M: Memory>(store: &M) {
+    use crate::memory::bot_request::{GENERATION, MODEL};
+    let request = EntityId("bot-request:contract-fusion-ask".into());
+    let note = EntityId("topic:contract-fusion-note".into());
+    let manager = EntityId("bot:contract-fusion-manager".into());
+    let target = EntityId("bot:contract-fusion-target".into());
+    for (id, name) in [
+        (&request, "Fusion Ask"),
+        (&note, "Fusion Note"),
+        (&manager, "Fusion Manager"),
+        (&target, "Fusion Target"),
+    ] {
+        add(store, NewEntity::new(id.clone(), name, "contract-fixture")).await;
+    }
+    let fields = |pairs: &[(&str, &str)]| -> std::collections::BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    };
+    capture(
+        store,
+        state(NewFact {
+            fields: fields(&[(crate::memory::REPORTS_TO, manager.as_str())]),
+            ..NewFact::about(
+                target.clone(),
+                "target reports to manager",
+                date(2026, 10, 1),
+            )
+        }),
+    )
+    .await;
+    let spec = |subject: &EntityId, pairs: &[(&str, &str)], day: i8| {
+        let mut fact = state(NewFact {
+            fields: fields(pairs),
+            ..NewFact::about(subject.clone(), "a spec", date(2026, 10, day))
+        });
+        if subject == &request {
+            fact.derived.insert(GENERATION.to_string());
+        }
+        fact
+    };
+    capture(
+        store,
+        spec(
+            &request,
+            &[
+                (TARGET_BOT, target.as_str()),
+                (DESIRED, "running"),
+                (GENERATION, "1"),
+            ],
+            2,
+        ),
+    )
+    .await;
+    capture(store, spec(&note, &[(MODEL, "beta")], 3)).await;
+    let read = || async { store.fields(&request).await.expect("readable") };
+
+    let mut refused = spec(&request, &[(GENERATION, "2")], 4);
+    refused
+        .fields
+        .insert("blocks".into(), "work:contract-fusion-nobody".into());
+    refused.sets.insert("blocks".into());
+    let taken_back = store
+        .merge_with_claim(&note, &request, None, date(2026, 10, 4), &manager, refused)
+        .await
+        .expect("the call answers");
+    assert!(
+        matches!(taken_back, Guarded::Blocked { .. }),
+        "a refused companion blocks the act: {taken_back:?}",
+    );
+    let fold = read().await;
+    assert_eq!(
+        fold.get(MODEL),
+        None,
+        "the merge was taken back with the refused claim",
+    );
+    assert_eq!(fold.get(GENERATION).map(String::as_str), Some("1"));
+    assert_eq!(
+        store.fields(&note).await.expect("readable").get(MODEL),
+        Some(&"beta".to_string()),
+        "the note still holds its own model",
+    );
+
+    let (merged, claim) = store
+        .merge_with_claim(
+            &note,
+            &request,
+            None,
+            date(2026, 10, 4),
+            &manager,
+            spec(&request, &[(GENERATION, "2")], 4),
+        )
+        .await
+        .expect("the call answers")
+        .written()
+        .expect("nothing blocks it");
+    assert_eq!(merged.folded, note);
+    assert_eq!(claim.subject, request);
+    let fold = read().await;
+    assert_eq!(fold.get(MODEL).map(String::as_str), Some("beta"));
+    assert_eq!(fold.get(DESIRED).map(String::as_str), Some("running"));
+    assert_eq!(
+        fold.get(GENERATION).map(String::as_str),
+        Some("2"),
+        "the merge and its number landed together",
+    );
+}
+
 /// **A retraction and the claim that carries the new number land as one act.**
 /// The sequence is a whole spec (1), a partial one (2) and another partial one
 /// (3); taking the second back changes the folded spec, so the claim written

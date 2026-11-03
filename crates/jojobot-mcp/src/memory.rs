@@ -315,6 +315,47 @@ impl Jojobot {
         ))
     }
 
+    /// **The generation merging one thing into a bot request would make**, or
+    /// `None` when the request's folded spec stays as it is (and for a survivor
+    /// that is no request, or a side the store does not know: the merge itself
+    /// answers for that). The spec after is the survivor's and the duplicate's
+    /// writes of each spec key interleaved by the moment each was written
+    /// ([`spec_merging`](jojobot_domain::memory::bot_request::spec_merging)),
+    /// numbered from the highest ever written on the request. Called under the
+    /// request's lock.
+    // TEMPORARY(9.3.3): prepare in the one writer compares the State's spec
+    // before and after the batch.
+    pub(crate) async fn generation_a_merge_makes(
+        &self,
+        duplicate: &EntityId,
+        survivor: &EntityId,
+    ) -> Result<Option<String>, MemoryError> {
+        use jojobot_domain::memory::bot_request::{
+            SPEC_KEYS, is_request, next_generation, spec_merging, spec_withdrawing,
+        };
+        if !is_request(survivor) || is_request(duplicate) {
+            return Ok(None);
+        }
+        let mut ours = std::collections::BTreeMap::new();
+        let mut theirs = std::collections::BTreeMap::new();
+        for key in SPEC_KEYS {
+            for (side, held) in [(survivor, &mut ours), (duplicate, &mut theirs)] {
+                match self.memory.history(side, key).await {
+                    Ok(writes) => held.insert(key.to_string(), writes),
+                    Err(MemoryError::UnknownEntity { .. }) => return Ok(None),
+                    Err(e) => return Err(e),
+                };
+            }
+        }
+        let highest = self.highest_generation_ever(survivor).await?;
+        Ok(next_generation(
+            survivor,
+            &spec_withdrawing(&ours, None),
+            &spec_merging(&ours, &theirs),
+            highest,
+        ))
+    }
+
     /// The key a thing's placement lock is held under.
     pub(crate) async fn placing_key(&self, thing: &EntityId) -> Result<String, MemoryError> {
         let known = self.memory.list_entities(None).await?;

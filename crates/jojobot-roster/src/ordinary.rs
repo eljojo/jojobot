@@ -1714,5 +1714,11 @@ pub const ORDINANCES: &[&str] = &[
     "bot:contract-archive-manager",
     "bot:contract-archive-target",
     "work:contract-archive-nobody",
+    "bot-request:contract-fusion-ask",
+    "topic:contract-fusion-note",
+    "bot:contract-fusion-manager",
+    "bot:contract-fusion-target",
+    "work:contract-fusion-nobody",
+    "thing:contract-fusion-stack",
     "topic:scrapbook",
 ];

@@ -857,6 +857,27 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
             .merge(folded, survivor, reason, date, caller, session)
             .await
     }
+    /// **A handle the build supplies is refused here too**, as for a merge alone.
+    async fn merge_with_claim(
+        &self,
+        folded: &EntityId,
+        survivor: &EntityId,
+        reason: Option<&str>,
+        date: Date,
+        caller: &EntityId,
+        claim: NewFact,
+    ) -> Result<Guarded<(Merge, Fact)>, MemoryError> {
+        for side in [folded, survivor] {
+            if self.supplied_only(side).await?.is_some() {
+                return Err(MemoryError::SuppliedHandle {
+                    attempted: side.to_string(),
+                });
+            }
+        }
+        self.inner
+            .merge_with_claim(folded, survivor, reason, date, caller, claim)
+            .await
+    }
     async fn declare_type(
         &self,
         declared: types::DeclaredType,

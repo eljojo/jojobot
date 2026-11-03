@@ -4792,6 +4792,91 @@ impl Memory for InMemoryMemory {
         })
     }
 
+    /// **The merge and its companion claim, as one act.** A refusal of the claim
+    /// puts back every table a merge writes, as the real store's one transaction
+    /// does.
+    async fn merge_with_claim(
+        &self,
+        folded: &EntityId,
+        survivor: &EntityId,
+        reason: Option<&str>,
+        date: Date,
+        caller: &EntityId,
+        claim: NewFact,
+    ) -> Result<Guarded<(Merge, Fact)>, MemoryError> {
+        // **One spend for the act**, after its last step.
+        let request = crate::request::take();
+        let session = claim.session.clone();
+        let entities_before = self.entities.lock().expect("fake mutex poisoned").clone();
+        let facts_before = self.facts.lock().expect("fake mutex poisoned").clone();
+        let writes_before = self.writes.lock().expect("fake mutex poisoned").clone();
+        let claim_writes_before = self
+            .claim_writes
+            .lock()
+            .expect("fake mutex poisoned")
+            .clone();
+        let entity_writes_before = self
+            .entity_writes
+            .lock()
+            .expect("fake mutex poisoned")
+            .clone();
+        let merges_before = self.merges.lock().expect("fake mutex poisoned").clone();
+        let versions_before = self
+            .entity_versions
+            .lock()
+            .expect("fake mutex poisoned")
+            .clone();
+        let take_back = || {
+            *self.entities.lock().expect("fake mutex poisoned") = entities_before.clone();
+            *self.facts.lock().expect("fake mutex poisoned") = facts_before.clone();
+            *self.writes.lock().expect("fake mutex poisoned") = writes_before.clone();
+            *self.claim_writes.lock().expect("fake mutex poisoned") = claim_writes_before.clone();
+            *self.entity_writes.lock().expect("fake mutex poisoned") = entity_writes_before.clone();
+            *self.merges.lock().expect("fake mutex poisoned") = merges_before.clone();
+            *self.entity_versions.lock().expect("fake mutex poisoned") = versions_before.clone();
+            *self.world_cache.lock().expect("fake mutex poisoned") = None;
+        };
+        let merged = self
+            .merge(folded, survivor, reason, date, caller, session.as_deref())
+            .await?;
+        // **The same thing, by whichever spelling it is named.**
+        let same_thing = self
+            .resolve(&claim.subject)
+            .is_some_and(|(_, handle)| handle == merged.survivor.id);
+        if !same_thing {
+            take_back();
+            return Err(MemoryError::InvalidFact(format!(
+                "the claim is about {}, and the thing merged into is {}",
+                claim.subject, merged.survivor.id
+            )));
+        }
+        match self.capture(claim).await {
+            Ok(Guarded::Written(fact)) => {
+                if let Err(e) = self.spend_claim(request, || {
+                    format!("{{\"folded\":\"{folded}\",\"survivor\":\"{survivor}\"}}")
+                }) {
+                    take_back();
+                    return Err(e);
+                }
+                Ok(Guarded::Written((merged, fact)))
+            }
+            Ok(Guarded::Blocked {
+                attempted,
+                candidates,
+            }) => {
+                take_back();
+                Ok(Guarded::Blocked {
+                    attempted,
+                    candidates,
+                })
+            }
+            Err(e) => {
+                take_back();
+                Err(e)
+            }
+        }
+    }
+
     async fn retract(
         &self,
         address: &FactAddress,

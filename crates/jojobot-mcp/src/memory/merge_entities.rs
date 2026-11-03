@@ -200,16 +200,56 @@ impl Jojobot {
         let survivor_before = self.as_it_stands(&survivor).await;
         // **A write that landed is never reported as failed** (rule 130): see
         // `capture`'s own note on the same shape.
-        let (done, fold_behind) = match jojobot_domain::request::armed(self.memory.merge(
-            &duplicate,
-            &survivor,
-            args.reason.as_deref(),
-            date,
-            &caller.bot,
-            Some(caller.sid.as_str()),
-        ))
-        .await
-        {
+        //
+        // **A merge into a bot request that changes its folded spec carries the
+        // next generation, written in the same act.** The spec after the merge is
+        // worked out from the histories of both sides, and the number rides on a
+        // live claim beside the merge. Read and written under the request's lock.
+        // TEMPORARY(9.3.3): prepare in the one writer replaces the lock.
+        let spec_lock = match self.hold_for_a_request_spec(&survivor).await {
+            Ok(guard) => guard,
+            Err(e) => return memory_declined("merge_entities", e),
+        };
+        let minted = match self.generation_a_merge_makes(&duplicate, &survivor).await {
+            Ok(minted) => minted,
+            Err(e) => return memory_declined("merge_entities", e),
+        };
+        let merged = match minted {
+            Some(number) => {
+                let companion =
+                    Self::generation_claim(&survivor, number, date, caller.sid.as_str());
+                jojobot_domain::request::armed(self.memory.merge_with_claim(
+                    &duplicate,
+                    &survivor,
+                    args.reason.as_deref(),
+                    date,
+                    &caller.bot,
+                    companion,
+                ))
+                .await
+                .and_then(|written| match written {
+                    jojobot_domain::memory::Guarded::Written((done, _)) => Ok(done),
+                    jojobot_domain::memory::Guarded::Blocked { .. } => {
+                        Err(MemoryError::InvalidFact(
+                            "the claim that carries the generation was blocked".into(),
+                        ))
+                    }
+                })
+            }
+            None => {
+                jojobot_domain::request::armed(self.memory.merge(
+                    &duplicate,
+                    &survivor,
+                    args.reason.as_deref(),
+                    date,
+                    &caller.bot,
+                    Some(caller.sid.as_str()),
+                ))
+                .await
+            }
+        };
+        drop(spec_lock);
+        let (done, fold_behind) = match merged {
             Ok(done) => (done, None),
             Err(MemoryError::FoldBehind {
                 landed: Landed::Merge(done),

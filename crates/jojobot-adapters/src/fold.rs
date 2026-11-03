@@ -1062,6 +1062,51 @@ impl Memory for Folded {
         .await
     }
 
+    /// **A merge that writes a claim reads the documents again as a merge does.**
+    /// Forwarded and not left to the port's default, which refuses.
+    async fn merge_with_claim(
+        &self,
+        folded: &EntityId,
+        survivor: &EntityId,
+        reason: Option<&str>,
+        date: Date,
+        caller: &EntityId,
+        claim: NewFact,
+    ) -> Result<Guarded<(Merge, Fact)>, MemoryError> {
+        owned!(
+            self,
+            this,
+            [
+                folded = folded.clone(),
+                survivor = survivor.clone(),
+                reason = reason.map(str::to_string),
+                caller = caller.clone()
+            ],
+            this.merge_with_claim(&folded, &survivor, reason.as_deref(), date, &caller, claim)
+                .await
+        );
+        self.scoped(async {
+            match self
+                .inner
+                .merge_with_claim(folded, survivor, reason, date, caller, claim)
+                .await?
+            {
+                Guarded::Written((done, fact)) => {
+                    let patch = image::patch::Change::Merged { folded, survivor };
+                    match self.patched_or_reloaded(patch).await {
+                        Ok(()) => Ok(Guarded::Written((done, fact))),
+                        Err(source) => {
+                            self.publish_things(vec![folded.clone(), survivor.clone()], true);
+                            Err(fold_behind(Landed::Merge(Box::new(done)), source))
+                        }
+                    }
+                }
+                blocked => Ok(blocked),
+            }
+        })
+        .await
+    }
+
     async fn set_prose(
         &self,
         entity: &EntityId,

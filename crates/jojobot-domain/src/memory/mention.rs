@@ -1840,6 +1840,64 @@ impl super::Memory for Mentioning {
         self.render_fact(&mut done.record, &known, &declared);
         Ok(done)
     }
+    /// **A merge and its claim resolve what they say, exactly as the two verbs
+    /// do apart.** Forwarded and not left to the port's default, which refuses.
+    async fn merge_with_claim(
+        &self,
+        folded: &EntityId,
+        survivor: &EntityId,
+        reason: Option<&str>,
+        date: jiff::civil::Date,
+        caller: &EntityId,
+        claim: super::NewFact,
+    ) -> Result<super::Guarded<(super::Merge, super::Fact)>, super::MemoryError> {
+        let said = [
+            reason.unwrap_or(""),
+            claim.content.as_str(),
+            claim.details.as_deref().unwrap_or(""),
+            claim.drop_because.as_deref().unwrap_or(""),
+        ];
+        let known = self.known_for(&said).await?;
+        refuse_forged(&said, &known)?;
+        if let Some(err) = Self::screen_or_unknown(&[reason.unwrap_or("")], &known) {
+            return Err(err);
+        }
+        if let Some(blocked) = Self::screen_words(&claim.content, claim.details.as_deref(), &known)
+        {
+            return Ok(blocked);
+        }
+        let declared = self.declared().await?;
+        let reason = reason
+            .map(|r| resolved(r, &known))
+            .transpose()
+            .map_err(unloaded)?;
+        let mut fields = claim.fields.clone();
+        self.bind_where(&mut fields, &known, &claim.subject).await?;
+        let written = self
+            .inner
+            .merge_with_claim(folded, survivor, reason.as_deref(), date, caller, {
+                let (content, details) =
+                    resolved_words(&claim.content, claim.details.as_deref(), &known)
+                        .map_err(unloaded)?;
+                super::NewFact {
+                    fields,
+                    content,
+                    details,
+                    drop_because: roster::resolved_reason(claim.drop_because.as_deref(), &known)?,
+                    ..claim
+                }
+            })
+            .await?
+            .open();
+        Ok(match written {
+            super::Guarded::Written((mut done, mut stored)) => {
+                self.render_fact(&mut done.record, &known, &declared);
+                self.render_fact(&mut stored, &known, &declared);
+                super::Guarded::Written((done, stored))
+            }
+            blocked => blocked,
+        })
+    }
     /// **A page is text, so it carries mentions too.** What comes back is the
     /// receipt for what was stored, rendered — the caller reads handles here
     /// exactly as they do everywhere else.

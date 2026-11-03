@@ -523,6 +523,23 @@ impl Memory for Counted {
         self.hang_if_armed("merge").await;
         landed
     }
+    async fn merge_with_claim(
+        &self,
+        folded: &EntityId,
+        survivor: &EntityId,
+        reason: Option<&str>,
+        date: Date,
+        caller: &EntityId,
+        claim: NewFact,
+    ) -> Result<Guarded<(Merge, Fact)>, MemoryError> {
+        self.hit("merge_with_claim");
+        let landed = self
+            .inner
+            .merge_with_claim(folded, survivor, reason, date, caller, claim)
+            .await;
+        self.hang_if_armed("merge_with_claim").await;
+        landed
+    }
     async fn set_prose(
         &self,
         entity: &EntityId,
