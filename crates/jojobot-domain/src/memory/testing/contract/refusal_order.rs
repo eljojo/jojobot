@@ -189,3 +189,48 @@ pub async fn a_full_room_is_refused_before_a_full_thread<M: Memory>(store: &M) {
         other => panic!("the room is judged before the thread's records, got {other:?}"),
     }
 }
+
+/// **A claim's missing source is told before a taken role is.** A rival claims a
+/// role whose lease is fresh, and the claim names a source nobody holds. The
+/// answer names the source, so a caller that fixes it then meets the held role.
+pub async fn a_missing_source_is_refused_before_a_held_role<M: Memory>(store: &M) {
+    let bot = EntityId("bot:contract-order-lease-bot".into());
+    let role = EntityId("role:contract-order-lease".into());
+    let source = EntityId("thing:contract-order-no-source".into());
+    ensure(store, &bot).await;
+    super::support::add(
+        store,
+        NewEntity {
+            parent: Some(bot),
+            ..NewEntity::new(role.clone(), "contract-order-lease", "contract-fixture")
+        },
+    )
+    .await;
+    let now = crate::session::testing::contract::epoch();
+    let claim = |claimant: &str| {
+        super::support::computed(NewFact {
+            fields: [
+                (
+                    crate::session::ROLE_HOLDER.to_string(),
+                    claimant.to_string(),
+                ),
+                (crate::session::ROLE_CLAIMED_AT.to_string(), now.to_string()),
+            ]
+            .into_iter()
+            .collect(),
+            ..NewFact::about(role.clone(), "a claim on the role", date(2026, 7, 1))
+        })
+    };
+    store
+        .capture(claim("delta"))
+        .await
+        .expect("the first claim lands");
+    let rival = NewFact {
+        derived_from: Some(FactAddress::new(source.clone(), FactId("f1".into()))),
+        ..claim("epsilon")
+    };
+    match store.capture(rival).await {
+        Err(MemoryError::UnknownEntity { attempted, .. }) if attempted == source.as_str() => {}
+        other => panic!("the missing source is judged before the held role, got {other:?}"),
+    }
+}
