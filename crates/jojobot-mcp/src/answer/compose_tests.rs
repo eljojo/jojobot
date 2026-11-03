@@ -1,4 +1,5 @@
-//! The composer's proof: one table per rule, and the subset property.
+//! The composer's proof: one table per rule, the account's three forms, and the
+//! subset property with the account counted.
 
 use super::compose::*;
 use serde_json::{Value, json};
@@ -34,7 +35,7 @@ fn names(composed: &Composed) -> Vec<String> {
     };
     served
         .keys()
-        .filter(|key| *key != "id" && *key != LEFT_OUT_KEY)
+        .filter(|key| !["id", LEFT_OUT_KEY, OVER_BUDGET_KEY].contains(&key.as_str()))
         .cloned()
         .collect()
 }
@@ -45,6 +46,51 @@ fn left(composed: &Composed) -> Vec<&'static str> {
         .iter()
         .map(|omitted| omitted.layer)
         .collect()
+}
+
+fn omission(layer: &'static str) -> LeftOut {
+    LeftOut {
+        layer,
+        call: "recall",
+    }
+}
+
+/// Characters the account of `omitted`, written in `form`, adds to the core.
+fn account_cost(form: Form, omitted: &[LeftOut]) -> usize {
+    let Value::Object(mut with) = core() else {
+        unreachable!()
+    };
+    with.insert(LEFT_OUT_KEY.to_string(), account(omitted, form));
+    crate::answer::served_len(&Value::Object(with)) - core_len()
+}
+
+/// The richest account of these layers, as a room to leave beside the layers.
+fn full(names: &[&'static str]) -> usize {
+    let omitted: Vec<LeftOut> = names.iter().map(|name| omission(name)).collect();
+    account_cost(Form::Full, &omitted)
+}
+
+/// The layer names an account lists, whatever its form.
+fn account_names(account: &Value) -> Vec<String> {
+    let strings = |value: &Value| -> Vec<String> {
+        value
+            .as_array()
+            .expect("an array of names")
+            .iter()
+            .map(|name| name.as_str().expect("a name").to_string())
+            .collect()
+    };
+    match account {
+        Value::Object(floor) => strings(&floor["layers"]),
+        Value::Array(rows) => rows
+            .iter()
+            .flat_map(|row| match row.get("layers") {
+                Some(layers) => strings(layers),
+                None => vec![row["layer"].as_str().expect("a name").to_string()],
+            })
+            .collect(),
+        other => panic!("not an account: {other}"),
+    }
 }
 
 fn run(layers: Vec<Layer>, extra_room: usize, taught: &[&str]) -> Composed {
@@ -82,30 +128,33 @@ fn rule_1_core_is_served_whole() {
 /// Rule 2. `rank_order`: tier first, then cost, then declared order.
 #[test]
 fn rule_2_layers_fill_by_tier_then_cost_then_declared_order() {
-    // (layers as declared, room, served in rank order)
+    // (layers as declared, room beside the account of the rest, served in rank order)
     type Row = (Vec<(&'static str, Tier, usize)>, usize, Vec<&'static str>);
     let rows: Vec<Row> = vec![
         // tier beats cost
         (
-            vec![("cheap_low", Tier::Low, 30), ("dear_high", Tier::High, 60)],
-            60,
+            vec![
+                ("cheap_low", Tier::Low, 100),
+                ("dear_high", Tier::High, 200),
+            ],
+            200,
             vec!["dear_high"],
         ),
         // inside a tier the cheaper goes first
         (
-            vec![("dear", Tier::Medium, 60), ("cheap", Tier::Medium, 30)],
-            30,
+            vec![("dear", Tier::Medium, 200), ("cheap", Tier::Medium, 100)],
+            100,
             vec!["cheap"],
         ),
         // equal cost keeps declared order
         (
-            vec![("first", Tier::Medium, 30), ("second", Tier::Medium, 30)],
-            30,
+            vec![("first", Tier::Medium, 100), ("second", Tier::Medium, 100)],
+            100,
             vec!["first"],
         ),
         (
-            vec![("second", Tier::Medium, 30), ("first", Tier::Medium, 30)],
-            30,
+            vec![("second", Tier::Medium, 100), ("first", Tier::Medium, 100)],
+            100,
             vec!["second"],
         ),
     ];
@@ -114,7 +163,12 @@ fn rule_2_layers_fill_by_tier_then_cost_then_declared_order() {
             .iter()
             .map(|(name, tier, cost)| sized(name, Kind::Detail, *tier, *cost))
             .collect();
-        let composed = run(layers, room, &[]);
+        let omitted: Vec<&'static str> = declared
+            .iter()
+            .map(|(name, ..)| *name)
+            .filter(|name| !expected.contains(name))
+            .collect();
+        let composed = run(layers, room + full(&omitted), &[]);
         let mut served = names(&composed);
         served.sort();
         let mut expected: Vec<String> = expected.iter().map(|name| name.to_string()).collect();
@@ -126,7 +180,8 @@ fn rule_2_layers_fill_by_tier_then_cost_then_declared_order() {
 /// Rule 3. `one_suggestion`: the best-ranked suggestion, or none.
 #[test]
 fn rule_3_at_most_one_suggestion_the_best_ranked_or_none() {
-    // (suggestions as declared (name, tier, cost), room, served suggestions)
+    // (suggestions as declared (name, tier, cost), room beside the account of
+    // the rest, served suggestions)
     type Row = (Vec<(&'static str, Tier, usize)>, usize, Vec<&'static str>);
     let rows: Vec<Row> = vec![
         // two fit: only the higher tier ships
@@ -137,7 +192,7 @@ fn rule_3_at_most_one_suggestion_the_best_ranked_or_none() {
         ),
         // the best does not fit: none, though the other would
         (
-            vec![("high", Tier::High, 60), ("low", Tier::Low, 30)],
+            vec![("high", Tier::High, 200), ("low", Tier::Low, 30)],
             40,
             vec![],
         ),
@@ -149,7 +204,12 @@ fn rule_3_at_most_one_suggestion_the_best_ranked_or_none() {
             .iter()
             .map(|(name, tier, cost)| sized(name, Kind::Suggestion, *tier, *cost))
             .collect();
-        let composed = run(layers, room, &[]);
+        let omitted: Vec<&'static str> = declared
+            .iter()
+            .map(|(name, ..)| *name)
+            .filter(|name| !expected.contains(name))
+            .collect();
+        let composed = run(layers, room + full(&omitted), &[]);
         assert_eq!(names(&composed), expected, "{declared:?} room {room}");
     }
     // A second suggestion is left out without closing the fill behind it.
@@ -159,7 +219,7 @@ fn rule_3_at_most_one_suggestion_the_best_ranked_or_none() {
             sized("second", Kind::Suggestion, Tier::Medium, 30),
             sized("detail", Kind::Detail, Tier::Low, 30),
         ],
-        100,
+        60 + full(&["second"]),
         &[],
     );
     assert_eq!(names(&composed), ["best", "detail"]);
@@ -198,11 +258,15 @@ fn rule_4_a_taught_domain_is_dropped_not_listed() {
 /// Rule 5. `left_out_named`: every other layer not served, once, with its call.
 #[test]
 fn rule_5_every_omission_is_named_once_with_its_call() {
-    let mut dear = sized("dear", Kind::Detail, Tier::Low, 60);
+    let mut dear = sized("dear", Kind::Detail, Tier::Low, 200);
     dear.returned_by = "recall with facts: true";
+    let account = [LeftOut {
+        layer: "dear",
+        call: "recall with facts: true",
+    }];
     let composed = run(
         vec![sized("small", Kind::Detail, Tier::High, 30), dear],
-        30,
+        30 + account_cost(Form::Full, &account),
         &[],
     );
     assert_eq!(names(&composed), ["small"]);
@@ -219,19 +283,19 @@ fn rule_5_every_omission_is_named_once_with_its_call() {
 /// Rule 6. `prefix_fill`: a layer that does not fit closes the fill.
 #[test]
 fn rule_6_a_tighter_budget_only_drops_layers() {
-    // Room 30 with a dear layer ahead of a cheap one of the same tier: the
-    // cheap one ranks first. Put the dear one in a better tier to make the
-    // cheap one the layer behind the gap.
+    // Room for the cheap layer and the account of both, with the dear one in a
+    // better tier: the cheap one is the layer behind the gap, and does not ship.
     let composed = run(
         vec![
-            sized("dear_high", Kind::Detail, Tier::High, 60),
+            sized("dear_high", Kind::Detail, Tier::High, 200),
             sized("cheap_low", Kind::Detail, Tier::Low, 30),
         ],
-        30,
+        30 + full(&["dear_high", "cheap_low"]),
         &[],
     );
     assert!(names(&composed).is_empty());
     assert_eq!(left(&composed), ["dear_high", "cheap_low"]);
+    assert_eq!(composed.over_budget, None);
 }
 
 #[test]
@@ -294,7 +358,158 @@ fn the_core_is_identical_and_served_layers_nest_across_every_limit() {
                 served.len() + composed.left_out.len(),
                 names(&all).len() + all.left_out.len()
             );
+            // The account is inside the budget: the final text fits, or the
+            // answer says it is over and by what floor (the ruler).
+            let len = crate::answer::served_len(&composed.served);
+            match composed.over_budget {
+                None => assert!(len <= limit, "limit {limit}: served {len}"),
+                Some(floor) => {
+                    assert!(floor > limit, "limit {limit}: floor {floor}");
+                    assert_eq!(composed.served[OVER_BUDGET_KEY], json!(floor));
+                    assert!(served.is_empty(), "an over-budget answer serves no layer");
+                }
+            }
+            // No omission is ever dropped: the account lists every one.
+            let listed = composed.served.get(LEFT_OUT_KEY).map(account_names);
+            let mut owed: Vec<String> = left(&composed).iter().map(|n| n.to_string()).collect();
+            let mut listed = listed.unwrap_or_default();
+            owed.sort();
+            listed.sort();
+            assert_eq!(listed, owed, "limit {limit}");
             previous = Some(served);
         }
     }
+}
+
+/// Six layers whose bodies are far over the room, all returned by one call.
+fn six_dear() -> Vec<Layer> {
+    ["a", "b", "c", "d", "e", "f"]
+        .iter()
+        .map(|name| sized(name, Kind::Detail, Tier::Medium, 160))
+        .collect()
+}
+
+/// The read of g1 found: a 21-character core and six omissions served 214
+/// characters under Strict 160, because the account was added after the fill.
+#[test]
+fn six_omissions_under_strict_fit_by_the_grouped_form() {
+    assert_eq!(core_len(), 21);
+    let answer = Answer::new(core(), six_dear());
+    let composed = compose_within(&answer, Budget::Strict.limit(), &BTreeSet::new());
+    assert_eq!(composed.over_budget, None);
+    assert!(crate::answer::served_len(&composed.served) <= Budget::Strict.limit());
+    assert_eq!(composed.form, Form::Grouped);
+    assert_eq!(left(&composed), ["a", "b", "c", "d", "e", "f"]);
+    assert_eq!(
+        account_names(&composed.served[LEFT_OUT_KEY]),
+        ["a", "b", "c", "d", "e", "f"]
+    );
+}
+
+/// The three forms, richest first: the richest that fits is the one served,
+/// and the floor's size is the signal when none fits.
+#[test]
+fn the_account_takes_the_richest_form_that_fits() {
+    let omitted = [
+        LeftOut {
+            layer: "a",
+            call: "recall with facts: true",
+        },
+        LeftOut {
+            layer: "b",
+            call: "recall with facts: true",
+        },
+        LeftOut {
+            layer: "c",
+            call: "search with include_mail: true",
+        },
+    ];
+    let layers = || -> Vec<Layer> {
+        omitted
+            .iter()
+            .map(|omitted| {
+                let mut layer = sized(omitted.layer, Kind::Detail, Tier::Medium, 200);
+                layer.returned_by = omitted.call;
+                layer
+            })
+            .collect()
+    };
+    let cost = |form| account_cost(form, &omitted);
+    assert!(cost(Form::Full) > cost(Form::Grouped) && cost(Form::Grouped) > cost(Form::Floor));
+    // (room beside the core, form served, over budget by this floor)
+    let rows = [
+        (cost(Form::Full), Form::Full, None),
+        (cost(Form::Full) + 1, Form::Full, None),
+        (cost(Form::Full) - 1, Form::Grouped, None),
+        (cost(Form::Grouped), Form::Grouped, None),
+        (cost(Form::Grouped) - 1, Form::Floor, None),
+        (cost(Form::Floor), Form::Floor, None),
+        (
+            cost(Form::Floor) - 1,
+            Form::Floor,
+            Some(core_len() + cost(Form::Floor)),
+        ),
+    ];
+    for (room, form, over) in rows {
+        let composed = run(layers(), room, &[]);
+        assert_eq!(composed.form, form, "room {room}");
+        assert_eq!(composed.over_budget, over, "room {room}");
+        assert_eq!(
+            composed.served[LEFT_OUT_KEY],
+            account(&composed.left_out, form),
+            "room {room}"
+        );
+        assert_eq!(left(&composed), ["a", "b", "c"], "room {room}");
+        assert!(names(&composed).is_empty(), "room {room}");
+    }
+}
+
+/// Layers come before the richness of the account: a layer is served in the
+/// grouped form rather than left out for the sake of the full one.
+#[test]
+fn a_layer_is_served_before_the_account_is_enriched() {
+    let layers = || {
+        vec![
+            sized("kept", Kind::Detail, Tier::High, 60),
+            sized("left_a", Kind::Detail, Tier::Low, 400),
+            sized("left_b", Kind::Detail, Tier::Low, 400),
+        ]
+    };
+    let omitted = [omission("left_a"), omission("left_b")];
+    let room = 60 + account_cost(Form::Full, &omitted) - 1;
+    let composed = run(layers(), room, &[]);
+    assert_eq!(names(&composed), ["kept"]);
+    assert_eq!(composed.form, Form::Grouped);
+    assert_eq!(composed.over_budget, None);
+}
+
+/// Even the floor does not fit: it is served whole and its size is said.
+#[test]
+fn a_floor_over_the_limit_is_served_and_its_size_said() {
+    let answer = Answer::new(core(), six_dear());
+    let all = compose_within(&answer, 0, &BTreeSet::new()).left_out;
+    let floor = core_len() + account_cost(Form::Floor, &all);
+    let composed = compose_within(&answer, core_len() + 10, &BTreeSet::new());
+    assert_eq!(composed.over_budget, Some(floor));
+    assert_eq!(composed.served[OVER_BUDGET_KEY], json!(floor));
+    assert_eq!(composed.form, Form::Floor);
+    assert!(names(&composed).is_empty());
+    assert_eq!(
+        account_names(&composed.served[LEFT_OUT_KEY]),
+        ["a", "b", "c", "d", "e", "f"]
+    );
+    // A core with no layer at all, over the limit, says so as well.
+    let bare = compose_within(&Answer::new(core(), vec![]), 0, &BTreeSet::new());
+    assert_eq!(bare.over_budget, Some(core_len()));
+    assert_eq!(bare.served["id"], "thing:kettle");
+}
+
+/// Nothing outside this process declares these spellings, and a stored or
+/// served record cannot fail a test: one case pins them as literals.
+#[test]
+fn the_served_spellings_of_the_account_are_pinned() {
+    let composed = run(six_dear(), 0, &[]);
+    let served = composed.served.as_object().expect("an object");
+    assert!(served.contains_key("left_out"));
+    assert!(served.contains_key("over_budget"));
 }
