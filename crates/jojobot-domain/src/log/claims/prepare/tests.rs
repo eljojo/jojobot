@@ -749,3 +749,48 @@ fn a_collection_is_founded_only_over_members_that_keep_its_promise() {
         ))
     ));
 }
+
+/// **A field value names a thing only where the link decision says it does.**
+/// A handle under any key must exist; loose prose under a reference key names
+/// nothing; a lone name under a reference key is refused with the handle to
+/// write, unless it is the badge of a thing the state holds.
+#[test]
+fn a_field_value_names_a_thing_where_the_link_decision_says() {
+    // A handle is a handle only against the loaded set of kinds.
+    crate::memory::kinds::load_shipped();
+    let events = [thing("alpha"), thing("person:gamma"), thing("badge1")].concat();
+    let state = replay(&events);
+    let declared = vec![DeclaredType::new(
+        "thing",
+        vec![Field::new("ref-key", ValueType::Reference)],
+    )];
+    let writing = |key: &str, value: &str| CaptureRequest {
+        fields: BTreeMap::from([(key.to_string(), value.to_string())]),
+        ..request("alpha")
+    };
+    assert_eq!(
+        prepare(&state, &declared, &writing("free-key", "person:moe")),
+        Err(Refusal::UnknownFieldTarget("person:moe".into())),
+        "a handle under a key no type declares must exist"
+    );
+    assert!(
+        prepare(&state, &declared, &writing("ref-key", "some loose prose")).is_ok(),
+        "prose under a reference key names nothing"
+    );
+    assert!(matches!(
+        prepare(&state, &declared, &writing("ref-key", "ghost")),
+        Err(Refusal::Malformed(words)) if words.contains("bare name")
+    ));
+    let linked = prepare(&state, &declared, &writing("free-key", "person:gamma"))
+        .expect("a held handle is admitted");
+    assert!(linked.iter().any(|event| matches!(
+        event,
+        ClaimEvent::FieldWritten { targets, .. } if targets == &vec![object("person:gamma")]
+    )));
+    let badge = prepare(&state, &declared, &writing("ref-key", "badge1"))
+        .expect("a badge a thing wears is admitted");
+    assert!(badge.iter().any(|event| matches!(
+        event,
+        ClaimEvent::FieldWritten { targets, .. } if targets == &vec![object("badge1")]
+    )));
+}

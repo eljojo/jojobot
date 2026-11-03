@@ -272,9 +272,37 @@ pub fn prepare(
             .ok_or_else(|| Refusal::UnknownRef(name.clone()))?;
         refs.push(object.clone());
     }
+    // The link decision (rule 646): a lone name under a reference key must be the
+    // badge of a thing, and any other value names a thing only through the
+    // handles it holds, whatever its key. Prose names nothing.
+    for (name, refusal) in memory::lone_reference_names(&request.fields, declared) {
+        if state.resolve(name).is_none() {
+            return Err(Refusal::Malformed(match refusal {
+                MemoryError::InvalidFact(words) => words,
+                other => other.to_string(),
+            }));
+        }
+    }
+    let reference_keys: BTreeSet<String> =
+        memory::reference_field_values(&request.fields, declared)
+            .into_iter()
+            .map(|(key, _)| key)
+            .collect();
     let mut targets: BTreeMap<String, Vec<ObjectId>> = BTreeMap::new();
-    for (key, items) in memory::reference_field_values(&request.fields, declared) {
-        for item in items {
+    for (key, value) in &request.fields {
+        let mut named: Vec<String> = memory::handles_in_value(value)
+            .into_iter()
+            .map(|handle| handle.to_string())
+            .collect();
+        // A reference key also takes the badge of a thing it holds.
+        if reference_keys.contains(key) && named.is_empty() {
+            named = value
+                .split(',')
+                .map(|item| item.trim().to_string())
+                .filter(|item| state.resolve(item).is_some())
+                .collect();
+        }
+        for item in named {
             let object = state
                 .resolve(&item)
                 .ok_or_else(|| Refusal::UnknownFieldTarget(item.clone()))?;
