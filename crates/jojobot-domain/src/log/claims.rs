@@ -156,6 +156,12 @@ pub enum ClaimEvent {
         write: FieldValue,
         targets: Vec<ObjectId>,
     },
+    /// A type is declared, or declared again. Each declaration is one event and
+    /// the earlier ones stay in the history; the newest is the one in force.
+    TypeDeclared {
+        kind: ObjectId,
+        declaration: DeclaredType,
+    },
 }
 
 /// What the state holds of one claim.
@@ -196,6 +202,8 @@ pub struct State {
     retired_addresses: BTreeMap<String, ObjectId>,
     records: BTreeMap<RecordId, Record>,
     streams: BTreeMap<(ObjectId, KeyId), Vec<Write>>,
+    /// Every declaration of each kind, oldest first.
+    declarations: BTreeMap<ObjectId, Vec<DeclaredType>>,
     indexes: indexes::Indexes,
 }
 
@@ -270,7 +278,23 @@ impl State {
                 });
                 self.index_write(record, subject, key, *ordinal);
             }
+            ClaimEvent::TypeDeclared { kind, declaration } => {
+                self.declarations
+                    .entry(kind.clone())
+                    .or_default()
+                    .push(declaration.clone());
+            }
         }
+    }
+
+    /// **The declaration of a kind in force now**: the newest one.
+    pub fn declared(&self, kind: &ObjectId) -> Option<&DeclaredType> {
+        self.declarations.get(kind).and_then(|held| held.last())
+    }
+
+    /// Every declaration of a kind, oldest first.
+    pub fn declarations_of(&self, kind: &ObjectId) -> &[DeclaredType] {
+        self.declarations.get(kind).map_or(&[], Vec::as_slice)
     }
 
     fn merge(

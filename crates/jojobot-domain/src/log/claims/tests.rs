@@ -555,3 +555,35 @@ fn each_key_write_keeps_the_moment_of_its_own_event() {
     let seen: Vec<_> = writes.iter().map(|write| write.written_at).collect();
     assert_eq!(seen, [Some(t1), Some(t2), Some(t1), None]);
 }
+
+fn declaration(name: &str, must: Option<&str>) -> DeclaredType {
+    DeclaredType {
+        name: name.to_string(),
+        fields: Vec::new(),
+        origin: memory::types::Origin::Declared,
+        must: must.map(str::to_string),
+    }
+}
+
+/// Each declaration of a kind is one event; the newest is in force and the
+/// earlier ones stay in the history, oldest first.
+#[test]
+fn a_redeclared_type_keeps_its_history_and_the_newest_is_in_force() {
+    let mut state = State::default();
+    let kind = object("pet");
+    for must in [None, Some("a"), Some("b")] {
+        state.apply(&envelope(ClaimEvent::TypeDeclared {
+            kind: kind.clone(),
+            declaration: declaration("pet", must),
+        }));
+    }
+    assert_eq!(state.declared(&kind).unwrap().must.as_deref(), Some("b"));
+    let history: Vec<_> = state
+        .declarations_of(&kind)
+        .iter()
+        .map(|held| held.must.as_deref())
+        .collect();
+    assert_eq!(history, [None, Some("a"), Some("b")]);
+    assert!(state.declared(&object("toy")).is_none());
+    assert!(state.declarations_of(&object("toy")).is_empty());
+}
