@@ -212,6 +212,35 @@ fn a_key_takes_the_next_place_in_its_stream() {
     );
 }
 
+/// **An own field stays on its claim; a setting and a computed key reach the
+/// thing.** Read through the state after the events apply, not off the events.
+#[test]
+fn own_fields_stay_while_settings_and_computed_keys_reach() {
+    let (mut state, declared) = world();
+    let events = prepare(
+        &state,
+        &declared,
+        &CaptureRequest {
+            fields: BTreeMap::from([
+                ("own_key".into(), "o".into()),
+                ("set_key".into(), "s".into()),
+                ("computed_key".into(), "c".into()),
+            ]),
+            sets: BTreeSet::from(["set_key".to_string()]),
+            derived: BTreeSet::from(["computed_key".to_string()]),
+            ..request("alpha")
+        },
+    )
+    .expect("admitted");
+    for event in &events {
+        apply(&mut state, event);
+    }
+    let held = state.fields(&object("alpha"), &declared);
+    assert!(!held.contains_key("own_key"), "{held:?}");
+    assert_eq!(held["set_key"], "s");
+    assert_eq!(held["computed_key"], "c");
+}
+
 /// A container `coll` numbering by `num`, with a live member holding 1, an
 /// archived member holding 2, and a member `m3` holding nothing yet.
 fn numbered_world() -> (State, Vec<DeclaredType>) {
@@ -253,6 +282,7 @@ fn numbered_world() -> (State, Vec<DeclaredType>) {
 fn numbering(subject: &str, number: &str) -> CaptureRequest {
     CaptureRequest {
         fields: BTreeMap::from([("num".into(), number.into())]),
+        sets: BTreeSet::from(["num".to_string()]),
         ..request(subject)
     }
 }

@@ -186,7 +186,8 @@ pub fn prepare(
         &request.derived,
         &[],
         declared,
-        false,
+        // A new own field stays on its claim, as the store's default decides.
+        true,
     )
     .map_err(|refused| match refused {
         MemoryError::InvalidFact(words) => Refusal::Malformed(words),
