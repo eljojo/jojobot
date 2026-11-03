@@ -26,7 +26,9 @@ mod chart;
 mod limits;
 mod numbering;
 
-use super::{ClaimBody, ClaimEvent, FieldValue, KeyId, ObjectId, RecordId, StarredRule, State};
+use super::{
+    ClaimBody, ClaimEvent, FieldValue, KeyId, ObjectId, RecordId, RunId, StarredRule, State,
+};
 use crate::actor::Actor;
 use crate::app::AppStamp;
 use crate::attention;
@@ -57,6 +59,9 @@ pub struct Door {
     pub owner_revoked: bool,
     /// The sizes the server measured for this request.
     pub measures: Measures,
+    /// The bot each run belongs to, as the session projection reads it: a
+    /// record whose first write names no bot is a bot's by its run.
+    pub runs: BTreeMap<RunId, EntityId>,
 }
 
 /// **What the caller decided about the claim itself**, as opposed to where it
@@ -269,10 +274,11 @@ pub fn prepare(
     if let Actor::Bot(caller) = &request.door.actor
         && memory::names_a_guarded_key(&request.fields)
     {
-        let subject = state
-            .handle_of(&home)
-            .unwrap_or_else(|| memory::EntityId(request.subject.clone()));
-        let chart = chart::Chart::new(state, declared);
+        let chart = chart::Chart::new(state, declared, &request.door.runs);
+        // Identity is judged on the objects: a spelling is canonical, so a thing
+        // and the bot that is it answer to one handle however they were reached.
+        let subject = chart.canonical(&memory::EntityId(request.subject.clone()));
+        let caller = &chart.canonical(caller);
         let held = chart.fold(&subject);
         // A resend of the value a key holds is not a change.
         let changing: BTreeMap<String, String> = request

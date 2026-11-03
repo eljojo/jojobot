@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::super::tests::{
-    apply, archived, body, claim, created, day, object, record, replay, write,
+    apply, archived, body, claim, created, day, object, record, replay, under, write,
 };
 use super::super::{ClaimEvent, ObjectBody, State};
 use super::{BootFloor, CaptureRequest, ClaimSize, Door, Draft, Measures, Refusal, Route, prepare};
@@ -51,6 +51,7 @@ fn request(subject: &str) -> CaptureRequest {
             owned_keys: BTreeSet::new(),
             owner_revoked: false,
             measures: Measures::default(),
+            runs: BTreeMap::new(),
         },
         subject: subject.to_string(),
         draft: Draft {
@@ -434,6 +435,7 @@ fn writing(subject: &str, key: &str, actor: Actor, revoked: bool) -> CaptureRequ
             owned_keys: BTreeSet::from(["state".to_string()]),
             owner_revoked: revoked,
             measures: Measures::default(),
+            runs: BTreeMap::new(),
         },
         fields: BTreeMap::from([(key.into(), "v".into())]),
         ..request(subject)
@@ -578,6 +580,7 @@ fn by_bot(subject: &str, caller: &str, key: &str, value: &str) -> CaptureRequest
             owned_keys: BTreeSet::new(),
             owner_revoked: false,
             measures: Measures::default(),
+            runs: BTreeMap::new(),
         },
         fields: BTreeMap::from([(key.into(), value.into())]),
         ..request(subject)
@@ -1089,4 +1092,114 @@ fn the_limits_are_told_in_order() {
         prepare(&roomy, &[], &both(false, true)),
         Err(Refusal::Invalid(MemoryError::ClaimTooLarge { .. }))
     ));
+}
+
+/// **A merged survivor is the same identity under either spelling**, so it
+/// cannot write what only a different identity may write about itself.
+#[test]
+fn a_merged_survivor_cannot_write_its_own_rule_seats() {
+    let events = [
+        ["bot:alpha", "bot:beta"]
+            .iter()
+            .flat_map(|name| {
+                vec![
+                    ClaimEvent::ObjectCreated {
+                        object: object(name),
+                        body: body("bot", name),
+                    },
+                    ClaimEvent::AddressBound {
+                        object: object(name),
+                        address: name.to_string(),
+                    },
+                ]
+            })
+            .collect::<Vec<_>>(),
+        vec![ClaimEvent::ObjectsMerged {
+            folded: object("bot:alpha"),
+            survivor: object("bot:beta"),
+            records: Vec::new(),
+            writes: Vec::new(),
+        }],
+    ]
+    .concat();
+    let state = replay(&events);
+    assert!(matches!(
+        prepare(
+            &state,
+            &[],
+            &by_bot("bot:beta", "bot:beta", "rule_seats", "3")
+        ),
+        Err(Refusal::Unlicensed(
+            crate::memory::MemoryError::KeyNotYours { .. }
+        ))
+    ));
+    // Reached by the folded spelling, it is the same identity too.
+    assert!(matches!(
+        prepare(
+            &state,
+            &[],
+            &by_bot("bot:alpha", "bot:beta", "rule_seats", "3")
+        ),
+        Err(Refusal::Unlicensed(
+            crate::memory::MemoryError::KeyNotYours { .. }
+        ))
+    ));
+}
+
+/// **A filler known only by its run still counts among the writers of a thread**,
+/// so it cannot raise the ceiling of the thread it fills. A run no bot is known
+/// for names nobody, and neither does an archived bot.
+#[test]
+fn a_thread_filler_known_only_by_its_run_cannot_raise_its_ceiling() {
+    crate::memory::kinds::load_shipped();
+    let filled = |archived_bot: bool| {
+        let mut state = State::default();
+        let mut bot_body = body("bot", "lisa");
+        bot_body.archived = archived_bot;
+        for event in [
+            ClaimEvent::ObjectCreated {
+                object: object("bot:lisa"),
+                body: bot_body,
+            },
+            ClaimEvent::AddressBound {
+                object: object("bot:lisa"),
+                address: "bot:lisa".to_string(),
+            },
+            ClaimEvent::ObjectCreated {
+                object: object("thread:alpha"),
+                body: body("thread", "alpha"),
+            },
+            ClaimEvent::AddressBound {
+                object: object("thread:alpha"),
+                address: "thread:alpha".to_string(),
+            },
+            created("r1", claim("f1", "thread:alpha", "a fill", 1)),
+        ] {
+            state.apply(&under(None, Some("sa01"), event));
+        }
+        state
+    };
+    let raising = || by_bot("thread:alpha", "bot:lisa", "record_capacity", "9");
+    let known = |state: &State, runs: &[(&str, &str)]| {
+        let mut request = raising();
+        request.door.runs = runs
+            .iter()
+            .map(|(run, bot)| {
+                (
+                    super::super::super::RunId(run.to_string()),
+                    crate::memory::EntityId(bot.to_string()),
+                )
+            })
+            .collect();
+        prepare(state, &[], &request)
+    };
+    assert!(matches!(
+        known(&filled(false), &[("sa01", "bot:lisa")]),
+        Err(Refusal::Unlicensed(_))
+    ));
+    assert!(known(&filled(false), &[]).is_ok(), "a run nobody owns");
+    assert!(
+        known(&filled(true), &[("sa01", "bot:lisa")]).is_ok(),
+        "an archived bot writes nobody's thread"
+    );
 }

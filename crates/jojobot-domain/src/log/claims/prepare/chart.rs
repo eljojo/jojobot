@@ -9,7 +9,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::super::{ObjectId, State};
+use super::super::{ObjectId, Record, RunId, State};
 use crate::actor::Actor;
 use crate::memory::{
     self, ChainWalk, EdgeShape, EntityId, EntityKind, FactStatus, GUARDED_KEYS, Lineage,
@@ -19,11 +19,43 @@ use crate::memory::{
 pub(super) struct Chart<'a> {
     state: &'a State,
     declared: &'a [DeclaredType],
+    runs: &'a BTreeMap<RunId, EntityId>,
 }
 
 impl<'a> Chart<'a> {
-    pub(super) fn new(state: &'a State, declared: &'a [DeclaredType]) -> Self {
-        Self { state, declared }
+    pub(super) fn new(
+        state: &'a State,
+        declared: &'a [DeclaredType],
+        runs: &'a BTreeMap<RunId, EntityId>,
+    ) -> Self {
+        Self {
+            state,
+            declared,
+            runs,
+        }
+    }
+
+    /// **The one handle an identity answers to**: whichever spelling it was
+    /// reached by, a thing and the thing it was merged into give one answer. A
+    /// spelling nothing holds is its own.
+    pub(super) fn canonical(&self, spelling: &EntityId) -> EntityId {
+        self.state
+            .resolve(spelling.as_str())
+            .and_then(|object| self.state.handle_of(object))
+            .unwrap_or_else(|| spelling.clone())
+    }
+
+    /// **The bot that wrote a record first**: the bot its envelope names, else the
+    /// bot its run belongs to. A bot merged into another is the survivor, and an
+    /// archived bot writes nobody's thread.
+    fn writer_of(&self, record: &Record) -> Option<EntityId> {
+        let named = match &record.first_writer {
+            Some(Actor::Bot(bot)) => Some(bot),
+            _ => record.first_run.as_ref().and_then(|run| self.runs.get(run)),
+        }?;
+        let object = self.state.resolve(named.as_str())?;
+        let body = self.state.object(object)?;
+        (!body.archived).then(|| self.canonical(named))
     }
 
     pub(super) fn fold(&self, handle: &EntityId) -> BTreeMap<String, String> {
@@ -87,7 +119,7 @@ impl<'a> Chart<'a> {
                     shape == EdgeShape::Connection.as_token()
                         && self.state.survivor(object) == self.state.survivor(home)
                 });
-                let by_itself = record.first_writer == Some(Actor::Bot(bot.clone()));
+                let by_itself = self.writer_of(record) == Some(self.canonical(&bot));
                 if points_at_it
                     && by_itself
                     && bot.kind() == Some(EntityKind::BOT)
@@ -116,10 +148,10 @@ impl<'a> Chart<'a> {
             if sets_a_guarded_key || takes_no_slot {
                 continue;
             }
-            if let Some(Actor::Bot(writer)) = &record.first_writer
-                && !fills.contains(writer)
+            if let Some(writer) = self.writer_of(record)
+                && !fills.contains(&writer)
             {
-                fills.push(writer.clone());
+                fills.push(writer);
             }
         }
         thread_writers::thread_writers(&thoughts, &fills)

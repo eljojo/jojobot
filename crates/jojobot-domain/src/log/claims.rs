@@ -174,6 +174,9 @@ pub struct Record {
     /// The actor on the envelope of the event that created the claim; a
     /// revision never replaces it.
     pub first_writer: Option<Actor>,
+    /// The run on the envelope of the event that created the claim, for a
+    /// writer no bot is named for: the run says which bot wrote it.
+    pub first_run: Option<RunId>,
     pub revisions: u32,
 }
 
@@ -244,6 +247,7 @@ impl State {
                     Record {
                         claim: claim.clone(),
                         first_writer: event.actor.clone(),
+                        first_run: event.run.clone(),
                         revisions: 0,
                     },
                 );

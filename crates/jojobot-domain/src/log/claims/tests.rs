@@ -5,7 +5,11 @@ pub(super) fn envelope(payload: ClaimEvent) -> Event<ClaimEvent> {
     under(Some(Actor::Operator), None, payload)
 }
 
-fn under(actor: Option<Actor>, run: Option<&str>, payload: ClaimEvent) -> Event<ClaimEvent> {
+pub(super) fn under(
+    actor: Option<Actor>,
+    run: Option<&str>,
+    payload: ClaimEvent,
+) -> Event<ClaimEvent> {
     Event {
         event_kind: "claim".into(),
         meaning_version: 1,
