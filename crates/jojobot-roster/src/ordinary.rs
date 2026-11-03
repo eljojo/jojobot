@@ -1684,4 +1684,9 @@ pub const ORDINANCES: &[&str] = &[
     "bot:contract-swallow-manager",
     "bot:contract-swallow-target",
     "bot:contract-swallow-outsider",
+    "bot-request:contract-bobbin-ask",
+    "bot:contract-bobbin-boss",
+    "bot:contract-bobbin-held",
+    "bot:contract-bobbin-chief",
+    "bot:contract-bobbin-target",
 ];

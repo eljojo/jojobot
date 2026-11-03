@@ -228,3 +228,86 @@ pub async fn a_bot_request_is_not_folded_into_another_thing<M: Memory>(store: &M
         .await
         .expect("an ordinary record folds with the same words");
 }
+
+/// **The first target of a request is judged by the target's chain, not by a
+/// manager the request already holds.** A request that holds a `reports_to` and
+/// no target takes its target in a later edit; the bot above the held manager is
+/// not above the target, so it does not write it. The target's own manager does.
+pub async fn a_first_target_is_judged_by_the_target_and_not_a_held_manager<M: Memory>(store: &M) {
+    let request = EntityId("bot-request:contract-bobbin-ask".into());
+    let held_boss = EntityId("bot:contract-bobbin-boss".into());
+    let held = EntityId("bot:contract-bobbin-held".into());
+    let chief = EntityId("bot:contract-bobbin-chief".into());
+    let target = EntityId("bot:contract-bobbin-target".into());
+    for (id, name) in [
+        (&request, "Bobbin Ask"),
+        (&held_boss, "Bobbin Boss"),
+        (&held, "Bobbin Held"),
+        (&chief, "Bobbin Chief"),
+        (&target, "Bobbin Target"),
+    ] {
+        add(store, NewEntity::new(id.clone(), name, "contract-fixture")).await;
+    }
+    let fields = |pairs: &[(&str, &str)]| -> std::collections::BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    };
+    for (bot, boss) in [(&held, &held_boss), (&target, &chief)] {
+        capture(
+            store,
+            state(NewFact {
+                fields: fields(&[(crate::memory::REPORTS_TO, boss.as_str())]),
+                ..NewFact::about(bot.clone(), "reports to its manager", date(2026, 10, 1))
+            }),
+        )
+        .await;
+    }
+    let claim = capture(
+        store,
+        state(NewFact {
+            fields: fields(&[(crate::memory::REPORTS_TO, held.as_str())]),
+            ..NewFact::about(
+                request.clone(),
+                "a request without a target",
+                date(2026, 10, 2),
+            )
+        }),
+    )
+    .await;
+    let first_target = || {
+        state_patch(FactPatch {
+            fields: fields(&[(TARGET_BOT, target.as_str())]),
+            ..Default::default()
+        })
+    };
+
+    let err = store
+        .update_fact(&claim.address(), first_target(), &held_boss)
+        .await
+        .expect_err("the manager of the held bot is not above the target");
+    assert!(
+        matches!(
+            err,
+            MemoryError::KeyNotYours {
+                may: MayWrite::RequestSpec,
+                ..
+            }
+        ),
+        "{err:?}"
+    );
+    let fold = store.fields(&request).await.expect("readable");
+    assert_eq!(
+        fold.get(TARGET_BOT),
+        None,
+        "the refused target was not kept"
+    );
+
+    store
+        .update_fact(&claim.address(), first_target(), &chief)
+        .await
+        .expect("the manager of the target writes its first target")
+        .written()
+        .expect("nothing blocks the target's manager");
+}
