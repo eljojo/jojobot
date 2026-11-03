@@ -4312,6 +4312,14 @@ impl Memory for InMemoryMemory {
         );
         let lineage = super::super::chart_wanted_by_change(&handle, &before, &after)
             .map(|named| self.lineage_among(&facts, &handle, named));
+        if patch.status == Some(FactStatus::Archived)
+            && let Some(err) = super::super::bot_request::refuses_withdrawing_the_generation(
+                &handle,
+                &edited.fields,
+            )
+        {
+            return Err(err);
+        }
         if let Some(err) = super::super::refuses_unlicensed_change(
             &handle,
             caller,
@@ -4879,6 +4887,12 @@ impl Memory for InMemoryMemory {
         );
         let lineage = super::super::chart_wanted_by_change(&handle, &before_fold, &after_fold)
             .map(|named| self.lineage_among(&facts, &handle, named));
+        if let Some(err) = super::super::bot_request::refuses_withdrawing_the_generation(
+            &handle,
+            &retracted.fields,
+        ) {
+            return Err(err);
+        }
         if let Some(err) = super::super::refuses_unlicensed_change(
             &handle,
             caller,

@@ -732,3 +732,126 @@ pub async fn a_retraction_and_its_generation_claim_land_as_one_act<M: Memory>(st
         "the withdrawal and its number landed together",
     );
 }
+
+/// **Nobody takes back a claim that sets only the generation of a request.** The
+/// number is jojobot's own, worked out from each write of the spec and never
+/// sent, so a bot that retracted or archived the claim carrying it would roll the
+/// folded generation back under a spec that is still the one numbered above it,
+/// and a bound app that last acted on the lower number would miss the change.
+/// Both ways of taking a claim off are refused for every caller, and the fold
+/// stays where it was. The positive is beside it: a claim that holds a spec key
+/// as well as the number is still the manager's to retract.
+pub async fn a_claim_that_sets_only_the_generation_is_not_taken_back<M: Memory>(store: &M) {
+    use crate::memory::bot_request::{GENERATION, MODEL};
+    let request = EntityId("bot-request:contract-hole-ask".into());
+    let manager = EntityId("bot:contract-hole-manager".into());
+    let target = EntityId("bot:contract-hole-target".into());
+    for (id, name) in [
+        (&request, "Hole Ask"),
+        (&manager, "Hole Manager"),
+        (&target, "Hole Target"),
+    ] {
+        add(store, NewEntity::new(id.clone(), name, "contract-fixture")).await;
+    }
+    let fields = |pairs: &[(&str, &str)]| -> std::collections::BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    };
+    capture(
+        store,
+        state(NewFact {
+            fields: fields(&[(crate::memory::REPORTS_TO, manager.as_str())]),
+            ..NewFact::about(
+                target.clone(),
+                "target reports to manager",
+                date(2026, 10, 1),
+            )
+        }),
+    )
+    .await;
+    let spec = |pairs: &[(&str, &str)], day: i8| {
+        let mut fact = state(NewFact {
+            fields: fields(pairs),
+            ..NewFact::about(request.clone(), "a spec", date(2026, 10, day))
+        });
+        fact.derived.insert(GENERATION.to_string());
+        fact
+    };
+    capture(
+        store,
+        spec(
+            &[
+                (TARGET_BOT, target.as_str()),
+                (DESIRED, "running"),
+                (GENERATION, "1"),
+            ],
+            2,
+        ),
+    )
+    .await;
+    let second = capture(
+        store,
+        spec(
+            &[(DESIRED, "stopped"), (MODEL, "alpha"), (GENERATION, "2")],
+            3,
+        ),
+    )
+    .await;
+    // The claim that carries the number alone, as the act that took a spec off
+    // writes it.
+    let number = capture(store, spec(&[(GENERATION, "3")], 4)).await;
+    let generation = || async {
+        store
+            .fields(&request)
+            .await
+            .expect("readable")
+            .get(GENERATION)
+            .cloned()
+    };
+    let refused = |err: MemoryError, what: &str| match err {
+        MemoryError::KeyNotYours {
+            may: MayWrite::RequestGeneration,
+            ..
+        } => {}
+        other => panic!("{what}: expected KeyNotYours for the generation, got {other:?}"),
+    };
+    assert_eq!(generation().await.as_deref(), Some("3"));
+
+    for who in [&manager, &target] {
+        let err = store
+            .retract(&number.address(), None, date(2026, 10, 5), who, None)
+            .await
+            .expect_err("nobody retracts the claim that carries only the generation");
+        refused(err, "the retraction");
+        assert_eq!(generation().await.as_deref(), Some("3"));
+
+        let err = store
+            .update_fact(
+                &number.address(),
+                state_patch(FactPatch {
+                    status: Some(FactStatus::Archived),
+                    ..Default::default()
+                }),
+                who,
+            )
+            .await
+            .expect_err("nobody archives the claim that carries only the generation");
+        refused(err, "the archive");
+        assert_eq!(generation().await.as_deref(), Some("3"));
+    }
+
+    // The claim that holds a spec key as well is still the manager's to retract.
+    store
+        .retract(&second.address(), None, date(2026, 10, 5), &manager, None)
+        .await
+        .expect("a claim that carries a spec key is retracted");
+    let fold = store.fields(&request).await.expect("readable");
+    assert_eq!(fold.get(DESIRED).map(String::as_str), Some("running"));
+    assert_eq!(
+        fold.get(GENERATION).map(String::as_str),
+        Some("3"),
+        "the number claim that was refused above still stands"
+    );
+}

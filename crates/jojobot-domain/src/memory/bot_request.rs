@@ -108,6 +108,36 @@ pub fn chain_start(
         .unwrap_or_else(|| subject.clone())
 }
 
+/// **Whether a claim's own keys are the generation and nothing else**, the
+/// label that marks a generated record aside. Such a claim is the one jojobot
+/// writes beside an act that took a spec claim off; it holds no spec.
+pub fn sets_only_the_generation(fields: &std::collections::BTreeMap<String, String>) -> bool {
+    let mut keys = fields
+        .keys()
+        .filter(|key| key.as_str() != super::review::SETTINGS_RECORD);
+    keys.next().is_some_and(|key| key == GENERATION) && keys.next().is_none()
+}
+
+/// **The refusal to take back a claim that sets only the generation of a
+/// request**, for every caller. The number is jojobot's own, worked out and never
+/// sent, so no bot unwrites it: taking the claim off rolls the folded generation
+/// back under a spec that is still the one numbered above it. A claim that holds
+/// a spec key as well stays the manager's to retract or archive. `None` for a
+/// subject that is no request.
+pub fn refuses_withdrawing_the_generation(
+    subject: &super::EntityId,
+    claim_fields: &std::collections::BTreeMap<String, String>,
+) -> Option<super::MemoryError> {
+    (is_request(subject) && sets_only_the_generation(claim_fields)).then(|| {
+        super::MemoryError::KeyNotYours {
+            subject: subject.to_string(),
+            key: GENERATION.to_string(),
+            may: super::MayWrite::RequestGeneration,
+            allowed: Vec::new(),
+        }
+    })
+}
+
 /// **Whether a value of a spec key is the one the request holds**, spaces around
 /// either aside. The one comparison of a held value with a written one: the
 /// generation reads a resend through it, and the app permit reads the app a

@@ -19614,6 +19614,7 @@ macro_rules! all_cases {
         $m!(a_bot_request_is_not_folded_into_another_thing($store));
         $m!(a_first_target_is_judged_by_the_target_and_not_a_held_manager($store));
         $m!(a_retracted_generation_is_still_the_highest_ever_written($store));
+        $m!(a_claim_that_sets_only_the_generation_is_not_taken_back($store));
         $m!(a_retraction_and_its_generation_claim_land_as_one_act($store));
         $m!(a_retraction_under_a_former_handle_carries_its_generation_claim($store));
         $m!(an_archive_and_its_generation_claim_land_as_one_act($store));

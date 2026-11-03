@@ -1899,6 +1899,12 @@ impl DoltMemory {
             Some(named) => Some(self.lineage_in(tx, &handle, named).await?),
             None => None,
         };
+        if let Some(err) = jojobot_domain::memory::bot_request::refuses_withdrawing_the_generation(
+            &handle,
+            &retracted.fields,
+        ) {
+            return Err(err);
+        }
         if let Some(err) = jojobot_domain::memory::refuses_unlicensed_change(
             &handle,
             caller,
@@ -2347,6 +2353,15 @@ impl DoltMemory {
             Some(named) => Some(self.lineage_in(tx, &handle, named).await?),
             None => None,
         };
+        if patch.status == Some(FactStatus::Archived)
+            && let Some(err) =
+                jojobot_domain::memory::bot_request::refuses_withdrawing_the_generation(
+                    &handle,
+                    &fields_before,
+                )
+        {
+            return Err(err);
+        }
         if let Some(err) = jojobot_domain::memory::refuses_unlicensed_change(
             &handle,
             caller,
