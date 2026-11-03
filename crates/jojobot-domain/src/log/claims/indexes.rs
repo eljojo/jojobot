@@ -451,7 +451,35 @@ impl State {
             self.refresh_subtree(subject);
         } else {
             self.refresh_member(subject);
+            self.issue_written(subject, key);
         }
+    }
+
+    /// **The number the write just applied issues**, under every container above
+    /// the member that numbers by the key, whatever became of the claim after.
+    fn issue_written(&mut self, member: &ObjectId, key: &KeyId) {
+        let member = self.survivor(member).clone();
+        let Some(write) = self
+            .streams
+            .get(&(member.clone(), key.clone()))
+            .and_then(|stream| stream.last())
+            .filter(|write| memory::reaches_the_thing(write.class))
+        else {
+            return;
+        };
+        let FieldValue::Set(value) = &write.write else {
+            return;
+        };
+        let Some(number) = whole_number(value) else {
+            return;
+        };
+        let issued: Vec<Seat> = self
+            .ancestors(&member)
+            .into_iter()
+            .filter(|container| self.numbers_by(container).as_deref() == Some(key.0.as_str()))
+            .map(|container| (container, key.0.clone(), number))
+            .collect();
+        self.indexes.issued.extend(issued);
     }
 
     fn refresh_subtree(&mut self, root: &ObjectId) {
@@ -477,30 +505,9 @@ impl State {
                 held.insert((container, key, number));
             }
         }
-        for container in self.ancestors(&member) {
-            let Some(key) = self.numbers_by(&container) else {
-                continue;
-            };
-            let mut newest: BTreeMap<&RecordId, &FieldValue> = BTreeMap::new();
-            for write in self
-                .streams
-                .get(&(member.clone(), KeyId(key.clone())))
-                .into_iter()
-                .flatten()
-                .filter(|write| memory::reaches_the_thing(write.class))
-            {
-                newest.insert(&write.record, &write.write);
-            }
-            let issued: Vec<Seat> = newest
-                .into_values()
-                .filter_map(|value| match value {
-                    FieldValue::Set(value) => whole_number(value),
-                    FieldValue::Clear => None,
-                })
-                .map(|number| (container.clone(), key.clone(), number))
-                .collect();
-            self.indexes.issued.extend(issued);
-        }
+        // A number held now is issued; a number a taken-back claim wrote before
+        // the container numbered, or before the member joined it, never was.
+        self.indexes.issued.extend(held.iter().cloned());
         for seat in &held {
             self.indexes
                 .seats

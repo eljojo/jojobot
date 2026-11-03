@@ -1203,3 +1203,72 @@ fn a_thread_filler_known_only_by_its_run_cannot_raise_its_ceiling() {
         "an archived bot writes nobody's thread"
     );
 }
+
+/// **A number is issued only by a write made while the member stood under a
+/// container that numbered by that key.** A number a claim wrote before the
+/// collection existed, or before the member joined it, was never issued.
+#[test]
+fn a_number_written_before_it_was_numbered_is_not_issued() {
+    let member = |id: &str, parent: Option<&str>| {
+        vec![
+            ClaimEvent::ObjectCreated {
+                object: object(id),
+                body: ObjectBody {
+                    parent: parent.map(object),
+                    ..body("thing", id)
+                },
+            },
+            ClaimEvent::AddressBound {
+                object: object(id),
+                address: id.to_string(),
+            },
+        ]
+    };
+    let taken_back = |record_id: &str, subject: &str, value: &str| {
+        vec![
+            created(record_id, claim(&format!("f{record_id}"), subject, "c", 1)),
+            write(record_id, subject, "num", 1, value),
+            archived(record_id, &format!("f{record_id}"), subject),
+        ]
+    };
+    let events = [
+        thing("coll"),
+        // before the collection numbers anything
+        member("m1", Some("coll")),
+        taken_back("n1", "m1", "5"),
+        // before the member joins
+        member("m2", None),
+        taken_back("n2", "m2", "6"),
+        vec![
+            created("c1", claim("f1", "coll", "c", 1)),
+            write("c1", "coll", NUMBERS_BY, 1, "num"),
+        ],
+        vec![ClaimEvent::ObjectRevised {
+            object: object("m2"),
+            body: ObjectBody {
+                parent: Some(object("coll")),
+                ..body("thing", "m2")
+            },
+        }],
+        member("m3", Some("coll")),
+        // after: a taken-back number is retired for good
+        taken_back("n3", "m3", "7"),
+    ]
+    .concat();
+    let state = replay(&events);
+    assert!(
+        prepare(&state, &[], &numbering("m3", "5")).is_ok(),
+        "written before the collection numbered"
+    );
+    assert!(
+        prepare(&state, &[], &numbering("m3", "6")).is_ok(),
+        "written before the member joined"
+    );
+    assert!(
+        matches!(
+            prepare(&state, &[], &numbering("m3", "7")),
+            Err(Refusal::NumberRetired { .. })
+        ),
+        "written and taken back since"
+    );
+}
