@@ -2423,7 +2423,12 @@ impl Memory for InMemoryMemory {
             *self.world_cache.lock().expect("fake mutex poisoned") = None;
         };
         let retraction = self.retract(address, reason, date, caller, session).await?;
-        if claim.subject != retraction.retracted.subject {
+        // **The same thing, by whichever spelling it is named**: the address is
+        // resolved under a handle the thing wore before a rename, so the claim
+        // beside it may carry that spelling too.
+        let same_thing = super::resolve_handle(&claim.subject, &self.known(), &self.former())
+            .is_some_and(|entity| entity.id == retraction.retracted.subject);
+        if !same_thing {
             take_back();
             return Err(MemoryError::InvalidFact(format!(
                 "the claim is about {}, and the claim taken back is about {}",

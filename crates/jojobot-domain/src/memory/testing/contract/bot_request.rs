@@ -312,6 +312,104 @@ pub async fn a_first_target_is_judged_by_the_target_and_not_a_held_manager<M: Me
         .expect("nothing blocks the target's manager");
 }
 
+/// **A claim taken back under the handle its request wore before a rename still
+/// carries its number.** The retraction resolves the address as the plain
+/// retraction does, and the companion claim names the same request by the
+/// spelling the caller typed; both land, and the fold names the new spec.
+pub async fn a_retraction_under_a_former_handle_carries_its_generation_claim<M: Memory>(store: &M) {
+    use crate::memory::bot_request::GENERATION;
+    let request = EntityId("bot-request:contract-former-ask".into());
+    let renamed = EntityId("bot-request:contract-former-now".into());
+    let manager = EntityId("bot:contract-former-manager".into());
+    let target = EntityId("bot:contract-former-target".into());
+    for (id, name) in [
+        (&request, "Former Ask"),
+        (&manager, "Former Manager"),
+        (&target, "Former Target"),
+    ] {
+        add(store, NewEntity::new(id.clone(), name, "contract-fixture")).await;
+    }
+    let fields = |pairs: &[(&str, &str)]| -> std::collections::BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    };
+    capture(
+        store,
+        state(NewFact {
+            fields: fields(&[(crate::memory::REPORTS_TO, manager.as_str())]),
+            ..NewFact::about(
+                target.clone(),
+                "target reports to manager",
+                date(2026, 10, 1),
+            )
+        }),
+    )
+    .await;
+    let spec = |subject: &EntityId, pairs: &[(&str, &str)], day: i8| {
+        let mut fact = state(NewFact {
+            fields: fields(pairs),
+            ..NewFact::about(subject.clone(), "a spec", date(2026, 10, day))
+        });
+        fact.derived.insert(GENERATION.to_string());
+        fact
+    };
+    capture(
+        store,
+        spec(
+            &request,
+            &[
+                (TARGET_BOT, target.as_str()),
+                (DESIRED, "running"),
+                (GENERATION, "1"),
+            ],
+            2,
+        ),
+    )
+    .await;
+    let second = capture(
+        store,
+        spec(&request, &[(DESIRED, "stopped"), (GENERATION, "2")], 3),
+    )
+    .await;
+    store
+        .rename_entity(
+            &request,
+            &renamed,
+            None,
+            date(2026, 10, 4),
+            crate::memory::Override::none(),
+            None,
+        )
+        .await
+        .expect("the rename lands")
+        .written()
+        .expect("nothing collides with the new handle");
+
+    let (retraction, claim) = store
+        .retract_with_claim(
+            &second.address(),
+            Some("written in error"),
+            date(2026, 10, 5),
+            &manager,
+            None,
+            spec(&request, &[(GENERATION, "3")], 5),
+        )
+        .await
+        .expect("the call answers")
+        .written()
+        .expect("nothing blocks it");
+    assert_eq!(retraction.retracted.subject, renamed);
+    assert_eq!(
+        claim.subject, renamed,
+        "the companion is served under the handle now"
+    );
+    let fold = store.fields(&renamed).await.expect("readable");
+    assert_eq!(fold.get(DESIRED).map(String::as_str), Some("running"));
+    assert_eq!(fold.get(GENERATION).map(String::as_str), Some("3"));
+}
+
 /// **A number the generation once held is still on the request's history after
 /// the claim that carried it is retracted**, so the next generation is one past the
 /// highest ever written and no number names two specs. Spec A is written with 1,

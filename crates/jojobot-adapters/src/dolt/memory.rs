@@ -6497,7 +6497,14 @@ impl Memory for DoltMemory {
         let taken_back = self
             .retract_in(&mut tx, address, reason, date, caller, session)
             .await?;
-        if claim.subject != taken_back.retracted.subject {
+        // **The same thing, by whichever spelling it is named**: the address is
+        // resolved under a handle the thing wore before a rename, so the claim
+        // beside it may carry that spelling too.
+        let same_thing = match self.resolve(&mut tx, &claim.subject).await? {
+            Some((_, handle)) => handle == taken_back.retracted.subject,
+            None => false,
+        };
+        if !same_thing {
             return Err(MemoryError::InvalidFact(format!(
                 "the claim is about {}, and the claim taken back is about {}",
                 claim.subject, taken_back.retracted.subject
