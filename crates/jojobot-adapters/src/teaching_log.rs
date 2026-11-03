@@ -60,6 +60,9 @@ mod tests;
 #[cfg(test)]
 mod witness_tests;
 
+#[cfg(test)]
+mod writer_log_tests;
+
 const REPRESENTATION_VERSION: u32 = 1;
 const READ_BOUND: usize = 256;
 /// Eager recovery after an unknown append: this many tail reads, waiting twice

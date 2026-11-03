@@ -21,7 +21,7 @@ fn mark(name: &str, domain: &str, second: i64) -> Mark {
     }
 }
 
-async fn head(log: &InMemoryLog) -> u64 {
+pub(super) async fn head(log: &dyn LogStore) -> u64 {
     log.read_from(Position::default(), 1000)
         .await
         .unwrap()
@@ -126,10 +126,11 @@ async fn the_import_keeps_source_times_and_runs_once() {
 /// contact records once more; another run's marks are untouched.
 #[tokio::test]
 async fn contacts_and_clears_append_only_what_changes() {
-    let log = InMemoryLog::default();
-    let teachings = LoggedTeachings::open(Arc::new(log.clone()), &[])
-        .await
-        .unwrap();
+    contacts_and_clears_on(Arc::new(InMemoryLog::default())).await;
+}
+
+pub(super) async fn contacts_and_clears_on(log: Arc<dyn LogStore>) {
+    let teachings = LoggedTeachings::open(log.clone(), &[]).await.unwrap();
     assert!(
         teachings
             .first_contact(&sid("homer"), "claims", at(0))
@@ -142,7 +143,7 @@ async fn contacts_and_clears_append_only_what_changes() {
             .await
             .unwrap()
     );
-    assert_eq!(head(&log).await, 2);
+    assert_eq!(head(&*log).await, 2);
     assert!(
         !teachings
             .first_contact(&sid("homer"), "claims", at(2))
@@ -150,7 +151,7 @@ async fn contacts_and_clears_append_only_what_changes() {
             .unwrap()
     );
     teachings.forget(&sid("lisa")).await.unwrap();
-    assert_eq!(head(&log).await, 2, "nothing appended");
+    assert_eq!(head(&*log).await, 2, "nothing appended");
     teachings.forget(&sid("homer")).await.unwrap();
     assert!(
         !teachings
@@ -171,10 +172,11 @@ async fn contacts_and_clears_append_only_what_changes() {
 /// nothing appended.**
 #[tokio::test]
 async fn the_domain_width_is_enforced_before_any_append() {
-    let log = InMemoryLog::default();
-    let teachings = LoggedTeachings::open(Arc::new(log.clone()), &[])
-        .await
-        .unwrap();
+    domain_width_on(Arc::new(InMemoryLog::default())).await;
+}
+
+pub(super) async fn domain_width_on(log: Arc<dyn LogStore>) {
+    let teachings = LoggedTeachings::open(log.clone(), &[]).await.unwrap();
     let fits = "d".repeat(DOMAIN_WIDTH);
     assert!(
         teachings
@@ -187,16 +189,17 @@ async fn the_domain_width_is_enforced_before_any_append() {
         teachings.first_contact(&sid("homer"), &wide, at(1)).await,
         Err(TeachingError::Refused(_))
     ));
-    assert_eq!(head(&log).await, 1);
+    assert_eq!(head(&*log).await, 1);
 }
 
 /// **A restart replays the log to the same ledger.**
 #[tokio::test]
 async fn a_restart_replays_to_the_same_ledger() {
-    let log = InMemoryLog::default();
-    let first = LoggedTeachings::open(Arc::new(log.clone()), &[])
-        .await
-        .unwrap();
+    restart_replay_on(Arc::new(InMemoryLog::default())).await;
+}
+
+pub(super) async fn restart_replay_on(log: Arc<dyn LogStore>) {
+    let first = LoggedTeachings::open(log.clone(), &[]).await.unwrap();
     first
         .first_contact(&sid("homer"), "claims", at(0))
         .await
@@ -206,9 +209,7 @@ async fn a_restart_replays_to_the_same_ledger() {
         .await
         .unwrap();
     first.forget(&sid("marge")).await.unwrap();
-    let second = LoggedTeachings::open(Arc::new(log.clone()), &[])
-        .await
-        .unwrap();
+    let second = LoggedTeachings::open(log.clone(), &[]).await.unwrap();
     assert_eq!(
         second.taught().await.unwrap(),
         first.taught().await.unwrap()
@@ -573,7 +574,7 @@ async fn a_rollback_and_roll_forward_reconciles_the_log_with_the_rows() {
 
 /// A batch holding one member whose envelope names `kind`, appended at the
 /// log's head, as another family's writer would append it.
-async fn append_member_of_kind(log: &InMemoryLog, kind: &str) {
+pub(super) async fn append_member_of_kind(log: &dyn LogStore, kind: &str) {
     append_members(log, vec![foreign_member(kind)]).await;
 }
 
@@ -590,7 +591,7 @@ fn foreign_member(kind: &str) -> Vec<u8> {
 }
 
 /// One batch of these members, appended at the log's head.
-async fn append_members(log: &InMemoryLog, members: Vec<Vec<u8>>) {
+pub(super) async fn append_members(log: &dyn LogStore, members: Vec<Vec<u8>>) {
     let previous = Position(head(log).await);
     let batch = SealedBatch::seal(
         BatchId(format!("mixed:{}", previous.0)),
@@ -610,7 +611,7 @@ async fn append_members(log: &InMemoryLog, members: Vec<Vec<u8>>) {
 /// applied, in either order, and the position moves past the whole batch.** A
 /// replay that stopped at the foreign member would drop the teaching member that
 /// follows it.
-async fn a_mixed_batch_is_applied(foreign_first: bool) {
+pub(super) async fn a_mixed_batch_is_applied(log: Arc<dyn LogStore>, foreign_first: bool) {
     let recorded = codec::encode(&TeachingEvent::Recorded {
         run: RunId("marge".into()),
         domain: "mail".into(),
@@ -622,11 +623,8 @@ async fn a_mixed_batch_is_applied(foreign_first: bool) {
     } else {
         vec![recorded, foreign]
     };
-    let log = InMemoryLog::default();
-    append_members(&log, members).await;
-    let opened = LoggedTeachings::open(Arc::new(log.clone()), &[])
-        .await
-        .unwrap();
+    append_members(&*log, members).await;
+    let opened = LoggedTeachings::open(log.clone(), &[]).await.unwrap();
     assert!(
         opened.has_contact(&sid("marge"), "mail").await.unwrap(),
         "the teaching member of the mixed batch is applied: {:?}",
@@ -640,17 +638,21 @@ async fn a_mixed_batch_is_applied(foreign_first: bool) {
         "a write after the batch lands"
     );
     // The batch holds two events and the later write one.
-    assert_eq!(head(&log).await, 3, "it appends at the head past the batch");
+    assert_eq!(
+        head(&*log).await,
+        3,
+        "it appends at the head past the batch"
+    );
 }
 
 #[tokio::test]
 async fn a_teaching_member_after_a_foreign_one_in_one_batch_is_applied() {
-    a_mixed_batch_is_applied(true).await;
+    a_mixed_batch_is_applied(Arc::new(InMemoryLog::default()), true).await;
 }
 
 #[tokio::test]
 async fn a_teaching_member_before_a_foreign_one_in_one_batch_is_applied() {
-    a_mixed_batch_is_applied(false).await;
+    a_mixed_batch_is_applied(Arc::new(InMemoryLog::default()), false).await;
 }
 
 /// **A member of another family is not an error for teaching.** The log holds
@@ -658,16 +660,17 @@ async fn a_teaching_member_before_a_foreign_one_in_one_batch_is_applied() {
 /// rest, the position still moving past them, so a write after one lands.
 #[tokio::test]
 async fn a_member_of_another_family_leaves_the_replay_equal() {
-    let log = InMemoryLog::default();
-    let first = LoggedTeachings::open(Arc::new(log.clone()), &[])
-        .await
-        .unwrap();
+    another_family_leaves_the_replay_equal(Arc::new(InMemoryLog::default())).await;
+}
+
+pub(super) async fn another_family_leaves_the_replay_equal(log: Arc<dyn LogStore>) {
+    let first = LoggedTeachings::open(log.clone(), &[]).await.unwrap();
     first
         .first_contact(&sid("homer"), "claims", at(0))
         .await
         .unwrap();
-    append_member_of_kind(&log, "RequestCommitted").await;
-    let second = LoggedTeachings::open(Arc::new(log.clone()), &[])
+    append_member_of_kind(&*log, "RequestCommitted").await;
+    let second = LoggedTeachings::open(log.clone(), &[])
         .await
         .expect("a foreign member does not stop the replay");
     assert_eq!(
@@ -681,7 +684,7 @@ async fn a_member_of_another_family_leaves_the_replay_equal() {
             .unwrap(),
         "a write after a foreign batch appends at the head past it"
     );
-    assert_eq!(head(&log).await, 3);
+    assert_eq!(head(&*log).await, 3);
 }
 
 /// **An unknown kind of teaching's own family still fails the replay**, and
@@ -689,9 +692,12 @@ async fn a_member_of_another_family_leaves_the_replay_equal() {
 /// and not understood is never passed.
 #[tokio::test]
 async fn an_unknown_kind_of_teachings_own_family_fails_the_replay() {
-    let log = InMemoryLog::default();
-    append_member_of_kind(&log, "TeachingForgotten").await;
-    let opened = LoggedTeachings::open(Arc::new(log), &[]).await;
+    an_unknown_own_kind_fails_the_replay(Arc::new(InMemoryLog::default())).await;
+}
+
+pub(super) async fn an_unknown_own_kind_fails_the_replay(log: Arc<dyn LogStore>) {
+    append_member_of_kind(&*log, "TeachingForgotten").await;
+    let opened = LoggedTeachings::open(log, &[]).await;
     let Err(TeachingError::Store(why)) = opened else {
         panic!("the replay must fail on an unknown teaching kind");
     };
