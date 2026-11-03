@@ -505,4 +505,6 @@ pub fn prepare(
 }
 
 #[cfg(test)]
+mod differential;
+#[cfg(test)]
 mod tests;
