@@ -178,6 +178,10 @@ pub struct Record {
     /// writer no bot is named for: the run says which bot wrote it.
     pub first_run: Option<RunId>,
     pub revisions: u32,
+    /// When the store took in the newest event that created or revised the
+    /// claim, by the same rule as [`Write::written_at`]. The store counts every
+    /// write of a claim as a touch, whether or not it wrote a field.
+    pub written_at: Option<Timestamp>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -249,6 +253,7 @@ impl State {
                         first_writer: event.actor.clone(),
                         first_run: event.run.clone(),
                         revisions: 0,
+                        written_at: event.imported_source_time.or(event.written_at),
                     },
                 );
                 self.index_record(record, before.as_ref(), claim);
@@ -257,6 +262,7 @@ impl State {
                 if let Some(held) = self.records.get_mut(record) {
                     let before = std::mem::replace(&mut held.claim, claim.clone());
                     held.revisions += 1;
+                    held.written_at = event.imported_source_time.or(event.written_at);
                     self.index_record(record, Some(&before), claim);
                 }
             }

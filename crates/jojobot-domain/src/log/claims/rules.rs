@@ -66,13 +66,15 @@ impl State {
     }
 
     /// **When a claim was last touched**: the newest moment the store took in a
-    /// write of the claim. A claim with no recorded write moment is never quiet.
+    /// write of the claim, of any kind: its creation, a revision or a field.
+    /// A claim with no recorded write moment is never quiet.
     pub fn last_touched(&self, record: &RecordId) -> Option<jiff::Timestamp> {
         self.streams
             .values()
             .flatten()
             .filter(|write| &write.record == record)
             .filter_map(|write| write.written_at)
+            .chain(self.records.get(record).and_then(|held| held.written_at))
             .max()
     }
 
