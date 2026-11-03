@@ -125,6 +125,24 @@ fn watcher_ignores_its_own_jobs_failure() {
     assert_eq!(code, 0, "a job stopped itself for its own failure");
 }
 
+/// **A red own-crates job stops no sibling.** It runs a branch's touched crates
+/// only, and the sibling that runs the whole report must still give its verdict
+/// when own-crates is red. **Paired**: the same red under any other name stops the
+/// job, as the first case above shows for `report`.
+#[test]
+fn watcher_does_not_stop_its_job_for_a_failed_own_crates_job() {
+    let jobs = [
+        job(3209, 1, "own-crates", "failure"),
+        job(3210, 1, "rooms", "running"),
+    ];
+    let (posts, _, stderr, code) = watched("own-crates", &jobs, "sleep 3");
+    assert_eq!(posts, "", "the run was cancelled: {posts:?}");
+    assert_eq!(
+        code, 0,
+        "a red own-crates job stopped its sibling: {stderr:?}"
+    );
+}
+
 /// **A stop reaches what the command started, not only the command.** The wrapped
 /// step is `make` under `nix develop`, so the process the watcher knows is far from
 /// the test binaries that hold the step's output open. Here the command starts a

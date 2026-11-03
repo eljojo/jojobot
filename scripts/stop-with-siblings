@@ -32,7 +32,10 @@ attempt_of() {
 failed_sibling() {
     jobs=$(curl -fsS "$run/jobs" 2>/dev/null | tr '}' '\n') || return 1
     own=$(printf '%s\n' "$jobs" | grep "\"name\":\"${GITHUB_JOB:-}\"" | attempt_of | head -n 1)
+    # own-crates runs a branch's touched crates only; its red must leave the
+    # whole report running, so it never counts as a failed sibling.
     printf '%s\n' "$jobs" | grep '"status":"failure"' | grep -v "\"name\":\"${GITHUB_JOB:-}\"" |
+        grep -v '"name":"own-crates"' |
         while read -r line; do
             attempt=$(printf '%s\n' "$line" | attempt_of)
             [ "$attempt" -ge "${own:-0}" ] || continue
