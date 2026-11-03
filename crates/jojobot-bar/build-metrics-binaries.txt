@@ -60,6 +60,7 @@ test-dolt_check_current_writes
 test-dolt_check_precision
 test-dolt_claim_ids_after_a_merge
 test-dolt_contract_parts
+test-dolt_creation_atomic
 test-dolt_due_pass_instance
 test-dolt_due_pass_unread
 test-dolt_id_case
