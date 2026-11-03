@@ -25,7 +25,7 @@ use jiff::{Timestamp, civil::Date};
 
 use super::{Event, ObjectId, RecordId, RunId};
 use crate::actor::Actor;
-use crate::app::AppStamp;
+use crate::app::{AppId, AppStamp};
 use crate::memory::{
     self, FactId, FactStatus, KeyWrite, Provenance, Standing, WriteClass, types::DeclaredType,
 };
@@ -59,6 +59,9 @@ pub struct ObjectBody {
     pub metadata: BTreeMap<String, String>,
     /// Archive and restore are revisions of the object.
     pub archived: bool,
+    /// **The app that owns the object.** Structural: only an event that binds
+    /// sets it, and no write of a key moves or drops it.
+    pub bound_to: Option<AppId>,
 }
 
 /// **Everything a claim says, complete when written.** `label` is the address
@@ -509,7 +512,7 @@ pub mod import;
 mod indexes;
 mod prepare;
 pub use indexes::Located;
-pub use prepare::{Admitted, CaptureRequest, Draft, Refusal, Route, prepare};
+pub use prepare::{Admitted, CaptureRequest, Door, Draft, Refusal, Route, prepare};
 
 #[cfg(test)]
 mod tests;

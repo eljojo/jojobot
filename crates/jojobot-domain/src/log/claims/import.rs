@@ -217,6 +217,8 @@ fn object_body(row: &EntityRow) -> ObjectBody {
         boot: row.boot.clone(),
         metadata,
         archived: row.archived.is_some(),
+        // The rows an app binds an object by are not read here yet.
+        bound_to: None,
     }
 }
 

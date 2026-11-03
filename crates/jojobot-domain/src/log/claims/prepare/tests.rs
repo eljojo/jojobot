@@ -4,7 +4,9 @@ use super::super::tests::{
     apply, archived, body, claim, created, day, object, record, replay, write,
 };
 use super::super::{ClaimEvent, ObjectBody, State};
-use super::{CaptureRequest, Draft, Refusal, Route, prepare};
+use super::{CaptureRequest, Door, Draft, Refusal, Route, prepare};
+use crate::actor::Actor;
+use crate::app::AppId;
 use crate::memory::numbered::NUMBERS_BY;
 use crate::memory::types::{DeclaredType, Field, ValueType};
 use crate::memory::{FactStatus, Provenance, Standing};
@@ -43,6 +45,11 @@ fn request(subject: &str) -> CaptureRequest {
     CaptureRequest {
         record: record("new"),
         route: Route::Verb,
+        door: Door {
+            actor: Actor::Operator,
+            owned_keys: BTreeSet::new(),
+            owner_revoked: false,
+        },
         subject: subject.to_string(),
         draft: Draft {
             content: "a claim".to_string(),
@@ -367,5 +374,135 @@ fn a_role_lease_field_is_refused_on_the_verb_and_not_on_the_engine() {
     assert!(
         prepare(&state, &declared, &leased(Route::Verb, "alpha", None)).is_ok(),
         "a key named holder on a thing that is no role"
+    );
+}
+
+fn app(name: &str) -> AppId {
+    AppId::parse(name).expect("a valid app name")
+}
+
+/// `bound` is bound to the app `bart-ci` and owns the key `state`; `free` is
+/// bound to nobody.
+fn bound_world() -> (State, Vec<DeclaredType>) {
+    let mut events = [thing("bound"), thing("free")].concat();
+    events[0] = ClaimEvent::ObjectCreated {
+        object: object("bound"),
+        body: ObjectBody {
+            bound_to: Some(app("bart-ci")),
+            ..body("thing", "bound")
+        },
+    };
+    (replay(&events), Vec::new())
+}
+
+fn writing(subject: &str, key: &str, actor: Actor, revoked: bool) -> CaptureRequest {
+    CaptureRequest {
+        door: Door {
+            actor,
+            owned_keys: BTreeSet::from(["state".to_string()]),
+            owner_revoked: revoked,
+        },
+        fields: BTreeMap::from([(key.into(), "v".into())]),
+        ..request(subject)
+    }
+}
+
+/// **Only the bound app writes the keys it owns**, and only while its grant
+/// stands. A key the kind does not mark, and a subject bound to nobody, are
+/// open.
+#[test]
+fn only_the_bound_app_writes_an_owned_key() {
+    let (state, declared) = bound_world();
+    let owned = |key: &str| Refusal::OwnedKeyWritten {
+        subject: "bound".into(),
+        key: key.into(),
+    };
+    let rows = [
+        (
+            "the bound app",
+            writing("bound", "state", Actor::App(app("bart-ci")), false),
+            None,
+        ),
+        (
+            "another app",
+            writing("bound", "state", Actor::App(app("lisa-ci")), false),
+            Some(owned("state")),
+        ),
+        (
+            "a bot",
+            writing(
+                "bound",
+                "state",
+                Actor::Bot(crate::memory::EntityId("bot:sigma".into())),
+                false,
+            ),
+            Some(owned("state")),
+        ),
+        (
+            "the operator through this verb",
+            writing("bound", "state", Actor::Operator, false),
+            Some(owned("state")),
+        ),
+        (
+            "the engine",
+            writing("bound", "state", Actor::System("sweep".into()), false),
+            Some(owned("state")),
+        ),
+        (
+            "a key the kind does not mark",
+            writing("bound", "note", Actor::Operator, false),
+            None,
+        ),
+        (
+            "a subject bound to nobody",
+            writing("free", "state", Actor::Operator, false),
+            None,
+        ),
+        (
+            "a revoked owner, itself included",
+            writing("bound", "state", Actor::App(app("bart-ci")), true),
+            Some(Refusal::OwnerRevoked {
+                subject: "bound".into(),
+                key: "state".into(),
+            }),
+        ),
+        (
+            "a revoked owner, everyone else too",
+            writing("bound", "state", Actor::Operator, true),
+            Some(Refusal::OwnerRevoked {
+                subject: "bound".into(),
+                key: "state".into(),
+            }),
+        ),
+    ];
+    for (name, request, refused) in rows {
+        let got = prepare(&state, &declared, &request);
+        match refused {
+            None => assert!(got.is_ok(), "{name}: {got:?}"),
+            Some(refusal) => assert_eq!(got, Err(refusal), "{name}"),
+        }
+    }
+}
+
+/// The permission is judged after the subject exists and before the edge's
+/// object is looked for.
+#[test]
+fn a_missing_subject_is_told_before_an_owned_key_and_that_before_a_missing_edge() {
+    let (state, declared) = bound_world();
+    let missing_subject = writing("nobody", "state", Actor::Operator, false);
+    assert_eq!(
+        prepare(&state, &declared, &missing_subject),
+        Err(Refusal::UnknownSubject("nobody".into()))
+    );
+    let both = CaptureRequest {
+        edge: Some(("about".into(), "ghost".into())),
+        ..writing("bound", "state", Actor::Operator, false)
+    };
+    assert_eq!(
+        prepare(&state, &declared, &both),
+        Err(Refusal::OwnedKeyWritten {
+            subject: "bound".into(),
+            key: "state".into(),
+        })
     );
 }

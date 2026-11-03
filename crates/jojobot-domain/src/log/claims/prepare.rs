@@ -8,7 +8,7 @@
 //!
 //! 1. the guards only the verb applies: a role's lease field;
 //! 2. the write alone: a setting with no value, a describing key set on a thing;
-//! 3. the subject, then the edge's object, then the refs, then the objects a
+//! 3. the subject, then who may write the keys it holds, then the edge's object, then the refs, then the objects a
 //!    reference field names, then the claim the write is derived from;
 //! 4. the number a container's member asks for, when another member holds it.
 //!
@@ -21,6 +21,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use jiff::civil::Date;
 
 use super::{ClaimBody, ClaimEvent, FieldValue, KeyId, ObjectId, RecordId, State};
+use crate::actor::Actor;
 use crate::app::AppStamp;
 use crate::memory::{
     self, FactStatus, MemoryError, Provenance, Standing, WriteClass, types::DeclaredType,
@@ -33,6 +34,18 @@ use crate::memory::{
 pub enum Route {
     Verb,
     Engine,
+}
+
+/// **What the door resolved before the request reached the state**: who is
+/// writing, which keys of the subject's kind its declaration marks as owned by
+/// the object's binding, and whether the owner's grant is revoked. The state
+/// holds none of it: revocation comes from the grants view, the marks from the
+/// declarations.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Door {
+    pub actor: Actor,
+    pub owned_keys: BTreeSet<String>,
+    pub owner_revoked: bool,
 }
 
 /// **What the caller decided about the claim itself**, as opposed to where it
@@ -60,6 +73,7 @@ pub struct CaptureRequest {
     /// counter for it.
     pub record: RecordId,
     pub route: Route,
+    pub door: Door,
     pub subject: String,
     pub draft: Draft,
     /// The edge's shape and the spelling of the object it points at.
@@ -78,6 +92,16 @@ pub struct CaptureRequest {
 /// fault the order above meets.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Refusal {
+    /// The subject is bound to an app, and the writer is not that app.
+    OwnedKeyWritten {
+        subject: String,
+        key: String,
+    },
+    /// The owning app's grant is revoked: its keys stay locked, to the app too.
+    OwnerRevoked {
+        subject: String,
+        key: String,
+    },
     /// A role's lease field named through the verb. The boot door owns it.
     RoleFieldGuarded {
         role: String,
@@ -151,6 +175,26 @@ pub fn prepare(
         .resolve(&request.subject)
         .ok_or_else(|| Refusal::UnknownSubject(request.subject.clone()))?
         .clone();
+    // Who may write a key: only the app the subject is bound to, and only while
+    // its grant stands. A key the kind does not mark, or a subject bound to no
+    // app, is open.
+    if let Some(owner) = state.object(&home).and_then(|body| body.bound_to.as_ref()) {
+        let touched = request
+            .fields
+            .keys()
+            .map(|key| key.trim())
+            .find(|key| request.door.owned_keys.contains(*key));
+        if let Some(key) = touched {
+            let key = key.to_string();
+            let subject = request.subject.clone();
+            if request.door.owner_revoked {
+                return Err(Refusal::OwnerRevoked { subject, key });
+            }
+            if request.door.actor != Actor::App(owner.clone()) {
+                return Err(Refusal::OwnedKeyWritten { subject, key });
+            }
+        }
+    }
     let edge = match &request.edge {
         Some((shape, object)) => {
             let object = state

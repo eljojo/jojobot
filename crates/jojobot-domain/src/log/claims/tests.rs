@@ -59,6 +59,7 @@ pub(super) fn body(kind: &str, name: &str) -> ObjectBody {
         boot: None,
         metadata: BTreeMap::new(),
         archived: false,
+        bound_to: None,
     }
 }
 
