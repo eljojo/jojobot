@@ -3298,21 +3298,25 @@ pub fn refuses_merge_carrying_by(
     if duplicate == survivor {
         return None;
     }
-    let mut barred: Vec<&GuardedKey> = Vec::new();
-    for rule in table.iter().filter(|rule| carried.contains_key(rule.key)) {
-        // **A request's own keys are judged on the request**, whatever the
-        // survivor is: a survivor that is no request licenses them for anyone,
-        // so a spec would land on it unjudged. The generation and the status
-        // are nobody's, which refuses the fold of a request for every caller.
+    // **A request's own keys are judged on the request**, whatever the
+    // survivor is: a survivor that is no request licenses them for anyone,
+    // so a spec would land on it unjudged. The generation and the status
+    // are nobody's, which refuses the fold of a request for every caller.
+    // The refusal names the same thing and chart that judged the key.
+    let judged_on = |rule: &GuardedKey| {
         let on_the_request = bot_request::is_request(duplicate)
             && matches!(
                 rule.may,
                 MayWrite::RequestSpec | MayWrite::RequestStatus | MayWrite::RequestGeneration
             );
-        let (judged, chart) = match on_the_request {
+        match on_the_request {
             true => (duplicate, duplicate_lineage),
             false => (survivor, lineage),
-        };
+        }
+    };
+    let mut barred: Vec<&GuardedKey> = Vec::new();
+    for rule in table.iter().filter(|rule| carried.contains_key(rule.key)) {
+        let (judged, chart) = judged_on(rule);
         match licensed(rule.may, rule.key, judged, caller, chart) {
             Ok(()) => {}
             // A merge that would invert the chart is the chart's own refusal.
@@ -3321,6 +3325,7 @@ pub fn refuses_merge_carrying_by(
         }
     }
     let first = barred.first()?;
+    let (judged, chart) = judged_on(first);
     // **The route of taking the keys off the duplicate is named only when it
     // opens**: the clear meets the same licence, asked of the duplicate.
     let clear_opens = barred
@@ -3335,8 +3340,8 @@ pub fn refuses_merge_carrying_by(
             .collect::<Vec<_>>()
             .join(", ")
             .into(),
-        may: worded_for(first.may, survivor.as_str(), first.key, lineage),
-        allowed: who_may_write(first.may, first.key, survivor, lineage),
+        may: worded_for(first.may, judged.as_str(), first.key, chart),
+        allowed: who_may_write(first.may, first.key, judged, chart),
         clear_opens,
     })
 }

@@ -1689,4 +1689,5 @@ pub const ORDINANCES: &[&str] = &[
     "bot:contract-bobbin-held",
     "bot:contract-bobbin-chief",
     "bot:contract-bobbin-target",
+    "topic:scrapbook",
 ];

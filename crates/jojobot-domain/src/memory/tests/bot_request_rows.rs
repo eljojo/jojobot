@@ -7,7 +7,9 @@ use std::collections::BTreeMap;
 use crate::memory::bot_request::{
     BOUND_APP, DESIRED, GENERATION, MACHINE, MODEL, OBSERVED_STATE, TARGET_BOT,
 };
-use crate::memory::{EntityId, Lineage, MemoryError, refuses_unlicensed_write};
+use crate::memory::{
+    EntityId, Lineage, MemoryError, refuses_merge_carrying, refuses_unlicensed_write,
+};
 
 fn handle(text: &str) -> EntityId {
     EntityId(text.into())
@@ -185,4 +187,35 @@ fn the_generation_rises_when_the_spec_changes_and_only_then() {
         ),
         None
     );
+}
+
+/// **A refused fold of a request names who the request's own chart allows**, not
+/// the chart of the thing it would land on. The survivor sits under one manager
+/// and the request's target under another; the refusal carries the second.
+#[test]
+fn a_refused_fold_of_a_request_names_the_chart_that_judged_it() {
+    let request_chart = Lineage {
+        above: vec![handle("bot:marge")],
+        holds: [TARGET_BOT.to_string()].into(),
+        ..Lineage::default()
+    };
+    let survivor_chart = Lineage {
+        above: vec![handle("bot:bart")],
+        holds: [TARGET_BOT.to_string()].into(),
+        ..Lineage::default()
+    };
+    let refused = refuses_merge_carrying(
+        &handle("bot:lisa"),
+        &handle("topic:scrapbook"),
+        &handle(REQUEST),
+        &writing(&[DESIRED]),
+        Some(&survivor_chart),
+        Some(&request_chart),
+    );
+    match refused {
+        Some(MemoryError::MergeCarriesGuardedKeys { allowed, .. }) => {
+            assert_eq!(allowed, vec!["bot:marge".to_string()]);
+        }
+        other => panic!("not the merge refusal: {other:?}"),
+    }
 }

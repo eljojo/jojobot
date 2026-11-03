@@ -242,6 +242,97 @@ async fn clearing_a_spec_key_raises_the_generation_and_the_generation_stays() {
     story.finish().await;
 }
 
+/// **An entity update that changes the spec raises the generation too.** The
+/// same change through `capture` and `update_fact` is held by other cases; this
+/// is the third verb that writes the keys.
+#[tokio::test]
+async fn updating_the_entity_raises_the_generation_of_a_request() {
+    let story = Story::begin("bot:marge").await;
+    let marge = story.session().await;
+    marge
+        .call(
+            "add_entity",
+            json!({"kind": "bot", "handle": "homer", "name": "Homer",
+                   "source": "user-named", "sets": {"reports_to": "bot:marge"}}),
+        )
+        .await;
+    marge.add("machine:theta", "Theta").await;
+    marge
+        .call("add_entity", creating(spec("bot:homer", "machine:theta")))
+        .await;
+    let read = || async {
+        let read = marge
+            .call("recall", json!({"subject": "bot-request:alpha"}))
+            .await;
+        let fields = read.json()["objects"][0]["fields"].clone();
+        (fields["generation"].clone(), fields["desired"].clone())
+    };
+    assert_eq!(read().await, ("1".into(), "running".into()));
+
+    marge
+        .call(
+            "update_entity",
+            json!({"handle": "bot-request:alpha", "sets": {"desired": "stopped"}}),
+        )
+        .await;
+    assert_eq!(read().await, ("2".into(), "stopped".into()));
+    story.finish().await;
+}
+
+/// **A request is not merged away, and the refusal does not send the caller to a
+/// ceiling it has nothing to do with.** The merge is refused for the manager of
+/// the target and for a bystander alike, into a topic and into another request.
+/// The refusal names the request. A bare request, which carries no spec, still
+/// folds.
+#[tokio::test]
+async fn a_request_is_not_merged_away_and_the_refusal_names_it() {
+    let story = Story::begin("bot:marge").await;
+    let marge = story.session().await;
+    marge
+        .call(
+            "add_entity",
+            json!({"kind": "bot", "handle": "homer", "name": "Homer",
+                   "source": "user-named", "sets": {"reports_to": "bot:marge"}}),
+        )
+        .await;
+    marge.add("bot:bart", "Bart").await;
+    marge.add("machine:theta", "Theta").await;
+    marge.add("topic:scrapbook", "Scrapbook").await;
+    marge
+        .call("add_entity", creating(spec("bot:homer", "machine:theta")))
+        .await;
+    marge
+        .call(
+            "add_entity",
+            json!({"kind": "bot-request", "handle": "beta", "name": "Homer waits",
+                   "source": "user-named"}),
+        )
+        .await;
+    let bart = story.as_bot("bot:bart").await;
+
+    for (who, survivor) in [
+        (&marge, "topic:scrapbook"),
+        (&bart, "topic:scrapbook"),
+        (&marge, "bot-request:beta"),
+    ] {
+        who.refused(
+            "merge_entities",
+            json!({"duplicate": "bot-request:alpha", "survivor": survivor}),
+        )
+        .await
+        .says("bot-request:alpha")
+        .never_says("ceiling");
+    }
+    // The control: a request with no spec carries nothing to move.
+    marge
+        .call(
+            "merge_entities",
+            json!({"duplicate": "bot-request:beta", "survivor": "topic:scrapbook"}),
+        )
+        .await;
+    story.finish().await;
+}
+
 /// **A manager sends a `reports_to` beside the target, and the target's own
 /// chain still judges the request.** Marge manages homer and not lisa. She names
 /// homer as the manager and lisa as the target, so the request is asked for a

@@ -2072,6 +2072,18 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                          '{survivor}' would change who '{survivor}' reports to, which only {who} \
                          may do. Ask {who} to make this merge.{clear}"
                     ),
+                    // **A bot request is not folded into another thing.** Its
+                    // target is fixed, jojobot writes its generation and the bound
+                    // app its status, so no bot can move them onto the survivor.
+                    // The route of clearing the keys first would loop back here.
+                    jojobot_domain::memory::MayWrite::RequestSpec
+                    | jojobot_domain::memory::MayWrite::RequestStatus
+                    | jojobot_domain::memory::MayWrite::RequestGeneration => format!(
+                        "Nothing was written. '{duplicate}' is a bot request and carries {keys}, \
+                         which no bot may move onto '{survivor}': its target_bot is fixed, \
+                         jojobot writes its generation and the bound app its status. Leave \
+                         '{duplicate}' where it is, or make a new request for the bot."
+                    ),
                     _ => format!(
                         "Nothing was written. '{duplicate}' carries {keys}, and merging it into \
                          '{survivor}', your own bot, would raise your own ceiling, which only a \
