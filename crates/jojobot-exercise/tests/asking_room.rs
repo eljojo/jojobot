@@ -17,6 +17,7 @@
 //!   meant to be holds all.
 
 use jojobot_exercise::expectations::{self, ASKING_ROOM};
+use jojobot_exercise::furnish_once;
 use jojobot_exercise::playbook::Playbook;
 use jojobot_exercise::room::{Room, server_binary};
 use jojobot_exercise::run::{
@@ -46,7 +47,24 @@ fn room_document() -> Playbook {
 
 /// A room furnished the way a run furnishes it.
 async fn furnished() -> (Room, Surface) {
-    let (room, surface) = Room::open_with_client_stating(
+    Room::open_with_client_from_stating(
+        &server_binary().expect("a jojobot binary"),
+        &furnish_once::seed_dir(&ASKING_SEED, ASKING_ROOM, SERVER_DAY.as_str()).await,
+        SERVER_DAY.as_str(),
+    )
+    .await
+    .expect("a room from the seed")
+}
+
+/// **The furnish of this room, done once per process** and copied for each case.
+static ASKING_SEED: tokio::sync::OnceCell<std::path::PathBuf> = tokio::sync::OnceCell::const_new();
+
+/// **A copy of the cached asking room holds what a live furnish holds**, the
+/// proof that the cache is not quietly thinner than the furnish every case used
+/// to pay for. Both rooms are read for every entity id of the kinds a seed files.
+#[tokio::test]
+async fn the_cached_asking_room_holds_what_a_live_furnish_holds() {
+    let (_live_room, live) = Room::open_with_client_stating(
         &server_binary().expect("a jojobot binary"),
         SERVER_DAY.as_str(),
     )
@@ -54,10 +72,16 @@ async fn furnished() -> (Room, Surface) {
     .expect("a room");
     expectations::seed_for(ASKING_ROOM)
         .expect("the room has furniture")
-        .furnish(&surface)
+        .furnish(&live)
         .await
         .expect("the room is furnished");
-    (room, surface)
+    let live_ids = furnish_once::held_ids(&live).await;
+    assert!(
+        live_ids.len() > 5,
+        "a live furnish holds almost nothing, so the comparison proves nothing: {live_ids:?}"
+    );
+    let (_cached_room, cached) = furnished().await;
+    assert_eq!(furnish_once::held_ids(&cached).await, live_ids);
 }
 
 /// **A session for one sitting, in the day that sitting is in** — the same

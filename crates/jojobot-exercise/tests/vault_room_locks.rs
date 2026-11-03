@@ -21,6 +21,7 @@
 //! time and checks the matching lock alone reddens.
 
 use jojobot_exercise::expectations;
+use jojobot_exercise::furnish_once;
 use jojobot_exercise::lock::{Lock, locks_of};
 use jojobot_exercise::room::{Room, server_binary};
 use jojobot_exercise::run::{Boundary, Expectation, Observed, Outcome};
@@ -74,23 +75,7 @@ async fn furnished() -> (Room, Surface, String) {
 static VAULT_SEED: tokio::sync::OnceCell<std::path::PathBuf> = tokio::sync::OnceCell::const_new();
 
 async fn filed_vault_seed() -> std::path::PathBuf {
-    VAULT_SEED
-        .get_or_try_init(|| async {
-            Room::snapshot_after_stating(
-                &server_binary().expect("a jojobot binary"),
-                &server_day(),
-                |surface| async move {
-                    expectations::seed_for(expectations::VAULT_ROOM)?
-                        .furnish(&surface)
-                        .await?;
-                    Ok(())
-                },
-            )
-            .await
-        })
-        .await
-        .expect("the filed-vault seed builds")
-        .clone()
+    furnish_once::seed_dir(&VAULT_SEED, expectations::VAULT_ROOM, &server_day()).await
 }
 
 /// The shipped identity booted in a furnished room, and its session.
@@ -106,30 +91,6 @@ async fn booted(room: Room, surface: Surface) -> (Room, Surface, String) {
     (room, surface, sid)
 }
 
-/// **Every entity id a room holds, by kind**, read through the surface and
-/// sorted, so two rooms can be compared on what a case can find.
-async fn held_ids(surface: &Surface) -> Vec<String> {
-    let mut ids = Vec::new();
-    for kind in [
-        "person", "place", "work", "event", "thing", "project", "list", "thread", "topic",
-    ] {
-        let read = surface
-            .call(
-                "recall",
-                json!({"kind": kind, "limit": 500, "keys": ["name"]}),
-            )
-            .await;
-        let read: serde_json::Value = serde_json::from_str(&read).expect("a JSON read");
-        for object in read["objects"].as_array().into_iter().flatten() {
-            if let Some(id) = object["id"].as_str() {
-                ids.push(id.to_string());
-            }
-        }
-    }
-    ids.sort();
-    ids
-}
-
 /// **A copy of the cached vault holds what a live furnish holds**, the proof
 /// that the cache is not quietly thinner than the furnish every case used to
 /// pay for. Both rooms are read for every entity id of the kinds a seed files.
@@ -137,12 +98,12 @@ async fn held_ids(surface: &Surface) -> Vec<String> {
 async fn the_cached_vault_holds_what_a_live_furnish_holds() {
     let (_live_room, live, _) = furnished_live().await;
     let (_cached_room, cached, _) = furnished().await;
-    let live_ids = held_ids(&live).await;
+    let live_ids = furnish_once::held_ids(&live).await;
     assert!(
         live_ids.len() > 5,
         "a live furnish holds almost nothing, so the comparison proves nothing: {live_ids:?}"
     );
-    assert_eq!(held_ids(&cached).await, live_ids);
+    assert_eq!(furnish_once::held_ids(&cached).await, live_ids);
 }
 
 /// A call the occupant would make.

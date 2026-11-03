@@ -32,6 +32,7 @@ pub mod calls;
 pub mod checks;
 pub mod expectations;
 pub mod failability;
+pub mod furnish_once;
 pub mod isolate;
 pub mod lock;
 pub mod playbook;

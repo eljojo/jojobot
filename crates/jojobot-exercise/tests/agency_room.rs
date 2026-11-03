@@ -11,6 +11,7 @@
 //! be won, but a harness that cannot be passed is not a probe of the product.
 
 use jojobot_exercise::expectations::{self, AGENCY_ROOM};
+use jojobot_exercise::furnish_once;
 use jojobot_exercise::playbook::Playbook;
 use jojobot_exercise::room::{Room, server_binary};
 use jojobot_exercise::run::{
@@ -52,18 +53,17 @@ static SERVER_DAY: LazyLock<String> = LazyLock::new(|| {
         .to_string()
 });
 
+/// **The furnish of this room, done once per process** and copied for each case.
+static AGENCY_SEED: tokio::sync::OnceCell<std::path::PathBuf> = tokio::sync::OnceCell::const_new();
+
 async fn lab() -> Lab {
-    let (room, surface) = Room::open_with_client_stating(
+    let (room, surface) = Room::open_with_client_from_stating(
         &server_binary().expect("a jojobot binary"),
+        &furnish_once::seed_dir(&AGENCY_SEED, AGENCY_ROOM, SERVER_DAY.as_str()).await,
         SERVER_DAY.as_str(),
     )
     .await
-    .expect("a room");
-    expectations::seed_for(AGENCY_ROOM)
-        .expect("the room has furniture")
-        .furnish(&surface)
-        .await
-        .expect("the room is furnished");
+    .expect("a room from the seed");
     let names = boundary_names(&document());
     let boundaries = vec![boundary(&surface, &names[0]).await];
     Lab {
@@ -73,6 +73,32 @@ async fn lab() -> Lab {
         boundaries,
         names,
     }
+}
+
+/// **A copy of the cached agency room holds what a live furnish holds**, the
+/// proof that the cache is not quietly thinner than the furnish every case used
+/// to pay for. Both rooms are read for every entity id of the kinds a seed files.
+#[tokio::test]
+async fn the_cached_agency_room_holds_what_a_live_furnish_holds() {
+    let (_live_room, live) = Room::open_with_client_stating(
+        &server_binary().expect("a jojobot binary"),
+        SERVER_DAY.as_str(),
+    )
+    .await
+    .expect("a room");
+    expectations::seed_for(AGENCY_ROOM)
+        .expect("the room has furniture")
+        .furnish(&live)
+        .await
+        .expect("the room is furnished");
+    let live_ids = furnish_once::held_ids(&live).await;
+    assert!(
+        live_ids.len() > 5,
+        "a live furnish holds almost nothing, so the comparison proves nothing: {live_ids:?}"
+    );
+    let cached = lab().await;
+    let cached = cached.surface;
+    assert_eq!(furnish_once::held_ids(&cached).await, live_ids);
 }
 
 impl Lab {

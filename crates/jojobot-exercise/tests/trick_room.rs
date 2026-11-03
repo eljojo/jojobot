@@ -11,6 +11,7 @@
 //! first sitting returns the intended answer.
 
 use jojobot_exercise::expectations::{self, TRICK_ROOM};
+use jojobot_exercise::furnish_once;
 use jojobot_exercise::playbook::Playbook;
 use jojobot_exercise::room::{Room, server_binary};
 use jojobot_exercise::run::{
@@ -38,20 +39,19 @@ fn document() -> Playbook {
         .unwrap_or_else(|e| panic!("the shipped room must read: {e:#}"))
 }
 
+/// **The furnish of this room, done once per process** and copied for each case.
+static TRICK_SEED: tokio::sync::OnceCell<std::path::PathBuf> = tokio::sync::OnceCell::const_new();
+
 /// A room furnished the way a run furnishes it, and a session to write into it
 /// as the occupant would.
 async fn furnished() -> (Room, Surface, String) {
-    let (handle, surface) = Room::open_with_client_stating(
+    let (handle, surface) = Room::open_with_client_from_stating(
         &server_binary().expect("a jojobot binary"),
+        &furnish_once::seed_dir(&TRICK_SEED, TRICK_ROOM, SERVER_DAY.as_str()).await,
         SERVER_DAY.as_str(),
     )
     .await
-    .expect("a room");
-    expectations::seed_for(TRICK_ROOM)
-        .expect("the room has furniture")
-        .furnish(&surface)
-        .await
-        .expect("the room is furnished");
+    .expect("a room from the seed");
     let booted = surface
         .must("start_here", json!({"bot": "assistant", "brief": true}))
         .await
@@ -61,6 +61,31 @@ async fn furnished() -> (Room, Surface, String) {
         .expect("a handle")
         .to_string();
     (handle, surface, sid)
+}
+
+/// **A copy of the cached trick room holds what a live furnish holds**, the
+/// proof that the cache is not quietly thinner than the furnish every case used
+/// to pay for. Both rooms are read for every entity id of the kinds a seed files.
+#[tokio::test]
+async fn the_cached_trick_room_holds_what_a_live_furnish_holds() {
+    let (_live_room, live) = Room::open_with_client_stating(
+        &server_binary().expect("a jojobot binary"),
+        SERVER_DAY.as_str(),
+    )
+    .await
+    .expect("a room");
+    expectations::seed_for(TRICK_ROOM)
+        .expect("the room has furniture")
+        .furnish(&live)
+        .await
+        .expect("the room is furnished");
+    let live_ids = furnish_once::held_ids(&live).await;
+    assert!(
+        live_ids.len() > 5,
+        "a live furnish holds almost nothing, so the comparison proves nothing: {live_ids:?}"
+    );
+    let (_cached_room, cached, _) = furnished().await;
+    assert_eq!(furnish_once::held_ids(&cached).await, live_ids);
 }
 
 async fn as_the_occupant(room: &Surface, sid: &str, verb: &str, mut args: Value) -> String {
