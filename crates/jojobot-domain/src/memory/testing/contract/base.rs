@@ -5910,6 +5910,21 @@ pub async fn a_claim_made_after_a_merge_gets_an_id_nobody_holds<M: Memory>(store
         "the new claim's id is one nobody held: {made:?}"
     );
     assert_eq!(after.len(), held.len() + 1, "exactly one claim was added");
+    let number = |id: &FactId| -> u64 {
+        id.0.strip_prefix('f')
+            .and_then(|n| n.parse().ok())
+            .unwrap_or_else(|| panic!("a claim id is f and a number: {id:?}"))
+    };
+    let highest = held
+        .iter()
+        .map(|f| number(&f.id))
+        .max()
+        .expect("held claims");
+    assert_eq!(
+        number(&made.id),
+        highest + 1,
+        "the new claim's id is the highest held plus one: {made:?}"
+    );
 }
 
 /// **A capture with two faults is told the same fault by every store.** The
