@@ -47,7 +47,7 @@ LABELS = {
              "doc", "dev", "narrow", "unmeasured"} | {f"test-rank-{rank:02}" for rank in range(1, 21)},
     "outcome": {"success", "failure", "cancelled", "skipped", "unknown"},
     "branch_class": {"main", "release", "dev"},
-    "runner_host": {"bart", "lisa", "nelly", "willie", "moe", "wiggum", "local"},
+    "runner_host": {"bart", "lisa", "nelly", "willie", "moe", "wiggum", "frink", "maggie", "cloudy", "local"},
 }
 METRICS = {"duration", "first_failure", "test_binary", "test"}
 BINARY_FILE = Path(__file__).resolve().parent.parent / "crates/jojobot-bar/build-metrics-binaries.txt"

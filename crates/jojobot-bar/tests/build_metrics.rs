@@ -116,7 +116,8 @@ fn samples(text: &str) -> Vec<(String, BTreeMap<String, String>, f64)> {
                 (
                     "runner_host",
                     &[
-                        "bart", "lisa", "nelly", "willie", "moe", "wiggum", "local", "other",
+                        "bart", "lisa", "nelly", "willie", "moe", "wiggum", "frink", "maggie",
+                        "cloudy", "local", "other",
                     ][..],
                 ),
             ] {
@@ -178,6 +179,25 @@ fn build_metrics_exposition_is_parseable_and_every_label_is_from_a_closed_set() 
             .values()
             .all(|v| v == "other" || v == "unknown")
     );
+}
+
+/// **Every host that runs a CI slot has a label of its own**, so the report job's
+/// time can be read per host. A host outside the closed set reads `other`, which
+/// hid the three hosts that ran about half of all branch runs.
+#[test]
+fn build_metrics_names_each_host_that_runs_a_ci_slot() {
+    for host in [
+        "bart", "lisa", "moe", "wiggum", "frink", "maggie", "cloudy", "nelly", "willie",
+    ] {
+        let text = render(&serde_json::json!({
+            "workflow": "branch", "job": "report", "ref": "refs/heads/dev-work",
+            "runner": format!("{host}.example.invalid"),
+            "samples": [
+                {"metric": "duration", "step": "job", "outcome": "success", "seconds": 1}
+            ]
+        }));
+        assert_eq!(samples(&text)[0].1["runner_host"], host, "{text}");
+    }
 }
 
 #[test]
