@@ -2090,8 +2090,15 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                         )
                     }
                     // **A spec key is the manager's to write**, so the bots above the
-                    // request's target may make this merge, and they are named.
-                    jojobot_domain::memory::MayWrite::RequestSpec if !allowed.is_empty() => {
+                    // request's target may make this merge, and they are named. Only
+                    // when every key the duplicate carries is a spec key: a status
+                    // key beside it is no bot's, and the merge stays barred.
+                    jojobot_domain::memory::MayWrite::RequestSpec
+                        if !allowed.is_empty()
+                            && keys.split(", ").all(|key| {
+                                jojobot_domain::memory::bot_request::SPEC_KEYS.contains(&key)
+                            }) =>
+                    {
                         format!(
                             "Nothing was written. '{duplicate}' carries {keys}, and \
                              '{survivor}' is a bot request, whose spec only {who} may write. Ask \
@@ -2789,16 +2796,16 @@ pub(crate) mod tests {
     #[test]
     fn a_spec_key_merged_into_a_request_names_the_bots_that_may_write_it() {
         use jojobot_domain::memory::MayWrite;
-        let refused = |may: MayWrite, allowed: Vec<String>| {
+        let refused = |may: MayWrite, keys: &str, allowed: Vec<String>, clear_opens: bool| {
             let result = memory_declined(
                 "merge_entities",
                 MemoryError::MergeCarriesGuardedKeys {
                     duplicate: "topic:scrapbook".into(),
                     survivor: "bot-request:beta".into(),
-                    keys: "desired".into(),
+                    keys: keys.into(),
                     may,
                     allowed,
-                    clear_opens: true,
+                    clear_opens,
                     judged_on_duplicate: false,
                 },
             )
@@ -2809,19 +2816,32 @@ pub(crate) mod tests {
                 .to_string()
         };
         let manager = vec!["bot:marge".to_string()];
-        let named = refused(MayWrite::RequestSpec, manager.clone());
+        let spec = MayWrite::RequestSpec;
+        let named = refused(spec, "desired", manager.clone(), true);
         assert!(named.contains("bot:marge"), "{named}");
         assert!(
             named.contains("clear_fields"),
             "the clear still opens: {named}"
         );
         assert!(!named.contains("  "), "{named}");
-        let nobody = refused(MayWrite::RequestSpec, vec![]);
+        // The clear is named only when it opens.
+        let barred = refused(spec, "desired", manager.clone(), false);
+        assert!(barred.contains("bot:marge"), "{barred}");
+        assert!(!barred.contains("clear_fields"), "{barred}");
+        // A request whose spec has no writer names nobody: the guard on the new
+        // arm keeps an empty list out of a sentence that has a gap for it.
+        let nobody = refused(spec, "desired", vec![], true);
         assert!(!nobody.contains("bot:marge"), "{nobody}");
+        assert!(!nobody.contains("  "), "no gap where a name goes: {nobody}");
+        assert!(nobody.contains("clear_fields"), "{nobody}");
         assert_ne!(named, nobody);
+        // A duplicate that also carries a status key cannot be merged by the
+        // manager, so the manager is not named, whichever key comes first.
+        let mixed = refused(spec, "desired, observed_state", manager.clone(), true);
+        assert!(!mixed.contains("bot:marge"), "{mixed}");
         // The status is the bound app's: no bot is the way forward, whoever is
         // listed.
-        let status = refused(MayWrite::RequestStatus, manager);
+        let status = refused(MayWrite::RequestStatus, "observed_state", manager, true);
         assert!(!status.contains("bot:marge"), "{status}");
     }
 
