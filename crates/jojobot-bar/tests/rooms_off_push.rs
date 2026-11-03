@@ -125,28 +125,26 @@ fn repository() -> PathBuf {
     dir
 }
 
-/// **What `bar plan rooms` says for a branch whose one change is `path`**: the
-/// `fast` output and the printed line. `selecting` is the workflow's
-/// `BAR_SELECT_BY_CRATE`, which a dispatch sets to `0`.
-fn plan_rooms(dir: &Path, path: &str, selecting: &str, base: &str) -> (String, String) {
-    fs::create_dir_all(dir.join(path).parent().expect("a parent")).expect("parent dir");
-    fs::write(dir.join(path), "// changed\n").expect("edit");
-    git(dir, &["add", "."]);
-    git(dir, &["commit", "-q", "-m", "change"]);
+/// **What `bar plan <lane>` says** on the branch as it stands: the `fast` output
+/// and the printed line. `selecting` is the workflow's `BAR_SELECT_BY_CRATE`,
+/// which a dispatch sets to `0`; `base` is `BAR_SELECT_BASE`, unset when `None`.
+fn plan_lane(dir: &Path, lane: &str, selecting: &str, base: Option<&str>) -> (String, String) {
     let output = dir.join("github-output");
     let _ = fs::remove_file(&output);
-    let out = support::output_fenced(
-        Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
-            .args(["plan", "rooms"])
-            .current_dir(dir)
-            .env("CARGO", dir.join("cargo"))
-            .env("BAR_HISTORY_DIR", dir.join("history"))
-            .env("BAR_SELECT_BY_CRATE", selecting)
-            .env("BAR_SELECT_BASE", base)
-            .env_remove("BAR_CI_BASE")
-            .env("GITHUB_OUTPUT", &output),
-    )
-    .expect("run the plan");
+    let mut command = Command::new(env!("CARGO_BIN_EXE_jojobot-bar"));
+    command
+        .args(["plan", lane])
+        .current_dir(dir)
+        .env("CARGO", dir.join("cargo"))
+        .env("BAR_HISTORY_DIR", dir.join("history"))
+        .env("BAR_SELECT_BY_CRATE", selecting)
+        .env_remove("BAR_SELECT_BASE")
+        .env_remove("BAR_CI_BASE")
+        .env("GITHUB_OUTPUT", &output);
+    if let Some(base) = base {
+        command.env("BAR_SELECT_BASE", base);
+    }
+    let out = support::output_fenced(&mut command).expect("run the plan");
     assert!(out.status.success(), "{out:?}");
     let written = fs::read_to_string(&output).expect("the plan writes its outputs");
     assert_eq!(
@@ -158,6 +156,19 @@ fn plan_rooms(dir: &Path, path: &str, selecting: &str, base: &str) -> (String, S
         written.trim().to_string(),
         String::from_utf8_lossy(&out.stdout).into_owned(),
     )
+}
+
+/// **What `bar plan rooms` says for a branch whose one change is `path`.**
+fn plan_rooms(dir: &Path, path: &str, selecting: &str, base: &str) -> (String, String) {
+    commit_change(dir, path);
+    plan_lane(dir, "rooms", selecting, Some(base))
+}
+
+fn commit_change(dir: &Path, path: &str) {
+    fs::create_dir_all(dir.join(path).parent().expect("a parent")).expect("parent dir");
+    fs::write(dir.join(path), "// changed\n").expect("edit");
+    git(dir, &["add", "."]);
+    git(dir, &["commit", "-q", "-m", "change"]);
 }
 
 #[test]
@@ -245,5 +256,38 @@ fn a_dispatch_runs_the_rooms_whatever_the_change() {
     let dir = repository();
     let (fast, said) = plan_rooms(&dir, "crates/jojobot-bar/src/lib.rs", "0", "main");
     assert_eq!(fast, "fast=false", "{said}");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// **The skip is the rooms' alone.** `plan` writes the same `fast` output for
+/// every lane, and the report job skips its step when it is true: a bar-only push
+/// that leaves the rooms to the pull request must not skip the report, the check,
+/// the build or the year. Paired with the first case: the rooms lane skips the
+/// same push.
+#[test]
+fn a_change_no_room_reaches_skips_no_other_lane() {
+    let dir = repository();
+    commit_change(&dir, "crates/jojobot-bar/src/lib.rs");
+    let (rooms, said) = plan_lane(&dir, "rooms", "1", Some("main"));
+    assert_eq!(rooms, "fast=true", "{said}");
+    for lane in ["report", "check", "build", "year"] {
+        let (fast, said) = plan_lane(&dir, lane, "1", Some("main"));
+        assert_eq!(fast, "fast=false", "{lane}: {said}");
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// **Nothing to read means run the rooms.** An unset base, and a branch with no
+/// change since its base, answer like a missing base does.
+#[test]
+fn an_unset_base_and_an_empty_diff_run_the_rooms() {
+    let dir = repository();
+    commit_change(&dir, "crates/jojobot-bar/src/lib.rs");
+    let (fast, said) = plan_lane(&dir, "rooms", "1", None);
+    assert_eq!(fast, "fast=false", "an unset base: {said}");
+    let _ = fs::remove_dir_all(&dir);
+    let dir = repository();
+    let (fast, said) = plan_lane(&dir, "rooms", "1", Some("main"));
+    assert_eq!(fast, "fast=false", "an empty diff: {said}");
     let _ = fs::remove_dir_all(&dir);
 }
