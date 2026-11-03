@@ -29,7 +29,7 @@ use serde_json::json;
 
 /// A room furnished the way a run furnishes it, and a handle to write into
 /// it as the occupant would.
-async fn furnished() -> (Room, Surface, String) {
+async fn furnished_live() -> (Room, Surface, String) {
     let (room, surface) = Room::open_for(
         &server_binary().expect("a jojobot binary"),
         &expectations::shipped_playbook(expectations::VAULT_ROOM)
@@ -42,6 +42,59 @@ async fn furnished() -> (Room, Surface, String) {
         .furnish(&surface)
         .await
         .expect("the room is furnished");
+    booted(room, surface).await
+}
+
+/// **The day this room's server acts out**, stated by the shipped document.
+fn server_day() -> String {
+    expectations::shipped_playbook(expectations::VAULT_ROOM)
+        .expect("the shipped room must read")
+        .stated_server_day()
+        .unwrap_or_else(|e| panic!("{e:#}"))
+        .to_string()
+}
+
+/// **The same room, from the furnish done once per process.** A copy of the
+/// seed's directory is what each case writes into, so no case sees another's
+/// writes; the identity is booted per case, after the copy.
+async fn furnished() -> (Room, Surface, String) {
+    let (room, surface) = Room::open_with_client_from_stating(
+        &server_binary().expect("a jojobot binary"),
+        &filed_vault_seed().await,
+        &server_day(),
+    )
+    .await
+    .expect("a room from the seed");
+    booted(room, surface).await
+}
+
+/// **The directory a live furnish of the vault leaves behind, built once per
+/// process**, by the mechanism `year_room.rs` uses: the first caller builds it
+/// and a caller that arrives meanwhile awaits the same build.
+static VAULT_SEED: tokio::sync::OnceCell<std::path::PathBuf> = tokio::sync::OnceCell::const_new();
+
+async fn filed_vault_seed() -> std::path::PathBuf {
+    VAULT_SEED
+        .get_or_try_init(|| async {
+            Room::snapshot_after_stating(
+                &server_binary().expect("a jojobot binary"),
+                &server_day(),
+                |surface| async move {
+                    expectations::seed_for(expectations::VAULT_ROOM)?
+                        .furnish(&surface)
+                        .await?;
+                    Ok(())
+                },
+            )
+            .await
+        })
+        .await
+        .expect("the filed-vault seed builds")
+        .clone()
+}
+
+/// The shipped identity booted in a furnished room, and its session.
+async fn booted(room: Room, surface: Surface) -> (Room, Surface, String) {
     let booted = surface
         .must("start_here", json!({"bot": "assistant", "brief": true}))
         .await
@@ -51,6 +104,45 @@ async fn furnished() -> (Room, Surface, String) {
         .expect("a handle")
         .to_string();
     (room, surface, sid)
+}
+
+/// **Every entity id a room holds, by kind**, read through the surface and
+/// sorted, so two rooms can be compared on what a case can find.
+async fn held_ids(surface: &Surface) -> Vec<String> {
+    let mut ids = Vec::new();
+    for kind in [
+        "person", "place", "work", "event", "thing", "project", "list", "thread", "topic",
+    ] {
+        let read = surface
+            .call(
+                "recall",
+                json!({"kind": kind, "limit": 500, "keys": ["name"]}),
+            )
+            .await;
+        let read: serde_json::Value = serde_json::from_str(&read).expect("a JSON read");
+        for object in read["objects"].as_array().into_iter().flatten() {
+            if let Some(id) = object["id"].as_str() {
+                ids.push(id.to_string());
+            }
+        }
+    }
+    ids.sort();
+    ids
+}
+
+/// **A copy of the cached vault holds what a live furnish holds**, the proof
+/// that the cache is not quietly thinner than the furnish every case used to
+/// pay for. Both rooms are read for every entity id of the kinds a seed files.
+#[tokio::test]
+async fn the_cached_vault_holds_what_a_live_furnish_holds() {
+    let (_live_room, live, _) = furnished_live().await;
+    let (_cached_room, cached, _) = furnished().await;
+    let live_ids = held_ids(&live).await;
+    assert!(
+        live_ids.len() > 5,
+        "a live furnish holds almost nothing, so the comparison proves nothing: {live_ids:?}"
+    );
+    assert_eq!(held_ids(&cached).await, live_ids);
 }
 
 /// A call the occupant would make.
