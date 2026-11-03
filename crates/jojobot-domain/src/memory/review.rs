@@ -224,3 +224,6 @@ mod tests {
         assert!(!is_defrag(&EntityId("bot:sigma".into())));
     }
 }
+
+#[cfg(test)]
+mod table_tests;

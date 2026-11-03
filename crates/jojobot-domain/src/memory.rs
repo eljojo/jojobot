@@ -7934,6 +7934,8 @@ pub trait Memory: Send + Sync {
 pub mod testing;
 
 #[cfg(test)]
+mod owner_table_tests;
+#[cfg(test)]
 mod stored_describing_keys;
 #[cfg(test)]
 mod tests;

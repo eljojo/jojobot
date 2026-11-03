@@ -337,3 +337,6 @@ pub fn interleave<T: ServedWrite>(folded: Vec<T>, survivor: Vec<T>) -> Vec<(Side
         merged.push((side, next.expect("peeked")));
     }
 }
+
+#[cfg(test)]
+mod table_tests;

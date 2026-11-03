@@ -680,3 +680,6 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod table_tests;

@@ -68,4 +68,6 @@ pub fn is_thought_of(edge: Option<&Edge>, written_by_another: bool) -> bool {
 }
 
 #[cfg(test)]
+mod table_tests;
+#[cfg(test)]
 mod tests;
