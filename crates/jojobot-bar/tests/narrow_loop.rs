@@ -177,6 +177,46 @@ fn a_misspelled_filter_beside_a_good_one_is_refused_by_name() {
     assert_eq!(code, Some(0), "{stdout}");
 }
 
+/// **A libtest flag beside a real filter is not a test name.** A line that
+/// debugs one case needs `--nocapture`; the flag reaches the test run only, so
+/// the listings that decide what is selected never see it as a filter.
+/// **Paired**: a misspelled word beside the flag is still refused, by name,
+/// and the flag is never named as a word that matched nothing.
+#[test]
+fn a_libtest_flag_beside_a_real_filter_rides_the_test_run_and_is_not_a_test_name() {
+    let (code, stdout, argv, _, _) = run_narrow("flag-ok", "alpha::first --nocapture");
+    assert_eq!(code, Some(0), "{stdout}");
+    let run = argv
+        .lines()
+        .find(|call| call.starts_with("test ") && !call.contains("--list"))
+        .unwrap_or_else(|| panic!("no test call: {argv}"));
+    assert!(
+        run.ends_with("alpha::first --nocapture"),
+        "the flag follows the filters in the test run: {run}"
+    );
+    assert!(
+        !argv
+            .lines()
+            .filter(|call| call.contains("--list"))
+            .any(|call| call.contains("--nocapture")),
+        "a listing took the flag as a filter: {argv}"
+    );
+
+    let (code, stdout, argv, _, _) = run_narrow("flag-typo", "alpha::sceond --nocapture");
+    assert_eq!(code, Some(2), "{stdout}");
+    assert!(stdout.contains("alpha::sceond"), "{stdout}");
+    assert!(
+        !stdout.contains(", --nocapture") && !stdout.contains("FILTER word(s) --nocapture"),
+        "the flag was named as an unmatched word: {stdout}"
+    );
+    assert!(
+        !argv
+            .lines()
+            .any(|call| call.starts_with("test ") && !call.contains("--list")),
+        "a refused selection ran tests: {argv}"
+    );
+}
+
 /// **A narrow run of the exercise crate builds the binary its rooms spawn, with
 /// the grader route; a narrow run of any other crate does not.** A room spawns
 /// the server, and a build without the feature answers its grader calls with

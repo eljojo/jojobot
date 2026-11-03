@@ -51,6 +51,17 @@ fn narrow(tag: &str, all: &str, ignored: &str) -> (Option<i32>, String) {
 
 /// The same, with the `--ignored` listing failing when `ignored_fails`.
 fn narrow_with(tag: &str, all: &str, ignored: &str, ignored_fails: bool) -> (Option<i32>, String) {
+    narrow_filtered(tag, all, ignored, ignored_fails, None)
+}
+
+/// The same, with a FILTER handed to `bar narrow`.
+fn narrow_filtered(
+    tag: &str,
+    all: &str,
+    ignored: &str,
+    ignored_fails: bool,
+    filter: Option<&str>,
+) -> (Option<i32>, String) {
     let dir = scratch_dir(tag);
     let fake_cargo = write_listing_cargo(&dir);
     let mut command = Command::new(env!("CARGO_BIN_EXE_jojobot-bar"));
@@ -61,6 +72,9 @@ fn narrow_with(tag: &str, all: &str, ignored: &str, ignored_fails: bool) -> (Opt
         .env("CARGO", &fake_cargo)
         .env("STUB_ALL", all)
         .env("STUB_IGNORED", ignored);
+    if let Some(filter) = filter {
+        command.args(["--filter", filter]);
+    }
     if ignored_fails {
         command.env("STUB_IGNORED_FAILS", "1");
     }
@@ -86,6 +100,18 @@ fn a_selection_of_only_ignored_tests_is_refused_and_says_they_were_ignored() {
         stdout.contains("ignored"),
         "the refusal must say why, not read as an empty selection: {stdout}"
     );
+}
+
+/// **A libtest flag does not hide an ignored-only selection.** The flag is
+/// skipped when words are checked, so the refusal for a selection that would
+/// run nothing is the one the same filter gets without the flag.
+#[test]
+fn a_flag_beside_a_filter_naming_only_ignored_tests_is_still_refused() {
+    let both = "alpha::first: test\nalpha::second: test";
+    let (code, stdout) =
+        narrow_filtered("flag-ignored", both, both, false, Some("alpha --nocapture"));
+    assert_eq!(code, Some(2), "{stdout}");
+    assert!(stdout.contains("ignored"), "{stdout}");
 }
 
 /// **The positive the refusal rests on.** One runnable test among ignored

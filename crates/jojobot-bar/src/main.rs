@@ -1982,7 +1982,14 @@ fn run_narrow(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
     // **FILTER may name several cases, split on whitespace**: `cargo test`
     // takes each as a substring and runs a test that matches any of them,
     // which is how a hand-off's list of cases runs in one call.
-    let filters: Vec<&str> = filter.as_deref().unwrap_or("").split_whitespace().collect();
+    // **A word that starts with `-` is a libtest flag** (`--nocapture`), not a
+    // test name: it rides the test run only, so neither listing nor the
+    // per-word check below takes it for a filter that matched nothing.
+    let (flags, filters): (Vec<&str>, Vec<&str>) = filter
+        .as_deref()
+        .unwrap_or("")
+        .split_whitespace()
+        .partition(|word| word.starts_with('-'));
     // **After `--`**, because `cargo test` itself takes one name before it and
     // the test harness takes any number after it.
     let mut list_args: Vec<&str> = vec!["test", "-p", &krate, "--all-features", "--", "--list"];
@@ -2118,9 +2125,10 @@ fn run_narrow(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
     }
     std::io::stdout().flush()?;
     let mut test_args: Vec<&str> = vec!["test", "-p", &krate, "--all-features"];
-    if !filters.is_empty() || !skipped.is_empty() {
+    if !filters.is_empty() || !flags.is_empty() || !skipped.is_empty() {
         test_args.push("--");
         test_args.extend(&filters);
+        test_args.extend(&flags);
         for name in &skipped {
             test_args.extend(["--skip", name]);
         }
