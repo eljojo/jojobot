@@ -565,3 +565,72 @@ async fn a_rollback_and_roll_forward_reconciles_the_log_with_the_rows() {
     );
     assert_eq!(report.counts()[0].disagreements, 0);
 }
+
+/// A batch holding one member whose envelope names `kind`, appended at the
+/// log's head, as another family's writer would append it.
+async fn append_member_of_kind(log: &InMemoryLog, kind: &str) {
+    let mut value: serde_json::Value =
+        serde_json::from_slice(&codec::encode(&TeachingEvent::Cleared {
+            run: RunId("homer".into()),
+        }))
+        .unwrap();
+    value["event_kind"] = kind.into();
+    let previous = Position(head(log).await);
+    let batch = SealedBatch::seal(
+        BatchId(format!("{kind}:{}", previous.0)),
+        previous,
+        at(9),
+        REPRESENTATION_VERSION,
+        vec![serde_json::to_vec(&value).unwrap()],
+    )
+    .unwrap();
+    assert!(matches!(
+        log.append(previous, &batch).await.unwrap(),
+        Append::Committed(_)
+    ));
+}
+
+/// **A member of another family is not an error for teaching.** The log holds
+/// every family's batches in one order; teaching replays its own and passes the
+/// rest, the position still moving past them, so a write after one lands.
+#[tokio::test]
+async fn a_member_of_another_family_leaves_the_replay_equal() {
+    let log = InMemoryLog::default();
+    let first = LoggedTeachings::open(Arc::new(log.clone()), &[])
+        .await
+        .unwrap();
+    first
+        .first_contact(&sid("homer"), "claims", at(0))
+        .await
+        .unwrap();
+    append_member_of_kind(&log, "RequestCommitted").await;
+    let second = LoggedTeachings::open(Arc::new(log.clone()), &[])
+        .await
+        .expect("a foreign member does not stop the replay");
+    assert_eq!(
+        second.taught().await.unwrap(),
+        first.taught().await.unwrap()
+    );
+    assert!(
+        second
+            .first_contact(&sid("marge"), "mail", at(2))
+            .await
+            .unwrap(),
+        "a write after a foreign batch appends at the head past it"
+    );
+    assert_eq!(head(&log).await, 3);
+}
+
+/// **An unknown kind of teaching's own family still fails the replay**, and
+/// names the kind: meaning is fixed per kind, so a member that is teaching's
+/// and not understood is never passed.
+#[tokio::test]
+async fn an_unknown_kind_of_teachings_own_family_fails_the_replay() {
+    let log = InMemoryLog::default();
+    append_member_of_kind(&log, "TeachingForgotten").await;
+    let opened = LoggedTeachings::open(Arc::new(log), &[]).await;
+    let Err(TeachingError::Store(why)) = opened else {
+        panic!("the replay must fail on an unknown teaching kind");
+    };
+    assert!(why.contains("TeachingForgotten"), "{why}");
+}

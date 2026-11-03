@@ -8,6 +8,8 @@ use jojobot_domain::teaching::events::{RunId, TeachingEvent};
 use serde::{Deserialize, Serialize};
 
 const MEANING_VERSION: u32 = 1;
+/// What every kind of this family starts with.
+const FAMILY: &str = "Teaching";
 const RECORDED: &str = "TeachingRecorded";
 const CLEARED: &str = "TeachingCleared";
 
@@ -61,6 +63,23 @@ pub fn encode(event: &TeachingEvent) -> Vec<u8> {
         payload,
     };
     serde_json::to_vec(&envelope).expect("a teaching event is plain data")
+}
+
+/// **Teaching's own events, out of a log that holds every family's.** The family
+/// is the one the envelope's `event_kind` names: a kind that starts with
+/// [`FAMILY`] is teaching's and must decode (an unknown one is an error, never
+/// skipped); any other kind belongs to another family's reader and gives `None`.
+pub fn decode_own(bytes: &[u8]) -> Result<Option<TeachingEvent>, DecodeError> {
+    #[derive(Deserialize)]
+    struct Named {
+        event_kind: String,
+    }
+    let named: Named =
+        serde_json::from_slice(bytes).map_err(|e| DecodeError::Unreadable(e.to_string()))?;
+    if !named.event_kind.starts_with(FAMILY) {
+        return Ok(None);
+    }
+    decode(bytes).map(Some)
 }
 
 pub fn decode(bytes: &[u8]) -> Result<TeachingEvent, DecodeError> {

@@ -364,7 +364,10 @@ impl LoggedTeachings {
             }
             for batch in batches {
                 for member in batch.members() {
-                    let event = codec::decode(member).map_err(unreadable)?;
+                    // Another family's member is that family's to read.
+                    let Some(event) = codec::decode_own(member).map_err(unreadable)? else {
+                        continue;
+                    };
                     held.state.apply(&event);
                     if let Some(shadow) = held.shadow.as_mut().filter(|_| moves_old) {
                         shadow.follow(&event);
