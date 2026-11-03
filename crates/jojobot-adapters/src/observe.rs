@@ -57,6 +57,7 @@ operations!(MemoryOperation {
     FieldsVersioned => "fields_versioned",
     Retract => "retract",
     RetractWithClaim => "retract_with_claim",
+    UpdateFactWithClaim => "update_fact_with_claim",
     Merge => "merge",
     SetProse => "set_prose",
     Scan => "scan",

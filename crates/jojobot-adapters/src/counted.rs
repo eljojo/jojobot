@@ -474,6 +474,21 @@ impl Memory for Counted {
         self.hang_if_armed("retract").await;
         landed
     }
+    async fn update_fact_with_claim(
+        &self,
+        address: &FactAddress,
+        patch: FactPatch,
+        caller: &EntityId,
+        claim: NewFact,
+    ) -> Result<Guarded<(Fact, Fact)>, MemoryError> {
+        self.hit("update_fact_with_claim");
+        let landed = self
+            .inner
+            .update_fact_with_claim(address, patch, caller, claim)
+            .await;
+        self.hang_if_armed("update_fact_with_claim").await;
+        landed
+    }
     async fn retract_with_claim(
         &self,
         address: &FactAddress,

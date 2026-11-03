@@ -797,6 +797,19 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
             .retract(address, reason, date, caller, session)
             .await
     }
+    async fn update_fact_with_claim(
+        &self,
+        address: &FactAddress,
+        patch: FactPatch,
+        caller: &EntityId,
+        claim: NewFact,
+    ) -> Result<Guarded<(Fact, Fact)>, MemoryError> {
+        Self::refuse_overlay_keys(patch.fields.keys())?;
+        Self::refuse_overlay_keys(claim.fields.keys())?;
+        self.inner
+            .update_fact_with_claim(address, patch, caller, claim)
+            .await
+    }
     async fn retract_with_claim(
         &self,
         address: &FactAddress,

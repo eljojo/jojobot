@@ -642,3 +642,81 @@ async fn taking_back_an_older_partial_spec_carries_the_next_generation() {
     );
     story.finish().await;
 }
+
+/// **Archiving a claim of a request changes its folded spec the way a retraction
+/// does, so the edit carries the next generation on a live claim.** The sequence
+/// of the retraction story: B archived gives 4. The claim that carries the
+/// current number is archived too: C holds 3, the archive leaves a spec no number
+/// named, so the number goes up to 5 and never falls back to an older one.
+#[tokio::test]
+async fn archiving_a_claim_of_a_request_carries_the_next_generation() {
+    let story = Story::begin("bot:marge").await;
+    let marge = story.session().await;
+    marge
+        .call(
+            "add_entity",
+            json!({"kind": "bot", "handle": "homer", "name": "Homer",
+                   "source": "user-named", "sets": {"reports_to": "bot:marge"}}),
+        )
+        .await;
+    marge.add("machine:theta", "Theta").await;
+    marge
+        .call("add_entity", creating(spec("bot:homer", "machine:theta")))
+        .await;
+    let read = || async {
+        let read = marge
+            .call("recall", json!({"subject": "bot-request:alpha"}))
+            .await;
+        let fields = read.json()["objects"][0]["fields"].clone();
+        (
+            fields["generation"].clone(),
+            fields["desired"].clone(),
+            fields["model"].clone(),
+        )
+    };
+    let capture = |content: &'static str, sets: serde_json::Value| {
+        let marge = &marge;
+        async move {
+            marge
+                .call(
+                    "capture",
+                    json!({"subject": "bot-request:alpha", "content": content, "sets": sets}),
+                )
+                .await
+                .field("address")
+        }
+    };
+    let archive = |address: String| {
+        let marge = &marge;
+        async move {
+            marge
+                .call(
+                    "update_fact",
+                    json!({"address": address, "status": "archived",
+                           "details": "written in error"}),
+                )
+                .await;
+        }
+    };
+    let older = capture("stop it", json!({"desired": "stopped"})).await;
+    let newest = capture("another model", json!({"model": "model-b"})).await;
+    assert_eq!(
+        read().await,
+        ("3".into(), "stopped".into(), "model-b".into())
+    );
+
+    archive(older).await;
+    assert_eq!(
+        read().await,
+        ("4".into(), "running".into(), "model-b".into()),
+        "the spec is a new one, and the number names it",
+    );
+
+    archive(newest).await;
+    assert_eq!(
+        read().await,
+        ("5".into(), "running".into(), "model-a".into()),
+        "the claim that held the number is archived, and the number goes up",
+    );
+    story.finish().await;
+}

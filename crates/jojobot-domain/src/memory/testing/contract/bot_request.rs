@@ -510,6 +510,113 @@ pub async fn a_retracted_generation_is_still_the_highest_ever_written<M: Memory>
     assert_eq!(third.as_deref(), Some("3"), "2 names the retracted spec");
 }
 
+/// **An archive and the claim that carries the new number land as one act.** The
+/// same sequence as a retraction: taking the second claim off by an archive
+/// changes the folded spec, so the claim written beside the edit names it 4. A
+/// companion claim a guard refuses takes the archive back with it.
+pub async fn an_archive_and_its_generation_claim_land_as_one_act<M: Memory>(store: &M) {
+    use crate::memory::bot_request::{GENERATION, MODEL};
+    let request = EntityId("bot-request:contract-archive-ask".into());
+    let manager = EntityId("bot:contract-archive-manager".into());
+    let target = EntityId("bot:contract-archive-target".into());
+    for (id, name) in [
+        (&request, "Archive Ask"),
+        (&manager, "Archive Manager"),
+        (&target, "Archive Target"),
+    ] {
+        add(store, NewEntity::new(id.clone(), name, "contract-fixture")).await;
+    }
+    let fields = |pairs: &[(&str, &str)]| -> std::collections::BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    };
+    capture(
+        store,
+        state(NewFact {
+            fields: fields(&[(crate::memory::REPORTS_TO, manager.as_str())]),
+            ..NewFact::about(
+                target.clone(),
+                "target reports to manager",
+                date(2026, 10, 1),
+            )
+        }),
+    )
+    .await;
+    let spec = |pairs: &[(&str, &str)], day: i8| {
+        let mut fact = state(NewFact {
+            fields: fields(pairs),
+            ..NewFact::about(request.clone(), "a spec", date(2026, 10, day))
+        });
+        fact.derived.insert(GENERATION.to_string());
+        fact
+    };
+    capture(
+        store,
+        spec(
+            &[
+                (TARGET_BOT, target.as_str()),
+                (DESIRED, "running"),
+                (MODEL, "alpha"),
+                (GENERATION, "1"),
+            ],
+            2,
+        ),
+    )
+    .await;
+    let second = capture(store, spec(&[(DESIRED, "stopped"), (GENERATION, "2")], 3)).await;
+    capture(store, spec(&[(MODEL, "beta"), (GENERATION, "3")], 4)).await;
+    let read = || async { store.fields(&request).await.expect("readable") };
+    let archive = || FactPatch {
+        status: Some(FactStatus::Archived),
+        ..Default::default()
+    };
+
+    let mut refused = spec(&[(GENERATION, "4")], 5);
+    refused
+        .fields
+        .insert("blocks".into(), "work:contract-archive-nobody".into());
+    refused.sets.insert("blocks".into());
+    let taken_back = store
+        .update_fact_with_claim(&second.address(), archive(), &manager, refused)
+        .await
+        .expect("the call answers");
+    assert!(
+        matches!(taken_back, Guarded::Blocked { .. }),
+        "a refused companion blocks the act: {taken_back:?}",
+    );
+    let fold = read().await;
+    assert_eq!(
+        fold.get(DESIRED).map(String::as_str),
+        Some("stopped"),
+        "the archive was taken back with the refused claim",
+    );
+    assert_eq!(fold.get(GENERATION).map(String::as_str), Some("3"));
+
+    let (archived, claim) = store
+        .update_fact_with_claim(
+            &second.address(),
+            archive(),
+            &manager,
+            spec(&[(GENERATION, "4")], 5),
+        )
+        .await
+        .expect("the call answers")
+        .written()
+        .expect("nothing blocks it");
+    assert_eq!(archived.status, FactStatus::Archived);
+    assert_eq!(claim.subject, request);
+    let fold = read().await;
+    assert_eq!(fold.get(DESIRED).map(String::as_str), Some("running"));
+    assert_eq!(fold.get(MODEL).map(String::as_str), Some("beta"));
+    assert_eq!(
+        fold.get(GENERATION).map(String::as_str),
+        Some("4"),
+        "the archive and its number landed together",
+    );
+}
+
 /// **A retraction and the claim that carries the new number land as one act.**
 /// The sequence is a whole spec (1), a partial one (2) and another partial one
 /// (3); taking the second back changes the folded spec, so the claim written

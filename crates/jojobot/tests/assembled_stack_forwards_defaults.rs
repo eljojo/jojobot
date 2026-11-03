@@ -771,5 +771,36 @@ async fn the_stack_the_binary_builds_answers_what_the_layer_beneath_implements()
         "the outermost port reads the pair as one act: {beside:?}"
     );
 
+    // ── update_fact_with_claim: implemented by the store, beneath every layer ──
+    let (edited, beside) = indexed
+        .update_fact_with_claim(
+            &beside.address(),
+            jojobot_domain::memory::FactPatch {
+                status: Some(jojobot_domain::memory::FactStatus::Archived),
+                ..Default::default()
+            },
+            &piano,
+            NewFact {
+                fields: fields(&[("pair_note", "third")]),
+                sets: fields(&[("pair_note", "third")]).into_keys().collect(),
+                ..NewFact::about(piano.clone(), "the note, once more", date(2026, 10, 3))
+            },
+        )
+        .await
+        .expect("the stack edits a claim and writes another")
+        .written()
+        .expect("nothing blocks it");
+    assert_eq!(edited.status, jojobot_domain::memory::FactStatus::Archived);
+    assert_eq!(
+        indexed
+            .fields(&piano)
+            .await
+            .expect("fields")
+            .get("pair_note")
+            .map(String::as_str),
+        Some("third"),
+        "the outermost port reads the edit and its claim as one act: {beside:?}"
+    );
+
     server.stop().await;
 }

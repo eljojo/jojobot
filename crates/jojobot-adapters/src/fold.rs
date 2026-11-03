@@ -917,6 +917,45 @@ impl Memory for Folded {
         .await
     }
 
+    /// **An edit that writes a claim refreshes the image for the thing, as an edit
+    /// does.** Forwarded and not left to the port's default, which refuses.
+    async fn update_fact_with_claim(
+        &self,
+        address: &FactAddress,
+        patch: FactPatch,
+        caller: &EntityId,
+        claim: NewFact,
+    ) -> Result<Guarded<(Fact, Fact)>, MemoryError> {
+        owned!(
+            self,
+            this,
+            [address = address.clone(), caller = caller.clone()],
+            this.update_fact_with_claim(&address, patch, &caller, claim)
+                .await
+        );
+        let sent: Vec<String> = jojobot_domain::memory::writes_of(&patch, &BTreeMap::new())
+            .into_iter()
+            .filter_map(|(key, value)| value.map(|_| key))
+            .collect();
+        self.scoped(async {
+            match self
+                .inner
+                .update_fact_with_claim(address, patch, caller, claim)
+                .await?
+            {
+                Guarded::Written((edited, fact)) => match self
+                    .refresh_claims(&edited.home, vec![(edited.id.clone(), sent)])
+                    .await
+                {
+                    Ok(()) => Ok(Guarded::Written((edited, fact))),
+                    Err(source) => Err(fold_behind(Landed::Fact(Box::new(edited)), source)),
+                },
+                blocked => Ok(blocked),
+            }
+        })
+        .await
+    }
+
     /// **A retraction that writes a claim refreshes the image for the thing, as a
     /// retraction does.** Forwarded and not left to the port's default, which
     /// refuses.

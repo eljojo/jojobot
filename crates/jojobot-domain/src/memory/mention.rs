@@ -847,6 +847,228 @@ impl Mentioning {
         roster_for(&*self.beneath, texts).await
     }
 
+    /// **An edit of a claim, with a companion claim written in the same act when
+    /// one is sent.** The one preparation of the edit's words for both verbs.
+    async fn edit_fact(
+        &self,
+        address: &super::FactAddress,
+        patch: super::FactPatch,
+        caller: &super::EntityId,
+        claim: Option<super::NewFact>,
+    ) -> Result<super::Guarded<(super::Fact, Option<super::Fact>)>, super::MemoryError> {
+        use super::text_edit::TextField;
+        // **A find and replace names the text it changes, so that text is not
+        // also sent.** The two together would say the same place twice.
+        let editing = patch.text_edit.as_ref().map(|edit| edit.field);
+        let sent = |field: TextField| match field {
+            TextField::Content => patch.content.is_some(),
+            TextField::Details => patch.details.is_some(),
+        };
+        if editing.is_some_and(sent) {
+            return Err(super::MemoryError::InvalidFact(
+                "a find and replace and the whole text it changes are both sent: send one".into(),
+            ));
+        }
+        // **The text under an edit is never screened or resolved as a whole**:
+        // only the words that replace the find are, in `edited_stored`.
+        let screened = [
+            patch
+                .content
+                .as_deref()
+                .filter(|_| editing != Some(TextField::Content))
+                .unwrap_or(""),
+            patch
+                .details
+                .as_deref()
+                .filter(|_| editing != Some(TextField::Details))
+                .unwrap_or(""),
+        ];
+        let known = self
+            .known_for(&[
+                screened[0],
+                screened[1],
+                patch
+                    .text_edit
+                    .as_ref()
+                    .map_or("", |edit| edit.replace.as_str()),
+            ])
+            .await?;
+        refuse_forged(&screened, &known)?;
+        // **What is code is decided over the claim's content and details as one
+        // text**, so an edit to one of them is read beside the other as stored:
+        // a details written under a content line that opens a fence is code.
+        // The other one is only read, never rewritten here.
+        let sent_content = patch
+            .content
+            .as_deref()
+            .filter(|_| editing != Some(TextField::Content));
+        let sent_details = patch
+            .details
+            .as_deref()
+            .filter(|_| editing != Some(TextField::Details));
+        let stored_beside = if editing.is_none() && sent_content.is_some() != sent_details.is_some()
+        {
+            self.inner.claim_history(address).await?.open().pop()
+        } else {
+            None
+        };
+        let words: Option<(String, Option<String>)> = match (sent_content, sent_details) {
+            (Some(c), Some(d)) => Some((c.to_string(), Some(d.to_string()))),
+            (Some(c), None) => Some((
+                c.to_string(),
+                stored_beside.as_ref().and_then(|w| w.details.clone()),
+            )),
+            (None, Some(d)) => Some((
+                stored_beside
+                    .as_ref()
+                    .map(|w| w.content.clone())
+                    .unwrap_or_default(),
+                Some(d.to_string()),
+            )),
+            (None, None) => None,
+        };
+        if let Some((c, d)) = &words
+            && let Some(blocked) = Self::screen_words(c, d.as_deref(), &known)
+        {
+            return Ok(blocked);
+        }
+        let mut fields = patch.fields.clone();
+        self.bind_where(&mut fields, &known, &address.home).await?;
+        let resolved_in_words = match &words {
+            Some((c, d)) => Some(resolved_words(c, d.as_deref(), &known).map_err(unloaded)?),
+            None => None,
+        };
+        let mut content = sent_content
+            .and(resolved_in_words.as_ref())
+            .map(|(c, _)| c.clone());
+        let mut details = sent_details
+            .and(resolved_in_words.as_ref())
+            .and_then(|(_, d)| d.clone());
+        let mut expected_revision = patch.expected_revision;
+        if let Some(edit) = &patch.text_edit {
+            // **Read as stored**, so the match is made over what the reader is
+            // served and the splice lands in what is kept. The write carries the
+            // revision of this read, so the store refuses it if the claim has
+            // moved since.
+            let chain = self.inner.claim_history(address).await?.open();
+            if let Some(refused) =
+                super::refuses_a_stale_revision(address, expected_revision, chain.len())
+            {
+                return Err(refused);
+            }
+            let newest = chain
+                .last()
+                .ok_or_else(|| super::MemoryError::UnknownFact {
+                    attempted: address.to_string(),
+                    nearest: Vec::new(),
+                })?;
+            let (current, beside) = match edit.field {
+                TextField::Content => (
+                    newest.content.as_str(),
+                    newest
+                        .details
+                        .as_deref()
+                        .map_or(Beside::Nothing, Beside::After),
+                ),
+                TextField::Details => (
+                    newest.details.as_deref().unwrap_or(""),
+                    Beside::Before(newest.content.as_str()),
+                ),
+            };
+            let text = match edited_stored(address, current, beside, edit, &known)? {
+                Ok(text) => text,
+                Err(handle) => {
+                    let candidates = roster::screened(&handle, &known);
+                    return Ok(super::Guarded::Blocked {
+                        attempted: handle,
+                        candidates,
+                    });
+                }
+            };
+            match edit.field {
+                TextField::Content => content = Some(text),
+                TextField::Details => details = Some(text),
+            }
+            expected_revision = Some(chain.len());
+        }
+        let patch = super::FactPatch {
+            fields,
+            content,
+            details,
+            text_edit: None,
+            expected_revision,
+            ..patch
+        };
+        let written = match claim {
+            None => match self.inner.update_fact(address, patch, caller).await?.open() {
+                super::Guarded::Written(stored) => super::Guarded::Written((stored, None)),
+                super::Guarded::Blocked {
+                    attempted,
+                    candidates,
+                } => super::Guarded::Blocked {
+                    attempted,
+                    candidates,
+                },
+            },
+            Some(claim) => {
+                // **The companion claim resolves what it says**, as a capture does.
+                let said = [
+                    claim.content.as_str(),
+                    claim.details.as_deref().unwrap_or(""),
+                    claim.drop_because.as_deref().unwrap_or(""),
+                ];
+                let known = self.known_for(&said).await?;
+                refuse_forged(&said, &known)?;
+                if let Some(blocked) =
+                    Self::screen_words(&claim.content, claim.details.as_deref(), &known)
+                {
+                    return Ok(blocked);
+                }
+                let mut claim_fields = claim.fields.clone();
+                self.bind_where(&mut claim_fields, &known, &claim.subject)
+                    .await?;
+                let (claim_content, claim_details) =
+                    resolved_words(&claim.content, claim.details.as_deref(), &known)
+                        .map_err(unloaded)?;
+                let claim = super::NewFact {
+                    fields: claim_fields,
+                    content: claim_content,
+                    details: claim_details,
+                    drop_because: roster::resolved_reason(claim.drop_because.as_deref(), &known)?,
+                    ..claim
+                };
+                match self
+                    .inner
+                    .update_fact_with_claim(address, patch, caller, claim)
+                    .await?
+                    .open()
+                {
+                    super::Guarded::Written((stored, beside)) => {
+                        super::Guarded::Written((stored, Some(beside)))
+                    }
+                    super::Guarded::Blocked {
+                        attempted,
+                        candidates,
+                    } => super::Guarded::Blocked {
+                        attempted,
+                        candidates,
+                    },
+                }
+            }
+        };
+        Ok(match written {
+            super::Guarded::Written((mut stored, mut beside)) => {
+                let declared = self.declared().await?;
+                self.render_fact(&mut stored, &known, &declared);
+                if let Some(beside) = beside.as_mut() {
+                    self.render_fact(beside, &known, &declared);
+                }
+                super::Guarded::Written((stored, beside))
+            }
+            blocked => blocked,
+        })
+    }
+
     /// **What a key holds, for the one thing that reads it going out**: an
     /// expression-typed field value is rendered as an expression, so the
     /// renderer needs the declarations to know which keys these are.
@@ -1280,165 +1502,42 @@ impl super::Memory for Mentioning {
         patch: super::FactPatch,
         caller: &super::EntityId,
     ) -> Result<super::Guarded<super::Fact>, super::MemoryError> {
-        use super::text_edit::TextField;
-        // **A find and replace names the text it changes, so that text is not
-        // also sent.** The two together would say the same place twice.
-        let editing = patch.text_edit.as_ref().map(|edit| edit.field);
-        let sent = |field: TextField| match field {
-            TextField::Content => patch.content.is_some(),
-            TextField::Details => patch.details.is_some(),
-        };
-        if editing.is_some_and(sent) {
-            return Err(super::MemoryError::InvalidFact(
-                "a find and replace and the whole text it changes are both sent: send one".into(),
-            ));
-        }
-        // **The text under an edit is never screened or resolved as a whole**:
-        // only the words that replace the find are, in `edited_stored`.
-        let screened = [
-            patch
-                .content
-                .as_deref()
-                .filter(|_| editing != Some(TextField::Content))
-                .unwrap_or(""),
-            patch
-                .details
-                .as_deref()
-                .filter(|_| editing != Some(TextField::Details))
-                .unwrap_or(""),
-        ];
-        let known = self
-            .known_for(&[
-                screened[0],
-                screened[1],
-                patch
-                    .text_edit
-                    .as_ref()
-                    .map_or("", |edit| edit.replace.as_str()),
-            ])
-            .await?;
-        refuse_forged(&screened, &known)?;
-        // **What is code is decided over the claim's content and details as one
-        // text**, so an edit to one of them is read beside the other as stored:
-        // a details written under a content line that opens a fence is code.
-        // The other one is only read, never rewritten here.
-        let sent_content = patch
-            .content
-            .as_deref()
-            .filter(|_| editing != Some(TextField::Content));
-        let sent_details = patch
-            .details
-            .as_deref()
-            .filter(|_| editing != Some(TextField::Details));
-        let stored_beside = if editing.is_none() && sent_content.is_some() != sent_details.is_some()
-        {
-            self.inner.claim_history(address).await?.open().pop()
-        } else {
-            None
-        };
-        let words: Option<(String, Option<String>)> = match (sent_content, sent_details) {
-            (Some(c), Some(d)) => Some((c.to_string(), Some(d.to_string()))),
-            (Some(c), None) => Some((
-                c.to_string(),
-                stored_beside.as_ref().and_then(|w| w.details.clone()),
-            )),
-            (None, Some(d)) => Some((
-                stored_beside
-                    .as_ref()
-                    .map(|w| w.content.clone())
-                    .unwrap_or_default(),
-                Some(d.to_string()),
-            )),
-            (None, None) => None,
-        };
-        if let Some((c, d)) = &words
-            && let Some(blocked) = Self::screen_words(c, d.as_deref(), &known)
-        {
-            return Ok(blocked);
-        }
-        let mut fields = patch.fields.clone();
-        self.bind_where(&mut fields, &known, &address.home).await?;
-        let resolved_in_words = match &words {
-            Some((c, d)) => Some(resolved_words(c, d.as_deref(), &known).map_err(unloaded)?),
-            None => None,
-        };
-        let mut content = sent_content
-            .and(resolved_in_words.as_ref())
-            .map(|(c, _)| c.clone());
-        let mut details = sent_details
-            .and(resolved_in_words.as_ref())
-            .and_then(|(_, d)| d.clone());
-        let mut expected_revision = patch.expected_revision;
-        if let Some(edit) = &patch.text_edit {
-            // **Read as stored**, so the match is made over what the reader is
-            // served and the splice lands in what is kept. The write carries the
-            // revision of this read, so the store refuses it if the claim has
-            // moved since.
-            let chain = self.inner.claim_history(address).await?.open();
-            if let Some(refused) =
-                super::refuses_a_stale_revision(address, expected_revision, chain.len())
-            {
-                return Err(refused);
-            }
-            let newest = chain
-                .last()
-                .ok_or_else(|| super::MemoryError::UnknownFact {
-                    attempted: address.to_string(),
-                    nearest: Vec::new(),
-                })?;
-            let (current, beside) = match edit.field {
-                TextField::Content => (
-                    newest.content.as_str(),
-                    newest
-                        .details
-                        .as_deref()
-                        .map_or(Beside::Nothing, Beside::After),
-                ),
-                TextField::Details => (
-                    newest.details.as_deref().unwrap_or(""),
-                    Beside::Before(newest.content.as_str()),
-                ),
-            };
-            let text = match edited_stored(address, current, beside, edit, &known)? {
-                Ok(text) => text,
-                Err(handle) => {
-                    let candidates = roster::screened(&handle, &known);
-                    return Ok(super::Guarded::Blocked {
-                        attempted: handle,
-                        candidates,
-                    });
-                }
-            };
-            match edit.field {
-                TextField::Content => content = Some(text),
-                TextField::Details => details = Some(text),
-            }
-            expected_revision = Some(chain.len());
-        }
-        let written = self
-            .inner
-            .update_fact(
-                address,
-                super::FactPatch {
-                    fields,
-                    content,
-                    details,
-                    text_edit: None,
-                    expected_revision,
-                    ..patch
-                },
-                caller,
-            )
-            .await?
-            .open();
-        Ok(match written {
-            super::Guarded::Written(mut stored) => {
-                let declared = self.declared().await?;
-                self.render_fact(&mut stored, &known, &declared);
-                super::Guarded::Written(stored)
-            }
-            blocked => blocked,
+        Ok(match self.edit_fact(address, patch, caller, None).await? {
+            super::Guarded::Written((stored, _)) => super::Guarded::Written(stored),
+            super::Guarded::Blocked {
+                attempted,
+                candidates,
+            } => super::Guarded::Blocked {
+                attempted,
+                candidates,
+            },
         })
+    }
+    /// **The edit and its companion claim resolve what they say, exactly as the
+    /// two verbs do apart.** Forwarded and not left to the port's default, which
+    /// refuses.
+    async fn update_fact_with_claim(
+        &self,
+        address: &super::FactAddress,
+        patch: super::FactPatch,
+        caller: &super::EntityId,
+        claim: super::NewFact,
+    ) -> Result<super::Guarded<(super::Fact, super::Fact)>, super::MemoryError> {
+        Ok(
+            match self.edit_fact(address, patch, caller, Some(claim)).await? {
+                super::Guarded::Written((stored, beside)) => super::Guarded::Written((
+                    stored,
+                    beside.expect("an edit with a claim answers the claim"),
+                )),
+                super::Guarded::Blocked {
+                    attempted,
+                    candidates,
+                } => super::Guarded::Blocked {
+                    attempted,
+                    candidates,
+                },
+            },
+        )
     }
     /// **A write carries the note its record carried**, which is text, so it
     /// renders like every other piece of text a caller reads.

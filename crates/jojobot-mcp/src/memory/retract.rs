@@ -190,20 +190,8 @@ impl Jojobot {
         };
         let withdrawn = match minted {
             Some(number) => {
-                let generation = jojobot_domain::memory::bot_request::GENERATION.to_string();
-                let companion = jojobot_domain::memory::NewFact {
-                    sets: [generation.clone()].into(),
-                    derived: [generation.clone()].into(),
-                    fields: jojobot_domain::memory::review::settings_fields(
-                        [(generation.clone(), number)].into(),
-                    ),
-                    session: Some(caller.sid.as_str().to_string()),
-                    ..jojobot_domain::memory::NewFact::about(
-                        address.home.clone(),
-                        format!("Set {generation} on @{}.", address.home.as_str()),
-                        date,
-                    )
-                };
+                let companion =
+                    Self::generation_claim(&address.home, number, date, caller.sid.as_str());
                 jojobot_domain::request::armed(self.memory.retract_with_claim(
                     &address,
                     args.reason.as_deref(),

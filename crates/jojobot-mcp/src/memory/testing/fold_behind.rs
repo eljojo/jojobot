@@ -45,6 +45,24 @@ impl Memory for FoldBehindMemory {
             .await?;
         Err(fold_behind(Landed::Retraction(Box::new(taken_back))))
     }
+    // **An edit and its claim in one act land, and the fold behind them never
+    // confirms**, the shape `update_fact` has here.
+    async fn update_fact_with_claim(
+        &self,
+        address: &FactAddress,
+        patch: FactPatch,
+        caller: &EntityId,
+        claim: NewFact,
+    ) -> Result<Guarded<(Fact, Fact)>, MemoryError> {
+        match self
+            .0
+            .update_fact_with_claim(address, patch, caller, claim)
+            .await?
+        {
+            Guarded::Written((edited, _)) => Err(fold_behind(Landed::Fact(Box::new(edited)))),
+            blocked => Ok(blocked),
+        }
+    }
     // **A retraction and its claim in one act land, and the fold behind them never
     // confirms**, the shape `retract` has here.
     async fn retract_with_claim(

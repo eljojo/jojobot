@@ -352,6 +352,20 @@ impl Memory for Observed<dyn Memory> {
         )
         .await
     }
+    async fn update_fact_with_claim(
+        &self,
+        address: &FactAddress,
+        patch: FactPatch,
+        caller: &EntityId,
+        claim: NewFact,
+    ) -> Result<Guarded<(Fact, Fact)>, MemoryError> {
+        self.result(
+            Operation::Memory(MemoryOperation::UpdateFactWithClaim),
+            self.inner
+                .update_fact_with_claim(address, patch, caller, claim),
+        )
+        .await
+    }
     async fn retract_with_claim(
         &self,
         address: &FactAddress,

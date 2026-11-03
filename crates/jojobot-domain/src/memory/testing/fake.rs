@@ -2395,6 +2395,81 @@ impl Memory for InMemoryMemory {
         }
     }
 
+    /// **The edit and its companion claim, as one act.** A refusal of the claim
+    /// puts every row back exactly as it was, as the real store's one
+    /// transaction does.
+    async fn update_fact_with_claim(
+        &self,
+        address: &FactAddress,
+        patch: FactPatch,
+        caller: &EntityId,
+        claim: NewFact,
+    ) -> Result<Guarded<(Fact, Fact)>, MemoryError> {
+        // **One spend for the act**, after its last step.
+        let request = crate::request::take();
+        let facts_before = self.facts.lock().expect("fake mutex poisoned").clone();
+        let writes_before = self.writes.lock().expect("fake mutex poisoned").clone();
+        let claim_writes_before = self
+            .claim_writes
+            .lock()
+            .expect("fake mutex poisoned")
+            .clone();
+        let take_back = || {
+            *self.facts.lock().expect("fake mutex poisoned") = facts_before.clone();
+            *self.writes.lock().expect("fake mutex poisoned") = writes_before.clone();
+            *self.claim_writes.lock().expect("fake mutex poisoned") = claim_writes_before.clone();
+            *self.world_cache.lock().expect("fake mutex poisoned") = None;
+        };
+        let edited = match self.update_fact(address, patch, caller).await? {
+            Guarded::Written(edited) => edited,
+            Guarded::Blocked {
+                attempted,
+                candidates,
+            } => {
+                return Ok(Guarded::Blocked {
+                    attempted,
+                    candidates,
+                });
+            }
+        };
+        // **The same thing, by whichever spelling it is named**: see
+        // `retract_with_claim`.
+        let same_thing = super::resolve_handle(&claim.subject, &self.known(), &self.former())
+            .is_some_and(|entity| entity.id == edited.subject);
+        if !same_thing {
+            take_back();
+            return Err(MemoryError::InvalidFact(format!(
+                "the claim is about {}, and the claim edited is about {}",
+                claim.subject, edited.subject
+            )));
+        }
+        match self.capture(claim).await {
+            Ok(Guarded::Written(fact)) => {
+                if let Err(e) = self.spend_claim(request, || {
+                    serde_json::json!({ "address": address.to_string() }).to_string()
+                }) {
+                    take_back();
+                    return Err(e);
+                }
+                Ok(Guarded::Written((edited, fact)))
+            }
+            Ok(Guarded::Blocked {
+                attempted,
+                candidates,
+            }) => {
+                take_back();
+                Ok(Guarded::Blocked {
+                    attempted,
+                    candidates,
+                })
+            }
+            Err(e) => {
+                take_back();
+                Err(e)
+            }
+        }
+    }
+
     /// **The retraction and its companion claim, as one act.** A refusal of the
     /// claim puts every row back exactly as it was, as the real store's one
     /// transaction does.

@@ -453,3 +453,33 @@ async fn a_wrapper_that_does_not_forward_the_retraction_with_a_claim_refuses_it(
         "nothing was retracted and nothing was written: {held:?}"
     );
 }
+
+/// **The same for an edit with a claim**: the default refuses and nothing lands.
+#[tokio::test]
+async fn a_wrapper_that_does_not_forward_the_edit_with_a_claim_refuses_it() {
+    let store = std::sync::Arc::new(InMemoryMemory::booted());
+    let subject = thing(&store, "person:lisa", "Lisa").await;
+    let address = say(&store, &subject, "said in error").await;
+    let wrapper = crate::memory::testing::WithoutBuiltOn(store.clone());
+    let refused = wrapper
+        .update_fact_with_claim(
+            &address,
+            FactPatch {
+                status: Some(FactStatus::Archived),
+                ..Default::default()
+            },
+            &subject,
+            NewFact::about(subject.clone(), "said again", date(2026, 6, 3)),
+        )
+        .await;
+    assert!(
+        matches!(refused, Err(MemoryError::InvalidFact(_))),
+        "the default refuses: {refused:?}"
+    );
+    let held = store.recall(&subject).await.expect("recall reads");
+    assert!(
+        held.iter()
+            .all(|fact| fact.status == FactStatus::Active && fact.content != "said again"),
+        "nothing was archived and nothing was written: {held:?}"
+    );
+}

@@ -731,6 +731,7 @@ impl Jojobot {
         // **A write of a bot request's spec raises its generation.** The store's
         // check of the edit leaves the generation to jojobot, so a caller's own
         // copy is refused here, on the key alone.
+        let mut generation_claim: Option<jojobot_domain::memory::NewFact> = None;
         if jojobot_domain::memory::bot_request::is_request(&address.home) {
             let generation = jojobot_domain::memory::bot_request::GENERATION;
             // **A clear of the generation is a write of it**: the next spec write
@@ -756,22 +757,44 @@ impl Jojobot {
                     return Ok(refused);
                 }
             }
-            let held = match self.memory.fields(&address.home).await {
-                Ok(held) => held,
-                Err(e) => return memory_declined("update_fact", e),
-            };
-            let highest = match self.highest_generation_ever(&address.home).await {
-                Ok(highest) => highest,
-                Err(e) => return memory_declined("update_fact", e),
-            };
-            if let Some(next) = jojobot_domain::memory::bot_request::next_generation(
-                &address.home,
-                &jojobot_domain::memory::bot_request::spec_of(&held),
-                &jojobot_domain::memory::bot_request::spec_after(&held, &reaching, &cleared),
-                highest,
+            if matches!(
+                args.status.as_deref().map(parse_status),
+                Some(Ok(FactStatus::Archived))
             ) {
-                fields.insert(generation.to_string(), next);
-                derived.insert(generation.to_string());
+                // **An archive takes the claim's keys off the thing, so the number
+                // rides on a live claim written in the same act**, never on the
+                // archived revision: its keys would leave the thing with it.
+                // TEMPORARY(9.3.3): prepare in the one writer writes both.
+                match self.generation_a_withdrawal_makes(&address).await {
+                    Ok(Some(number)) => {
+                        generation_claim = Some(Self::generation_claim(
+                            &address.home,
+                            number,
+                            self.dated(None, args.sid.as_deref()).await?,
+                            caller.sid.as_str(),
+                        ));
+                    }
+                    Ok(None) => {}
+                    Err(e) => return memory_declined("update_fact", e),
+                }
+            } else {
+                let held = match self.memory.fields(&address.home).await {
+                    Ok(held) => held,
+                    Err(e) => return memory_declined("update_fact", e),
+                };
+                let highest = match self.highest_generation_ever(&address.home).await {
+                    Ok(highest) => highest,
+                    Err(e) => return memory_declined("update_fact", e),
+                };
+                if let Some(next) = jojobot_domain::memory::bot_request::next_generation(
+                    &address.home,
+                    &jojobot_domain::memory::bot_request::spec_of(&held),
+                    &jojobot_domain::memory::bot_request::spec_after(&held, &reaching, &cleared),
+                    highest,
+                ) {
+                    fields.insert(generation.to_string(), next);
+                    derived.insert(generation.to_string());
+                }
             }
         }
         // **A write by defrag stamps the thing in the same act**, as a key on the
@@ -1066,6 +1089,7 @@ impl Jojobot {
             &caller.bot,
             override_token.as_deref(),
             override_reason.as_deref(),
+            generation_claim,
         );
         let writing = match &move_plan {
             Some(plan) => {

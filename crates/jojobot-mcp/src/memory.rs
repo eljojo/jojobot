@@ -257,6 +257,31 @@ impl Jojobot {
         Ok(jojobot_domain::memory::bot_request::highest_generation_ever(&writes))
     }
 
+    /// **The live claim that carries a generation beside an act that took a claim
+    /// off a bot request.** The number is jojobot's own, so it is a derived key.
+    // TEMPORARY(9.3.3): prepare in the one writer writes the number with the act.
+    pub(crate) fn generation_claim(
+        subject: &EntityId,
+        number: String,
+        recorded_at: jiff::civil::Date,
+        session: &str,
+    ) -> jojobot_domain::memory::NewFact {
+        let generation = jojobot_domain::memory::bot_request::GENERATION.to_string();
+        jojobot_domain::memory::NewFact {
+            sets: [generation.clone()].into(),
+            derived: [generation.clone()].into(),
+            fields: jojobot_domain::memory::review::settings_fields(
+                [(generation.clone(), number)].into(),
+            ),
+            session: Some(session.to_string()),
+            ..jojobot_domain::memory::NewFact::about(
+                subject.clone(),
+                format!("Set {generation} on @{}.", subject.as_str()),
+                recorded_at,
+            )
+        }
+    }
+
     /// **The generation taking back one claim of a bot request would make**, or
     /// `None` when the request's folded spec stays as it is (and for a subject
     /// that is no request, or one the store does not know: the retraction itself

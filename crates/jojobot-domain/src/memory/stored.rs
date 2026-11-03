@@ -238,6 +238,13 @@ pub trait StoredMemory: Send + Sync {
         caller: &super::EntityId,
         session: Option<&str>,
     ) -> Result<Stored<super::Retraction>, super::MemoryError>;
+    async fn update_fact_with_claim(
+        &self,
+        address: &super::FactAddress,
+        patch: super::FactPatch,
+        caller: &super::EntityId,
+        claim: super::NewFact,
+    ) -> Result<Stored<super::Guarded<(super::Fact, super::Fact)>>, super::MemoryError>;
     async fn retract_with_claim(
         &self,
         address: &super::FactAddress,
@@ -519,6 +526,18 @@ impl StoredMemory for Unrendered {
     ) -> Result<Stored<super::Retraction>, super::MemoryError> {
         self.0
             .retract(address, reason, date, caller, session)
+            .await
+            .map(Stored::new)
+    }
+    async fn update_fact_with_claim(
+        &self,
+        address: &super::FactAddress,
+        patch: super::FactPatch,
+        caller: &super::EntityId,
+        claim: super::NewFact,
+    ) -> Result<Stored<super::Guarded<(super::Fact, super::Fact)>>, super::MemoryError> {
+        self.0
+            .update_fact_with_claim(address, patch, caller, claim)
             .await
             .map(Stored::new)
     }

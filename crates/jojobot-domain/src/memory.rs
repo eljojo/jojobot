@@ -6864,6 +6864,35 @@ pub trait Memory: Send + Sync {
         ))
     }
 
+    /// **Edit a claim and write a claim about the same thing, in one act.**
+    /// [`update_fact`](Memory::update_fact) with a companion claim, run as a
+    /// capture runs it. If any guard of the edit or of the claim refuses,
+    /// **nothing is written**: the edit is taken back with the claim. The
+    /// companion is about the thing the edited claim is about; any other subject
+    /// is [`MemoryError::InvalidFact`].
+    ///
+    /// An archive that changes a bot request's folded spec carries the next
+    /// generation on this claim: an archived claim's keys leave the thing, so the
+    /// number rides on a live claim written in the same act. Answers the edited
+    /// claim first and the companion second.
+    ///
+    /// **A store that cannot do this refuses loudly rather than editing and then
+    /// capturing**, for the reason
+    /// [`add_entity_with_first_claim`](Memory::add_entity_with_first_claim) does.
+    // TEMPORARY(9.3.3): prepare in the one writer batches the act and its number.
+    async fn update_fact_with_claim(
+        &self,
+        address: &FactAddress,
+        patch: FactPatch,
+        caller: &EntityId,
+        claim: NewFact,
+    ) -> Result<Guarded<(Fact, Fact)>, MemoryError> {
+        let _ = (address, patch, caller, claim);
+        Err(MemoryError::InvalidFact(
+            "this store cannot edit a claim and write another in one act".into(),
+        ))
+    }
+
     /// **What a numbered collection adds to a read of it**: the key its members
     /// are numbered by and the number the next member takes (the largest held,
     /// archived members included, plus one). `None` for a thing that numbers

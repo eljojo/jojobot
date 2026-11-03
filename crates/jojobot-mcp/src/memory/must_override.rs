@@ -80,6 +80,9 @@ pub(crate) async fn capture_lifting(
 
 /// **`update_fact`, asking again with the token and the written reason**, as
 /// [`capture_lifting`].
+///
+/// **With a `companion`, the edit and that claim are written in one act**
+/// ([`Memory::update_fact_with_claim`]); the answer is the edited claim either way.
 pub(crate) async fn update_fact_lifting(
     memory: &dyn Memory,
     address: &FactAddress,
@@ -87,8 +90,32 @@ pub(crate) async fn update_fact_lifting(
     caller: &EntityId,
     token: Option<&str>,
     reason: Option<&str>,
+    companion: Option<NewFact>,
 ) -> Result<Guarded<Fact>, MemoryError> {
-    let first = memory.update_fact(address, patch.clone(), caller).await;
+    let write = |patch: FactPatch| {
+        let companion = companion.clone();
+        async move {
+            match companion {
+                None => memory.update_fact(address, patch, caller).await,
+                Some(companion) => Ok(
+                    match memory
+                        .update_fact_with_claim(address, patch, caller, companion)
+                        .await?
+                    {
+                        Guarded::Written((edited, _)) => Guarded::Written(edited),
+                        Guarded::Blocked {
+                            attempted,
+                            candidates,
+                        } => Guarded::Blocked {
+                            attempted,
+                            candidates,
+                        },
+                    },
+                ),
+            }
+        }
+    };
+    let first = write(patch.clone()).await;
     let Err(refused) = &first else {
         return first;
     };
@@ -98,7 +125,7 @@ pub(crate) async fn update_fact_lifting(
     let mut again = patch;
     again.must_override = Some(insisting);
     again.fields.insert(MUST_OVERRIDDEN.to_string(), label);
-    memory.update_fact(address, again, caller).await
+    write(again).await
 }
 
 /// **The answer to a refused write**: a `must` refusal names the way through

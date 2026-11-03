@@ -250,6 +250,27 @@ pub struct DoltMemory {
     warned: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, u64>>>,
 }
 
+/// **How an edit of a claim is committed by the caller that owns its
+/// transaction.** An edit that wrote nothing is `None`, and the transaction is
+/// dropped. A role's renewal spends no request id and commits natively.
+enum Commit {
+    None,
+    Native,
+    Request(String),
+}
+
+impl Commit {
+    async fn commit(self, tx: Transaction<'_, MySql>, clock: &Clock) -> Result<(), MemoryError> {
+        match self {
+            Commit::None => Ok(()),
+            Commit::Native => commit_native(tx).await.map_err(store),
+            Commit::Request(landed) => super::requests::commit(tx, clock, || landed)
+                .await
+                .map_err(store),
+        }
+    }
+}
+
 impl DoltMemory {
     /// Open the store over an existing pool.
     ///
@@ -1918,6 +1939,577 @@ impl DoltMemory {
             retracted: served_retracted,
             record: served_record,
         })
+    }
+
+    /// **An edit of a claim in a transaction its caller owns.** `how` says how the
+    /// caller commits it, and stays `Commit::None` for an edit that wrote nothing.
+    /// [`update_fact`](Memory::update_fact) is that, and so is the edit that
+    /// writes a claim in the same act.
+    async fn update_fact_in(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        address: &FactAddress,
+        patch: FactPatch,
+        caller: &EntityId,
+        how: &mut Commit,
+    ) -> Result<Guarded<Fact>, MemoryError> {
+        if let Some(refused) = jojobot_domain::memory::refuses_an_unapplied_text_edit(&patch) {
+            return Err(refused);
+        }
+        let moved = self.moved_in(tx, address).await?;
+        let address = moved.as_ref().unwrap_or(address);
+        // An edge's object names an entity, so an edit that attaches one is an
+        // entity-touching write and faces the guard — screened before anything
+        // is rewritten. **What EXISTS includes what the build supplies**, for
+        // the same reason `capture` reads it: an edge may point at a record the
+        // build supplies. The check is one targeted row; the full listing is
+        // built only for a name that answered to nothing.
+        if let Some(edge) = &patch.edge {
+            validate_edge(edge)?;
+            if let guard::Decision::Block(candidates) = self.decide_edge_targeted(tx, edge).await? {
+                return Ok(Guarded::Blocked {
+                    attempted: edge.object.clone(),
+                    candidates,
+                });
+            }
+        }
+        // **The same rule on the edit path**, over the keys this patch sets: a
+        // reference names an entity, and nothing a write names is created as a
+        // side effect of being named.
+        for object in self.references_checked(tx, &patch.fields).await? {
+            if let guard::Decision::Block(candidates) =
+                self.decide_existing_targeted(tx, &object).await?
+            {
+                return Ok(Guarded::Blocked {
+                    attempted: object,
+                    candidates,
+                });
+            }
+        }
+        // A miss on the HANDLE is an entity miss, with the near candidates that
+        // explain it — not a fact miss trailing an empty address list. A
+        // stale-but-renamed handle resolves through its own history, same as
+        // every other lookup here.
+        let Some((key, handle)) = self.resolve(tx, &address.home).await? else {
+            let index = self.known(tx).await?;
+            return Err(MemoryError::UnknownEntity {
+                attempted: address.home.to_string(),
+                nearest: self.nearest(tx, &address.home, &index).await?,
+            });
+        };
+        let resolved_address = FactAddress::new(key.clone(), address.local.clone());
+        let Some(mut fact) = self.read_fact(tx, &resolved_address).await? else {
+            let index = self.known(tx).await?;
+            if let Some(resolved) = index.iter().find(|e| e.id == handle)
+                && let Some(err) = jojobot_domain::memory::already_merged(&address.home, resolved)
+            {
+                return Err(err);
+            }
+            return Err(MemoryError::UnknownFact {
+                attempted: address.to_string(),
+                nearest: self.addresses_in(tx, &key).await?,
+            });
+        };
+        // **`read_fact` serves the handle form, for the readers it usually
+        // answers.** This one writes the row back, so `home` and `subject`
+        // are lowered to the storage key it was read under before anything
+        // touches it — writing the handle would file the edit under a
+        // different primary key and strand it there, unread by anything
+        // keyed on the badge. The other pointer fields are lowered once,
+        // unconditionally, in [`Self::lower_pointers`], right before the
+        // row is written — not here, because the patch below may still
+        // rewrite any of them.
+        fact.home = key.clone();
+        fact.subject = key.clone();
+        // An archived row is out of reach of an ordinary edit — one-way is
+        // enforced here rather than intended elsewhere.
+        if fact.status == FactStatus::Archived {
+            return Err(MemoryError::NotRetractable {
+                attempted: address.to_string(),
+                why: "it is archived, and an archived record is not editable — archiving is \
+                      one-way. Capture what is so now as a new record"
+                    .to_string(),
+            });
+        }
+        self.refuses_a_stale_claim(tx, &key, address, &patch)
+            .await?;
+        // **A role's own claim, renewed or re-claimed by patch, is decided
+        // atomically with the write it gates** — the same check `capture`
+        // runs, against the same state under the same transaction, so a
+        // renewal and a fresh claim are one mechanism rather than two.
+        let role_state = self.role_state_of(tx, &handle, &key).await?;
+        if let Some((role, state)) = &role_state
+            && let Some(refused) = jojobot_domain::memory::refuses_role_write(
+                role,
+                patch.role_move.as_ref(),
+                &patch.fields,
+                state,
+            )
+        {
+            return Err(refused);
+        }
+        // **A renewal overwrites the lease moment and appends nothing.** See
+        // [`Self::overwrite_lease_moment`] for the one exception this is. A claim
+        // that also carries an edge, a source, a ref or a mark is served the
+        // ordinary way, below, so this answers only for the plain claim a role
+        // is made of.
+        if role_state.is_some()
+            && jojobot_domain::memory::is_a_plain_renewal(&patch)
+            && fact.edge.is_none()
+            && fact.derived_from.is_none()
+            && fact.refs.is_empty()
+            && fact.stands_for.is_empty()
+            && let Some(moment) = patch.fields.get(jojobot_domain::session::ROLE_CLAIMED_AT)
+            && Self::overwrite_lease_moment(tx, &key, moment, &self.clock).await?
+        {
+            // The signal `write_summary` reads, so the search index sees the new
+            // moment as a change although no claim write was added. Filed under
+            // the handle, as every other `entity_write` row is.
+            append_entity_write(tx, &handle, &self.clock, patch.session.as_deref()).await?;
+            // **Not an id's write**: a renewal overwrites a moment and is its own
+            // repeat, so it spends no request id.
+            *how = Commit::Native;
+            let mut fields = fact.fields.clone();
+            fields.insert(
+                jojobot_domain::session::ROLE_CLAIMED_AT.to_string(),
+                moment.clone(),
+            );
+            return Ok(Guarded::Written(Fact {
+                fields,
+                home: handle.clone(),
+                subject: handle,
+                ..fact
+            }));
+        }
+        // What the ADDRESSED RECORD carries right now — read off before the
+        // patch rewrites it, because that is what decides which of the patch's
+        // clears is a write and which names a key this record never had.
+        let carried = fact.fields.clone();
+        // **Whether this record was already a thought, read before the patch
+        // rewrites it.** The archived check just above guarantees `status` is
+        // `Active` here, so a connection edge is the whole of the question.
+        // This is what tells an edit that merely touches an EXISTING thought
+        // apart from one that MAKES a claim into a thought — the cap and the
+        // room only have anything to say about the second.
+        let was_thought = jojobot_domain::memory::authorship::is_connection(fact.edge.as_ref());
+        // **Every claim a mark names faces the existence rule a source
+        // does** — a mark is a set of citations, and a citation to nothing
+        // is exactly the failure `derived_from` is screened against below,
+        // just plural.
+        if let Some(stands_for) = &patch.stands_for {
+            // **A record that another active shape names as a source cannot be a
+            // shape itself**: the other order of the one-layer rule below. The
+            // marks are read where they are kept, and the one domain function
+            // judges what it finds.
+            let marks = sqlx::query(
+                "SELECT fact_home, fact_id FROM fact_stands_for
+                 WHERE source_home = ? AND source_id = ?",
+            )
+            .bind(key.as_str())
+            .bind(address.local.as_str())
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(store)?;
+            let mut holders = Vec::new();
+            for mark in &marks {
+                let held = FactAddress::new(
+                    EntityId(mark.get::<String, _>("fact_home")),
+                    FactId(mark.get::<String, _>("fact_id")),
+                );
+                if let Some(shape) = self.read_fact(tx, &held).await?
+                    && shape.status == FactStatus::Active
+                {
+                    holders.push(shape.address());
+                }
+            }
+            if let Some(refused) =
+                jojobot_domain::memory::refuses_marking_a_source(address, &holders)
+            {
+                return Err(refused);
+            }
+            for named in stands_for {
+                let Some((named_key, _)) = self.resolve(tx, &named.home).await? else {
+                    // **The listing is built for a name that answered to
+                    // nothing**: the candidates come from the whole roster.
+                    let index = self.index(tx).await?;
+                    return Err(MemoryError::UnknownEntity {
+                        attempted: named.home.to_string(),
+                        nearest: self.nearest(tx, &named.home, &index).await?,
+                    });
+                };
+                let resolved_named = FactAddress::new(named_key.clone(), named.local.clone());
+                let Some(named_fact) = self.read_fact(tx, &resolved_named).await? else {
+                    return Err(MemoryError::UnknownFact {
+                        attempted: named.to_string(),
+                        nearest: self.addresses_in(tx, &named_key).await?,
+                    });
+                };
+                // **Self-reference is checked on the same storage key the
+                // record being edited already resolved to** — never on the
+                // name the patch sent, which is not yet in that key space
+                // and would let a self-reference through unnoticed whenever
+                // a badge is in play.
+                if named_key == key && named.local == address.local {
+                    return Err(MemoryError::InvalidFact(format!(
+                        "a record cannot be marked as standing for itself: {named} is its own \
+                         address"
+                    )));
+                }
+                // **One layer, so the pile is always one step away.** A
+                // record already marked as standing for others is itself a
+                // shape, and a shape cannot be folded into another mark: that
+                // would let a walk that unfolded a shape find a second shape
+                // underneath, and a read one layer deep would leave the
+                // pile's bottom permanently out of reach.
+                if !named_fact.stands_for.is_empty() {
+                    return Err(MemoryError::InvalidFact(format!(
+                        "{named} already stands for its own sources, so it cannot be folded into \
+                         another mark: a shape may only name sources that are not themselves \
+                         shapes"
+                    )));
+                }
+            }
+        }
+        // **A source named by an EDIT faces the rule a source named at capture
+        // faces.** Lineage is learned late, so it is checked here too — and a
+        // pointer at a claim nobody wrote would be a link that reads as
+        // evidence and leads nowhere. The resolved form is not kept here —
+        // [`Self::lower_pointers`], below, lowers whatever `apply_fact_patch`
+        // leaves in `fact.derived_from`, touched by this patch or not.
+        if let Some(source) = &patch.derived_from {
+            let Some((source_key, _)) = self.resolve(tx, &source.home).await? else {
+                // **The listing is built for a name that answered to nothing**:
+                // the candidates come from the whole roster.
+                let index = self.index(tx).await?;
+                return Err(MemoryError::UnknownEntity {
+                    attempted: source.home.to_string(),
+                    nearest: self.nearest(tx, &source.home, &index).await?,
+                });
+            };
+            let resolved_source = FactAddress::new(source_key, source.local.clone());
+            // **Archive is a visibility switch, not a validity gate** — a
+            // source that is archived may still be cited; see the same note
+            // in `capture`.
+            if self.read_fact(tx, &resolved_source).await?.is_none() {
+                return Err(MemoryError::UnknownFact {
+                    attempted: source.to_string(),
+                    // **The resolved key, not the raw handle** — `addresses_in`
+                    // reads by storage key, exactly as `capture`'s own check
+                    // does; passing the handle here always came back empty.
+                    nearest: self.addresses_in(tx, &resolved_source.home).await?,
+                });
+            }
+        }
+        // **Whose words these are, asked of the claim's FIRST write.** A later
+        // write by another session does not make it the owner.
+        let stored = self
+            .stored_address_of(tx, &FactAddress::new(key.clone(), address.local.clone()))
+            .await?
+            .unwrap_or_else(|| FactAddress::new(key.clone(), address.local.clone()));
+        let first_session: Option<String> = sqlx::query_scalar(
+            "SELECT session FROM fact_write WHERE entity = ? AND fact_id = ?
+             ORDER BY ordinal ASC LIMIT 1",
+        )
+        .bind(stored.home.as_str())
+        .bind(stored.local.as_str())
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(store)?
+        .flatten();
+        let patch = match jojobot_domain::memory::settle_rewrite(
+            address,
+            &fact,
+            patch.clone(),
+            first_session.as_deref(),
+            &Self::types_in(tx).await?,
+        ) {
+            Ok(settled) => settled,
+            // **A ceiling key answers first.** The refusal of a rewrite of
+            // testimony names the route of archiving and capturing a correction,
+            // and for a key this caller may not write that route meets the key's
+            // own refusal at its end. So the key is asked now, and its refusal
+            // is the one the caller gets.
+            Err(refusal @ MemoryError::TestimonyRewritten { .. }) => {
+                let held = self.writes_on(tx, &fact.home).await?;
+                let declared = Self::types_in(tx).await?;
+                let before = self
+                    .with_manager_rendered(tx, &folded_fields(&held, &declared))
+                    .await?;
+                let after = jojobot_domain::memory::fold_after_field_edits(&before, &patch);
+                let lineage = match jojobot_domain::memory::chart_wanted_by_change(
+                    &handle, &before, &after,
+                ) {
+                    Some(named) => Some(self.lineage_in(tx, &handle, named).await?),
+                    None => None,
+                };
+                return Err(jojobot_domain::memory::refuses_unlicensed_change(
+                    &handle,
+                    caller,
+                    &before,
+                    &after,
+                    lineage.as_ref(),
+                )
+                .unwrap_or(refusal));
+            }
+            Err(other) => return Err(other),
+        };
+        // **Which bag each key is written under**, read off what this record holds
+        // now: a key stays in the bag it was first written under.
+        let held_classes = self.held_classes(tx, &key, &address.local).await?;
+        let classes = jojobot_domain::memory::classes_for_write(
+            &held_classes,
+            &patch.fields,
+            &patch.sets,
+            &patch.derived,
+            &patch.clear_fields,
+            &Self::types_in(tx).await?,
+            !self.own_fields_reach,
+        )?;
+        let fields_before = fact.fields.clone();
+        apply_fact_patch(&mut fact, &patch)?;
+        // **Every pointer-bearing field, lowered in one pass, unconditionally**
+        // (rule 268) — `apply_fact_patch` carries whatever the patch named, or
+        // whatever `read_fact` served, and both are handle form. Not three
+        // more conditionals on which field the patch happened to touch: that
+        // is the defect, not a workaround for it.
+        self.lower_pointers(tx, &mut fact, &key).await?;
+        // **The thing's fields as they will stand, against the thing's fields
+        // as they stand now.** A write may not drop a thing below a type it
+        // already fits; a thing that fits nothing has nothing to protect, so
+        // its records stay repairable. One function, called from both stores.
+        let held = self.writes_on(tx, &fact.home).await?;
+        let declared = Self::types_in(tx).await?;
+        // **Off the entity's own kind, never off `fact.home`** — that is a
+        // badge now, and a badge carries no kind token to parse.
+        let kind = kind_of_handle(&handle)?;
+        let governs = Self::kind_keys_in(tx, kind.as_token()).await?;
+        let before_fold = folded_fields(&held, &declared);
+        jojobot_domain::memory::guard_clear_backing(&held, &fact, &patch, &carried, &declared)?;
+        let after_fold = stood_after(&held, &fact, &patch, &carried, &declared);
+        // **The type check reads the folds as handles, as a caller does.** A
+        // reference key holds the permanent id of what it names, and an edit that
+        // takes a claim back leaves the fold on an older claim's stored id, which
+        // is no handle and breaks the key's type. Served first, the check asks
+        // whether the value is an entity of the kind the key names.
+        let mut served_before = before_fold.clone();
+        self.compose_reference_fields(tx, &mut served_before)
+            .await?;
+        let mut served_after = after_fold.clone();
+        self.compose_reference_fields(tx, &mut served_after).await?;
+        self.guard_fit_resolved(
+            tx,
+            &fact.home,
+            kind.as_token(),
+            &served_before,
+            &served_after,
+            &governs,
+        )
+        .await?;
+        // **A rule a type declares for its claims**, judged on the record's own
+        // fields: before the edit, and as the edit leaves them. An engine record
+        // is exempt.
+        if fact.app_stamp.is_none() {
+            let named: Vec<String> = patch
+                .fields
+                .keys()
+                .chain(patch.clear_fields.iter())
+                .cloned()
+                .collect();
+            self.report_must(judge(
+                &declared,
+                &address.to_string(),
+                Some(&fields_before),
+                &fact.fields,
+                &named,
+                patch.must_override.as_ref(),
+                patch
+                    .must_day
+                    .unwrap_or_else(|| self.clock.today_in(&jiff::tz::TimeZone::UTC)),
+            )?);
+        }
+        self.guard_numbering(
+            tx,
+            &jojobot_domain::memory::numbered::Change::of_update(&handle, &served_after, &patch),
+            None,
+        )
+        .await?;
+        // **The ceiling and the room, both on the state this edit leaves
+        // behind, atomically with the write that would leave it.** See
+        // `refuses_unlicensed_change` and `refuses_room_overflow` in the
+        // domain crate for why the fold rather than the raw patch.
+        let chart_before = self.with_manager_rendered(tx, &before_fold).await?;
+        let chart_after = self.with_manager_rendered(tx, &after_fold).await?;
+        let lineage = match jojobot_domain::memory::chart_wanted_by_change(
+            &handle,
+            &chart_before,
+            &chart_after,
+        ) {
+            Some(named) => Some(self.lineage_in(tx, &handle, named).await?),
+            None => None,
+        };
+        if let Some(err) = jojobot_domain::memory::refuses_unlicensed_change(
+            &handle,
+            caller,
+            &chart_before,
+            &chart_after,
+            lineage.as_ref(),
+        ) {
+            return Err(err);
+        }
+        // **A claim another bot first wrote is no thought of this thing's**, however
+        // the edit leaves it: the owner's keep or edit never adopts it. Asked of the
+        // claim's first write, for a claim that has no edge yet as well.
+        let another_bots = self
+            .another_bots_claim(tx, &stored.home, &stored.local, &key)
+            .await?;
+        let was_thought = was_thought && !another_bots;
+        let becomes_thought = fact.status == FactStatus::Active
+            && jojobot_domain::memory::authorship::is_thought_of(fact.edge.as_ref(), another_bots);
+        // **The cap runs on a content change, or on newly becoming a
+        // thought — never on an edit that leaves an existing thought's
+        // content exactly as it was.** An edit seeded over the cap, or over
+        // capacity, before either check existed must still take an edit
+        // that does not touch the content the cap protects or the room
+        // membership the capacity protects.
+        let capacity = after_fold
+            .get(jojobot_domain::memory::THOUGHT_CAPACITY)
+            .and_then(|v| v.trim().parse::<usize>().ok());
+        if becomes_thought && (patch.content.is_some() || !was_thought) {
+            // **The body cap, checked before the room has anything to say.**
+            // A thought over its container's cap is refused whether or not
+            // the room has space — see `refuses_thought_over_cap`.
+            let cap = after_fold
+                .get(jojobot_domain::memory::THOUGHT_BODY_CAP)
+                .and_then(|v| v.trim().parse::<usize>().ok());
+            if let Some(err) = jojobot_domain::memory::refuses_thought_over_cap(
+                &handle,
+                &fact.content,
+                cap,
+                capacity,
+            ) {
+                return Err(err);
+            }
+        }
+        // **The room only grows when a record newly joins it, or comes back into
+        // it.** An edit to a thought already in the room does not grow it,
+        // whatever else the edit changes — a room already over capacity (a
+        // borrow, or seeded that way) is an allowed state an unrelated edit
+        // must not re-judge. A thought gone quiet is outside the count, and any
+        // edit to it touches it, so it rejoins the room and meets the same check
+        // a new thought does.
+        let was_aged = was_thought && {
+            let ids = [fact.id.clone()];
+            jojobot_domain::memory::is_quiet(
+                self.touched_moments(tx, &key, &ids)
+                    .await?
+                    .get(&fact.id)
+                    .copied(),
+                patch.aged_before,
+            )
+        };
+        if becomes_thought
+            && (!was_thought || was_aged)
+            && let Some(capacity) = capacity
+        {
+            // **The storage key, not the display handle** — `facts_of` reads
+            // by the badge a row is filed under (see its own doc comment),
+            // exactly as `writes_on` above is called with `fact.home` rather
+            // than `handle`.
+            let others: Vec<Fact> = self
+                .facts_of(tx, &key)
+                .await?
+                .into_iter()
+                .filter(|f| f.id != fact.id)
+                .collect();
+            let nominal = jojobot_domain::memory::thought_room(&others);
+            // **Ageing's cost is paid only when the room might be full**,
+            // exactly as `capture` pays it, and the cutoff is the caller's.
+            let touched = if nominal.len() >= capacity {
+                let ids: Vec<FactId> = nominal.iter().map(|f| f.id.clone()).collect();
+                self.touched_moments(tx, &key, &ids).await?
+            } else {
+                Default::default()
+            };
+            let counted =
+                jojobot_domain::memory::count_room(nominal, &touched, patch.aged_before, capacity);
+            if let Some(err) = jojobot_domain::memory::refuses_room_overflow(&handle, counted) {
+                return Err(err);
+            }
+        }
+        let on_disk = self.as_stored(tx, &fact).await?;
+        let claim_write =
+            Self::write_fact(tx, &on_disk, &self.clock, patch.session.as_deref(), None).await?;
+        // **The edit appends.** The record reads back changed — that is the
+        // surface — and the value it replaced stays where it was written.
+        // **A reference-typed value is lowered to the permanent id it
+        // names first** (rule 268) — the guard just above already checked
+        // the handle-form value the patch sent, so what lands here is free
+        // to be the storage shape.
+        let lowered_writes = self.lower_writes(tx, writes_of(&patch, &carried)).await?;
+        Self::append_writes(
+            tx,
+            &on_disk.home,
+            &on_disk.id,
+            lowered_writes,
+            &self.clock,
+            &classes,
+            claim_write,
+        )
+        .await?;
+        // Read back from the substrate rather than from what the patch
+        // believed, so the answer is the projection a later read will give.
+        // **The keys and the bag each is held in come from the same rows**, so the
+        // answer's `sets` is the claim as it stands after this write and never the
+        // one it had before it: a setting this edit cleared must not stay in `sets`
+        // with no value left in `fields`.
+        let (served, sets, reaching) = self.read_write_fields(tx, &on_disk).await?;
+        // **Served under the handle, stored under the key.**
+        let served_derived_from = match &fact.derived_from {
+            Some(source) => Some(FactAddress::new(
+                self.current_handle(tx, &source.home).await?,
+                source.local.clone(),
+            )),
+            None => None,
+        };
+        let served_edge = match &fact.edge {
+            Some(edge) => Some(Edge {
+                shape: edge.shape,
+                object: self.current_handle(tx, &edge.object).await?,
+            }),
+            None => None,
+        };
+        let mut served_stands_for = Vec::with_capacity(fact.stands_for.len());
+        for named in &fact.stands_for {
+            served_stands_for.push(FactAddress::new(
+                self.current_handle(tx, &named.home).await?,
+                named.local.clone(),
+            ));
+        }
+        // **Refs are stored as permanent ids, exactly as the edge is**, so
+        // they are served the same way: answering with the stored form hands
+        // the caller opaque ids for the handles it wrote.
+        let mut served_refs = Vec::with_capacity(fact.refs.len());
+        for object in &fact.refs {
+            served_refs.push(self.current_handle(tx, object).await?);
+        }
+        *how = Commit::Request(jojobot_domain::request::claim_landed(
+            &address.to_string(),
+            on_disk.home.as_str(),
+            None,
+        ));
+        Ok(Guarded::Written(Fact {
+            fields: served.values,
+            field_links: served.links,
+            sets,
+            reaching,
+            home: handle.clone(),
+            subject: handle,
+            derived_from: served_derived_from,
+            edge: served_edge,
+            refs: served_refs,
+            stands_for: served_stands_for,
+            ..fact
+        }))
     }
 
     /// **An edit of an entity's own row, in a transaction its caller owns.** The
@@ -5509,574 +6101,70 @@ impl Memory for DoltMemory {
             return Err(refused);
         }
         let mut tx = self.pool.begin().await.map_err(store)?;
-        let moved = self.moved_in(&mut tx, address).await?;
-        let address = moved.as_ref().unwrap_or(address);
-        // An edge's object names an entity, so an edit that attaches one is an
-        // entity-touching write and faces the guard — screened before anything
-        // is rewritten. **What EXISTS includes what the build supplies**, for
-        // the same reason `capture` reads it: an edge may point at a record the
-        // build supplies. The check is one targeted row; the full listing is
-        // built only for a name that answered to nothing.
-        if let Some(edge) = &patch.edge {
-            validate_edge(edge)?;
-            if let guard::Decision::Block(candidates) =
-                self.decide_edge_targeted(&mut tx, edge).await?
-            {
-                return Ok(Guarded::Blocked {
-                    attempted: edge.object.clone(),
-                    candidates,
-                });
-            }
-        }
-        // **The same rule on the edit path**, over the keys this patch sets: a
-        // reference names an entity, and nothing a write names is created as a
-        // side effect of being named.
-        for object in self.references_checked(&mut tx, &patch.fields).await? {
-            if let guard::Decision::Block(candidates) =
-                self.decide_existing_targeted(&mut tx, &object).await?
-            {
-                return Ok(Guarded::Blocked {
-                    attempted: object,
-                    candidates,
-                });
-            }
-        }
-        // A miss on the HANDLE is an entity miss, with the near candidates that
-        // explain it — not a fact miss trailing an empty address list. A
-        // stale-but-renamed handle resolves through its own history, same as
-        // every other lookup here.
-        let Some((key, handle)) = self.resolve(&mut tx, &address.home).await? else {
-            let index = self.known(&mut tx).await?;
-            return Err(MemoryError::UnknownEntity {
-                attempted: address.home.to_string(),
-                nearest: self.nearest(&mut tx, &address.home, &index).await?,
-            });
-        };
-        let resolved_address = FactAddress::new(key.clone(), address.local.clone());
-        let Some(mut fact) = self.read_fact(&mut tx, &resolved_address).await? else {
-            let index = self.known(&mut tx).await?;
-            if let Some(resolved) = index.iter().find(|e| e.id == handle)
-                && let Some(err) = jojobot_domain::memory::already_merged(&address.home, resolved)
-            {
-                return Err(err);
-            }
-            return Err(MemoryError::UnknownFact {
-                attempted: address.to_string(),
-                nearest: self.addresses_in(&mut tx, &key).await?,
-            });
-        };
-        // **`read_fact` serves the handle form, for the readers it usually
-        // answers.** This one writes the row back, so `home` and `subject`
-        // are lowered to the storage key it was read under before anything
-        // touches it — writing the handle would file the edit under a
-        // different primary key and strand it there, unread by anything
-        // keyed on the badge. The other pointer fields are lowered once,
-        // unconditionally, in [`Self::lower_pointers`], right before the
-        // row is written — not here, because the patch below may still
-        // rewrite any of them.
-        fact.home = key.clone();
-        fact.subject = key.clone();
-        // An archived row is out of reach of an ordinary edit — one-way is
-        // enforced here rather than intended elsewhere.
-        if fact.status == FactStatus::Archived {
-            return Err(MemoryError::NotRetractable {
-                attempted: address.to_string(),
-                why: "it is archived, and an archived record is not editable — archiving is \
-                      one-way. Capture what is so now as a new record"
-                    .to_string(),
-            });
-        }
-        self.refuses_a_stale_claim(&mut tx, &key, address, &patch)
+        let mut how = Commit::None;
+        let edited = self
+            .update_fact_in(&mut tx, address, patch, caller, &mut how)
             .await?;
-        // **A role's own claim, renewed or re-claimed by patch, is decided
-        // atomically with the write it gates** — the same check `capture`
-        // runs, against the same state under the same transaction, so a
-        // renewal and a fresh claim are one mechanism rather than two.
-        let role_state = self.role_state_of(&mut tx, &handle, &key).await?;
-        if let Some((role, state)) = &role_state
-            && let Some(refused) = jojobot_domain::memory::refuses_role_write(
-                role,
-                patch.role_move.as_ref(),
-                &patch.fields,
-                state,
-            )
-        {
+        how.commit(tx, &self.clock).await?;
+        Ok(edited)
+    }
+
+    /// **The edit and its companion claim in one transaction.** A refusal or a
+    /// block of the claim returns before the commit, so the edit is never stored
+    /// without it.
+    async fn update_fact_with_claim(
+        &self,
+        address: &FactAddress,
+        patch: FactPatch,
+        caller: &EntityId,
+        claim: NewFact,
+    ) -> Result<Guarded<(Fact, Fact)>, MemoryError> {
+        if let Some(refused) = jojobot_domain::memory::refuses_an_unapplied_text_edit(&patch) {
             return Err(refused);
         }
-        // **A renewal overwrites the lease moment and appends nothing.** See
-        // [`Self::overwrite_lease_moment`] for the one exception this is. A claim
-        // that also carries an edge, a source, a ref or a mark is served the
-        // ordinary way, below, so this answers only for the plain claim a role
-        // is made of.
-        if role_state.is_some()
-            && jojobot_domain::memory::is_a_plain_renewal(&patch)
-            && fact.edge.is_none()
-            && fact.derived_from.is_none()
-            && fact.refs.is_empty()
-            && fact.stands_for.is_empty()
-            && let Some(moment) = patch.fields.get(jojobot_domain::session::ROLE_CLAIMED_AT)
-            && Self::overwrite_lease_moment(&mut tx, &key, moment, &self.clock).await?
-        {
-            // The signal `write_summary` reads, so the search index sees the new
-            // moment as a change although no claim write was added. Filed under
-            // the handle, as every other `entity_write` row is.
-            append_entity_write(&mut tx, &handle, &self.clock, patch.session.as_deref()).await?;
-            // **Not an id's write**: a renewal overwrites a moment and is its own
-            // repeat, so it spends no request id.
-            commit_native(tx).await.map_err(store)?;
-            let mut fields = fact.fields.clone();
-            fields.insert(
-                jojobot_domain::session::ROLE_CLAIMED_AT.to_string(),
-                moment.clone(),
-            );
-            return Ok(Guarded::Written(Fact {
-                fields,
-                home: handle.clone(),
-                subject: handle,
-                ..fact
-            }));
-        }
-        // What the ADDRESSED RECORD carries right now — read off before the
-        // patch rewrites it, because that is what decides which of the patch's
-        // clears is a write and which names a key this record never had.
-        let carried = fact.fields.clone();
-        // **Whether this record was already a thought, read before the patch
-        // rewrites it.** The archived check just above guarantees `status` is
-        // `Active` here, so a connection edge is the whole of the question.
-        // This is what tells an edit that merely touches an EXISTING thought
-        // apart from one that MAKES a claim into a thought — the cap and the
-        // room only have anything to say about the second.
-        let was_thought = jojobot_domain::memory::authorship::is_connection(fact.edge.as_ref());
-        // **Every claim a mark names faces the existence rule a source
-        // does** — a mark is a set of citations, and a citation to nothing
-        // is exactly the failure `derived_from` is screened against below,
-        // just plural.
-        if let Some(stands_for) = &patch.stands_for {
-            // **A record that another active shape names as a source cannot be a
-            // shape itself**: the other order of the one-layer rule below. The
-            // marks are read where they are kept, and the one domain function
-            // judges what it finds.
-            let marks = sqlx::query(
-                "SELECT fact_home, fact_id FROM fact_stands_for
-                 WHERE source_home = ? AND source_id = ?",
-            )
-            .bind(key.as_str())
-            .bind(address.local.as_str())
-            .fetch_all(&mut *tx)
-            .await
-            .map_err(store)?;
-            let mut holders = Vec::new();
-            for mark in &marks {
-                let held = FactAddress::new(
-                    EntityId(mark.get::<String, _>("fact_home")),
-                    FactId(mark.get::<String, _>("fact_id")),
-                );
-                if let Some(shape) = self.read_fact(&mut tx, &held).await?
-                    && shape.status == FactStatus::Active
-                {
-                    holders.push(shape.address());
-                }
-            }
-            if let Some(refused) =
-                jojobot_domain::memory::refuses_marking_a_source(address, &holders)
-            {
-                return Err(refused);
-            }
-            for named in stands_for {
-                let Some((named_key, _)) = self.resolve(&mut tx, &named.home).await? else {
-                    // **The listing is built for a name that answered to
-                    // nothing**: the candidates come from the whole roster.
-                    let index = self.index(&mut tx).await?;
-                    return Err(MemoryError::UnknownEntity {
-                        attempted: named.home.to_string(),
-                        nearest: self.nearest(&mut tx, &named.home, &index).await?,
-                    });
-                };
-                let resolved_named = FactAddress::new(named_key.clone(), named.local.clone());
-                let Some(named_fact) = self.read_fact(&mut tx, &resolved_named).await? else {
-                    return Err(MemoryError::UnknownFact {
-                        attempted: named.to_string(),
-                        nearest: self.addresses_in(&mut tx, &named_key).await?,
-                    });
-                };
-                // **Self-reference is checked on the same storage key the
-                // record being edited already resolved to** — never on the
-                // name the patch sent, which is not yet in that key space
-                // and would let a self-reference through unnoticed whenever
-                // a badge is in play.
-                if named_key == key && named.local == address.local {
-                    return Err(MemoryError::InvalidFact(format!(
-                        "a record cannot be marked as standing for itself: {named} is its own \
-                         address"
-                    )));
-                }
-                // **One layer, so the pile is always one step away.** A
-                // record already marked as standing for others is itself a
-                // shape, and a shape cannot be folded into another mark: that
-                // would let a walk that unfolded a shape find a second shape
-                // underneath, and a read one layer deep would leave the
-                // pile's bottom permanently out of reach.
-                if !named_fact.stands_for.is_empty() {
-                    return Err(MemoryError::InvalidFact(format!(
-                        "{named} already stands for its own sources, so it cannot be folded into \
-                         another mark: a shape may only name sources that are not themselves \
-                         shapes"
-                    )));
-                }
-            }
-        }
-        // **A source named by an EDIT faces the rule a source named at capture
-        // faces.** Lineage is learned late, so it is checked here too — and a
-        // pointer at a claim nobody wrote would be a link that reads as
-        // evidence and leads nowhere. The resolved form is not kept here —
-        // [`Self::lower_pointers`], below, lowers whatever `apply_fact_patch`
-        // leaves in `fact.derived_from`, touched by this patch or not.
-        if let Some(source) = &patch.derived_from {
-            let Some((source_key, _)) = self.resolve(&mut tx, &source.home).await? else {
-                // **The listing is built for a name that answered to nothing**:
-                // the candidates come from the whole roster.
-                let index = self.index(&mut tx).await?;
-                return Err(MemoryError::UnknownEntity {
-                    attempted: source.home.to_string(),
-                    nearest: self.nearest(&mut tx, &source.home, &index).await?,
-                });
-            };
-            let resolved_source = FactAddress::new(source_key, source.local.clone());
-            // **Archive is a visibility switch, not a validity gate** — a
-            // source that is archived may still be cited; see the same note
-            // in `capture`.
-            if self.read_fact(&mut tx, &resolved_source).await?.is_none() {
-                return Err(MemoryError::UnknownFact {
-                    attempted: source.to_string(),
-                    // **The resolved key, not the raw handle** — `addresses_in`
-                    // reads by storage key, exactly as `capture`'s own check
-                    // does; passing the handle here always came back empty.
-                    nearest: self.addresses_in(&mut tx, &resolved_source.home).await?,
-                });
-            }
-        }
-        // **Whose words these are, asked of the claim's FIRST write.** A later
-        // write by another session does not make it the owner.
-        let stored = self
-            .stored_address_of(
-                &mut tx,
-                &FactAddress::new(key.clone(), address.local.clone()),
-            )
+        validate_new_fact(&claim)?;
+        let mut tx = self.pool.begin().await.map_err(store)?;
+        let mut how = Commit::None;
+        let edited = match self
+            .update_fact_in(&mut tx, address, patch, caller, &mut how)
             .await?
-            .unwrap_or_else(|| FactAddress::new(key.clone(), address.local.clone()));
-        let first_session: Option<String> = sqlx::query_scalar(
-            "SELECT session FROM fact_write WHERE entity = ? AND fact_id = ?
-             ORDER BY ordinal ASC LIMIT 1",
-        )
-        .bind(stored.home.as_str())
-        .bind(stored.local.as_str())
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(store)?
-        .flatten();
-        let patch = match jojobot_domain::memory::settle_rewrite(
-            address,
-            &fact,
-            patch.clone(),
-            first_session.as_deref(),
-            &Self::types_in(&mut tx).await?,
-        ) {
-            Ok(settled) => settled,
-            // **A ceiling key answers first.** The refusal of a rewrite of
-            // testimony names the route of archiving and capturing a correction,
-            // and for a key this caller may not write that route meets the key's
-            // own refusal at its end. So the key is asked now, and its refusal
-            // is the one the caller gets.
-            Err(refusal @ MemoryError::TestimonyRewritten { .. }) => {
-                let held = self.writes_on(&mut tx, &fact.home).await?;
-                let declared = Self::types_in(&mut tx).await?;
-                let before = self
-                    .with_manager_rendered(&mut tx, &folded_fields(&held, &declared))
-                    .await?;
-                let after = jojobot_domain::memory::fold_after_field_edits(&before, &patch);
-                let lineage = match jojobot_domain::memory::chart_wanted_by_change(
-                    &handle, &before, &after,
-                ) {
-                    Some(named) => Some(self.lineage_in(&mut tx, &handle, named).await?),
-                    None => None,
-                };
-                return Err(jojobot_domain::memory::refuses_unlicensed_change(
-                    &handle,
-                    caller,
-                    &before,
-                    &after,
-                    lineage.as_ref(),
-                )
-                .unwrap_or(refusal));
-            }
-            Err(other) => return Err(other),
-        };
-        // **Which bag each key is written under**, read off what this record holds
-        // now: a key stays in the bag it was first written under.
-        let held_classes = self.held_classes(&mut tx, &key, &address.local).await?;
-        let classes = jojobot_domain::memory::classes_for_write(
-            &held_classes,
-            &patch.fields,
-            &patch.sets,
-            &patch.derived,
-            &patch.clear_fields,
-            &Self::types_in(&mut tx).await?,
-            !self.own_fields_reach,
-        )?;
-        let fields_before = fact.fields.clone();
-        apply_fact_patch(&mut fact, &patch)?;
-        // **Every pointer-bearing field, lowered in one pass, unconditionally**
-        // (rule 268) — `apply_fact_patch` carries whatever the patch named, or
-        // whatever `read_fact` served, and both are handle form. Not three
-        // more conditionals on which field the patch happened to touch: that
-        // is the defect, not a workaround for it.
-        self.lower_pointers(&mut tx, &mut fact, &key).await?;
-        // **The thing's fields as they will stand, against the thing's fields
-        // as they stand now.** A write may not drop a thing below a type it
-        // already fits; a thing that fits nothing has nothing to protect, so
-        // its records stay repairable. One function, called from both stores.
-        let held = self.writes_on(&mut tx, &fact.home).await?;
-        let declared = Self::types_in(&mut tx).await?;
-        // **Off the entity's own kind, never off `fact.home`** — that is a
-        // badge now, and a badge carries no kind token to parse.
-        let kind = kind_of_handle(&handle)?;
-        let governs = Self::kind_keys_in(&mut tx, kind.as_token()).await?;
-        let before_fold = folded_fields(&held, &declared);
-        jojobot_domain::memory::guard_clear_backing(&held, &fact, &patch, &carried, &declared)?;
-        let after_fold = stood_after(&held, &fact, &patch, &carried, &declared);
-        // **The type check reads the folds as handles, as a caller does.** A
-        // reference key holds the permanent id of what it names, and an edit that
-        // takes a claim back leaves the fold on an older claim's stored id, which
-        // is no handle and breaks the key's type. Served first, the check asks
-        // whether the value is an entity of the kind the key names.
-        let mut served_before = before_fold.clone();
-        self.compose_reference_fields(&mut tx, &mut served_before)
-            .await?;
-        let mut served_after = after_fold.clone();
-        self.compose_reference_fields(&mut tx, &mut served_after)
-            .await?;
-        self.guard_fit_resolved(
-            &mut tx,
-            &fact.home,
-            kind.as_token(),
-            &served_before,
-            &served_after,
-            &governs,
-        )
-        .await?;
-        // **A rule a type declares for its claims**, judged on the record's own
-        // fields: before the edit, and as the edit leaves them. An engine record
-        // is exempt.
-        if fact.app_stamp.is_none() {
-            let named: Vec<String> = patch
-                .fields
-                .keys()
-                .chain(patch.clear_fields.iter())
-                .cloned()
-                .collect();
-            self.report_must(judge(
-                &declared,
-                &address.to_string(),
-                Some(&fields_before),
-                &fact.fields,
-                &named,
-                patch.must_override.as_ref(),
-                patch
-                    .must_day
-                    .unwrap_or_else(|| self.clock.today_in(&jiff::tz::TimeZone::UTC)),
-            )?);
-        }
-        self.guard_numbering(
-            &mut tx,
-            &jojobot_domain::memory::numbered::Change::of_update(&handle, &served_after, &patch),
-            None,
-        )
-        .await?;
-        // **The ceiling and the room, both on the state this edit leaves
-        // behind, atomically with the write that would leave it.** See
-        // `refuses_unlicensed_change` and `refuses_room_overflow` in the
-        // domain crate for why the fold rather than the raw patch.
-        let chart_before = self.with_manager_rendered(&mut tx, &before_fold).await?;
-        let chart_after = self.with_manager_rendered(&mut tx, &after_fold).await?;
-        let lineage = match jojobot_domain::memory::chart_wanted_by_change(
-            &handle,
-            &chart_before,
-            &chart_after,
-        ) {
-            Some(named) => Some(self.lineage_in(&mut tx, &handle, named).await?),
-            None => None,
-        };
-        if let Some(err) = jojobot_domain::memory::refuses_unlicensed_change(
-            &handle,
-            caller,
-            &chart_before,
-            &chart_after,
-            lineage.as_ref(),
-        ) {
-            return Err(err);
-        }
-        // **A claim another bot first wrote is no thought of this thing's**, however
-        // the edit leaves it: the owner's keep or edit never adopts it. Asked of the
-        // claim's first write, for a claim that has no edge yet as well.
-        let another_bots = self
-            .another_bots_claim(&mut tx, &stored.home, &stored.local, &key)
-            .await?;
-        let was_thought = was_thought && !another_bots;
-        let becomes_thought = fact.status == FactStatus::Active
-            && jojobot_domain::memory::authorship::is_thought_of(fact.edge.as_ref(), another_bots);
-        // **The cap runs on a content change, or on newly becoming a
-        // thought — never on an edit that leaves an existing thought's
-        // content exactly as it was.** An edit seeded over the cap, or over
-        // capacity, before either check existed must still take an edit
-        // that does not touch the content the cap protects or the room
-        // membership the capacity protects.
-        let capacity = after_fold
-            .get(jojobot_domain::memory::THOUGHT_CAPACITY)
-            .and_then(|v| v.trim().parse::<usize>().ok());
-        if becomes_thought && (patch.content.is_some() || !was_thought) {
-            // **The body cap, checked before the room has anything to say.**
-            // A thought over its container's cap is refused whether or not
-            // the room has space — see `refuses_thought_over_cap`.
-            let cap = after_fold
-                .get(jojobot_domain::memory::THOUGHT_BODY_CAP)
-                .and_then(|v| v.trim().parse::<usize>().ok());
-            if let Some(err) = jojobot_domain::memory::refuses_thought_over_cap(
-                &handle,
-                &fact.content,
-                cap,
-                capacity,
-            ) {
-                return Err(err);
-            }
-        }
-        // **The room only grows when a record newly joins it, or comes back into
-        // it.** An edit to a thought already in the room does not grow it,
-        // whatever else the edit changes — a room already over capacity (a
-        // borrow, or seeded that way) is an allowed state an unrelated edit
-        // must not re-judge. A thought gone quiet is outside the count, and any
-        // edit to it touches it, so it rejoins the room and meets the same check
-        // a new thought does.
-        let was_aged = was_thought && {
-            let ids = [fact.id.clone()];
-            jojobot_domain::memory::is_quiet(
-                self.touched_moments(&mut tx, &key, &ids)
-                    .await?
-                    .get(&fact.id)
-                    .copied(),
-                patch.aged_before,
-            )
-        };
-        if becomes_thought
-            && (!was_thought || was_aged)
-            && let Some(capacity) = capacity
         {
-            // **The storage key, not the display handle** — `facts_of` reads
-            // by the badge a row is filed under (see its own doc comment),
-            // exactly as `writes_on` above is called with `fact.home` rather
-            // than `handle`.
-            let others: Vec<Fact> = self
-                .facts_of(&mut tx, &key)
-                .await?
-                .into_iter()
-                .filter(|f| f.id != fact.id)
-                .collect();
-            let nominal = jojobot_domain::memory::thought_room(&others);
-            // **Ageing's cost is paid only when the room might be full**,
-            // exactly as `capture` pays it, and the cutoff is the caller's.
-            let touched = if nominal.len() >= capacity {
-                let ids: Vec<FactId> = nominal.iter().map(|f| f.id.clone()).collect();
-                self.touched_moments(&mut tx, &key, &ids).await?
-            } else {
-                Default::default()
-            };
-            let counted =
-                jojobot_domain::memory::count_room(nominal, &touched, patch.aged_before, capacity);
-            if let Some(err) = jojobot_domain::memory::refuses_room_overflow(&handle, counted) {
-                return Err(err);
+            Guarded::Written(edited) => edited,
+            Guarded::Blocked {
+                attempted,
+                candidates,
+            } => {
+                return Ok(Guarded::Blocked {
+                    attempted,
+                    candidates,
+                });
             }
-        }
-        let on_disk = self.as_stored(&mut tx, &fact).await?;
-        let claim_write = Self::write_fact(
-            &mut tx,
-            &on_disk,
-            &self.clock,
-            patch.session.as_deref(),
-            None,
-        )
-        .await?;
-        // **The edit appends.** The record reads back changed — that is the
-        // surface — and the value it replaced stays where it was written.
-        // **A reference-typed value is lowered to the permanent id it
-        // names first** (rule 268) — the guard just above already checked
-        // the handle-form value the patch sent, so what lands here is free
-        // to be the storage shape.
-        let lowered_writes = self
-            .lower_writes(&mut tx, writes_of(&patch, &carried))
-            .await?;
-        Self::append_writes(
-            &mut tx,
-            &on_disk.home,
-            &on_disk.id,
-            lowered_writes,
-            &self.clock,
-            &classes,
-            claim_write,
-        )
-        .await?;
-        // Read back from the substrate rather than from what the patch
-        // believed, so the answer is the projection a later read will give.
-        // **The keys and the bag each is held in come from the same rows**, so the
-        // answer's `sets` is the claim as it stands after this write and never the
-        // one it had before it: a setting this edit cleared must not stay in `sets`
-        // with no value left in `fields`.
-        let (served, sets, reaching) = self.read_write_fields(&mut tx, &on_disk).await?;
-        // **Served under the handle, stored under the key.**
-        let served_derived_from = match &fact.derived_from {
-            Some(source) => Some(FactAddress::new(
-                self.current_handle(&mut tx, &source.home).await?,
-                source.local.clone(),
-            )),
-            None => None,
         };
-        let served_edge = match &fact.edge {
-            Some(edge) => Some(Edge {
-                shape: edge.shape,
-                object: self.current_handle(&mut tx, &edge.object).await?,
+        // **The same thing, by whichever spelling it is named**: see
+        // `retract_with_claim`.
+        let same_thing = match self.resolve(&mut tx, &claim.subject).await? {
+            Some((_, handle)) => handle == edited.subject,
+            None => false,
+        };
+        if !same_thing {
+            return Err(MemoryError::InvalidFact(format!(
+                "the claim is about {}, and the claim edited is about {}",
+                claim.subject, edited.subject
+            )));
+        }
+        match self.capture_in(&mut tx, claim).await? {
+            Guarded::Written(fact) => {
+                how.commit(tx, &self.clock).await?;
+                Ok(Guarded::Written((edited, fact)))
+            }
+            Guarded::Blocked {
+                attempted,
+                candidates,
+            } => Ok(Guarded::Blocked {
+                attempted,
+                candidates,
             }),
-            None => None,
-        };
-        let mut served_stands_for = Vec::with_capacity(fact.stands_for.len());
-        for named in &fact.stands_for {
-            served_stands_for.push(FactAddress::new(
-                self.current_handle(&mut tx, &named.home).await?,
-                named.local.clone(),
-            ));
         }
-        // **Refs are stored as permanent ids, exactly as the edge is**, so
-        // they are served the same way: answering with the stored form hands
-        // the caller opaque ids for the handles it wrote.
-        let mut served_refs = Vec::with_capacity(fact.refs.len());
-        for object in &fact.refs {
-            served_refs.push(self.current_handle(&mut tx, object).await?);
-        }
-        super::requests::commit(tx, &self.clock, || {
-            jojobot_domain::request::claim_landed(&address.to_string(), on_disk.home.as_str(), None)
-        })
-        .await
-        .map_err(store)?;
-        Ok(Guarded::Written(Fact {
-            fields: served.values,
-            field_links: served.links,
-            sets,
-            reaching,
-            home: handle.clone(),
-            subject: handle,
-            derived_from: served_derived_from,
-            edge: served_edge,
-            refs: served_refs,
-            stands_for: served_stands_for,
-            ..fact
-        }))
     }
 
     async fn merge(
