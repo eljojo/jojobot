@@ -333,6 +333,55 @@ async fn a_request_is_not_merged_away_and_the_refusal_names_it() {
     story.finish().await;
 }
 
+/// **An ordinary thing that carries a status key is not a request, and the
+/// refusal that keeps it out of a request tells it to clear the key.** The
+/// request is the survivor, so the key cannot land on it; the thing is the
+/// duplicate, so the caller may take the key off it first. The refusal names
+/// the thing and the clear, and the merge goes through once the key is gone.
+#[tokio::test]
+async fn an_ordinary_thing_merged_into_a_request_is_told_to_clear_its_status_key() {
+    let story = Story::begin("bot:marge").await;
+    let marge = story.session().await;
+    marge
+        .call(
+            "add_entity",
+            json!({"kind": "bot-request", "handle": "beta", "name": "Homer waits",
+                   "source": "user-named"}),
+        )
+        .await;
+    let created = marge
+        .call(
+            "add_entity",
+            json!({"kind": "topic", "handle": "scrapbook", "name": "Scrapbook",
+                   "source": "user-named", "sets": {"observed_state": "running"}}),
+        )
+        .await;
+    let address = created.field("address");
+
+    marge
+        .refused(
+            "merge_entities",
+            json!({"duplicate": "topic:scrapbook", "survivor": "bot-request:beta"}),
+        )
+        .await
+        .says("topic:scrapbook")
+        .says("bot-request:beta")
+        .says("clear_fields");
+    marge
+        .call(
+            "update_fact",
+            json!({"address": &address, "clear_fields": ["observed_state"]}),
+        )
+        .await;
+    marge
+        .call(
+            "merge_entities",
+            json!({"duplicate": "topic:scrapbook", "survivor": "bot-request:beta"}),
+        )
+        .await;
+    story.finish().await;
+}
+
 /// **A manager sends a `reports_to` beside the target, and the target's own
 /// chain still judges the request.** Marge manages homer and not lisa. She names
 /// homer as the manager and lisa as the target, so the request is asked for a

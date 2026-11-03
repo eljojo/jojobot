@@ -2078,11 +2078,27 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                     // The route of clearing the keys first would loop back here.
                     jojobot_domain::memory::MayWrite::RequestSpec
                     | jojobot_domain::memory::MayWrite::RequestStatus
+                    | jojobot_domain::memory::MayWrite::RequestGeneration
+                        if jojobot_domain::memory::bot_request::is_request(&EntityId(
+                            duplicate.clone(),
+                        )) =>
+                    {
+                        format!(
+                            "Nothing was written. '{duplicate}' is a bot request and carries \
+                             {keys}, which no bot may move onto '{survivor}': its target_bot is \
+                             fixed, jojobot writes its generation and the bound app its status. \
+                             Leave '{duplicate}' where it is, or make a new request for the bot."
+                        )
+                    }
+                    // **The duplicate is an ordinary thing and the survivor is the
+                    // request**, which is what judged the key. The key cannot land
+                    // on a request, but the caller may take it off the duplicate.
+                    jojobot_domain::memory::MayWrite::RequestSpec
+                    | jojobot_domain::memory::MayWrite::RequestStatus
                     | jojobot_domain::memory::MayWrite::RequestGeneration => format!(
-                        "Nothing was written. '{duplicate}' is a bot request and carries {keys}, \
-                         which no bot may move onto '{survivor}': its target_bot is fixed, \
-                         jojobot writes its generation and the bound app its status. Leave \
-                         '{duplicate}' where it is, or make a new request for the bot."
+                        "Nothing was written. '{duplicate}' carries {keys}, and '{survivor}' is \
+                         a bot request, which no bot may set it on: its target_bot is fixed, \
+                         jojobot writes its generation and the bound app its status.{clear}"
                     ),
                     _ => format!(
                         "Nothing was written. '{duplicate}' carries {keys}, and merging it into \
@@ -2619,6 +2635,50 @@ pub(crate) mod tests {
             !named.contains("Place 'bot:lisa' under a manager"),
             "{named}"
         );
+    }
+
+    /// **A merge of an ordinary thing into a bot request names the clear** when the
+    /// domain says it opens, and the request as the survivor. The same key on a
+    /// request as the duplicate is the request's own refusal, which names no
+    /// clear (rule 68).
+    #[test]
+    fn an_ordinary_duplicate_merged_into_a_request_is_told_to_clear_the_key() {
+        use jojobot_domain::memory::MayWrite;
+        let refused = |duplicate: &str, survivor: &str, clear_opens: bool| {
+            let result = memory_declined(
+                "merge_entities",
+                MemoryError::MergeCarriesGuardedKeys {
+                    duplicate: duplicate.into(),
+                    survivor: survivor.into(),
+                    keys: "observed_state".into(),
+                    may: MayWrite::RequestStatus,
+                    allowed: vec![],
+                    clear_opens,
+                },
+            )
+            .expect("a refusal is an answer");
+            blocked(&result)["how_to_proceed"]
+                .as_str()
+                .expect("a way forward")
+                .to_string()
+        };
+        let ordinary = refused("topic:scrapbook", "bot-request:beta", true);
+        for word in [
+            "topic:scrapbook",
+            "bot-request:beta",
+            "observed_state",
+            "clear_fields",
+        ] {
+            assert!(ordinary.contains(word), "{word}: {ordinary}");
+        }
+        assert!(!ordinary.contains("  "), "{ordinary}");
+        let barred = refused("topic:scrapbook", "bot-request:beta", false);
+        assert!(!barred.contains("clear_fields"), "{barred}");
+        let request = refused("bot-request:alpha", "topic:scrapbook", false);
+        for word in ["bot-request:alpha", "observed_state"] {
+            assert!(request.contains(word), "{word}: {request}");
+        }
+        assert!(!request.contains("clear_fields"), "{request}");
     }
 
     /// **A chart cycle is refused with a way forward that names a different
