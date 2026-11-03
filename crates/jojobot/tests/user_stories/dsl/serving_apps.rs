@@ -17,6 +17,16 @@ impl Story {
         app: &str,
         operations: Vec<OperationSpec>,
     ) -> (Self, String) {
+        let (story, mut tokens) = Self::begin_serving_apps(bot, vec![(app, operations)]).await;
+        (story, tokens.remove(0))
+    }
+
+    /// **The same, with several apps registered**, each with its own grant. Hands
+    /// back one token per app, in the order given.
+    pub async fn begin_serving_apps(
+        bot: &str,
+        apps: Vec<(&str, Vec<OperationSpec>)>,
+    ) -> (Self, Vec<String>) {
         let bare = bot
             .strip_prefix("bot:")
             .expect("a bot handle carries its kind prefix");
@@ -27,21 +37,28 @@ impl Story {
         // that order; `tests/app_grant_kinds_start.rs` starts the real binary and
         // does.
         let memory = InMemoryMemory::booted();
-        let token = jojobot_domain::app::mint_token();
-        let spec = jojobot_domain::app::AppSpec {
-            name: app.to_string(),
-            operation: String::new(),
-            thread: String::new(),
-            kind: String::new(),
-            keys: vec![],
-            operations,
-            revoked: false,
-        };
-        let principal = jojobot_domain::app::AppPrincipal::from_spec(
-            &spec,
-            &jojobot_domain::app::hash_token(&token),
-        )
-        .expect("the app's grant is one the server can hold");
+        let mut tokens = Vec::new();
+        let mut principals = Vec::new();
+        for (app, operations) in apps {
+            let token = jojobot_domain::app::mint_token();
+            let spec = jojobot_domain::app::AppSpec {
+                name: app.to_string(),
+                operation: String::new(),
+                thread: String::new(),
+                kind: String::new(),
+                keys: vec![],
+                operations,
+                revoked: false,
+            };
+            principals.push(
+                jojobot_domain::app::AppPrincipal::from_spec(
+                    &spec,
+                    &jojobot_domain::app::hash_token(&token),
+                )
+                .expect("the app's grant is one the server can hold"),
+            );
+            tokens.push(token);
+        }
         let story = Self::spawn_serving(
             bare,
             Self::wired(memory),
@@ -53,11 +70,11 @@ impl Story {
             },
             None,
             jojobot_mcp::orientation::skills::SKILLS,
-            jojobot::app_api::Apps::new(vec![principal]),
+            jojobot::app_api::Apps::new(principals),
         )
         .await;
         story.stand_up_the_bot().await;
-        (story, token)
+        (story, tokens)
     }
 
     /// **An app's call to an operation**, the way an outside program sends it:

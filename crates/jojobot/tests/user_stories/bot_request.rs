@@ -10,6 +10,7 @@ use serde_json::json;
 use super::dsl::Story;
 
 const APP: &str = "beta";
+const OTHER_APP: &str = "gamma";
 
 fn status_keys() -> Vec<String> {
     [
@@ -194,6 +195,102 @@ async fn a_manager_asks_for_a_bot_and_only_its_app_reports_on_it() {
     )
     .await;
     story.finish().await;
+}
+
+/// **Only the app a request names writes its status, whichever other app holds
+/// the same grant.** Two apps hold the same grant on the same kind and keys. The
+/// request names the first; a second request names an app that is not served; a
+/// third names none. The named app writes, and the other app, the app on the
+/// unserved name and both apps on the bare request are refused, and each refused
+/// write leaves the request as it was.
+#[tokio::test]
+async fn only_the_app_a_request_names_writes_its_status() {
+    let grant = || {
+        vec![
+            OperationSpec {
+                operation: "recall".into(),
+                kinds: vec![],
+                keys: vec![],
+            },
+            OperationSpec {
+                operation: "capture".into(),
+                kinds: vec!["bot-request".into()],
+                keys: status_keys(),
+            },
+        ]
+    };
+    let (story, tokens) =
+        Story::begin_serving_apps("bot:marge", vec![(APP, grant()), (OTHER_APP, grant())]).await;
+    let (first, second) = (&tokens[0], &tokens[1]);
+    let marge = story.session().await;
+    marge
+        .call(
+            "add_entity",
+            json!({"kind": "bot", "handle": "homer", "name": "Homer",
+                   "source": "user-named", "sets": {"reports_to": "bot:marge"}}),
+        )
+        .await;
+    marge.add("machine:theta", "Theta").await;
+    marge
+        .call("add_entity", creating(spec("bot:homer", "machine:theta")))
+        .await;
+    let mut unserved = spec("bot:homer", "machine:theta");
+    unserved["bound_app"] = json!("omega");
+    marge
+        .call(
+            "add_entity",
+            json!({"kind": "bot-request", "handle": "gamma", "name": "Homer elsewhere",
+                   "source": "user-named", "sets": unserved}),
+        )
+        .await;
+    marge
+        .call(
+            "add_entity",
+            json!({"kind": "bot-request", "handle": "beta", "name": "Homer unbound",
+                   "source": "user-named"}),
+        )
+        .await;
+    let seen = |handle: &str| json!({"subject": handle, "content": "Seen.", "sets": {"observed_state": "running"}});
+
+    // ── the app the request names writes it ─────────────────────────────────
+    let (written, body) = story
+        .app_calls(first, "capture", seen("bot-request:alpha"))
+        .await;
+    assert_eq!(written, 200, "{body}");
+    assert_eq!(
+        observed(&story, first, "bot-request:alpha").await,
+        "running"
+    );
+
+    // ── another app with the same grant does not, on a request that names the
+    //    first, one that names an app nobody serves, or one that names none ────
+    for (token, handle) in [
+        (second, "bot-request:alpha"),
+        (first, "bot-request:gamma"),
+        (second, "bot-request:gamma"),
+        (first, "bot-request:beta"),
+        (second, "bot-request:beta"),
+    ] {
+        let (status, body) = story.app_calls(token, "capture", seen(handle)).await;
+        assert_ne!(status, 200, "{handle}: {body}");
+    }
+    for handle in ["bot-request:gamma", "bot-request:beta"] {
+        assert_eq!(
+            observed(&story, first, handle).await,
+            serde_json::Value::Null,
+            "{handle} is as it was"
+        );
+    }
+    story.finish().await;
+}
+
+/// The status a request holds, as an app reads it with the token it holds.
+async fn observed(story: &Story, token: &str, handle: &str) -> serde_json::Value {
+    let (status, read) = story
+        .app_calls(token, "recall", json!({"subject": handle}))
+        .await;
+    assert_eq!(status, 200, "{read}");
+    read["objects"][0]["fields"]["observed_state"].clone()
 }
 
 /// **Taking a spec key off a request changes the spec, so it raises the
