@@ -1,7 +1,7 @@
 use super::*;
 
 /// The envelope the helpers wrap an event in: the operator, no run.
-fn envelope(payload: ClaimEvent) -> Event<ClaimEvent> {
+pub(super) fn envelope(payload: ClaimEvent) -> Event<ClaimEvent> {
     under(Some(Actor::Operator), None, payload)
 }
 
@@ -21,11 +21,11 @@ fn under(actor: Option<Actor>, run: Option<&str>, payload: ClaimEvent) -> Event<
     }
 }
 
-fn apply(state: &mut State, event: &ClaimEvent) {
+pub(super) fn apply(state: &mut State, event: &ClaimEvent) {
     state.apply(&envelope(event.clone()));
 }
 
-fn replay<'a>(events: impl IntoIterator<Item = &'a ClaimEvent>) -> State {
+pub(super) fn replay<'a>(events: impl IntoIterator<Item = &'a ClaimEvent>) -> State {
     let mut state = State::default();
     for event in events {
         apply(&mut state, event);
@@ -33,23 +33,23 @@ fn replay<'a>(events: impl IntoIterator<Item = &'a ClaimEvent>) -> State {
     state
 }
 
-fn object(name: &str) -> ObjectId {
+pub(super) fn object(name: &str) -> ObjectId {
     ObjectId(name.to_string())
 }
 
-fn record(name: &str) -> RecordId {
+pub(super) fn record(name: &str) -> RecordId {
     RecordId(name.to_string())
 }
 
-fn key(name: &str) -> KeyId {
+pub(super) fn key(name: &str) -> KeyId {
     KeyId(name.to_string())
 }
 
-fn day(d: i8) -> Date {
+pub(super) fn day(d: i8) -> Date {
     jiff::civil::date(2026, 4, d)
 }
 
-fn body(kind: &str, name: &str) -> ObjectBody {
+pub(super) fn body(kind: &str, name: &str) -> ObjectBody {
     ObjectBody {
         kind: KindId(kind.to_string()),
         parent: None,
@@ -62,7 +62,7 @@ fn body(kind: &str, name: &str) -> ObjectBody {
     }
 }
 
-fn claim(label: &str, home: &str, content: &str, on: i8) -> ClaimBody {
+pub(super) fn claim(label: &str, home: &str, content: &str, on: i8) -> ClaimBody {
     ClaimBody {
         label: label.to_string(),
         home: object(home),
@@ -85,14 +85,14 @@ fn claim(label: &str, home: &str, content: &str, on: i8) -> ClaimBody {
     }
 }
 
-fn created(id: &str, body: ClaimBody) -> ClaimEvent {
+pub(super) fn created(id: &str, body: ClaimBody) -> ClaimEvent {
     ClaimEvent::RecordCreated {
         record: record(id),
         claim: body,
     }
 }
 
-fn archived(id: &str, label: &str, home: &str) -> ClaimEvent {
+pub(super) fn archived(id: &str, label: &str, home: &str) -> ClaimEvent {
     ClaimEvent::RecordRevised {
         record: record(id),
         claim: ClaimBody {
@@ -102,7 +102,7 @@ fn archived(id: &str, label: &str, home: &str) -> ClaimEvent {
     }
 }
 
-fn write(id: &str, subject: &str, k: &str, ordinal: u64, value: &str) -> ClaimEvent {
+pub(super) fn write(id: &str, subject: &str, k: &str, ordinal: u64, value: &str) -> ClaimEvent {
     ClaimEvent::FieldWritten {
         record: record(id),
         subject: object(subject),
@@ -114,7 +114,7 @@ fn write(id: &str, subject: &str, k: &str, ordinal: u64, value: &str) -> ClaimEv
     }
 }
 
-fn clear(id: &str, subject: &str, k: &str, ordinal: u64) -> ClaimEvent {
+pub(super) fn clear(id: &str, subject: &str, k: &str, ordinal: u64) -> ClaimEvent {
     ClaimEvent::FieldWritten {
         record: record(id),
         subject: object(subject),

@@ -190,8 +190,13 @@ pub struct State {
     objects: BTreeMap<ObjectId, ObjectBody>,
     addresses: BTreeMap<String, ObjectId>,
     redirects: BTreeMap<ObjectId, ObjectId>,
+    /// The spellings an object answered to once and no longer does, for the
+    /// claim lookup. It is read only after the current spellings, so a spelling
+    /// bound again answers to its new object.
+    retired_addresses: BTreeMap<String, ObjectId>,
     records: BTreeMap<RecordId, Record>,
     streams: BTreeMap<(ObjectId, KeyId), Vec<Write>>,
+    indexes: indexes::Indexes,
 }
 
 impl State {
@@ -201,7 +206,9 @@ impl State {
         match &event.payload {
             ClaimEvent::ObjectCreated { object, body }
             | ClaimEvent::ObjectRevised { object, body } => {
+                let before = self.objects.get(object).map(|held| held.parent.clone());
                 self.objects.insert(object.clone(), body.clone());
+                self.index_object(object, before, &body.parent);
             }
             ClaimEvent::AddressBound { object, address } => {
                 self.addresses.insert(address.clone(), object.clone());
@@ -209,6 +216,8 @@ impl State {
             ClaimEvent::AddressRetired { object, address } => {
                 if self.addresses.get(address) == Some(object) {
                     self.addresses.remove(address);
+                    self.retired_addresses
+                        .insert(address.clone(), object.clone());
                 }
             }
             ClaimEvent::ObjectsMerged {
@@ -218,6 +227,7 @@ impl State {
                 writes,
             } => self.merge(folded, survivor, records, writes),
             ClaimEvent::RecordCreated { record, claim } => {
+                let before = self.records.get(record).map(|held| held.claim.clone());
                 self.records.insert(
                     record.clone(),
                     Record {
@@ -226,11 +236,13 @@ impl State {
                         revisions: 0,
                     },
                 );
+                self.index_record(record, before.as_ref(), claim);
             }
             ClaimEvent::RecordRevised { record, claim } => {
                 if let Some(held) = self.records.get_mut(record) {
-                    held.claim = claim.clone();
+                    let before = std::mem::replace(&mut held.claim, claim.clone());
                     held.revisions += 1;
+                    self.index_record(record, Some(&before), claim);
                 }
             }
             ClaimEvent::FieldWritten {
@@ -256,6 +268,7 @@ impl State {
                     run: event.run.clone(),
                     written_at: event.imported_source_time.or(event.written_at),
                 });
+                self.index_write(record, subject, key, *ordinal);
             }
         }
     }
@@ -267,6 +280,7 @@ impl State {
         records: &[MovedRecord],
         writes: &[MovedWrite],
     ) {
+        self.index_before_merge(records);
         self.redirects.insert(folded.clone(), survivor.clone());
         for address in self.addresses.values_mut() {
             if address == folded {
@@ -286,6 +300,8 @@ impl State {
             .cloned()
             .collect();
         for (subject, key) in keys {
+            let folded_key = (subject.clone(), key.clone());
+            let survivor_key = (survivor.clone(), key.clone());
             let Some(stream) = self.streams.remove(&(subject, key.clone())) else {
                 continue;
             };
@@ -303,7 +319,11 @@ impl State {
                 }
                 target.push(write);
             }
+            let highest = target.iter().map(|write| write.ordinal).max();
+            self.indexes
+                .moved_stream(&folded_key, &survivor_key, highest);
         }
+        self.index_after_merge(folded, survivor, records);
     }
 
     /// The state after `events`, from nothing.
@@ -357,36 +377,51 @@ impl State {
         let subject = self.survivor(subject);
         let mut out = Vec::new();
         for ((held, key), stream) in &self.streams {
-            if held != subject {
-                continue;
-            }
-            for write in stream {
-                if !memory::reaches_the_thing(write.class) {
-                    continue;
-                }
-                let Some(record) = self.records.get(&write.record) else {
-                    continue;
-                };
-                out.push(KeyWrite {
-                    key: key.0.clone(),
-                    ordinal: write.ordinal,
-                    value: match &write.write {
-                        FieldValue::Set(value) => Some(value.clone()),
-                        FieldValue::Clear => None,
-                    },
-                    fact: FactId(record.claim.label.clone()),
-                    status: record.claim.status,
-                    provenance: record.claim.provenance,
-                    standing: record.claim.standing,
-                    note: record.claim.details.clone(),
-                    recorded_by: record.claim.app.clone(),
-                    writer: write.writer.clone(),
-                    run: write.run.as_ref().map(|run| run.0.clone()),
-                    written_at: write.written_at,
-                });
+            if held == subject {
+                self.push_key_writes(key, stream, &mut out);
             }
         }
         out
+    }
+
+    /// The writes of one key of a subject, as [`Self::key_writes`] reads them.
+    fn key_writes_of(&self, subject: &ObjectId, key: &KeyId) -> Vec<KeyWrite> {
+        let mut out = Vec::new();
+        if let Some(stream) = self
+            .streams
+            .get(&(self.survivor(subject).clone(), key.clone()))
+        {
+            self.push_key_writes(key, stream, &mut out);
+        }
+        out
+    }
+
+    fn push_key_writes(&self, key: &KeyId, stream: &[Write], out: &mut Vec<KeyWrite>) {
+        for write in stream {
+            if !memory::reaches_the_thing(write.class) {
+                continue;
+            }
+            let Some(record) = self.records.get(&write.record) else {
+                continue;
+            };
+            out.push(KeyWrite {
+                key: key.0.clone(),
+                ordinal: write.ordinal,
+                value: match &write.write {
+                    FieldValue::Set(value) => Some(value.clone()),
+                    FieldValue::Clear => None,
+                },
+                fact: FactId(record.claim.label.clone()),
+                status: record.claim.status,
+                provenance: record.claim.provenance,
+                standing: record.claim.standing,
+                note: record.claim.details.clone(),
+                recorded_by: record.claim.app.clone(),
+                writer: write.writer.clone(),
+                run: write.run.as_ref().map(|run| run.0.clone()),
+                written_at: write.written_at,
+            });
+        }
     }
 
     /// **What the thing holds**: the one fold over the writes of its active
@@ -445,6 +480,9 @@ impl State {
             .collect()
     }
 }
+
+mod indexes;
+pub use indexes::Located;
 
 #[cfg(test)]
 mod tests;
