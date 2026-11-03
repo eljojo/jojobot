@@ -210,10 +210,11 @@ async fn a_manager_asks_for_a_bot_and_only_its_app_reports_on_it() {
 
 /// **Only the app a request names writes its status, whichever other app holds
 /// the same grant.** Two apps hold the same grant on the same kind and keys. The
-/// request names the first; a second request names an app that is not served; a
-/// third names none. The named app writes, and the other app, the app on the
-/// unserved name and both apps on the bare request are refused, and each refused
-/// write leaves the request as it was.
+/// request names the first; a second request names the second app; a third names
+/// an app that is not served; a fourth names none. The named app writes each of
+/// the first two. The other app, the app on the unserved name and both apps on
+/// the bare request are refused for the bound app, and each refused write leaves
+/// the request as it was.
 #[tokio::test]
 async fn only_the_app_a_request_names_writes_its_status() {
     let grant = || {
@@ -261,7 +262,20 @@ async fn only_the_app_a_request_names_writes_its_status() {
                    "source": "user-named"}),
         )
         .await;
-    let seen = |handle: &str| json!({"subject": handle, "content": "Seen.", "sets": {"observed_state": "running"}});
+    let mut names_second = spec("bot:homer", "machine:theta");
+    names_second["bound_app"] = json!(OTHER_APP);
+    marge
+        .call(
+            "add_entity",
+            json!({"kind": "bot-request", "handle": "epsilon", "name": "Homer on the second app",
+                   "source": "user-named", "sets": names_second}),
+        )
+        .await;
+    let reports = |handle: &str, state: &str| json!({"subject": handle, "content": "Seen.", "sets": {"observed_state": state}});
+    let seen = |handle: &str| reports(handle, "running");
+    // A refused write says a different state from the one held, so a read-back
+    // after it can tell the write was kept out.
+    let stopped = |handle: &str| reports(handle, "stopped");
 
     // ── the app the request names writes it ─────────────────────────────────
     let (written, body) = story
@@ -273,22 +287,43 @@ async fn only_the_app_a_request_names_writes_its_status() {
         "running"
     );
 
+    // ── the second app writes the request that names it, with the same grant ──
+    let (written, body) = story
+        .app_calls(second, "capture", seen("bot-request:epsilon"))
+        .await;
+    assert_eq!(written, 200, "{body}");
+    assert_eq!(
+        observed(&story, second, "bot-request:epsilon").await,
+        "running"
+    );
+
     // ── another app with the same grant does not, on a request that names the
-    //    first, one that names an app nobody serves, or one that names none ────
+    //    other, one that names an app nobody serves, or one that names none ────
     for (token, handle) in [
         (second, "bot-request:alpha"),
         (first, "bot-request:gamma"),
         (second, "bot-request:gamma"),
         (first, "bot-request:beta"),
         (second, "bot-request:beta"),
+        (first, "bot-request:epsilon"),
     ] {
-        let (status, body) = story.app_calls(token, "capture", seen(handle)).await;
+        let (status, body) = story.app_calls(token, "capture", stopped(handle)).await;
         assert_ne!(status, 200, "{handle}: {body}");
+        // The cause, not any failure: a bad token is refused too.
+        assert!(
+            body.to_string().contains("bound_app"),
+            "{handle} is refused for another cause: {body}"
+        );
     }
-    for handle in ["bot-request:gamma", "bot-request:beta"] {
+    for (handle, held) in [
+        ("bot-request:alpha", json!("running")),
+        ("bot-request:gamma", serde_json::Value::Null),
+        ("bot-request:beta", serde_json::Value::Null),
+        ("bot-request:epsilon", json!("running")),
+    ] {
         assert_eq!(
             observed(&story, first, handle).await,
-            serde_json::Value::Null,
+            held,
             "{handle} is as it was"
         );
     }
