@@ -259,16 +259,7 @@ impl FaultLog for Faulted {
     async fn restart(&self) {
         self.end_delayed(false).await;
         drop(self.current.lock().unwrap().take());
-        // The old owner's private connection still holds the lock until the
-        // store notices that it closed.
-        let mut opened = Self::open(self.store.clone(), self.port).await;
-        for _ in 0..50 {
-            if opened.is_ok() {
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-            opened = Self::open(self.store.clone(), self.port).await;
-        }
+        let opened = Self::open(self.store.clone(), self.port).await;
         *self.current.lock().unwrap() = Some(opened.unwrap());
     }
 }
