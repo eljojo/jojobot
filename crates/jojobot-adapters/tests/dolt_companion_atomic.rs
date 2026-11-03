@@ -13,7 +13,44 @@ use jiff::civil::date;
 use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::testing::{Scratch, free_port, migrated_database};
-use jojobot_domain::memory::{EntityId, Memory, NewEntity, NewFact, Provenance};
+use jojobot_domain::memory::{EntityId, Memory, MemoryError, NewEntity, NewFact, Provenance};
+use sqlx::MySqlPool;
+
+/// **How many rows each table of the database holds**, by table. It reads the
+/// rows themselves, not the store's API: a read of a handle that is not on the
+/// roster is refused before any claim is looked at, so it cannot say whether a
+/// claim row was left behind.
+async fn row_counts(pool: &MySqlPool) -> Vec<(String, i64)> {
+    let tables: Vec<String> = sqlx::query_scalar(
+        "SELECT table_name FROM information_schema.tables \
+         WHERE table_schema = DATABASE() ORDER BY table_name",
+    )
+    .fetch_all(pool)
+    .await
+    .expect("the tables read");
+    let mut counts = Vec::new();
+    for table in tables {
+        let (n,): (i64,) = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "SELECT COUNT(*) FROM `{table}`"
+        )))
+        .fetch_one(pool)
+        .await
+        .expect("the rows count");
+        counts.push((table, n));
+    }
+    counts
+}
+
+/// The rows of one table that belong to `thing`.
+async fn rows_of(pool: &MySqlPool, table: &str, column: &str, thing: &EntityId) -> i64 {
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT COUNT(*) FROM `{table}` WHERE `{column}` = ?"
+    )))
+    .bind(thing.as_str())
+    .fetch_one(pool)
+    .await
+    .expect("the rows count")
+}
 
 /// A first claim that sets the thing's ceiling to `ceiling`, and one companion.
 fn creation(thing: &EntityId, ceiling: &str) -> (NewEntity, NewFact) {
@@ -41,7 +78,7 @@ async fn a_companion_refused_inside_the_transaction_leaves_nothing() {
     let pool = migrated_database(&server, "companionatomic")
         .await
         .expect("a database of its own");
-    let memory = DoltMemory::open(pool);
+    let memory = DoltMemory::open(pool.clone());
     jojobot_domain::memory::kinds::seed(&memory)
         .await
         .expect("the kinds are seeded");
@@ -51,23 +88,32 @@ async fn a_companion_refused_inside_the_transaction_leaves_nothing() {
     // refuse it, after the thing and the first claim are in the batch.
     let thing = EntityId("work:theta".to_string());
     let (entity, first) = creation(&thing, "1");
+    let before = row_counts(&pool).await;
     let refused = memory.add_entity_with_first_claim(entity, first).await;
-    let said = format!("{refused:?}");
     assert!(
-        refused.map_or(true, |answer| answer.written().is_none()),
-        "the companion goes over the ceiling, so the creation does not land: {said}"
+        matches!(
+            &refused,
+            Err(MemoryError::OverCapacity { subject, live: 1, limit: 1, adding: 1, .. })
+                if subject.as_str() == "work:theta"
+        ),
+        "the companion goes over the ceiling of one, inside the batch: {refused:?}"
     );
     let roster = memory.list_entities(None).await.expect("the roster reads");
     assert!(
         roster.iter().all(|entity| entity.id != thing),
         "a companion refused inside the batch left {thing} on the roster: {roster:?}"
     );
-    assert!(
-        memory
-            .recall(&thing)
-            .await
-            .map_or(true, |facts| facts.is_empty()),
-        "a read of the handle finds a claim of a thing a refused batch made"
+    // **The claim rows are read from the tables.** The roster check above
+    // passes once the thing is gone, whatever happened to its claims.
+    assert_eq!(
+        row_counts(&pool).await,
+        before,
+        "a refused batch changed the rows of some table"
+    );
+    assert_eq!(
+        rows_of(&pool, "entity", "id", &thing).await,
+        0,
+        "the entity table holds a row of {thing} after a refused batch"
     );
 
     // **The same creation with room for the companion makes all three**, so the
@@ -80,6 +126,38 @@ async fn a_companion_refused_inside_the_transaction_leaves_nothing() {
         .expect("the creation is allowed")
         .written()
         .expect("nothing collides with it");
+    // The same reading sees the rows a creation makes, so the zero above is
+    // an absence and not a table this reading cannot see.
+    // Claims are keyed by the thing's badge, not its handle.
+    let badge: String = sqlx::query_scalar("SELECT badge FROM entity WHERE id = ?")
+        .bind(roomy.as_str())
+        .fetch_one(&pool)
+        .await
+        .expect("the thing has a badge");
+    for table in ["fact", "fact_write"] {
+        let (n,): (i64,) = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "SELECT COUNT(*) FROM `{table}` WHERE entity = ?"
+        )))
+        .bind(&badge)
+        .fetch_one(&pool)
+        .await
+        .expect("the rows count");
+        assert_eq!(n, 2, "{table} holds the first claim and the companion");
+    }
+    let after = row_counts(&pool).await;
+    for table in ["entity", "fact", "fact_write"] {
+        let count = |counts: &[(String, i64)]| {
+            counts
+                .iter()
+                .find(|(name, _)| name == table)
+                .map(|(_, n)| *n)
+        };
+        assert_ne!(
+            count(&after),
+            count(&before),
+            "a creation moves the row count of {table}, so the snapshot sees it"
+        );
+    }
     assert!(
         memory
             .list_entities(None)
