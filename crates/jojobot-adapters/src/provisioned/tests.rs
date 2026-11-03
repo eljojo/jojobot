@@ -1575,3 +1575,112 @@ async fn a_build_that_stops_supplying_leaves_the_operators_text_alone() {
     let dropped = Provisioned::new(store.inner, Provisions::default());
     assert_eq!(read(&dropped, &bot).await, "Gamma files the weekly note.");
 }
+
+/// **A claim written beside a retraction or an edit faces the overlay-key
+/// screen a capture faces.** The keys jojobot keeps a supplied record's name
+/// under are set by the update that names it, which screens them; a companion
+/// claim that set them would skip the screen. The refusal comes before the
+/// store beneath is asked, so the claim taken back is still standing.
+/// **Paired with a plain companion, which still lands**: a layer that refused
+/// every companion would pass the refusals identically.
+#[tokio::test]
+async fn the_claim_beside_a_retraction_or_an_edit_cannot_set_the_overlay_keys() {
+    use jojobot_domain::memory::{FactPatch, FactStatus};
+    let keys = jojobot_domain::memory::owned::OVERLAY_NAME;
+    let id = EntityId("thing:merge-kept".into());
+    let day = Date::constant(2026, 6, 13);
+    let caller = EntityId("bot:sigma".into());
+    let store = InMemoryMemory::booted();
+    store
+        .add_entity(jojobot_domain::memory::NewEntity::new(
+            id.clone(),
+            "merge-kept",
+            "the operator",
+        ))
+        .await
+        .expect("the operator's own thing is created")
+        .written()
+        .expect("an empty board blocks nothing");
+    let mut addresses = Vec::new();
+    for words in [
+        "to take back",
+        "to edit",
+        "to edit again",
+        "to take back too",
+    ] {
+        let made = store
+            .capture(NewFact::about(id.clone(), words, day))
+            .await
+            .expect("a claim lands")
+            .written()
+            .expect("nothing blocks it");
+        addresses.push(made.address());
+    }
+    let over = Provisioned::new(store, Provisions::new(vec![shipped_record("loops")]));
+    let beside = |words: &str, overlay: bool| {
+        let mut claim = NewFact::about(id.clone(), words, day);
+        if overlay {
+            claim.fields.insert(keys.to_string(), "Sneaked".to_string());
+            claim.sets.insert(keys.to_string());
+        }
+        claim
+    };
+
+    let retract = over
+        .retract_with_claim(
+            &addresses[0],
+            None,
+            day,
+            &caller,
+            None,
+            beside("beside", true),
+        )
+        .await;
+    assert!(
+        matches!(retract, Err(MemoryError::InvalidFact(_))),
+        "a retraction whose claim sets the overlay's key is refused: {retract:?}"
+    );
+    let edit_claim = over
+        .update_fact_with_claim(
+            &addresses[1],
+            FactPatch::default(),
+            &caller,
+            beside("beside", true),
+        )
+        .await;
+    assert!(
+        matches!(edit_claim, Err(MemoryError::InvalidFact(_))),
+        "an edit whose claim sets the overlay's key is refused: {edit_claim:?}"
+    );
+    let mut patch = FactPatch::default();
+    patch.fields.insert(keys.to_string(), "Sneaked".to_string());
+    let edit_patch = over
+        .update_fact_with_claim(&addresses[2], patch, &caller, beside("beside", false))
+        .await;
+    assert!(
+        matches!(edit_patch, Err(MemoryError::InvalidFact(_))),
+        "an edit whose patch sets the overlay's key is refused: {edit_patch:?}"
+    );
+    let held = over.recall(&id).await.expect("recall reads");
+    assert!(
+        held.iter().all(|fact| fact.status == FactStatus::Active),
+        "nothing was taken back or edited: {held:?}"
+    );
+    assert!(
+        held.iter().all(|fact| fact.content != "beside"),
+        "no companion landed: {held:?}"
+    );
+
+    over.retract_with_claim(
+        &addresses[3],
+        None,
+        day,
+        &caller,
+        None,
+        beside("beside", false),
+    )
+    .await
+    .expect("a plain companion passes through")
+    .written()
+    .expect("nothing blocks it");
+}

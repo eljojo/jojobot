@@ -831,6 +831,7 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
         session: Option<&str>,
         claim: NewFact,
     ) -> Result<Guarded<(Retraction, Fact)>, MemoryError> {
+        Self::refuse_overlay_keys(claim.fields.keys())?;
         self.inner
             .retract_with_claim(address, reason, date, caller, session, claim)
             .await
