@@ -216,13 +216,18 @@ pub async fn a_full_room_is_refused_before_a_full_thread<M: Memory>(store: &M) {
 }
 
 /// **A claim's missing source is told before a taken role is.** A rival claims a
-/// role whose lease is fresh, and the claim names a source nobody holds. The
-/// answer names the source, so a caller that fixes it then meets the held role.
+/// role whose lease is fresh, and the claim cites a claim nobody holds on a home
+/// that exists. The answer names the claim, so a caller that fixes it then meets
+/// the held role. **The home is known so that the fake's lowering of the citation
+/// holds beneath the check**: with the home missing, an order change would stop at
+/// that lowering and never reach the lease decision.
 pub async fn a_missing_source_is_refused_before_a_held_role<M: Memory>(store: &M) {
     let bot = EntityId("bot:contract-order-lease-bot".into());
     let role = EntityId("role:contract-order-lease".into());
     let source = EntityId("thing:contract-order-no-source".into());
+    let cited = FactAddress::new(source.clone(), FactId("f99".into()));
     ensure(store, &bot).await;
+    ensure(store, &source).await;
     super::support::add(
         store,
         NewEntity {
@@ -251,11 +256,11 @@ pub async fn a_missing_source_is_refused_before_a_held_role<M: Memory>(store: &M
         .await
         .expect("the first claim lands");
     let rival = NewFact {
-        derived_from: Some(FactAddress::new(source.clone(), FactId("f1".into()))),
+        derived_from: Some(cited.clone()),
         ..claim("epsilon")
     };
     match store.capture(rival).await {
-        Err(MemoryError::UnknownEntity { attempted, .. }) if attempted == source.as_str() => {}
+        Err(MemoryError::UnknownFact { attempted, .. }) if attempted == cited.to_string() => {}
         other => panic!("the missing source is judged before the held role, got {other:?}"),
     }
 }
