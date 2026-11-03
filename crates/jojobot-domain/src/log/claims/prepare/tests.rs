@@ -108,7 +108,7 @@ fn two_faults_are_told_in_the_order() {
         Row {
             name: "a missing subject before a missing edge object",
             request: CaptureRequest {
-                edge: Some((EdgeShape::About, "ghost".into())),
+                edge: Some((EdgeShape::About, "thing:omega".into())),
                 ..request("nobody")
             },
             refused: Refusal::UnknownSubject("nobody".into()),
@@ -116,11 +116,11 @@ fn two_faults_are_told_in_the_order() {
         Row {
             name: "a missing edge object before a missing ref",
             request: CaptureRequest {
-                edge: Some((EdgeShape::About, "ghost".into())),
+                edge: Some((EdgeShape::About, "thing:omega".into())),
                 refs: vec!["phantom".into()],
                 ..request("alpha")
             },
-            refused: Refusal::UnknownEdgeObject("ghost".into()),
+            refused: Refusal::UnknownEdgeObject("thing:omega".into()),
         },
         Row {
             name: "a missing ref before a missing reference field object",
@@ -413,6 +413,26 @@ fn a_number_stays_retired_after_its_container_is_merged() {
     );
 }
 
+/// **An edge the shape cannot point at is told before the object is looked
+/// up**: both stores judge the spelling first, so a missing object behind a
+/// wrong shape is an invalid edge, not an absent one.
+#[test]
+fn an_edge_the_shape_cannot_hold_is_told_before_its_object_is_looked_up() {
+    let (state, declared) = world();
+    let located = |object: &str| CaptureRequest {
+        edge: Some((EdgeShape::Location, object.into())),
+        ..request("alpha")
+    };
+    assert!(matches!(
+        prepare(&state, &declared, &located("thing:omega")),
+        Err(Refusal::Invalid(MemoryError::InvalidEdge(_)))
+    ));
+    assert!(matches!(
+        prepare(&state, &declared, &located("place:omega")),
+        Err(Refusal::UnknownEdgeObject(_))
+    ));
+}
+
 /// A `promise` named `promise:alpha`, holding `promised_by` when it is given
 /// one; the kind requires that key.
 fn promise_world(promised_by: Option<&str>) -> (State, Vec<DeclaredType>) {
@@ -661,7 +681,7 @@ fn a_missing_subject_is_told_before_an_owned_key_and_that_before_a_missing_edge(
         Err(Refusal::UnknownSubject("nobody".into()))
     );
     let both = CaptureRequest {
-        edge: Some((EdgeShape::About, "ghost".into())),
+        edge: Some((EdgeShape::About, "thing:omega".into())),
         ..writing("bound", "state", Actor::Operator, false)
     };
     assert_eq!(

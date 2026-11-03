@@ -254,6 +254,15 @@ pub fn prepare(
         memory::validate_write_subject(&subject_spelling).map_err(Refusal::Invalid)?;
     }
     memory::validate_content(&request.draft.content).map_err(Refusal::Invalid)?;
+    // The edge's spelling: its grammar and the kind its shape asks for, before
+    // anything is looked up, as both stores read a new fact.
+    if let Some((shape, object)) = &request.edge {
+        memory::validate_edge(&Edge {
+            shape: *shape,
+            object: EntityId(object.clone()),
+        })
+        .map_err(Refusal::Invalid)?;
+    }
     memory::validate_happened_span(request.draft.happened_at, request.draft.happened_through)
         .map_err(Refusal::Invalid)?;
     memory::validate_fields(&request.fields).map_err(Refusal::Invalid)?;
