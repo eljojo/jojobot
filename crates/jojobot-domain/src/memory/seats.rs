@@ -104,9 +104,9 @@ pub fn refuses_a_star(
         return None;
     }
     let starred = in_force.iter().filter(|rule| is_starred(rule)).count();
-    match fits(seats, starred, 1, false) {
-        Fits::Yes | Fits::OnTheReserve => None,
-        Fits::No => Some(MemoryError::SeatsFull {
+    match star_has_no_seat(seats, starred) {
+        false => None,
+        true => Some(MemoryError::SeatsFull {
             subject: bot.to_string(),
             seats,
             starred,
@@ -115,6 +115,27 @@ pub fn refuses_a_star(
             // them and never asks for more choices than it lists.
             seated: starred_by_age(in_force).into_iter().cloned().collect(),
         }),
+    }
+}
+
+/// **Whether one more star finds no seat**, given how many are in use. The
+/// decision over a count, so a caller that holds the rules in any shape asks the
+/// one admission.
+pub fn star_has_no_seat(seats: usize, starred: usize) -> bool {
+    matches!(fits(seats, starred, 1, false), Fits::No)
+}
+
+/// **A seat count a write names, as a number or as the refusal it earns.** A count
+/// that is no whole number above zero is refused before any read.
+pub fn seat_count_written(written: Option<&str>) -> Result<Option<usize>, MemoryError> {
+    match written {
+        None => Ok(None),
+        Some(written) => match written.trim().parse::<usize>() {
+            Ok(seats) if seats > 0 => Ok(Some(seats)),
+            _ => Err(MemoryError::InvalidFact(format!(
+                "rule_seats holds a whole number above zero, and '{written}' is not one"
+            ))),
+        },
     }
 }
 

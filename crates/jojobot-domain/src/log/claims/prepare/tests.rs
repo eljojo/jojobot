@@ -4,7 +4,7 @@ use super::super::tests::{
     apply, archived, body, claim, created, day, object, record, replay, write,
 };
 use super::super::{ClaimEvent, ObjectBody, State};
-use super::{CaptureRequest, Door, Draft, Refusal, Route, prepare};
+use super::{BootFloor, CaptureRequest, ClaimSize, Door, Draft, Measures, Refusal, Route, prepare};
 use crate::actor::Actor;
 use crate::app::AppId;
 use crate::memory::numbered::NUMBERS_BY;
@@ -50,6 +50,7 @@ fn request(subject: &str) -> CaptureRequest {
             actor: Actor::Operator,
             owned_keys: BTreeSet::new(),
             owner_revoked: false,
+            measures: Measures::default(),
         },
         subject: subject.to_string(),
         draft: Draft {
@@ -432,6 +433,7 @@ fn writing(subject: &str, key: &str, actor: Actor, revoked: bool) -> CaptureRequ
             actor,
             owned_keys: BTreeSet::from(["state".to_string()]),
             owner_revoked: revoked,
+            measures: Measures::default(),
         },
         fields: BTreeMap::from([(key.into(), "v".into())]),
         ..request(subject)
@@ -575,6 +577,7 @@ fn by_bot(subject: &str, caller: &str, key: &str, value: &str) -> CaptureRequest
             actor: Actor::Bot(crate::memory::EntityId(caller.to_string())),
             owned_keys: BTreeSet::new(),
             owner_revoked: false,
+            measures: Measures::default(),
         },
         fields: BTreeMap::from([(key.into(), value.into())]),
         ..request(subject)
@@ -878,5 +881,212 @@ fn an_edge_points_at_the_kind_its_shape_names() {
     assert!(matches!(
         prepare(&state, &[], &located("person:gamma")),
         Err(Refusal::Invalid(MemoryError::InvalidEdge(_)))
+    ));
+}
+
+/// A bot `alpha` with `seats` seats and one starred rule, and a thing `beta`.
+fn seated_world(seats: &str) -> State {
+    let events = [
+        vec![
+            ClaimEvent::ObjectCreated {
+                object: object("bot:alpha"),
+                body: body("bot", "Alpha"),
+            },
+            ClaimEvent::AddressBound {
+                object: object("bot:alpha"),
+                address: "bot:alpha".to_string(),
+            },
+            created("r0", claim("f1", "bot:alpha", "settings", 1)),
+            write("r0", "bot:alpha", crate::memory::RULE_SEATS, 1, seats),
+            created("r1", claim("f2", "bot:alpha", "a rule", 1)),
+            write("r1", "bot:alpha", "starred", 1, "true"),
+        ],
+        thing("beta"),
+    ]
+    .concat();
+    replay(&events)
+}
+
+fn starring(subject: &str) -> CaptureRequest {
+    CaptureRequest {
+        fields: BTreeMap::from([("starred".into(), "true".into())]),
+        ..request(subject)
+    }
+}
+
+/// **A star into full seats is refused, naming the rules that hold them.**
+#[test]
+fn a_star_into_full_seats_is_refused() {
+    crate::memory::kinds::load_shipped();
+    let full = seated_world("1");
+    match prepare(&full, &[], &starring("bot:alpha")) {
+        Err(Refusal::SeatsFull {
+            seats,
+            starred,
+            seated,
+            ..
+        }) => {
+            assert_eq!((seats, starred), (1, 1));
+            assert_eq!(seated.len(), 1);
+            assert_eq!(seated[0].label, "f2");
+        }
+        other => panic!("expected full seats, got {other:?}"),
+    }
+    let room = seated_world("2");
+    assert!(prepare(&room, &[], &starring("bot:alpha")).is_ok());
+    // A thought takes no seat, and a thing that is no bot has none to fill.
+    let thought = CaptureRequest {
+        edge: Some((EdgeShape::Connection, "bot:alpha".into())),
+        ..starring("bot:alpha")
+    };
+    assert!(prepare(&full, &[], &thought).is_ok());
+    assert!(prepare(&full, &[], &starring("beta")).is_ok());
+}
+
+fn measured(change: impl FnOnce(&mut Measures)) -> Door {
+    let mut door = request("alpha").door;
+    change(&mut door.measures);
+    door
+}
+
+/// **A boot over its ceiling that the write made bigger is refused**, and a
+/// boot already over stays repairable by every write that does not grow it.
+#[test]
+fn a_write_that_grows_a_boot_past_its_ceiling_is_refused() {
+    crate::memory::kinds::load_shipped();
+    let state = seated_world("3");
+    let budget = crate::text::BOOT_ANSWER.budget;
+    let floor = |before: usize, after: usize| {
+        Some(BootFloor {
+            after,
+            before,
+            parts: vec![("charter".into(), after)],
+            stamp_margin: 7,
+        })
+    };
+    let asking = |floor: Option<BootFloor>, request: CaptureRequest| CaptureRequest {
+        door: measured(|measures| measures.boot_floor = floor),
+        ..request
+    };
+    match prepare(
+        &state,
+        &[],
+        &asking(floor(budget, budget + 1), starring("bot:alpha")),
+    ) {
+        Err(Refusal::Invalid(MemoryError::BootTooHeavy {
+            floor,
+            budget: held,
+            stamp_margin,
+            ..
+        })) => assert_eq!((floor, held, stamp_margin), (budget + 1, budget, 7)),
+        other => panic!("expected a heavy boot, got {other:?}"),
+    }
+    // Not grown, not over, not measured, or a write that grows no floor.
+    for (name, request) in [
+        (
+            "already over",
+            asking(floor(budget + 1, budget + 1), starring("bot:alpha")),
+        ),
+        ("within", asking(floor(0, budget), starring("bot:alpha"))),
+        ("unmeasured", asking(None, starring("bot:alpha"))),
+        (
+            "no star and no seats",
+            asking(
+                floor(0, budget + 9),
+                CaptureRequest {
+                    fields: BTreeMap::from([("note".into(), "x".into())]),
+                    ..request("bot:alpha")
+                },
+            ),
+        ),
+        ("not a bot", asking(floor(0, budget + 9), starring("beta"))),
+    ] {
+        assert!(prepare(&state, &[], &request).is_ok(), "{name}");
+    }
+    let seats = |value: &str| CaptureRequest {
+        fields: BTreeMap::from([(crate::memory::RULE_SEATS.into(), value.into())]),
+        ..request("bot:alpha")
+    };
+    assert!(matches!(
+        prepare(&state, &[], &asking(floor(0, budget + 9), seats("4"))),
+        Err(Refusal::Invalid(MemoryError::BootTooHeavy {
+            stamp_margin: 0,
+            ..
+        }))
+    ));
+    assert!(matches!(
+        prepare(&state, &[], &seats("many")),
+        Err(Refusal::Invalid(MemoryError::InvalidFact(_)))
+    ));
+}
+
+/// **A claim no answer could carry is refused**, and the thing's row is named
+/// when the row is the cause.
+#[test]
+fn a_claim_too_big_for_one_answer_is_refused() {
+    let (state, declared) = world();
+    let sized = |size: usize, row: Option<(usize, usize)>| CaptureRequest {
+        door: measured(|measures| {
+            measures.claim = Some(ClaimSize {
+                size,
+                room: 100,
+                row,
+            })
+        }),
+        ..request("alpha")
+    };
+    assert!(prepare(&state, &declared, &sized(100, None)).is_ok());
+    assert_eq!(
+        prepare(&state, &declared, &sized(101, None)),
+        Err(Refusal::Invalid(MemoryError::ClaimTooLarge {
+            subject: "alpha".into(),
+            size: 101,
+            room: 100
+        }))
+    );
+    assert_eq!(
+        prepare(&state, &declared, &sized(101, Some((150, 100)))),
+        Err(Refusal::Invalid(MemoryError::ThingTooLarge {
+            subject: "alpha".into(),
+            size: 150,
+            room: 100
+        }))
+    );
+}
+
+/// **The three limits are told in the order the verb asks them.**
+#[test]
+fn the_limits_are_told_in_order() {
+    crate::memory::kinds::load_shipped();
+    let state = seated_world("1");
+    let budget = crate::text::BOOT_ANSWER.budget;
+    let both = |floor: bool, claim: bool| CaptureRequest {
+        door: measured(|measures| {
+            measures.boot_floor = floor.then(|| BootFloor {
+                after: budget + 1,
+                before: 0,
+                parts: Vec::new(),
+                stamp_margin: 0,
+            });
+            measures.claim = claim.then_some(ClaimSize {
+                size: 2,
+                room: 1,
+                row: None,
+            });
+        }),
+        ..starring("bot:alpha")
+    };
+    assert!(matches!(
+        prepare(&state, &[], &both(true, true)),
+        Err(Refusal::Invalid(MemoryError::BootTooHeavy { .. }))
+    ));
+    assert!(matches!(
+        prepare(&state, &[], &both(false, true)),
+        Err(Refusal::SeatsFull { .. })
+    ));
+    let roomy = seated_world("2");
+    assert!(matches!(
+        prepare(&roomy, &[], &both(false, true)),
+        Err(Refusal::Invalid(MemoryError::ClaimTooLarge { .. }))
     ));
 }

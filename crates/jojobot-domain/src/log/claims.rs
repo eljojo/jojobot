@@ -513,7 +513,9 @@ mod indexes;
 mod prepare;
 mod rules;
 pub use indexes::Located;
-pub use prepare::{Admitted, CaptureRequest, Door, Draft, Refusal, Route, prepare};
+pub use prepare::{
+    Admitted, BootFloor, CaptureRequest, ClaimSize, Door, Draft, Measures, Refusal, Route, prepare,
+};
 pub use rules::StarredRule;
 
 #[cfg(test)]

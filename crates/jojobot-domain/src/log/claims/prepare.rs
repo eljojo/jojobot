@@ -23,9 +23,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use jiff::civil::Date;
 
 mod chart;
+mod limits;
 mod numbering;
 
-use super::{ClaimBody, ClaimEvent, FieldValue, KeyId, ObjectId, RecordId, State};
+use super::{ClaimBody, ClaimEvent, FieldValue, KeyId, ObjectId, RecordId, StarredRule, State};
 use crate::actor::Actor;
 use crate::app::AppStamp;
 use crate::attention;
@@ -33,6 +34,7 @@ use crate::memory::{
     self, Edge, EdgeShape, EntityId, FactStatus, MemoryError, Provenance, Standing, WriteClass,
     receipt::Receipt, types::DeclaredType,
 };
+pub use limits::{BootFloor, ClaimSize, Measures};
 
 /// **Which door the request came through.** The verb is the caller-facing
 /// surface; the engine writes its own records, and some of them carry keys the
@@ -53,6 +55,8 @@ pub struct Door {
     pub actor: Actor,
     pub owned_keys: BTreeSet<String>,
     pub owner_revoked: bool,
+    /// The sizes the server measured for this request.
+    pub measures: Measures,
 }
 
 /// **What the caller decided about the claim itself**, as opposed to where it
@@ -126,6 +130,13 @@ pub enum Refusal {
     /// do not name: a value that is no number, a number a member would free, a
     /// collection founded over members that break its promise.
     Numbering(MemoryError),
+    /// A star into full seats: every rule that holds a seat, oldest first.
+    SeatsFull {
+        subject: String,
+        seats: usize,
+        starred: usize,
+        seated: Vec<StarredRule>,
+    },
     /// The write is malformed on its own. Carries the words the caller reads.
     Malformed(String),
     /// An input the claim itself gets wrong: a subject that is no place to
@@ -367,6 +378,17 @@ pub fn prepare(
     // The last fault in the order: it needs the subject and nothing else.
     if let Some(refused) = numbering::refuses(state, declared, &home, request) {
         return Err(refused);
+    }
+
+    // What the claim may not grow past, in the order the verb asks it.
+    if let Some(refused) = limits::refuses_a_boot_floor(state, &home, request) {
+        return Err(Refusal::Invalid(refused));
+    }
+    if let Some(refused) = limits::refuses_a_star(state, declared, &home, request) {
+        return Err(refused);
+    }
+    if let Some(refused) = limits::refuses_a_claim_too_big(state, &home, request) {
+        return Err(Refusal::Invalid(refused));
     }
 
     let draft = &request.draft;
