@@ -90,6 +90,69 @@ pub(crate) async fn lost_commit_reply_proxy_when(
     (port, dropped, proxy)
 }
 
+/// **A proxy that holds the server's answer to the tail read.** The read runs at
+/// the store, and its answer waits until `release` is signalled; `reached` is
+/// signalled when it has run. The tail read is recognised by its statement text.
+pub(crate) async fn held_tail_reply_proxy(
+    upstream: u16,
+) -> (
+    u16,
+    Arc<tokio::sync::Notify>,
+    Arc<tokio::sync::Notify>,
+    tokio::task::JoinHandle<()>,
+) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let reached = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    let (signal, gate) = (reached.clone(), release.clone());
+    let proxy = tokio::spawn(async move {
+        while let Ok((client, _)) = listener.accept().await {
+            let (signal, gate) = (signal.clone(), gate.clone());
+            tokio::spawn(async move {
+                let upstream = tokio::net::TcpStream::connect(("127.0.0.1", upstream)).await?;
+                let (mut from_client, mut to_client) = client.into_split();
+                let (mut from_server, mut to_server) = upstream.into_split();
+                let prepared = AtomicBool::new(false);
+                let holding = AtomicBool::new(false);
+                let requests = async {
+                    loop {
+                        let bytes = packet(&mut from_client).await?;
+                        let text = String::from_utf8_lossy(&bytes[5..]);
+                        // 0x16 prepares and 0x17 executes a statement.
+                        if bytes[4] == 0x16 && text.contains("MAX(last_position)") {
+                            prepared.store(true, Ordering::SeqCst);
+                        } else if bytes[4] == 0x17 && prepared.swap(false, Ordering::SeqCst) {
+                            holding.store(true, Ordering::SeqCst);
+                        }
+                        to_server.write_all(&bytes).await?;
+                    }
+                    #[allow(unreachable_code)]
+                    Ok::<_, std::io::Error>(())
+                };
+                let replies = async {
+                    loop {
+                        let bytes = packet(&mut from_server).await?;
+                        if holding.swap(false, Ordering::SeqCst) {
+                            signal.notify_one();
+                            gate.notified().await;
+                        }
+                        to_client.write_all(&bytes).await?;
+                    }
+                    #[allow(unreachable_code)]
+                    Ok::<(), std::io::Error>(())
+                };
+                let _ = tokio::try_join!(requests, replies);
+                Ok::<_, std::io::Error>(())
+            });
+        }
+    });
+    (port, reached, release, proxy)
+}
+
 /// One batch put into the table and committed on the caller's own transaction,
 /// as the owner does it, with the head moved after the acknowledged COMMIT.
 async fn appended(log: &DoltLog, pool: &MySqlPool, head: Position, batch: &SealedBatch) {
@@ -270,13 +333,28 @@ async fn the_tail_is_read_once_for_any_number_of_writes() {
 #[tokio::test]
 async fn an_older_settle_read_never_moves_the_head_back() {
     let (_scratch, mut server, pool, log) = fixture().await;
-    // The read a settle made while the log held nothing.
+    let (port, reached, release, _proxy) =
+        held_tail_reply_proxy(pool.connect_options().get_port()).await;
+    let reader = sqlx::mysql::MySqlPoolOptions::new()
+        .max_connections(1)
+        .connect_lazy_with((*pool.connect_options()).clone().port(port));
+    // The settle runs the tail read through the proxy, which holds its answer.
+    let settling = {
+        let (log, reader) = (log.clone(), reader.clone());
+        tokio::spawn(async move { log.settle(&reader).await })
+    };
+    tokio::time::timeout(Duration::from_secs(10), reached.notified())
+        .await
+        .expect("the settle's tail read reached the store");
+    // The read has run against an empty log; an append commits while its answer
+    // is held.
     let older_read = 0;
     let newer = batch("newer", 0, &[b"a"]);
     appended(&log, &pool, Position(0), &newer).await;
     let moved_to = newer.range().last.0;
     assert!(moved_to > older_read, "the append moved the head");
-    assert_eq!(log.hold_read(older_read), moved_to);
+    release.notify_one();
+    settling.await.unwrap().unwrap();
     assert_eq!(
         *log.0.head.lock().unwrap(),
         Some(moved_to),
