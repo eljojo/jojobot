@@ -65,6 +65,9 @@ pub struct Door {
     pub runs: BTreeMap<RunId, EntityId>,
     /// The run the request is written in, for a writer that is no bot of its own.
     pub run: Option<RunId>,
+    /// The moment before which a thought untouched since has gone quiet: the
+    /// bot's own ageing threshold, read from its runs.
+    pub aged_before: Option<jiff::Timestamp>,
 }
 
 /// **What the caller decided about the claim itself**, as opposed to where it
@@ -107,6 +110,8 @@ pub struct CaptureRequest {
     pub derived_from: Option<String>,
     /// Spend the one-record reserve over a full ceiling.
     pub borrow: bool,
+    /// The thought to give up when the room is full, and why.
+    pub drop: Option<(String, String)>,
 }
 
 /// **The one answer a refused request gets.** Each variant names the first
@@ -146,6 +151,14 @@ pub enum Refusal {
         seats: usize,
         starred: usize,
         seated: Vec<StarredRule>,
+    },
+    /// The room of thoughts is full and the write names no thought it may drop.
+    RoomFull {
+        subject: String,
+        live: usize,
+        capacity: usize,
+        aged_out: usize,
+        room: Vec<HeldRecord>,
     },
     /// The thing holds as many live records as its ceiling allows.
     OverCapacity {
@@ -417,7 +430,15 @@ pub fn prepare(
     if let Some(refused) = limits::refuses_a_thought_over_cap(state, declared, &home, request) {
         return Err(Refusal::Invalid(refused));
     }
-    if let Some(refused) = limits::refuses_over_the_ceiling(state, declared, &home, request) {
+    // A full room gives up the thought the write names, in the same act.
+    let dropped = limits::room_for_a_thought(state, declared, &home, request)?;
+    if let Some(refused) = limits::refuses_over_the_ceiling(
+        state,
+        declared,
+        &home,
+        request,
+        dropped.as_ref().map(|(record, _)| record),
+    ) {
         return Err(refused);
     }
 
@@ -442,10 +463,11 @@ pub fn prepare(
         app: draft.app.clone(),
         inserted_at: None,
     };
-    let mut events = vec![ClaimEvent::RecordCreated {
+    let mut events: Vec<ClaimEvent> = dropped.into_iter().map(|(_, archive)| archive).collect();
+    events.push(ClaimEvent::RecordCreated {
         record: request.record.clone(),
         claim,
-    }];
+    });
     for (key, value) in &request.fields {
         let key = KeyId(key.trim().to_string());
         events.push(ClaimEvent::FieldWritten {

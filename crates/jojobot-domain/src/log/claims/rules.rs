@@ -65,6 +65,17 @@ impl State {
         live
     }
 
+    /// **When a claim was last touched**: the newest moment the store took in a
+    /// write of the claim. A claim with no recorded write moment is never quiet.
+    pub fn last_touched(&self, record: &RecordId) -> Option<jiff::Timestamp> {
+        self.streams
+            .values()
+            .flatten()
+            .filter(|write| &write.record == record)
+            .filter_map(|write| write.written_at)
+            .max()
+    }
+
     /// Whether the record wrote any of the keys on the thing.
     fn writes_a_key(&self, home: &ObjectId, record: &RecordId, keys: &[&str]) -> bool {
         self.streams.iter().any(|((subject, key), stream)| {

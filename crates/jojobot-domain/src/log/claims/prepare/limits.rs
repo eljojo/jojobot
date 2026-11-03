@@ -7,7 +7,7 @@
 //! the room". A size the door could not measure is not a size known to be over,
 //! and it passes.
 
-use super::super::{ObjectId, StarredRule, State};
+use super::super::{ClaimEvent, HeldRecord, ObjectId, RecordId, StarredRule, State};
 use super::{CaptureRequest, Refusal};
 use crate::actor::Actor;
 use crate::memory::{
@@ -213,6 +213,7 @@ pub(super) fn refuses_over_the_ceiling(
     declared: &[DeclaredType],
     home: &ObjectId,
     request: &CaptureRequest,
+    dropped: Option<&RecordId>,
 ) -> Option<Refusal> {
     let kind = state
         .object(home)
@@ -223,7 +224,8 @@ pub(super) fn refuses_over_the_ceiling(
     if adding == 0 {
         return None;
     }
-    let live = state.live_records(home);
+    let mut live = state.live_records(home);
+    live.retain(|held| Some(&held.record) != dropped);
     match capacity::fits(ceiling.limit, live.len(), adding, request.borrow) {
         capacity::Fits::Yes | capacity::Fits::OnTheReserve => None,
         capacity::Fits::No => Some(Refusal::OverCapacity {
@@ -234,4 +236,106 @@ pub(super) fn refuses_over_the_ceiling(
             records: live,
         }),
     }
+}
+
+/// **Whether another bot wrote a claim already in the state**: the bot its first
+/// write names, else the bot its run belongs to, when that bot is not the thing.
+fn record_by_another(
+    state: &State,
+    home: &ObjectId,
+    record: &super::super::Record,
+    request: &CaptureRequest,
+) -> bool {
+    let writer = match &record.first_writer {
+        Some(Actor::Bot(bot)) => Some(bot),
+        _ => record
+            .first_run
+            .as_ref()
+            .and_then(|run| request.door.runs.get(run)),
+    };
+    writer
+        .and_then(|bot| state.resolve(bot.as_str()))
+        .is_some_and(|bot| bot != state.survivor(home))
+}
+
+/// **A thought joining a full room gives up one the write names, or spends the
+/// reserve, or is refused.** The room counts the thoughts the thing keeps that
+/// have not gone quiet. Giving one up archives it in the same act, with the
+/// reason as its details: the archive is the first event.
+pub(super) fn room_for_a_thought(
+    state: &State,
+    declared: &[DeclaredType],
+    home: &ObjectId,
+    request: &CaptureRequest,
+) -> Result<Option<(RecordId, ClaimEvent)>, Refusal> {
+    if !is_a_thought(state, home, request) {
+        return Ok(None);
+    }
+    let Some(capacity) = whole(&state.fields(home, declared), THOUGHT_CAPACITY) else {
+        return Ok(None);
+    };
+    let nominal: Vec<HeldRecord> =
+        state
+            .live_records(home)
+            .into_iter()
+            .filter(|held| {
+                state.record(&held.record).is_some_and(|record| {
+                    record.claim.edge.as_ref().is_some_and(|(shape, _)| {
+                        *shape == memory::EdgeShape::Connection.to_string()
+                    }) && !record_by_another(state, home, record, request)
+                })
+            })
+            .collect();
+    if nominal.len() < capacity {
+        return Ok(None);
+    }
+    let (aged, live): (Vec<HeldRecord>, Vec<HeldRecord>) = nominal.into_iter().partition(|held| {
+        memory::is_quiet(state.last_touched(&held.record), request.door.aged_before)
+    });
+    if live.len() < capacity {
+        return Ok(None);
+    }
+    let over = live.len() > capacity;
+    let refuse = |live: Vec<HeldRecord>| Refusal::RoomFull {
+        subject: subject_of(state, home, request),
+        live: live.len(),
+        capacity,
+        aged_out: aged.len(),
+        room: live,
+    };
+    if let Some((address, reason)) = &request.drop {
+        let victim = state
+            .claim_at(address)
+            .filter(|located| state.survivor(&located.home) == state.survivor(home))
+            .filter(|located| live.iter().any(|held| held.record == located.record));
+        let Some(victim) = victim else {
+            return Err(refuse(live));
+        };
+        // A thought that carries a key only its own relation may change is not
+        // droppable: nothing here says who may change that key.
+        if state
+            .streams_written_by(&victim.record)
+            .iter()
+            .any(|(_, key)| memory::GUARDED_KEYS.iter().any(|rule| rule.key == key.0))
+        {
+            return Err(refuse(live));
+        }
+        let Some(held) = state.record(&victim.record) else {
+            return Err(refuse(live));
+        };
+        let mut claim = held.claim.clone();
+        claim.status = memory::FactStatus::Archived;
+        claim.details = Some(reason.clone());
+        return Ok(Some((
+            victim.record.clone(),
+            ClaimEvent::RecordRevised {
+                record: victim.record,
+                claim,
+            },
+        )));
+    }
+    if request.borrow && !over {
+        return Ok(None);
+    }
+    Err(refuse(live))
 }

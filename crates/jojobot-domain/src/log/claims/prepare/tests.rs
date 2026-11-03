@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::super::tests::{
     apply, archived, body, claim, created, day, object, record, replay, under, write,
 };
-use super::super::{ClaimEvent, ObjectBody, State};
+use super::super::{ClaimBody, ClaimEvent, ObjectBody, State};
 use super::{BootFloor, CaptureRequest, ClaimSize, Door, Draft, Measures, Refusal, Route, prepare};
 use crate::actor::Actor;
 use crate::app::AppId;
@@ -53,6 +53,7 @@ fn request(subject: &str) -> CaptureRequest {
             measures: Measures::default(),
             runs: BTreeMap::new(),
             run: None,
+            aged_before: None,
         },
         subject: subject.to_string(),
         draft: Draft {
@@ -75,6 +76,7 @@ fn request(subject: &str) -> CaptureRequest {
         derived: BTreeSet::new(),
         derived_from: None,
         borrow: false,
+        drop: None,
     }
 }
 
@@ -439,6 +441,7 @@ fn writing(subject: &str, key: &str, actor: Actor, revoked: bool) -> CaptureRequ
             measures: Measures::default(),
             runs: BTreeMap::new(),
             run: None,
+            aged_before: None,
         },
         fields: BTreeMap::from([(key.into(), "v".into())]),
         ..request(subject)
@@ -585,6 +588,7 @@ fn by_bot(subject: &str, caller: &str, key: &str, value: &str) -> CaptureRequest
             measures: Measures::default(),
             runs: BTreeMap::new(),
             run: None,
+            aged_before: None,
         },
         fields: BTreeMap::from([(key.into(), value.into())]),
         ..request(subject)
@@ -1437,4 +1441,112 @@ fn a_thing_holds_no_more_live_records_than_its_ceiling() {
         ..request("beta")
     };
     assert!(prepare(&over, &[], &marking).is_ok());
+}
+
+/// A bot `alpha` with room for two thoughts, and `kept` thoughts of its own
+/// written by `by`, each touched at `touched`.
+fn roomy(kept: usize, by: Actor, touched: jiff::Timestamp) -> State {
+    let mut state = State::default();
+    let at = |actor: Actor, payload: ClaimEvent| {
+        let mut event = under(Some(actor), None, payload);
+        event.written_at = Some(touched);
+        event
+    };
+    for payload in held("bot", "bot:alpha", &[("r0", "f1", "thought_capacity", "2")]) {
+        state.apply(&at(Actor::Operator, payload));
+    }
+    for n in 0..kept {
+        let id = format!("t{n}");
+        let thought = ClaimBody {
+            edge: Some((EdgeShape::Connection.to_string(), object("bot:alpha"))),
+            ..claim(&format!("f{}", n + 2), "bot:alpha", "a thought", 1)
+        };
+        for payload in [
+            created(&id, thought),
+            write(&id, "bot:alpha", "note", 1, "x"),
+        ] {
+            state.apply(&at(by.clone(), payload));
+        }
+    }
+    state
+}
+
+fn thinking() -> CaptureRequest {
+    let mut thought = CaptureRequest {
+        edge: Some((EdgeShape::Connection, "bot:alpha".into())),
+        ..request("bot:alpha")
+    };
+    thought.door.actor = Actor::Bot(crate::memory::EntityId("bot:alpha".into()));
+    thought
+}
+
+/// **A thought joining a full room gives up one the write names, spends the
+/// reserve once, or is refused.** Thoughts gone quiet and claims another bot
+/// wrote are not in the room.
+#[test]
+fn a_thought_joining_a_full_room_gives_up_one_or_is_refused() {
+    crate::memory::kinds::load_shipped();
+    let own = || Actor::Bot(crate::memory::EntityId("bot:alpha".into()));
+    let now: jiff::Timestamp = "2026-04-03T10:00:00Z".parse().unwrap();
+    let full = roomy(2, own(), now);
+    assert!(prepare(&roomy(1, own(), now), &[], &thinking()).is_ok());
+    match prepare(&full, &[], &thinking()) {
+        Err(Refusal::RoomFull {
+            live,
+            capacity,
+            aged_out,
+            room,
+            ..
+        }) => assert_eq!((live, capacity, aged_out, room.len()), (2, 2, 0, 2)),
+        other => panic!("expected a full room, got {other:?}"),
+    }
+    // The reserve: once, and not over a room already over.
+    let borrowing = CaptureRequest {
+        borrow: true,
+        ..thinking()
+    };
+    assert!(prepare(&full, &[], &borrowing).is_ok());
+    assert!(matches!(
+        prepare(&roomy(3, own(), now), &[], &borrowing),
+        Err(Refusal::RoomFull { .. })
+    ));
+    // A drop archives the thought in the same act, ahead of the new claim.
+    let dropping = |address: &str| CaptureRequest {
+        drop: Some((address.into(), "no longer earns it".into())),
+        ..thinking()
+    };
+    let events = prepare(&full, &[], &dropping("bot:alpha#f2")).expect("admitted");
+    assert!(matches!(
+        &events[0],
+        ClaimEvent::RecordRevised { record, claim }
+            if record == &super::super::tests::record("t0")
+                && claim.status == FactStatus::Archived
+                && claim.details.as_deref() == Some("no longer earns it")
+    ));
+    assert!(matches!(&events[1], ClaimEvent::RecordCreated { .. }));
+    // Only a live thought of this room can be dropped.
+    assert!(matches!(
+        prepare(&full, &[], &dropping("bot:alpha#f1")),
+        Err(Refusal::RoomFull { .. })
+    ));
+    assert!(matches!(
+        prepare(&full, &[], &dropping("bot:alpha#f9")),
+        Err(Refusal::RoomFull { .. })
+    ));
+    // Gone quiet: still there, outside the count.
+    let quiet = CaptureRequest {
+        door: Door {
+            aged_before: Some("2026-04-03T11:00:00Z".parse().unwrap()),
+            ..thinking().door
+        },
+        ..thinking()
+    };
+    assert!(prepare(&full, &[], &quiet).is_ok());
+    // Another bot's claims on the bot take no seat.
+    let other = Actor::Bot(crate::memory::EntityId("bot:beta".into()));
+    let mut mixed = roomy(2, other, now);
+    for event in held("bot", "bot:beta", &[]) {
+        apply(&mut mixed, &event);
+    }
+    assert!(prepare(&mixed, &[], &thinking()).is_ok());
 }
