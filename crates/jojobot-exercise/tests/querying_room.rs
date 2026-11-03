@@ -19,6 +19,7 @@
 //!   hold all, and one wrong answer fails the one lock it is about.
 
 use jojobot_exercise::expectations::{self, QUERYING_ROOM};
+use jojobot_exercise::furnish_once;
 use jojobot_exercise::playbook::Playbook;
 use jojobot_exercise::room::{Room, server_binary};
 use jojobot_exercise::run::{Boundary, Observed, Outcome};
@@ -49,7 +50,8 @@ fn room_document() -> Playbook {
 /// about it (the six `solvable_` ones and the page count) furnish all of it. The cases about
 /// the locks are about the twelve, and every piece of the filler costs the room a write, so
 /// they furnish the twelve alone: nothing a lock asks is about a piece the fill added.
-async fn furnished_with_only_the_twelve() -> (Room, Surface) {
+/// **The twelve pieces alone, as a seed**: the room's document with the fill lines left out.
+fn the_twelve() -> anyhow::Result<jojobot_exercise::surface::Seed> {
     let document = std::fs::read_to_string(expectations::room_document(QUERYING_ROOM))
         .expect("the room document reads");
     let without_the_fill: String = document
@@ -57,34 +59,67 @@ async fn furnished_with_only_the_twelve() -> (Room, Surface) {
         .filter(|line| !line.trim_start().starts_with("fill "))
         .collect::<Vec<_>>()
         .join("\n");
-    let (room, surface) = Room::open_with_client_stating(
+    jojobot_exercise::world::read(&without_the_fill)
+}
+
+/// **The furnish of each shape of this room, done once per process** and copied for each case.
+static TWELVE_SEED: tokio::sync::OnceCell<std::path::PathBuf> = tokio::sync::OnceCell::const_new();
+static WHOLE_SEED: tokio::sync::OnceCell<std::path::PathBuf> = tokio::sync::OnceCell::const_new();
+
+async fn furnished_with_only_the_twelve() -> (Room, Surface) {
+    Room::open_with_client_from_stating(
         &server_binary().expect("a jojobot binary"),
+        &furnish_once::seed_dir_of(&TWELVE_SEED, SERVER_DAY.as_str(), the_twelve).await,
         SERVER_DAY.as_str(),
     )
     .await
-    .expect("a room");
-    jojobot_exercise::world::read(&without_the_fill)
-        .expect("the world reads")
-        .furnish(&surface)
-        .await
-        .expect("the room is furnished");
-    (room, surface)
+    .expect("a room from the seed")
 }
 
 /// A room furnished the way a run furnishes it.
 async fn furnished() -> (Room, Surface) {
-    let (room, surface) = Room::open_with_client_stating(
+    Room::open_with_client_from_stating(
         &server_binary().expect("a jojobot binary"),
+        &furnish_once::seed_dir(&WHOLE_SEED, QUERYING_ROOM, SERVER_DAY.as_str()).await,
         SERVER_DAY.as_str(),
     )
     .await
-    .expect("a room");
-    expectations::seed_for(QUERYING_ROOM)
-        .expect("the room has furniture")
-        .furnish(&surface)
+    .expect("a room from the seed")
+}
+
+/// **A copy of each cached shape of this room holds what a live furnish holds**, the proof
+/// that neither cache is quietly thinner than the furnish every case used to pay for.
+#[tokio::test]
+async fn the_cached_querying_room_holds_what_a_live_furnish_holds() {
+    for whole in [true, false] {
+        let (_live_room, live) = Room::open_with_client_stating(
+            &server_binary().expect("a jojobot binary"),
+            SERVER_DAY.as_str(),
+        )
         .await
-        .expect("the room is furnished");
-    (room, surface)
+        .expect("a room");
+        let seed = if whole {
+            expectations::seed_for(QUERYING_ROOM).expect("the room has furniture")
+        } else {
+            the_twelve().expect("the world reads")
+        };
+        seed.furnish(&live).await.expect("the room is furnished");
+        let live_ids = furnish_once::held_ids(&live).await;
+        assert!(
+            live_ids.len() > 5,
+            "a live furnish holds almost nothing, so the comparison proves nothing: {live_ids:?}"
+        );
+        let (_cached_room, cached) = if whole {
+            furnished().await
+        } else {
+            furnished_with_only_the_twelve().await
+        };
+        assert_eq!(
+            furnish_once::held_ids(&cached).await,
+            live_ids,
+            "the cached room differs from a live furnish (whole board: {whole})"
+        );
+    }
 }
 
 /// **A session for the one cold sitting, on the day it states.**

@@ -25,14 +25,23 @@ pub async fn seed_dir(
     room_document: &'static str,
     day: &str,
 ) -> PathBuf {
+    seed_dir_of(cell, day, || expectations::seed_for(room_document)).await
+}
+
+/// **The furnished store of a seed the caller makes**, for a suite that furnishes
+/// a room's seed in more than one shape. `make` is called once, on the first use.
+pub async fn seed_dir_of(
+    cell: &'static tokio::sync::OnceCell<PathBuf>,
+    day: &str,
+    make: impl FnOnce() -> anyhow::Result<crate::surface::Seed>,
+) -> PathBuf {
     cell.get_or_try_init(|| async {
+        let seed = make()?;
         Room::snapshot_after_stating(
             &server_binary().expect("a jojobot binary"),
             day,
             |surface| async move {
-                expectations::seed_for(room_document)?
-                    .furnish(&surface)
-                    .await?;
+                seed.furnish(&surface).await?;
                 Ok(())
             },
         )
