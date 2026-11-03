@@ -80,6 +80,7 @@ fn samples(text: &str) -> Vec<(String, BTreeMap<String, String>, f64)> {
                     &[
                         "report",
                         "rooms",
+                        "own-crates",
                         "nix-build",
                         "flake-check",
                         "build",
@@ -198,6 +199,20 @@ fn build_metrics_names_each_host_that_runs_a_ci_slot() {
         }));
         assert_eq!(samples(&text)[0].1["runner_host"], host, "{text}");
     }
+}
+
+/// **The own-crates job has a label of its own**, so the time to a branch's
+/// first verdict is graphed beside the report's duration from the same series.
+#[test]
+fn build_metrics_names_the_own_crates_job() {
+    let text = render(&serde_json::json!({
+        "workflow": "branch", "job": "own-crates", "ref": "refs/heads/dev-work",
+        "runner": "lisa.example.invalid",
+        "samples": [
+            {"metric": "duration", "step": "workflow", "outcome": "success", "seconds": 1}
+        ]
+    }));
+    assert_eq!(samples(&text)[0].1["job"], "own-crates", "{text}");
 }
 
 #[test]

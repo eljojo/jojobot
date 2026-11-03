@@ -42,7 +42,7 @@ import urllib.request
 
 LABELS = {
     "workflow": {"branch", "pull-request", "local"},
-    "job": {"report", "rooms", "nix-build", "flake-check", "build", "check", "year", "dev", "narrow"},
+    "job": {"report", "rooms", "own-crates", "nix-build", "flake-check", "build", "check", "year", "dev", "narrow"},
     "step": {"workflow", "job", "fmt", "build", "test_compile", "test_list", "test", "lint",
              "doc", "dev", "narrow", "unmeasured"} | {f"test-rank-{rank:02}" for rank in range(1, 21)},
     "outcome": {"success", "failure", "cancelled", "skipped", "unknown"},
