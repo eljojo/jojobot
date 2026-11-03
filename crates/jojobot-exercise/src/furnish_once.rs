@@ -59,6 +59,7 @@ pub async fn held_ids(surface: &Surface) -> Vec<String> {
     let mut ids = Vec::new();
     for kind in [
         "person", "place", "work", "event", "thing", "project", "list", "thread", "topic",
+        "rhythm", "org", "machine", "document", "pet",
     ] {
         let read = surface
             .call(
