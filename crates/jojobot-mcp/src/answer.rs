@@ -8,6 +8,12 @@
 
 use super::*;
 
+// No verb goes through the composer yet: capture's receipt is its first client.
+#[allow(dead_code)]
+mod compose;
+#[cfg(test)]
+mod compose_tests;
+
 /// Codes owned by context constructors rather than an error enum.
 pub(crate) const CONTEXT_REFUSAL_CODES: &[&str] = &[
     "AddEntity",
