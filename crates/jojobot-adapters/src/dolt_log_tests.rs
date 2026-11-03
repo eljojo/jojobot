@@ -352,6 +352,61 @@ async fn a_rolled_back_transaction_leaves_neither_rows_nor_batch() {
     server.stop().await;
 }
 
+/// **The tail is read when the log opens**, so the first write after it reads
+/// nothing: one read after open, still one after a write.
+#[tokio::test]
+async fn the_head_is_read_when_the_log_opens() {
+    let (_scratch, mut server, _pool, log) = fixture().await;
+    let reads = || log.0.tail_reads.load(std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(reads(), 1, "the open reads the tail");
+    let next = batch("first", 0, &[b"a"]);
+    assert_eq!(
+        log.append(Position(0), &next).await.unwrap(),
+        Append::Committed(next.range())
+    );
+    assert_eq!(reads(), 1, "the first write reads nothing");
+    drop(log);
+    server.stop().await;
+}
+
+/// **A commit whose answer was lost is settled by one read of the tail.** The
+/// batch did commit; the caller does not know it. After the head is settled the
+/// next batch stages at the position after it, and a batch at the old position
+/// is refused: nothing is applied twice.
+#[tokio::test]
+async fn a_commit_with_a_lost_answer_is_settled_by_one_tail_read() {
+    let (_scratch, mut server, pool, log) = fixture().await;
+    let first = batch("settled-1", 0, &[b"a"]);
+    let mut tx = pool.begin().await.unwrap();
+    let staged = log.stage(&mut tx, Position(0), &first).await.unwrap();
+    tx.commit().await.unwrap();
+    staged.unknown();
+    log.settle(&pool).await.unwrap();
+    assert_eq!(
+        log.0.tail_reads.load(std::sync::atomic::Ordering::SeqCst),
+        2,
+        "the open and the settlement"
+    );
+    let again = batch("settled-again", 0, &[b"b"]);
+    let mut tx = pool.begin().await.unwrap();
+    assert_eq!(
+        log.stage(&mut tx, Position(0), &again).await.err(),
+        Some(LogError::Conflict)
+    );
+    tx.rollback().await.unwrap();
+    let second = batch("settled-2", 1, &[b"c"]);
+    let mut tx = pool.begin().await.unwrap();
+    let staged = log.stage(&mut tx, Position(1), &second).await.unwrap();
+    tx.commit().await.unwrap();
+    staged.committed();
+    assert_eq!(
+        log.read_from(Position(0), 10).await.unwrap(),
+        [first, second]
+    );
+    drop(log);
+    server.stop().await;
+}
+
 /// **The owner reads the log's tail once**, not before each write: three
 /// batches, one read.
 #[tokio::test]

@@ -85,7 +85,7 @@ impl DoltLog {
             pool.connect_options().get_database().unwrap_or_default()
         ));
         let (connection, id) = Self::take(&pool, &lock).await?;
-        Ok(Self(Arc::new(Inner {
+        let log = Self(Arc::new(Inner {
             pool,
             lock,
             session: Mutex::new(Session {
@@ -102,7 +102,25 @@ impl DoltLog {
             fault: std::sync::Mutex::new(None),
             #[cfg(any(test, feature = "testing"))]
             acknowledged: tokio::sync::Notify::new(),
-        })))
+        }));
+        // **The head is read when the log opens**, so no write after it reads
+        // the tail.
+        {
+            let mut session = log.0.session.lock().await;
+            let connection = session.connection.as_mut().ok_or(LogError::Indeterminate)?;
+            log.known_head(connection).await?;
+        }
+        Ok(log)
+    }
+
+    /// **Settle the head after a commit whose outcome was not known**, by one
+    /// read of the log's tail on a connection the caller has fenced (the
+    /// writer's reader, taken after the old connection's terminal boundary).
+    pub async fn settle(&self, reader: &MySqlPool) -> Result<(), LogError> {
+        self.forget_head();
+        let mut connection = reader.acquire().await.map_err(failed)?;
+        self.known_head(&mut connection).await?;
+        Ok(())
     }
 
     /// The head the owner holds. The one read of the log's tail is made here,
@@ -181,13 +199,18 @@ impl DoltLog {
             }
         }
         // KILL returning is not the fence. A busy lock preserves uncertainty.
-        let (connection, id) = Self::take(&self.0.pool, &self.0.lock)
+        let (mut connection, id) = Self::take(&self.0.pool, &self.0.lock)
+            .await
+            .map_err(|_| LogError::Indeterminate)?;
+        // The fence is also where the head is settled: one read of the tail,
+        // on the connection that now holds the lock.
+        self.forget_head();
+        self.known_head(&mut connection)
             .await
             .map_err(|_| LogError::Indeterminate)?;
         session.connection = Some(connection);
         session.id = id;
         session.uncertain = false;
-        self.forget_head();
         #[cfg(any(test, feature = "testing"))]
         {
             session.delayed = false;
@@ -360,6 +383,12 @@ pub struct Staged {
 impl Staged {
     pub fn committed(self) {
         self.log.moved_to(self.last);
+    }
+
+    /// The COMMIT's outcome is not known: the head held is not trusted until
+    /// [`DoltLog::settle`] reads the tail.
+    pub fn unknown(self) {
+        self.log.forget_head();
     }
 }
 
