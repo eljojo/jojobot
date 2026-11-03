@@ -1,4 +1,4 @@
-//! Native failure boundaries from the adopted Dolt fence spike.
+//! The log's table, its codec and its held head, on a real store.
 use super::*;
 use crate::{
     dolt::Dolt,
@@ -14,132 +14,6 @@ async fn fixture() -> (Scratch, Dolt, MySqlPool, DoltLog) {
     let pool = migrated_database(&server, "alpha").await.unwrap();
     let log = DoltLog::open(pool.clone()).await.unwrap();
     (scratch, server, pool, log)
-}
-
-#[tokio::test]
-async fn dolt_log_contract_native_commit_outlives_kill_until_its_fence() {
-    let (_scratch, mut server, pool, log) = fixture().await;
-    let next = batch("late", 0, &[b"a", b"b"]);
-    log.inject(Fault::DelayedCommit).await;
-    assert_eq!(
-        log.append(Position(0), &next).await.unwrap(),
-        Append::Indeterminate
-    );
-    let mut gate = DoltLog::fresh(&pool).await.unwrap();
-    let held: Option<i64> = sqlx::query_scalar("SELECT GET_LOCK('log-gate', 0)")
-        .fetch_one(&mut gate)
-        .await
-        .unwrap();
-    assert_eq!(held, Some(1));
-    let mut state = log.0.session.lock().await;
-    let old_id = state.id;
-    let mut old = state.connection.take().unwrap();
-    state.delayed = false;
-    drop(state);
-    let ready: Option<i64> = sqlx::query_scalar("SELECT GET_LOCK('log-ready', 0)")
-        .fetch_one(&mut old)
-        .await
-        .unwrap();
-    assert_eq!(ready, Some(1));
-    let commit = tokio::spawn(async move {
-        let _ = sqlx::raw_sql("SET @ready = RELEASE_LOCK('log-ready'); SET @gate = GET_LOCK('log-gate', 30); COMMIT; SET @released = RELEASE_LOCK('log-gate')")
-            .execute(&mut old).await;
-        let _ = old.close().await;
-    });
-    let entered: Option<i64> = sqlx::query_scalar("SELECT GET_LOCK('log-ready', 5)")
-        .fetch_one(&mut gate)
-        .await
-        .unwrap();
-    assert_eq!(entered, Some(1));
-    let rows = sqlx::query("SHOW FULL PROCESSLIST")
-        .fetch_all(&pool)
-        .await
-        .unwrap();
-    assert!(
-        rows.iter()
-            .any(|row| row.get::<i64, _>("Id") as u64 == old_id
-                && row.get::<String, _>("Command") == "Query")
-    );
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM event_log")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(
-        count, 0,
-        "a fresh SELECT is absent while COMMIT can still land"
-    );
-    assert_eq!(
-        log.read_from(Position(0), 10).await,
-        Err(LogError::Indeterminate),
-        "KILL returned, but the old server command still owns the fence"
-    );
-    sqlx::query("SELECT RELEASE_LOCK('log-gate')")
-        .execute(&mut gate)
-        .await
-        .unwrap();
-    commit.await.unwrap();
-    let tail = log.read_from(Position(0), 10).await.unwrap();
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM event_log")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(tail.len() as i64, count);
-    assert!(tail.is_empty() || tail == [next]);
-    let state = log.0.session.lock().await;
-    let owner: Option<u64> = sqlx::query_scalar("SELECT IS_USED_LOCK(?)")
-        .bind(&log.0.lock)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(owner, Some(state.id));
-    drop(state);
-    drop(log);
-    server.stop().await;
-}
-
-#[tokio::test]
-async fn dolt_log_contract_native_lost_connection_rolls_back_before_replay() {
-    let (_scratch, mut server, _pool, log) = fixture().await;
-    log.inject(Fault::DelayedCommit).await;
-    let old = batch("old", 0, &[b"a", b"b"]);
-    assert_eq!(
-        log.append(Position(0), &old).await.unwrap(),
-        Append::Indeterminate
-    );
-    let mut state = log.0.session.lock().await;
-    state.connection.take().unwrap().close_hard().await.unwrap();
-    state.delayed = false;
-    drop(state);
-    assert!(log.read_from(Position(0), 10).await.unwrap().is_empty());
-    let next = batch("new", 0, &[b"replacement"]);
-    assert_eq!(
-        log.append(Position(0), &next).await.unwrap(),
-        Append::Committed(next.range())
-    );
-    assert_eq!(log.read_from(Position(0), 10).await.unwrap(), [next]);
-    drop(log);
-    server.stop().await;
-}
-
-#[tokio::test]
-async fn dolt_log_contract_native_start_excludes_a_live_predecessor() {
-    let (_scratch, mut server, pool, log) = fixture().await;
-    log.inject(Fault::DelayedCommit).await;
-    let next = batch("predecessor", 0, &[b"pending"]);
-    assert_eq!(
-        log.append(Position(0), &next).await.unwrap(),
-        Append::Indeterminate
-    );
-    assert!(matches!(
-        DoltLog::open(pool.clone()).await,
-        Err(LogError::Indeterminate)
-    ));
-    log.finish_delayed(true).await;
-    drop(log);
-    let successor = DoltLog::open(pool).await.unwrap();
-    assert_eq!(successor.read_from(Position(0), 10).await.unwrap(), [next]);
-    drop(successor);
-    server.stop().await;
 }
 
 pub(crate) async fn packet(reader: &mut (impl AsyncRead + Unpin)) -> std::io::Result<Vec<u8>> {
@@ -159,11 +33,18 @@ pub(crate) async fn packet(reader: &mut (impl AsyncRead + Unpin)) -> std::io::Re
 pub(crate) async fn lost_commit_reply_proxy(
     upstream: u16,
 ) -> (u16, Arc<tokio::sync::Notify>, tokio::task::JoinHandle<()>) {
+    lost_commit_reply_proxy_when(upstream, Arc::new(std::sync::atomic::AtomicBool::new(true))).await
+}
+
+/// The same proxy, losing the answer of the first COMMIT after `armed` is set.
+pub(crate) async fn lost_commit_reply_proxy_when(
+    upstream: u16,
+    once: Arc<std::sync::atomic::AtomicBool>,
+) -> (u16, Arc<tokio::sync::Notify>, tokio::task::JoinHandle<()>) {
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
         .await
         .unwrap();
     let port = listener.local_addr().unwrap().port();
-    let once = Arc::new(std::sync::atomic::AtomicBool::new(true));
     let dropped = Arc::new(tokio::sync::Notify::new());
     let signal = dropped.clone();
     let proxy = tokio::spawn(async move {
@@ -209,132 +90,13 @@ pub(crate) async fn lost_commit_reply_proxy(
     (port, dropped, proxy)
 }
 
-#[tokio::test]
-async fn dolt_log_contract_native_dropped_commit_reply_recovers_exactly_once() {
-    let (_scratch, mut server, pool, first) = fixture().await;
-    drop(first);
-    let (port, dropped, proxy) = lost_commit_reply_proxy(pool.connect_options().get_port()).await;
-    let source =
-        MySqlPoolOptions::new().connect_lazy_with((*pool.connect_options()).clone().port(port));
-    let log = DoltLog::open(source).await.unwrap();
-    let next = batch("lost-reply", 0, &[b"null", b""]);
-    assert_eq!(
-        log.append(Position(0), &next).await.unwrap(),
-        Append::Indeterminate
-    );
-    tokio::time::timeout(Duration::from_secs(5), dropped.notified())
-        .await
-        .unwrap();
-    assert_eq!(
-        log.read_from(Position(0), 10).await.unwrap().as_slice(),
-        std::slice::from_ref(&next)
-    );
-    assert_eq!(
-        log.append(Position(0), &next).await.unwrap(),
-        Append::Committed(next.range())
-    );
-    assert_eq!(log.read_from(Position(0), 10).await.unwrap(), [next]);
-    drop(log);
-    proxy.abort();
-    server.stop().await;
-}
-
-fn recorded_row(sid: &str) -> RowChange {
-    RowChange::Record {
-        sid: sid.into(),
-        domain: "claims".into(),
-        taught_at: "2026-01-01T00:00:00Z".parse().unwrap(),
-    }
-}
-
-/// **A change of the legacy rows commits with its batch.** The row and the
-/// batch are both there after one append.
-#[tokio::test]
-async fn a_row_change_commits_with_its_batch() {
-    let (_scratch, mut server, pool, log) = fixture().await;
-    let next = batch("rows", 0, &[b"a"]);
-    assert_eq!(
-        log.append_with_rows(Position(0), &next, vec![recorded_row("homer")])
-            .await
-            .unwrap(),
-        Append::Committed(next.range())
-    );
-    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM session_teaching WHERE sid = 'homer'")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(rows, 1);
-    assert_eq!(log.read_from(Position(0), 10).await.unwrap(), [next]);
-    drop(log);
-    server.stop().await;
-}
-
-/// **Forgetting a run takes every one of its rows, in the batch's own commit**,
-/// and leaves the rows of another run.
-#[tokio::test]
-async fn a_forget_row_change_takes_all_the_rows_of_its_run() {
-    let (_scratch, mut server, pool, log) = fixture().await;
-    let first = batch("rows-1", 0, &[b"a"]);
-    let other_domain = RowChange::Record {
-        sid: "homer".into(),
-        domain: "mail".into(),
-        taught_at: "2026-01-01T00:00:00Z".parse().unwrap(),
-    };
-    log.append_with_rows(
-        Position(0),
-        &first,
-        vec![recorded_row("homer"), other_domain, recorded_row("lisa")],
-    )
-    .await
-    .unwrap();
-    let second = batch("rows-2", 1, &[b"b"]);
-    assert_eq!(
-        log.append_with_rows(
-            Position(1),
-            &second,
-            vec![RowChange::Forget {
-                sid: "homer".into()
-            }]
-        )
-        .await
-        .unwrap(),
-        Append::Committed(second.range())
-    );
-    assert_eq!(rows_of(&pool, "homer").await, 0);
-    assert_eq!(rows_of(&pool, "lisa").await, 1);
-    drop(log);
-    server.stop().await;
-}
-
-/// **A change the server refuses leaves neither the row nor the batch**, and
-/// the log takes the next append at the same head. The second change repeats
-/// the first row's key, which the table refuses.
-#[tokio::test]
-async fn a_refused_row_change_leaves_no_batch() {
-    let (_scratch, mut server, pool, log) = fixture().await;
-    let next = batch("refused", 0, &[b"a"]);
-    assert_eq!(
-        log.append_with_rows(
-            Position(0),
-            &next,
-            vec![recorded_row("marge"), recorded_row("marge")]
-        )
-        .await
-        .unwrap(),
-        Append::DefinitelyNotCommitted
-    );
-    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM session_teaching WHERE sid = 'marge'")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(rows, 0);
-    assert!(log.read_from(Position(0), 10).await.unwrap().is_empty());
-    assert_eq!(
-        log.append(Position(0), &next).await.unwrap(),
-        Append::Committed(next.range())
-    );
-    drop(log);
-    server.stop().await;
+/// One batch put into the table and committed on the caller's own transaction,
+/// as the owner does it, with the head moved after the acknowledged COMMIT.
+async fn appended(log: &DoltLog, pool: &MySqlPool, head: Position, batch: &SealedBatch) {
+    let mut tx = pool.begin().await.unwrap();
+    let staged = log.stage(&mut tx, head, batch).await.unwrap();
+    tx.commit().await.unwrap();
+    staged.committed();
 }
 
 async fn row_in(tx: &mut sqlx::Transaction<'_, sqlx::MySql>, sid: &str) {
@@ -393,10 +155,7 @@ async fn a_rolled_back_transaction_leaves_neither_rows_nor_batch() {
     assert_eq!(rows_of(&pool, "marge").await, 0);
     assert!(log.read_from(Position(0), 10).await.unwrap().is_empty());
     let next = batch("next", 0, &[b"b"]);
-    assert_eq!(
-        log.append(Position(0), &next).await.unwrap(),
-        Append::Committed(next.range())
-    );
+    appended(&log, &pool, Position(0), &next).await;
     drop(log);
     server.stop().await;
 }
@@ -409,7 +168,7 @@ async fn a_rolled_back_transaction_leaves_neither_rows_nor_batch() {
 async fn a_read_inside_a_fence_uses_the_fenced_reader() {
     let (_scratch, mut server, pool, log) = fixture().await;
     let next = batch("fenced", 0, &[b"a"]);
-    log.append(Position(0), &next).await.unwrap();
+    appended(&log, &pool, Position(0), &next).await;
     let options = (*pool.connect_options()).clone();
     let closed = MySqlPoolOptions::new()
         .max_connections(1)
@@ -438,14 +197,11 @@ async fn a_read_inside_a_fence_uses_the_fenced_reader() {
 /// nothing: one read after open, still one after a write.
 #[tokio::test]
 async fn the_head_is_read_when_the_log_opens() {
-    let (_scratch, mut server, _pool, log) = fixture().await;
+    let (_scratch, mut server, pool, log) = fixture().await;
     let reads = || log.0.tail_reads.load(std::sync::atomic::Ordering::SeqCst);
     assert_eq!(reads(), 1, "the open reads the tail");
     let next = batch("first", 0, &[b"a"]);
-    assert_eq!(
-        log.append(Position(0), &next).await.unwrap(),
-        Append::Committed(next.range())
-    );
+    appended(&log, &pool, Position(0), &next).await;
     assert_eq!(reads(), 1, "the first write reads nothing");
     drop(log);
     server.stop().await;
@@ -493,13 +249,10 @@ async fn a_commit_with_a_lost_answer_is_settled_by_one_tail_read() {
 /// batches, one read.
 #[tokio::test]
 async fn the_tail_is_read_once_for_any_number_of_writes() {
-    let (_scratch, mut server, _pool, log) = fixture().await;
+    let (_scratch, mut server, pool, log) = fixture().await;
     for (id, head) in [("one", 0), ("two", 1), ("three", 2)] {
         let next = batch(id, head, &[b"a"]);
-        assert_eq!(
-            log.append(Position(head), &next).await.unwrap(),
-            Append::Committed(next.range())
-        );
+        appended(&log, &pool, Position(head), &next).await;
     }
     assert_eq!(
         log.0.tail_reads.load(std::sync::atomic::Ordering::SeqCst),
@@ -516,14 +269,11 @@ async fn the_tail_is_read_once_for_any_number_of_writes() {
 /// later append as a conflict until a restart.
 #[tokio::test]
 async fn an_older_settle_read_never_moves_the_head_back() {
-    let (_scratch, mut server, _pool, log) = fixture().await;
+    let (_scratch, mut server, pool, log) = fixture().await;
     // The read a settle made while the log held nothing.
     let older_read = 0;
     let newer = batch("newer", 0, &[b"a"]);
-    assert_eq!(
-        log.append(Position(0), &newer).await.unwrap(),
-        Append::Committed(newer.range())
-    );
+    appended(&log, &pool, Position(0), &newer).await;
     let moved_to = newer.range().last.0;
     assert!(moved_to > older_read, "the append moved the head");
     assert_eq!(log.hold_read(older_read), moved_to);
@@ -533,36 +283,7 @@ async fn an_older_settle_read_never_moves_the_head_back() {
         "the older read did not set the head back"
     );
     let after = batch("after", moved_to, &[b"b"]);
-    assert_eq!(
-        log.append(Position(moved_to), &after).await.unwrap(),
-        Append::Committed(after.range()),
-        "the next append stages after the newer batch"
-    );
-    drop(log);
-    server.stop().await;
-}
-
-/// **The import reads every mark with its own taught_at**, including a run with
-/// no session card.
-#[tokio::test]
-async fn the_marks_come_back_with_their_times() {
-    let (_scratch, mut server, pool, log) = fixture().await;
-    let next = batch("marks", 0, &[b"a"]);
-    log.append_with_rows(Position(0), &next, vec![recorded_row("homer")])
-        .await
-        .unwrap();
-    let marks = crate::dolt::teaching::DoltTeachings::open(pool.clone())
-        .marks()
-        .await
-        .unwrap();
-    assert_eq!(
-        marks,
-        [crate::teaching_log::Mark {
-            sid: jojobot_domain::session::Sid("homer".into()),
-            domain: "claims".into(),
-            taught_at: "2026-01-01T00:00:00Z".parse().unwrap(),
-        }]
-    );
+    appended(&log, &pool, Position(moved_to), &after).await;
     drop(log);
     server.stop().await;
 }

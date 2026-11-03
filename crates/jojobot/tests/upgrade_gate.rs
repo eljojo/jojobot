@@ -106,11 +106,11 @@ async fn the_restored_log_holds_a_batch(pool: &sqlx::MySqlPool) -> bool {
 /// build writes it. The ledger opens over the rows the recording holds.
 async fn seed_the_teaching_marks_through_the_log(pool: &sqlx::MySqlPool) {
     use jojobot_adapters::dolt::teaching::DoltTeachings;
-    use jojobot_adapters::dolt_log::DoltLog;
     use jojobot_adapters::teaching_log::LoggedTeachings;
+    use jojobot_adapters::{writer::Writer, writer_log::WriterLog};
     use jojobot_domain::teaching::Teachings;
     let log = std::sync::Arc::new(
-        DoltLog::open(pool.clone())
+        WriterLog::open(pool.clone(), Writer::default())
             .await
             .expect("the event log opens"),
     );
@@ -229,8 +229,8 @@ async fn age_the_recording(pool: &sqlx::MySqlPool, hours: i64) {
 /// stands, fails the restore and names it: a family that reaches the log
 /// cannot be left un-aged without notice.
 async fn age_the_event_log(pool: &sqlx::MySqlPool, hours: i64) {
-    use jojobot_adapters::dolt_log::DoltLog;
     use jojobot_adapters::teaching_log::codec;
+    use jojobot_adapters::{writer::Writer, writer_log::WriterLog};
     use jojobot_domain::log::{Append, LogStore, Position, SealedBatch};
     use jojobot_domain::teaching::events::TeachingEvent;
     let earlier = jiff::SignedDuration::from_hours(hours);
@@ -239,7 +239,7 @@ async fn age_the_event_log(pool: &sqlx::MySqlPool, hours: i64) {
             .checked_sub(earlier)
             .expect("an aged moment is in range")
     };
-    let log = DoltLog::open(pool.clone())
+    let log = WriterLog::open(pool.clone(), Writer::default())
         .await
         .expect("the event log opens to be aged");
     assert!(
@@ -1284,11 +1284,11 @@ async fn assert_the_ledger_ends_whole(state_dir: &std::path::Path, git_ref: &str
 /// run's marks, a mark recorded again takes the newer time, and the result is
 /// ordered by key as the rows read.
 async fn the_logged_marks(pool: &sqlx::MySqlPool) -> Vec<jojobot_adapters::teaching_log::Mark> {
-    use jojobot_adapters::dolt_log::DoltLog;
     use jojobot_adapters::teaching_log::{Mark, codec};
+    use jojobot_adapters::{writer::Writer, writer_log::WriterLog};
     use jojobot_domain::log::{LogStore, Position};
     use jojobot_domain::teaching::events::TeachingEvent;
-    let log = DoltLog::open(pool.clone())
+    let log = WriterLog::open(pool.clone(), Writer::default())
         .await
         .expect("the event log opens");
     let mut imported: Vec<Mark> = Vec::new();

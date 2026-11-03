@@ -22,7 +22,6 @@ use tokio::sync::Mutex;
 use crate::writer::Writer;
 
 use crate::dolt::teaching::RowChange;
-use crate::dolt_log::DoltLog;
 use crate::fold::teachings::{held_after_contact, held_after_forget};
 use crate::writer_log::WriterLog;
 
@@ -94,18 +93,6 @@ pub trait RowsLog: LogStore {
         batch: &SealedBatch,
         rows: Vec<RowChange>,
     ) -> Result<Append, LogError>;
-}
-
-#[async_trait::async_trait]
-impl RowsLog for DoltLog {
-    async fn append_with_rows(
-        &self,
-        head: Position,
-        batch: &SealedBatch,
-        rows: Vec<RowChange>,
-    ) -> Result<Append, LogError> {
-        DoltLog::append_with_rows(self, head, batch, rows).await
-    }
 }
 
 #[async_trait::async_trait]

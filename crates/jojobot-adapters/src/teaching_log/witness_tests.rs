@@ -6,7 +6,6 @@
 
 use std::sync::{Arc, Mutex};
 
-use jojobot_domain::log::testing::{Fault, FaultLog};
 use sqlx::mysql::MySqlPoolOptions;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 
@@ -14,8 +13,8 @@ use super::tests::{at, sid};
 use super::*;
 use crate::dolt::Dolt;
 use crate::dolt::teaching::DoltTeachings;
-use crate::dolt_log::DoltLog;
 use crate::testing::{Scratch, free_port, migrated_database};
+use crate::writer_log::WriterLog;
 
 type Seen = Arc<Mutex<Vec<String>>>;
 
@@ -136,14 +135,24 @@ async fn no_legacy_teaching_read_is_made_after_boot() {
     let port = listener.local_addr().unwrap().port();
     let seen: Seen = Arc::default();
     recording_proxy(listener, direct.connect_options().get_port(), seen.clone());
-    let through = MySqlPoolOptions::new().connect_lazy_with(through_proxy(&direct, port));
+    // The lost answer is armed after boot; its proxy sits in front of the recorder.
+    let armed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let (lost_port, _dropped, _lost_proxy) =
+        crate::dolt_log::tests::lost_commit_reply_proxy_when(port, armed.clone()).await;
+    let through = MySqlPoolOptions::new().connect_lazy_with(through_proxy(&direct, lost_port));
 
-    let log = Arc::new(DoltLog::open(through.clone()).await.unwrap());
+    let writer = crate::writer::Writer::default();
+    let log = Arc::new(
+        WriterLog::open(through.clone(), writer.clone())
+            .await
+            .unwrap(),
+    );
     let marks = DoltTeachings::open(through).marks().await.unwrap();
     let report = Arc::new(crate::fold::shadow::Shadow::named("teachings").unwrap());
     let teachings = LoggedTeachings::open_shadowed(log.clone(), &marks, report.clone())
         .await
-        .unwrap();
+        .unwrap()
+        .with_writer(writer);
     assert_eq!(marks.len(), 1, "boot read the old row for the import");
     seen.lock().unwrap().clear();
 
@@ -165,7 +174,7 @@ async fn no_legacy_teaching_read_is_made_after_boot() {
             .await
             .unwrap()
     );
-    log.inject(Fault::LostAcknowledgement).await;
+    armed.store(true, std::sync::atomic::Ordering::SeqCst);
     assert!(
         teachings
             .first_contact(&sid("bart"), "mail", at(3))
@@ -213,7 +222,11 @@ async fn a_rollback_and_roll_forward_on_a_real_store_reconciles_and_writes() {
     let pool = migrated_database(&server, "alpha").await.unwrap();
     let report = Arc::new(crate::fold::shadow::Shadow::named("teachings").unwrap());
 
-    let log = Arc::new(DoltLog::open(pool.clone()).await.unwrap());
+    let log = Arc::new(
+        WriterLog::open(pool.clone(), crate::writer::Writer::default())
+            .await
+            .unwrap(),
+    );
     let marks = DoltTeachings::open(pool.clone()).marks().await.unwrap();
     let running = LoggedTeachings::open_shadowed(log.clone(), &marks, report.clone())
         .await
@@ -238,7 +251,11 @@ async fn a_rollback_and_roll_forward_on_a_real_store_reconciles_and_writes() {
     );
     old.forget(&sid("marge")).await.unwrap();
 
-    let log = Arc::new(DoltLog::open(pool.clone()).await.unwrap());
+    let log = Arc::new(
+        WriterLog::open(pool.clone(), crate::writer::Writer::default())
+            .await
+            .unwrap(),
+    );
     let marks = old.marks().await.unwrap();
     let again = LoggedTeachings::open_shadowed(log.clone(), &marks, report.clone())
         .await

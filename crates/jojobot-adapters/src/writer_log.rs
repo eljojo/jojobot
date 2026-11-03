@@ -38,6 +38,14 @@ impl WriterLog {
         })
     }
 
+    /// **Settle the head after the store was changed beneath the log**, by one
+    /// read of its tail on a connection the caller has fenced. A restore, a
+    /// migration tool or a test that writes the table itself calls this; the
+    /// log never calls it.
+    pub async fn settle(&self, reader: &MySqlPool) -> Result<(), LogError> {
+        self.log.settle(reader).await
+    }
+
     /// Run `work` as one job of the writer, under the log's uncertainty scope. A
     /// job that finds the log uncertain first fences and settles the head; a job
     /// whose commit is not known leaves it uncertain and does the same.
@@ -166,9 +174,13 @@ impl LogStore for WriterLog {
     }
 
     async fn store_snapshot(&self, snapshot: &ValidatedSnapshot) -> Result<(), LogError> {
-        let log = self.log.clone();
+        let pool = self.pool.clone();
         let snapshot = snapshot.clone();
-        self.job(async move { log.store_snapshot(&snapshot).await })
-            .await
+        self.job(async move {
+            let mut tx = pool.begin().await.map_err(sql::store_error::<LogError>)?;
+            DoltLog::put_snapshot(&mut tx, &snapshot).await?;
+            sql::commit(tx).await.map_err(sql::store_error::<LogError>)
+        })
+        .await
     }
 }
