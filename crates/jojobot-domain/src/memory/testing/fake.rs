@@ -873,10 +873,30 @@ impl InMemoryMemory {
             .lock()
             .expect("fake mutex poisoned")
             .retain(|(held, _)| held != &home);
+        // **Every handle the thing was ever written under**, read before the badge
+        // and former-handle tables are cleared: prose is keyed by the handle it
+        // was written under, and a rename does not re-key it.
+        let written_under: Vec<EntityId> = self
+            .badges
+            .lock()
+            .expect("fake mutex poisoned")
+            .iter()
+            .filter(|(_, held)| held.as_str() == home.as_str())
+            .map(|(made_as, _)| made_as.clone())
+            .chain(
+                self.former_handles
+                    .lock()
+                    .expect("fake mutex poisoned")
+                    .iter()
+                    .filter(|f| f.badge == home.as_str())
+                    .map(|f| f.former.clone()),
+            )
+            .chain([handle.clone()])
+            .collect();
         self.prose
             .lock()
             .expect("fake mutex poisoned")
-            .remove(handle);
+            .retain(|key, _| !written_under.contains(key));
         // **By the badge it wears**, because the map is keyed by the handle the
         // thing was made under and a rename does not re-key it.
         self.badges
