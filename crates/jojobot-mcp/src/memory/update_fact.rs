@@ -490,7 +490,7 @@ impl Jojobot {
         // the chunks that carry it on follow once it has landed.
         // **Held from the read of the neighbours to the end of the edit**, for the
         // reason a put holds it: the key is minted from that read.
-        let _placing = match args.after {
+        let mut placing = match args.after {
             Some(_) => match self.hold_placing(&address.home).await {
                 Ok(guard) => Some(guard),
                 Err(e) => return memory_declined("update_fact", e),
@@ -553,7 +553,7 @@ impl Jojobot {
         // fold, held under its lock from the read to the write.** The thing is the
         // one the claim is about. A move already holds the lock on the claim's
         // home, which is not re-entrant, so the two are separate calls.
-        let _list_lock = if Self::changes_a_list_by_item(&args.sets_add, &args.sets_remove) {
+        let mut list_lock = if Self::changes_a_list_by_item(&args.sets_add, &args.sets_remove) {
             if args.after.is_some() {
                 return memory_declined(
                     "update_fact",
@@ -601,7 +601,7 @@ impl Jojobot {
         // the same request again: the review mark of an archive by defrag does,
         // and would wait on this lock for ever.
         // TEMPORARY(9.3.3): prepare in the one writer replaces it.
-        let mut spec_lock = match (&_placing, &_list_lock) {
+        let mut spec_lock = match (&placing, &list_lock) {
             (None, None) => match self.hold_for_a_request_spec(&address.home).await {
                 Ok(guard) => guard,
                 Err(e) => return memory_declined("update_fact", e),
@@ -1145,7 +1145,6 @@ impl Jojobot {
         };
         match written {
             Guarded::Written(fact) => {
-                drop(spec_lock.take());
                 // **Pointing the bot at its work comes before any step that can end
                 // the call for a resend to finish**: the finishing paths rebuild
                 // the receipt from the claim and do not do it again.
@@ -1168,6 +1167,17 @@ impl Jojobot {
                 // mark marks it. The mark is a part of this call: under an id the call
                 // is not finished until it is made, and without one the receipt says
                 // the thing is still in the queue.
+                //
+                // **Every guard this call holds on the subject is let go here**: the
+                // store edit and the chunks that follow a move have landed, and the
+                // mark edits the same thing again, so a guard kept past this point
+                // makes the mark wait for the call that is waiting for it. Which
+                // guard is held depends on the edit (the move, a list delta, a
+                // request's generation); all three go together. The reads that need
+                // them have been made.
+                drop(placing.take());
+                drop(list_lock.take());
+                drop(spec_lock.take());
                 let marked = if defrag_archive {
                     let marked = self
                         .mark_what_defrag_archived(&fact.subject, args.sid.clone())

@@ -492,3 +492,73 @@ async fn an_archive_by_defrag_of_a_note_on_a_request_finishes_and_marks_it() {
         "the request is marked reviewed"
     );
 }
+
+/// **The same archive that also changes a list by item finishes and marks the
+/// request.** An edit that changes a list holds the thing's placement lock from
+/// the read of the list to the write, and the edit of a request then takes no lock
+/// of its own for the generation. The review mark that follows edits the request
+/// again, so any lock kept past the store edit makes the mark wait for the edit
+/// that is waiting for it. The list item is added, the answer comes inside the
+/// bound, and the request leaves the queue.
+#[tokio::test]
+async fn an_archive_by_defrag_that_adds_a_list_item_to_a_request_finishes_and_marks_it() {
+    let ledger = InMemoryRequests::new();
+    let memory = Arc::new(InMemoryMemory::seeded().with_requests(ledger.clone()));
+    let writer = healthy(memory.clone(), &ledger);
+    make_bot(&writer, "defrag").await;
+    ensure(&writer, "bot-request:theta").await;
+    // A list key of its own, declared on no kind: any thing may carry it.
+    let declared = json_of(
+        &writer
+            .declare_type(Parameters(super::declare_type::DeclareTypeArgs {
+                must: None,
+                request_id: None,
+                override_token: None,
+                override_reason: None,
+                name: "sightings".into(),
+                fields: vec![super::declare_type::FieldArgs {
+                    key: "seen_items".into(),
+                    holds: Some("list:text".into()),
+                    folds: None,
+                    required: false,
+                    one_of: None,
+                }],
+                sid: Some(as_bot(&writer, "defrag")),
+            }))
+            .await
+            .expect("declare_type answers"),
+    );
+    assert_ne!(declared["status"], "blocked", "{declared}");
+    let landed = capture_ok(&writer, capture_args("bot-request:theta", "a note")).await;
+    let address = address_of(&landed);
+    let jojobot = healthy(memory.clone(), &ledger);
+
+    let sid = as_bot(&jojobot, "defrag");
+    let args = UpdateFactArgs {
+        status: Some("archived".into()),
+        details: Some("folded into the timetable".into()),
+        sets_add: Some(
+            [("seen_items".to_string(), "alpha".to_string())]
+                .into_iter()
+                .collect(),
+        ),
+        sid: Some(sid),
+        ..update_args(&address)
+    };
+    let answered = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        jojobot.update_fact(Parameters(args)),
+    )
+    .await
+    .expect("the archive finishes and does not wait on its own lock")
+    .expect("the archive answers");
+    assert_ne!(json_of(&answered)["status"], "blocked", "{answered:?}");
+    // The item rides the archived claim, whose keys do not reach the thing; the
+    // case is about the edit finishing and the mark landing.
+    assert!(
+        !the_queue_of(&jojobot, "bot-request:theta")
+            .await
+            .contains(&"bot-request:theta".to_string()),
+        "the request is marked reviewed"
+    );
+}
