@@ -117,3 +117,41 @@ pub async fn a_missing_ref_is_refused_before_a_missing_reference_field<M: Memory
         "the refs are judged before a reference field's value"
     );
 }
+
+/// **A thought over its body cap is refused before a full room is.** The room
+/// holds its one thought and the new thought is too long; the answer names the
+/// cap, so a caller that shortens the thought then meets the full room.
+pub async fn a_thought_over_its_cap_is_refused_before_a_full_room<M: Memory>(store: &M) {
+    let owner = EntityId("thing:contract-order-room-owner".into());
+    let first = EntityId("thing:contract-order-room-first".into());
+    let second = EntityId("thing:contract-order-room-second".into());
+    for handle in [&owner, &first, &second] {
+        ensure(store, handle).await;
+    }
+    let settings = super::support::state(NewFact {
+        fields: [
+            (crate::memory::THOUGHT_CAPACITY.to_string(), "1".to_string()),
+            (crate::memory::THOUGHT_BODY_CAP.to_string(), "5".to_string()),
+        ]
+        .into_iter()
+        .collect(),
+        ..NewFact::about(owner.clone(), "room of one", date(2026, 7, 1))
+    });
+    store.capture(settings).await.expect("the settings land");
+    let filling = NewFact {
+        edge: Some(Edge::new(EdgeShape::Connection, first)),
+        ..NewFact::about(owner.clone(), "fills", date(2026, 7, 2))
+    };
+    store
+        .capture(filling)
+        .await
+        .expect("the room's one thought lands");
+    let too_long = NewFact {
+        edge: Some(Edge::new(EdgeShape::Connection, second)),
+        ..NewFact::about(owner, "far too long for five", date(2026, 7, 3))
+    };
+    match store.capture(too_long).await {
+        Err(MemoryError::ThoughtTooLong { .. }) => {}
+        other => panic!("the cap is judged before the room, got {other:?}"),
+    }
+}
