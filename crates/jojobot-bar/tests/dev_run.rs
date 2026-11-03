@@ -217,6 +217,8 @@ fn dev_run(repo: &Path, markers: &[&str], envs: &[(&str, &str)]) -> Ran {
             // A `make dev BASE=...` that runs these cases must not name their base.
             .env_remove("BAR_DEV_BASE")
             .env_remove("SIZE_BASE")
+            // The own-crates job exports this to the test run it is part of.
+            .env_remove("BAR_OWN_CRATES")
             .envs(envs.iter().copied()),
     )
     .expect("run bar");
