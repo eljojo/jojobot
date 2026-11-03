@@ -142,7 +142,7 @@ async fn dolt_log_contract_native_start_excludes_a_live_predecessor() {
     server.stop().await;
 }
 
-async fn packet(reader: &mut (impl AsyncRead + Unpin)) -> std::io::Result<Vec<u8>> {
+pub(crate) async fn packet(reader: &mut (impl AsyncRead + Unpin)) -> std::io::Result<Vec<u8>> {
     let mut header = [0; 4];
     reader.read_exact(&mut header).await?;
     let length = u32::from_le_bytes([header[0], header[1], header[2], 0]) as usize;
