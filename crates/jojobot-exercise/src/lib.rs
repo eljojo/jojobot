@@ -37,6 +37,7 @@ pub mod lock;
 pub mod playbook;
 pub mod replay;
 pub mod room;
+pub mod room_timing;
 pub mod run;
 pub mod spawn_gate;
 pub mod surface;

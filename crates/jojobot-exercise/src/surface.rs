@@ -19,6 +19,10 @@ pub struct Surface {
     harness_url: String,
     harness_token: Option<String>,
     position: tokio::sync::Mutex<Value>,
+    /// **Microseconds the seed's writes took on this surface**, shared with the
+    /// room that made it, so the room's timing line can say how long the
+    /// furnishing was.
+    furnished: std::sync::Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl Surface {
@@ -38,7 +42,17 @@ impl Surface {
             harness_url: format!("{}/_room_harness", endpoint.trim_end_matches("/mcp")),
             harness_token: None,
             position: tokio::sync::Mutex::new(Value::Null),
+            furnished: std::sync::Arc::default(),
         })
+    }
+
+    /// Count this surface's furnishing on the room's own total.
+    pub(crate) fn sharing_furnished(
+        mut self,
+        furnished: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    ) -> Self {
+        self.furnished = furnished;
+        self
     }
 
     pub(crate) fn with_harness_token(mut self, token: String) -> Self {
@@ -560,10 +574,17 @@ impl Seed {
 
     /// Furniture is scenario data, authored without opening a harness run.
     pub async fn furnish(&self, room: &Surface) -> Result<()> {
-        room.harness_request(json!({
-            "operation": "seed", "author": "bot:assistant", "writes": self.writes,
-        }))
-        .await?;
+        let started = std::time::Instant::now();
+        let done = room
+            .harness_request(json!({
+                "operation": "seed", "author": "bot:assistant", "writes": self.writes,
+            }))
+            .await;
+        room.furnished.fetch_add(
+            started.elapsed().as_micros() as u64,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        done?;
         Ok(())
     }
 }

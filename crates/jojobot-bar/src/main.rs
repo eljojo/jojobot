@@ -198,6 +198,16 @@ fn say_what_was_swept(parent: &Path, swept: jojobot_bar::sweep::Swept) {
     }
 }
 
+/// **The variable that names the file each room case appends its timing line
+/// to.** The harness reads the same spelling (`room_timing::SINK_VARIABLE`); the
+/// two crates do not depend on each other, so each pins it with a case.
+const ROOM_TIMING_VARIABLE: &str = "JOJOBOT_ROOM_TIMING";
+
+/// The file the rooms lane's test processes write their timing lines to, set by
+/// `bar rooms` before the first job starts. It lives beside the lane's log so the
+/// forge's log upload keeps it.
+static ROOM_TIMING_SINK: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
 /// The directory this run gives its children as their temp directory.
 static RUN_ROOT: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
 
@@ -261,6 +271,9 @@ impl Drop for RunRoot {
 /// otherwise run that bar on this run's binaries and fail to read the manifest.
 fn in_the_run_root(command: &mut Command) -> &mut Command {
     command.env_remove(BUNDLE_VARIABLE);
+    if let Some(sink) = ROOM_TIMING_SINK.get() {
+        command.env(ROOM_TIMING_VARIABLE, sink);
+    }
     jojobot_bar::sccache_stats::on_this_runs_server(command);
     match RUN_ROOT.get() {
         Some(root) => command.env("TMPDIR", root),
@@ -667,6 +680,11 @@ fn run_rooms(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
     let cargo = cargo_bin();
     let log_path = PathBuf::from(format!("target/bar/{lane}.log"));
     fresh_log(&log_path)?;
+    let timing_path = PathBuf::from(format!("target/bar/{lane}-room-timing.log"));
+    fresh_log(&timing_path)?;
+    ROOM_TIMING_SINK
+        .set(std::path::absolute(&timing_path)?)
+        .ok();
     let mut summary = Summary::new();
     let prebuilt = match Prebuilt::from_env(&lane) {
         Ok(prebuilt) => prebuilt,
@@ -2070,5 +2088,27 @@ mod tests {
             .filter(|(key, _)| *key == BUNDLE_VARIABLE)
             .collect();
         assert_eq!(held, [(std::ffi::OsStr::new(BUNDLE_VARIABLE), None)]);
+    }
+
+    /// **A command the bar starts for the rooms lane carries the sink variable**,
+    /// naming the file the lane set, and the spelling is pinned here because the
+    /// harness in another crate reads it.
+    #[test]
+    fn a_child_command_names_the_room_timing_file_once_the_lane_set_it() {
+        let file = PathBuf::from("/tmp/a-room-timing.log");
+        ROOM_TIMING_SINK.set(file.clone()).ok();
+        let mut command = Command::new("true");
+        in_the_run_root(&mut command);
+        let held: Vec<_> = command
+            .get_envs()
+            .filter(|(key, _)| *key == "JOJOBOT_ROOM_TIMING")
+            .collect();
+        assert_eq!(
+            held,
+            [(
+                std::ffi::OsStr::new("JOJOBOT_ROOM_TIMING"),
+                Some(file.as_os_str())
+            )]
+        );
     }
 }

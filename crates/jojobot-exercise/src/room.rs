@@ -80,6 +80,14 @@ pub struct Room {
     /// as the room lives**, so another run of this harness is not offered them
     /// between the listener's release and the server's own bind or afterwards.
     _claims: Vec<jojobot_ports::Claim>,
+    /// **When this room's open began**, before its store was copied.
+    began: std::time::Instant,
+    /// How long the store copy took and how long the server took to listen,
+    /// for the timing line the room writes as it goes.
+    copied: std::time::Duration,
+    served: std::time::Duration,
+    /// Microseconds the seed's writes took, shared with this room's surface.
+    furnished: std::sync::Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl Room {
@@ -187,6 +195,7 @@ impl Room {
                     continue;
                 }
             };
+            let began = std::time::Instant::now();
             if let Err(e) = copy_dir_all(seed, dir.path()).with_context(|| {
                 format!(
                     "copying the seed at {} into {}",
@@ -197,7 +206,10 @@ impl Room {
                 last = Some(e);
                 continue;
             }
-            let room = match Room::spawn_bare(binary, &DeathSignal::Ask, today, dir).await {
+            let copied = began.elapsed();
+            let room = match Room::spawn_bare(binary, &DeathSignal::Ask, today, dir, began, copied)
+                .await
+            {
                 Ok(room) => room,
                 Err(e) => {
                     last = Some(e);
@@ -382,6 +394,7 @@ impl Room {
         today: Option<&str>,
         use_template: bool,
     ) -> Result<Room> {
+        let began = std::time::Instant::now();
         let dir = scratch()?;
         if use_template {
             let template = template(binary).await?;
@@ -393,7 +406,8 @@ impl Room {
                 )
             })?;
         }
-        Room::spawn_bare(binary, signal, today, dir).await
+        let copied = began.elapsed();
+        Room::spawn_bare(binary, signal, today, dir, began, copied).await
     }
 
     /// **One attempt, over a directory the caller already prepared** — empty
@@ -404,6 +418,8 @@ impl Room {
         signal: &DeathSignal,
         today: Option<&str>,
         dir: RoomDir,
+        began: std::time::Instant,
+        copied: std::time::Duration,
     ) -> Result<Room> {
         // **Held until the spawn, then let go.** Nothing else in this process
         // can take these numbers while the command is being built, which is
@@ -473,8 +489,14 @@ impl Room {
             endpoint,
             harness_token,
             _claims: claims,
+            began,
+            copied,
+            served: std::time::Duration::ZERO,
+            furnished: std::sync::Arc::default(),
         };
+        let spawned = std::time::Instant::now();
         room.wait_until_answering().await?;
+        room.served = spawned.elapsed();
         Ok(room)
     }
 
@@ -487,7 +509,8 @@ impl Room {
     pub async fn connect(&self) -> Result<crate::surface::Surface> {
         Ok(crate::surface::Surface::connect(self.endpoint())
             .await?
-            .with_harness_token(self.harness_token.clone()))
+            .with_harness_token(self.harness_token.clone())
+            .sharing_furnished(std::sync::Arc::clone(&self.furnished)))
     }
 
     /// **Every line the server has printed so far**, oldest first. A copy, so
@@ -595,6 +618,14 @@ impl Drop for Room {
     /// endings is [`die_with_this_run`], which is the kernel's job rather than
     /// this one's — and it reaches the processes, not the directory.
     fn drop(&mut self) {
+        crate::room_timing::record(&crate::room_timing::RoomTime {
+            copy: self.copied,
+            server: self.served,
+            furnish: std::time::Duration::from_micros(
+                self.furnished.load(std::sync::atomic::Ordering::Relaxed),
+            ),
+            life: self.began.elapsed(),
+        });
         let _ = self.server.kill();
         let _ = self.server.wait();
         if !self.dir.as_os_str().is_empty() {
@@ -716,8 +747,17 @@ async fn template(binary: &Path) -> Result<PathBuf> {
 /// behind, still on disk, is the template; the server itself is not kept,
 /// so [`Room::drop`] never runs over it and the directory survives.
 async fn build_template(binary: &Path) -> Result<PathBuf> {
+    let began = std::time::Instant::now();
     let dir = scratch()?;
-    let room = Room::spawn_bare(binary, &DeathSignal::Skip, None, dir).await?;
+    let room = Room::spawn_bare(
+        binary,
+        &DeathSignal::Skip,
+        None,
+        dir,
+        began,
+        std::time::Duration::ZERO,
+    )
+    .await?;
     let dir = room.keep_dir();
     keep_until_exit(dir.clone());
     Ok(dir)
@@ -1270,6 +1310,8 @@ mod tests {
             &super::DeathSignal::Skip,
             None,
             dir,
+            std::time::Instant::now(),
+            std::time::Duration::ZERO,
         )
         .await;
         assert!(spawned.is_err(), "the binary does not exist");
@@ -1672,6 +1714,10 @@ mod tests {
             endpoint: "http://127.0.0.1:9/mcp".to_string(),
             harness_token: String::new(),
             _claims: Vec::new(),
+            began: std::time::Instant::now(),
+            copied: std::time::Duration::ZERO,
+            served: std::time::Duration::ZERO,
+            furnished: std::sync::Arc::default(),
         };
 
         let message = match room.wait_until_answering().await {
@@ -1730,6 +1776,10 @@ mod tests {
             endpoint: format!("http://127.0.0.1:{port}/mcp"),
             harness_token: String::new(),
             _claims: Vec::new(),
+            began: std::time::Instant::now(),
+            copied: std::time::Duration::ZERO,
+            served: std::time::Duration::ZERO,
+            furnished: std::sync::Arc::default(),
         };
         let waited = tokio::time::timeout(
             std::time::Duration::from_secs(5),
