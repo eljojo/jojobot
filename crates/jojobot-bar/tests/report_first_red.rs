@@ -55,6 +55,7 @@ fn scratch() -> PathBuf {
 
 struct Ran {
     stdout: String,
+    stderr: String,
     success: bool,
     took: Duration,
     started: Vec<String>,
@@ -87,6 +88,7 @@ fn bar_with_jobs(dir: &Path, level: &str, red_job: &str, jobs: &str) -> Ran {
         .collect();
     Ran {
         stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
         success: out.status.success(),
         took,
         started,
@@ -171,4 +173,39 @@ fn report_first_red_accepts_an_all_green_stub() {
     assert!(report.success, "{}", report.stdout);
     assert!(report.started.iter().any(|call| call.contains("gamma")));
     assert!(!report.stdout.contains("did not run"), "{}", report.stdout);
+}
+
+/// **The report says what happens as it happens.** A phase line reaches the job
+/// log when the phase ends, and the first red job is named the moment it ends,
+/// before the jobs still running are killed, so a reader of the running job sees
+/// the red and not only the verdict at the end. **Paired**: the boundary level
+/// keeps its one verdict at the end and says none of it early.
+#[test]
+fn report_says_each_phase_and_the_first_red_job_when_it_happens() {
+    let dir = scratch();
+    let report = bar(&dir, "report", "--lib");
+    assert!(!report.success, "{}", report.stdout);
+    let phase = report
+        .stderr
+        .lines()
+        .position(|line| line.starts_with("fmt-check: ok"))
+        .unwrap_or_else(|| panic!("no phase line while running\n{}", report.stderr));
+    let red = report
+        .stderr
+        .lines()
+        .position(|line| line.starts_with("red: ") && line.contains("--lib"))
+        .unwrap_or_else(|| panic!("the red job was not named\n{}", report.stderr));
+    assert!(phase < red, "the phase line came after the red job");
+
+    let dir = scratch();
+    let boundary = bar(&dir, "check", "--lib");
+    assert!(!boundary.success, "{}", boundary.stdout);
+    assert!(
+        !boundary
+            .stderr
+            .lines()
+            .any(|line| line.starts_with("red: ") || line.starts_with("fmt-check: ok")),
+        "the boundary level said a phase early\n{}",
+        boundary.stderr
+    );
 }

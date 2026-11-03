@@ -370,6 +370,7 @@ pub struct Summary {
     lines: Vec<String>,
     pub green: bool,
     pending_verdict: Option<verdict::Input>,
+    live: bool,
 }
 
 impl Summary {
@@ -378,13 +379,31 @@ impl Summary {
             lines: Vec::new(),
             green: true,
             pending_verdict: None,
+            live: false,
         }
+    }
+
+    /// **The report level's summary says each phase line on standard error as the
+    /// phase ends**, so the job log of a run that is still going shows how far it
+    /// is. The verdict block at the end is unchanged.
+    pub fn live() -> Self {
+        Summary {
+            live: true,
+            ..Summary::new()
+        }
+    }
+
+    fn say(&mut self, line: String) {
+        if self.live {
+            eprintln!("{line}");
+        }
+        self.lines.push(line);
     }
 
     /// **A phase that ran clean.** Recorded as ok; nothing about `green`
     /// changes on its own.
     pub fn phase_ok(&mut self, phase: &str, detail: &str) {
-        self.lines.push(format!("{phase}: ok — {detail}"));
+        self.say(format!("{phase}: ok — {detail}"));
     }
 
     /// **A phase that ran clean, with the wall time it took.** The time is the
@@ -496,7 +515,7 @@ impl Summary {
 
     pub fn phase_failed(&mut self, phase: &str, detail: &str) {
         self.green = false;
-        self.lines.push(format!("{phase}: FAILED — {detail}"));
+        self.say(format!("{phase}: FAILED — {detail}"));
     }
 
     /// **A line under a phase**, as it is: the reasons a phase failed.

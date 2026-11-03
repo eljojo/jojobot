@@ -546,6 +546,12 @@ fn run_test_jobs(
                             eprintln!("bar: test history: this job was not written: {e}");
                         }
                         if fail_fast && !result.0 {
+                            // Said before the other jobs are killed, so the log of
+                            // a running job shows the red when it happens.
+                            eprintln!(
+                                "red: cargo test {}; the jobs still running are killed",
+                                job_args(prefix, job).join(" ")
+                            );
                             stop.store(true, Ordering::SeqCst);
                         }
                     }
@@ -1466,7 +1472,11 @@ fn run_check_phases(known: &KnownReds, level: Level) -> std::io::Result<ExitCode
     }
     let log_path = PathBuf::from(format!("target/bar/{}.log", level.name()));
     fresh_log(&log_path)?;
-    let mut summary = Summary::new();
+    let mut summary = if level == Level::Report {
+        Summary::live()
+    } else {
+        Summary::new()
+    };
     jojobot_bar::size::phase(&mut summary);
 
     let started = std::time::Instant::now();
