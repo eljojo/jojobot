@@ -32,9 +32,11 @@ async fn a_first_claim_that_fails_inside_the_write_leaves_no_thing_behind() {
         fact
     };
 
-    // **The claim's table is out of reach while the call runs**, so the claim's
-    // insert fails after validation has passed and after the thing's own row is
-    // in the batch. Nothing the call is asked is wrong; the store fails it.
+    // **The claim's table is out of reach while the call runs**, so the read of
+    // what the thing already holds (the capacity preflight in `capture_in`, which
+    // joins this table) fails after validation has passed and after the thing's
+    // own row is in the batch. Nothing the call is asked is wrong; the store
+    // fails it.
     sqlx::query("RENAME TABLE fact_write TO fact_write_away")
         .execute(&pool)
         .await
@@ -69,7 +71,7 @@ async fn a_first_claim_that_fails_inside_the_write_leaves_no_thing_behind() {
 
     // **The same call, once the table is back, makes both**, so the miss above
     // is the failure and not a handle this store refuses.
-    memory
+    let (_, made) = memory
         .add_entity_with_first_claim(
             NewEntity::new(eta.clone(), "Eta", "contract-fixture"),
             claim(&eta),
@@ -86,5 +88,15 @@ async fn a_first_claim_that_fails_inside_the_write_leaves_no_thing_behind() {
             .iter()
             .any(|entity| entity.id == eta),
         "the thing is made when the claim's write lands"
+    );
+    // **The claim the call returned is stored**, read back through the store, so
+    // a call that commits the thing and answers with a claim it did not persist
+    // fails here.
+    let stored = memory.recall(&eta).await.expect("the claim reads back");
+    assert!(
+        stored
+            .iter()
+            .any(|fact| fact.id == made.id && fact.content == "the first claim"),
+        "the first claim the call returned is stored on the new thing: {stored:?}"
     );
 }
