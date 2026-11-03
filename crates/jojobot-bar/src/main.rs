@@ -30,9 +30,10 @@ use jojobot_bar::verdict;
 use jojobot_bar::{
     CALL_USAGE, HISTORY_DIR_VARIABLE, KnownReds, ROSTER_FILE, Run, RunHeader, Summary,
     TEST_JOBS_VARIABLE, cargo_bin, contained_from_exit, history_root, is_a_revision, is_slow,
-    iso_utc, job_args, jobs_limit, load_known_reds, new_roster_entries, parse_call, parse_job,
-    read_history, render_roster_report, report_line, report_plan, roster_entries, run_id,
-    start_lines, summarize_test_output, test_healthy, test_jobs, write_call,
+    iso_utc, job_args, job_name, jobs_limit, load_known_reds, longest_first, new_roster_entries,
+    parse_call, parse_job, read_history, render_roster_report, report_line, report_plan,
+    roster_entries, run_id, start_lines, summarize_test_output, test_healthy, test_jobs,
+    write_call,
 };
 
 mod local_upgrade;
@@ -677,6 +678,23 @@ fn run_rooms(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
             return Ok(ExitCode::from(2));
         }
     };
+    // **The longest suite starts first**, by the durations the lane recorded on
+    // this host, so the last suite to start is a short one.
+    let recorded = history_root(
+        std::env::var(HISTORY_DIR_VARIABLE).ok().as_deref(),
+        std::env::var("HOME").ok().as_deref(),
+    )
+    .map(|root| read_history(&root, &[lane.as_str()]))
+    .unwrap_or_default();
+    let with_history = jobs
+        .iter()
+        .filter(|job| recorded.jobs.contains_key(&job_name(job)))
+        .count();
+    let order_line = format!(
+        "longest recorded run first; {with_history} of {} jobs have a recorded run",
+        jobs.len()
+    );
+    let jobs = longest_first(jobs, &recorded);
     let cargo = cargo_bin();
     let log_path = PathBuf::from(format!("target/bar/{lane}.log"));
     fresh_log(&log_path)?;
@@ -736,6 +754,7 @@ fn run_rooms(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
         "jobs",
         &format!("{limit} test binaries at a time ({TEST_JOBS_VARIABLE})"),
     );
+    summary.phase_ok("order", &order_line);
     summary.test_phase(ok, &verdict, known);
     summary.verdict_of(&lane, &text, ok, 0);
     finish(&mut summary, &log_path);

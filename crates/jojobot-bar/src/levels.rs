@@ -165,6 +165,31 @@ pub fn median_cost_ms(runs: &[JobRun]) -> Option<f64> {
     }
 }
 
+/// **The jobs in the order the longest runs first**, by the median cost the
+/// history holds for each, so the last job to start is a short one and the lanes
+/// finish together. A job with no recorded duration has no evidence either way
+/// and starts first: a new suite of unknown length must not be the one left for
+/// last. Jobs of equal cost, and jobs with none, keep the order they were given.
+/// Nothing is dropped and nothing is added.
+pub fn longest_first(jobs: Vec<Vec<String>>, history: &History) -> Vec<Vec<String>> {
+    let cost = |job: &Vec<String>| {
+        history
+            .jobs
+            .get(&job_name(job))
+            .and_then(|runs| median_cost_ms(runs))
+    };
+    let mut ordered = jobs;
+    // A stable sort keeps the given order among equals. `None` sorts before any
+    // number, and the longest cost sorts before the shortest.
+    ordered.sort_by(|a, b| match (cost(a), cost(b)) {
+        (None, None) => std::cmp::Ordering::Equal,
+        (None, Some(_)) => std::cmp::Ordering::Less,
+        (Some(_), None) => std::cmp::Ordering::Greater,
+        (Some(a), Some(b)) => b.total_cmp(&a),
+    });
+    ordered
+}
+
 /// **Whether a job's runs cost enough to leave the report level.** A job with
 /// no recorded duration has no evidence of cost and is not slow.
 pub fn is_slow(runs: &[JobRun]) -> bool {
@@ -648,6 +673,72 @@ mod tests {
 
     fn all_taking(count: usize, ms: u64) -> Vec<JobRun> {
         (0..count).map(|n| timed(n, ms, None, None)).collect()
+    }
+
+    fn history_of_costs(costs: &[(&str, u64)]) -> History {
+        let mut history = History::default();
+        for (name, ms) in costs {
+            history.jobs.insert((*name).to_string(), all_taking(5, *ms));
+        }
+        history
+    }
+
+    /// **The longest job starts first, and a job with no history before them
+    /// all.** The suites a lane runs are given in the order the manifest lists
+    /// them, so the order is the only thing that can leave a long one for last.
+    #[test]
+    fn the_longest_job_starts_first_and_an_unknown_one_before_it() {
+        let jobs = vec![
+            job(&["--test", "alpha"]),
+            job(&["--test", "beta"]),
+            job(&["--test", "gamma"]),
+            job(&["--test", "delta"]),
+        ];
+        let history = history_of_costs(&[
+            ("test-alpha", 10_000),
+            ("test-beta", 300_000),
+            ("test-delta", 20_000),
+        ]);
+        let ordered = longest_first(jobs.clone(), &history);
+        assert_eq!(
+            ordered,
+            [
+                job(&["--test", "gamma"]),
+                job(&["--test", "beta"]),
+                job(&["--test", "delta"]),
+                job(&["--test", "alpha"]),
+            ]
+        );
+    }
+
+    /// **With no history at all the order is the given one**, so a runner that
+    /// has never run the lane is no worse off than before.
+    #[test]
+    fn without_any_history_the_given_order_stays() {
+        let jobs = vec![job(&["--test", "beta"]), job(&["--test", "alpha"])];
+        assert_eq!(longest_first(jobs.clone(), &History::default()), jobs);
+    }
+
+    /// **A run on a loaded machine counts for the share of it the job had**, as
+    /// the report level's cost does: a long raw time under heavy load is not a
+    /// longer job than a shorter one on a quiet machine.
+    #[test]
+    fn a_loaded_runs_time_is_discounted_when_ordering() {
+        let mut history = History::default();
+        history.jobs.insert(
+            "test-loaded".to_string(),
+            (0..5)
+                .map(|n| timed(n, 400_000, Some(4), Some(16.0)))
+                .collect(),
+        );
+        history
+            .jobs
+            .insert("test-quiet".to_string(), all_taking(5, 200_000));
+        let jobs = vec![job(&["--test", "loaded"]), job(&["--test", "quiet"])];
+        assert_eq!(
+            longest_first(jobs, &history),
+            [job(&["--test", "quiet"]), job(&["--test", "loaded"])]
+        );
     }
 
     /// **The threshold is thirty seconds and the edge is costly.** A median of
