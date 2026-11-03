@@ -7,15 +7,14 @@ use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::testing::{Scratch, free_port, migrated_database};
+use jojobot_domain::memory::Guarded;
 use jojobot_domain::memory::testing::contract;
 
 /// **The real store still names a missing subject before it judges the write.**
 /// The decided order refuses a setting with no value first; this pins what the
 /// real store does today. The admission that moves in 9.3.3-c2 makes it follow the
-/// decided order; that change removes `should_panic` and runs the case like the
-/// others.
+/// decided order; that change replaces this case with a run of the shared one.
 #[tokio::test]
-#[should_panic(expected = "a malformed write is refused before the subject is judged")]
 async fn dolt_still_names_a_missing_subject_before_it_judges_a_malformed_write() {
     let scratch = Scratch::new("refusal-order-malformed");
     let mut store = Dolt::start(&scratch.0, free_port())
@@ -29,8 +28,14 @@ async fn dolt_still_names_a_missing_subject_before_it_judges_a_malformed_write()
         .await
         .expect("the kinds are seeded");
     let memory = DoltMemory::open(pool);
-    contract::a_setting_with_no_value_is_refused_before_a_missing_subject(&memory).await;
+    let answer = contract::a_setting_with_no_value_on_a_missing_subject(&memory).await;
     store.stop().await;
+    match answer {
+        Ok(Guarded::Blocked { attempted, .. }) => {
+            assert_eq!(attempted.as_str(), contract::MALFORMED_SUBJECT);
+        }
+        other => panic!("the real store names the missing subject, got {other:?}"),
+    }
 }
 
 #[tokio::test]

@@ -23,21 +23,33 @@ async fn missed<M: Memory>(store: &M, fact: NewFact) -> String {
     }
 }
 
+/// The subject the malformed write is about, which nobody holds.
+pub const MALFORMED_SUBJECT: &str = "thing:contract-order-malformed-subject";
+
+/// The capture of a setting with no value on a subject nobody holds: the fault of
+/// the write and the missing subject, in one call. Each store's answer to it is
+/// pinned where the store is tested.
+pub async fn a_setting_with_no_value_on_a_missing_subject<M: Memory>(
+    store: &M,
+) -> Result<Guarded<Fact>, MemoryError> {
+    let fact = NewFact {
+        sets: ["contract_order_setting".to_string()].into(),
+        ..NewFact::about(
+            EntityId(MALFORMED_SUBJECT.into()),
+            "a malformed write on nobody",
+            date(2026, 7, 1),
+        )
+    };
+    store.capture(fact).await
+}
+
 /// **A malformed write is refused before a missing subject is named.** A setting
 /// that has no value is a fault of the write alone, and it is judged first, so the
 /// answer is the refusal of the write and not a request to create the subject.
 /// **The real store judges the subject first and answers `Blocked`**, so this case
 /// reddens against it until the admission moves, and only the fake runs it.
 pub async fn a_setting_with_no_value_is_refused_before_a_missing_subject<M: Memory>(store: &M) {
-    let fact = NewFact {
-        sets: ["contract_order_setting".to_string()].into(),
-        ..NewFact::about(
-            EntityId("thing:contract-order-malformed-subject".into()),
-            "a malformed write on nobody",
-            date(2026, 7, 1),
-        )
-    };
-    match store.capture(fact).await {
+    match a_setting_with_no_value_on_a_missing_subject(store).await {
         Err(MemoryError::InvalidFact(_)) => {}
         other => panic!("a malformed write is refused before the subject is judged, got {other:?}"),
     }
@@ -84,11 +96,16 @@ pub async fn a_missing_edge_object_is_refused_before_a_missing_ref<M: Memory>(st
     );
 }
 
-/// **The refs are judged before the value of a reference-typed field.** The
-/// subject exists; a ref and a reference field both name nobody; the answer names
-/// the ref. **The fake judges the field first**, so this case reddens against it
-/// until the admission moves, and only the real store runs it.
-pub async fn a_missing_ref_is_refused_before_a_missing_reference_field<M: Memory>(store: &M) {
+/// The value of the reference field, which nobody answers to.
+pub const REFERENCE_FIELD_VALUE: &str = "person:contract-order-the-field-value";
+/// The ref, which nobody answers to.
+pub const FIRST_REF: &str = "person:contract-order-first-ref";
+
+/// The handle the refusal of a capture says missed, when the capture names a ref
+/// and a reference field's value that nobody answers to. The subject exists.
+pub async fn the_name_missed_by_a_missing_ref_and_a_missing_reference_field<M: Memory>(
+    store: &M,
+) -> String {
     store
         .declare_type(
             DeclaredType::new(
@@ -104,16 +121,24 @@ pub async fn a_missing_ref_is_refused_before_a_missing_reference_field<M: Memory
     let fact = NewFact {
         fields: [(
             "order_loaned_to".to_string(),
-            "person:contract-order-the-field-value".to_string(),
+            REFERENCE_FIELD_VALUE.to_string(),
         )]
         .into_iter()
         .collect(),
-        refs: vec![EntityId("person:contract-order-first-ref".into())],
+        refs: vec![EntityId(FIRST_REF.into())],
         ..NewFact::about(subject, "two names that miss", date(2026, 7, 1))
     };
+    missed(store, fact).await
+}
+
+/// **The refs are judged before the value of a reference-typed field.** The
+/// subject exists; a ref and a reference field both name nobody; the answer names
+/// the ref. **The fake judges the field first**, so this case reddens against it
+/// until the admission moves, and only the real store runs it.
+pub async fn a_missing_ref_is_refused_before_a_missing_reference_field<M: Memory>(store: &M) {
     assert_eq!(
-        missed(store, fact).await,
-        "person:contract-order-first-ref",
+        the_name_missed_by_a_missing_ref_and_a_missing_reference_field(store).await,
+        FIRST_REF,
         "the refs are judged before a reference field's value"
     );
 }

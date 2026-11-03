@@ -67,11 +67,13 @@ async fn the_fake_judges_the_subject_the_edge_and_the_refs_in_the_decided_order(
 /// **The fake judges a reference field's value before the refs, and the decided
 /// order is the other way round.** This pins what the fake does today: the case
 /// the real store passes reddens here. The admission that moves in 9.3.3-c2 makes
-/// the fake follow the decided order; that change removes `should_panic` and runs
-/// the case on the fake like the others.
+/// the fake follow the decided order; that change replaces this case with a run of
+/// the shared one.
 #[tokio::test]
-#[should_panic(expected = "the refs are judged before a reference field's value")]
 async fn the_fake_still_judges_a_reference_field_before_the_refs() {
     let store = InMemoryMemory::booted();
-    contract::a_missing_ref_is_refused_before_a_missing_reference_field(&store).await;
+    assert_eq!(
+        contract::the_name_missed_by_a_missing_ref_and_a_missing_reference_field(&store).await,
+        contract::REFERENCE_FIELD_VALUE,
+    );
 }
