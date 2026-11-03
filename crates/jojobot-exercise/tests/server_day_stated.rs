@@ -82,6 +82,10 @@ const OPENS_ON_THE_WALL_CLOCK: &[(&str, &str)] = &[
         "asserts on the server's log lines, matches no answer",
     ),
     (
+        "room_timing_line.rs",
+        "asserts on the timing line a room writes, matches no answer",
+    ),
+    (
         "room_template_vanished.rs",
         "asserts a room opens after its template is removed, matches no answer",
     ),
