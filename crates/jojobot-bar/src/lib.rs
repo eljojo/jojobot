@@ -147,6 +147,113 @@ pub fn jobs_limit(value: Option<&str>) -> Result<usize, String> {
     }
 }
 
+/// **The environment variable that names the cores this runner slot owns**, a
+/// whole number of at least 1: the host's cores divided by the host's slot count.
+/// The runner's configuration sets it, per host. Unset or empty, the run is
+/// bounded by nothing and behaves as it always has.
+pub const SLOT_CORES_VARIABLE: &str = "BAR_SLOT_CORES";
+
+/// **The cores this slot owns**, from the value of [`SLOT_CORES_VARIABLE`]. `None`
+/// when it is unset or empty (an empty value counts as unset); anything else that
+/// is not a whole number of at least one is an error naming the variable and the
+/// value, so a bound that fell back to nothing never reads later as a bound.
+pub fn slot_cores(value: Option<&str>) -> Result<Option<usize>, String> {
+    let Some(value) = value.filter(|value| !value.trim().is_empty()) else {
+        return Ok(None);
+    };
+    let digits = value.trim();
+    match digits.parse::<usize>() {
+        // Only digits: a sign is not a count of cores, whatever `parse` allows.
+        Ok(n) if n >= 1 && digits.bytes().all(|b| b.is_ascii_digit()) => Ok(Some(n)),
+        _ => Err(format!(
+            "{SLOT_CORES_VARIABLE} is {value:?}: it must be a whole number of at least 1"
+        )),
+    }
+}
+
+/// **What a slot's core share bounds in one run.** Cargo builds with `build_jobs`
+/// jobs; at most `limit` test binaries run at once, never more than `cores`; and
+/// each test binary runs `test_threads` cases at once, so the binaries side by
+/// side together use about `cores` threads. The bound is a ceiling and never a
+/// raise: see [`SlotBound::within`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SlotBound {
+    pub cores: usize,
+    pub limit: usize,
+    pub build_jobs: usize,
+    pub test_threads: usize,
+}
+
+impl SlotBound {
+    /// **The bound held under what the runner already set.** A runner that sets
+    /// `CARGO_BUILD_JOBS` or `RUST_TEST_THREADS` below the slot's share keeps its
+    /// number: the lower of the two wins, so naming a slot's cores never raises a
+    /// job above what its host chose. A value that is not a whole number of at
+    /// least one counts as unset. It leaves `cores` and the binaries-at-once
+    /// `limit` as they are; the host's own cores cap the build apart, in
+    /// [`SlotBound::capped_to_host`].
+    pub fn within(self, build_jobs: Option<&str>, test_threads: Option<&str>) -> SlotBound {
+        let whole = |value: Option<&str>| {
+            value
+                .map(str::trim)
+                .filter(|digits| !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
+                .and_then(|digits| digits.parse::<usize>().ok())
+                .filter(|n| *n >= 1)
+        };
+        SlotBound {
+            build_jobs: whole(build_jobs).map_or(self.build_jobs, |held| held.min(self.build_jobs)),
+            test_threads: whole(test_threads)
+                .map_or(self.test_threads, |held| held.min(self.test_threads)),
+            ..self
+        }
+    }
+
+    /// **The bound held to the host's own cores.** Cargo with no `CARGO_BUILD_JOBS`
+    /// builds with the host's logical cores, so a slot variable that names more
+    /// cores than the host has must not raise the build above that.
+    pub fn capped_to_host(self, host_cores: usize) -> SlotBound {
+        SlotBound {
+            build_jobs: self.build_jobs.min(host_cores.max(1)),
+            ..self
+        }
+    }
+
+    /// The sentence a verdict says about the bound, naming the variable and each
+    /// number the bound set.
+    pub fn detail(&self) -> String {
+        format!(
+            "bounded to {} slot cores ({SLOT_CORES_VARIABLE}): {} build jobs, {} test threads a binary",
+            self.cores, self.build_jobs, self.test_threads
+        )
+    }
+}
+
+/// **How many test binaries run at once, and what the slot bounds**, from the
+/// values of [`TEST_JOBS_VARIABLE`] and [`SLOT_CORES_VARIABLE`]. With no slot
+/// variable it is [`jobs_limit`] and no bound. With one, the limit is held to the
+/// slot's cores, and the test threads of a binary are the cores shared among the
+/// binaries that run at once.
+pub fn bounded_limit(
+    jobs: Option<&str>,
+    slot: Option<&str>,
+) -> Result<(usize, Option<SlotBound>), String> {
+    let limit = jobs_limit(jobs)?;
+    let Some(cores) = slot_cores(slot)? else {
+        return Ok((limit, None));
+    };
+    let limit = limit.min(cores);
+    Ok((
+        limit,
+        Some(SlotBound {
+            cores,
+            limit,
+            build_jobs: cores,
+            // The limit is held to the cores and is at least 1, so this is at least 1.
+            test_threads: cores / limit,
+        }),
+    ))
+}
+
 /// **The `cargo test` runs that, together, are `cargo test --workspace`.**
 ///
 /// Read off `cargo test --workspace --no-run`, which prints one `Executable`
@@ -749,6 +856,138 @@ mod tests {
                 "the refusal must name the variable and the value: {err}"
             );
         }
+    }
+
+    /// **No slot variable is today's behaviour: the limit is the one `jobs_limit`
+    /// gives and nothing is bounded.** An empty variable counts as unset.
+    #[test]
+    fn without_a_slot_variable_the_limit_is_what_it_was() {
+        assert_eq!(bounded_limit(None, None), Ok((TEST_JOBS_DEFAULT, None)));
+        assert_eq!(bounded_limit(Some("3"), None), Ok((3, None)));
+        assert_eq!(bounded_limit(None, Some("")), Ok((TEST_JOBS_DEFAULT, None)));
+        assert_eq!(slot_cores(Some("  ")), Ok(None));
+    }
+
+    /// **A slot's cores hold the limit down and share the cores among the
+    /// binaries.** The default of eight on a four-core slot is four binaries of
+    /// one thread; two binaries on eight cores are four threads each; a limit
+    /// already under the cores stays.
+    #[test]
+    fn a_slot_bounds_the_binaries_at_once_and_the_threads_of_each() {
+        let bound = |limit, test_threads, cores| SlotBound {
+            cores,
+            limit,
+            build_jobs: cores,
+            test_threads,
+        };
+        assert_eq!(
+            bounded_limit(None, Some("4")),
+            Ok((4, Some(bound(4, 1, 4))))
+        );
+        assert_eq!(
+            bounded_limit(Some("2"), Some("8")),
+            Ok((2, Some(bound(2, 4, 8))))
+        );
+        assert_eq!(
+            bounded_limit(Some("16"), Some("8")),
+            Ok((8, Some(bound(8, 1, 8))))
+        );
+        assert_eq!(
+            bounded_limit(Some("3"), Some("8")),
+            Ok((3, Some(bound(3, 2, 8))))
+        );
+        assert_eq!(
+            bounded_limit(None, Some(" 1 ")),
+            Ok((1, Some(bound(1, 1, 1))))
+        );
+    }
+
+    /// **A slot value that is not a whole number of at least one is refused by
+    /// name, and a bad job limit still is too.**
+    #[test]
+    fn a_bad_slot_value_is_refused_by_name() {
+        for bad in ["0", "many", "-2", "2.5", "+4", "99999999999999999999999"] {
+            let err = bounded_limit(None, Some(bad)).expect_err(bad);
+            assert!(
+                err.contains(SLOT_CORES_VARIABLE) && err.contains(&format!("{bad:?}")),
+                "the refusal must name the variable and the value: {err}"
+            );
+        }
+        let err = bounded_limit(Some("many"), Some("4")).expect_err("a bad job limit");
+        assert!(err.contains(TEST_JOBS_VARIABLE), "{err}");
+    }
+
+    /// **The slot bound is a ceiling and never a raise.** What the runner already
+    /// set below the slot's share stays; what it set above is brought down to the
+    /// share; a value that is not a whole number counts as unset.
+    #[test]
+    fn a_slot_bound_never_raises_what_the_runner_set() {
+        let bound = SlotBound {
+            cores: 12,
+            limit: 3,
+            build_jobs: 12,
+            test_threads: 4,
+        };
+        let held = |build_jobs, test_threads| {
+            let b = bound.within(build_jobs, test_threads);
+            (b.build_jobs, b.test_threads)
+        };
+        assert_eq!(held(Some("6"), Some("2")), (6, 2), "lower values stay");
+        assert_eq!(
+            held(Some("20"), Some("9")),
+            (12, 4),
+            "higher values come down"
+        );
+        assert_eq!(held(None, None), (12, 4), "nothing set, the share");
+        assert_eq!(held(Some(" 8 "), None), (8, 4));
+        for bad in ["many", "0", "", "+3", "2.5", "99999999999999999999999"] {
+            assert_eq!(
+                held(Some(bad), Some(bad)),
+                (12, 4),
+                "{bad:?} counts as unset"
+            );
+        }
+        assert_eq!(bound.within(Some("6"), None).cores, 12);
+        assert_eq!(bound.within(Some("6"), None).limit, 3);
+    }
+
+    /// **A bound never builds with more jobs than the host has cores**, and leaves
+    /// the other numbers alone.
+    #[test]
+    fn a_bound_is_held_to_the_hosts_cores_for_the_build() {
+        let bound = SlotBound {
+            cores: 28,
+            limit: 4,
+            build_jobs: 28,
+            test_threads: 7,
+        };
+        assert_eq!(bound.capped_to_host(16).build_jobs, 16);
+        assert_eq!(bound.capped_to_host(64).build_jobs, 28);
+        assert_eq!(bound.capped_to_host(0).build_jobs, 1);
+        let capped = bound.capped_to_host(16);
+        assert_eq!(
+            (capped.cores, capped.limit, capped.test_threads),
+            (28, 4, 7)
+        );
+    }
+
+    /// **The sentence a verdict says names the variable and the numbers.** The
+    /// spelling of the variable is stored in the runner's configuration, which
+    /// nothing in this crate declares, so it is pinned here as a literal.
+    #[test]
+    fn the_bound_says_its_variable_and_its_numbers() {
+        assert_eq!(SLOT_CORES_VARIABLE, "BAR_SLOT_CORES");
+        let said = SlotBound {
+            cores: 6,
+            limit: 2,
+            build_jobs: 4,
+            test_threads: 3,
+        }
+        .detail();
+        assert!(said.contains("BAR_SLOT_CORES"), "{said}");
+        assert!(said.contains("6 slot cores"), "{said}");
+        assert!(said.contains("4 build jobs"), "{said}");
+        assert!(said.contains("3 test threads"), "{said}");
     }
 
     /// **A listing that names no binary still runs the doc-tests and nothing

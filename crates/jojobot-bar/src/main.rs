@@ -28,12 +28,12 @@ use jojobot_bar::deadline::Clock;
 use jojobot_bar::dev;
 use jojobot_bar::verdict;
 use jojobot_bar::{
-    CALL_USAGE, HISTORY_DIR_VARIABLE, KnownReds, ROSTER_FILE, Run, RunHeader, Summary,
-    TEST_JOBS_VARIABLE, cargo_bin, contained_from_exit, history_root, is_a_revision, is_slow,
-    iso_utc, job_args, job_name, jobs_limit, load_known_reds, longest_first, new_roster_entries,
-    parse_call, parse_job, read_history, render_roster_report, report_line, report_plan,
-    roster_entries, run_id, start_lines, summarize_test_output, test_healthy, test_jobs,
-    write_call,
+    CALL_USAGE, HISTORY_DIR_VARIABLE, KnownReds, ROSTER_FILE, Run, RunHeader, SLOT_CORES_VARIABLE,
+    Summary, TEST_JOBS_VARIABLE, bounded_limit, cargo_bin, contained_from_exit, history_root,
+    is_a_revision, is_slow, iso_utc, job_args, job_name, load_known_reds, longest_first,
+    new_roster_entries, parse_call, parse_job, read_history, render_roster_report, report_line,
+    report_plan, roster_entries, run_id, start_lines, summarize_test_output, test_healthy,
+    test_jobs, write_call,
 };
 
 mod local_upgrade;
@@ -85,6 +85,13 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    // **Bound to the slot's cores before any child starts**, whatever the target:
+    // there is no list of targets to fall out of, and a value that is not a core
+    // count is refused here by name before any phase costs a build.
+    if let Err(refusal) = bind_this_run_to_its_slot() {
+        eprintln!("bar: {refusal}");
+        return ExitCode::from(2);
+    }
     // **Held until the run ends**, so the directory its children work in goes
     // with it, whatever those children left.
     let _run_root = if matches!(
@@ -265,6 +272,66 @@ impl Drop for RunRoot {
     }
 }
 
+/// What this run's slot bounds, when the runner names the slot's cores. Set once,
+/// by [`limit_of_this_run`], before any child starts.
+static SLOT_BOUND: std::sync::OnceLock<jojobot_bar::SlotBound> = std::sync::OnceLock::new();
+
+/// **How many test binaries run at once in this run**, from `BAR_JOBS` and the
+/// slot's cores. When the runner names the slot's cores the bound is kept for
+/// every child and for the verdict's jobs line.
+fn limit_of_this_run() -> Result<usize, String> {
+    Ok(bounds_of_this_run()?.0)
+}
+
+/// The limit and the bound the environment names, read once here for both the
+/// targets that run test binaries and the run's start.
+fn bounds_of_this_run() -> Result<(usize, Option<jojobot_bar::SlotBound>), String> {
+    let (limit, bound) = bounded_limit(
+        std::env::var(TEST_JOBS_VARIABLE).ok().as_deref(),
+        std::env::var(SLOT_CORES_VARIABLE).ok().as_deref(),
+    )?;
+    // What the runner already set below the slot's share stays, and the build is
+    // never wider than the host: a bound never raises.
+    let host = std::thread::available_parallelism().map_or(usize::MAX, |cores| cores.get());
+    let bound = bound.map(|bound| {
+        bound
+            .within(
+                std::env::var("CARGO_BUILD_JOBS").ok().as_deref(),
+                std::env::var("RUST_TEST_THREADS").ok().as_deref(),
+            )
+            .capped_to_host(host)
+    });
+    Ok((limit, bound))
+}
+
+/// **Keep the slot's bound for every child this run starts**, before the first
+/// one does, whatever the target. A value that is not a whole number of cores is
+/// refused here, by name, before any phase costs a build.
+fn bind_this_run_to_its_slot() -> Result<(), String> {
+    let slot = std::env::var(SLOT_CORES_VARIABLE).ok();
+    if jojobot_bar::slot_cores(slot.as_deref())?.is_some()
+        && let (_, Some(bound)) = bounds_of_this_run()?
+    {
+        SLOT_BOUND.set(bound).ok();
+    }
+    Ok(())
+}
+
+/// **Bound a child to its slot's cores**: cargo builds with the slot's cores and
+/// a test binary runs its share of them. With no bound the child is left as it
+/// was, and a bound it inherited from the environment is not touched either.
+fn with_slot_bound<'a>(
+    command: &'a mut Command,
+    bound: Option<&jojobot_bar::SlotBound>,
+) -> &'a mut Command {
+    match bound {
+        Some(bound) => command
+            .env("CARGO_BUILD_JOBS", bound.build_jobs.to_string())
+            .env("RUST_TEST_THREADS", bound.test_threads.to_string()),
+        None => command,
+    }
+}
+
 /// **Point a child's temp directory at this run's own**, when it has one.
 ///
 /// **A child never sees [`BUNDLE_VARIABLE`].** It names the bundle for this bar
@@ -275,6 +342,7 @@ fn in_the_run_root(command: &mut Command) -> &mut Command {
     if let Some(sink) = ROOM_TIMING_SINK.get() {
         command.env(ROOM_TIMING_VARIABLE, sink);
     }
+    with_slot_bound(command, SLOT_BOUND.get());
     jojobot_bar::sccache_stats::on_this_runs_server(command);
     match RUN_ROOT.get() {
         Some(root) => command.env("TMPDIR", root),
@@ -316,12 +384,25 @@ fn run_phase(
 /// **The jobs line of a verdict**: how many test binaries ran side by side, at
 /// which limit, and the wall time of all of them together when it was measured.
 fn jobs_detail(limit: usize, wall: Option<std::time::Duration>) -> String {
-    match wall {
+    jobs_detail_bound(limit, wall, SLOT_BOUND.get())
+}
+
+/// The jobs line, with the bound a run was given or none.
+fn jobs_detail_bound(
+    limit: usize,
+    wall: Option<std::time::Duration>,
+    bound: Option<&jojobot_bar::SlotBound>,
+) -> String {
+    let said = match wall {
         Some(wall) => format!(
             "{limit} test binaries at a time ({TEST_JOBS_VARIABLE}), wall {}s",
             wall.as_secs()
         ),
         None => format!("{limit} test binaries at a time ({TEST_JOBS_VARIABLE})"),
+    };
+    match bound {
+        Some(bound) => format!("{said}; {}", bound.detail()),
+        None => said,
     }
 }
 
@@ -671,7 +752,7 @@ fn run_rooms(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
         eprintln!("bar rooms names no room: bar rooms --test <name> [--test <name> ...]");
         return Ok(ExitCode::from(2));
     }
-    let limit = match jobs_limit(std::env::var(TEST_JOBS_VARIABLE).ok().as_deref()) {
+    let limit = match limit_of_this_run() {
         Ok(limit) => limit,
         Err(refusal) => {
             eprintln!("bar: {refusal}");
@@ -750,10 +831,7 @@ fn run_rooms(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
     )?;
     finish_history(history.as_ref());
     let verdict = summarize_test_output(&text);
-    summary.phase_ok(
-        "jobs",
-        &format!("{limit} test binaries at a time ({TEST_JOBS_VARIABLE})"),
-    );
+    summary.phase_ok("jobs", &jobs_detail(limit, None));
     summary.phase_ok("order", &order_line);
     summary.test_phase(ok, &verdict, known);
     summary.verdict_of(&lane, &text, ok, 0);
@@ -1085,7 +1163,7 @@ fn run_dev(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
         return Ok(ExitCode::from(2));
     }
     let cargo = cargo_bin();
-    let limit = match jobs_limit(std::env::var(TEST_JOBS_VARIABLE).ok().as_deref()) {
+    let limit = match limit_of_this_run() {
         Ok(limit) => limit,
         Err(refusal) => {
             eprintln!("bar: {refusal}");
@@ -1528,7 +1606,7 @@ fn run_check(known: &KnownReds, level: Level) -> std::io::Result<ExitCode> {
 fn run_check_phases(known: &KnownReds, level: Level) -> std::io::Result<ExitCode> {
     // **Refused before any phase runs**, so a limit that is not a number never
     // costs a build and never reads as a green run at some other number.
-    let limit = match jobs_limit(std::env::var(TEST_JOBS_VARIABLE).ok().as_deref()) {
+    let limit = match limit_of_this_run() {
         Ok(limit) => limit,
         Err(refusal) => {
             eprintln!("bar: {refusal}");
@@ -2129,5 +2207,66 @@ mod tests {
                 Some(file.as_os_str())
             )]
         );
+    }
+
+    fn envs_of(command: &Command) -> std::collections::BTreeMap<String, String> {
+        command
+            .get_envs()
+            .filter_map(|(key, value)| {
+                Some((key.to_str()?.to_string(), value?.to_str()?.to_string()))
+            })
+            .collect()
+    }
+
+    /// **A command bound to a slot carries the slot's cores and its share of them**:
+    /// cargo builds with the cores, and a test binary runs its threads. The cores and
+    /// the threads are different numbers here so neither can stand for the other.
+    #[test]
+    fn a_child_command_bound_to_a_slot_carries_its_cores_and_its_threads() {
+        let bound = jojobot_bar::SlotBound {
+            cores: 6,
+            limit: 2,
+            build_jobs: 5,
+            test_threads: 3,
+        };
+        let mut command = Command::new("true");
+        with_slot_bound(&mut command, Some(&bound));
+        let held = envs_of(&command);
+        assert_eq!(held.get("CARGO_BUILD_JOBS").map(String::as_str), Some("5"));
+        assert_eq!(held.get("RUST_TEST_THREADS").map(String::as_str), Some("3"));
+    }
+
+    /// **A command with no bound is left as it was**: neither variable is set.
+    #[test]
+    fn a_child_command_with_no_bound_is_left_as_it_was() {
+        let mut command = Command::new("true");
+        with_slot_bound(&mut command, None);
+        let held = envs_of(&command);
+        assert!(!held.contains_key("CARGO_BUILD_JOBS"), "{held:?}");
+        assert!(!held.contains_key("RUST_TEST_THREADS"), "{held:?}");
+    }
+
+    /// **The jobs line is the limit alone when nothing bounds the run, and names
+    /// the bound's variable and numbers when something does.**
+    #[test]
+    fn the_jobs_line_names_the_bound_only_when_there_is_one() {
+        assert_eq!(
+            jobs_detail_bound(2, None, None),
+            "2 test binaries at a time (BAR_JOBS)"
+        );
+        let bound = jojobot_bar::SlotBound {
+            cores: 6,
+            limit: 2,
+            build_jobs: 5,
+            test_threads: 3,
+        };
+        let said = jobs_detail_bound(2, None, Some(&bound));
+        assert!(
+            said.starts_with("2 test binaries at a time (BAR_JOBS); "),
+            "{said}"
+        );
+        assert!(said.contains("BAR_SLOT_CORES"), "{said}");
+        assert!(said.contains("5 build jobs"), "{said}");
+        assert!(said.contains("3 test threads"), "{said}");
     }
 }
