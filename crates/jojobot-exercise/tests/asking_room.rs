@@ -1062,11 +1062,63 @@ async fn work_the_year_slipping(room: &Surface, slip: Slip) {
     }
 }
 
-/// A furnished room with the year worked in it.
+/// **The furnish and the nine sittings, done once per process** and copied for each case.
+static WORKED_YEAR_SEED: tokio::sync::OnceCell<std::path::PathBuf> =
+    tokio::sync::OnceCell::const_new();
+
+/// A furnished room with the year worked in it, opened from a copy of the room
+/// the first caller worked.
 async fn year_worked() -> (Room, Surface) {
-    let (room, surface) = furnished().await;
-    work_the_year(&surface).await;
-    (room, surface)
+    let seed = furnish_once::seed_dir_after(
+        &WORKED_YEAR_SEED,
+        SERVER_DAY.as_str(),
+        |surface| async move {
+            expectations::seed_for(ASKING_ROOM)?
+                .furnish(&surface)
+                .await?;
+            work_the_year(&surface).await;
+            Ok(())
+        },
+    )
+    .await;
+    Room::open_with_client_from_stating(
+        &server_binary().expect("a jojobot binary"),
+        &seed,
+        SERVER_DAY.as_str(),
+    )
+    .await
+    .expect("a room from the worked year")
+}
+
+/// **A copy of the cached worked year judges the same as a year worked live**: the
+/// outcome of every lock and the entity ids the room holds are equal, so the cache is
+/// not quietly a different year from the one every case used to work for itself.
+#[tokio::test]
+async fn the_cached_worked_year_judges_the_same_as_a_live_one() {
+    let (_live_room, live) = Room::open_with_client_stating(
+        &server_binary().expect("a jojobot binary"),
+        SERVER_DAY.as_str(),
+    )
+    .await
+    .expect("a room");
+    expectations::seed_for(ASKING_ROOM)
+        .expect("the room has furniture")
+        .furnish(&live)
+        .await
+        .expect("the room is furnished");
+    work_the_year(&live).await;
+    let (_cached_room, cached) = year_worked().await;
+    let held = |outcomes: Vec<Outcome>| outcomes.iter().map(|o| o.held).collect::<Vec<_>>();
+    let live_held = held(judge_all(&live, &[]).await);
+    assert!(
+        live_held.iter().any(|held| *held),
+        "a live year holds no lock, so the comparison proves nothing"
+    );
+    assert_eq!(held(judge_all(&cached, &[]).await), live_held);
+    assert_eq!(
+        furnish_once::held_ids(&cached).await,
+        furnish_once::held_ids(&live).await
+    );
 }
 
 /// **All ten sittings, with the readings a run takes between them** — one
@@ -1820,8 +1872,7 @@ fn only_one_fails(outcomes: &[Outcome], piece: &str) {
 /// sitting's own handle — the wrong act in each case below happens inside that
 /// sitting, on its own day.
 async fn worked_in_full() -> (Room, Surface, String) {
-    let (room, surface) = furnished().await;
-    work_the_year(&surface).await;
+    let (room, surface) = year_worked().await;
     let sid = sitting(&surface, "2026-12-01").await;
     december(&surface, &sid).await;
     (room, surface, sid)
@@ -1949,8 +2000,7 @@ async fn a_year_that_read_lisas_session_as_the_operators_fails_only_the_knee_loc
 /// A room worked as meant except for one slip, and the cold sitting's answers.
 /// The year as it is meant to be, with the cold sitting's December written.
 async fn worked_slipping_nothing() -> (Room, Surface) {
-    let (room, surface) = furnished().await;
-    work_the_year(&surface).await;
+    let (room, surface) = year_worked().await;
     let sid = sitting(&surface, "2026-12-01").await;
     december(&surface, &sid).await;
     (room, surface)

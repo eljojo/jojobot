@@ -35,20 +35,31 @@ pub async fn seed_dir_of(
     day: &str,
     make: impl FnOnce() -> anyhow::Result<crate::surface::Seed>,
 ) -> PathBuf {
-    cell.get_or_try_init(|| async {
-        let seed = make()?;
-        Room::snapshot_after_stating(
-            &server_binary().expect("a jojobot binary"),
-            day,
-            |surface| async move {
-                seed.furnish(&surface).await?;
-                Ok(())
-            },
-        )
-        .await
+    seed_dir_after(cell, day, |surface| async move {
+        make()?.furnish(&surface).await?;
+        Ok(())
     })
     .await
-    .expect("the furnished seed builds")
+}
+
+/// **The store of a room a caller filled in its own way**, built once per process:
+/// `fill` gets the live room's surface and may furnish it and then work it. A suite
+/// whose cases all start from the same worked room pays the work once.
+pub async fn seed_dir_after<F, Fut>(
+    cell: &'static tokio::sync::OnceCell<PathBuf>,
+    day: &str,
+    fill: F,
+) -> PathBuf
+where
+    F: FnOnce(Surface) -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<()>>,
+{
+    cell.get_or_try_init(|| async {
+        let binary = server_binary().expect("a jojobot binary");
+        Room::snapshot_after_stating(&binary, day, fill).await
+    })
+    .await
+    .expect("the filled seed builds")
     .clone()
 }
 
