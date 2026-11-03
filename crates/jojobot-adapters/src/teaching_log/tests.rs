@@ -569,25 +569,83 @@ async fn a_rollback_and_roll_forward_reconciles_the_log_with_the_rows() {
 /// A batch holding one member whose envelope names `kind`, appended at the
 /// log's head, as another family's writer would append it.
 async fn append_member_of_kind(log: &InMemoryLog, kind: &str) {
+    append_members(log, vec![foreign_member(kind)]).await;
+}
+
+/// A member whose envelope names `kind`, which is not teaching's unless the
+/// kind starts with Teaching.
+fn foreign_member(kind: &str) -> Vec<u8> {
     let mut value: serde_json::Value =
         serde_json::from_slice(&codec::encode(&TeachingEvent::Cleared {
             run: RunId("homer".into()),
         }))
         .unwrap();
     value["event_kind"] = kind.into();
+    serde_json::to_vec(&value).unwrap()
+}
+
+/// One batch of these members, appended at the log's head.
+async fn append_members(log: &InMemoryLog, members: Vec<Vec<u8>>) {
     let previous = Position(head(log).await);
     let batch = SealedBatch::seal(
-        BatchId(format!("{kind}:{}", previous.0)),
+        BatchId(format!("mixed:{}", previous.0)),
         previous,
         at(9),
         REPRESENTATION_VERSION,
-        vec![serde_json::to_vec(&value).unwrap()],
+        members,
     )
     .unwrap();
     assert!(matches!(
         log.append(previous, &batch).await.unwrap(),
         Append::Committed(_)
     ));
+}
+
+/// **A teaching member that shares a batch with another family's member is
+/// applied, in either order, and the position moves past the whole batch.** A
+/// replay that stopped at the foreign member would drop the teaching member that
+/// follows it.
+async fn a_mixed_batch_is_applied(foreign_first: bool) {
+    let recorded = codec::encode(&TeachingEvent::Recorded {
+        run: RunId("marge".into()),
+        domain: "mail".into(),
+        taught_at: at(3),
+    });
+    let foreign = foreign_member("RequestCommitted");
+    let members = if foreign_first {
+        vec![foreign, recorded]
+    } else {
+        vec![recorded, foreign]
+    };
+    let log = InMemoryLog::default();
+    append_members(&log, members).await;
+    let opened = LoggedTeachings::open(Arc::new(log.clone()), &[])
+        .await
+        .unwrap();
+    assert!(
+        opened.has_contact(&sid("marge"), "mail").await.unwrap(),
+        "the teaching member of the mixed batch is applied: {:?}",
+        opened.taught().await
+    );
+    assert!(
+        opened
+            .first_contact(&sid("homer"), "claims", at(4))
+            .await
+            .unwrap(),
+        "a write after the batch lands"
+    );
+    // The batch holds two events and the later write one.
+    assert_eq!(head(&log).await, 3, "it appends at the head past the batch");
+}
+
+#[tokio::test]
+async fn a_teaching_member_after_a_foreign_one_in_one_batch_is_applied() {
+    a_mixed_batch_is_applied(true).await;
+}
+
+#[tokio::test]
+async fn a_teaching_member_before_a_foreign_one_in_one_batch_is_applied() {
+    a_mixed_batch_is_applied(false).await;
 }
 
 /// **A member of another family is not an error for teaching.** The log holds
