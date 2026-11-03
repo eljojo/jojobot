@@ -496,6 +496,8 @@ fn card() -> Value {
         "retires": "the retyped header lines, because the card carries them",
         "falsify": "git rev-list --count HEAD prints 9 on main abc1234; done when it prints at least 2",
         "self_review": "read the diff once",
+        "owner": "bot:assistant",
+        "follow_ups": "none",
     })
 }
 
@@ -871,6 +873,138 @@ fn a_card_with_no_done_line_fails_as_unrunnable() {
     let (code, out, err) = check(&repo, &api, &full);
     assert_eq!(code, 0, "{out}\n{err}");
     assert!(!out.contains("DONE"), "{out}");
+}
+
+/// The line an answer prints for `key`.
+fn line_of<'a>(out: &'a str, key: &str) -> &'a str {
+    out.lines()
+        .find(|l| l.contains(key))
+        .unwrap_or_else(|| panic!("no {key} line: {out}"))
+}
+
+/// The card with `key` set to `value`, or taken off when `value` is null.
+fn card_with(key: &str, value: Value) -> Value {
+    let mut held = card();
+    if value.is_null() {
+        held.as_object_mut()
+            .expect("a card is an object")
+            .remove(key);
+    } else {
+        held[key] = value;
+    }
+    held
+}
+
+/// **A card is carried only when it names an owner.** The refusal names the key to
+/// write.
+#[test]
+fn a_card_with_no_owner_is_refused_naming_the_key() {
+    let repo = repository();
+    let api = stand(green(&repo));
+    let text = report(&as_pairs(&facts_only(&repo)));
+    let (code, out, _) = check_card(&repo, &api, &text, Some(&card_with("owner", Value::Null)));
+    assert_eq!(code, 1, "{out}");
+    let line = line_of(&out, "CARD-OWNER");
+    assert!(
+        line.starts_with("FAIL") && line.contains("`owner`"),
+        "{line}"
+    );
+    let (code, out, _) = check_card(&repo, &api, &text, Some(&card_with("owner", json!("  "))));
+    assert_eq!(code, 1, "a blank owner names nobody: {out}");
+}
+
+/// **A card with no `follow_ups` key is refused, and `none` is the way to say there
+/// are none.** The refusal names the key and the word.
+#[test]
+fn a_card_with_no_follow_ups_key_is_refused_and_none_passes() {
+    let repo = repository();
+    let api = stand(green(&repo));
+    let text = report(&as_pairs(&facts_only(&repo)));
+    let (code, out, _) = check_card(
+        &repo,
+        &api,
+        &text,
+        Some(&card_with("follow_ups", Value::Null)),
+    );
+    assert_eq!(code, 1, "{out}");
+    let line = line_of(&out, "FOLLOW-UPS");
+    assert!(
+        line.starts_with("FAIL") && line.contains("`follow_ups`") && line.contains("none"),
+        "{line}"
+    );
+    let (code, out, err) = check_card(&repo, &api, &text, Some(&card()));
+    assert_eq!(code, 0, "{out}\n{err}");
+    assert!(line_of(&out, "FOLLOW-UPS").starts_with("pass"), "{out}");
+}
+
+/// **Every follow-up is an existing work item that holds an owner.** The card file
+/// carries what the caller read of each one under `follow_up_items`.
+#[test]
+fn a_follow_up_that_is_missing_or_has_no_owner_is_refused_naming_it() {
+    let repo = repository();
+    let api = stand(green(&repo));
+    let text = report(&as_pairs(&facts_only(&repo)));
+    let mut held = card_with("follow_ups", json!("work:q-1001, work:q-1002"));
+    held["follow_up_items"] = json!({"work:q-1001": {"owner": "bot:assistant"}});
+    let (code, out, _) = check_card(&repo, &api, &text, Some(&held));
+    assert_eq!(code, 1, "{out}");
+    let line = line_of(&out, "FOLLOW-UPS");
+    assert!(
+        line.starts_with("FAIL") && line.contains("work:q-1002") && !line.contains("work:q-1001"),
+        "a follow-up the file does not hold is named alone: {line}"
+    );
+    held["follow_up_items"]["work:q-1002"] = json!({"status": "queued"});
+    let (code, out, _) = check_card(&repo, &api, &text, Some(&held));
+    assert_eq!(code, 1, "{out}");
+    let line = line_of(&out, "FOLLOW-UPS");
+    assert!(
+        line.starts_with("FAIL") && line.contains("work:q-1002") && line.contains("`owner`"),
+        "an item with no owner is named: {line}"
+    );
+    held["follow_up_items"]["work:q-1002"] = json!({"owner": "bot:defrag"});
+    let (code, out, err) = check_card(&repo, &api, &text, Some(&held));
+    assert_eq!(code, 0, "{out}\n{err}");
+    assert!(line_of(&out, "FOLLOW-UPS").starts_with("pass"), "{out}");
+    let words = card_with("follow_ups", json!("rebase it later"));
+    let (code, out, _) = check_card(&repo, &api, &text, Some(&words));
+    assert_eq!(code, 1, "a step in prose is no work item: {out}");
+}
+
+/// **A card whose hand-off predates the rule passes with a note naming what it
+/// lacks.** The card file says when the hand-off claim was recorded; a card whose
+/// hand-off is that day or later gets no such pass. A legacy card that does hold
+/// the keys is checked as any other.
+#[test]
+fn a_legacy_card_passes_with_a_note_and_a_current_one_does_not() {
+    let repo = repository();
+    let api = stand(green(&repo));
+    let text = report(&as_pairs(&facts_only(&repo)));
+    let mut bare = card_with("owner", Value::Null);
+    bare.as_object_mut().unwrap().remove("follow_ups");
+    bare["handoff_recorded_at"] = json!("2026-11-02");
+    let (code, out, err) = check_card(&repo, &api, &text, Some(&bare));
+    assert_eq!(code, 0, "{out}\n{err}");
+    let line = line_of(&out, "FOLLOW-UPS");
+    assert!(
+        line.starts_with("pass")
+            && line.contains("legacy")
+            && line.contains("`owner`")
+            && line.contains("`follow_ups`"),
+        "{line}"
+    );
+    bare["handoff_recorded_at"] = json!("2026-11-03");
+    let (code, out, _) = check_card(&repo, &api, &text, Some(&bare));
+    assert_eq!(
+        code, 1,
+        "a hand-off recorded on the rule's day is held to it: {out}"
+    );
+    let mut bad = card_with("follow_ups", json!("work:q-1010"));
+    bad["handoff_recorded_at"] = json!("2026-11-02");
+    let (code, out, _) = check_card(&repo, &api, &text, Some(&bad));
+    assert_eq!(
+        code, 1,
+        "a legacy card with a bad follow_ups is refused: {out}"
+    );
 }
 
 /// **A report with no net table fails NET, and a RETIRES of `none` with no reason

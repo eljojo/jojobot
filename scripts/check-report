@@ -73,6 +73,20 @@ is unrunnable. Words after the number are not checked.
 The clause is required: a card with no `done when` clause fails DONE as
 unrunnable, so it cannot be carried. A review report runs no DONE.
 
+**Every card has an owner, and every step it defers is a card with an owner.** With
+`--card`, CARD-OWNER fails when the card holds no `owner`, and FOLLOW-UPS fails when
+it holds no `follow_ups` key. `follow_ups` is `none`, or the handles of the work
+items that hold each step the card leaves for later, separated by commas or
+spaces. Each must be a `work:` handle the card file describes under
+`follow_up_items` (`{handle: {"owner": ...}}`, the caller's read of each item) and
+that item must hold an `owner`; a step in prose names no card, so it fails. Every
+refusal names the missing piece and the key to write. **A legacy card** is one
+whose hand-off claim was recorded before OWNED_FROM: the card file says so in
+`handoff_recorded_at` (the claim's `recorded_at`). A legacy card that lacks either
+key passes with a note naming what it lacks; one that holds them is checked as any
+other, and a card file with no `handoff_recorded_at` is held to the rule. A review
+report runs neither check.
+
 The forge is read the way scripts/wait-run reads it, with its lookup and its
 WAIT_RUN_API; no credential is asked for. With no API root the tool exits 4.
 
@@ -221,6 +235,62 @@ def done_says(falsify, commit, key="falsify"):
         DONE_COMPARES[comparison](int(printed), number),
         f"`{command}` printed {printed}; done when it prints {words}",
     )
+
+
+# A card whose hand-off was recorded before this day is held to the rule only when
+# it holds the keys: the landings already in flight are not blocked by it.
+OWNED_FROM = "2026-11-03"
+FOLLOW_UP_HANDLE = re.compile(r"work:[\w.-]+")
+
+
+def follow_ups_say(value, items):
+    """Whether every handle in a card's `follow_ups` is a work item that holds an
+    owner, and the reason. `items` is the card file's `follow_up_items`."""
+    if re.fullmatch(r"(?i)none\W*", value):
+        return True, "none"
+    items = items if isinstance(items, dict) else {}
+    problems = []
+    for word in re.split(r"[,\s]+", value):
+        if not word:
+            continue
+        if not FOLLOW_UP_HANDLE.fullmatch(word):
+            problems.append(f"{word} is no work handle: a step in prose has no owner, so make it a card")
+        elif not isinstance(items.get(word), dict):
+            problems.append(f"{word} is not an existing work item (the card file's `follow_up_items` holds none for it)")
+        elif card_value(items[word], ("owner",)) is None:
+            problems.append(f"{word} holds no `owner`: write one on it")
+    if problems:
+        return False, "; ".join(problems)
+    return True, value
+
+
+def owned_says(card):
+    """The CARD-OWNER and FOLLOW-UPS lines for a card: (key, passed, reason) each."""
+    owner, follows = card_value(card, ("owner",)), card_value(card, ("follow_ups",))
+    stamp = card.get("handoff_recorded_at")
+    legacy = isinstance(stamp, str) and bool(stamp.strip()) and stamp.strip()[:10] < OWNED_FROM
+    lacking = [f"`{key}`" for key, held in (("owner", owner), ("follow_ups", follows)) if held is None]
+    lines = []
+    if lacking and legacy:
+        lines.append((
+            "FOLLOW-UPS",
+            True,
+            f"legacy card (hand-off recorded {stamp.strip()}, before {OWNED_FROM}) lacks {', '.join(lacking)}: write them",
+        ))
+    if owner is not None:
+        lines.append(("CARD-OWNER", True, owner))
+    elif not legacy:
+        lines.append(("CARD-OWNER", False, "the card holds no `owner`: write the bot or person who answers for it"))
+    if follows is not None:
+        good, words = follow_ups_say(follows, card.get("follow_up_items"))
+        lines.append(("FOLLOW-UPS", good, words))
+    elif not legacy:
+        lines.append((
+            "FOLLOW-UPS",
+            False,
+            "the card holds no `follow_ups` key: write the work items it leaves for later, or `none`",
+        ))
+    return lines
 
 
 def merge_base_says(base, commit):
@@ -419,13 +489,14 @@ def main():
     text = sys.stdin.read()
     header = header_of(text)
     review = header.get("REVIEW")
-    card_falsify, done_key = None, "falsify"
+    card_falsify, done_key, owned = None, "falsify", []
     if args and not review:
         with open(args[1]) as handle:
             card = json.load(handle)
         header = with_card(header, card)
         done_key = next((key for key in ("done_line", "falsify") if card_value(card, (key,))), "falsify")
         card_falsify = card_value(card, (done_key,)) or ""
+        owned = owned_says(card)
     if not wr.API and not (review and not any(key in header for key in KEYS)):
         print("WAIT_RUN_API is not set: set it to the repository's API root", file=sys.stderr)
         sys.exit(4)
@@ -530,6 +601,9 @@ def main():
     if "DONE" in results:
         good, words = results["DONE"]
         print(f"{'pass' if good else 'FAIL'} DONE: {words}")
+        ok = ok and good
+    for key, good, words in owned:
+        print(f"{'pass' if good else 'FAIL'} {key}: {words}")
         ok = ok and good
     if review:
         printed, review_ok = review_says(review, text)
