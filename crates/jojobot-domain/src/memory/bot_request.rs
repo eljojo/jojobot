@@ -108,6 +108,14 @@ pub fn chain_start(
         .unwrap_or_else(|| subject.clone())
 }
 
+/// **Whether a value of a spec key is the one the request holds**, spaces around
+/// either aside. The one comparison of a held value with a written one: the
+/// generation reads a resend through it, and the app permit reads the app a
+/// request binds through it, so the two never disagree about a padded value.
+pub fn same_value(held: Option<&str>, written: &str) -> bool {
+    held.map(str::trim) == Some(written.trim())
+}
+
 /// **The highest generation ever written on a request**, read from the history
 /// of its [`GENERATION`] key: every write, a retracted or archived claim's
 /// included, because a number that was ever issued names a spec for good. A
@@ -145,7 +153,7 @@ pub fn next_generation(
     let changes = SPEC_KEYS.iter().any(|key| {
         let sets_another = written
             .get(*key)
-            .is_some_and(|value| held.get(*key).map(|now| now.trim()) != Some(value.trim()));
+            .is_some_and(|value| !same_value(held.get(*key).map(String::as_str), value));
         // A spec key taken off while the request holds a value for it is a change too.
         let takes_off = cleared.iter().any(|gone| gone == key)
             && held.get(*key).is_some_and(|now| !now.trim().is_empty());

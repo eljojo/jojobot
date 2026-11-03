@@ -237,7 +237,10 @@ pub fn permit(app: &AppPrincipal, call: &Operation) -> Result<(), AppError> {
             // widens either.
             if on_a_request {
                 if crate::memory::bot_request::STATUS_KEYS.contains(&key.as_str()) {
-                    if call.bound_app.as_deref() != Some(app.id.as_str()) {
+                    if !crate::memory::bot_request::same_value(
+                        call.bound_app.as_deref(),
+                        app.id.as_str(),
+                    ) {
                         return outside(format!(
                             "the key {key:?} is the status of a bot request, which only the app \
                              named in its bound_app writes"
@@ -356,6 +359,17 @@ mod tests {
     /// keys, judged by the grant alone.
     #[test]
     fn a_request_status_is_the_bound_apps_and_its_spec_no_apps() {
+        // A bound_app that carries spaces around the app's id binds it, as the
+        // generation's own comparison of a spec value reads it.
+        let padded = app(vec![op("capture", &["bot-request"], &["observed_state"])]);
+        let mut spaced = call(
+            "capture",
+            &["subject", "sets"],
+            Some(EntityKind::BOT_REQUEST),
+            &["observed_state"],
+        );
+        spaced.bound_app = Some(format!(" {} ", padded.id));
+        assert_eq!(permit(&padded, &spaced), Ok(()), "spaces around the id");
         let request = Some(EntityKind::BOT_REQUEST);
         // The spellings are the app's contract and nothing else declares them, so
         // they are written out and not read from the table under test.
