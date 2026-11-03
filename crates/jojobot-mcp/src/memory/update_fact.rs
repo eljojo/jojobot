@@ -597,8 +597,11 @@ impl Jojobot {
         // **An edit of a bot request's spec is made under the request's lock**, from
         // the read of the highest generation to the write, unless one of the locks
         // above already holds that subject (the lock is not re-entrant).
+        // **Let go once the store edit has landed**, before any step that edits
+        // the same request again: the review mark of an archive by defrag does,
+        // and would wait on this lock for ever.
         // TEMPORARY(9.3.3): prepare in the one writer replaces it.
-        let _spec_lock = match (&_placing, &_list_lock) {
+        let mut spec_lock = match (&_placing, &_list_lock) {
             (None, None) => match self.hold_for_a_request_spec(&address.home).await {
                 Ok(guard) => guard,
                 Err(e) => return memory_declined("update_fact", e),
@@ -1142,6 +1145,7 @@ impl Jojobot {
         };
         match written {
             Guarded::Written(fact) => {
+                drop(spec_lock.take());
                 // **Pointing the bot at its work comes before any step that can end
                 // the call for a resend to finish**: the finishing paths rebuild
                 // the receipt from the claim and do not do it again.

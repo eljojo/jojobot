@@ -453,3 +453,42 @@ async fn a_mark_refused_by_a_rule_is_told_to_change_and_the_resend_meets_it_agai
         "the archive landed: {held}"
     );
 }
+
+/// **An archive by defrag of a note on a bot request finishes and marks the
+/// request.** An edit of a request holds the request's lock while it reads the
+/// highest generation and writes. The mark that follows the archive edits the
+/// same request, so a lock kept past the store edit makes the mark wait for the
+/// edit that is waiting for it. The answer comes inside the bound, and the
+/// request leaves the queue.
+#[tokio::test]
+async fn an_archive_by_defrag_of_a_note_on_a_request_finishes_and_marks_it() {
+    let ledger = InMemoryRequests::new();
+    let memory = Arc::new(InMemoryMemory::seeded().with_requests(ledger.clone()));
+    let writer = healthy(memory.clone(), &ledger);
+    make_bot(&writer, "defrag").await;
+    ensure(&writer, "bot-request:theta").await;
+    let landed = capture_ok(&writer, capture_args("bot-request:theta", "a note")).await;
+    let address = address_of(&landed);
+    let jojobot = healthy(memory, &ledger);
+    assert!(
+        the_queue_of(&jojobot, "bot-request:theta")
+            .await
+            .contains(&"bot-request:theta".to_string()),
+        "the request waits before the archive"
+    );
+
+    let answered = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        defrag_archives(&jojobot, &address, None),
+    )
+    .await
+    .expect("the archive finishes and does not wait on its own lock")
+    .expect("the archive answers");
+    assert_ne!(json_of(&answered)["status"], "blocked", "{answered:?}");
+    assert!(
+        !the_queue_of(&jojobot, "bot-request:theta")
+            .await
+            .contains(&"bot-request:theta".to_string()),
+        "the request is marked reviewed"
+    );
+}
