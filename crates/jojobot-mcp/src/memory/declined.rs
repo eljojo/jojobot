@@ -1997,6 +1997,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             may,
             ref allowed,
             clear_opens,
+            judged_on_duplicate,
         } => Ok(blocked_body(
             "MemoryDeclinedArms",
             &EntityId(duplicate.clone()),
@@ -2079,9 +2080,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                     jojobot_domain::memory::MayWrite::RequestSpec
                     | jojobot_domain::memory::MayWrite::RequestStatus
                     | jojobot_domain::memory::MayWrite::RequestGeneration
-                        if jojobot_domain::memory::bot_request::is_request(&EntityId(
-                            duplicate.clone(),
-                        )) =>
+                        if judged_on_duplicate =>
                     {
                         format!(
                             "Nothing was written. '{duplicate}' is a bot request and carries \
@@ -2501,6 +2500,7 @@ pub(crate) mod tests {
                     may,
                     allowed: allowed.iter().map(ToString::to_string).collect(),
                     clear_opens: true,
+                    judged_on_duplicate: false,
                 },
             )
             .expect("a refusal is an answer");
@@ -2553,6 +2553,7 @@ pub(crate) mod tests {
                     may: MayWrite::WritersSuperior,
                     allowed: allowed.iter().map(ToString::to_string).collect(),
                     clear_opens,
+                    judged_on_duplicate: false,
                 },
             )
             .expect("a refusal is an answer");
@@ -2607,6 +2608,7 @@ pub(crate) mod tests {
                     may,
                     allowed: allowed.iter().map(ToString::to_string).collect(),
                     clear_opens: false,
+                    judged_on_duplicate: false,
                 },
             )
             .expect("a refusal is an answer");
@@ -2640,20 +2642,22 @@ pub(crate) mod tests {
     /// **A merge of an ordinary thing into a bot request names the clear** when the
     /// domain says it opens, and the request as the survivor. The same key on a
     /// request as the duplicate is the request's own refusal, which names no
-    /// clear (rule 68).
+    /// clear (rule 68). Every key of a request is driven: one dropped from either
+    /// arm falls to the ceiling wording, which still names the clear.
     #[test]
     fn an_ordinary_duplicate_merged_into_a_request_is_told_to_clear_the_key() {
         use jojobot_domain::memory::MayWrite;
-        let refused = |duplicate: &str, survivor: &str, clear_opens: bool| {
+        let refused = |may: MayWrite, duplicate: &str, survivor: &str, clear_opens: bool| {
             let result = memory_declined(
                 "merge_entities",
                 MemoryError::MergeCarriesGuardedKeys {
                     duplicate: duplicate.into(),
                     survivor: survivor.into(),
                     keys: "observed_state".into(),
-                    may: MayWrite::RequestStatus,
+                    may,
                     allowed: vec![],
                     clear_opens,
+                    judged_on_duplicate: duplicate.starts_with("bot-request:"),
                 },
             )
             .expect("a refusal is an answer");
@@ -2662,23 +2666,33 @@ pub(crate) mod tests {
                 .expect("a way forward")
                 .to_string()
         };
-        let ordinary = refused("topic:scrapbook", "bot-request:beta", true);
-        for word in [
-            "topic:scrapbook",
-            "bot-request:beta",
-            "observed_state",
-            "clear_fields",
+        for may in [
+            MayWrite::RequestSpec,
+            MayWrite::RequestStatus,
+            MayWrite::RequestGeneration,
         ] {
-            assert!(ordinary.contains(word), "{word}: {ordinary}");
+            let ordinary = refused(may, "topic:scrapbook", "bot-request:beta", true);
+            for word in [
+                "topic:scrapbook",
+                "bot-request:beta",
+                "observed_state",
+                "clear_fields",
+            ] {
+                assert!(ordinary.contains(word), "{may:?} {word}: {ordinary}");
+            }
+            assert!(!ordinary.contains("ceiling"), "{may:?}: {ordinary}");
+            assert!(!ordinary.contains("Leave"), "{may:?}: {ordinary}");
+            assert!(!ordinary.contains("  "), "{ordinary}");
+            let barred = refused(may, "topic:scrapbook", "bot-request:beta", false);
+            assert!(!barred.contains("clear_fields"), "{may:?}: {barred}");
+            assert!(!barred.contains("ceiling"), "{may:?}: {barred}");
+            let request = refused(may, "bot-request:alpha", "topic:scrapbook", false);
+            for word in ["bot-request:alpha", "observed_state", "Leave"] {
+                assert!(request.contains(word), "{may:?} {word}: {request}");
+            }
+            assert!(!request.contains("clear_fields"), "{may:?}: {request}");
+            assert!(!request.contains("ceiling"), "{may:?}: {request}");
         }
-        assert!(!ordinary.contains("  "), "{ordinary}");
-        let barred = refused("topic:scrapbook", "bot-request:beta", false);
-        assert!(!barred.contains("clear_fields"), "{barred}");
-        let request = refused("bot-request:alpha", "topic:scrapbook", false);
-        for word in ["bot-request:alpha", "observed_state"] {
-            assert!(request.contains(word), "{word}: {request}");
-        }
-        assert!(!request.contains("clear_fields"), "{request}");
     }
 
     /// **A chart cycle is refused with a way forward that names a different
@@ -3129,6 +3143,7 @@ pub(crate) mod tests {
                     may: MayWrite::DifferentIdentity,
                     allowed: Vec::new(),
                     clear_opens: true,
+                    judged_on_duplicate: false,
                 },
                 Some("change"),
             ),

@@ -219,3 +219,31 @@ fn a_refused_fold_of_a_request_names_the_chart_that_judged_it() {
         other => panic!("not the merge refusal: {other:?}"),
     }
 }
+
+/// **The refusal says which side judged the key**, for the renderer to word the
+/// route from: a request's own keys are judged on the request as the duplicate,
+/// and on the request as the survivor when an ordinary thing carries them.
+#[test]
+fn a_refused_fold_says_whether_the_request_was_the_side_that_judged() {
+    let chart = Lineage {
+        above: vec![handle("bot:marge")],
+        holds: [TARGET_BOT.to_string()].into(),
+        ..Lineage::default()
+    };
+    let judged_on_duplicate = |survivor: &str, duplicate: &str| match refuses_merge_carrying(
+        &handle("bot:lisa"),
+        &handle(survivor),
+        &handle(duplicate),
+        &writing(&[DESIRED]),
+        Some(&chart),
+        Some(&chart),
+    ) {
+        Some(MemoryError::MergeCarriesGuardedKeys {
+            judged_on_duplicate,
+            ..
+        }) => judged_on_duplicate,
+        other => panic!("not the merge refusal: {other:?}"),
+    };
+    assert!(judged_on_duplicate("topic:scrapbook", REQUEST));
+    assert!(!judged_on_duplicate(REQUEST, "topic:scrapbook"));
+}

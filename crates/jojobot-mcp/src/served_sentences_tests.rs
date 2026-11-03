@@ -234,6 +234,7 @@ fn a_refusal_naming_the_assistant_says_nothing_of_the_operator() {
             may: MayWrite::WritersSuperior,
             allowed: vec![ASSISTANT.into()],
             clear_opens: true,
+            judged_on_duplicate: false,
         },
     )
     .expect("a refusal is an answer");

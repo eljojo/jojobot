@@ -3343,6 +3343,7 @@ pub fn refuses_merge_carrying_by(
         may: worded_for(first.may, judged.as_str(), first.key, chart),
         allowed: who_may_write(first.may, first.key, judged, chart),
         clear_opens,
+        judged_on_duplicate: judged == duplicate,
     })
 }
 
@@ -6189,6 +6190,9 @@ pub enum MemoryError {
         /// the licence a clear would meet, so a refusal names that route only
         /// when it opens.
         clear_opens: bool,
+        /// **Whether the key was judged on `duplicate`** and not on `survivor`:
+        /// a bot request's own keys are judged on the request, whichever side it is.
+        judged_on_duplicate: bool,
     },
     /// **A thought's body is over its container's cap.** See
     /// [`refuses_thought_over_cap`] — only ever raised on a write that

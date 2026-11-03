@@ -2956,6 +2956,7 @@ fn the_merge_refusal_for_a_different_identitys_key_calls_a_role_no_ceiling() {
         may: MayWrite::DifferentIdentity,
         allowed: Vec::new(),
         clear_opens: true,
+        judged_on_duplicate: false,
     }
     .to_string();
     assert!(said.contains("claims_role"), "{said}");
