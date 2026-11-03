@@ -102,6 +102,57 @@ jobs:
         env:
           JOJOBOT_METRICS_OUTCOME: ${{ job.status }}
 
+  # The first verdict of a push: the tests and lint of the crates the branch
+  # touched and of the crates that depend on them, through `make dev`, the one
+  # way the bar picks crates. It has no `needs`, so it starts with `static` and
+  # not after it, and it ends at its first red test. `report` and `rooms` run
+  # everything they ran before; a red here stops them as any sibling's red does
+  # (scripts/stop-with-siblings). A push only: a dispatch names the job it
+  # reruns, and this is not one of them. BAR_OWN_CRATES measures the branch
+  # against the trunk it is cut from, not `main`, and the SIZE_BASE here is the
+  # bare `main` so that the trunk, not origin/main, is the base.
+  own-crates:
+    if: ${{ forgejo.event_name == 'push' }}
+    runs-on: nix
+    timeout-minutes: 30
+    steps:
+      - name: Level
+        run: |
+          echo "level: own-crates; workflow jobs: static, $BAR_WORKFLOW_JOBS; left to boundary: $BAR_BOUNDARY_LEFT"
+      - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      # A push that changed only docs has no crate to run: `make dev` refuses a
+      # diff that touches no package, so the plan skips the step as it does for
+      # the jobs beside this one.
+      - name: Job plan
+        id: plan
+        run: |
+          mkdir -p target/bar
+          nix develop -c cargo run -q --locked -p jojobot-bar -- plan report 2>target/bar/plan.log || { cat target/bar/plan.log >&2; exit 1; }
+      - name: Touched crates
+        if: ${{ steps.plan.outputs.fast != 'true' }}
+        run: scripts/stop-with-siblings nix develop -c make dev
+        env:
+          BAR_OWN_CRATES: '1'
+          SIZE_BASE: main
+      - if: ${{ !cancelled() }}
+        continue-on-error: true
+        uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5
+        with:
+          name: bar-logs-own-crates
+          path: |
+            target/bar/*.log
+            target/bar/verdict-*.json
+          retention-days: 7
+          if-no-files-found: ignore
+      # Samples cannot change the gate's verdict.
+      - if: ${{ always() }}
+        continue-on-error: true
+        run: nix develop -c python3 scripts/build-metrics ci
+        env:
+          JOJOBOT_METRICS_OUTCOME: ${{ job.status }}
+
   report:
     needs: static
     # A push runs it, and so does a dispatch that names no job or names this one.

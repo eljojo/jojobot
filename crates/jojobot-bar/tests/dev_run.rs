@@ -826,3 +826,49 @@ fn the_default_base_is_the_release_trunk_the_branch_is_cut_from() {
     );
     let _ = fs::remove_dir_all(&repo);
 }
+
+/// **The own-crates job of a branch push is `bar dev` told it runs on the forge.**
+/// `BAR_OWN_CRATES` measures the branch against the trunk it is cut from even on
+/// CI, where the bare `dev` keeps `main`, so the job runs the crates the branch
+/// touched and not every crate the trunk changed since `main`.
+#[test]
+fn an_own_crates_run_on_ci_is_measured_against_the_trunk_the_branch_is_cut_from() {
+    let repo = repository();
+    git(&repo, &["switch", "-q", "-c", "trunk"]);
+    commit_change(&repo, "jojobot-domain", "the trunk's own change");
+    remote_line(&repo, "em-933-carry", "HEAD");
+    git(&repo, &["switch", "-q", "-c", "work"]);
+    commit_change(&repo, "jojobot-bar", "work");
+    let own = dev_run(
+        &repo,
+        &[],
+        &[("GITHUB_ACTIONS", "true"), ("BAR_OWN_CRATES", "1")],
+    );
+    assert_eq!(own.exit, Some(0), "{}", own.stdout);
+    assert_eq!(own.packages_tested(), ["jojobot-bar"], "{:?}", own.calls);
+    // Paired: the same checkout on CI without the switch keeps `main`.
+    let plain = dev_run(&repo, &[], &[("GITHUB_ACTIONS", "true")]);
+    assert_eq!(
+        plain.packages_tested(),
+        ["jojobot-bar", "jojobot-domain"],
+        "{:?}",
+        plain.calls
+    );
+    let _ = fs::remove_dir_all(&repo);
+}
+
+/// **An own-crates run ends at its first red test**, so the forge shows the red
+/// when the test ends and the lint, which a green run does next, is not run.
+/// **Paired**: a plain dev run with red tests still lints
+/// (`red_tests_still_run_the_lint_and_it_says_clean`).
+#[test]
+fn an_own_crates_run_ends_at_the_first_red_test_and_runs_no_lint() {
+    let repo = repository();
+    fs::write(repo.join("crates/jojobot-bar/src/lib.rs"), "// changed\n").expect("edit");
+    let ran = dev_run(&repo, &["tests-fail"], &[("BAR_OWN_CRATES", "1")]);
+    assert_eq!(ran.exit, Some(1), "{}", ran.stdout);
+    assert!(ran.stdout.contains("test: FAILED"), "{}", ran.stdout);
+    assert!(ran.stdout.contains("lint: not run"), "{}", ran.stdout);
+    assert!(ran.packages_linted().is_empty(), "{:?}", ran.calls);
+    let _ = fs::remove_dir_all(&repo);
+}

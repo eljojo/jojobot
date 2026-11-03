@@ -37,6 +37,15 @@ pub fn git_paths(args: &[&str]) -> std::io::Result<Vec<String>> {
         .collect())
 }
 
+/// **The forge's own-crates job runs `bar dev` with this set.** The run is then
+/// measured against the trunk the branch is cut from, as it is off CI, and it
+/// ends at its first red test.
+pub const OWN_CRATES_VARIABLE: &str = "BAR_OWN_CRATES";
+
+pub fn own_crates() -> bool {
+    std::env::var(OWN_CRATES_VARIABLE).is_ok_and(|value| value == "1")
+}
+
 /// **The paths the branch changed**, for `bar dev`: everything that differs
 /// from the merge base with `main`, committed or not, and the files git does
 /// not track yet, with the merge base they were taken from. `None` when there is
@@ -59,7 +68,11 @@ pub fn checked_changed_paths() -> std::io::Result<Option<(String, Vec<String>)>>
     let named = |name: &str| std::env::var(name).ok().filter(|value| !value.is_empty());
     let base_ref = named("BAR_DEV_BASE")
         .or_else(|| named("SIZE_BASE").filter(|value| value != "main"))
-        .or_else(|| (!size::in_ci()).then(size::remote_line).flatten())
+        .or_else(|| {
+            (!size::in_ci() || own_crates())
+                .then(size::remote_line)
+                .flatten()
+        })
         .unwrap_or_else(|| "main".to_string());
     let mut base = git_stdout(&["merge-base", &base_ref, "HEAD"]);
     // **The forge's checkout holds `origin/main` and no local `main`**, so the

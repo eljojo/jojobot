@@ -1202,12 +1202,28 @@ fn run_dev(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
          report or a carry",
     );
 
+    // **The forge's own-crates job ends at its first red test**, as the report
+    // does, so the red is on the forge when that test ends.
+    let first_red = jojobot_bar::changes::own_crates();
     let started = std::time::Instant::now();
-    let (ok, text, _, _) =
-        run_test_jobs(&log_path, &cargo, &[], &plan.run, limit, None, None, false)?;
+    let (ok, text, _, _) = run_test_jobs(
+        &log_path,
+        &cargo,
+        &[],
+        &plan.run,
+        limit,
+        None,
+        None,
+        first_red,
+    )?;
     summary.phase_ok("jobs", &jobs_detail(limit, Some(started.elapsed())));
     let verdict = summarize_test_output(&text);
     summary.test_phase(ok, &verdict, known);
+    if first_red && !ok {
+        summary.phase_skipped("lint");
+        finish(&mut summary, &log_path);
+        return Ok(ExitCode::FAILURE);
+    }
 
     // **The lint runs whatever the tests said**, as the report and narrow levels
     // run it, over the packages the tests were chosen from.
