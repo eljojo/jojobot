@@ -75,6 +75,68 @@ struct Restored {
     holder_key: Option<String>,
 }
 
+/// The two teaching marks every restore seeds, as `(sid, taught_at)`.
+const TEACHING_MARKS: [(&str, &str); 2] = [
+    ("alpha", "2026-03-01T09:00:00Z"),
+    ("beta", "2026-03-01T08:00:00.25Z"),
+];
+
+/// **Whether the restored store's event log already holds a batch.** A recording
+/// with no log table at all holds none; the restore refuses such a recording.
+async fn the_restored_log_holds_a_batch(pool: &sqlx::MySqlPool) -> bool {
+    let table: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM information_schema.tables \
+         WHERE table_schema = DATABASE() AND table_name = 'event_log'",
+    )
+    .fetch_one(pool)
+    .await
+    .expect("the tables of the old store read");
+    if table == 0 {
+        return false;
+    }
+    let batches: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM event_log")
+        .fetch_one(pool)
+        .await
+        .expect("the event log of the old store counts");
+    batches > 0
+}
+
+/// **Each mark through the teaching ledger's own record path, with the shadow
+/// on**, so its legacy row lands with its event in one commit, as the recorded
+/// build writes it. The ledger opens over the rows the recording holds.
+async fn seed_the_teaching_marks_through_the_log(pool: &sqlx::MySqlPool) {
+    use jojobot_adapters::dolt::teaching::DoltTeachings;
+    use jojobot_adapters::dolt_log::DoltLog;
+    use jojobot_adapters::teaching_log::LoggedTeachings;
+    use jojobot_domain::teaching::Teachings;
+    let log = std::sync::Arc::new(
+        DoltLog::open(pool.clone())
+            .await
+            .expect("the event log opens"),
+    );
+    let rows = DoltTeachings::open(pool.clone())
+        .marks()
+        .await
+        .expect("the teaching rows read back");
+    let shadow = std::sync::Arc::new(
+        jojobot_adapters::fold::shadow::Shadow::named("teachings").expect("the teaching shadow"),
+    );
+    let ledger = LoggedTeachings::open_shadowed(log, &rows, shadow)
+        .await
+        .expect("the teaching ledger opens over the recording");
+    for (sid, taught_at) in TEACHING_MARKS {
+        let landed = ledger
+            .first_contact(
+                &jojobot_domain::session::Sid(sid.to_string()),
+                "claims",
+                taught_at.parse().expect("a mark time parses"),
+            )
+            .await
+            .expect("the teaching mark lands through the log");
+        assert!(landed, "the recording already holds a mark for {sid}");
+    }
+}
+
 struct Booted {
     child: tokio::process::Child,
     /// The directory the store under this binary keeps its files in.
@@ -154,6 +216,97 @@ async fn age_the_recording(pool: &sqlx::MySqlPool, hours: i64) {
             .unwrap_or_else(|e| panic!("aging a moment in {table}.{column}: {e}"));
         }
     }
+    age_the_event_log(pool, hours).await;
+}
+
+/// **The event log, aged by the same offset as the rows**, through its own path.
+/// The columns above hold text; a batch is a blob, so the loop leaves it alone,
+/// and rows and log would then disagree by exactly the ageing, which no build
+/// writes. Each batch is read through the log, each member decoded with the
+/// teaching family's codec, every moment it carries moved, and the batch sealed
+/// again with the header moment moved too, so its checksum is the log's own.
+/// A member the codec does not decode, or that it would not write back as it
+/// stands, fails the restore and names it: a family that reaches the log
+/// cannot be left un-aged without notice.
+async fn age_the_event_log(pool: &sqlx::MySqlPool, hours: i64) {
+    use jojobot_adapters::dolt_log::DoltLog;
+    use jojobot_adapters::teaching_log::codec;
+    use jojobot_domain::log::{Append, LogStore, Position, SealedBatch};
+    use jojobot_domain::teaching::events::TeachingEvent;
+    let earlier = jiff::SignedDuration::from_hours(hours);
+    let move_back = |moment: jiff::Timestamp| {
+        moment
+            .checked_sub(earlier)
+            .expect("an aged moment is in range")
+    };
+    let log = DoltLog::open(pool.clone())
+        .await
+        .expect("the event log opens to be aged");
+    assert!(
+        log.load_snapshot()
+            .await
+            .expect("the log's snapshot slot reads")
+            .is_none(),
+        "the recording holds a log snapshot, which the ageing cannot move: a snapshot carries moments of its own"
+    );
+    let batches = log
+        .read_from(Position(0), 100_000)
+        .await
+        .expect("the log reads to be aged");
+    let mut aged: Vec<SealedBatch> = Vec::new();
+    for batch in &batches {
+        let members: Vec<Vec<u8>> = batch
+            .members()
+            .iter()
+            .map(|member| {
+                let event = codec::decode(member).unwrap_or_else(|e| {
+                    panic!("the ageing cannot decode an event of the recording's log: {e}")
+                });
+                assert_eq!(
+                    &codec::encode(&event),
+                    member,
+                    "the ageing would drop something an event of the recording's log carries"
+                );
+                codec::encode(&match event {
+                    TeachingEvent::Recorded {
+                        run,
+                        domain,
+                        taught_at,
+                    } => TeachingEvent::Recorded {
+                        run,
+                        domain,
+                        taught_at: move_back(taught_at),
+                    },
+                    cleared @ TeachingEvent::Cleared { .. } => cleared,
+                })
+            })
+            .collect();
+        let header = batch.header();
+        aged.push(
+            SealedBatch::seal(
+                header.batch_id.clone(),
+                header.expected_previous_position,
+                move_back(header.append_time_utc),
+                header.representation_version,
+                members,
+            )
+            .expect("an aged batch seals"),
+        );
+    }
+    sqlx::query("DELETE FROM event_log WHERE first_position IS NOT NULL")
+        .execute(pool)
+        .await
+        .expect("the old batches are taken out of the log");
+    for batch in &aged {
+        let landed = log
+            .append(batch.header().expected_previous_position, batch)
+            .await
+            .expect("an aged batch is appended");
+        assert!(
+            matches!(landed, Append::Committed(_)),
+            "an aged batch did not commit: {landed:?}"
+        );
+    }
 }
 
 /// **A fixture directory, restored into a store of this case's own, and aged**
@@ -195,24 +348,26 @@ async fn restore_a_fixture_recorded_earlier(
                 panic!("replaying the fixture recorded at {git_ref} failed on:\n{statement}\n{e}")
             });
     }
-    // **Two teaching marks the older build wrote, which the recording holds none
-    // of.** A run with no session card, and a time with a fraction. The key order
-    // `(sid, domain)` and the order of the times are opposite, so an import that
-    // sorted by time, dropped a time or rounded one cannot read back equal. The
-    // text is the old build's own: `Timestamp`'s display form.
-    for (sid, taught_at) in [
-        ("alpha", "2026-03-01T09:00:00Z"),
-        ("beta", "2026-03-01T08:00:00.25Z"),
-    ] {
-        sqlx::query(
-            "INSERT INTO session_teaching (sid, domain, taught_at) VALUES (?, 'claims', ?)",
-        )
-        .bind(sid)
-        .bind(taught_at)
-        .execute(restoring.pool())
-        .await
-        .expect("the older build's teaching mark lands");
-    }
+    // **Two teaching marks the recorded build wrote, seeded the way that build
+    // writes them.** A run with no session card, and a time with a fraction. The
+    // key order `(sid, domain)` and the order of the times are opposite, so an
+    // import that sorted by time, dropped a time or rounded one cannot read back
+    // equal. The text is `Timestamp`'s display form.
+    //
+    // **The recorded build keeps a teaching log**, so it wrote each mark as an
+    // event with its legacy row in one commit. Rows alone would make the log
+    // disagree with them, and a boot would reconcile and warn; events alone would
+    // be cleared. The marks go in through the ledger's own record path with the
+    // shadow on, after the ageing below, so the boot meets agreement. The gate
+    // reads only the last deployed recording, and every recording from
+    // deploy-9.3.2 on has a log (the architect, on the upgrade gate's teaching
+    // seed): a recording without one fails here, loudly, instead of seeding the
+    // wrong way. The quiet import of rows keeps its proof with the teaching log's
+    // own cases.
+    assert!(
+        the_restored_log_holds_a_batch(restoring.pool()).await,
+        "the recording made at {git_ref} holds no event log batch: the gate seeds its teaching marks through the log and supports only a recording from a build that keeps one (the architect's ruling on the upgrade gate's teaching seed: the empty-log branch is dead code)"
+    );
     // **The recording is aged before the gate pins anything.** The moments a case
     // compares against the clock are the three the edits below set, each to a
     // moment of its own choosing, so the age the recording was given changes
@@ -236,6 +391,11 @@ async fn restore_a_fixture_recorded_earlier(
         jiff::SignedDuration::from_hours(earlier_hours),
         "the recording made at {git_ref} was not aged by {earlier_hours} hours"
     );
+    // **Seeded through the log after the ageing, so the row and its event carry
+    // the same time.** The ageing rewrites `session_teaching.taught_at` (text) and
+    // leaves the event payload (a blob) alone; a mark seeded before it would read
+    // back at two times in an aged case.
+    seed_the_teaching_marks_through_the_log(restoring.pool()).await;
     // **The old claim is moved to ten minutes ago, as the store of a deploy a
     // little while ago holds it.** The recording is hours old and its lease has
     // lapsed by the time this runs, and a lapsed lease proves nothing about a
@@ -420,7 +580,7 @@ async fn boots_on_a_restored_store(fixture_dir: &str, restored: Restored) {
     let first = boot_current(&state_dir, store_port, &git_ref).await;
     first.stop().await;
     assert_the_ledger_ends_whole(&state_dir, &git_ref).await;
-    assert_the_teaching_import_equals_the_rows(&state_dir, store_port, &git_ref).await;
+    assert_the_teaching_marks_equal_the_rows(&state_dir, store_port, &git_ref).await;
     let after_first = dump_store(&state_dir).await;
     // The first boot reported the recording's handle; the passes are marked, so the
     // next boots report nothing.
@@ -594,6 +754,7 @@ async fn the_scan_for_oversized_records_finds_one_stored_over_the_ceiling() {
         held_before: _,
         handles,
         holder_key: _,
+        ..
     } = restore_the_fixture("oversized").await;
     let mut editing = Dolt::start(&state_dir.join("db"), free_port())
         .await
@@ -1116,26 +1277,15 @@ async fn assert_the_ledger_ends_whole(state_dir: &std::path::Path, git_ref: &str
     );
 }
 
-/// **The first boot imported the teaching rows into the event log whole.** The
-/// store is brought up with no binary over it. Every mark the log's events
-/// record, with its source time, equals a row of `session_teaching` read the
-/// same way, and a store with no rows has an empty log.
-async fn assert_the_teaching_import_equals_the_rows(
-    state_dir: &std::path::Path,
-    store_port: u16,
-    git_ref: &str,
-) {
-    use jojobot_adapters::dolt::teaching::DoltTeachings;
+/// **The marks the teaching log holds**, folded in order: a clear drops its
+/// run's marks, a mark recorded again takes the newer time, and the result is
+/// ordered by key as the rows read.
+async fn the_logged_marks(pool: &sqlx::MySqlPool) -> Vec<jojobot_adapters::teaching_log::Mark> {
     use jojobot_adapters::dolt_log::DoltLog;
     use jojobot_adapters::teaching_log::{Mark, codec};
     use jojobot_domain::log::{LogStore, Position};
     use jojobot_domain::teaching::events::TeachingEvent;
-    let mut store = open_the_store(state_dir, store_port).await;
-    let rows = DoltTeachings::open(store.pool().clone())
-        .marks()
-        .await
-        .expect("the teaching rows read back");
-    let log = DoltLog::open(store.pool().clone())
+    let log = DoltLog::open(pool.clone())
         .await
         .expect("the event log opens");
     let mut imported: Vec<Mark> = Vec::new();
@@ -1155,27 +1305,93 @@ async fn assert_the_teaching_import_equals_the_rows(
                     domain,
                     taught_at,
                 }),
-                TeachingEvent::Cleared { .. } => {
-                    panic!("the import of the store recorded at {git_ref} cleared a run")
+                TeachingEvent::Cleared { run } => {
+                    imported.retain(|mark| mark.sid.as_str() != run.0);
                 }
             }
         }
     }
-    // **Not empty, so the equality below can fail**: the restore seeds two marks,
-    // and the recording may hold marks of its own beside them.
-    for seeded in ["alpha", "beta"] {
+    let mut folded = std::collections::BTreeMap::new();
+    for mark in imported.drain(..) {
+        folded.insert((mark.sid, mark.domain), mark.taught_at);
+    }
+    folded
+        .into_iter()
+        .map(|((sid, domain), taught_at)| Mark {
+            sid,
+            domain,
+            taught_at,
+        })
+        .collect()
+}
+
+/// **A store that is aged moves its teaching log with its rows.** A fresh store
+/// takes the two seeded marks through the ledger, is aged six hours, and the
+/// log's fold must equal the rows, each mark six hours before it was written.
+/// This needs no recording, so it is the local witness of the ageing step.
+#[tokio::test]
+async fn ageing_a_store_moves_its_teaching_log_with_its_rows() {
+    use jojobot_adapters::dolt::teaching::DoltTeachings;
+    let scratch = Scratch::new("gate-ageing-log");
+    let server = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("a store comes up");
+    let pool = jojobot_adapters::testing::migrated_database(&server, "alpha")
+        .await
+        .expect("a migrated database");
+    seed_the_teaching_marks_through_the_log(&pool).await;
+    age_the_recording(&pool, 6).await;
+    let rows = DoltTeachings::open(pool.clone())
+        .marks()
+        .await
+        .expect("the teaching rows read back");
+    let logged = the_logged_marks(&pool).await;
+    for (sid, taught_at) in TEACHING_MARKS {
+        let aged: jiff::Timestamp = taught_at
+            .parse::<jiff::Timestamp>()
+            .expect("a mark time parses")
+            - jiff::SignedDuration::from_hours(6);
         assert!(
-            rows.iter().any(|mark| mark.sid.as_str() == seeded),
-            "the seeded mark of {seeded} is in the store recorded at {git_ref}: {rows:?}"
+            logged
+                .iter()
+                .any(|mark| mark.sid.as_str() == sid && mark.taught_at == aged),
+            "the log holds {sid} six hours earlier: {logged:?}"
         );
     }
-    // **In the log's own order**, not sorted here: the rows read back by key, and
-    // an import that ordered them by their times would differ.
+    assert_eq!(logged, rows, "an aged store's log and rows agree");
+}
+
+/// **The teaching marks the restore seeded through the log survive the first
+/// boot whole.** The store is brought up with no binary over it. The log's
+/// events, folded in order with a clear dropping its run, equal the rows of
+/// `session_teaching` read the same way, and both seeded marks read back with
+/// their own times. The boot itself said nothing of a disagreement.
+async fn assert_the_teaching_marks_equal_the_rows(
+    state_dir: &std::path::Path,
+    store_port: u16,
+    git_ref: &str,
+) {
+    use jojobot_adapters::dolt::teaching::DoltTeachings;
+    let mut store = open_the_store(state_dir, store_port).await;
+    let rows = DoltTeachings::open(store.pool().clone())
+        .marks()
+        .await
+        .expect("the teaching rows read back");
+    let imported = the_logged_marks(store.pool()).await;
+    // **Not empty, so the equality below can fail**, and each seeded mark keeps
+    // its own time: the restore seeds two, and the recording may hold marks of
+    // its own beside them.
+    for (sid, taught_at) in TEACHING_MARKS {
+        assert!(
+            rows.iter().any(|mark| mark.sid.as_str() == sid
+                && mark.taught_at == taught_at.parse().expect("a mark time parses")),
+            "the seeded mark of {sid} reads back with its own time from the store recorded at {git_ref}: {rows:?}"
+        );
+    }
     assert_eq!(
         imported, rows,
-        "the teaching marks the first boot imported differ from the rows of the store recorded at {git_ref}"
+        "the teaching marks the log holds after the first boot differ from the rows of the store recorded at {git_ref}"
     );
-    drop(log);
     store.stop().await;
 }
 
@@ -2715,12 +2931,12 @@ async fn a_pointer_at_a_record_the_build_supplies_boots_quiet_and_reads_back() {
 }
 
 /// **A reference-typed field that names a record the build supplies is valid, and
-/// a boot that owes the reference pass says nothing about it.** The recording
-/// holds such a field, on a key declared to hold a reference to anything. The
-/// deployed build had already run the pass, so its marker is dropped first: a
-/// store that has not run it is one that last booted on a build before the pass.
-/// The record has no row to resolve through, and a boot that read the value as a
-/// stale handle would log an error naming it. The field reads back as the record.
+/// a boot says nothing about it.** The recording holds such a field, on a key
+/// declared to hold a reference to anything. The record has no row to resolve
+/// through, and a boot that read the value as a stale handle would log an error
+/// naming it. The field reads back as the record. The reference lowering pass
+/// this case once made owed again was removed as a finished boot pass
+/// (c212aee21, in deploy-9.3.2), so the recording holds no marker for it.
 #[tokio::test]
 async fn a_reference_field_naming_a_supplied_record_boots_quiet_and_reads_back() {
     let Restored {
@@ -2735,16 +2951,10 @@ async fn a_reference_field_naming_a_supplied_record_boots_quiet_and_reads_back()
         .fetch_one(store.pool())
         .await
         .expect("the field writes count");
-    let dropped = sqlx::query("DELETE FROM store_pass WHERE name = 'reference field lowering'")
-        .execute(store.pool())
-        .await
-        .expect("the pass is owed again")
-        .rows_affected();
     store.stop().await;
     assert_eq!(
-        (held, dropped),
-        (1, 1),
-        "recorded at {git_ref}: the recording holds the field, and the pass had run"
+        held, 1,
+        "recorded at {git_ref}: the recording holds the field"
     );
 
     let booted = boot_current(&state_dir, store_port, &git_ref).await;
@@ -2786,10 +2996,11 @@ async fn the_boots_over_a_store_the_deployed_build_filled_log_no_warning_and_no_
         .expect("the pass markers read");
     store.stop().await;
     // The field-link pass the deployed build ran: the lowering or the marking.
+    // The reference lowering pass is gone from the build (c212aee21, in
+    // deploy-9.3.2), so its marker is not looked for.
     let linked = |pass: &str| marked.iter().any(|name| name == pass);
     assert!(
-        (linked("field value lowering") || linked("field value links marked"))
-            && linked("reference field lowering"),
+        linked("field value lowering") || linked("field value links marked"),
         "the recording holds the markers the deployed build's own boot set: {marked:?}"
     );
     let mut dumps = Vec::new();
@@ -3623,6 +3834,7 @@ async fn a_lost_link_table_is_rebuilt(fixture_dir: &str, label: &str) {
         held_before: _,
         handles: _,
         holder_key: _,
+        ..
     } = restore_a_fixture(fixture_dir, label).await;
     let reports = usize::from(recording_holds_the_plain_ambiguous_handle(&git_ref));
     let first = boot_current_expecting(&state_dir, store_port, &git_ref, Some(reports), &[]).await;

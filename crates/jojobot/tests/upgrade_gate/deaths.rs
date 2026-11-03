@@ -61,11 +61,9 @@ async fn a_death_inside_one_migration(version: &str, how: Interruption) {
 }
 
 // Add a named pair here with each migration introduced beyond the cached
-// store's ledger.
-deaths_beyond_the_last_release!(
-    field_write_fact_write_ordinal => "0118_field_write_fact_write_ordinal",
-    event_log => "0119_event_log",
-);
+// store's ledger. The deploy-9.3.2 store holds every shipped migration, so none
+// is left.
+deaths_beyond_the_last_release!();
 
 #[tokio::test]
 async fn every_migration_added_since_the_last_release_has_a_death_case() {
