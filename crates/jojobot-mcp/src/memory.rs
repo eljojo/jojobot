@@ -35,6 +35,8 @@ mod due_unread;
 mod fillers;
 #[cfg(test)]
 mod fillers_tests;
+#[cfg(test)]
+mod generation_witnesses;
 pub(crate) mod instance_unread;
 #[cfg(test)]
 mod keys_kept_tests;
