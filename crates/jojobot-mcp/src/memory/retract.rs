@@ -174,15 +174,67 @@ impl Jojobot {
         let before = self.as_it_stands(&address.home).await;
         // **A write that landed is never reported as failed** (rule 130): see
         // `capture`'s own note on the same shape.
-        let (taken_back, fold_behind) = match jojobot_domain::request::armed(self.memory.retract(
-            &address,
-            args.reason.as_deref(),
-            date,
-            &caller.bot,
-            Some(caller.sid.as_str()),
-        ))
-        .await
-        {
+        //
+        // **Taking back a claim of a bot request that changes its folded spec
+        // carries the next generation, written in the same act.** A retracted
+        // claim's keys leave the thing, so the number rides on a live claim
+        // beside the retraction. Read and written under the request's lock.
+        // TEMPORARY(9.3.3): prepare in the one writer replaces the lock.
+        let spec_lock = match self.hold_for_a_request_spec(&address.home).await {
+            Ok(guard) => guard,
+            Err(e) => return memory_declined("retract", e),
+        };
+        let minted = match self.generation_a_withdrawal_makes(&address).await {
+            Ok(minted) => minted,
+            Err(e) => return memory_declined("retract", e),
+        };
+        let withdrawn = match minted {
+            Some(number) => {
+                let generation = jojobot_domain::memory::bot_request::GENERATION.to_string();
+                let companion = jojobot_domain::memory::NewFact {
+                    sets: [generation.clone()].into(),
+                    derived: [generation.clone()].into(),
+                    fields: jojobot_domain::memory::review::settings_fields(
+                        [(generation.clone(), number)].into(),
+                    ),
+                    session: Some(caller.sid.as_str().to_string()),
+                    ..jojobot_domain::memory::NewFact::about(
+                        address.home.clone(),
+                        format!("Set {generation} on @{}.", address.home.as_str()),
+                        date,
+                    )
+                };
+                jojobot_domain::request::armed(self.memory.retract_with_claim(
+                    &address,
+                    args.reason.as_deref(),
+                    date,
+                    &caller.bot,
+                    Some(caller.sid.as_str()),
+                    companion,
+                ))
+                .await
+                .and_then(|written| match written {
+                    jojobot_domain::memory::Guarded::Written((taken_back, _)) => Ok(taken_back),
+                    jojobot_domain::memory::Guarded::Blocked { .. } => {
+                        Err(MemoryError::InvalidFact(
+                            "the claim that carries the generation was blocked".into(),
+                        ))
+                    }
+                })
+            }
+            None => {
+                jojobot_domain::request::armed(self.memory.retract(
+                    &address,
+                    args.reason.as_deref(),
+                    date,
+                    &caller.bot,
+                    Some(caller.sid.as_str()),
+                ))
+                .await
+            }
+        };
+        drop(spec_lock);
+        let (taken_back, fold_behind) = match withdrawn {
             Ok(taken_back) => (taken_back, None),
             Err(MemoryError::FoldBehind {
                 landed: Landed::Retraction(taken_back),

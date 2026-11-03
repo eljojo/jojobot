@@ -1652,6 +1652,66 @@ impl super::Memory for Mentioning {
         self.render_fact(&mut done.record, &known, &declared);
         Ok(done)
     }
+    /// **A retraction and its claim resolve what they say, exactly as the two
+    /// verbs do apart.** Forwarded and not left to the port's default, which
+    /// refuses.
+    async fn retract_with_claim(
+        &self,
+        address: &super::FactAddress,
+        reason: Option<&str>,
+        date: jiff::civil::Date,
+        caller: &super::EntityId,
+        session: Option<&str>,
+        claim: super::NewFact,
+    ) -> Result<super::Guarded<(super::Retraction, super::Fact)>, super::MemoryError> {
+        let said = [
+            reason.unwrap_or(""),
+            claim.content.as_str(),
+            claim.details.as_deref().unwrap_or(""),
+            claim.drop_because.as_deref().unwrap_or(""),
+        ];
+        let known = self.known_for(&said).await?;
+        refuse_forged(&said, &known)?;
+        if let Some(err) = Self::screen_or_unknown(&[reason.unwrap_or("")], &known) {
+            return Err(err);
+        }
+        if let Some(blocked) = Self::screen_words(&claim.content, claim.details.as_deref(), &known)
+        {
+            return Ok(blocked);
+        }
+        let declared = self.declared().await?;
+        let reason = reason
+            .map(|r| resolved(r, &known))
+            .transpose()
+            .map_err(unloaded)?;
+        let mut fields = claim.fields.clone();
+        self.bind_where(&mut fields, &known, &claim.subject).await?;
+        let written = self
+            .inner
+            .retract_with_claim(address, reason.as_deref(), date, caller, session, {
+                let (content, details) =
+                    resolved_words(&claim.content, claim.details.as_deref(), &known)
+                        .map_err(unloaded)?;
+                super::NewFact {
+                    fields,
+                    content,
+                    details,
+                    drop_because: roster::resolved_reason(claim.drop_because.as_deref(), &known)?,
+                    ..claim
+                }
+            })
+            .await?
+            .open();
+        Ok(match written {
+            super::Guarded::Written((mut done, mut stored)) => {
+                self.render_fact(&mut done.retracted, &known, &declared);
+                self.render_fact(&mut done.record, &known, &declared);
+                self.render_fact(&mut stored, &known, &declared);
+                super::Guarded::Written((done, stored))
+            }
+            blocked => blocked,
+        })
+    }
     /// **A fold writes an account on the survivor**, which is a claim like any
     /// other and reads like one.
     async fn merge(

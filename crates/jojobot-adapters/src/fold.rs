@@ -917,6 +917,59 @@ impl Memory for Folded {
         .await
     }
 
+    /// **A retraction that writes a claim refreshes the image for the thing, as a
+    /// retraction does.** Forwarded and not left to the port's default, which
+    /// refuses.
+    async fn retract_with_claim(
+        &self,
+        address: &FactAddress,
+        reason: Option<&str>,
+        date: Date,
+        caller: &EntityId,
+        session: Option<&str>,
+        claim: NewFact,
+    ) -> Result<Guarded<(Retraction, Fact)>, MemoryError> {
+        owned!(
+            self,
+            this,
+            [
+                address = address.clone(),
+                reason = reason.map(str::to_string),
+                caller = caller.clone(),
+                session = session.map(str::to_string)
+            ],
+            this.retract_with_claim(
+                &address,
+                reason.as_deref(),
+                date,
+                &caller,
+                session.as_deref(),
+                claim,
+            )
+            .await
+        );
+        self.scoped(async {
+            match self
+                .inner
+                .retract_with_claim(address, reason, date, caller, session, claim)
+                .await?
+            {
+                Guarded::Written((taken_back, fact)) => match self
+                    .refresh_claims(&taken_back.retracted.home, Vec::new())
+                    .await
+                {
+                    Ok(()) => Ok(Guarded::Written((taken_back, fact))),
+                    Err(source) => Err(fold_behind(
+                        Landed::Retraction(Box::new(taken_back)),
+                        source,
+                    )),
+                },
+                blocked => Ok(blocked),
+            }
+        })
+        .await
+    }
+
     /// **The documents that spell either handle are read again.** The folded
     /// thing's claims are served from the survivor (see [`Memory::merge`]), and
     /// every record that named the folded thing now reads as naming the survivor,

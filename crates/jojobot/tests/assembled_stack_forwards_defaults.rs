@@ -727,5 +727,49 @@ async fn the_stack_the_binary_builds_answers_what_the_layer_beneath_implements()
         "the same attempt through the whole stack repeats"
     );
 
+    // ── retract_with_claim: implemented by the store, beneath every layer ──
+    //
+    // A claim taken back and a claim written beside it reach the store as one
+    // act through every layer. A layer that left the port's default answers
+    // "this store cannot take back a claim and write another in one act".
+    let withdrawn = indexed
+        .capture(NewFact {
+            fields: fields(&[("pair_note", "first")]),
+            sets: fields(&[("pair_note", "first")]).into_keys().collect(),
+            ..NewFact::about(piano.clone(), "a note to take back", date(2026, 10, 1))
+        })
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("nothing collides");
+    let (taken_back, beside) = indexed
+        .retract_with_claim(
+            &withdrawn.address(),
+            Some("written in error"),
+            date(2026, 10, 2),
+            &piano,
+            Some("stack-run"),
+            NewFact {
+                fields: fields(&[("pair_note", "second")]),
+                sets: fields(&[("pair_note", "second")]).into_keys().collect(),
+                ..NewFact::about(piano.clone(), "the note, said again", date(2026, 10, 2))
+            },
+        )
+        .await
+        .expect("the stack takes a claim back and writes another")
+        .written()
+        .expect("nothing blocks it");
+    assert_eq!(taken_back.retracted.address(), withdrawn.address());
+    assert_eq!(
+        indexed
+            .fields(&piano)
+            .await
+            .expect("fields")
+            .get("pair_note")
+            .map(String::as_str),
+        Some("second"),
+        "the outermost port reads the pair as one act: {beside:?}"
+    );
+
     server.stop().await;
 }

@@ -558,3 +558,87 @@ async fn naming_a_manager_beside_the_target_does_not_change_who_judges_it() {
     bart.call("add_entity", creating(asked)).await;
     story.finish().await;
 }
+
+/// **Taking back an older partial spec changes the folded spec, so the
+/// retraction carries the next generation.** A names the whole spec (1), B only
+/// `desired` (2), C only `model` (3); B taken back leaves a spec no number
+/// named, so the retraction carries 4. A withdrawal that uncovers nothing
+/// carries none: D is wholly overridden by the newer E, and taking D back
+/// changes no key.
+#[tokio::test]
+async fn taking_back_an_older_partial_spec_carries_the_next_generation() {
+    let story = Story::begin("bot:marge").await;
+    let marge = story.session().await;
+    marge
+        .call(
+            "add_entity",
+            json!({"kind": "bot", "handle": "homer", "name": "Homer",
+                   "source": "user-named", "sets": {"reports_to": "bot:marge"}}),
+        )
+        .await;
+    marge.add("machine:theta", "Theta").await;
+    marge
+        .call("add_entity", creating(spec("bot:homer", "machine:theta")))
+        .await;
+    let read = || async {
+        let read = marge
+            .call("recall", json!({"subject": "bot-request:alpha"}))
+            .await;
+        let fields = read.json()["objects"][0]["fields"].clone();
+        (
+            fields["generation"].clone(),
+            fields["desired"].clone(),
+            fields["model"].clone(),
+        )
+    };
+    let capture = |content: &'static str, sets: serde_json::Value| {
+        let marge = &marge;
+        async move {
+            marge
+                .call(
+                    "capture",
+                    json!({"subject": "bot-request:alpha", "content": content, "sets": sets}),
+                )
+                .await
+                .field("address")
+        }
+    };
+    assert_eq!(
+        read().await,
+        ("1".into(), "running".into(), "model-a".into())
+    );
+    let older = capture("stop it", json!({"desired": "stopped"})).await;
+    capture("another model", json!({"model": "model-b"})).await;
+    assert_eq!(
+        read().await,
+        ("3".into(), "stopped".into(), "model-b".into())
+    );
+
+    marge
+        .call(
+            "retract",
+            json!({"address": &older, "reason": "written in error"}),
+        )
+        .await;
+    assert_eq!(
+        read().await,
+        ("4".into(), "running".into(), "model-b".into()),
+        "the spec is a new one, and the number names it",
+    );
+
+    let overridden = capture("pause it", json!({"desired": "paused"})).await;
+    capture("stop it for good", json!({"desired": "halted"})).await;
+    assert_eq!(read().await.0, "6");
+    marge
+        .call(
+            "retract",
+            json!({"address": &overridden, "reason": "written in error"}),
+        )
+        .await;
+    assert_eq!(
+        read().await,
+        ("6".into(), "halted".into(), "model-b".into()),
+        "a withdrawal that uncovers nothing carries no number",
+    );
+    story.finish().await;
+}

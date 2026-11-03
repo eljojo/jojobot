@@ -1767,6 +1767,159 @@ impl DoltMemory {
         }))
     }
 
+    /// **A retraction in a transaction its caller owns.** The caller commits it
+    /// only when this answers `Ok`. [`retract`](Memory::retract) is that, and so
+    /// is the retraction that writes a claim in the same act.
+    async fn retract_in(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        address: &FactAddress,
+        reason: Option<&str>,
+        date: Date,
+        caller: &EntityId,
+        session: Option<&str>,
+    ) -> Result<Retraction, MemoryError> {
+        let moved = self.moved_in(tx, address).await?;
+        let address = moved.as_ref().unwrap_or(address);
+        // **The full listing is built only on a miss** — two miss branches
+        // below can reach one, each building its own: a handle that resolves
+        // to nothing, or a resolved handle with no fact at this address.
+        let Some((key, handle)) = self.resolve(tx, &address.home).await? else {
+            let index = self.index(tx).await?;
+            return Err(MemoryError::UnknownEntity {
+                attempted: address.home.to_string(),
+                nearest: self.nearest(tx, &address.home, &index).await?,
+            });
+        };
+        let resolved_address = FactAddress::new(key.clone(), address.local.clone());
+        // Everything is decided before anything moves, so a refusal leaves the
+        // row exactly as it was.
+        let Some(mut target) = self.read_fact(tx, &resolved_address).await? else {
+            let index = self.index(tx).await?;
+            if let Some(resolved) = index.iter().find(|e| e.id == handle)
+                && let Some(err) = jojobot_domain::memory::already_merged(&address.home, resolved)
+            {
+                return Err(err);
+            }
+            return Err(MemoryError::UnknownFact {
+                attempted: address.to_string(),
+                nearest: self.addresses_in(tx, &key).await?,
+            });
+        };
+        // **Lowered back to the storage form it was read under, every
+        // pointer-bearing field at once** (rule 268) — this row is about to
+        // be written again, twice: once retracted, once as the account
+        // built from it. Neither write-back may leave a served handle
+        // behind in a column that answers to the badge.
+        self.lower_pointers(tx, &mut target, &key).await?;
+        // **`retraction_of` addresses the claim it takes back in a field
+        // value, as free text** — served under the handle, exactly as any
+        // other address a reader is given, never under the storage key.
+        let served_target = Fact {
+            home: handle.clone(),
+            subject: handle.clone(),
+            ..target.clone()
+        };
+        let account = retraction_of(&served_target, reason, date)?;
+        let standing = standing_of(&account);
+        let record = Fact {
+            app_stamp: None,
+            written_by_another: false,
+            sets: Default::default(),
+            // Unclassed keys of an engine-written record are own fields that reach.
+            reaching: account.fields.keys().cloned().collect(),
+            field_links: Default::default(),
+            id: Self::mint(tx, &key).await?,
+            home: key.clone(),
+            subject: key.clone(),
+            content: account.content,
+            details: account.details,
+            provenance: account.provenance,
+            standing,
+            status: account.status,
+            recorded_at: account.recorded_at,
+            happened_at: account.happened_at,
+            happened_through: account.happened_through,
+            edge: account.edge,
+            fields: account.fields,
+            refs: account.refs,
+            derived_from: account.derived_from,
+            stands_for: Vec::new(),
+            // A retraction is a record in its own right, taken in now.
+            inserted_at: Some(self.clock.now()),
+            stale_after: None,
+            receipt: None,
+        };
+        let retracted = Fact {
+            status: FactStatus::Archived,
+            ..target
+        };
+        // **The ceiling, on the state this retraction leaves behind.** A
+        // retraction carries no `FactPatch` of its own, so `stood_after`
+        // takes an empty one — the only thing it needs from the patch is
+        // the record's own new status, which `retracted` already carries.
+        let held = self.writes_on(tx, &key).await?;
+        let declared = Self::types_in(tx).await?;
+        let before_fold = folded_fields(&held, &declared);
+        let after_fold = stood_after(
+            &held,
+            &retracted,
+            &FactPatch::default(),
+            &Default::default(),
+            &declared,
+        );
+        let chart_before = self.with_manager_rendered(tx, &before_fold).await?;
+        let chart_after = self.with_manager_rendered(tx, &after_fold).await?;
+        let lineage = match jojobot_domain::memory::chart_wanted_by_change(
+            &handle,
+            &chart_before,
+            &chart_after,
+        ) {
+            Some(named) => Some(self.lineage_in(tx, &handle, named).await?),
+            None => None,
+        };
+        if let Some(err) = jojobot_domain::memory::refuses_unlicensed_change(
+            &handle,
+            caller,
+            &chart_before,
+            &chart_after,
+            lineage.as_ref(),
+        ) {
+            return Err(err);
+        }
+        let retracted_on_disk = self.as_stored(tx, &retracted).await?;
+        Self::write_fact(tx, &retracted_on_disk, &self.clock, session, None).await?;
+        let claim_write = Self::write_fact(tx, &record, &self.clock, session, None).await?;
+        // The account is a record like any other, and the key naming what it
+        // takes back is a write of its own. The record being taken back writes
+        // no key: what changed there is its status.
+        Self::append_writes(
+            tx,
+            &record.home,
+            &record.id,
+            written_keys(&record),
+            &self.clock,
+            &Default::default(),
+            claim_write,
+        )
+        .await?;
+        // **Served under the handle, stored under the key.**
+        let served_retracted = Fact {
+            home: handle.clone(),
+            subject: handle.clone(),
+            ..retracted
+        };
+        let served_record = Fact {
+            home: handle.clone(),
+            subject: handle,
+            ..record
+        };
+        Ok(Retraction {
+            retracted: served_retracted,
+            record: served_record,
+        })
+    }
+
     /// **An edit of an entity's own row, in a transaction its caller owns.** The
     /// caller commits it only when this answers `Written`.
     /// [`update_entity`](Memory::update_entity) is that, and so is the edit that
@@ -6316,150 +6469,57 @@ impl Memory for DoltMemory {
         session: Option<&str>,
     ) -> Result<Retraction, MemoryError> {
         let mut tx = self.pool.begin().await.map_err(store)?;
-        let moved = self.moved_in(&mut tx, address).await?;
-        let address = moved.as_ref().unwrap_or(address);
-        // **The full listing is built only on a miss** — two miss branches
-        // below can reach one, each building its own: a handle that resolves
-        // to nothing, or a resolved handle with no fact at this address.
-        let Some((key, handle)) = self.resolve(&mut tx, &address.home).await? else {
-            let index = self.index(&mut tx).await?;
-            return Err(MemoryError::UnknownEntity {
-                attempted: address.home.to_string(),
-                nearest: self.nearest(&mut tx, &address.home, &index).await?,
-            });
-        };
-        let resolved_address = FactAddress::new(key.clone(), address.local.clone());
-        // Everything is decided before anything moves, so a refusal leaves the
-        // row exactly as it was.
-        let Some(mut target) = self.read_fact(&mut tx, &resolved_address).await? else {
-            let index = self.index(&mut tx).await?;
-            if let Some(resolved) = index.iter().find(|e| e.id == handle)
-                && let Some(err) = jojobot_domain::memory::already_merged(&address.home, resolved)
-            {
-                return Err(err);
-            }
-            return Err(MemoryError::UnknownFact {
-                attempted: address.to_string(),
-                nearest: self.addresses_in(&mut tx, &key).await?,
-            });
-        };
-        // **Lowered back to the storage form it was read under, every
-        // pointer-bearing field at once** (rule 268) — this row is about to
-        // be written again, twice: once retracted, once as the account
-        // built from it. Neither write-back may leave a served handle
-        // behind in a column that answers to the badge.
-        self.lower_pointers(&mut tx, &mut target, &key).await?;
-        // **`retraction_of` addresses the claim it takes back in a field
-        // value, as free text** — served under the handle, exactly as any
-        // other address a reader is given, never under the storage key.
-        let served_target = Fact {
-            home: handle.clone(),
-            subject: handle.clone(),
-            ..target.clone()
-        };
-        let account = retraction_of(&served_target, reason, date)?;
-        let standing = standing_of(&account);
-        let record = Fact {
-            app_stamp: None,
-            written_by_another: false,
-            sets: Default::default(),
-            // Unclassed keys of an engine-written record are own fields that reach.
-            reaching: account.fields.keys().cloned().collect(),
-            field_links: Default::default(),
-            id: Self::mint(&mut tx, &key).await?,
-            home: key.clone(),
-            subject: key.clone(),
-            content: account.content,
-            details: account.details,
-            provenance: account.provenance,
-            standing,
-            status: account.status,
-            recorded_at: account.recorded_at,
-            happened_at: account.happened_at,
-            happened_through: account.happened_through,
-            edge: account.edge,
-            fields: account.fields,
-            refs: account.refs,
-            derived_from: account.derived_from,
-            stands_for: Vec::new(),
-            // A retraction is a record in its own right, taken in now.
-            inserted_at: Some(self.clock.now()),
-            stale_after: None,
-            receipt: None,
-        };
-        let retracted = Fact {
-            status: FactStatus::Archived,
-            ..target
-        };
-        // **The ceiling, on the state this retraction leaves behind.** A
-        // retraction carries no `FactPatch` of its own, so `stood_after`
-        // takes an empty one — the only thing it needs from the patch is
-        // the record's own new status, which `retracted` already carries.
-        let held = self.writes_on(&mut tx, &key).await?;
-        let declared = Self::types_in(&mut tx).await?;
-        let before_fold = folded_fields(&held, &declared);
-        let after_fold = stood_after(
-            &held,
-            &retracted,
-            &FactPatch::default(),
-            &Default::default(),
-            &declared,
-        );
-        let chart_before = self.with_manager_rendered(&mut tx, &before_fold).await?;
-        let chart_after = self.with_manager_rendered(&mut tx, &after_fold).await?;
-        let lineage = match jojobot_domain::memory::chart_wanted_by_change(
-            &handle,
-            &chart_before,
-            &chart_after,
-        ) {
-            Some(named) => Some(self.lineage_in(&mut tx, &handle, named).await?),
-            None => None,
-        };
-        if let Some(err) = jojobot_domain::memory::refuses_unlicensed_change(
-            &handle,
-            caller,
-            &chart_before,
-            &chart_after,
-            lineage.as_ref(),
-        ) {
-            return Err(err);
-        }
-        let retracted_on_disk = self.as_stored(&mut tx, &retracted).await?;
-        Self::write_fact(&mut tx, &retracted_on_disk, &self.clock, session, None).await?;
-        let claim_write = Self::write_fact(&mut tx, &record, &self.clock, session, None).await?;
-        // The account is a record like any other, and the key naming what it
-        // takes back is a write of its own. The record being taken back writes
-        // no key: what changed there is its status.
-        Self::append_writes(
-            &mut tx,
-            &record.home,
-            &record.id,
-            written_keys(&record),
-            &self.clock,
-            &Default::default(),
-            claim_write,
-        )
-        .await?;
-        // **Served under the handle, stored under the key.**
-        let served_retracted = Fact {
-            home: handle.clone(),
-            subject: handle.clone(),
-            ..retracted
-        };
-        let served_record = Fact {
-            home: handle.clone(),
-            subject: handle,
-            ..record
-        };
+        let taken_back = self
+            .retract_in(&mut tx, address, reason, date, caller, session)
+            .await?;
         super::requests::commit(tx, &self.clock, || {
             serde_json::json!({ "address": address.to_string() }).to_string()
         })
         .await
         .map_err(store)?;
-        Ok(Retraction {
-            retracted: served_retracted,
-            record: served_record,
-        })
+        Ok(taken_back)
+    }
+
+    /// **The retraction and its companion claim in one transaction.** A refusal or
+    /// a block of the claim returns before the commit, so the retraction is never
+    /// stored without it.
+    async fn retract_with_claim(
+        &self,
+        address: &FactAddress,
+        reason: Option<&str>,
+        date: Date,
+        caller: &EntityId,
+        session: Option<&str>,
+        claim: NewFact,
+    ) -> Result<Guarded<(Retraction, Fact)>, MemoryError> {
+        validate_new_fact(&claim)?;
+        let mut tx = self.pool.begin().await.map_err(store)?;
+        let taken_back = self
+            .retract_in(&mut tx, address, reason, date, caller, session)
+            .await?;
+        if claim.subject != taken_back.retracted.subject {
+            return Err(MemoryError::InvalidFact(format!(
+                "the claim is about {}, and the claim taken back is about {}",
+                claim.subject, taken_back.retracted.subject
+            )));
+        }
+        match self.capture_in(&mut tx, claim).await? {
+            Guarded::Written(fact) => {
+                super::requests::commit(tx, &self.clock, || {
+                    serde_json::json!({ "address": address.to_string() }).to_string()
+                })
+                .await
+                .map_err(store)?;
+                Ok(Guarded::Written((taken_back, fact)))
+            }
+            Guarded::Blocked {
+                attempted,
+                candidates,
+            } => Ok(Guarded::Blocked {
+                attempted,
+                candidates,
+            }),
+        }
     }
 
     /// **One read of the writes, folded by the domain's own rule.** The default

@@ -56,6 +56,7 @@ operations!(MemoryOperation {
     EchoedDefaults => "echoed_defaults",
     FieldsVersioned => "fields_versioned",
     Retract => "retract",
+    RetractWithClaim => "retract_with_claim",
     Merge => "merge",
     SetProse => "set_prose",
     Scan => "scan",

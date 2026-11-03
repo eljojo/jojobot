@@ -188,3 +188,30 @@ pub fn next_generation(
 ) -> Option<String> {
     (is_request(subject) && before != after).then(|| (highest_ever + 1).to_string())
 }
+
+/// **The spec the history of the spec keys holds once one claim is taken out.**
+/// Each spec key reads its newest write among the active claims other than
+/// `withdrawn`; a clear, or a blank value, leaves the key off. This is the fold
+/// of a withdrawal as the store will leave it, read before the act so the number
+/// it makes can be written with it.
+pub fn spec_withdrawing(
+    history: &std::collections::BTreeMap<String, Vec<super::FieldWrite>>,
+    withdrawn: Option<&super::FactId>,
+) -> std::collections::BTreeMap<String, String> {
+    SPEC_KEYS
+        .iter()
+        .filter_map(|key| {
+            let newest = history
+                .get(*key)?
+                .iter()
+                .rfind(|write| {
+                    write.status == super::FactStatus::Active
+                        && withdrawn != Some(&write.fact.local)
+                })?
+                .value
+                .as_deref()?
+                .trim();
+            (!newest.is_empty()).then(|| (key.to_string(), newest.to_string()))
+        })
+        .collect()
+}

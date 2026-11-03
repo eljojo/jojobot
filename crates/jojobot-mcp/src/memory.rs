@@ -257,6 +257,39 @@ impl Jojobot {
         Ok(jojobot_domain::memory::bot_request::highest_generation_ever(&writes))
     }
 
+    /// **The generation taking back one claim of a bot request would make**, or
+    /// `None` when the request's folded spec stays as it is (and for a subject
+    /// that is no request, or one the store does not know: the retraction itself
+    /// answers for that). Read from the history of the spec keys, with the claim
+    /// taken out, and numbered from the highest ever written. Called under the
+    /// request's lock.
+    // TEMPORARY(9.3.3): prepare in the one writer compares the State's spec
+    // before and after the batch.
+    pub(crate) async fn generation_a_withdrawal_makes(
+        &self,
+        address: &jojobot_domain::memory::FactAddress,
+    ) -> Result<Option<String>, MemoryError> {
+        use jojobot_domain::memory::bot_request::{SPEC_KEYS, next_generation, spec_withdrawing};
+        if !jojobot_domain::memory::bot_request::is_request(&address.home) {
+            return Ok(None);
+        }
+        let mut history = std::collections::BTreeMap::new();
+        for key in SPEC_KEYS {
+            match self.memory.history(&address.home, key).await {
+                Ok(writes) => history.insert(key.to_string(), writes),
+                Err(MemoryError::UnknownEntity { .. }) => return Ok(None),
+                Err(e) => return Err(e),
+            };
+        }
+        let highest = self.highest_generation_ever(&address.home).await?;
+        Ok(next_generation(
+            &address.home,
+            &spec_withdrawing(&history, None),
+            &spec_withdrawing(&history, Some(&address.local)),
+            highest,
+        ))
+    }
+
     /// The key a thing's placement lock is held under.
     pub(crate) async fn placing_key(&self, thing: &EntityId) -> Result<String, MemoryError> {
         let known = self.memory.list_entities(None).await?;

@@ -421,3 +421,35 @@ async fn the_rows_served_follow_the_newest_event_for_an_address() {
         "and not where the older event put them: {left:?}"
     );
 }
+
+/// **A wrapper that forwards only what the port requires refuses a retraction
+/// with a claim, and writes nothing.** The port's default is the refusal, so a
+/// layer that forgot to forward the method fails loudly and never retracts and
+/// then captures as two writes.
+#[tokio::test]
+async fn a_wrapper_that_does_not_forward_the_retraction_with_a_claim_refuses_it() {
+    let store = std::sync::Arc::new(InMemoryMemory::booted());
+    let subject = thing(&store, "person:lisa", "Lisa").await;
+    let address = say(&store, &subject, "said in error").await;
+    let wrapper = crate::memory::testing::WithoutBuiltOn(store.clone());
+    let refused = wrapper
+        .retract_with_claim(
+            &address,
+            None,
+            date(2026, 6, 3),
+            &subject,
+            None,
+            NewFact::about(subject.clone(), "said again", date(2026, 6, 3)),
+        )
+        .await;
+    assert!(
+        matches!(refused, Err(MemoryError::InvalidFact(_))),
+        "the default refuses: {refused:?}"
+    );
+    let held = store.recall(&subject).await.expect("recall reads");
+    assert!(
+        held.iter()
+            .all(|fact| fact.status == FactStatus::Active && fact.content != "said again"),
+        "nothing was retracted and nothing was written: {held:?}"
+    );
+}

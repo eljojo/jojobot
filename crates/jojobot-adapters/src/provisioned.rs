@@ -797,6 +797,19 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
             .retract(address, reason, date, caller, session)
             .await
     }
+    async fn retract_with_claim(
+        &self,
+        address: &FactAddress,
+        reason: Option<&str>,
+        date: Date,
+        caller: &EntityId,
+        session: Option<&str>,
+        claim: NewFact,
+    ) -> Result<Guarded<(Retraction, Fact)>, MemoryError> {
+        self.inner
+            .retract_with_claim(address, reason, date, caller, session, claim)
+            .await
+    }
     /// **A handle the build supplies is taken, on either side of a fold —
     /// exactly as it is for add, update and rename** (rule 234). Checked
     /// here, before the store underneath is ever asked, for the reason

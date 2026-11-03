@@ -474,6 +474,23 @@ impl Memory for Counted {
         self.hang_if_armed("retract").await;
         landed
     }
+    async fn retract_with_claim(
+        &self,
+        address: &FactAddress,
+        reason: Option<&str>,
+        date: Date,
+        caller: &EntityId,
+        session: Option<&str>,
+        claim: NewFact,
+    ) -> Result<Guarded<(Retraction, Fact)>, MemoryError> {
+        self.hit("retract_with_claim");
+        let landed = self
+            .inner
+            .retract_with_claim(address, reason, date, caller, session, claim)
+            .await;
+        self.hang_if_armed("retract_with_claim").await;
+        landed
+    }
     async fn merge(
         &self,
         folded: &EntityId,

@@ -432,3 +432,89 @@ fn a_refused_fold_says_whether_the_request_was_the_side_that_judged() {
     assert!(judged_on_duplicate("topic:scrapbook", REQUEST));
     assert!(!judged_on_duplicate(REQUEST, "topic:scrapbook"));
 }
+
+/// **The spec the history holds, with one claim taken out**, is the fold without
+/// that claim: each spec key reads its newest active write, a clear leaves the
+/// key off, and a claim taken out uncovers the write under it. The sequence is
+/// the one a withdrawal changes: A sets desired and model, B sets desired, C sets
+/// model.
+#[test]
+fn the_spec_a_withdrawal_leaves_is_read_from_the_history() {
+    use crate::memory::{FactAddress, FactId, FactStatus, FieldWrite, Provenance, Standing};
+    let write = |fact: &str, value: Option<&str>, status: FactStatus| FieldWrite {
+        written_at: None,
+        value: value.map(String::from),
+        fact: FactAddress::new(handle(REQUEST), FactId(fact.into())),
+        recorded_at: Default::default(),
+        status,
+        provenance: Provenance::Inference,
+        standing: Standing::Open,
+        note: None,
+        recorded_by: None,
+        writer: None,
+        run: None,
+    };
+    let history: BTreeMap<String, Vec<FieldWrite>> = [
+        (
+            DESIRED.to_string(),
+            vec![
+                write("f1", Some("running"), FactStatus::Active),
+                write("f2", Some("stopped"), FactStatus::Active),
+            ],
+        ),
+        (
+            MODEL.to_string(),
+            vec![
+                write("f1", Some("alpha"), FactStatus::Active),
+                write("f3", Some(" beta "), FactStatus::Active),
+            ],
+        ),
+    ]
+    .into();
+    let spec = super::super::bot_request::spec_withdrawing;
+    let held = |pairs: &[(&str, &str)]| -> BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    };
+    assert_eq!(
+        spec(&history, None),
+        held(&[(DESIRED, "stopped"), (MODEL, "beta")]),
+        "nothing taken out reads the newest active write of each key",
+    );
+    assert_eq!(
+        spec(&history, Some(&FactId("f2".into()))),
+        held(&[(DESIRED, "running"), (MODEL, "beta")]),
+        "the older claim's value comes back under the one taken out",
+    );
+    assert_eq!(
+        spec(&history, Some(&FactId("f3".into()))),
+        held(&[(DESIRED, "stopped"), (MODEL, "alpha")]),
+    );
+    assert_eq!(
+        spec(&history, Some(&FactId("f9".into()))),
+        spec(&history, None),
+        "a claim that wrote no spec key leaves the spec as it was",
+    );
+    let mut cleared = history.clone();
+    cleared
+        .get_mut(MODEL)
+        .expect("the model key")
+        .push(write("f4", None, FactStatus::Active));
+    assert_eq!(
+        spec(&cleared, None),
+        held(&[(DESIRED, "stopped")]),
+        "a clear leaves the key off the spec",
+    );
+    let mut archived = history;
+    archived
+        .get_mut(DESIRED)
+        .expect("the desired key")
+        .push(write("f5", Some("paused"), FactStatus::Archived));
+    assert_eq!(
+        spec(&archived, None),
+        held(&[(DESIRED, "stopped"), (MODEL, "beta")]),
+        "a write of an archived claim does not count",
+    );
+}

@@ -411,3 +411,119 @@ pub async fn a_retracted_generation_is_still_the_highest_ever_written<M: Memory>
     );
     assert_eq!(third.as_deref(), Some("3"), "2 names the retracted spec");
 }
+
+/// **A retraction and the claim that carries the new number land as one act.**
+/// The sequence is a whole spec (1), a partial one (2) and another partial one
+/// (3); taking the second back changes the folded spec, so the claim written
+/// beside the retraction names it 4. A companion claim a guard refuses takes the
+/// retraction back with it, so a withdrawal is never stored without its number.
+pub async fn a_retraction_and_its_generation_claim_land_as_one_act<M: Memory>(store: &M) {
+    use crate::memory::bot_request::{GENERATION, MODEL};
+    let request = EntityId("bot-request:contract-pair-ask".into());
+    let manager = EntityId("bot:contract-pair-manager".into());
+    let target = EntityId("bot:contract-pair-target".into());
+    for (id, name) in [
+        (&request, "Pair Ask"),
+        (&manager, "Pair Manager"),
+        (&target, "Pair Target"),
+    ] {
+        add(store, NewEntity::new(id.clone(), name, "contract-fixture")).await;
+    }
+    let fields = |pairs: &[(&str, &str)]| -> std::collections::BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    };
+    capture(
+        store,
+        state(NewFact {
+            fields: fields(&[(crate::memory::REPORTS_TO, manager.as_str())]),
+            ..NewFact::about(
+                target.clone(),
+                "target reports to manager",
+                date(2026, 10, 1),
+            )
+        }),
+    )
+    .await;
+    let spec = |pairs: &[(&str, &str)], day: i8| {
+        let mut fact = state(NewFact {
+            fields: fields(pairs),
+            ..NewFact::about(request.clone(), "a spec", date(2026, 10, day))
+        });
+        fact.derived.insert(GENERATION.to_string());
+        fact
+    };
+    capture(
+        store,
+        spec(
+            &[
+                (TARGET_BOT, target.as_str()),
+                (DESIRED, "running"),
+                (MODEL, "alpha"),
+                (GENERATION, "1"),
+            ],
+            2,
+        ),
+    )
+    .await;
+    let second = capture(store, spec(&[(DESIRED, "stopped"), (GENERATION, "2")], 3)).await;
+    capture(store, spec(&[(MODEL, "beta"), (GENERATION, "3")], 4)).await;
+    let read = || async { store.fields(&request).await.expect("readable") };
+    let companion = |number: &str| spec(&[(GENERATION, number)], 5);
+
+    // A companion a guard refuses: its key links to a handle nobody holds.
+    let mut refused = companion("4");
+    refused
+        .fields
+        .insert("blocks".into(), "work:contract-pair-nobody".into());
+    refused.sets.insert("blocks".into());
+    let taken_back = store
+        .retract_with_claim(
+            &second.address(),
+            Some("written in error"),
+            date(2026, 10, 5),
+            &manager,
+            None,
+            refused,
+        )
+        .await
+        .expect("the call answers");
+    assert!(
+        matches!(taken_back, Guarded::Blocked { .. }),
+        "a refused companion blocks the act: {taken_back:?}",
+    );
+    let fold = read().await;
+    assert_eq!(
+        fold.get(DESIRED).map(String::as_str),
+        Some("stopped"),
+        "the retraction was taken back with the refused claim",
+    );
+    assert_eq!(fold.get(GENERATION).map(String::as_str), Some("3"));
+
+    // The companion that stands: both land, and the fold names the new spec 4.
+    let (retraction, claim) = store
+        .retract_with_claim(
+            &second.address(),
+            Some("written in error"),
+            date(2026, 10, 5),
+            &manager,
+            None,
+            companion("4"),
+        )
+        .await
+        .expect("the call answers")
+        .written()
+        .expect("nothing blocks it");
+    assert_eq!(retraction.retracted.address(), second.address());
+    assert_eq!(claim.subject, request);
+    let fold = read().await;
+    assert_eq!(fold.get(DESIRED).map(String::as_str), Some("running"));
+    assert_eq!(fold.get(MODEL).map(String::as_str), Some("beta"));
+    assert_eq!(
+        fold.get(GENERATION).map(String::as_str),
+        Some("4"),
+        "the withdrawal and its number landed together",
+    );
+}

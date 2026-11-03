@@ -45,6 +45,28 @@ impl Memory for FoldBehindMemory {
             .await?;
         Err(fold_behind(Landed::Retraction(Box::new(taken_back))))
     }
+    // **A retraction and its claim in one act land, and the fold behind them never
+    // confirms**, the shape `retract` has here.
+    async fn retract_with_claim(
+        &self,
+        address: &FactAddress,
+        reason: Option<&str>,
+        date: jiff::civil::Date,
+        caller: &EntityId,
+        session: Option<&str>,
+        claim: NewFact,
+    ) -> Result<Guarded<(jojobot_domain::memory::Retraction, Fact)>, MemoryError> {
+        match self
+            .0
+            .retract_with_claim(address, reason, date, caller, session, claim)
+            .await?
+        {
+            Guarded::Written((taken_back, _)) => {
+                Err(fold_behind(Landed::Retraction(Box::new(taken_back))))
+            }
+            blocked => Ok(blocked),
+        }
+    }
     async fn merge(
         &self,
         folded: &EntityId,

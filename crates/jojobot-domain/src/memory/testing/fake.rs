@@ -2395,6 +2395,68 @@ impl Memory for InMemoryMemory {
         }
     }
 
+    /// **The retraction and its companion claim, as one act.** A refusal of the
+    /// claim puts every row back exactly as it was, as the real store's one
+    /// transaction does.
+    async fn retract_with_claim(
+        &self,
+        address: &FactAddress,
+        reason: Option<&str>,
+        date: Date,
+        caller: &EntityId,
+        session: Option<&str>,
+        claim: NewFact,
+    ) -> Result<Guarded<(Retraction, Fact)>, MemoryError> {
+        // **One spend for the act**, after its last step.
+        let request = crate::request::take();
+        let facts_before = self.facts.lock().expect("fake mutex poisoned").clone();
+        let writes_before = self.writes.lock().expect("fake mutex poisoned").clone();
+        let claim_writes_before = self
+            .claim_writes
+            .lock()
+            .expect("fake mutex poisoned")
+            .clone();
+        let take_back = || {
+            *self.facts.lock().expect("fake mutex poisoned") = facts_before.clone();
+            *self.writes.lock().expect("fake mutex poisoned") = writes_before.clone();
+            *self.claim_writes.lock().expect("fake mutex poisoned") = claim_writes_before.clone();
+            *self.world_cache.lock().expect("fake mutex poisoned") = None;
+        };
+        let retraction = self.retract(address, reason, date, caller, session).await?;
+        if claim.subject != retraction.retracted.subject {
+            take_back();
+            return Err(MemoryError::InvalidFact(format!(
+                "the claim is about {}, and the claim taken back is about {}",
+                claim.subject, retraction.retracted.subject
+            )));
+        }
+        match self.capture(claim).await {
+            Ok(Guarded::Written(fact)) => {
+                if let Err(e) = self.spend_claim(request, || {
+                    serde_json::json!({ "address": address.to_string() }).to_string()
+                }) {
+                    take_back();
+                    return Err(e);
+                }
+                Ok(Guarded::Written((retraction, fact)))
+            }
+            Ok(Guarded::Blocked {
+                attempted,
+                candidates,
+            }) => {
+                take_back();
+                Ok(Guarded::Blocked {
+                    attempted,
+                    candidates,
+                })
+            }
+            Err(e) => {
+                take_back();
+                Err(e)
+            }
+        }
+    }
+
     /// **The port's default walk, over the fake's own index.** The real store
     /// answers this with one targeted read and never lists, so the default
     /// body, which calls [`Memory::list_entities`], would count a listing no

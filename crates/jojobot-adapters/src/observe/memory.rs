@@ -352,6 +352,22 @@ impl Memory for Observed<dyn Memory> {
         )
         .await
     }
+    async fn retract_with_claim(
+        &self,
+        address: &FactAddress,
+        reason: Option<&str>,
+        date: Date,
+        caller: &EntityId,
+        session: Option<&str>,
+        claim: NewFact,
+    ) -> Result<Guarded<(Retraction, Fact)>, MemoryError> {
+        self.result(
+            Operation::Memory(MemoryOperation::RetractWithClaim),
+            self.inner
+                .retract_with_claim(address, reason, date, caller, session, claim),
+        )
+        .await
+    }
     async fn merge(
         &self,
         folded: &EntityId,

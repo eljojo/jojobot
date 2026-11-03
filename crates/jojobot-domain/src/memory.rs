@@ -6834,6 +6834,36 @@ pub trait Memory: Send + Sync {
         ))
     }
 
+    /// **Take back a claim and write a claim about the same thing, in one act.**
+    /// [`retract`](Memory::retract) with a companion claim, run as a capture runs
+    /// it. If any guard of the retraction or of the claim refuses, **nothing is
+    /// written**: the retraction is taken back with the claim. The companion is
+    /// about the thing the retracted claim is about; any other subject is
+    /// [`MemoryError::InvalidFact`].
+    ///
+    /// A withdrawal that changes a bot request's folded spec carries the next
+    /// generation on this claim: a retracted claim's keys leave the thing, so the
+    /// number rides on a live claim written in the same act.
+    ///
+    /// **A store that cannot do this refuses loudly rather than retracting and
+    /// then capturing**, for the reason
+    /// [`add_entity_with_first_claim`](Memory::add_entity_with_first_claim) does.
+    // TEMPORARY(9.3.3): prepare in the one writer batches the act and its number.
+    async fn retract_with_claim(
+        &self,
+        address: &FactAddress,
+        reason: Option<&str>,
+        date: Date,
+        caller: &EntityId,
+        session: Option<&str>,
+        claim: NewFact,
+    ) -> Result<Guarded<(Retraction, Fact)>, MemoryError> {
+        let _ = (address, reason, date, caller, session, claim);
+        Err(MemoryError::InvalidFact(
+            "this store cannot take back a claim and write another in one act".into(),
+        ))
+    }
+
     /// **What a numbered collection adds to a read of it**: the key its members
     /// are numbered by and the number the next member takes (the largest held,
     /// archived members included, plus one). `None` for a thing that numbers
