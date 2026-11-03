@@ -10,6 +10,7 @@
 
 use std::future::Future;
 
+use crate::dolt::teaching::RowChange;
 use crate::dolt_log::DoltLog;
 use crate::writer::{Writer, recovery::guarded, sql};
 use jojobot_domain::log::*;
@@ -46,7 +47,8 @@ impl WriterLog {
     ) -> Result<T, LogError> {
         let log = self.log.clone();
         let writer = self.writer.clone();
-        self.writer
+        let done = self
+            .writer
             .run(async move {
                 guarded(&writer, RAIL, work, || {
                     let log = log.clone();
@@ -54,10 +56,21 @@ impl WriterLog {
                 })
                 .await
             })
-            .await
+            .await;
+        match done {
+            // A job refused while the log is uncertain was not started, and what
+            // the log holds is still not known: the caller is told so.
+            Err(_) if self.writer.rail_uncertain(RAIL) => Err(LogError::Indeterminate),
+            other => other,
+        }
     }
 
-    async fn append_in_job(&self, head: Position, batch: &SealedBatch) -> Result<Append, LogError> {
+    async fn append_in_job(
+        &self,
+        head: Position,
+        batch: &SealedBatch,
+        rows: &[RowChange],
+    ) -> Result<Append, LogError> {
         let mut tx = self
             .pool
             .begin()
@@ -80,6 +93,15 @@ impl WriterLog {
             };
         }
         let staged = self.log.stage(&mut tx, head, batch).await?;
+        for change in rows {
+            if change.apply(&mut tx).await.is_err() {
+                // Nothing is committed before COMMIT, whether the server refused
+                // the change or the connection was lost: the whole transaction
+                // rolls back and the head stays where it was.
+                let _ = tx.rollback().await;
+                return Ok(Append::DefinitelyNotCommitted);
+            }
+        }
         match sql::commit(tx).await {
             Ok(()) => {
                 staged.committed();
@@ -94,21 +116,38 @@ impl WriterLog {
 }
 
 #[cfg(test)]
+mod fault_tests;
+#[cfg(test)]
 mod tests;
 
-#[async_trait::async_trait]
-impl LogStore for WriterLog {
-    async fn append(&self, head: Position, batch: &SealedBatch) -> Result<Append, LogError> {
+impl WriterLog {
+    /// **Append a batch and the changes of the legacy rows as one transaction.**
+    /// A change that fails rolls the whole transaction back and answers
+    /// `DefinitelyNotCommitted`. The legacy rows of a family that has not left
+    /// the old path use this, so the rows and the events never disagree.
+    pub async fn append_with_rows(
+        &self,
+        head: Position,
+        batch: &SealedBatch,
+        rows: Vec<RowChange>,
+    ) -> Result<Append, LogError> {
         let this = self.clone();
         let batch = batch.clone();
         let appended = self
-            .job(async move { this.append_in_job(head, &batch).await })
+            .job(async move { this.append_in_job(head, &batch, &rows).await })
             .await;
         match appended {
             // The contract answers an unknown commit as a value, not an error.
             Err(LogError::Indeterminate) => Ok(Append::Indeterminate),
             other => other,
         }
+    }
+}
+
+#[async_trait::async_trait]
+impl LogStore for WriterLog {
+    async fn append(&self, head: Position, batch: &SealedBatch) -> Result<Append, LogError> {
+        self.append_with_rows(head, batch, Vec::new()).await
     }
 
     async fn read_from(
