@@ -706,6 +706,29 @@ pub async fn a_merge_and_its_generation_claim_land_as_one_act<M: Memory>(store: 
         "the note still holds its own model",
     );
 
+    // A claim about another thing than the survivor is no companion of this
+    // merge: the act is refused and the merge is taken back with it.
+    let elsewhere = store
+        .merge_with_claim(
+            &note,
+            &request,
+            None,
+            date(2026, 10, 4),
+            &manager,
+            spec(&target, &[], 4),
+        )
+        .await
+        .expect_err("a claim about the target is not about the survivor");
+    assert!(
+        matches!(elsewhere, MemoryError::InvalidFact(_)),
+        "{elsewhere:?}"
+    );
+    assert_eq!(
+        read().await.get(MODEL),
+        None,
+        "the merge was taken back with the misdirected claim",
+    );
+
     let (merged, claim) = store
         .merge_with_claim(
             &note,
@@ -729,6 +752,33 @@ pub async fn a_merge_and_its_generation_claim_land_as_one_act<M: Memory>(store: 
         Some("2"),
         "the merge and its number landed together",
     );
+
+    // **The number is read from the request alone, so a duplicate that holds one
+    // of its own must not be folded in**: nobody may write a generation, and the
+    // merge that would carry one onto the request is refused.
+    let stamped = EntityId("topic:contract-fusion-stamped".into());
+    add(
+        store,
+        NewEntity::new(stamped.clone(), "Fusion Stamped", "contract-fixture"),
+    )
+    .await;
+    capture(store, spec(&stamped, &[(GENERATION, "9")], 5)).await;
+    let refused = store
+        .merge_with_claim(
+            &stamped,
+            &request,
+            None,
+            date(2026, 10, 6),
+            &manager,
+            spec(&request, &[(GENERATION, "3")], 6),
+        )
+        .await
+        .expect_err("a duplicate that holds a generation is not folded into a request");
+    assert!(
+        matches!(refused, MemoryError::MergeCarriesGuardedKeys { .. }),
+        "{refused:?}"
+    );
+    assert_eq!(read().await.get(GENERATION).map(String::as_str), Some("2"));
 }
 
 /// **A retraction and the claim that carries the new number land as one act.**

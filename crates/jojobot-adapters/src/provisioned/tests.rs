@@ -565,6 +565,78 @@ async fn merging_a_supplied_record_is_refused_and_a_stored_pair_still_merges() {
     .expect("a fold of two stored things is still the decorator's to pass through");
 }
 
+/// **The merge that writes a claim refuses a supplied record on either side too**,
+/// before the store is asked, and a stored pair still merges with its claim.
+#[tokio::test]
+async fn merging_a_supplied_record_with_a_claim_is_refused_and_a_stored_pair_still_merges() {
+    use jojobot_domain::memory::NewFact;
+    let store = InMemoryMemory::booted();
+    for id in ["thing:merge-spare", "thing:merge-kept"] {
+        store
+            .add_entity(jojobot_domain::memory::NewEntity::new(
+                EntityId(id.into()),
+                id.split_once(':').map_or(id, |(_, slug)| slug),
+                "the operator",
+            ))
+            .await
+            .expect("the operator's own thing is created")
+            .written()
+            .expect("an empty board blocks nothing");
+    }
+    let over = Provisioned::new(store, Provisions::new(vec![shipped_record("loops")]));
+    let claim = |about: &str| {
+        NewFact::about(
+            EntityId(about.into()),
+            "a note beside the merge",
+            Date::constant(2026, 6, 13),
+        )
+    };
+
+    let as_folded = over
+        .merge_with_claim(
+            &EntityId("view:loops".into()),
+            &EntityId("thing:merge-kept".into()),
+            None,
+            Date::constant(2026, 6, 13),
+            &EntityId("bot:sigma".into()),
+            claim("thing:merge-kept"),
+        )
+        .await
+        .expect_err("folding a supplied record away must be refused");
+    assert!(
+        matches!(&as_folded, MemoryError::SuppliedHandle { attempted } if attempted == "view:loops"),
+        "{as_folded:?}",
+    );
+    let as_survivor = over
+        .merge_with_claim(
+            &EntityId("thing:merge-spare".into()),
+            &EntityId("view:loops".into()),
+            None,
+            Date::constant(2026, 6, 13),
+            &EntityId("bot:sigma".into()),
+            claim("view:loops"),
+        )
+        .await
+        .expect_err("folding a stored thing into a supplied record must be refused");
+    assert!(
+        matches!(&as_survivor, MemoryError::SuppliedHandle { attempted } if attempted == "view:loops"),
+        "{as_survivor:?}",
+    );
+
+    over.merge_with_claim(
+        &EntityId("thing:merge-spare".into()),
+        &EntityId("thing:merge-kept".into()),
+        None,
+        Date::constant(2026, 6, 13),
+        &EntityId("bot:sigma".into()),
+        claim("thing:merge-kept"),
+    )
+    .await
+    .expect("a merge of two stored things with a claim passes through")
+    .written()
+    .expect("nothing blocks it");
+}
+
 /// **A record the build ships whole, with the keys a view's build inputs
 /// live under** — what a stored row at the same handle must never read
 /// back.

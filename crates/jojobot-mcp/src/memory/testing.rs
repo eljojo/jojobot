@@ -676,6 +676,9 @@ pub(crate) async fn a_role_and_an_ordinary_claim_under_a_former_handle(
 mod down_memory;
 pub(crate) use down_memory::DownMemory;
 
+mod blocked_companion;
+pub(crate) use blocked_companion::BlockedCompanionMemory;
+
 mod fold_behind;
 pub(crate) use fold_behind::FoldBehindMemory;
 

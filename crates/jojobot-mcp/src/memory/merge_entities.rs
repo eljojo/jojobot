@@ -133,8 +133,15 @@ impl Jojobot {
         // **A merge of lists or documents mints keys on the survivor from a read
         // of both**, so it holds both placement locks, in one order, from before
         // that read to the store's write. A capture on either waits for it.
+        //
+        // **A merge into a bot request holds the same two locks**, because the
+        // generation it makes is read and written under the request's lock, and the
+        // lock is not re-entrant: the request's lock is taken here, once, with the
+        // duplicate's, and nowhere else in this verb.
+        // TEMPORARY(9.3.3): prepare in the one writer replaces the lock.
         let _placing = if jojobot_domain::memory::entries::places_its_records(duplicate.kind())
             || jojobot_domain::memory::entries::places_its_records(survivor.kind())
+            || jojobot_domain::memory::bot_request::is_request(&survivor)
         {
             match self.hold_placing_both(&duplicate, &survivor).await {
                 Ok(held) => held,
@@ -204,12 +211,8 @@ impl Jojobot {
         // **A merge into a bot request that changes its folded spec carries the
         // next generation, written in the same act.** The spec after the merge is
         // worked out from the histories of both sides, and the number rides on a
-        // live claim beside the merge. Read and written under the request's lock.
-        // TEMPORARY(9.3.3): prepare in the one writer replaces the lock.
-        let spec_lock = match self.hold_for_a_request_spec(&survivor).await {
-            Ok(guard) => guard,
-            Err(e) => return memory_declined("merge_entities", e),
-        };
+        // live claim beside the merge. Read and written under the request's lock,
+        // held above.
         let minted = match self.generation_a_merge_makes(&duplicate, &survivor).await {
             Ok(minted) => minted,
             Err(e) => return memory_declined("merge_entities", e),
@@ -248,7 +251,6 @@ impl Jojobot {
                 .await
             }
         };
-        drop(spec_lock);
         let (done, fold_behind) = match merged {
             Ok(done) => (done, None),
             Err(MemoryError::FoldBehind {
@@ -1185,5 +1187,216 @@ mod tests {
                 "the number reached {survivor}"
             );
         }
+    }
+
+    /// **A request whose spec bot:otto may write**: lisa is the target, and she
+    /// reports to otto. The request holds a first spec, so it has a generation.
+    async fn a_request_otto_manages(jojobot: &Jojobot) {
+        use crate::memory::testing::{capture_args, capture_ok, ensure};
+        for handle in ["bot:otto", "bot:lisa", "bot-request:theta"] {
+            ensure(jojobot, handle).await;
+        }
+        jojobot
+            .memory
+            .capture(jojobot_domain::memory::NewFact {
+                fields: [("reports_to".to_string(), "bot:otto".to_string())].into(),
+                sets: ["reports_to".to_string()].into(),
+                ..jojobot_domain::memory::NewFact::about(
+                    EntityId::person("bot:lisa"),
+                    "reports to otto",
+                    jiff::civil::date(2026, 10, 1),
+                )
+            })
+            .await
+            .expect("the chart is placed");
+        capture_ok(
+            jojobot,
+            CaptureArgs {
+                sets: Some(
+                    [
+                        ("target_bot".to_string(), "bot:lisa".to_string()),
+                        ("desired".to_string(), "running".to_string()),
+                    ]
+                    .into_iter()
+                    .collect(),
+                ),
+                ..capture_args("bot-request:theta", "the first spec")
+            },
+        )
+        .await;
+    }
+
+    /// An ordinary note that holds a `model`, so merging it into the request
+    /// changes the request's folded spec.
+    async fn a_note_with_a_model(jojobot: &Jojobot) {
+        use crate::memory::testing::{capture_args, capture_ok, ensure};
+        ensure(jojobot, "topic:tarps").await;
+        capture_ok(
+            jojobot,
+            CaptureArgs {
+                sets: Some(
+                    [("model".to_string(), "model-b".to_string())]
+                        .into_iter()
+                        .collect(),
+                ),
+                ..capture_args("topic:tarps", "a model")
+            },
+        )
+        .await;
+    }
+
+    fn merging(sid: &str, duplicate: &str, survivor: &str) -> MergeArgs {
+        MergeArgs {
+            request_id: None,
+            duplicate: duplicate.into(),
+            survivor: survivor.into(),
+            reason: None,
+            recorded_at: None,
+            sid: Some(sid.into()),
+        }
+    }
+
+    /// **A list merged into a bot request holds the request's lock once.** The
+    /// merge of a list takes the placement locks of both sides, and the generation
+    /// is read under the request's lock, which is one of them and is not
+    /// re-entrant: a merge that took it a second time waited on itself forever.
+    #[tokio::test]
+    async fn merging_a_list_into_a_request_answers_and_does_not_wait_on_its_own_lock() {
+        let jojobot = handler();
+        let sid = writing_as(&jojobot);
+        a_request_otto_manages(&jojobot).await;
+        jojobot
+            .add_entity(Parameters(add_args("list", "list:errands", "Errands")))
+            .await
+            .expect("add ok");
+
+        let answered = tokio::time::timeout(
+            std::time::Duration::from_secs(20),
+            jojobot.merge_entities(Parameters(merging(
+                &sid,
+                "list:errands",
+                "bot-request:theta",
+            ))),
+        )
+        .await;
+        assert!(
+            answered.is_ok(),
+            "the merge waits on a lock it already holds"
+        );
+    }
+
+    /// **A merge that changes the spec of a request, over a fold that could not
+    /// refresh, answers landed with the number written.** The act is the merge and
+    /// its claim in one; the fold behind it is the only part that failed.
+    #[tokio::test]
+    async fn a_merge_into_a_request_whose_fold_could_not_refresh_answers_landed_with_its_number() {
+        use crate::memory::testing::{FoldBehindMemory, InMemoryMemory, SpySearch};
+        let inner = Arc::new(InMemoryMemory::booted());
+        let jojobot_over = |memory: Arc<dyn Memory>| {
+            Jojobot::new(
+                memory,
+                Arc::new(SpySearch::default()),
+                Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner()),
+                Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),
+                Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
+                seeded_registry(),
+            )
+        };
+        let setup = jojobot_over(inner.clone());
+        writing_as(&setup);
+        a_request_otto_manages(&setup).await;
+        a_note_with_a_model(&setup).await;
+        let behind = jojobot_over(Arc::new(FoldBehindMemory(inner.clone())));
+        let sid = writing_as(&behind);
+
+        let body = json_of(
+            &behind
+                .merge_entities(Parameters(merging(
+                    &sid,
+                    "topic:tarps",
+                    "bot-request:theta",
+                )))
+                .await
+                .expect("merge ok"),
+        );
+        assert_eq!(body["fold"]["behind"], "stale", "{body}");
+        assert_eq!(body["merged"], "topic:tarps", "{body}");
+        let fields = inner
+            .fields(&EntityId::person("bot-request:theta"))
+            .await
+            .expect("readable");
+        assert_eq!(fields.get("model").map(String::as_str), Some("model-b"));
+        assert_eq!(
+            fields.get("generation").map(String::as_str),
+            Some("2"),
+            "the number landed with the merge"
+        );
+    }
+
+    /// **A claim that carries the number and is blocked takes the merge back with
+    /// it, and the answer says nothing was written.**
+    #[tokio::test]
+    async fn a_merge_whose_generation_claim_is_blocked_is_refused() {
+        use crate::memory::testing::{BlockedCompanionMemory, InMemoryMemory, SpySearch};
+        let inner = Arc::new(InMemoryMemory::booted());
+        let jojobot_over = |memory: Arc<dyn Memory>| {
+            Jojobot::new(
+                memory,
+                Arc::new(SpySearch::default()),
+                Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner()),
+                Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),
+                Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
+                seeded_registry(),
+            )
+        };
+        let setup = jojobot_over(inner.clone());
+        writing_as(&setup);
+        a_request_otto_manages(&setup).await;
+        a_note_with_a_model(&setup).await;
+        let blocking = jojobot_over(Arc::new(BlockedCompanionMemory(inner.clone())));
+        let sid = writing_as(&blocking);
+
+        let result = blocking
+            .merge_entities(Parameters(merging(
+                &sid,
+                "topic:tarps",
+                "bot-request:theta",
+            )))
+            .await
+            .expect("a refusal is an answer");
+        let body = blocked(&result);
+        assert_eq!(body["wrote"], false, "{body}");
+        assert!(
+            !inner
+                .fields(&EntityId::person("bot-request:theta"))
+                .await
+                .expect("readable")
+                .contains_key("model"),
+            "nothing was merged"
+        );
+    }
+
+    /// **A survivor the store does not know is the merge's own refusal**, not a
+    /// failure to read its history: no number is asked for, and the plain merge
+    /// answers that the thing is unknown.
+    #[tokio::test]
+    async fn merging_into_a_request_nobody_made_is_the_merges_own_refusal() {
+        let jojobot = handler();
+        let sid = writing_as(&jojobot);
+        a_note_with_a_model(&jojobot).await;
+
+        let result = jojobot
+            .merge_entities(Parameters(merging(
+                &sid,
+                "topic:tarps",
+                "bot-request:contract-fusion-ask",
+            )))
+            .await
+            .expect("a refusal is an answer");
+        let body = blocked(&result);
+        assert_eq!(
+            body["attempted"], "bot-request:contract-fusion-ask",
+            "{body}"
+        );
     }
 }
