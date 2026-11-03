@@ -357,29 +357,48 @@ mod tests {
     #[test]
     fn a_request_status_is_the_bound_apps_and_its_spec_no_apps() {
         let request = Some(EntityKind::BOT_REQUEST);
+        // The spellings are the app's contract and nothing else declares them, so
+        // they are written out and not read from the table under test.
+        let status_keys = [
+            "observed_state",
+            "observed_generation",
+            "runtime_ref",
+            "last_result",
+        ];
+        let spec_keys = [
+            "target_bot",
+            "desired",
+            "machine",
+            "model",
+            "bound_app",
+            "generation",
+        ];
         let granted = app(vec![op(
             "capture",
             &["bot-request"],
-            &["observed_state", "desired", "generation"],
+            &[status_keys.as_slice(), spec_keys.as_slice()].concat(),
         )]);
         let id = granted.id.to_string();
-        let mut status = call(
-            "capture",
-            &["subject", "sets"],
-            request,
-            &["observed_state"],
-        );
-        status.bound_app = Some(id.clone());
-        assert_eq!(
-            permit(&granted, &status),
-            Ok(()),
-            "the bound app writes status"
-        );
-        status.bound_app = Some("someone-else".into());
-        assert!(refusal(permit(&granted, &status)).contains("bound_app"));
-        status.bound_app = None;
-        assert!(refusal(permit(&granted, &status)).contains("bound_app"));
-        for key in ["desired", "generation"] {
+        for key in status_keys {
+            let mut status = call("capture", &["subject", "sets"], request, &[key]);
+            status.bound_app = Some(id.clone());
+            assert_eq!(
+                permit(&granted, &status),
+                Ok(()),
+                "the bound app writes {key}"
+            );
+            status.bound_app = Some("someone-else".into());
+            assert!(
+                refusal(permit(&granted, &status)).contains("bound_app"),
+                "{key}: another app"
+            );
+            status.bound_app = None;
+            assert!(
+                refusal(permit(&granted, &status)).contains("bound_app"),
+                "{key}: no bound app"
+            );
+        }
+        for key in spec_keys {
             let mut spec = call("capture", &["subject", "sets"], request, &[key]);
             spec.bound_app = Some(id.clone());
             assert!(
