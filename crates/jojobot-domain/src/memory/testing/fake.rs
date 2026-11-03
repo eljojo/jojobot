@@ -877,14 +877,16 @@ impl InMemoryMemory {
             .lock()
             .expect("fake mutex poisoned")
             .remove(handle);
+        // **By the badge it wears**, because the map is keyed by the handle the
+        // thing was made under and a rename does not re-key it.
         self.badges
             .lock()
             .expect("fake mutex poisoned")
-            .remove(handle);
+            .retain(|_, held| held != home.as_str());
         self.merges
             .lock()
             .expect("fake mutex poisoned")
-            .retain(|m| &m.folded != handle && &m.survivor != handle);
+            .retain(|m| m.folded != home && m.survivor != home);
         self.former_handles
             .lock()
             .expect("fake mutex poisoned")

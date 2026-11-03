@@ -521,3 +521,166 @@ async fn a_wrapper_that_does_not_forward_the_merge_with_a_claim_refuses_it() {
         "no thing was merged away"
     );
 }
+
+/// **The seam that deletes a thing under the store leaves nothing keyed to it**:
+/// not its row, claims or writes, and not its entity writes, versions, prose,
+/// badge, merges or former handles. A thing nobody deleted keeps its own.
+#[tokio::test]
+async fn deleting_a_thing_under_the_store_clears_every_table_keyed_to_it() {
+    let store = InMemoryMemory::booted();
+    let doomed = thing(&store, "person:nelson", "Nelson").await;
+    let kept = thing(&store, "person:milhouse", "Milhouse").await;
+    let folded = thing(&store, "person:ralph", "Ralph").await;
+    let caller = EntityId("bot:sigma".into());
+    // **Renamed first**, so the prose, the merge and the former handle all name
+    // the handle the seam is asked to delete.
+    let renamed = EntityId("person:delta".into());
+    store
+        .rename_entity(
+            &doomed,
+            &renamed,
+            None,
+            date(2026, 6, 4),
+            crate::memory::Override::none(),
+            None,
+        )
+        .await
+        .expect("the rename is answered")
+        .written()
+        .expect("nothing collides with the new handle");
+    for held in [&renamed, &kept] {
+        say(&store, held, "laughs").await;
+        store
+            .set_prose(held, "a page", None)
+            .await
+            .expect("prose lands");
+    }
+    store
+        .merge(&folded, &renamed, None, date(2026, 6, 3), &caller, None)
+        .await
+        .expect("the merge lands");
+    let badge = store
+        .entities
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|e| e.id == renamed)
+        .and_then(|e| e.badge.clone())
+        .expect("the renamed thing wears a badge");
+    let home = EntityId(badge.clone());
+    let kept_home = EntityId(
+        store
+            .entities
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|e| e.id == kept)
+            .and_then(|e| e.badge.clone())
+            .expect("the kept thing wears a badge"),
+    );
+    // **Before**, so each table below is shown to hold something to clear.
+    assert!(
+        store
+            .entity_writes
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(k, _)| k == &home)
+    );
+    assert!(
+        store
+            .entity_versions
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(k, _)| k == &home)
+    );
+    assert!(store.prose.lock().unwrap().contains_key(&renamed));
+    assert!(
+        store
+            .badges
+            .lock()
+            .unwrap()
+            .values()
+            .any(|held| held == &badge)
+    );
+    assert!(
+        store
+            .merges
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|m| m.survivor == home)
+    );
+    assert!(
+        store
+            .former_handles
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|f| f.badge == badge)
+    );
+
+    store.delete_entity_past_the_guard(&renamed);
+
+    assert!(
+        store
+            .entity_writes
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|(k, _)| k != &home),
+        "entity writes of the deleted thing remain"
+    );
+    assert!(
+        store
+            .entity_versions
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|(k, _)| k != &home),
+        "entity versions of the deleted thing remain"
+    );
+    assert!(
+        !store.prose.lock().unwrap().contains_key(&renamed),
+        "prose of the deleted thing remains"
+    );
+    assert!(
+        !store
+            .badges
+            .lock()
+            .unwrap()
+            .values()
+            .any(|held| held == &badge),
+        "the badge of the deleted thing remains"
+    );
+    assert!(
+        store
+            .merges
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|m| m.survivor != home && m.folded != home),
+        "a merge naming the deleted thing remains"
+    );
+    assert!(
+        store
+            .former_handles
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|f| f.badge != badge),
+        "a former handle of the deleted thing remains"
+    );
+    // **The thing nobody deleted keeps its own**, so the clearing is not a wipe.
+    assert!(
+        store
+            .entity_writes
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(k, _)| k == &kept_home)
+    );
+    assert!(store.prose.lock().unwrap().contains_key(&kept));
+    assert!(store.badges.lock().unwrap().contains_key(&kept));
+}
