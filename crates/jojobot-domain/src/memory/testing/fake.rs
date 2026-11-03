@@ -865,6 +865,30 @@ impl InMemoryMemory {
             .lock()
             .expect("fake mutex poisoned")
             .retain(|(held, _, _)| held != &home);
+        self.entity_writes
+            .lock()
+            .expect("fake mutex poisoned")
+            .retain(|(held, _)| held != &home);
+        self.entity_versions
+            .lock()
+            .expect("fake mutex poisoned")
+            .retain(|(held, _)| held != &home);
+        self.prose
+            .lock()
+            .expect("fake mutex poisoned")
+            .remove(handle);
+        self.badges
+            .lock()
+            .expect("fake mutex poisoned")
+            .remove(handle);
+        self.merges
+            .lock()
+            .expect("fake mutex poisoned")
+            .retain(|m| &m.folded != handle && &m.survivor != handle);
+        self.former_handles
+            .lock()
+            .expect("fake mutex poisoned")
+            .retain(|f| f.badge != home.as_str());
     }
 
     /// **From now on an app's event lands and the fold then fails to refresh.**
