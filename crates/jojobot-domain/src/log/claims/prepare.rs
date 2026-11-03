@@ -23,6 +23,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use jiff::civil::Date;
 
 mod chart;
+mod numbering;
 
 use super::{ClaimBody, ClaimEvent, FieldValue, KeyId, ObjectId, RecordId, State};
 use crate::actor::Actor;
@@ -120,6 +121,10 @@ pub enum Refusal {
     ServerWritten {
         key: String,
     },
+    /// The numbering decision refuses the write for a reason the variants above
+    /// do not name: a value that is no number, a number a member would free, a
+    /// collection founded over members that break its promise.
+    Numbering(MemoryError),
     /// The write is malformed on its own. Carries the words the caller reads.
     Malformed(String),
     UnknownSubject(String),
@@ -292,34 +297,8 @@ pub fn prepare(
     };
 
     // The last fault in the order: it needs the subject and nothing else.
-    for (container, numbers_by) in state.numbering_scopes(&home) {
-        let Some(number) = request
-            .fields
-            .iter()
-            .find(|(key, _)| key.trim() == numbers_by)
-            .and_then(|(_, value)| memory::numbered::whole_number(value))
-        else {
-            continue;
-        };
-        match state.numbered_member(&container, &numbers_by, number) {
-            Some(holder) if holder != &home => {
-                return Err(Refusal::NumberHeld {
-                    container,
-                    key: numbers_by,
-                    number,
-                    holder: holder.clone(),
-                });
-            }
-            Some(_) => {}
-            None if state.number_issued(&container, &numbers_by, number) => {
-                return Err(Refusal::NumberRetired {
-                    container,
-                    key: numbers_by,
-                    number,
-                });
-            }
-            None => {}
-        }
+    if let Some(refused) = numbering::refuses(state, declared, &home, request) {
+        return Err(refused);
     }
 
     let draft = &request.draft;

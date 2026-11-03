@@ -374,10 +374,40 @@ impl State {
     }
 
     /// The key an object numbers its members by, if it numbers them.
-    fn numbers_by(&self, object: &ObjectId) -> Option<String> {
+    pub(super) fn numbers_by(&self, object: &ObjectId) -> Option<String> {
         let key = self.held_value(object, NUMBERS_BY)?;
         let key = key.trim();
         (!key.is_empty()).then(|| key.to_string())
+    }
+
+    /// **Every object under `root` by parent**, archived ones included, none
+    /// folded into another, the root left out.
+    pub(super) fn members_below(&self, root: &ObjectId) -> Vec<ObjectId> {
+        self.subtree(root)
+            .into_iter()
+            .skip(1)
+            .filter(|object| !self.redirects.contains_key(object))
+            .collect()
+    }
+
+    /// **The numbers a claim once held under `key` in `container` that nobody
+    /// holds now**: issued, and taken back.
+    pub(super) fn issued_unheld(&self, container: &ObjectId, key: &str) -> BTreeSet<u64> {
+        let container = self.survivor(container);
+        self.indexes
+            .issued
+            .iter()
+            .filter(|(held_in, held_key, number)| {
+                held_in == container
+                    && held_key == key
+                    && self
+                        .indexes
+                        .seats
+                        .get(&(held_in.clone(), held_key.clone(), *number))
+                        .is_none_or(|members| members.is_empty())
+            })
+            .map(|(_, _, number)| *number)
+            .collect()
     }
 
     /// The objects above one by parent, nearest first, merged objects followed

@@ -689,3 +689,63 @@ fn a_key_jojobot_writes_itself_is_refused_on_the_verb_and_not_on_the_engine() {
         assert!(prepare(&state, &declared, &engine).is_ok(), "{key}");
     }
 }
+
+/// **A number is one whole number, and a member keeps the one it holds.** The
+/// numbering decision of the store, asked over the state.
+#[test]
+fn a_number_is_a_whole_number_and_a_member_keeps_the_one_it_holds() {
+    let (state, declared) = numbered_world();
+    for bad in ["two", "0", "-1", "2.5", "04", ""] {
+        assert!(
+            matches!(
+                prepare(&state, &declared, &numbering("m3", bad)),
+                Err(Refusal::Numbering(
+                    crate::memory::MemoryError::NotANumber { .. }
+                ))
+            ),
+            "{bad:?}"
+        );
+    }
+    // m1 holds 1; giving it 3 would free 1.
+    assert!(matches!(
+        prepare(&state, &declared, &numbering("m1", "3")),
+        Err(Refusal::Numbering(
+            crate::memory::MemoryError::NumberFreed { number: 1, .. }
+        ))
+    ));
+}
+
+/// **A collection is founded only over members that already keep its promise.**
+#[test]
+fn a_collection_is_founded_only_over_members_that_keep_its_promise() {
+    let member = |id: &str| {
+        vec![
+            ClaimEvent::ObjectCreated {
+                object: object(id),
+                body: ObjectBody {
+                    parent: Some(object("grp")),
+                    ..body("thing", id)
+                },
+            },
+            ClaimEvent::AddressBound {
+                object: object(id),
+                address: id.to_string(),
+            },
+            created(&format!("c-{id}"), claim("f1", id, "c", 1)),
+            write(&format!("c-{id}"), id, "slot", 1, "7"),
+        ]
+    };
+    let events = [thing("grp"), member("a1"), member("a2")].concat();
+    let state = replay(&events);
+    let founding = CaptureRequest {
+        fields: BTreeMap::from([(NUMBERS_BY.into(), "slot".into())]),
+        sets: BTreeSet::from([NUMBERS_BY.to_string()]),
+        ..request("grp")
+    };
+    assert!(matches!(
+        prepare(&state, &[], &founding),
+        Err(Refusal::Numbering(
+            crate::memory::MemoryError::MembersBreakNumbering { .. }
+        ))
+    ));
+}
