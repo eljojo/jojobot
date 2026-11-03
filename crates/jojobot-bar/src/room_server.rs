@@ -16,6 +16,31 @@ pub(super) fn for_tests(log: &Path, cargo: &str, harness: bool) -> std::io::Resu
     }
 }
 
+/// **The packages a run tests, built and nothing else.** The harness build is
+/// added only when the server package is among them.
+pub(super) fn for_selected(
+    log: &Path,
+    cargo: &str,
+    selected: &std::collections::BTreeSet<String>,
+) -> std::io::Result<(bool, String)> {
+    let mut args = vec!["build", "--locked"];
+    for name in selected {
+        args.extend(["-p", name.as_str()]);
+    }
+    let built = run_phase(log, "cargo build --locked -p <selected>", cargo, &args)?;
+    if built.0 && selected.contains("jojobot") {
+        args.push("--features=jojobot/room-harness");
+        run_phase(
+            log,
+            "cargo build --locked -p <selected> --features=jojobot/room-harness",
+            cargo,
+            &args,
+        )
+    } else {
+        Ok(built)
+    }
+}
+
 pub(super) fn build(log: &Path, cargo: &str) -> std::io::Result<(bool, String)> {
     run_phase(
         log,

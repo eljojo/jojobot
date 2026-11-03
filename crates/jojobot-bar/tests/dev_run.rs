@@ -524,6 +524,42 @@ fn a_diff_that_touches_no_package_is_refused() {
     let _ = fs::remove_dir_all(&repo);
 }
 
+/// **An own-crates run builds the packages it tests and not the workspace.** The
+/// whole-workspace build was most of the job's time on a loaded host, and the
+/// tests build what they need. Paired: the plain run still builds the workspace.
+#[test]
+fn an_own_crates_run_builds_the_selected_packages_and_not_the_workspace() {
+    let repo = repository();
+    git(&repo, &["switch", "-q", "-c", "work"]);
+    commit_change(&repo, "jojobot-bar", "work");
+    let own = dev_run(&repo, &[], &[("BAR_OWN_CRATES", "1")]);
+    assert_eq!(own.exit, Some(0), "{}", own.stdout);
+    let builds = |ran: &Ran| {
+        ran.calls
+            .iter()
+            .filter(|c| c.starts_with("build"))
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    assert!(
+        builds(&own).iter().all(|c| !c.contains("--workspace")),
+        "{:?}",
+        own.calls
+    );
+    assert!(
+        builds(&own).iter().any(|c| c.contains("-p jojobot-bar")),
+        "{:?}",
+        own.calls
+    );
+    let plain = dev(&repo);
+    assert!(
+        builds(&plain).iter().any(|c| c.contains("--workspace")),
+        "{:?}",
+        plain.calls
+    );
+    let _ = fs::remove_dir_all(&repo);
+}
+
 /// **An own-crates run over a diff that touches no package has nothing to run and
 /// passes.** The forge runs the job on every push the docs lane does not skip, and
 /// a scripts-only or workflow-only push has no crate; a red there would be a

@@ -1175,7 +1175,13 @@ fn run_dev(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
     );
 
     let started = std::time::Instant::now();
-    let (ok, text) = room_server::for_tests(&log_path, &cargo, true)?;
+    // **The forge's own-crates job builds the packages it tests**; the whole
+    // workspace was most of its time, and the tests compile what they need.
+    let (ok, text) = if jojobot_bar::changes::own_crates() {
+        room_server::for_selected(&log_path, &cargo, &selected)?
+    } else {
+        room_server::for_tests(&log_path, &cargo, true)?
+    };
     let took = started.elapsed();
     if !ok {
         let verdict = summarize_test_output(&text);
