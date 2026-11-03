@@ -129,8 +129,10 @@ fn repository() -> PathBuf {
 /// `fast` output and the printed line. `selecting` is the workflow's
 /// `BAR_SELECT_BY_CRATE`, which a dispatch sets to `0`.
 fn plan_rooms(dir: &Path, path: &str, selecting: &str, base: &str) -> (String, String) {
+    fs::create_dir_all(dir.join(path).parent().expect("a parent")).expect("parent dir");
     fs::write(dir.join(path), "// changed\n").expect("edit");
-    git(dir, &["commit", "-q", "-am", "change"]);
+    git(dir, &["add", "."]);
+    git(dir, &["commit", "-q", "-m", "change"]);
     let output = dir.join("github-output");
     let _ = fs::remove_file(&output);
     let out = support::output_fenced(
@@ -179,6 +181,24 @@ fn a_domain_only_change_leaves_the_rooms_to_the_pull_request() {
     let (fast, said) = plan_rooms(&dir, "crates/jojobot-domain/src/lib.rs", "1", "main");
     assert_eq!(fast, "fast=true", "{said}");
     let _ = fs::remove_dir_all(&dir);
+}
+
+/// **A path the crate selection runs everything for is still no room file.** The
+/// selector answers a full run for a manifest, a migration, a fixture, a workflow
+/// file; none of them is under the exercise crate, so none selects the rooms.
+#[test]
+fn a_global_path_outside_the_exercise_crate_leaves_the_rooms_to_the_pull_request() {
+    for path in [
+        "crates/jojobot-domain/Cargo.toml",
+        "crates/jojobot-adapters/migrations/0001_add.sql",
+        "crates/jojobot-domain/tests/fixtures/sample.json",
+        ".forgejo/workflows/branch.yml",
+    ] {
+        let dir = repository();
+        let (fast, said) = plan_rooms(&dir, path, "1", "main");
+        assert_eq!(fast, "fast=true", "{path}: {said}");
+        let _ = fs::remove_dir_all(&dir);
+    }
 }
 
 #[test]

@@ -134,11 +134,14 @@ const ROOM_FILES: &str = "crates/jojobot-exercise/";
 
 /// **Why a push leaves the rooms to the pull request, or `None` when it runs them.**
 /// A server-crate change, the domain included, selects no room (rule 760); only a
-/// change to a room's own files does. Only a scoped crate selection can say so: a
-/// full run, a missing base and a dispatch (no selection) all leave the rooms to
-/// run, and so does a diff that cannot be read.
+/// change to a room's own files does, whatever the crate selection answers for
+/// the paths: a manifest, a migration or a workflow file is a full run for the
+/// crates and no room file. A dispatch (no selection by crate), a missing base and
+/// a diff that cannot be read leave the rooms to run.
 fn rooms_not_selected() -> Option<String> {
-    selection::current().filter(|s| s.scoped())?;
+    if std::env::var("BAR_SELECT_BY_CRATE").ok().as_deref() != Some("1") {
+        return None;
+    }
     let base = std::env::var("BAR_SELECT_BASE").ok()?;
     let joint = Command::new("git")
         .args(["merge-base", &base, "HEAD"])
