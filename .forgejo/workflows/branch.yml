@@ -12,10 +12,11 @@
 # `check` status.
 #
 # The rooms run on a push where its change selects them (rule 760): `bar plan
-# rooms` reads the crate selection, and a push that reaches no room, no room
-# document and nothing the server is built from skips the rooms step and says
-# why. The rooms run in full on the landing's pull request and at the release
-# gate, and a dispatch naming this job runs them whatever the change. The job
+# rooms` reads the crate selection, and a push that changes no room document, no
+# room test file and not the exercise harness skips the rooms step and says why;
+# a server-crate change, the domain included, does not select them. The rooms
+# run in full on the landing's pull request and at the release gate, and a
+# dispatch naming this job runs them whatever the change. The job
 # is named `rooms`, as on the pull request, and it is not a required status.
 # The year room stays on the pull request and the carry only.
 name: branch

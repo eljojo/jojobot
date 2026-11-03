@@ -1,9 +1,9 @@
-//! **A branch push runs the rooms only when its change can reach one.** The real
-//! `bar plan rooms` runs in a scratch repository against a stub `cargo` that
-//! describes four packages: the room tests (`jojobot-exercise`), the server the
-//! rooms start (`jojobot`) and what it is built from (`jojobot-domain`), and a
-//! package no room touches (`jojobot-bar`). The answer is the `fast` output the
-//! workflow's rooms step reads: `true` leaves the rooms to the pull request.
+//! **A branch push runs the rooms only when its change is to a room's own
+//! files**: a room's document, a room's test file or the exercise harness, all
+//! under `crates/jojobot-exercise`. The real `bar plan rooms` runs in a scratch
+//! repository against a stub `cargo` that describes four packages. The answer is
+//! the `fast` output the workflow's rooms step reads: `true` leaves the rooms to
+//! the pull request and the release gate.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -95,6 +95,12 @@ fn repository() -> PathBuf {
     }
     fs::create_dir_all(dir.join("crates/jojobot-exercise/rooms")).expect("rooms dir");
     fs::write(dir.join("crates/jojobot-exercise/rooms/bike.md"), "base\n").expect("write");
+    fs::create_dir_all(dir.join("crates/jojobot-exercise/tests")).expect("tests dir");
+    fs::write(
+        dir.join("crates/jojobot-exercise/tests/bike_room.rs"),
+        "// base\n",
+    )
+    .expect("write");
     fs::create_dir_all(dir.join("scripts")).expect("scripts dir");
     for name in ["select-crates", "ci-full-paths.txt"] {
         fs::copy(
@@ -159,22 +165,37 @@ fn a_change_no_room_reaches_leaves_the_rooms_to_the_pull_request() {
     assert_eq!(fast, "fast=true", "{said}");
     assert!(said.contains("pull request"), "{said}");
     assert!(
-        said.contains("jojobot-bar"),
-        "the line names the selected package: {said}"
+        said.contains("room document"),
+        "the line says which files would have selected the rooms: {said}"
     );
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// **A server-crate change selects no room**, the domain included: a defect it
+/// causes that a room would catch is caught at the landing's pull request.
 #[test]
-fn a_change_to_what_the_server_is_built_from_runs_the_rooms() {
+fn a_domain_only_change_leaves_the_rooms_to_the_pull_request() {
     let dir = repository();
     let (fast, said) = plan_rooms(&dir, "crates/jojobot-domain/src/lib.rs", "1", "main");
+    assert_eq!(fast, "fast=true", "{said}");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_change_to_a_room_test_file_runs_the_rooms() {
+    let dir = repository();
+    let (fast, said) = plan_rooms(
+        &dir,
+        "crates/jojobot-exercise/tests/bike_room.rs",
+        "1",
+        "main",
+    );
     assert_eq!(fast, "fast=false", "{said}");
     let _ = fs::remove_dir_all(&dir);
 }
 
 #[test]
-fn a_change_to_the_room_tests_runs_the_rooms() {
+fn a_change_to_the_exercise_harness_runs_the_rooms() {
     let dir = repository();
     let (fast, said) = plan_rooms(&dir, "crates/jojobot-exercise/src/lib.rs", "1", "main");
     assert_eq!(fast, "fast=false", "{said}");

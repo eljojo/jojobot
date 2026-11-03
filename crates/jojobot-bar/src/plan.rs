@@ -40,27 +40,15 @@ pub(super) fn run(args: &[String]) -> std::io::Result<ExitCode> {
     }
     let docs_only =
         matches!(lane, "report" | "check" | "build" | "rooms" | "year") && fast_base().is_some();
-    let read_metadata = || -> std::io::Result<Value> {
-        let output = Command::new(cargo_bin())
-            .args(["metadata", "--format-version", "1", "--locked"])
-            .output()?;
-        if !output.status.success() {
-            return Err(std::io::Error::other(
-                String::from_utf8_lossy(&output.stderr).into_owned(),
-            ));
-        }
-        Ok(serde_json::from_slice(&output.stdout)?)
+    // **A branch push runs the rooms only when its change is to a room's own
+    // files.** The rooms job reads the same `fast` answer a docs-only push gets
+    // and skips its step; the pull request and the release gate run the rooms in
+    // full.
+    let rooms_left = if lane == "rooms" && !docs_only {
+        rooms_not_selected()
+    } else {
+        None
     };
-    // **A branch push runs the rooms only when its change can reach one.** The
-    // rooms job reads the same `fast` answer a docs-only push gets and skips its
-    // step; the pull request and the release gate run the rooms in full.
-    let mut metadata = None;
-    let mut rooms_left = None;
-    if lane == "rooms" && !docs_only {
-        let read = read_metadata()?;
-        rooms_left = rooms_not_reached(&read);
-        metadata = Some(read);
-    }
     let fast = docs_only || rooms_left.is_some();
     if let Ok(path) = std::env::var("GITHUB_OUTPUT") {
         writeln!(
@@ -80,10 +68,15 @@ pub(super) fn run(args: &[String]) -> std::io::Result<ExitCode> {
         );
         return Ok(ExitCode::SUCCESS);
     }
-    let metadata = match metadata {
-        Some(read) => read,
-        None => read_metadata()?,
-    };
+    let output = Command::new(cargo_bin())
+        .args(["metadata", "--format-version", "1", "--locked"])
+        .output()?;
+    if !output.status.success() {
+        return Err(std::io::Error::other(
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        ));
+    }
+    let metadata: Value = serde_json::from_slice(&output.stdout)?;
     let (all, rooms, year) = startup_targets(&metadata)?;
     let level = if lane == "report" {
         Level::Report
@@ -135,47 +128,49 @@ pub(super) fn run(args: &[String]) -> std::io::Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// **Why no room is reached by a push, or `None` when one is.** The rooms run the
-/// room tests (`jojobot-exercise`) against the server (`jojobot`), so the packages
-/// they reach are those two and everything the server is built from. Only a scoped
-/// crate selection can say nothing is reached; a full run, a missing base and a
-/// dispatch (no selection) all leave the rooms to run.
-fn rooms_not_reached(metadata: &Value) -> Option<String> {
-    let selection = selection::current().filter(|s| s.scoped())?;
-    let packages = metadata["packages"].as_array()?;
-    let members = metadata["workspace_members"].as_array()?;
-    let member = |name: &str| {
-        packages
-            .iter()
-            .find(|p| p["name"] == name && members.contains(&p["id"]))
-    };
-    let mut reached: std::collections::BTreeSet<String> =
-        ["jojobot-exercise", "jojobot"].map(String::from).into();
-    let mut queue: Vec<String> = reached.iter().cloned().collect();
-    while let Some(name) = queue.pop() {
-        let Some(package) = member(&name) else {
-            continue;
-        };
-        for dependency in package["dependencies"].as_array()?.iter() {
-            let Some(dependency) = dependency["name"].as_str() else {
-                continue;
-            };
-            if member(dependency).is_some() && reached.insert(dependency.to_string()) {
-                queue.push(dependency.to_string());
-            }
-        }
-    }
-    if selection.packages().iter().any(|p| reached.contains(p)) {
+/// **The directory of the rooms' own files**: a room's document, a room's test
+/// file and the exercise harness all live under the exercise crate.
+const ROOM_FILES: &str = "crates/jojobot-exercise/";
+
+/// **Why a push leaves the rooms to the pull request, or `None` when it runs them.**
+/// A server-crate change, the domain included, selects no room (rule 760); only a
+/// change to a room's own files does. Only a scoped crate selection can say so: a
+/// full run, a missing base and a dispatch (no selection) all leave the rooms to
+/// run, and so does a diff that cannot be read.
+fn rooms_not_selected() -> Option<String> {
+    selection::current().filter(|s| s.scoped())?;
+    let base = std::env::var("BAR_SELECT_BASE").ok()?;
+    let joint = Command::new("git")
+        .args(["merge-base", &base, "HEAD"])
+        .output()
+        .ok()
+        .filter(|out| out.status.success())?;
+    let joint = String::from_utf8(joint.stdout).ok()?;
+    let diff = Command::new("git")
+        .args([
+            "diff",
+            "--name-only",
+            "--no-renames",
+            "-z",
+            joint.trim(),
+            "HEAD",
+            "--",
+        ])
+        .output()
+        .ok()
+        .filter(|out| out.status.success())?;
+    let paths: Vec<String> = String::from_utf8(diff.stdout)
+        .ok()?
+        .split('\0')
+        .filter(|p| !p.is_empty())
+        .map(str::to_string)
+        .collect();
+    if paths.is_empty() || paths.iter().any(|p| p.starts_with(ROOM_FILES)) {
         return None;
     }
     Some(format!(
-        "no room reaches the selected packages ({})",
-        selection
-            .packages()
-            .iter()
-            .cloned()
-            .collect::<Vec<_>>()
-            .join(", ")
+        "no room document, room test file or exercise harness changed ({} paths)",
+        paths.len()
     ))
 }
 
