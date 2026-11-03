@@ -64,6 +64,7 @@ fn the_shipped_kinds_round_trip_and_the_set_is_closed() {
         (EntityKind::LIST, "list"),
         (EntityKind::USAGE, "usage"),
         (EntityKind::TRIP, "trip"),
+        (EntityKind::BOT_REQUEST, "bot-request"),
     ];
     for (kind, token) in all {
         assert_eq!(kind.as_token(), token);
