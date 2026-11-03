@@ -1,5 +1,6 @@
 use super::*;
 
+/// TEMPORARY(9.3.5) kept witness: W per store: declaration change signal.
 /// **A kind declaration answers whether the store holds anything different
 /// afterwards.** A fold that keeps a copy of the store reads it again only when
 /// the answer is yes, so the answer has to be exact in both directions: a repeat

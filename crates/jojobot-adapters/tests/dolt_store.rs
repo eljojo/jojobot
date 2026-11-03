@@ -190,6 +190,7 @@ async fn calls_counted_at_once_under_one_key_are_all_counted() {
     store.stop().await;
 }
 
+/// TEMPORARY(9.3.7) kept witness: W: counter bypass racer (calls).
 /// **The store keeps every add itself, whoever calls it.** No write gate sits
 /// above the store here: 24 calls counted at the same moment under one key are
 /// 24 in the row, because the real store alone would merge concurrent adds to
@@ -229,6 +230,7 @@ async fn calls_counted_at_once_through_the_store_alone_are_all_counted() {
     store.stop().await;
 }
 
+/// TEMPORARY(9.3.7) kept witness: W: counter bypass racer (served).
 /// **A served total is kept in full through the store alone.** 24 adds to one
 /// run at the same moment leave the run's total and the total of its day both
 /// at the sum of the 24, with no write gate above the store.
@@ -275,6 +277,7 @@ async fn served_added_at_once_through_the_store_alone_is_all_kept() {
     store.stop().await;
 }
 
+/// TEMPORARY(9.3.7) kept witness: W: counter bypass racer (reset).
 /// **A reset racing adds through the store alone loses nothing.** Adds and resets
 /// of one run are issued at the same moment, with no write gate above the store.
 /// What the resets recorded, plus what the run holds afterwards, is everything
@@ -542,6 +545,7 @@ async fn a_type_declared_and_redeclared_twice_leaves_three_writes_in_order() {
     store.stop().await;
 }
 
+/// TEMPORARY(9.3.7) kept witness: Session race (nondeterministic: harden or drop).
 /// 🚨 **A conflict is not a store failure, and the caller must be told
 /// which one happened — the session rail's own copy of the memory rail's
 /// case.** A batch of concurrent `set_focus` calls on one session's own
@@ -2067,6 +2071,7 @@ async fn dolt_serves_a_manager_folded_through_a_long_chain_as_the_bot_it_became(
     store.stop().await;
 }
 
+/// TEMPORARY(9.3.5) kept witness: W: per-store mount, stands_for.
 /// **The mark's own contract, against the real store.**
 #[tokio::test]
 async fn dolt_satisfies_the_stands_for_contract() {
@@ -2107,6 +2112,7 @@ async fn dolt_satisfies_the_stands_for_contract_when_folded() {
     store.stop().await;
 }
 
+/// TEMPORARY(9.3.5) kept witness: W: per-store mount, record capacity.
 /// **The record ceiling's contract, against the real store.**
 #[tokio::test]
 async fn dolt_satisfies_the_record_capacity_contract() {
@@ -2146,6 +2152,7 @@ async fn dolt_satisfies_the_record_capacity_contract_when_folded() {
     store.stop().await;
 }
 
+/// TEMPORARY(9.3.5) kept witness: W: per-store mount, receipt.
 /// **The receipt's own contract, against the real store.**
 #[tokio::test]
 async fn dolt_satisfies_the_receipt_contract() {
@@ -2304,6 +2311,7 @@ async fn a_receipt_is_kept_in_one_spelling_and_a_damaged_cell_is_named() {
     store.stop().await;
 }
 
+/// TEMPORARY(9.3.5) kept witness: W: per-store mount, numbered collection.
 /// **Numbered collections, against the real store.** The same specs the fake
 /// passes: a member named by its number, a number held by one member archived
 /// or not, the whole subtree as the scope, and a miss that offers the numbers.
@@ -2677,6 +2685,7 @@ impl memory::Rehandles for DoltRehandles {
     }
 }
 
+/// TEMPORARY(9.3.5) kept witness: W: Stored/Supplied guard mount (Dolt).
 /// **…and the supplied-record guard specs**, over a real store wired with
 /// the same shipped view [`memory::SUPPLIED_VIEW_FOR_THE_GUARD_SPECS`]
 /// names — a near-miss is caught and its own override lifts it, an exact
@@ -2874,6 +2883,7 @@ async fn dolt_answers_every_gated_read_alike_stored_and_supplied() {
     store.stop().await;
 }
 
+/// TEMPORARY(9.3.4) kept witness: W: Stored/Supplied edit mount (Dolt).
 /// **…and an edit on a claim lands alike for a stored record and a supplied
 /// one, over the real store.**
 ///
@@ -2915,6 +2925,7 @@ async fn dolt_lands_an_edit_alike_stored_and_supplied() {
     store.stop().await;
 }
 
+/// TEMPORARY(9.3.4) kept witness: W: Stored/Supplied retract mount (Dolt).
 /// **…and a retraction on a claim lands alike for a stored record and a
 /// supplied one, over the real store.**
 ///
@@ -3257,6 +3268,7 @@ async fn dolt_satisfies_the_mailbox_contract() {
     store.stop().await;
 }
 
+/// TEMPORARY(9.3.6) kept witness: Mailbox race (nondeterministic: harden or drop).
 /// 🚨 **A conflict is not a store failure, and the caller must be told
 /// which one happened — the mailbox rail's own copy of the memory rail's
 /// case.** The operator's own example: two bots marking ONE message
@@ -3386,6 +3398,7 @@ async fn dolt_satisfies_the_teaching_contract() {
     store.stop().await;
 }
 
+/// TEMPORARY(9.3.3) kept witness: Teaching race.
 /// 🚨 **A conflict is not a store failure, and the caller must be told
 /// which one happened — the teaching rail's own copy of the memory rail's
 /// case.** A batch of concurrent first-contact writes for one session, on
@@ -4012,6 +4025,7 @@ async fn the_backfill_rewrites_every_retired_status_to_archived() {
     store.stop().await;
 }
 
+/// TEMPORARY(9.3.5) kept witness: W: SQL fast path hit.
 /// **A `fields` hit never pays for a listing of every entity.** `resolve`
 /// answers a live handle from one targeted row; the full listing exists only
 /// to say what a name that answered to nothing resembles, and a hit never
@@ -4065,6 +4079,7 @@ async fn a_fields_hit_answers_with_no_full_listing() {
     store.stop().await;
 }
 
+/// TEMPORARY(9.3.5) kept witness: W: SQL fast path miss.
 /// **A `fields` miss still comes back with its near candidates.** The fix
 /// above defers the full listing to the miss branch rather than removing it
 /// — the refusal's whole value is naming a way forward, and that still needs
@@ -6310,6 +6325,7 @@ async fn session_write_summary_answers_the_real_store() {
     store.stop().await;
 }
 
+/// TEMPORARY(9.3.3) kept witness: Commit-conflict race.
 /// 🚨 **A conflict is not a store failure, and the caller must be told
 /// which one happened.** Two concurrent captures on one bot's own home
 /// entity, nothing shared between them but that home — no drop, no edge,
@@ -6377,6 +6393,7 @@ async fn a_write_that_conflicts_with_another_is_told_apart_from_a_failed_store()
     store.stop().await;
 }
 
+/// TEMPORARY(9.3.3) kept witness: Last-slot race.
 /// 🚨 **Two captures racing for the last slot of a thread cannot both land.**
 /// The thread holds one record of the two its own number allows, and two
 /// captures read that count in two transactions that are open together. Real
@@ -8513,6 +8530,7 @@ async fn dolt_keeps_own_fields_off_the_thing_when_they_stay() {
     store.stop().await;
 }
 
+/// TEMPORARY(9.3.4) kept witness: W: old-mode door (Dolt).
 /// The old mode, over the real store: an own field reaches its thing, and the
 /// class it is kept under is the one a row from before the change has.
 #[tokio::test]
@@ -9868,6 +9886,7 @@ async fn statements_run(pool: &sqlx::MySqlPool) -> usize {
         .expect("the counter is a number")
 }
 
+/// TEMPORARY(9.3.3) kept witness: W: statement budget per member.
 /// **A capture on a member of a large numbered collection reads the collection in
 /// a bounded number of statements per member.** A collection of 64 members
 /// numbered by a key, a plain thing beside it, and the same note captured on each.
@@ -10184,6 +10203,7 @@ async fn a_bookkeeping_write_is_no_change_of_the_thing_in_the_real_store() {
     store.stop().await;
 }
 
+/// TEMPORARY(9.3.3) kept witness: W: claims read on a capped home.
 /// **A write pays for a ceiling only where a ceiling applies.** A capture onto a
 /// person reads the claims of the person no more than the capture of a first
 /// claim does, however many the person holds, because a person has no ceiling and

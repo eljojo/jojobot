@@ -857,6 +857,7 @@ pub async fn multiple_facts_all_recallable<M: Memory>(store: &M) {
     );
 }
 
+/// TEMPORARY(9.3.8) kept witness: Write-summary witness (consumers: search index refresh, observe).
 /// **A store with no entity write and no claim write still answers its write
 /// summary, naming no latest moment, and the summary moves when a claim is
 /// written.**
@@ -1452,6 +1453,7 @@ pub async fn a_machine_read_claim_names_what_it_was_read_from<M: Memory>(store: 
     );
 }
 
+/// TEMPORARY(9.3.8) kept witness: W: fold override of backing.
 pub async fn a_folded_value_says_who_backs_it<M: Memory>(store: &M) {
     let subject = EntityId("person:contract-backing".into());
     add(
@@ -1654,6 +1656,7 @@ pub async fn a_summed_key_has_no_backing_to_report<M: Memory>(store: &M) {
     );
 }
 
+/// TEMPORARY(9.3.8) kept witness: W: fold override of built_on.
 pub async fn a_claims_lineage_is_walkable_from_its_source<M: Memory>(store: &M) {
     let subject = EntityId("person:contract-lineage".into());
     add(
@@ -1816,6 +1819,7 @@ pub async fn a_claims_lineage_is_walkable_from_its_source<M: Memory>(store: &M) 
     .await;
 }
 
+/// TEMPORARY(9.3.8) kept witness: W: fold override of referring_to.
 pub async fn referring_to_answers_from_the_far_end<M: Memory>(store: &M) {
     let gate = EntityId("event:contract-krusty-fest".into());
     let other = EntityId("event:contract-leaving-party".into());
@@ -2463,6 +2467,7 @@ pub async fn a_merge_cannot_fold_a_bot_into_one_that_sits_below_it<M: Memory>(st
         .expect("a merge of two bots on nobody's chain lands");
 }
 
+/// TEMPORARY(9.3.4) kept witness: W per backend: refuses_unlicensed_write (update, retract).
 /// **Each edit, retraction and merge judges the chart inside its write.**
 /// Only a managed bot's chain moves it; only the assistant adopts an unmanaged
 /// leaf. Refused and permitted callers are paired, and cycles answer rather
@@ -2665,6 +2670,7 @@ pub async fn the_chart_is_judged_against_the_chain_read_inside_the_write<M: Memo
     refused_for("stranger", &err);
 }
 
+/// TEMPORARY(9.3.5) kept witness: W per backend: refuses_unlicensed_write (merge).
 /// **A merge into the caller's own bot cannot carry a ceiling onto it, and the
 /// store decides that itself.** A caller-side check made before the merge
 /// leaves a gap a second session of the same bot can write a ceiling into, so
@@ -3264,6 +3270,7 @@ pub async fn a_numbered_series_under_one_parent_is_not_a_near_miss<M: Memory>(st
     }
 }
 
+/// TEMPORARY(9.3.8) kept witness: W: children trait default.
 /// **Children come back as handles, one level down.** Zooming is the whole
 /// point: a parent read hands back the branch names and nothing else, so
 /// the caller pays only for the branch it descends into. A grandchild is
@@ -7837,6 +7844,7 @@ pub async fn a_creation_writes_the_records_beside_its_first_claim_in_one_act<M: 
     );
 }
 
+/// TEMPORARY(9.3.8) kept witness: W per assembly of `newest` (fake, Dolt ages, Dolt boot reads).
 /// **A write of jojobot's own bookkeeping is no change of the thing.** The record
 /// of the release notes a bot was told is written at start and rewritten at every
 /// start that sends a note; if it counted, every bot would come back to defrag's
@@ -9092,6 +9100,7 @@ pub async fn retracting_an_unknown_address_never_writes<M: Memory>(store: &M) {
 
 // --- the write guard, on the write path ----------------------------------
 
+/// TEMPORARY(9.3.5) kept witness: W: Stored/Supplied existence matrix.
 /// 🚨 **An exact handle collision is refused and stays refused — no token
 /// clears it — and a near-miss is caught and its own override lifts it —
 /// asked of a stored row and a record the build supplies, in one call**
@@ -10511,6 +10520,7 @@ async fn a_captured_claim_reads_through_every_gated_read<M: Memory, B: support::
     );
 }
 
+/// TEMPORARY(9.3.4) kept witness: W: Stored/Supplied edit.
 /// **Editing a claim filed on a supplied record's subject lands, exactly as
 /// it does on a stored one.**
 ///
@@ -10585,6 +10595,7 @@ async fn an_edit_on_a_captured_claim_lands<M: Memory, B: support::Backing<M>>(
     );
 }
 
+/// TEMPORARY(9.3.4) kept witness: W: Stored/Supplied retract.
 /// **Retracting a claim filed on a supplied record's subject lands, exactly
 /// as it does on a stored one.**
 ///
@@ -11572,6 +11583,7 @@ pub async fn a_type_with_no_keys_is_refused_and_writes_nothing<M: Memory>(store:
     assert_eq!(read_type(store, "contract-not-empty").await.fields.len(), 1);
 }
 
+/// TEMPORARY(9.3.5) kept witness: W: old declaration gates.
 /// **A type that ships with the software is closed to callers, and the
 /// store is what closes it.**
 ///
@@ -14535,6 +14547,7 @@ pub async fn a_handle_under_an_undeclared_key_follows_a_rename<M: Memory>(store:
     );
 }
 
+/// TEMPORARY(9.3.4) kept witness: W per backend: NotArchived on restore.
 /// **An archived entity can be restored, and restoring moves nothing else.**
 ///
 /// Archiving touches only the entity's own state: its claims, its edges and its
@@ -14788,6 +14801,7 @@ pub async fn a_write_cannot_break_a_fit_that_already_exists<M: Memory>(store: &M
     assert_eq!(added.fields.get("cost").map(String::as_str), Some("45"));
 }
 
+/// TEMPORARY(9.3.4) kept witness: W per backend: the retract path has no guard_fit_resolved call.
 /// **Moving a record past is refused when it would break a fit; taking it
 /// back is not.**
 ///
@@ -15820,6 +15834,7 @@ pub async fn a_walk_with_no_facts_carries_no_revision_counts<M: Memory>(store: &
     );
 }
 
+/// TEMPORARY(9.3.10) kept witness: Forwarding witness: claim_histories on every layer.
 /// 🚨 **The batched read of a whole entity's history agrees with the
 /// per-record read, fact for fact.**
 ///
@@ -16497,6 +16512,7 @@ pub async fn a_promise_is_refused_without_a_parent_and_keeps_its_day<M: Memory>(
         .expect("a key the kind does not require goes freely");
 }
 
+/// TEMPORARY(9.3.5) kept witness: W per backend: NothingToMerge.
 /// 🚨 **A duplicate that got past the guard is repairable, and the repair
 /// is legible afterwards.**
 ///
@@ -17702,6 +17718,7 @@ pub async fn a_fold_repoints_a_list_of_references_and_names_the_survivor_once<M:
     );
 }
 
+/// TEMPORARY(9.3.4) kept witness: W per door: session-kind gate on add.
 /// **A session-kind handle is refused by `add_entity`, never written.**
 ///
 /// `validate_write_subject` already refuses a memory write onto a session's
@@ -17726,6 +17743,7 @@ pub async fn add_entity_refuses_a_session_kind_handle<M: Memory>(store: &M) {
     );
 }
 
+/// TEMPORARY(9.3.4) kept witness: W per door: usage-kind gate on add.
 /// **A usage handle is refused by `add_entity`, never written.**
 ///
 /// A week of usage is computed from run history at the read and held in no
@@ -17747,6 +17765,7 @@ pub async fn add_entity_refuses_a_usage_kind_handle<M: Memory>(store: &M) {
     );
 }
 
+/// TEMPORARY(9.3.5) kept witness: W per side: session-kind gate on merge.
 /// **A session-kind handle is refused on either side of a merge.**
 ///
 /// `merge` moves rows directly rather than through `capture`, so it never
@@ -18459,6 +18478,7 @@ pub async fn a_testimony_claims_value_fields_belong_to_the_session_that_wrote_it
         .expect("nothing blocks it");
 }
 
+/// TEMPORARY(9.3.4) kept witness: W per backend: key-before-rewrite precedence.
 /// **A caller who may not write a ceiling key is told so before it is told to
 /// archive and capture.** The route a testimony refusal names ends at the key's
 /// own refusal for such a caller, so the key answers first. A caller who may
@@ -18521,6 +18541,7 @@ pub async fn a_ceiling_key_on_another_sessions_testimony_gets_the_key_refusal<M:
     );
 }
 
+/// TEMPORARY(9.3.10) kept witness: Forwarding witness: add_entity_with_first_claim trait default.
 /// **A thing created with its first claim is made whole or not at all.**
 ///
 /// Three halves, each against the others. The call that is allowed makes the
@@ -18615,6 +18636,7 @@ pub async fn an_entity_created_with_a_first_claim_is_made_whole_or_not_at_all<M:
     );
 }
 
+/// TEMPORARY(9.3.10) kept witness: Forwarding witness: own_fields_stay_* keys kept off the thing.
 /// **Once own fields stay, a key sent as one stays on its record, and a setting
 /// and a key jojobot computed reach the thing.** Not part of the contract list,
 /// which runs on a store as it is: this is run on a store built so own fields
@@ -18696,6 +18718,7 @@ pub async fn own_fields_stay_while_settings_and_computed_keys_reach<M: Memory>(s
     );
 }
 
+/// TEMPORARY(9.3.4) kept witness: W: old-mode door (contract).
 /// **On a store from before own fields stayed, a key sent as an own field
 /// reaches its thing, and an edit of it goes on reaching.** The pair of
 /// [`own_fields_stay_while_settings_and_computed_keys_reach`]: not part of the
@@ -19100,6 +19123,7 @@ pub async fn a_write_answers_with_the_bags_a_read_of_the_claim_serves<M: Memory>
     );
 }
 
+/// TEMPORARY(9.3.10) kept witness: Forwarding witness: update_entity_with_claim trait default.
 /// **An entity is edited and a claim sets keys on it in one act, made whole or
 /// not at all.**
 ///
@@ -19969,6 +19993,7 @@ pub async fn a_retraction_and_a_merge_record_the_session_that_made_them<M: Memor
     assert_eq!(written(&history), vec![None], "no run, no name invented");
 }
 
+/// TEMPORARY(9.3.10) kept witness: Forwarding witness: key_trails on every layer.
 /// **A key that stays on its record is in the trails with the moment the store
 /// took each write in, and a key that reaches the thing is in the history and
 /// not here.** Paired in one claim: the setting reaches the thing, the own field
