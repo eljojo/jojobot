@@ -176,9 +176,19 @@ impl DoltLog {
         .fetch_one(connection)
         .await
         .map_err(failed)?;
-        let head = last.unwrap_or(0);
-        *self.0.head.lock().expect("the head is not poisoned") = Some(head);
-        Ok(head)
+        Ok(self.hold_read(last.unwrap_or(0)))
+    }
+
+    /// **A read of the tail becomes the held head only if it is not behind it.**
+    /// The read was made before an `await` returned, and an append can commit and
+    /// move the head in that time. Storing the read as it came would set the head
+    /// back, and every later append would then be refused as a conflict until a
+    /// restart. Returns the head now held.
+    fn hold_read(&self, read: u64) -> u64 {
+        let mut held = self.0.head.lock().expect("the head is not poisoned");
+        let head = held.map_or(read, |now| now.max(read));
+        *held = Some(head);
+        head
     }
 
     /// The head after a COMMIT the store acknowledged.

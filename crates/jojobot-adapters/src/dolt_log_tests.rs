@@ -509,6 +509,39 @@ async fn the_tail_is_read_once_for_any_number_of_writes() {
     server.stop().await;
 }
 
+/// **A tail read that finishes after an append never sets the head back.** A
+/// settle reads the tail, an append commits and moves the head while that read is
+/// in flight, and the read is then applied. The head stays at the newer batch,
+/// and the next append stages after it: a head set back would refuse every
+/// later append as a conflict until a restart.
+#[tokio::test]
+async fn an_older_settle_read_never_moves_the_head_back() {
+    let (_scratch, mut server, _pool, log) = fixture().await;
+    // The read a settle made while the log held nothing.
+    let older_read = 0;
+    let newer = batch("newer", 0, &[b"a"]);
+    assert_eq!(
+        log.append(Position(0), &newer).await.unwrap(),
+        Append::Committed(newer.range())
+    );
+    let moved_to = newer.range().last.0;
+    assert!(moved_to > older_read, "the append moved the head");
+    assert_eq!(log.hold_read(older_read), moved_to);
+    assert_eq!(
+        *log.0.head.lock().unwrap(),
+        Some(moved_to),
+        "the older read did not set the head back"
+    );
+    let after = batch("after", moved_to, &[b"b"]);
+    assert_eq!(
+        log.append(Position(moved_to), &after).await.unwrap(),
+        Append::Committed(after.range()),
+        "the next append stages after the newer batch"
+    );
+    drop(log);
+    server.stop().await;
+}
+
 /// **The import reads every mark with its own taught_at**, including a run with
 /// no session card.
 #[tokio::test]
