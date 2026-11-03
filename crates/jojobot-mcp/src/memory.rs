@@ -317,8 +317,8 @@ impl Jojobot {
 
     /// **The generation merging one thing into a bot request would make**, or
     /// `None` when the request's folded spec stays as it is (and for a survivor
-    /// that is no request, or a side the store does not know: the merge itself
-    /// answers for that). The spec after is the survivor's and the duplicate's
+    /// that is no request; a side the store does not know is refused by the
+    /// history read, as the merge refuses it). The spec after is the survivor's and the duplicate's
     /// writes of each spec key interleaved by the moment each was written
     /// ([`spec_merging`](jojobot_domain::memory::bot_request::spec_merging)),
     /// numbered from the highest ever written on the request. Called under the
@@ -340,11 +340,7 @@ impl Jojobot {
         let mut theirs = std::collections::BTreeMap::new();
         for key in SPEC_KEYS {
             for (side, held) in [(survivor, &mut ours), (duplicate, &mut theirs)] {
-                match self.memory.history(side, key).await {
-                    Ok(writes) => held.insert(key.to_string(), writes),
-                    Err(MemoryError::UnknownEntity { .. }) => return Ok(None),
-                    Err(e) => return Err(e),
-                };
+                held.insert(key.to_string(), self.memory.history(side, key).await?);
             }
         }
         let highest = self.highest_generation_ever(survivor).await?;
