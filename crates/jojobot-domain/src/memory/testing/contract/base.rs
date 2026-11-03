@@ -5512,6 +5512,65 @@ pub async fn a_thought_carrying_a_guarded_key_cannot_be_dropped_to_make_room<M: 
     );
 }
 
+/// **A thought that carries a word the request kind guards is dropped to make
+/// room, when it is no request.** `model`, `machine` and `desired` are freeform
+/// on every other thing, and a store from before the request kind holds them
+/// there. The drop path asks only for the keys that bind a ceiling or the chart
+/// (the positive beside `a_thought_carrying_a_guarded_key_cannot_be_dropped_to_make_room`).
+pub async fn a_thought_carrying_a_request_word_is_dropped_to_make_room<M: Memory>(store: &M) {
+    let bot = EntityId("bot:contract-room-model".into());
+    let a = EntityId("thing:jukebox".into());
+    let b = EntityId("thing:battery".into());
+    for id in [&bot, &a, &b] {
+        ensure(store, id).await;
+    }
+    capture(
+        store,
+        state(NewFact {
+            fields: [(THOUGHT_CAPACITY.to_string(), "1".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(bot.clone(), "capacity is one", date(2026, 7, 1))
+        }),
+    )
+    .await;
+    // The only thought in the room carries a word only a request guards.
+    let holding = capture(
+        store,
+        NewFact {
+            edge: Some(Edge::new(EdgeShape::Connection, a.clone())),
+            fields: [("model".to_string(), "kettle".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(bot.clone(), "the jukebox runs a model", date(2026, 7, 2))
+        },
+    )
+    .await;
+
+    let landed = store
+        .capture(NewFact {
+            edge: Some(Edge::new(EdgeShape::Connection, b.clone())),
+            drop: Some(holding.address()),
+            drop_because: Some("making room".into()),
+            ..NewFact::about(bot.clone(), "the battery is flat", date(2026, 7, 3))
+        })
+        .await;
+    assert!(
+        landed.is_ok(),
+        "a thought carrying model is no request's, so it is dropped to make room: {landed:?}",
+    );
+    let after = store.recall(&bot).await.expect("recall ok");
+    let dropped = after
+        .iter()
+        .find(|f| f.id == holding.id)
+        .expect("the dropped thought is still on record");
+    assert_eq!(
+        dropped.status,
+        FactStatus::Archived,
+        "it was archived: {dropped:?}"
+    );
+}
+
 /// **A room at capacity, with a live thought and a way to name what leaves
 /// would exceed it.** A write into a full room with no drop named is
 /// refused, and the refusal carries the room so a caller can choose without
@@ -19576,6 +19635,7 @@ macro_rules! all_cases {
         $m!(undoing_the_newest_manager_cannot_close_a_loop($store));
         $m!(restating_the_same_manager_is_not_a_change($store));
         $m!(a_thought_carrying_a_guarded_key_cannot_be_dropped_to_make_room($store));
+        $m!(a_thought_carrying_a_request_word_is_dropped_to_make_room($store));
         $m!(a_manager_folded_into_another_keeps_its_reports_in_the_chain($store));
         $m!(referring_to_finds_a_target_named_in_a_list_of_references($store));
         $m!(a_work_items_status_lands_whatever_word_it_holds($store));

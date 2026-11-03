@@ -280,6 +280,7 @@ pub const ORDINARY: &[&str] = &[
     "bot:contract-restate-fjord",
     "bot:contract-restate-mesa",
     "bot:contract-room-guarded",
+    "bot:contract-room-model",
     "bot:contract-room-warden",
     "bot:contract-fold-gully",
     "bot:contract-fold-ridge",

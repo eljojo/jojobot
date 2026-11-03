@@ -2830,8 +2830,7 @@ impl DoltMemory {
                                 // capture carries no caller to ask who may change
                                 // that key, and archiving the thought takes the
                                 // key off the fold. Retracting it asks.
-                                if !jojobot_domain::memory::guarded_keys_in(&victim_fact.fields)
-                                    .is_empty()
+                                if jojobot_domain::memory::names_a_ceiling_key(&victim_fact.fields)
                                 {
                                     return Err(refuse(room));
                                 }

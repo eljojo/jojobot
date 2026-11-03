@@ -3276,11 +3276,9 @@ impl Memory for InMemoryMemory {
                                 // capture carries no caller to ask who may change
                                 // that key, and archiving the thought takes the
                                 // key off the fold. Retracting it asks.
-                                if !super::super::guarded_keys_in(
+                                if super::super::names_a_ceiling_key(
                                     &self.projected(&facts[victim_index]).fields,
-                                )
-                                .is_empty()
-                                {
+                                ) {
                                     return Err(refuse(counted.live));
                                 }
                                 // **Archived, through the one writer every

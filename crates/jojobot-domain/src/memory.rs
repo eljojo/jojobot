@@ -3129,6 +3129,14 @@ pub fn names_a_guarded_key(fields: &BTreeMap<String, String>) -> bool {
     !guarded_keys_in(fields).is_empty()
 }
 
+/// **Whether a bag of fields names a key that binds a ceiling or the chart**,
+/// which is every guarded key but the rows that guard a bot request. A thought
+/// that is no request and holds a request's word (`model`, `machine`) is no
+/// setting of either.
+pub fn names_a_ceiling_key(fields: &BTreeMap<String, String>) -> bool {
+    ceiling_keys().any(|rule| fields.contains_key(rule.key))
+}
+
 /// **The guarded keys a bag of fields names**, in the table's order.
 pub fn guarded_keys_in(fields: &BTreeMap<String, String>) -> Vec<&'static GuardedKey> {
     GUARDED_KEYS
