@@ -2089,6 +2089,15 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                              Leave '{duplicate}' where it is, or make a new request for the bot."
                         )
                     }
+                    // **A spec key is the manager's to write**, so the bots above the
+                    // request's target may make this merge, and they are named.
+                    jojobot_domain::memory::MayWrite::RequestSpec if !allowed.is_empty() => {
+                        format!(
+                            "Nothing was written. '{duplicate}' carries {keys}, and \
+                             '{survivor}' is a bot request, whose spec only {who} may write. Ask \
+                             {who} to make this merge.{clear}"
+                        )
+                    }
                     // **The duplicate is an ordinary thing and the survivor is the
                     // request**, which is what judged the key. The key cannot land
                     // on a request, but the caller may take it off the duplicate.
@@ -2770,6 +2779,50 @@ pub(crate) mod tests {
             assert!(request.contains(word), "{word}: {request}");
         }
         assert!(!request.contains("clear_fields"), "{request}");
+    }
+
+    /// **An ordinary thing carrying a request's spec key is told who may merge
+    /// it into the request.** The spec is the manager's, so the bots above the
+    /// target are named, while the status and the generation are nobody's and
+    /// name no bot. The refusal that names nobody is the one a request with no
+    /// writer gets.
+    #[test]
+    fn a_spec_key_merged_into_a_request_names_the_bots_that_may_write_it() {
+        use jojobot_domain::memory::MayWrite;
+        let refused = |may: MayWrite, allowed: Vec<String>| {
+            let result = memory_declined(
+                "merge_entities",
+                MemoryError::MergeCarriesGuardedKeys {
+                    duplicate: "topic:scrapbook".into(),
+                    survivor: "bot-request:beta".into(),
+                    keys: "desired".into(),
+                    may,
+                    allowed,
+                    clear_opens: true,
+                    judged_on_duplicate: false,
+                },
+            )
+            .expect("a refusal is an answer");
+            blocked(&result)["how_to_proceed"]
+                .as_str()
+                .expect("a way forward")
+                .to_string()
+        };
+        let manager = vec!["bot:marge".to_string()];
+        let named = refused(MayWrite::RequestSpec, manager.clone());
+        assert!(named.contains("bot:marge"), "{named}");
+        assert!(
+            named.contains("clear_fields"),
+            "the clear still opens: {named}"
+        );
+        assert!(!named.contains("  "), "{named}");
+        let nobody = refused(MayWrite::RequestSpec, vec![]);
+        assert!(!nobody.contains("bot:marge"), "{nobody}");
+        assert_ne!(named, nobody);
+        // The status is the bound app's: no bot is the way forward, whoever is
+        // listed.
+        let status = refused(MayWrite::RequestStatus, manager);
+        assert!(!status.contains("bot:marge"), "{status}");
     }
 
     /// **A chart cycle is refused with a way forward that names a different
