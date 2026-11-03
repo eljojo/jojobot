@@ -413,9 +413,8 @@ impl Jojobot {
                     };
                     if let Some(next) = jojobot_domain::memory::bot_request::next_generation(
                         &handle,
-                        &held,
-                        &fields,
-                        &[],
+                        &jojobot_domain::memory::bot_request::spec_of(&held),
+                        &jojobot_domain::memory::bot_request::spec_after(&held, &fields, &[]),
                         highest,
                     ) {
                         fields.insert(

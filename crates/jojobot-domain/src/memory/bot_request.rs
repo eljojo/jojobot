@@ -129,11 +129,51 @@ pub fn highest_generation_ever(writes: &[super::FieldWrite]) -> u64 {
         .unwrap_or(0)
 }
 
-/// **The generation a write of the spec makes, or `None` when it makes none.**
-/// A write that sets a spec key to a value the request does not hold raises the
-/// generation by one; the first spec written makes it 1. A resend of what the
-/// request holds changes nothing, so it raises nothing. Worked out here and
-/// never sent by a caller: [`GENERATION`] is a row nobody may write.
+/// **The spec a fold holds**: the spec keys it carries, spaces around a value
+/// aside, and none that is blank.
+pub fn spec_of(
+    fold: &std::collections::BTreeMap<String, String>,
+) -> std::collections::BTreeMap<String, String> {
+    SPEC_KEYS
+        .iter()
+        .filter_map(|key| {
+            let value = fold.get(*key)?.trim();
+            (!value.is_empty()).then(|| (key.to_string(), value.to_string()))
+        })
+        .collect()
+}
+
+/// **The spec a write leaves**: the spec `held` carries, with the spec keys the
+/// write sets put in and the spec keys it clears taken out. A key set to a blank
+/// value is a key taken off.
+pub fn spec_after(
+    held: &std::collections::BTreeMap<String, String>,
+    written: &std::collections::BTreeMap<String, String>,
+    cleared: &[String],
+) -> std::collections::BTreeMap<String, String> {
+    let mut spec = spec_of(held);
+    for key in SPEC_KEYS {
+        if cleared.iter().any(|gone| gone == key) {
+            spec.remove(key);
+        }
+        if let Some(value) = written.get(key) {
+            match value.trim() {
+                "" => spec.remove(key),
+                value => spec.insert(key.to_string(), value.to_string()),
+            };
+        }
+    }
+    spec
+}
+
+/// **The generation an act makes, or `None` when it makes none.** An act that
+/// leaves the request with a different folded spec than it had makes the next
+/// number; the first spec written makes 1. An act that leaves the spec as it was
+/// (a resend, a clear of a key not held, a withdrawal of a claim the fold did not
+/// read) makes none. The two specs are the folds before and after the act
+/// ([`spec_of`], [`spec_after`]), never the write alone: a retract or an archive
+/// that uncovers an older value changes the spec though it sends no key. Worked
+/// out here and never sent by a caller: [`GENERATION`] is a row nobody may write.
 ///
 /// **The number is one past `highest_ever`, the highest ever written on the
 /// request, and never one past the folded value.** A retract takes the newest
@@ -142,22 +182,9 @@ pub fn highest_generation_ever(writes: &[super::FieldWrite]) -> u64 {
 /// under the request's lock, so two writes do not read the same number.
 pub fn next_generation(
     subject: &super::EntityId,
-    held: &std::collections::BTreeMap<String, String>,
-    written: &std::collections::BTreeMap<String, String>,
-    cleared: &[String],
+    before: &std::collections::BTreeMap<String, String>,
+    after: &std::collections::BTreeMap<String, String>,
     highest_ever: u64,
 ) -> Option<String> {
-    if !is_request(subject) {
-        return None;
-    }
-    let changes = SPEC_KEYS.iter().any(|key| {
-        let sets_another = written
-            .get(*key)
-            .is_some_and(|value| !same_value(held.get(*key).map(String::as_str), value));
-        // A spec key taken off while the request holds a value for it is a change too.
-        let takes_off = cleared.iter().any(|gone| gone == key)
-            && held.get(*key).is_some_and(|now| !now.trim().is_empty());
-        sets_another || takes_off
-    });
-    changes.then(|| (highest_ever + 1).to_string())
+    (is_request(subject) && before != after).then(|| (highest_ever + 1).to_string())
 }

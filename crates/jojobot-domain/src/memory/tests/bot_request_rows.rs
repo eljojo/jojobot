@@ -206,9 +206,8 @@ fn the_generation_rises_when_the_spec_changes_and_only_then() {
             .unwrap_or(0);
         super::super::bot_request::next_generation(
             &request,
-            held,
-            &holding(written),
-            &cleared,
+            &super::super::bot_request::spec_of(held),
+            &super::super::bot_request::spec_after(held, &holding(written), &cleared),
             highest,
         )
     };
@@ -233,10 +232,42 @@ fn the_generation_rises_when_the_spec_changes_and_only_then() {
             &handle("topic:theta"),
             &holding(&[]),
             &holding(&[(DESIRED, "running")]),
-            &[],
             0,
         ),
         None
+    );
+}
+
+/// **The generation follows the FOLDED spec before and after an act, whatever
+/// the act.** A withdrawal that uncovers an older value changes the spec though it
+/// sends no key; a withdrawal of a claim the fold did not read changes nothing.
+/// The sequence of the finding: A sets desired and model, B sets desired, C sets
+/// model; withdrawing B leaves desired from A and model from C.
+#[test]
+fn the_generation_follows_the_folded_spec_before_and_after_an_act() {
+    let request = handle(REQUEST);
+    let next = |before: &[(&str, &str)], after: &[(&str, &str)], highest: u64| {
+        super::super::bot_request::next_generation(
+            &request,
+            &holding(before),
+            &holding(after),
+            highest,
+        )
+    };
+    let with_b_and_c = [(DESIRED, "stopped"), (MODEL, "beta")];
+    let with_b_withdrawn = [(DESIRED, "running"), (MODEL, "beta")];
+    assert_eq!(
+        next(&with_b_and_c, &with_b_withdrawn, 3).as_deref(),
+        Some("4"),
+        "withdrawing B changes desired under the number C holds"
+    );
+    // C already overrides every key B held: B withdrawn leaves the spec as it was.
+    let covered = [(DESIRED, "stopped"), (MODEL, "beta")];
+    assert_eq!(next(&covered, &covered, 3), None, "nothing uncovered");
+    assert_eq!(
+        next(&with_b_withdrawn, &with_b_and_c, 4).as_deref(),
+        Some("5"),
+        "a number is never given twice, the way back included"
     );
 }
 
@@ -252,9 +283,8 @@ fn the_generation_is_one_past_the_highest_ever_written() {
         let cleared: Vec<String> = cleared.iter().map(|key| key.to_string()).collect();
         super::super::bot_request::next_generation(
             &request,
-            &holding(held),
-            &holding(written),
-            &cleared,
+            &super::super::bot_request::spec_of(&holding(held)),
+            &super::super::bot_request::spec_after(&holding(held), &holding(written), &cleared),
             highest,
         )
     };

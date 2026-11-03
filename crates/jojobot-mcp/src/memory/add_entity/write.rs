@@ -334,8 +334,11 @@ impl Jojobot {
                 if let Some(next) = jojobot_domain::memory::bot_request::next_generation(
                     &creating,
                     &Default::default(),
-                    &fields,
-                    &[],
+                    &jojobot_domain::memory::bot_request::spec_after(
+                        &Default::default(),
+                        &fields,
+                        &[],
+                    ),
                     0,
                 ) {
                     fields.insert(

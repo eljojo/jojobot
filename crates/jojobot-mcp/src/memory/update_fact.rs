@@ -766,9 +766,8 @@ impl Jojobot {
             };
             if let Some(next) = jojobot_domain::memory::bot_request::next_generation(
                 &address.home,
-                &held,
-                &reaching,
-                &cleared,
+                &jojobot_domain::memory::bot_request::spec_of(&held),
+                &jojobot_domain::memory::bot_request::spec_after(&held, &reaching, &cleared),
                 highest,
             ) {
                 fields.insert(generation.to_string(), next);

@@ -318,7 +318,9 @@ pub async fn a_first_target_is_judged_by_the_target_and_not_a_held_manager<M: Me
 /// spec B with 2, B's claim is retracted, and spec C must come out as 3: the fold
 /// reads 1 again, and a number taken from it would repeat 2.
 pub async fn a_retracted_generation_is_still_the_highest_ever_written<M: Memory>(store: &M) {
-    use crate::memory::bot_request::{GENERATION, highest_generation_ever, next_generation};
+    use crate::memory::bot_request::{
+        GENERATION, highest_generation_ever, next_generation, spec_after, spec_of,
+    };
     let request = EntityId("bot-request:contract-retract-ask".into());
     let manager = EntityId("bot:contract-retract-manager".into());
     let target = EntityId("bot:contract-retract-target".into());
@@ -403,9 +405,8 @@ pub async fn a_retracted_generation_is_still_the_highest_ever_written<M: Memory>
     );
     let third = next_generation(
         &request,
-        &fold,
-        &fields(&[(DESIRED, "paused")]),
-        &[],
+        &spec_of(&fold),
+        &spec_after(&fold, &fields(&[(DESIRED, "paused")]), &[]),
         highest().await,
     );
     assert_eq!(third.as_deref(), Some("3"), "2 names the retracted spec");
