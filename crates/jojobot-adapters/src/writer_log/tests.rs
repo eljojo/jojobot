@@ -299,6 +299,81 @@ async fn a_read_waits_in_the_writers_queue_behind_an_append_in_flight() {
     server.stop().await;
 }
 
+/// **A new owner cannot open while its predecessor has a commit in flight, and
+/// opens on the predecessor's tail once it is gone.** The predecessor's append is
+/// held inside the store, so it holds the lock and has not committed. A second
+/// log over the same store is refused. Released, the append commits; the
+/// predecessor is dropped and a successor opens, reads the head the predecessor
+/// left and appends at it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_new_owner_waits_out_a_predecessor_with_a_commit_in_flight() {
+    let scratch = Scratch::new("writer-log-successor");
+    let mut server = Dolt::start(&scratch.0, free_port()).await.unwrap();
+    let pool = migrated_database(&server, "alpha").await.unwrap();
+    let held = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    let (port, proxy) = append_gate_proxy(
+        pool.connect_options().get_port(),
+        held.clone(),
+        release.clone(),
+    )
+    .await;
+    let source =
+        MySqlPoolOptions::new().connect_lazy_with((*pool.connect_options()).clone().port(port));
+    let writer = Writer::default();
+    let predecessor = WriterLog::open(source, writer.clone()).await.unwrap();
+    let appended = batch("predecessor", 0, &[b"a", b"b"]);
+    let append = tokio::spawn({
+        let (log, appended) = (predecessor.clone(), appended.clone());
+        async move { log.append(Position(0), &appended).await }
+    });
+    tokio::time::timeout(Duration::from_secs(10), held.notified())
+        .await
+        .expect("the append reached the store");
+    let refused = WriterLog::open(pool.clone(), Writer::default()).await;
+    assert!(
+        matches!(refused, Err(LogError::Store(_))),
+        "a new owner must be refused while the predecessor's commit is in flight"
+    );
+    release.notify_one();
+    assert_eq!(
+        append.await.unwrap().unwrap(),
+        Append::Committed(appended.range())
+    );
+    drop(predecessor);
+    writer.drain().await;
+    // The writer owns the connection that holds the lock, so the predecessor is
+    // gone when its writer is dropped; the store frees the lock a moment later.
+    drop(writer);
+    let successor_writer = Writer::default();
+    let successor = tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            match WriterLog::open(pool.clone(), successor_writer.clone()).await {
+                Ok(log) => return log,
+                Err(LogError::Store(_)) => tokio::time::sleep(Duration::from_millis(100)).await,
+                Err(other) => panic!("unexpected {other:?}"),
+            }
+        }
+    })
+    .await
+    .expect("the successor opens once the predecessor is gone");
+    let tail = appended.range().last;
+    let next = batch("successor", tail.0, &[b"c"]);
+    assert_eq!(
+        successor.append(tail, &next).await.unwrap(),
+        Append::Committed(next.range()),
+        "the successor's head is the predecessor's tail"
+    );
+    assert_eq!(
+        successor.read_from(Position(0), 10).await.unwrap(),
+        [appended, next]
+    );
+    drop(successor);
+    successor_writer.drain().await;
+    proxy.abort();
+    server.stop().await;
+}
+
 /// **A position another writer already took is refused by the store itself.**
 /// A batch is put at position 1 beneath the owner, as a second writer would. The
 /// owner's head still says 0, so its head check passes; the table's unique key
