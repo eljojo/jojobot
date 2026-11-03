@@ -5,8 +5,8 @@
 # pull request, any branch whose head was pushed less than a day ago (the push
 # time, read from the forge's activity feed; a head with no push in the feed is
 # held, because its age is unknown) and any branch with work main lacks. The
-# workflow cannot read the cards: only the engineering manager dispatches
-# `delete`, after reading the dry-run list against the cards.
+# workflow cannot read the cards, so the script also keeps every name in its
+# HELD list; what the cards still need goes on that list.
 #
 # **It deletes daily at 06:17Z.** The schedule has no inputs, so `DELETE` below
 # falls back to `true`, and the run logs every deleted branch with its head so
