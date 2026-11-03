@@ -937,37 +937,84 @@ fn a_card_with_no_follow_ups_key_is_refused_and_none_passes() {
     assert!(line_of(&out, "FOLLOW-UPS").starts_with("pass"), "{out}");
 }
 
-/// **Every follow-up is an existing work item that holds an owner.** The card file
-/// carries what the caller read of each one under `follow_up_items`.
-#[test]
-fn a_follow_up_that_is_missing_or_has_no_owner_is_refused_naming_it() {
+/// The card file with `follow_ups` set to `handles` and `items` as what the caller
+/// read of each follow-up, checked: the exit code and the FOLLOW-UPS line.
+fn follow_ups_check(handles: &str, items: Value) -> (i32, String) {
     let repo = repository();
     let api = stand(green(&repo));
     let text = report(&as_pairs(&facts_only(&repo)));
-    let mut held = card_with("follow_ups", json!("work:q-1001, work:q-1002"));
-    held["follow_up_items"] = json!({"work:q-1001": {"owner": "bot:assistant"}});
-    let (code, out, _) = check_card(&repo, &api, &text, Some(&held));
-    assert_eq!(code, 1, "{out}");
-    let line = line_of(&out, "FOLLOW-UPS");
+    let mut held = card_with("follow_ups", json!(handles));
+    held["follow_up_items"] = items;
+    let (code, out, err) = check_card(&repo, &api, &text, Some(&held));
+    let line = out
+        .lines()
+        .find(|l| l.contains("FOLLOW-UPS"))
+        .unwrap_or_else(|| panic!("no FOLLOW-UPS line: {out}\n{err}"))
+        .to_string();
+    (code, line)
+}
+
+/// **A follow-up the card file holds no item for is refused, and named alone.**
+#[test]
+fn a_follow_up_naming_a_missing_item_is_refused_naming_it() {
+    let (code, line) = follow_ups_check(
+        "work:q-1001, work:q-1002",
+        json!({"work:q-1001": {"owner": "bot:assistant"}}),
+    );
+    assert_eq!(code, 1, "{line}");
     assert!(
         line.starts_with("FAIL") && line.contains("work:q-1002") && !line.contains("work:q-1001"),
-        "a follow-up the file does not hold is named alone: {line}"
+        "{line}"
     );
-    held["follow_up_items"]["work:q-1002"] = json!({"status": "queued"});
-    let (code, out, _) = check_card(&repo, &api, &text, Some(&held));
-    assert_eq!(code, 1, "{out}");
-    let line = line_of(&out, "FOLLOW-UPS");
+}
+
+/// **A follow-up whose item holds no owner is refused, naming the item and the key.**
+#[test]
+fn a_follow_up_whose_item_holds_no_owner_is_refused_naming_it() {
+    let (code, line) = follow_ups_check(
+        "work:q-1001, work:q-1002",
+        json!({"work:q-1001": {"owner": "bot:assistant"}, "work:q-1002": {"status": "queued"}}),
+    );
+    assert_eq!(code, 1, "{line}");
     assert!(
         line.starts_with("FAIL") && line.contains("work:q-1002") && line.contains("`owner`"),
-        "an item with no owner is named: {line}"
+        "{line}"
     );
-    held["follow_up_items"]["work:q-1002"] = json!({"owner": "bot:defrag"});
-    let (code, out, err) = check_card(&repo, &api, &text, Some(&held));
-    assert_eq!(code, 0, "{out}\n{err}");
-    assert!(line_of(&out, "FOLLOW-UPS").starts_with("pass"), "{out}");
-    let words = card_with("follow_ups", json!("rebase it later"));
-    let (code, out, _) = check_card(&repo, &api, &text, Some(&words));
-    assert_eq!(code, 1, "a step in prose is no work item: {out}");
+    assert!(!line.contains("work:q-1001"), "{line}");
+}
+
+/// **A step written in prose is no work item.**
+#[test]
+fn a_follow_up_in_prose_is_refused() {
+    let (code, line) = follow_ups_check("rebase it later", json!({}));
+    assert_eq!(code, 1, "{line}");
+    assert!(line.starts_with("FAIL"), "{line}");
+}
+
+/// **A `follow_ups` of only separators names nothing, and is not `none`.** Neither
+/// an empty word between separators nor a lone comma may pass as an owned follow-up.
+#[test]
+fn a_follow_up_of_only_separators_is_refused() {
+    for value in [",", ", ,,", ",,"] {
+        let (code, line) = follow_ups_check(value, json!({}));
+        assert_eq!(code, 1, "{value:?}: {line}");
+        assert!(
+            line.starts_with("FAIL") && line.contains("none"),
+            "{value:?}: {line}"
+        );
+    }
+}
+
+/// **Follow-ups that are all existing work items with owners pass**, and the line
+/// repeats them.
+#[test]
+fn a_follow_up_set_whose_items_all_hold_an_owner_passes() {
+    let (code, line) = follow_ups_check(
+        "work:q-1001, work:q-1002",
+        json!({"work:q-1001": {"owner": "bot:assistant"}, "work:q-1002": {"owner": "bot:defrag"}}),
+    );
+    assert_eq!(code, 0, "{line}");
+    assert!(line.starts_with("pass"), "{line}");
 }
 
 /// **A card whose hand-off predates the rule passes with a note naming what it

@@ -249,10 +249,11 @@ def follow_ups_say(value, items):
     if re.fullmatch(r"(?i)none\W*", value):
         return True, "none"
     items = items if isinstance(items, dict) else {}
+    words = [word for word in re.split(r"[,\s]+", value) if word]
+    if not words:
+        return False, "`follow_ups` names no work item: write the handles, or `none`"
     problems = []
-    for word in re.split(r"[,\s]+", value):
-        if not word:
-            continue
+    for word in words:
         if not FOLLOW_UP_HANDLE.fullmatch(word):
             problems.append(f"{word} is no work handle: a step in prose has no owner, so make it a card")
         elif not isinstance(items.get(word), dict):
