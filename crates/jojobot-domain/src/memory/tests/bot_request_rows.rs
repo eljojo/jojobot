@@ -227,6 +227,34 @@ fn the_generation_rises_when_the_spec_changes_and_only_then() {
         None,
         "nothing held to clear"
     );
+    // A blank spec value is a key taken off, written or held.
+    assert_eq!(
+        next(&holding(&[]), &[(DESIRED, "  ")], &[]),
+        None,
+        "a blank written on an empty request changes nothing"
+    );
+    assert_eq!(
+        next(&at_one, &[(DESIRED, "  ")], &[]).as_deref(),
+        Some("2"),
+        "a blank written over a held value takes the key off"
+    );
+    let blank_held = holding(&[(DESIRED, "  "), (GENERATION, "1")]);
+    assert_eq!(
+        super::super::bot_request::spec_of(&blank_held),
+        super::super::bot_request::spec_of(&holding(&[(GENERATION, "1")])),
+        "a blank held value equals an absent one"
+    );
+    assert_eq!(
+        super::super::bot_request::next_generation(
+            &request,
+            &super::super::bot_request::spec_of(&blank_held),
+            &holding(&[(DESIRED, "running")]),
+            1,
+        )
+        .as_deref(),
+        Some("2"),
+        "a value written over a blank held one is a new spec"
+    );
     assert_eq!(
         super::super::bot_request::next_generation(
             &handle("topic:theta"),
