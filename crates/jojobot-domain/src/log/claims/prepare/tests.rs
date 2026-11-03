@@ -413,6 +413,88 @@ fn a_number_stays_retired_after_its_container_is_merged() {
     );
 }
 
+/// A `promise` named `promise:alpha`, holding `promised_by` when it is given
+/// one; the kind requires that key.
+fn promise_world(promised_by: Option<&str>) -> (State, Vec<DeclaredType>) {
+    crate::memory::kinds::load_shipped();
+    let mut events = vec![
+        ClaimEvent::ObjectCreated {
+            object: object("promise:alpha"),
+            body: body("promise", "promise:alpha"),
+        },
+        ClaimEvent::AddressBound {
+            object: object("promise:alpha"),
+            address: "promise:alpha".into(),
+        },
+    ];
+    if let Some(day) = promised_by {
+        events.push(created(
+            "p1",
+            claim("f1", "promise:alpha", "has to go back", 1),
+        ));
+        events.push(write("p1", "promise:alpha", "promised_by", 1, day));
+    }
+    (replay(&events), Vec::new())
+}
+
+fn setting(subject: &str, key: &str, value: &str) -> CaptureRequest {
+    CaptureRequest {
+        fields: BTreeMap::from([(key.into(), value.into())]),
+        sets: BTreeSet::from([key.to_string()]),
+        ..request(subject)
+    }
+}
+
+/// **A capture may not drop a thing below its kind's floor, and may not put a
+/// key a value it does not hold.** The floor guards a thing that meets it; a
+/// thing that fits nothing has nothing to protect, and a key beyond the kind is
+/// welcome.
+#[test]
+fn a_capture_is_held_to_its_subjects_kind() {
+    let (held, declared) = promise_world(Some("2026-07-01"));
+    assert!(matches!(
+        prepare(&held, &declared, &setting("promise:alpha", "promised_by", "")),
+        Err(Refusal::BreaksKind(MemoryError::BreaksFit { name, keys }))
+            if name == "promise" && keys == ["promised_by"]
+    ));
+    assert!(matches!(
+        prepare(&held, &declared, &setting("promise:alpha", "promised_by", "someday")),
+        Err(Refusal::BreaksKind(MemoryError::BreaksType { key, .. })) if key == "promised_by"
+    ));
+    assert!(
+        prepare(
+            &held,
+            &declared,
+            &setting("promise:alpha", "promised_by", "2026-08-01")
+        )
+        .is_ok(),
+        "a day replaces a day"
+    );
+    assert!(
+        prepare(&held, &declared, &setting("promise:alpha", "note", "")).is_ok(),
+        "a blank in a key the kind does not require goes freely"
+    );
+    assert!(
+        prepare(&held, &declared, &setting("promise:alpha", "mood", "quiet")).is_ok(),
+        "a key beyond the kind is welcome"
+    );
+    // A promise that holds no day fits nothing: it can be repaired, but a bad
+    // value is refused wherever the key is set.
+    let (bare, declared) = promise_world(None);
+    assert!(
+        prepare(&bare, &declared, &setting("promise:alpha", "note", "")).is_ok(),
+        "nothing to protect"
+    );
+    assert!(matches!(
+        prepare(
+            &bare,
+            &declared,
+            &setting("promise:alpha", "promised_by", "someday")
+        ),
+        Err(Refusal::BreaksKind(MemoryError::BreaksType { .. }))
+    ));
+}
+
 /// **A role's lease fields belong to the boot door.** The verb is refused them
 /// before any object is looked up; the engine's own routes write them.
 #[test]

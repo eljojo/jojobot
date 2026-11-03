@@ -3994,8 +3994,41 @@ pub fn stood_after_capture(
     captured: &Fact,
     declared: &[types::DeclaredType],
 ) -> BTreeMap<String, String> {
+    stood_after_record(
+        writes,
+        &NewRecord {
+            id: &captured.id,
+            fields: &captured.fields,
+            status: captured.status,
+            provenance: captured.provenance,
+            standing: captured.standing,
+            note: captured.details.as_ref(),
+            recorded_by: captured.app_stamp.as_ref(),
+        },
+        declared,
+    )
+}
+
+/// **The parts of a new record that the write of its keys carries**: what
+/// [`stood_after_record`] reads, so a caller that holds no [`Fact`] can ask.
+pub struct NewRecord<'a> {
+    pub id: &'a FactId,
+    pub fields: &'a BTreeMap<String, String>,
+    pub status: FactStatus,
+    pub provenance: Provenance,
+    pub standing: Standing,
+    pub note: Option<&'a String>,
+    pub recorded_by: Option<&'a crate::app::AppStamp>,
+}
+
+/// The fold [`stood_after_capture`] answers, from the parts of the record.
+pub fn stood_after_record(
+    writes: &[KeyWrite],
+    captured: &NewRecord<'_>,
+    declared: &[types::DeclaredType],
+) -> BTreeMap<String, String> {
     let mut next = writes.to_vec();
-    for (key, value) in &captured.fields {
+    for (key, value) in captured.fields {
         let ordinal = next
             .iter()
             .filter(|w| &w.key == key)
@@ -4009,8 +4042,8 @@ pub fn stood_after_capture(
             value: Some(value.clone()),
             fact: captured.id.clone(),
             status: captured.status,
-            note: captured.details.clone(),
-            recorded_by: captured.app_stamp.clone(),
+            note: captured.note.cloned(),
+            recorded_by: captured.recorded_by.cloned(),
             writer: None,
             run: None,
             provenance: captured.provenance,

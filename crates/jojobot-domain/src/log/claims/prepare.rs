@@ -23,6 +23,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use jiff::civil::Date;
 
 mod chart;
+mod kind;
 mod limits;
 mod numbering;
 
@@ -145,6 +146,9 @@ pub enum Refusal {
     /// do not name: a value that is no number, a number a member would free, a
     /// collection founded over members that break its promise.
     Numbering(MemoryError),
+    /// The write would drop a thing below its kind's required keys, or puts in a
+    /// key a value the kind declared it does not hold.
+    BreaksKind(MemoryError),
     /// A star into full seats: every rule that holds a seat, oldest first.
     SeatsFull {
         subject: String,
@@ -440,6 +444,11 @@ pub fn prepare(
         dropped.as_ref().map(|(record, _)| record),
     ) {
         return Err(refused);
+    }
+    // The result is held to the subject's kind, after the ceiling as the store
+    // reads it.
+    if let Some(refused) = kind::refuses_a_kind_misfit(state, declared, &home, request) {
+        return Err(Refusal::BreaksKind(refused));
     }
 
     let draft = &request.draft;
