@@ -829,6 +829,34 @@ fn the_default_base_is_the_release_trunk_the_branch_is_cut_from() {
     let _ = fs::remove_dir_all(&repo);
 }
 
+/// **`bar trunk` names the remote line the branch is cut from**, the line `bar
+/// dev` measures against. The forge's jobs hand it to the crate selection as its
+/// base, so the report does not diff every branch against one fixed carry.
+#[test]
+fn the_trunk_command_names_the_line_the_branch_is_cut_from() {
+    let repo = repository();
+    remote_line(&repo, "em-old-carry", "HEAD");
+    commit_change(&repo, "jojobot-domain", "main moved on");
+    remote_line(&repo, "main", "HEAD");
+    git(&repo, &["switch", "-q", "-c", "trunk"]);
+    commit_change(&repo, "jojobot-ports", "the trunk's own change");
+    remote_line(&repo, "em-new-carry", "HEAD");
+    git(&repo, &["switch", "-q", "-c", "work"]);
+    commit_change(&repo, "jojobot-bar", "work");
+    let out = support::output_fenced(
+        Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
+            .arg("trunk")
+            .current_dir(&repo),
+    )
+    .expect("run bar");
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        "forgejo/em-new-carry"
+    );
+    let _ = fs::remove_dir_all(&repo);
+}
+
 /// **The own-crates job of a branch push is `bar dev` told it runs on the forge.**
 /// `BAR_OWN_CRATES` measures the branch against the trunk it is cut from even on
 /// CI, where the bare `dev` keeps `main`, so the job runs the crates the branch

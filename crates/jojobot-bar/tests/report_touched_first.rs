@@ -327,43 +327,66 @@ fn ci_crate_mcp_change_keeps_workspace_scanners() {
     );
 }
 
+/// **Each forge job that selects crates takes its base from `bar trunk`**, in its
+/// plan step, and no fixed carry is named. The lines are run here with a stand-in
+/// `nix` that answers as `bar trunk` does.
 #[test]
-fn ci_crate_fetch_and_selection_share_the_current_carry() {
+fn ci_crate_selection_takes_the_base_the_branch_is_cut_from() {
     let workflow = fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.forgejo/workflows/branch.yml"),
     )
     .unwrap();
     assert!(
-        workflow
+        !workflow
             .lines()
-            .any(|line| line.trim() == "BAR_SELECT_BASE: origin/em-931-carry")
+            .any(|line| line.trim().starts_with("BAR_SELECT_BASE:")),
+        "a fixed base is set for every job"
     );
-    assert_eq!(workflow.matches("em-931-carry").count(), 1);
-    let fetch = workflow
-        .lines()
-        .find(|line| line.trim().starts_with("git fetch origin "))
+    assert_eq!(
+        workflow.matches("jojobot-bar -- trunk)").count(),
+        3,
+        "each job that plans takes its base from `bar trunk`"
+    );
+    let step = workflow
+        .split("      - name: Job plan\n        id: plan\n        run: |\n")
+        .nth(1)
         .unwrap()
-        .trim();
+        .lines()
+        .take_while(|line| !line.contains("mkdir -p"))
+        .collect::<Vec<_>>()
+        .join("\n");
     let dir = scratch();
-    support::write_executable(&dir.join("git"), "#!/bin/sh\nprintf '%s\\n' \"$@\"\n");
-    let path = std::env::join_paths(
-        std::iter::once(dir.clone())
-            .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
-    )
-    .unwrap();
-    for branch in ["alpha-carry", "beta-carry"] {
+    // What the plan that follows the lines would see in its own environment.
+    let step = format!("{step}\nprintf 'plan sees %s' \"${{BAR_SELECT_BASE-unset}}\"");
+    for (answer, written, seen) in [
+        (
+            "origin/alpha-carry",
+            "BAR_SELECT_BASE=origin/alpha-carry\n",
+            "plan sees origin/alpha-carry",
+        ),
+        ("", "", "plan sees unset"),
+    ] {
+        support::write_executable(
+            &dir.join("nix"),
+            &format!("#!/bin/sh\nprintf '%s\\n' '{answer}'\n"),
+        );
+        let env_file = dir.join("github-env");
+        let _ = fs::remove_file(&env_file);
+        let path = std::env::join_paths(
+            std::iter::once(dir.clone())
+                .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+        )
+        .unwrap();
         let out = support::output_fenced(
             Command::new("sh")
-                .args(["-c", fetch])
+                .args(["-c", &step])
                 .env("PATH", &path)
-                .env("BAR_SELECT_BASE", format!("origin/{branch}")),
+                .env("GITHUB_ENV", &env_file),
         )
         .unwrap();
         assert!(out.status.success(), "{out:?}");
-        assert_eq!(
-            String::from_utf8(out.stdout).unwrap(),
-            format!("fetch\norigin\n{branch}:refs/remotes/origin/{branch}\n")
-        );
+        assert_eq!(fs::read_to_string(&env_file).unwrap_or_default(), written);
+        assert_eq!(String::from_utf8_lossy(&out.stdout), seen);
     }
 }
 

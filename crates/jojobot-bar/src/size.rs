@@ -588,7 +588,7 @@ pub(crate) fn in_ci() -> bool {
 /// `main` and carry lines (`em-*`), the one HEAD is fewest commits past its
 /// merge-base with. A checkout's own `main` can lag far behind a carry, so it is
 /// never the answer here.
-pub(crate) fn remote_line() -> Option<String> {
+pub fn remote_line() -> Option<String> {
     let text = |args: &[&str]| {
         git_output(args).map(|out| String::from_utf8_lossy(&out).trim().to_string())
     };

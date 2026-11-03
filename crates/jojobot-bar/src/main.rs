@@ -102,6 +102,11 @@ fn main() -> ExitCode {
         Some("dev") => with_loop_wall_line(|| run_dev(&args[1..], &known)),
         Some("rooms") => run_rooms(&args[1..], &known),
         Some("plan") => plan::run(&args[1..]),
+        // The line the forge's jobs select crates against; empty when none.
+        Some("trunk") => {
+            println!("{}", jojobot_bar::size::remote_line().unwrap_or_default());
+            Ok(ExitCode::SUCCESS)
+        }
         Some("size") => jojobot_bar::size::run(&args[1..]),
         Some("static") => jojobot_bar::static_checks::run(&args[1..]),
         Some("bundle") => run_bundle(&args[1..]),
