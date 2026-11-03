@@ -2642,12 +2642,18 @@ pub(crate) mod tests {
     /// **A merge of an ordinary thing into a bot request names the clear** when the
     /// domain says it opens, and the request as the survivor. The same key on a
     /// request as the duplicate is the request's own refusal, which names no
-    /// clear (rule 68). Every key of a request is driven: one dropped from either
-    /// arm falls to the ceiling wording, which still names the clear.
+    /// clear (rule 68). Every key of a request is driven, and the arm that fired
+    /// is told by its output, not by a word in it: all three keys give the same
+    /// text, and that text is not the one the fall-through arm gives. A key
+    /// dropped from either arm falls through, which also names the clear.
     #[test]
     fn an_ordinary_duplicate_merged_into_a_request_is_told_to_clear_the_key() {
         use jojobot_domain::memory::MayWrite;
-        let refused = |may: MayWrite, duplicate: &str, survivor: &str, clear_opens: bool| {
+        let refused = |may: MayWrite,
+                       duplicate: &str,
+                       survivor: &str,
+                       clear_opens: bool,
+                       judged_on_duplicate: bool| {
             let result = memory_declined(
                 "merge_entities",
                 MemoryError::MergeCarriesGuardedKeys {
@@ -2657,7 +2663,7 @@ pub(crate) mod tests {
                     may,
                     allowed: vec![],
                     clear_opens,
-                    judged_on_duplicate: duplicate.starts_with("bot-request:"),
+                    judged_on_duplicate,
                 },
             )
             .expect("a refusal is an answer");
@@ -2666,33 +2672,58 @@ pub(crate) mod tests {
                 .expect("a way forward")
                 .to_string()
         };
-        for may in [
+        let keys = [
             MayWrite::RequestSpec,
             MayWrite::RequestStatus,
             MayWrite::RequestGeneration,
+        ];
+        let ordinary_into_request = ("topic:scrapbook", "bot-request:beta", true, false);
+        let barred_into_request = ("topic:scrapbook", "bot-request:beta", false, false);
+        let request_into_ordinary = ("bot-request:alpha", "topic:scrapbook", false, true);
+        let mut arms = Vec::new();
+        for (duplicate, survivor, clear_opens, judged) in [
+            ordinary_into_request,
+            barred_into_request,
+            request_into_ordinary,
         ] {
-            let ordinary = refused(may, "topic:scrapbook", "bot-request:beta", true);
-            for word in [
-                "topic:scrapbook",
-                "bot-request:beta",
-                "observed_state",
-                "clear_fields",
-            ] {
-                assert!(ordinary.contains(word), "{may:?} {word}: {ordinary}");
+            let fallthrough = refused(
+                MayWrite::DifferentIdentity,
+                duplicate,
+                survivor,
+                clear_opens,
+                judged,
+            );
+            let arm = refused(keys[0], duplicate, survivor, clear_opens, judged);
+            assert_ne!(arm, fallthrough, "{duplicate} into {survivor}: {arm}");
+            for may in keys {
+                let said = refused(may, duplicate, survivor, clear_opens, judged);
+                assert_eq!(said, arm, "{may:?}: {duplicate} into {survivor}");
             }
-            assert!(!ordinary.contains("ceiling"), "{may:?}: {ordinary}");
-            assert!(!ordinary.contains("Leave"), "{may:?}: {ordinary}");
-            assert!(!ordinary.contains("  "), "{ordinary}");
-            let barred = refused(may, "topic:scrapbook", "bot-request:beta", false);
-            assert!(!barred.contains("clear_fields"), "{may:?}: {barred}");
-            assert!(!barred.contains("ceiling"), "{may:?}: {barred}");
-            let request = refused(may, "bot-request:alpha", "topic:scrapbook", false);
-            for word in ["bot-request:alpha", "observed_state", "Leave"] {
-                assert!(request.contains(word), "{may:?} {word}: {request}");
-            }
-            assert!(!request.contains("clear_fields"), "{may:?}: {request}");
-            assert!(!request.contains("ceiling"), "{may:?}: {request}");
+            arms.push(arm);
         }
+        let [ordinary, barred, request] = &arms[..] else {
+            unreachable!("three cases were run")
+        };
+        // The side that judged picks the arm, whatever the clear says.
+        assert_ne!(
+            refused(keys[0], "topic:scrapbook", "bot-request:beta", false, true),
+            *barred,
+            "the flag, not the handles, picks the arm"
+        );
+        for word in [
+            "topic:scrapbook",
+            "bot-request:beta",
+            "observed_state",
+            "clear_fields",
+        ] {
+            assert!(ordinary.contains(word), "{word}: {ordinary}");
+        }
+        assert!(!ordinary.contains("  "), "{ordinary}");
+        assert!(!barred.contains("clear_fields"), "{barred}");
+        for word in ["bot-request:alpha", "observed_state"] {
+            assert!(request.contains(word), "{word}: {request}");
+        }
+        assert!(!request.contains("clear_fields"), "{request}");
     }
 
     /// **A chart cycle is refused with a way forward that names a different

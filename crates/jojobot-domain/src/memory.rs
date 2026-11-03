@@ -6190,8 +6190,9 @@ pub enum MemoryError {
         /// the licence a clear would meet, so a refusal names that route only
         /// when it opens.
         clear_opens: bool,
-        /// **Whether the key was judged on `duplicate`** and not on `survivor`:
-        /// a bot request's own keys are judged on the request, whichever side it is.
+        /// **Whether the key was judged on `duplicate`** and not on `survivor`.
+        /// True only when the duplicate is a bot request, whose own keys are
+        /// judged on it. False when the request is the survivor.
         judged_on_duplicate: bool,
     },
     /// **A thought's body is over its container's cap.** See
