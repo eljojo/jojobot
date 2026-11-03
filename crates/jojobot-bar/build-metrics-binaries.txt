@@ -67,6 +67,7 @@ test-dolt_links_by_mark
 test-dolt_log_contract
 test-dolt_must_back
 test-dolt_numbered_restart
+test-dolt_race_through_writer
 test-dolt_repair
 test-dolt_requests
 test-dolt_search_after_a_merge
