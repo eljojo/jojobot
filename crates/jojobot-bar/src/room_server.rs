@@ -17,7 +17,7 @@ pub(super) fn for_tests(log: &Path, cargo: &str, harness: bool) -> std::io::Resu
 }
 
 /// **The packages a run tests, built and nothing else.** The harness build is
-/// added only when the server package is among them.
+/// added when the server package or the exercise crate is among them.
 pub(super) fn for_selected(
     log: &Path,
     cargo: &str,
@@ -28,7 +28,12 @@ pub(super) fn for_selected(
         args.extend(["-p", name.as_str()]);
     }
     let built = run_phase(log, "cargo build --locked -p <selected>", cargo, &args)?;
-    if built.0 && selected.contains("jojobot") {
+    // The exercise crate's cases start the `jojobot` binary and do not depend on
+    // it, so selecting the crate builds the server too.
+    if built.0 && (selected.contains("jojobot") || selected.contains("jojobot-exercise")) {
+        if !selected.contains("jojobot") {
+            args.extend(["-p", "jojobot"]);
+        }
         args.push("--features=jojobot/room-harness");
         run_phase(
             log,

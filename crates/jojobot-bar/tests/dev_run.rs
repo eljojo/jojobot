@@ -560,6 +560,45 @@ fn an_own_crates_run_builds_the_selected_packages_and_not_the_workspace() {
     let _ = fs::remove_dir_all(&repo);
 }
 
+/// **An own-crates run of the exercise crate builds the server with the room
+/// harness.** The exercise crate's ordinary cases start the `jojobot` binary,
+/// which the crate does not depend on, so building the selected packages alone
+/// leaves them none. Paired: a run that selects another crate builds no harness.
+#[test]
+fn an_own_crates_run_of_the_exercise_crate_builds_the_server_with_the_harness() {
+    let repo = repository();
+    git(&repo, &["switch", "-q", "-c", "work"]);
+    commit_change(&repo, "jojobot-exercise", "exercise");
+    let own = dev_run(&repo, &[], &[("BAR_OWN_CRATES", "1")]);
+    assert_eq!(own.exit, Some(0), "{}", own.stdout);
+    let harness = |ran: &Ran| {
+        ran.calls
+            .iter()
+            .filter(|c| c.starts_with("build") && c.contains("--features=jojobot/room-harness"))
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    let builds = harness(&own);
+    assert_eq!(builds.len(), 1, "{:?}", own.calls);
+    assert!(
+        builds[0].contains("-p jojobot ") || builds[0].contains("-p jojobot-exercise -p jojobot"),
+        "the server package is built: {:?}",
+        own.calls
+    );
+    assert!(
+        own.calls
+            .iter()
+            .all(|c| !c.starts_with("build") || !c.contains("--workspace")),
+        "{:?}",
+        own.calls
+    );
+    git(&repo, &["switch", "-q", "-c", "other", "main"]);
+    commit_change(&repo, "jojobot-bar", "bar");
+    let other = dev_run(&repo, &[], &[("BAR_OWN_CRATES", "1")]);
+    assert!(harness(&other).is_empty(), "{:?}", other.calls);
+    let _ = fs::remove_dir_all(&repo);
+}
+
 /// **An own-crates run over a diff that touches no package has nothing to run and
 /// passes.** The forge runs the job on every push the docs lane does not skip, and
 /// a scripts-only or workflow-only push has no crate; a red there would be a
