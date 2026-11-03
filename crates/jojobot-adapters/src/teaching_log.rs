@@ -21,7 +21,8 @@ use tokio::sync::Mutex;
 
 use crate::writer::Writer;
 
-use crate::dolt_log::{Companion, DoltLog};
+use crate::dolt::teaching::RowChange;
+use crate::dolt_log::DoltLog;
 use crate::fold::teachings::{held_after_contact, held_after_forget};
 
 pub mod codec;
@@ -83,26 +84,26 @@ struct Held {
     uncertain: BTreeSet<RunId>,
 }
 
-/// A log that commits legacy-row statements with its batches.
+/// A log that commits changes of the legacy rows with its batches.
 #[async_trait::async_trait]
-pub trait CompanionLog: LogStore {
-    async fn append_with(
+pub trait RowsLog: LogStore {
+    async fn append_with_rows(
         &self,
         head: Position,
         batch: &SealedBatch,
-        companions: Vec<Companion>,
+        rows: Vec<RowChange>,
     ) -> Result<Append, LogError>;
 }
 
 #[async_trait::async_trait]
-impl CompanionLog for DoltLog {
-    async fn append_with(
+impl RowsLog for DoltLog {
+    async fn append_with_rows(
         &self,
         head: Position,
         batch: &SealedBatch,
-        companions: Vec<Companion>,
+        rows: Vec<RowChange>,
     ) -> Result<Append, LogError> {
-        DoltLog::append_with(self, head, batch, companions).await
+        DoltLog::append_with_rows(self, head, batch, rows).await
     }
 }
 
@@ -110,7 +111,7 @@ impl CompanionLog for DoltLog {
 /// code, and the legacy rows its statements keep current in the batch's own
 /// transaction.
 struct Shadow {
-    log: Arc<dyn CompanionLog>,
+    log: Arc<dyn RowsLog>,
     legacy: BTreeSet<(Sid, String)>,
     report: Arc<crate::fold::shadow::Shadow>,
 }
@@ -122,21 +123,18 @@ impl Shadow {
             .compared_teaching(sid.as_str(), domain, log_holds, old_holds);
     }
 
-    fn statement(event: &TeachingEvent) -> Companion {
+    fn change(event: &TeachingEvent) -> RowChange {
         match event {
             TeachingEvent::Recorded {
                 run,
                 domain,
                 taught_at,
-            } => Companion {
-                sql: "INSERT INTO session_teaching (sid, domain, taught_at) VALUES (?, ?, ?)"
-                    .into(),
-                binds: vec![run.0.clone(), domain.clone(), taught_at.to_string()],
+            } => RowChange::Record {
+                sid: run.0.clone(),
+                domain: domain.clone(),
+                taught_at: *taught_at,
             },
-            TeachingEvent::Cleared { run } => Companion {
-                sql: "DELETE FROM session_teaching WHERE sid = ?".into(),
-                binds: vec![run.0.clone()],
-            },
+            TeachingEvent::Cleared { run } => RowChange::Forget { sid: run.0.clone() },
         }
     }
 
@@ -215,7 +213,7 @@ impl LoggedTeachings {
     /// **Open with the old path as a shadow.** Every batch carries the legacy
     /// row statements, and `marks` seed the old held set. The counts say how
     /// often the two answered and how often they differed, on `report`.
-    pub async fn open_shadowed<L: CompanionLog + 'static>(
+    pub async fn open_shadowed<L: RowsLog + 'static>(
         log: Arc<L>,
         marks: &[Mark],
         report: Arc<crate::fold::shadow::Shadow>,
@@ -430,8 +428,8 @@ impl LoggedTeachings {
         // The import's rows already exist, so only a live write carries them.
         let appended = match held.shadow.as_ref().filter(|_| with_rows) {
             Some(shadow) => {
-                let companions = events.iter().map(Shadow::statement).collect();
-                shadow.log.append_with(held.head, &batch, companions).await
+                let rows = events.iter().map(Shadow::change).collect();
+                shadow.log.append_with_rows(held.head, &batch, rows).await
             }
             None => self.log.append(held.head, &batch).await,
         };

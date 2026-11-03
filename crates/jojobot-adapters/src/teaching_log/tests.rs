@@ -396,22 +396,27 @@ impl LogStore for RowLog {
 }
 
 #[async_trait::async_trait]
-impl CompanionLog for RowLog {
-    async fn append_with(
+impl RowsLog for RowLog {
+    async fn append_with_rows(
         &self,
         head: Position,
         batch: &SealedBatch,
-        companions: Vec<Companion>,
+        rows: Vec<RowChange>,
     ) -> Result<Append, LogError> {
         let mut staged = self.rows.lock().unwrap().clone();
-        for companion in &companions {
-            if companion.sql.starts_with("INSERT") {
-                let key = (companion.binds[0].clone(), companion.binds[1].clone());
-                if staged.insert(key, companion.binds[2].clone()).is_some() {
-                    return Ok(Append::DefinitelyNotCommitted);
+        for change in &rows {
+            match change {
+                RowChange::Record {
+                    sid,
+                    domain,
+                    taught_at,
+                } => {
+                    let key = (sid.clone(), domain.clone());
+                    if staged.insert(key, taught_at.to_string()).is_some() {
+                        return Ok(Append::DefinitelyNotCommitted);
+                    }
                 }
-            } else {
-                staged.retain(|(sid, _), _| *sid != companion.binds[0]);
+                RowChange::Forget { sid } => staged.retain(|(held, _), _| held != sid),
             }
         }
         let appended = self.log.append(head, batch).await?;

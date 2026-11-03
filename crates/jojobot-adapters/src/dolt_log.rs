@@ -1,4 +1,5 @@
 //! Atomic event batches and a connection-lifetime commit fence.
+use crate::dolt::teaching::RowChange;
 use jojobot_domain::log::*;
 use serde::{Deserialize, Serialize};
 use sqlx::{AssertSqlSafe, Connection, MySqlConnection, MySqlPool, Row};
@@ -233,7 +234,7 @@ impl DoltLog {
         &self,
         head: Position,
         batch: SealedBatch,
-        companions: Vec<Companion>,
+        rows: Vec<RowChange>,
     ) -> Result<Append, LogError> {
         let mut session = self.0.session.lock().await;
         if self.ready(&mut session).await.is_err() {
@@ -284,12 +285,8 @@ impl DoltLog {
         if result.is_err() {
             return Ok(Append::Indeterminate);
         }
-        for companion in &companions {
-            let mut statement = sqlx::query(AssertSqlSafe(companion.sql.clone()));
-            for bind in &companion.binds {
-                statement = statement.bind(bind.clone());
-            }
-            match within(statement.execute(&mut *connection)).await {
+        for change in &rows {
+            match within(change.apply(&mut *connection)).await {
                 Ok(_) => {}
                 Err(LogError::Indeterminate) => return Ok(Append::Indeterminate),
                 Err(_) => {
@@ -392,30 +389,22 @@ impl Staged {
     }
 }
 
-/// One statement that commits in the same transaction as an event batch. Its
-/// binds are text.
-#[derive(Clone, Debug)]
-pub struct Companion {
-    pub sql: String,
-    pub binds: Vec<String>,
-}
-
 impl DoltLog {
-    /// **Append a batch and the companion statements as one transaction**, on
-    /// the same lock-holding connection and under the same fence as
-    /// [`LogStore::append`]. A companion the server refuses rolls the whole
+    /// **Append a batch and the changes of the legacy rows as one transaction**,
+    /// on the same lock-holding connection and under the same fence as
+    /// [`LogStore::append`]. A change the server refuses rolls the whole
     /// transaction back and answers `DefinitelyNotCommitted`. The legacy rows of
     /// a family that has not left the old path use this, so the rows and the
     /// events never disagree.
-    pub async fn append_with(
+    pub async fn append_with_rows(
         &self,
         head: Position,
         batch: &SealedBatch,
-        companions: Vec<Companion>,
+        rows: Vec<RowChange>,
     ) -> Result<Append, LogError> {
         let log = self.clone();
         let batch = batch.clone();
-        tokio::spawn(async move { log.append_owned(head, batch, companions).await })
+        tokio::spawn(async move { log.append_owned(head, batch, rows).await })
             .await
             .map_err(failed)?
     }

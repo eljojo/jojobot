@@ -229,21 +229,22 @@ async fn dolt_log_contract_native_dropped_commit_reply_recovers_exactly_once() {
     server.stop().await;
 }
 
-fn companion_row(sid: &str) -> Companion {
-    Companion {
-        sql: "INSERT INTO session_teaching (sid, domain, taught_at) VALUES (?, ?, ?)".into(),
-        binds: vec![sid.into(), "claims".into(), "2026-01-01T00:00:00Z".into()],
+fn recorded_row(sid: &str) -> RowChange {
+    RowChange::Record {
+        sid: sid.into(),
+        domain: "claims".into(),
+        taught_at: "2026-01-01T00:00:00Z".parse().unwrap(),
     }
 }
 
-/// **A companion statement commits with its batch.** The row and the batch are
-/// both there after one append.
+/// **A change of the legacy rows commits with its batch.** The row and the
+/// batch are both there after one append.
 #[tokio::test]
-async fn a_companion_row_commits_with_its_batch() {
+async fn a_row_change_commits_with_its_batch() {
     let (_scratch, mut server, pool, log) = fixture().await;
-    let next = batch("companion", 0, &[b"a"]);
+    let next = batch("rows", 0, &[b"a"]);
     assert_eq!(
-        log.append_with(Position(0), &next, vec![companion_row("homer")])
+        log.append_with_rows(Position(0), &next, vec![recorded_row("homer")])
             .await
             .unwrap(),
         Append::Committed(next.range())
@@ -258,20 +259,58 @@ async fn a_companion_row_commits_with_its_batch() {
     server.stop().await;
 }
 
-/// **A companion the server refuses leaves neither the row nor the batch**, and
-/// the log takes the next append at the same head.
+/// **Forgetting a run takes every one of its rows, in the batch's own commit**,
+/// and leaves the rows of another run.
 #[tokio::test]
-async fn a_refused_companion_leaves_no_batch() {
+async fn a_forget_row_change_takes_all_the_rows_of_its_run() {
+    let (_scratch, mut server, pool, log) = fixture().await;
+    let first = batch("rows-1", 0, &[b"a"]);
+    let other_domain = RowChange::Record {
+        sid: "homer".into(),
+        domain: "mail".into(),
+        taught_at: "2026-01-01T00:00:00Z".parse().unwrap(),
+    };
+    log.append_with_rows(
+        Position(0),
+        &first,
+        vec![recorded_row("homer"), other_domain, recorded_row("lisa")],
+    )
+    .await
+    .unwrap();
+    let second = batch("rows-2", 1, &[b"b"]);
+    assert_eq!(
+        log.append_with_rows(
+            Position(1),
+            &second,
+            vec![RowChange::Forget {
+                sid: "homer".into()
+            }]
+        )
+        .await
+        .unwrap(),
+        Append::Committed(second.range())
+    );
+    assert_eq!(rows_of(&pool, "homer").await, 0);
+    assert_eq!(rows_of(&pool, "lisa").await, 1);
+    drop(log);
+    server.stop().await;
+}
+
+/// **A change the server refuses leaves neither the row nor the batch**, and
+/// the log takes the next append at the same head. The second change repeats
+/// the first row's key, which the table refuses.
+#[tokio::test]
+async fn a_refused_row_change_leaves_no_batch() {
     let (_scratch, mut server, pool, log) = fixture().await;
     let next = batch("refused", 0, &[b"a"]);
-    let broken = Companion {
-        sql: "INSERT INTO no_such_table (x) VALUES (?)".into(),
-        binds: vec!["1".into()],
-    };
     assert_eq!(
-        log.append_with(Position(0), &next, vec![companion_row("marge"), broken])
-            .await
-            .unwrap(),
+        log.append_with_rows(
+            Position(0),
+            &next,
+            vec![recorded_row("marge"), recorded_row("marge")]
+        )
+        .await
+        .unwrap(),
         Append::DefinitelyNotCommitted
     );
     let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM session_teaching WHERE sid = 'marge'")
@@ -433,7 +472,7 @@ async fn the_tail_is_read_once_for_any_number_of_writes() {
 async fn the_marks_come_back_with_their_times() {
     let (_scratch, mut server, pool, log) = fixture().await;
     let next = batch("marks", 0, &[b"a"]);
-    log.append_with(Position(0), &next, vec![companion_row("homer")])
+    log.append_with_rows(Position(0), &next, vec![recorded_row("homer")])
         .await
         .unwrap();
     let marks = crate::dolt::teaching::DoltTeachings::open(pool.clone())
