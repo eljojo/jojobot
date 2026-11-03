@@ -73,14 +73,14 @@ jobs:
         with:
           fetch-depth: 0
       - name: Build-free gates
-        env:
-          BAR_RELEASE: ${{ forgejo.event_name == 'workflow_dispatch' && forgejo.event.inputs.release || '' }}
         run: |
           mkdir -p target/bar
           status=0
           nix develop -c make static >target/bar/static.log 2>&1 || status=$?
           cat target/bar/static.log
           exit "$status"
+        env:
+          BAR_RELEASE: ${{ forgejo.event_name == 'workflow_dispatch' && forgejo.event.inputs.release || '' }}
       - name: Served text snapshot
         run: |
           mkdir -p target/bar
