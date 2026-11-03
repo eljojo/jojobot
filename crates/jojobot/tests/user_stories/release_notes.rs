@@ -23,6 +23,7 @@ use super::dsl::{Session, Story};
 struct NoteOnDisk {
     folder: String,
     id: String,
+    title: String,
     narrows: bool,
 }
 
@@ -50,6 +51,12 @@ fn notes_on_disk() -> Vec<NoteOnDisk> {
                     .expect("a file name")
                     .to_string_lossy()
                     .into(),
+                title: text
+                    .lines()
+                    .find_map(|line| line.strip_prefix("title: "))
+                    .expect("a note has a title line")
+                    .trim()
+                    .to_string(),
                 narrows: text
                     .lines()
                     .take_while(|line| !line.trim().is_empty())
@@ -69,6 +76,59 @@ fn ids_named(body: &str) -> Vec<String> {
         .and_then(|line| line.strip_prefix("Notes: "))
         .map(|ids| ids.split(", ").map(String::from).collect())
         .unwrap_or_default()
+}
+
+/// **The shipped notes are more than one message holds, so a start sends them in
+/// several, and each message is whole.** The notes on disk together are longer
+/// than any one message a bot was sent, more than one message arrives, and in
+/// each the last line names exactly the notes whose titles stand in it, in that
+/// order, with the `For:` line and the three sections of each: no note is cut
+/// between two messages.
+fn splits_into_whole_messages(who: &str, bodies: &[String]) {
+    assert!(
+        bodies.len() > 1,
+        "the shipped notes are more than one message holds, so {who} is sent several: {bodies:?}"
+    );
+    let on_disk = notes_on_disk();
+    let longest = bodies.iter().map(String::len).max().unwrap_or_default();
+    assert!(
+        bodies.iter().map(String::len).sum::<usize>() > longest,
+        "no message holds every note"
+    );
+    for body in bodies {
+        let ids = ids_named(body);
+        assert!(!ids.is_empty(), "a message names its notes: {body}");
+        let titles_named: Vec<&str> = ids
+            .iter()
+            .map(|id| {
+                on_disk
+                    .iter()
+                    .find(|note| &note.id == id)
+                    .unwrap_or_else(|| panic!("{id} is not a note on disk"))
+                    .title
+                    .as_str()
+            })
+            .collect();
+        let titles_inside: Vec<&str> = body
+            .lines()
+            .filter_map(|line| line.strip_prefix("# "))
+            .collect();
+        assert_eq!(
+            titles_inside, titles_named,
+            "the notes a message names are the notes whose titles stand in it: {body}"
+        );
+        let lines = |prefix: &str| body.lines().filter(|line| line.starts_with(prefix)).count();
+        assert_eq!(
+            lines("For: "),
+            ids.len(),
+            "a For line for each note: {body}"
+        );
+        assert_eq!(
+            lines("## "),
+            3 * ids.len(),
+            "three whole sections for each note: {body}"
+        );
+    }
 }
 
 /// **The messages of a start hold every shipped note once, in the shape a note
@@ -91,6 +151,7 @@ fn holds_every_shipped_note_once(who: &str, bodies: &[String]) {
         sorted, shipped,
         "{who}'s messages name the notes this build ships: {bodies:?}"
     );
+    splits_into_whole_messages(who, bodies);
     let lines = |prefix: &str| {
         bodies
             .iter()

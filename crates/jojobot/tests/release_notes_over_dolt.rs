@@ -57,6 +57,27 @@ async fn from_the_system(mailboxes: &Arc<dyn Mailboxes>, box_name: &str) -> Vec<
 }
 
 /// The last line of a message, which names the notes it carries.
+/// **The ids of the notes on disk**, from the folders the build ships them from.
+fn shipped_note_ids_on_disk() -> Vec<String> {
+    let root =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../jojobot-mcp/release-notes");
+    let mut ids = Vec::new();
+    for folder in std::fs::read_dir(&root).expect("the release-notes folder reads") {
+        let folder = folder.expect("a folder entry").path();
+        for file in std::fs::read_dir(&folder).expect("a deploy folder reads") {
+            let file = file.expect("a file entry").path();
+            ids.push(
+                file.file_stem()
+                    .expect("a file name")
+                    .to_string_lossy()
+                    .into_owned(),
+            );
+        }
+    }
+    ids.sort();
+    ids
+}
+
 fn ledger_line(body: &str) -> &str {
     body.trim_end()
         .lines()
@@ -88,7 +109,34 @@ async fn over_the_real_store_a_start_sends_the_notes_and_the_next_start_sends_no
     // ledger is every one of those lines together.
     send_unsent_notes(&memory, &mailboxes, &Clock::default()).await;
     let first = from_the_system(&mailboxes, "homer").await;
-    assert!(!first.is_empty(), "messages from the system");
+    assert!(
+        first.len() > 1,
+        "the shipped notes are more than one message holds, so a start sends several: {first:?}"
+    );
+    // **No note is cut between two messages**: in each, the notes the last line
+    // names are the notes standing in it, and together the messages name every
+    // note on disk once.
+    let mut named: Vec<String> = Vec::new();
+    for message in &first {
+        let ids: Vec<&str> = ledger_line(&message.body)
+            .strip_prefix("Notes: ")
+            .expect("a message names its notes")
+            .split(", ")
+            .collect();
+        let lines = |prefix: &str| {
+            message
+                .body
+                .lines()
+                .filter(|line| line.starts_with(prefix))
+                .count()
+        };
+        assert_eq!(lines("# "), ids.len(), "a title for each named note");
+        assert_eq!(lines("For: "), ids.len(), "a For line for each named note");
+        assert_eq!(lines("## "), 3 * ids.len(), "three sections for each note");
+        named.extend(ids.iter().map(|id| id.to_string()));
+    }
+    named.sort();
+    assert_eq!(named, shipped_note_ids_on_disk(), "every note on disk once");
     for message in &first {
         let line = ledger_line(&message.body);
         assert!(
