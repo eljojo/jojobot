@@ -111,11 +111,15 @@ jobs:
     # The bar kills a test binary that runs past its own deadline (twenty minutes,
     # BINARY_DEADLINE in crates/jojobot-bar/src/deadline.rs), names it and keeps
     # its output, so a hang costs minutes and says where it is. This bound is the
-    # last resort, an hour as it was before it was raised to two: runs 762, 1640
-    # and 1650 were silent hangs, not slow progress, and a raised bound only held a
-    # runner longer. Measured 2026-10-26 from /actions/runs: in the last day 80 of
-    # 88 runs ended under 60 minutes, p50 30, p90 48, p95 51.
-    timeout-minutes: 60
+    # last resort, ninety minutes. It was an hour, and before that two hours: runs
+    # 762, 1640 and 1650 were silent hangs, not slow progress, and a raised bound
+    # only held a runner longer. Measured 2026-10-26 from /actions/runs: in the
+    # last day 80 of 88 runs ended under 60 minutes, p50 30, p90 48, p95 51. That
+    # was an idle runner pool. With 13 runs sharing it on 2026-11-03, run 2928
+    # printed a green verdict (184 suites, 4447 passed) and was killed at 60
+    # minutes, so a finished bar was thrown away. A hang still costs at most the
+    # test binary's own deadline, so 90 does not hold a runner longer for one.
+    timeout-minutes: 90
     steps:
       - name: Level
         run: |
