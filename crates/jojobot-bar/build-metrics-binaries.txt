@@ -73,6 +73,7 @@ test-dolt_race_through_writer
 test-dolt_refusal_order
 test-dolt_repair
 test-dolt_requests
+test-dolt_restore_atomic
 test-dolt_search_after_a_merge
 test-dolt_search_after_a_write
 test-dolt_search_after_an_entity_write
