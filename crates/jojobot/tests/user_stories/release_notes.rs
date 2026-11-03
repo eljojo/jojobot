@@ -79,8 +79,7 @@ fn ids_named(body: &str) -> Vec<String> {
 }
 
 /// **The shipped notes are more than one message holds, so a start sends them in
-/// several, and each message is whole.** The notes on disk together are longer
-/// than any one message a bot was sent, more than one message arrives, and in
+/// several, and each message is whole.** More than one message arrives, and in
 /// each the last line names exactly the notes whose titles stand in it, in that
 /// order, with the `For:` line and the three sections of each: no note is cut
 /// between two messages.
@@ -90,11 +89,6 @@ fn splits_into_whole_messages(who: &str, bodies: &[String]) {
         "the shipped notes are more than one message holds, so {who} is sent several: {bodies:?}"
     );
     let on_disk = notes_on_disk();
-    let longest = bodies.iter().map(String::len).max().unwrap_or_default();
-    assert!(
-        bodies.iter().map(String::len).sum::<usize>() > longest,
-        "no message holds every note"
-    );
     for body in bodies {
         let ids = ids_named(body);
         assert!(!ids.is_empty(), "a message names its notes: {body}");

@@ -56,7 +56,6 @@ async fn from_the_system(mailboxes: &Arc<dyn Mailboxes>, box_name: &str) -> Vec<
         .collect()
 }
 
-/// The last line of a message, which names the notes it carries.
 /// **The ids of the notes on disk**, from the folders the build ships them from.
 fn shipped_note_ids_on_disk() -> Vec<String> {
     let root =
@@ -78,6 +77,7 @@ fn shipped_note_ids_on_disk() -> Vec<String> {
     ids
 }
 
+/// The last line of a message, which names the notes it carries.
 fn ledger_line(body: &str) -> &str {
     body.trim_end()
         .lines()
