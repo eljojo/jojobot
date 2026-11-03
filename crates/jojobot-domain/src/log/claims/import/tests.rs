@@ -5,6 +5,8 @@ use jiff::Timestamp;
 use super::*;
 use crate::log::claims::State;
 use crate::log::claims::tests::{body, claim, key, object};
+use crate::memory::merge;
+use crate::memory::types::DeclaredType;
 use crate::memory::{FactId, FactStatus, KeyWrite, RETRACTS};
 
 fn at(second: i64) -> Option<Timestamp> {
@@ -51,6 +53,7 @@ fn fact(home: &str, local: &str, writes: Vec<FactWriteRow>) -> FactRow {
         local: local.into(),
         head,
         writes,
+        event_kind: None,
     }
 }
 
@@ -77,7 +80,7 @@ fn set(
 }
 
 fn state_of(rows: &Rows) -> State {
-    State::replay(&import(rows))
+    State::replay(&imported(rows))
 }
 
 fn stream<'a>(state: &'a State, subject: &str, k: &str) -> &'a [super::super::Write] {
@@ -95,7 +98,7 @@ fn an_entity_row_becomes_an_object_answering_to_its_handle() {
     row.aliases = vec!["Homie".into()];
     row.crm = Some("crm-7".into());
     row.taken_in = at(5);
-    let events = import(&Rows {
+    let events = imported(&Rows {
         entities: vec![row],
         ..Rows::default()
     });
@@ -111,7 +114,7 @@ fn an_entity_row_becomes_an_object_answering_to_its_handle() {
 /// An entity row with no moment stays without one.
 #[test]
 fn an_entity_row_with_no_moment_arrives_with_none() {
-    let events = import(&Rows {
+    let events = imported(&Rows {
         entities: vec![entity("k1", "person:homer")],
         ..Rows::default()
     });
@@ -220,7 +223,7 @@ fn an_unstamped_claim_and_write_get_no_moment() {
         field_writes: vec![write],
         ..Rows::default()
     };
-    let events = import(&rows);
+    let events = imported(&rows);
     assert!(
         events
             .iter()
@@ -235,7 +238,7 @@ fn an_unstamped_claim_and_write_get_no_moment() {
 fn a_head_that_differs_from_its_last_write_is_one_unstamped_revision() {
     let mut row = fact("k1", "f1", vec![write_of(1, "written", Some("run-a"), 1)]);
     row.head.content = "edited in the row".into();
-    let events = import(&Rows {
+    let events = imported(&Rows {
         entities: vec![entity("k1", "person:homer")],
         facts: vec![row],
         ..Rows::default()
@@ -366,7 +369,7 @@ fn a_merged_pair_arrives_interleaved_under_the_survivor() {
 fn a_folded_write_of_an_unmapped_claim_is_left_out() {
     let mut rows = merged_pair();
     rows.merges[0].claims.clear();
-    let events = import(&rows);
+    let events = imported(&rows);
     assert_eq!(
         events
             .iter()
@@ -374,6 +377,122 @@ fn a_folded_write_of_an_unmapped_claim_is_left_out() {
             .count(),
         1
     );
+}
+
+fn imported(rows: &Rows) -> Vec<Event<ClaimEvent>> {
+    import(rows).unwrap()
+}
+
+fn declaration(name: &str, must: Option<&str>) -> DeclaredType {
+    DeclaredType {
+        name: name.into(),
+        fields: Vec::new(),
+        origin: crate::memory::types::Origin::Declared,
+        must: must.map(String::from),
+    }
+}
+
+/// A type declared twice: the history keeps both, the newest is in force, and
+/// each declaration keeps its session and moment.
+#[test]
+fn a_type_written_twice_arrives_as_two_declarations() {
+    let rows = Rows {
+        type_writes: vec![
+            TypeWriteRow {
+                ordinal: 2,
+                session: Some("run-b".into()),
+                written_at: at(2),
+                declaration: declaration("pet", Some("newer")),
+            },
+            TypeWriteRow {
+                ordinal: 1,
+                session: Some("run-a".into()),
+                written_at: None,
+                declaration: declaration("pet", None),
+            },
+        ],
+        ..Rows::default()
+    };
+    let events = imported(&rows);
+    assert_eq!(events[0].run, Some(RunId("run-a".into())));
+    assert_eq!(events[0].imported_source_time, None);
+    assert_eq!(events[1].imported_source_time, at(2));
+    let state = State::replay(&events);
+    let kind = object("pet");
+    assert_eq!(state.declarations_of(&kind).len(), 2);
+    assert_eq!(
+        state.declared(&kind).unwrap().must.as_deref(),
+        Some("newer")
+    );
+}
+
+/// A claim holding an event_kind is refused by name, and so is a metadata row.
+#[test]
+fn an_event_kind_or_a_metadata_row_is_refused_by_name() {
+    let mut held = fact("k1", "f1", vec![write_of(1, "x", None, 1)]);
+    held.event_kind = Some("visit".into());
+    let refused = import(&Rows {
+        facts: vec![held],
+        ..Rows::default()
+    });
+    assert_eq!(
+        refused,
+        Err(ImportError::EventKindHeld {
+            home: "k1".into(),
+            local: "f1".into()
+        })
+    );
+    let refused = import(&Rows {
+        metadata: vec![MetadataRow {
+            home: object("k1"),
+            local: "f1".into(),
+            key: "colour".into(),
+            value: "red".into(),
+        }],
+        ..Rows::default()
+    });
+    assert_eq!(
+        refused,
+        Err(ImportError::MetadataHeld {
+            home: "k1".into(),
+            local: "f1".into(),
+            key: "colour".into()
+        })
+    );
+}
+
+/// The folded side's former handle still resolves to the survivor, and a moved
+/// claim keeps the label and the lineage it wears under the survivor.
+#[test]
+fn a_merged_pairs_former_handle_and_moved_claim_survive() {
+    let mut rows = merged_pair();
+    rows.former_handles.push(FormerHandleRow {
+        former: "person:bart".into(),
+        object: object("k2"),
+        ordinal: 1,
+    });
+    let lineage = Some(record_id(&object("k1"), "f1"));
+    rows.facts[1].head.derived_from = lineage.clone();
+    rows.facts[1].writes[0].claim.derived_from = lineage.clone();
+    let state = state_of(&rows);
+    assert_eq!(
+        state.retired_addresses.get("person:bart"),
+        Some(&object("k2"))
+    );
+    assert_eq!(state.survivor(&object("k2")), &object("k1"));
+    let moved = state.record(&record_id(&object("k1"), "f9")).unwrap();
+    assert_eq!(moved.claim.label, "f9");
+    assert_eq!(moved.claim.derived_from, lineage);
+}
+
+/// The folded fields hold on a merged fixture: the survivor serves the newest
+/// write of each key across both sides.
+#[test]
+fn a_merged_fixture_folds_to_what_the_rows_fold_to() {
+    let rows = merged_pair();
+    let state = state_of(&rows);
+    assert_eq!(state.fields(&object("k1"), &[]), folded_over(&rows, "k1"));
+    assert_eq!(state.fields(&object("k1"), &[])["mood"], "theirs");
 }
 
 /// The spelling of a claim's identity is stored on the log and nothing outside
@@ -456,17 +575,56 @@ fn drawn(dice: &mut Dice) -> Rows {
 /// The fold as the store reads it: the stored writes of a thing, joined to the
 /// head of their claim, handed to the one fold. It reads rows and never events.
 fn folded_over(rows: &Rows, thing: &str) -> BTreeMap<String, String> {
+    let mut held: std::collections::HashMap<String, Vec<KeyWrite>> = rows
+        .entities
+        .iter()
+        .map(|e| (e.key.0.clone(), stored_writes(rows, &e.key.0)))
+        .collect();
+    let mut steps: Vec<_> = rows.merges.iter().collect();
+    steps.sort_by_key(|step| step.no);
+    let steps: Vec<merge::MergeStep> = steps
+        .into_iter()
+        .map(|step| merge::MergeStep {
+            merge_no: step.no,
+            folded: step.folded.0.clone(),
+            survivor: step.survivor.0.clone(),
+            claims: step.claims.iter().cloned().collect(),
+        })
+        .collect();
+    merge::apply_merges(&mut held, &steps);
+    crate::memory::folded_fields(&held.remove(thing).unwrap_or_default(), &[])
+}
+
+/// The claim a stored write names: where it is filed, or where the merge that
+/// moved it filed it.
+fn claim_of<'a>(rows: &'a Rows, write: &FieldWriteRow) -> Option<&'a FactRow> {
+    let at = |home: &ObjectId, local: &str| {
+        rows.facts
+            .iter()
+            .find(|f| &f.home == home && f.local == local)
+    };
+    at(&write.fact_home, &write.fact_local).or_else(|| {
+        let step = rows
+            .merges
+            .iter()
+            .find(|step| step.folded == write.entity)?;
+        let (_, new) = step
+            .claims
+            .iter()
+            .find(|(old, _)| *old == write.fact_local)?;
+        at(&step.survivor, new)
+    })
+}
+
+/// The writes stored on one thing, each joined to the head of its claim.
+fn stored_writes(rows: &Rows, thing: &str) -> Vec<KeyWrite> {
     let mut writes = Vec::new();
     for write in rows
         .field_writes
         .iter()
         .filter(|w| w.entity == object(thing))
     {
-        let Some(fact) = rows
-            .facts
-            .iter()
-            .find(|f| f.home == write.fact_home && f.local == write.fact_local)
-        else {
+        let Some(fact) = claim_of(rows, write) else {
             continue;
         };
         if !crate::memory::reaches_the_thing(write.class) {
@@ -485,7 +643,7 @@ fn folded_over(rows: &Rows, thing: &str) -> BTreeMap<String, String> {
                 FieldValue::Set(v) => Some(v.clone()),
                 FieldValue::Clear => None,
             },
-            fact: FactId(fact.head.label.clone()),
+            fact: FactId(write.fact_local.clone()),
             status: fact.head.status,
             provenance: fact.head.provenance,
             standing: fact.head.standing,
@@ -496,7 +654,7 @@ fn folded_over(rows: &Rows, thing: &str) -> BTreeMap<String, String> {
             written_at: write.written_at,
         });
     }
-    crate::memory::folded_fields(&writes, &[])
+    writes
 }
 
 /// Mapping the rows and applying the events gives the folded fields the fold
@@ -559,7 +717,7 @@ fn no_stamp_is_invented() {
             )
             .chain(rows.entities.iter().filter_map(|e| e.taken_in))
             .collect();
-        for event in import(&rows) {
+        for event in imported(&rows) {
             if let Some(stamp) = event.imported_source_time {
                 assert!(given.contains(&stamp), "seed {seed}: {stamp} not a row's");
             }

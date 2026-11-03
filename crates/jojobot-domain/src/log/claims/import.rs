@@ -22,12 +22,45 @@ use std::collections::{BTreeMap, HashMap};
 
 use jiff::Timestamp;
 
-use super::{ClaimBody, ClaimEvent, FieldValue, KeyId, KindId, ObjectBody};
+use super::{ClaimBody, ClaimEvent, FieldValue, KeyId, KindId, MovedRecord, ObjectBody};
 use crate::actor::Actor;
 use crate::log::{Event, ObjectId, RecordId, RunId};
 use crate::memory::merge::{self, MergeStep, ServedWrite};
+use crate::memory::types::DeclaredType;
 use crate::memory::write_origin::{self, WriteOrigin};
 use crate::memory::{EntityId, WriteClass};
+
+/// **A row the log has no kind for.** The column and the table are unwritten
+/// in production; a row that holds one is refused by name and never dropped.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ImportError {
+    #[error("claim {home}/{local} holds an event_kind, which no event carries")]
+    EventKindHeld { home: String, local: String },
+    #[error("claim {home}/{local} holds a metadata row under {key}, which no event carries")]
+    MetadataHeld {
+        home: String,
+        local: String,
+        key: String,
+    },
+}
+
+/// **One `type_write` row**, its declaration decoded.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypeWriteRow {
+    pub ordinal: u32,
+    pub session: Option<String>,
+    pub written_at: Option<Timestamp>,
+    pub declaration: DeclaredType,
+}
+
+/// **One `fact_event_metadata` row.**
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MetadataRow {
+    pub home: ObjectId,
+    pub local: String,
+    pub key: String,
+    pub value: String,
+}
 
 /// The envelope kind and meaning every imported claim event wears.
 pub const EVENT_KIND: &str = "claim";
@@ -83,6 +116,8 @@ pub struct FactRow {
     /// The row as it stands.
     pub head: ClaimBody,
     pub writes: Vec<FactWriteRow>,
+    /// The `event_kind` column; `None` is the only value that imports.
+    pub event_kind: Option<String>,
 }
 
 /// **One `field_write` row.**
@@ -120,6 +155,8 @@ pub struct Rows {
     pub facts: Vec<FactRow>,
     pub field_writes: Vec<FieldWriteRow>,
     pub merges: Vec<MergeRow>,
+    pub type_writes: Vec<TypeWriteRow>,
+    pub metadata: Vec<MetadataRow>,
 }
 
 /// **The identity a claim is filed under in the log**: its home and local id.
@@ -255,7 +292,20 @@ fn placed_by_merges(rows: &Rows) -> HashMap<usize, (ObjectId, u64, String)> {
 
 /// **The events that make the state today's rows serve.** Objects first, then
 /// the claims, then the key writes, then the redirects of the merges.
-pub fn import(rows: &Rows) -> Vec<Event<ClaimEvent>> {
+pub fn import(rows: &Rows) -> Result<Vec<Event<ClaimEvent>>, ImportError> {
+    if let Some(fact) = rows.facts.iter().find(|fact| fact.event_kind.is_some()) {
+        return Err(ImportError::EventKindHeld {
+            home: fact.home.0.clone(),
+            local: fact.local.clone(),
+        });
+    }
+    if let Some(row) = rows.metadata.first() {
+        return Err(ImportError::MetadataHeld {
+            home: row.home.0.clone(),
+            local: row.local.clone(),
+            key: row.key.clone(),
+        });
+    }
     let mut events = Vec::new();
     for row in &rows.entities {
         events.push(envelope(
@@ -285,6 +335,19 @@ pub fn import(rows: &Rows) -> Vec<Event<ClaimEvent>> {
             object: row.key.clone(),
             address: row.handle.clone(),
         }));
+    }
+    let mut declared: Vec<&TypeWriteRow> = rows.type_writes.iter().collect();
+    declared.sort_by_key(|row| (row.declaration.name.clone(), row.ordinal));
+    for row in declared {
+        events.push(envelope(
+            None,
+            row.session.clone(),
+            row.written_at,
+            ClaimEvent::TypeDeclared {
+                kind: ObjectId(row.declaration.name.clone()),
+                declaration: row.declaration.clone(),
+            },
+        ));
     }
     for fact in &rows.facts {
         events.extend(claim_events(fact));
@@ -330,11 +393,19 @@ pub fn import(rows: &Rows) -> Vec<Event<ClaimEvent>> {
         events.push(plain(ClaimEvent::ObjectsMerged {
             folded: step.folded.clone(),
             survivor: step.survivor.clone(),
-            records: Vec::new(),
+            // The claims the merge gave a new id keep the label they now wear.
+            records: step
+                .claims
+                .iter()
+                .map(|(_, new)| MovedRecord {
+                    record: record_id(&step.survivor, new),
+                    label: new.clone(),
+                })
+                .collect(),
             writes: Vec::new(),
         }));
     }
-    events
+    Ok(events)
 }
 
 fn find_fact<'a>(rows: &'a Rows, home: &ObjectId, local: &str) -> Option<&'a FactRow> {
