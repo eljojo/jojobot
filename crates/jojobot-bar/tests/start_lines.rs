@@ -62,6 +62,18 @@ fn the_startup_branch_banner_names_omitted_work_for_each_selection() {
         ("report", omitted("report"), false, true),
         ("rooms", omitted("rooms"), true, false),
         ("default", both, false, false),
+        // A push runs the rooms only when a room file changed (rule 760).
+        (
+            "push",
+            left.split("forgejo.event_name == 'push' && '")
+                .nth(1)
+                .expect("a push says what it leaves")
+                .split('\'')
+                .next()
+                .unwrap(),
+            false,
+            true,
+        ),
     ] {
         assert_eq!(
             words.contains("report"),

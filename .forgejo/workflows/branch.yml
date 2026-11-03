@@ -50,7 +50,7 @@ concurrency:
 
 env:
   BAR_WORKFLOW_JOBS: ${{ forgejo.event.inputs.job || 'report, rooms' }}
-  BAR_BOUNDARY_LEFT: ${{ forgejo.event.inputs.job == 'report' && 'rooms, history-eligible slow tests, year' || forgejo.event.inputs.job == 'rooms' && 'report tests, year' || 'history-eligible slow tests, year' }}
+  BAR_BOUNDARY_LEFT: ${{ forgejo.event.inputs.job == 'report' && 'rooms, history-eligible slow tests, year' || forgejo.event.inputs.job == 'rooms' && 'report tests, year' || forgejo.event_name == 'push' && 'rooms unless a room file changed, history-eligible slow tests, year' || 'history-eligible slow tests, year' }}
   BAR_CI_BASE: ${{ forgejo.event.before }}
   # Select only on working-branch pushes. Dispatch and every boundary lane
   # keep their full plan. A job with no trunk line leaves the base unset, and the selector runs everything.
