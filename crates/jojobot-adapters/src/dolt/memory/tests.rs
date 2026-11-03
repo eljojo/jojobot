@@ -3423,3 +3423,28 @@ async fn a_record_filed_by_a_folded_bot_makes_its_survivor_a_writer_in_the_real_
     .await;
     store.stop().await;
 }
+
+/// **A record that sets a bot request's key makes its filer a writer of the
+/// thread**, on the real store: the writes it reads to tell a ceiling's setting
+/// from a fill leave the request keys out.
+#[tokio::test]
+async fn a_record_setting_a_request_key_makes_its_filer_a_writer_in_the_real_store() {
+    let scratch = Scratch::new("request-key-filler");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "request_key_filler")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    let memory = DoltMemory::open(pool.clone());
+    jojobot_domain::memory::kinds::seed(&memory)
+        .await
+        .expect("the kinds are seeded");
+
+    jojobot_domain::memory::testing::contract::a_record_setting_a_request_key_makes_its_filer_a_writer_of_the_thread(
+        &memory,
+    )
+    .await;
+    store.stop().await;
+}

@@ -19564,6 +19564,7 @@ macro_rules! all_cases {
         $m!(a_dropped_thought_is_archived_by_the_session_that_captured($store));
         $m!(a_record_filed_by_a_folded_bot_makes_its_survivor_a_writer($store));
         $m!(a_run_with_no_session_row_that_filled_a_thread_is_a_writer_of_it($store));
+        $m!(a_record_setting_a_request_key_makes_its_filer_a_writer_of_the_thread($store));
         $m!(keys_holding_answers_each_leaf_as_a_filter_reads_it($store));
         $m!(keys_holding_finds_the_decisions_that_name_a_handle($store));
         $m!(a_retired_chain_of_decisions_reads_on_to_the_one_that_stands($store));
