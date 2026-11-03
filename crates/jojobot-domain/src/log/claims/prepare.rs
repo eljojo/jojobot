@@ -8,7 +8,8 @@
 //!
 //! 1. the write alone: a setting with no value, a describing key set on a thing;
 //! 2. the subject, then the edge's object, then the refs, then the objects a
-//!    reference field names, then the claim the write is derived from.
+//!    reference field names, then the claim the write is derived from;
+//! 3. the number a container's member asks for, when another member holds it.
 //!
 //! The write is judged first because it needs no object: it is a fault of the
 //! request, and a store that named a missing subject first would leave the
@@ -77,6 +78,14 @@ pub enum Refusal {
     UnknownSourceHome(String),
     /// The home is known and holds no claim under the label.
     UnknownSourceClaim(String),
+    /// A container numbers its members, and another member holds the number the
+    /// write asks for. An archived member holds its number too.
+    NumberHeld {
+        container: ObjectId,
+        key: String,
+        number: u64,
+        holder: ObjectId,
+    },
 }
 
 /// **The events a capture writes**, in the order they apply: the claim, then one
@@ -148,6 +157,28 @@ pub fn prepare(
         ),
         None => None,
     };
+
+    // The last fault in the order: it needs the subject and nothing else.
+    for (container, numbers_by) in state.numbering_scopes(&home) {
+        let Some(number) = request
+            .fields
+            .iter()
+            .find(|(key, _)| key.trim() == numbers_by)
+            .and_then(|(_, value)| memory::numbered::whole_number(value))
+        else {
+            continue;
+        };
+        if let Some(holder) = state.numbered_member(&container, &numbers_by, number)
+            && holder != &home
+        {
+            return Err(Refusal::NumberHeld {
+                container,
+                key: numbers_by,
+                number,
+                holder: holder.clone(),
+            });
+        }
+    }
 
     let draft = &request.draft;
     let claim = ClaimBody {

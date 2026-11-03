@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::super::tests::{apply, body, claim, created, day, object, record, replay, write};
 use super::super::{ClaimEvent, ObjectBody, State};
 use super::{CaptureRequest, Draft, Refusal, prepare};
+use crate::memory::numbered::NUMBERS_BY;
 use crate::memory::types::{DeclaredType, Field, ValueType};
 use crate::memory::{FactStatus, Provenance, Standing};
 
@@ -198,5 +199,97 @@ fn a_key_takes_the_next_place_in_its_stream() {
     assert_eq!(
         places,
         vec![("colour".to_string(), 5), ("size".to_string(), 1)]
+    );
+}
+
+/// A container `coll` numbering by `num`, with a live member holding 1, an
+/// archived member holding 2, and a member `m3` holding nothing yet.
+fn numbered_world() -> (State, Vec<DeclaredType>) {
+    let member = |id: &str, archived: bool| {
+        vec![
+            ClaimEvent::ObjectCreated {
+                object: object(id),
+                body: ObjectBody {
+                    parent: Some(object("coll")),
+                    archived,
+                    ..body("thing", id)
+                },
+            },
+            ClaimEvent::AddressBound {
+                object: object(id),
+                address: id.to_string(),
+            },
+        ]
+    };
+    let holds = |record_id: &str, subject: &str, k: &str, value: &str| {
+        vec![
+            created(record_id, claim(&format!("f{record_id}"), subject, "c", 1)),
+            write(record_id, subject, k, 1, value),
+        ]
+    };
+    let events = [
+        thing("coll"),
+        holds("c1", "coll", NUMBERS_BY, "num"),
+        member("m1", false),
+        holds("n1", "m1", "num", "1"),
+        member("m2", true),
+        holds("n2", "m2", "num", "2"),
+        member("m3", false),
+    ]
+    .concat();
+    (replay(&events), Vec::new())
+}
+
+fn numbering(subject: &str, number: &str) -> CaptureRequest {
+    CaptureRequest {
+        fields: BTreeMap::from([("num".into(), number.into())]),
+        ..request(subject)
+    }
+}
+
+/// **No two members of a container hold one number**, and an archived member
+/// keeps its own.
+#[test]
+fn a_member_cannot_take_a_number_another_member_holds() {
+    let (state, declared) = numbered_world();
+    let held = |number: u64, holder: &str| {
+        Err(Refusal::NumberHeld {
+            container: object("coll"),
+            key: "num".into(),
+            number,
+            holder: object(holder),
+        })
+    };
+    assert_eq!(
+        prepare(&state, &declared, &numbering("m3", "1")),
+        held(1, "m1"),
+        "a live member's number"
+    );
+    assert_eq!(
+        prepare(&state, &declared, &numbering("m3", "2")),
+        held(2, "m2"),
+        "an archived member's number"
+    );
+    assert!(
+        prepare(&state, &declared, &numbering("m3", "3")).is_ok(),
+        "a number nobody holds"
+    );
+    assert!(
+        prepare(&state, &declared, &numbering("m1", "1")).is_ok(),
+        "a member keeps writing the number it holds"
+    );
+}
+
+/// A number is judged after every name the write mentions.
+#[test]
+fn a_missing_source_is_told_before_a_held_number() {
+    let (state, declared) = numbered_world();
+    let request = CaptureRequest {
+        derived_from: Some("nobody#f1".into()),
+        ..numbering("m3", "1")
+    };
+    assert_eq!(
+        prepare(&state, &declared, &request),
+        Err(Refusal::UnknownSourceHome("nobody#f1".into()))
     );
 }

@@ -120,6 +120,18 @@ impl State {
             .next()
     }
 
+    /// **The containers above `member` that number their members**, nearest
+    /// first, each with the key it numbers by.
+    pub(super) fn numbering_scopes(&self, member: &ObjectId) -> Vec<(ObjectId, String)> {
+        self.ancestors(member)
+            .into_iter()
+            .filter_map(|container| {
+                let key = self.numbers_by(&container)?;
+                Some((container, key))
+            })
+            .collect()
+    }
+
     /// **The claim an address names**: a spelling of the object, a `#`, and the
     /// label the claim is served under. The spelling may be one the object
     /// answers to now or one it gave up, and a merged object's follows it to its
