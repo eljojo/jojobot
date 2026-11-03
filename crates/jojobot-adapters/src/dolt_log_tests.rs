@@ -391,6 +391,39 @@ async fn a_rolled_back_transaction_leaves_neither_rows_nor_batch() {
     server.stop().await;
 }
 
+/// **A read inside a recovery's fence uses the reader that fence opened, and no
+/// other.** A closed reader makes the read fail, so the read cannot have used
+/// the log's own connection; a live one answers; and with no fence in scope the
+/// read is the ordinary one.
+#[tokio::test]
+async fn a_read_inside_a_fence_uses_the_fenced_reader() {
+    let (_scratch, mut server, pool, log) = fixture().await;
+    let next = batch("fenced", 0, &[b"a"]);
+    log.append(Position(0), &next).await.unwrap();
+    let options = (*pool.connect_options()).clone();
+    let closed = MySqlPoolOptions::new()
+        .max_connections(1)
+        .connect_with(options.clone())
+        .await
+        .unwrap();
+    closed.close().await;
+    let refused = crate::writer::sql::reloading(closed, log.read_from(Position(0), 10)).await;
+    assert!(
+        refused.is_err(),
+        "the read did not use the fenced reader: {refused:?}"
+    );
+    let live = MySqlPoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .unwrap();
+    let answered = crate::writer::sql::reloading(live, log.read_from(Position(0), 10)).await;
+    assert_eq!(answered.unwrap(), std::slice::from_ref(&next));
+    assert_eq!(log.read_from(Position(0), 10).await.unwrap(), [next]);
+    drop(log);
+    server.stop().await;
+}
+
 /// **The tail is read when the log opens**, so the first write after it reads
 /// nothing: one read after open, still one after a write.
 #[tokio::test]

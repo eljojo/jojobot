@@ -111,8 +111,14 @@ pub(crate) async fn reading<F: Future>(read: F) -> F::Output {
     READING.scope((), read).await
 }
 
-pub(super) async fn reloading<F: Future>(pool: MySqlPool, read: F) -> F::Output {
+pub(crate) async fn reloading<F: Future>(pool: MySqlPool, read: F) -> F::Output {
     READER.scope(pool, reading(read)).await
+}
+
+/// **The reader a recovery opened after its fence**, when the read runs inside
+/// one. A read made there must use it and no other connection.
+pub(crate) fn fenced_reader() -> Option<MySqlPool> {
+    READER.try_with(Clone::clone).ok()
 }
 
 /// Capture before spawning: loader tasks must use the same fenced reader.

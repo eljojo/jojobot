@@ -34,6 +34,20 @@ struct Session {
     delayed: bool,
 }
 
+enum Reader {
+    Fenced(sqlx::pool::PoolConnection<sqlx::MySql>),
+    Fresh(MySqlConnection),
+}
+
+impl Reader {
+    fn connection(&mut self) -> &mut MySqlConnection {
+        match self {
+            Self::Fenced(connection) => connection,
+            Self::Fresh(connection) => connection,
+        }
+    }
+}
+
 fn failed(error: impl std::fmt::Display) -> LogError {
     LogError::Store(error.to_string())
 }
@@ -154,6 +168,16 @@ impl DoltLog {
     /// reads the tail once, after the fence.
     fn forget_head(&self) {
         *self.0.head.lock().expect("the head is not poisoned") = None;
+    }
+
+    /// **The connection a read runs on.** Inside a recovery's fence the read uses
+    /// the reader that fence opened, and no other: a read made on any other
+    /// connection could meet a commit the fence has not yet settled.
+    async fn reader(&self) -> Result<Reader, LogError> {
+        if let Some(pool) = crate::writer::sql::fenced_reader() {
+            return Ok(Reader::Fenced(pool.acquire().await.map_err(failed)?));
+        }
+        Ok(Reader::Fresh(Self::fresh(&self.0.pool).await?))
     }
 
     async fn fresh(pool: &MySqlPool) -> Result<MySqlConnection, LogError> {
@@ -438,9 +462,9 @@ impl LogStore for DoltLog {
     ) -> Result<Vec<SealedBatch>, LogError> {
         let mut session = self.0.session.lock().await;
         self.ready(&mut session).await?;
-        let mut reader = Self::fresh(&self.0.pool).await?;
+        let mut reader = self.reader().await?;
         let rows = sqlx::query("SELECT first_position, last_position, payload FROM event_log WHERE first_position IS NOT NULL AND last_position > ? ORDER BY first_position LIMIT ?")
-            .bind(position.0).bind(bound as u64).fetch_all(&mut reader).await.map_err(failed)?;
+            .bind(position.0).bind(bound as u64).fetch_all(reader.connection()).await.map_err(failed)?;
         rows.into_iter()
             .map(|row| {
                 let batch =
@@ -459,10 +483,10 @@ impl LogStore for DoltLog {
     async fn load_snapshot(&self) -> Result<Option<ValidatedSnapshot>, LogError> {
         let mut session = self.0.session.lock().await;
         self.ready(&mut session).await?;
-        let mut reader = Self::fresh(&self.0.pool).await?;
+        let mut reader = self.reader().await?;
         let bytes: Option<Vec<u8>> =
             sqlx::query_scalar("SELECT payload FROM event_log WHERE slot = 'snapshot'")
-                .fetch_optional(&mut reader)
+                .fetch_optional(reader.connection())
                 .await
                 .map_err(failed)?;
         bytes.map(|bytes| decode_snapshot(&bytes)).transpose()
