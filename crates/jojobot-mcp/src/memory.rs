@@ -225,6 +225,38 @@ impl Jojobot {
         Ok(held)
     }
 
+    /// **The lock a write of a bot request's spec is made under**, held from the
+    /// read of the highest generation to the write that stores the number. It is
+    /// the placement lock a list's writes already take, scoped to a request, so
+    /// two writes of one request's spec do not read one number. `None` for a
+    /// subject that is no request. The caller must not hold the placement lock of
+    /// the same subject already: it is not re-entrant.
+    // TEMPORARY(9.3.3): the spec write's admission moves into prepare in the one
+    // writer, which is serialized and reads the highest generation from the
+    // State's GENERATION stream; this lock and the history read go with it.
+    pub(crate) async fn hold_for_a_request_spec(
+        &self,
+        subject: &EntityId,
+    ) -> Result<Option<tokio::sync::OwnedMutexGuard<()>>, MemoryError> {
+        match jojobot_domain::memory::bot_request::is_request(subject) {
+            true => self.hold_placing(subject).await.map(Some),
+            false => Ok(None),
+        }
+    }
+
+    /// **The highest generation ever written on a request**, from the history of
+    /// the key, retracted and archived claims included.
+    pub(crate) async fn highest_generation_ever(
+        &self,
+        subject: &EntityId,
+    ) -> Result<u64, MemoryError> {
+        let writes = self
+            .memory
+            .history(subject, jojobot_domain::memory::bot_request::GENERATION)
+            .await?;
+        Ok(jojobot_domain::memory::bot_request::highest_generation_ever(&writes))
+    }
+
     /// The key a thing's placement lock is held under.
     pub(crate) async fn placing_key(&self, thing: &EntityId) -> Result<String, MemoryError> {
         let known = self.memory.list_entities(None).await?;

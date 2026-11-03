@@ -1222,9 +1222,15 @@ impl Jojobot {
         // document's sections and a list's entries are placed under, so two callers
         // changing one list read one after the other. A list takes it for its
         // entries whether or not a delta is sent, and it is taken once.
+        //
+        // **A bot request's spec is written under it too**, so the highest generation
+        // read below is still the highest when the claim carrying the next one lands.
+        // TEMPORARY(9.3.3): prepare in the one writer replaces this (see
+        // `hold_for_a_request_spec`).
         let _placing = if !mode.placing_held
             && (subject_kind == Some(EntityKind::LIST)
-                || Self::changes_a_list_by_item(&args.sets_add, &args.sets_remove))
+                || Self::changes_a_list_by_item(&args.sets_add, &args.sets_remove)
+                || jojobot_domain::memory::bot_request::is_request(&subject))
         {
             match self.hold_placing(&subject).await {
                 Ok(guard) => Some(guard),
@@ -1343,11 +1349,16 @@ impl Jojobot {
                 Ok(held) => held,
                 Err(e) => return memory_declined("capture", e).map(Err),
             };
+            let highest = match self.highest_generation_ever(&subject).await {
+                Ok(highest) => highest,
+                Err(e) => return memory_declined("capture", e).map(Err),
+            };
             if let Some(next) = jojobot_domain::memory::bot_request::next_generation(
                 &subject,
                 &held,
                 &reaching,
                 &[],
+                highest,
             ) {
                 fields.insert(
                     jojobot_domain::memory::bot_request::GENERATION.to_string(),

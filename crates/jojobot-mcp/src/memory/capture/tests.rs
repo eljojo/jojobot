@@ -4571,3 +4571,78 @@ async fn a_list_merged_into_itself_is_refused_and_does_not_wait_on_its_own_lock(
 
     assert_eq!(answer["status"], "blocked", "{answer}");
 }
+
+/// **Two specs written to one request at the same moment get two generations.**
+/// Each call reads the highest generation ever written, adds one and stores it in
+/// its own claim; with nothing holding the request between the read and the write,
+/// both read the same number and name two specs with one.
+#[tokio::test]
+async fn two_specs_written_at_the_same_moment_get_two_generations() {
+    let (a, b, memory) = two_connections();
+    ensure(&a, "bot:otto").await;
+    ensure(&a, "bot:lisa").await;
+    ensure(&a, "bot-request:theta").await;
+    // The chart is placed in the store directly: only the head of the chart may
+    // place a bot, and the case is about the writes that follow.
+    memory
+        .capture(jojobot_domain::memory::NewFact {
+            fields: [("reports_to".to_string(), "bot:otto".to_string())].into(),
+            sets: ["reports_to".to_string()].into(),
+            ..jojobot_domain::memory::NewFact::about(
+                EntityId::person("bot:lisa"),
+                "reports to otto",
+                jiff::civil::date(2026, 10, 1),
+            )
+        })
+        .await
+        .expect("the chart is placed");
+    async fn writing(who: &Jojobot, desired: &str) -> serde_json::Value {
+        capture_ok(
+            who,
+            CaptureArgs {
+                sets: Some(
+                    [("desired".to_string(), desired.to_string())]
+                        .into_iter()
+                        .collect(),
+                ),
+                ..capture_args("bot-request:theta", "a spec")
+            },
+        )
+        .await
+    }
+    let first = capture_ok(
+        &a,
+        CaptureArgs {
+            sets: Some(
+                [
+                    ("target_bot".to_string(), "bot:lisa".to_string()),
+                    ("desired".to_string(), "running".to_string()),
+                ]
+                .into_iter()
+                .collect(),
+            ),
+            ..capture_args("bot-request:theta", "the first spec")
+        },
+    )
+    .await;
+    assert!(first["address"].as_str().is_some(), "{first}");
+
+    tokio::join!(writing(&a, "stopped"), writing(&b, "paused"));
+
+    let mut written: Vec<u64> = memory
+        .history(
+            &EntityId::person("bot-request:theta"),
+            jojobot_domain::memory::bot_request::GENERATION,
+        )
+        .await
+        .expect("the history reads")
+        .iter()
+        .filter_map(|write| write.value.as_deref()?.parse().ok())
+        .collect();
+    written.sort_unstable();
+    assert_eq!(
+        written,
+        vec![1, 2, 3],
+        "each spec has a generation of its own"
+    );
+}

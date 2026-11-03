@@ -108,16 +108,36 @@ pub fn chain_start(
         .unwrap_or_else(|| subject.clone())
 }
 
+/// **The highest generation ever written on a request**, read from the history
+/// of its [`GENERATION`] key: every write, a retracted or archived claim's
+/// included, because a number that was ever issued names a spec for good. A
+/// clear, a value that is no number and a request that never held one count as
+/// 0.
+pub fn highest_generation_ever(writes: &[super::FieldWrite]) -> u64 {
+    writes
+        .iter()
+        .filter_map(|write| write.value.as_deref()?.trim().parse::<u64>().ok())
+        .max()
+        .unwrap_or(0)
+}
+
 /// **The generation a write of the spec makes, or `None` when it makes none.**
 /// A write that sets a spec key to a value the request does not hold raises the
 /// generation by one; the first spec written makes it 1. A resend of what the
 /// request holds changes nothing, so it raises nothing. Worked out here and
 /// never sent by a caller: [`GENERATION`] is a row nobody may write.
+///
+/// **The number is one past `highest_ever`, the highest ever written on the
+/// request, and never one past the folded value.** A retract takes the newest
+/// claim out of the fold, and a number read from the fold would then name a second
+/// spec. The caller reads `highest_ever` ([`highest_generation_ever`]) and writes
+/// under the request's lock, so two writes do not read the same number.
 pub fn next_generation(
     subject: &super::EntityId,
     held: &std::collections::BTreeMap<String, String>,
     written: &std::collections::BTreeMap<String, String>,
     cleared: &[String],
+    highest_ever: u64,
 ) -> Option<String> {
     if !is_request(subject) {
         return None;
@@ -131,11 +151,5 @@ pub fn next_generation(
             && held.get(*key).is_some_and(|now| !now.trim().is_empty());
         sets_another || takes_off
     });
-    changes.then(|| {
-        let now = held
-            .get(GENERATION)
-            .and_then(|value| value.trim().parse::<u64>().ok())
-            .unwrap_or(0);
-        (now + 1).to_string()
-    })
+    changes.then(|| (highest_ever + 1).to_string())
 }

@@ -311,3 +311,102 @@ pub async fn a_first_target_is_judged_by_the_target_and_not_a_held_manager<M: Me
         .written()
         .expect("nothing blocks the target's manager");
 }
+
+/// **A number the generation once held is still on the request's history after
+/// the claim that carried it is retracted**, so the next generation is one past the
+/// highest ever written and no number names two specs. Spec A is written with 1,
+/// spec B with 2, B's claim is retracted, and spec C must come out as 3: the fold
+/// reads 1 again, and a number taken from it would repeat 2.
+pub async fn a_retracted_generation_is_still_the_highest_ever_written<M: Memory>(store: &M) {
+    use crate::memory::bot_request::{GENERATION, highest_generation_ever, next_generation};
+    let request = EntityId("bot-request:contract-retract-ask".into());
+    let manager = EntityId("bot:contract-retract-manager".into());
+    let target = EntityId("bot:contract-retract-target".into());
+    for (id, name) in [
+        (&request, "Retract Ask"),
+        (&manager, "Retract Manager"),
+        (&target, "Retract Target"),
+    ] {
+        add(store, NewEntity::new(id.clone(), name, "contract-fixture")).await;
+    }
+    let fields = |pairs: &[(&str, &str)]| -> std::collections::BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    };
+    capture(
+        store,
+        state(NewFact {
+            fields: fields(&[(crate::memory::REPORTS_TO, manager.as_str())]),
+            ..NewFact::about(
+                target.clone(),
+                "target reports to manager",
+                date(2026, 10, 1),
+            )
+        }),
+    )
+    .await;
+    // The generation rides in the claim of the spec it counts, as a verb writes it.
+    let spec = |pairs: &[(&str, &str)], day: i8| {
+        let mut fact = state(NewFact {
+            fields: fields(pairs),
+            ..NewFact::about(request.clone(), "a spec", date(2026, 10, day))
+        });
+        fact.derived.insert(GENERATION.to_string());
+        fact
+    };
+    capture(
+        store,
+        spec(
+            &[
+                (TARGET_BOT, target.as_str()),
+                (DESIRED, "running"),
+                (GENERATION, "1"),
+            ],
+            2,
+        ),
+    )
+    .await;
+    let second = capture(store, spec(&[(DESIRED, "stopped"), (GENERATION, "2")], 3)).await;
+    let read = || async { store.fields(&request).await.expect("readable") };
+    let highest = || async {
+        highest_generation_ever(
+            &store
+                .history(&request, GENERATION)
+                .await
+                .expect("the history reads"),
+        )
+    };
+    assert_eq!(highest().await, 2, "the positive the rest rests on");
+
+    store
+        .retract(
+            &second.address(),
+            Some("written in error"),
+            date(2026, 10, 4),
+            &manager,
+            None,
+        )
+        .await
+        .expect("the manager retracts the second spec");
+    let fold = read().await;
+    assert_eq!(
+        fold.get(GENERATION).map(String::as_str),
+        Some("1"),
+        "the fold reads the spec that stands"
+    );
+    assert_eq!(
+        highest().await,
+        2,
+        "the retracted claim's number is still the highest ever written"
+    );
+    let third = next_generation(
+        &request,
+        &fold,
+        &fields(&[(DESIRED, "paused")]),
+        &[],
+        highest().await,
+    );
+    assert_eq!(third.as_deref(), Some("3"), "2 names the retracted spec");
+}

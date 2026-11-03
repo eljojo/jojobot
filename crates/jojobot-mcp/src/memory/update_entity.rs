@@ -395,10 +395,20 @@ impl Jojobot {
                     fields.insert(key.clone(), moment);
                     derived.insert(key);
                 }
-                // **A write of a bot request's spec raises its generation.**
+                // **A write of a bot request's spec raises its generation**, from the
+                // highest ever written, read and stored under the request's lock.
+                // TEMPORARY(9.3.3): prepare in the one writer replaces the lock.
+                let _spec_lock = match self.hold_for_a_request_spec(&handle).await {
+                    Ok(guard) => guard,
+                    Err(e) => return memory_declined("update_entity", e),
+                };
                 if jojobot_domain::memory::bot_request::is_request(&handle) {
                     let held = match self.memory.fields(&handle).await {
                         Ok(held) => held,
+                        Err(e) => return memory_declined("update_entity", e),
+                    };
+                    let highest = match self.highest_generation_ever(&handle).await {
+                        Ok(highest) => highest,
                         Err(e) => return memory_declined("update_entity", e),
                     };
                     if let Some(next) = jojobot_domain::memory::bot_request::next_generation(
@@ -406,6 +416,7 @@ impl Jojobot {
                         &held,
                         &fields,
                         &[],
+                        highest,
                     ) {
                         fields.insert(
                             jojobot_domain::memory::bot_request::GENERATION.to_string(),

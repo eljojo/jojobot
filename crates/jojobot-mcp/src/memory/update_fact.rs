@@ -594,6 +594,17 @@ impl Jojobot {
         } else {
             None
         };
+        // **An edit of a bot request's spec is made under the request's lock**, from
+        // the read of the highest generation to the write, unless one of the locks
+        // above already holds that subject (the lock is not re-entrant).
+        // TEMPORARY(9.3.3): prepare in the one writer replaces it.
+        let _spec_lock = match (&_placing, &_list_lock) {
+            (None, None) => match self.hold_for_a_request_spec(&address.home).await {
+                Ok(guard) => guard,
+                Err(e) => return memory_declined("update_fact", e),
+            },
+            _ => None,
+        };
         let dropped_keys = match self
             .drop_read_keys(
                 &address.home,
@@ -746,11 +757,16 @@ impl Jojobot {
                 Ok(held) => held,
                 Err(e) => return memory_declined("update_fact", e),
             };
+            let highest = match self.highest_generation_ever(&address.home).await {
+                Ok(highest) => highest,
+                Err(e) => return memory_declined("update_fact", e),
+            };
             if let Some(next) = jojobot_domain::memory::bot_request::next_generation(
                 &address.home,
                 &held,
                 &reaching,
                 &cleared,
+                highest,
             ) {
                 fields.insert(generation.to_string(), next);
                 derived.insert(generation.to_string());

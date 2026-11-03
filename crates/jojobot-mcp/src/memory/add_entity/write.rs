@@ -324,11 +324,19 @@ impl Jojobot {
                 // **A bot request is born at generation 1** once it sets any of its
                 // spec; the key is jojobot's, and the licence check above refused
                 // a caller's own copy.
+                // **Held to the end of the creation**, as every write of a request's
+                // spec is. TEMPORARY(9.3.3): prepare in the one writer replaces it.
+                let _spec_lock = match self.hold_for_a_request_spec(&creating).await {
+                    Ok(guard) => guard,
+                    Err(e) => return memory_declined("add_entity", e).map(Err),
+                };
+                // A thing being created has written no generation before.
                 if let Some(next) = jojobot_domain::memory::bot_request::next_generation(
                     &creating,
                     &Default::default(),
                     &fields,
                     &[],
+                    0,
                 ) {
                     fields.insert(
                         jojobot_domain::memory::bot_request::GENERATION.to_string(),

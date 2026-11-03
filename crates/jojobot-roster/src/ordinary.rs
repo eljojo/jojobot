@@ -1689,5 +1689,8 @@ pub const ORDINANCES: &[&str] = &[
     "bot:contract-bobbin-held",
     "bot:contract-bobbin-chief",
     "bot:contract-bobbin-target",
+    "bot-request:contract-retract-ask",
+    "bot:contract-retract-manager",
+    "bot:contract-retract-target",
     "topic:scrapbook",
 ];

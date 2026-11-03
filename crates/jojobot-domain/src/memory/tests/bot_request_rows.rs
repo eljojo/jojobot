@@ -160,7 +160,17 @@ fn the_generation_rises_when_the_spec_changes_and_only_then() {
     let at_one = holding(&[(DESIRED, "running"), (GENERATION, "1")]);
     let next = |held: &BTreeMap<String, String>, written: &[(&str, &str)], cleared: &[&str]| {
         let cleared: Vec<String> = cleared.iter().map(|key| key.to_string()).collect();
-        super::super::bot_request::next_generation(&request, held, &holding(written), &cleared)
+        let highest = held
+            .get(GENERATION)
+            .and_then(|generation| generation.parse().ok())
+            .unwrap_or(0);
+        super::super::bot_request::next_generation(
+            &request,
+            held,
+            &holding(written),
+            &cleared,
+            highest,
+        )
     };
     assert_eq!(
         next(&holding(&[]), &[(DESIRED, "running")], &[]).as_deref(),
@@ -184,8 +194,85 @@ fn the_generation_rises_when_the_spec_changes_and_only_then() {
             &holding(&[]),
             &holding(&[(DESIRED, "running")]),
             &[],
+            0,
         ),
         None
+    );
+}
+
+/// **The number follows the highest ever written, not the fold.** A fold that
+/// reads 1 after a retract took the claim carrying 2 out of it still yields 3,
+/// and the folded value is not read at all: a fold that holds a number far above
+/// the highest ever changes nothing. A resend raises nothing whatever the
+/// highest is, and a clear of a held spec key raises to one past it.
+#[test]
+fn the_generation_is_one_past_the_highest_ever_written() {
+    let request = handle(REQUEST);
+    let next = |held: &[(&str, &str)], written: &[(&str, &str)], cleared: &[&str], highest: u64| {
+        let cleared: Vec<String> = cleared.iter().map(|key| key.to_string()).collect();
+        super::super::bot_request::next_generation(
+            &request,
+            &holding(held),
+            &holding(written),
+            &cleared,
+            highest,
+        )
+    };
+    let after_a_retract = [(DESIRED, "running"), (GENERATION, "1")];
+    assert_eq!(
+        next(&after_a_retract, &[(DESIRED, "stopped")], &[], 2).as_deref(),
+        Some("3"),
+        "the highest ever, 2, is above the folded 1"
+    );
+    let fold_ahead = [(DESIRED, "running"), (GENERATION, "9")];
+    assert_eq!(
+        next(&fold_ahead, &[(DESIRED, "stopped")], &[], 2).as_deref(),
+        Some("3"),
+        "a folded value above the highest ever is not read"
+    );
+    assert_eq!(
+        next(&after_a_retract, &[(DESIRED, "running")], &[], 5),
+        None,
+        "a resend raises nothing"
+    );
+    assert_eq!(
+        next(&after_a_retract, &[], &[DESIRED], 4).as_deref(),
+        Some("5"),
+        "a clear of a held spec key raises"
+    );
+}
+
+/// **The highest ever counts every write of the key**, an archived claim's
+/// included, and only numbers: a clear, a blank and a value that is no number
+/// count as 0.
+#[test]
+fn the_highest_generation_ever_counts_every_write_that_was_a_number() {
+    use crate::memory::{FactAddress, FactId, FactStatus, FieldWrite, Provenance, Standing};
+    let write = |value: Option<&str>, status: FactStatus| FieldWrite {
+        written_at: None,
+        value: value.map(String::from),
+        fact: FactAddress::new(handle(REQUEST), FactId("f1".into())),
+        recorded_at: Default::default(),
+        status,
+        provenance: Provenance::Inference,
+        standing: Standing::Open,
+        note: None,
+        recorded_by: None,
+        writer: None,
+        run: None,
+    };
+    let highest = super::super::bot_request::highest_generation_ever;
+    assert_eq!(highest(&[]), 0);
+    assert_eq!(
+        highest(&[
+            write(Some("1"), FactStatus::Active),
+            write(Some("2"), FactStatus::Archived),
+            write(Some(" 3 "), FactStatus::Active),
+            write(None, FactStatus::Active),
+            write(Some(" "), FactStatus::Active),
+            write(Some("x"), FactStatus::Active),
+        ]),
+        3
     );
 }
 

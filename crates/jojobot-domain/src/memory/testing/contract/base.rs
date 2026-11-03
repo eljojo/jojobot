@@ -19554,6 +19554,7 @@ macro_rules! all_cases {
         $m!(a_bot_requests_spec_is_judged_by_the_chain_above_its_target($store));
         $m!(a_bot_request_is_not_folded_into_another_thing($store));
         $m!(a_first_target_is_judged_by_the_target_and_not_a_held_manager($store));
+        $m!(a_retracted_generation_is_still_the_highest_ever_written($store));
         $m!(the_operator_is_named_by_any_bot_and_changed_only_by_the_head_of_the_chart($store));
         $m!(a_threads_ceiling_is_set_only_above_the_bots_that_write_into_it($store));
         $m!(a_threads_ageing_is_set_only_above_the_bots_that_write_into_it($store));
