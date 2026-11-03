@@ -79,7 +79,7 @@ fn old_role_fields(
 /// **A thing's folded fields, read the served way** — duplicated from
 /// `base::thing_fields` rather than reused: that function is private to a
 /// file this module does not edit, per the batch this shipped in.
-async fn folded_fields_of<M: Memory>(
+pub(super) async fn folded_fields_of<M: Memory>(
     store: &M,
     id: &EntityId,
 ) -> std::collections::BTreeMap<String, String> {

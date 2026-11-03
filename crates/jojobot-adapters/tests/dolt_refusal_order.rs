@@ -53,5 +53,6 @@ async fn dolt_judges_two_missing_names_in_the_decided_order() {
     contract::a_thought_over_its_cap_is_refused_before_a_full_room(&memory).await;
     contract::a_full_room_is_refused_before_a_full_thread(&memory).await;
     contract::a_missing_source_is_refused_before_a_held_role(&memory).await;
+    contract::a_write_after_a_merge_is_the_newest_of_its_key(&memory).await;
     store.stop().await;
 }

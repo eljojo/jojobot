@@ -61,6 +61,7 @@ async fn the_fake_judges_the_subject_the_edge_and_the_refs_in_the_decided_order(
     contract::a_thought_over_its_cap_is_refused_before_a_full_room(&store).await;
     contract::a_full_room_is_refused_before_a_full_thread(&store).await;
     contract::a_missing_source_is_refused_before_a_held_role(&store).await;
+    contract::a_write_after_a_merge_is_the_newest_of_its_key(&store).await;
 }
 
 /// **The fake judges a reference field's value before the refs, and the decided

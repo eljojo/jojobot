@@ -32,6 +32,8 @@ pub const ORDINARY: &[&str] = &[
     "thing:contract-order-room-owner",
     "thing:contract-order-room-first",
     "thing:contract-order-room-second",
+    "thing:contract-numbers-survivor",
+    "thing:contract-numbers-folded",
     "bot:contract-order-lease-bot",
     "role:contract-order-lease",
     "thing:contract-order-no-source",
