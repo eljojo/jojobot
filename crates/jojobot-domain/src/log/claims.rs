@@ -520,7 +520,7 @@ pub use indexes::Located;
 pub use prepare::{
     Admitted, BootFloor, CaptureRequest, ClaimSize, Door, Draft, Measures, Refusal, Route, prepare,
 };
-pub use rules::StarredRule;
+pub use rules::{HeldRecord, StarredRule};
 
 #[cfg(test)]
 mod tests;

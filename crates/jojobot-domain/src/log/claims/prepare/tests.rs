@@ -52,6 +52,7 @@ fn request(subject: &str) -> CaptureRequest {
             owner_revoked: false,
             measures: Measures::default(),
             runs: BTreeMap::new(),
+            run: None,
         },
         subject: subject.to_string(),
         draft: Draft {
@@ -73,6 +74,7 @@ fn request(subject: &str) -> CaptureRequest {
         sets: BTreeSet::new(),
         derived: BTreeSet::new(),
         derived_from: None,
+        borrow: false,
     }
 }
 
@@ -436,6 +438,7 @@ fn writing(subject: &str, key: &str, actor: Actor, revoked: bool) -> CaptureRequ
             owner_revoked: revoked,
             measures: Measures::default(),
             runs: BTreeMap::new(),
+            run: None,
         },
         fields: BTreeMap::from([(key.into(), "v".into())]),
         ..request(subject)
@@ -581,6 +584,7 @@ fn by_bot(subject: &str, caller: &str, key: &str, value: &str) -> CaptureRequest
             owner_revoked: false,
             measures: Measures::default(),
             runs: BTreeMap::new(),
+            run: None,
         },
         fields: BTreeMap::from([(key.into(), value.into())]),
         ..request(subject)
@@ -1271,4 +1275,166 @@ fn a_number_written_before_it_was_numbered_is_not_issued() {
         ),
         "written and taken back since"
     );
+}
+
+/// A bare object of `kind` that answers to `handle`, with claims that each
+/// write one key: `(record, label, key, value)`.
+fn held(kind: &str, handle: &str, writes: &[(&str, &str, &str, &str)]) -> Vec<ClaimEvent> {
+    let mut events = vec![
+        ClaimEvent::ObjectCreated {
+            object: object(handle),
+            body: body(kind, handle),
+        },
+        ClaimEvent::AddressBound {
+            object: object(handle),
+            address: handle.to_string(),
+        },
+    ];
+    for (record, label, key, value) in writes {
+        events.push(created(record, claim(label, handle, "c", 1)));
+        events.push(write(record, handle, key, 1, value));
+    }
+    events
+}
+
+/// **A write to a role object is judged against the lease the role holds**, on
+/// the engine's route: the verb never writes a lease field.
+#[test]
+fn a_role_is_taken_only_when_its_lease_has_lapsed_or_is_the_claimants() {
+    crate::memory::kinds::load_shipped();
+    let state = replay(&held(
+        "role",
+        "role:alpha",
+        &[
+            ("r1", "f1", "holder", "sa01"),
+            ("r2", "f2", "claimed_at", "2026-04-03T10:00:00Z"),
+        ],
+    ));
+    let claim_at = |holder: &str, at: &str| CaptureRequest {
+        route: Route::Engine,
+        fields: BTreeMap::from([
+            ("holder".into(), holder.into()),
+            ("claimed_at".into(), at.into()),
+        ]),
+        ..request("role:alpha")
+    };
+    assert!(matches!(
+        prepare(&state, &[], &claim_at("sb01", "2026-04-03T10:10:00Z")),
+        Err(Refusal::Invalid(MemoryError::RoleTaken { .. }))
+    ));
+    assert!(prepare(&state, &[], &claim_at("sa01", "2026-04-03T10:10:00Z")).is_ok());
+    assert!(prepare(&state, &[], &claim_at("sb01", "2026-04-03T12:00:00Z")).is_ok());
+}
+
+/// **A thought is capped by its container's own body cap**, and another bot's
+/// claim on the container is no thought of its.
+#[test]
+fn a_thought_over_its_containers_body_cap_is_refused() {
+    crate::memory::kinds::load_shipped();
+    let state = replay(
+        &[
+            held(
+                "bot",
+                "bot:alpha",
+                &[
+                    ("r1", "f1", "thought_capacity", "3"),
+                    ("r2", "f2", "thought_body_cap", "10"),
+                ],
+            ),
+            held("bot", "bot:beta", &[]),
+        ]
+        .concat(),
+    );
+    let thought = |content: &str, actor: Actor| {
+        let mut request = CaptureRequest {
+            edge: Some((EdgeShape::Connection, "bot:alpha".into())),
+            ..request("bot:alpha")
+        };
+        request.draft.content = content.to_string();
+        request.door.actor = actor;
+        request
+    };
+    let own = || Actor::Bot(crate::memory::EntityId("bot:alpha".into()));
+    assert!(prepare(&state, &[], &thought("0123456789", own())).is_ok());
+    assert!(matches!(
+        prepare(&state, &[], &thought("01234567890", own())),
+        Err(Refusal::Invalid(MemoryError::ThoughtTooLong {
+            len: 11,
+            cap: 10,
+            ..
+        }))
+    ));
+    assert!(matches!(
+        prepare(&state, &[], &thought("01234567890", Actor::Operator)),
+        Err(Refusal::Invalid(MemoryError::ThoughtTooLong { .. }))
+    ));
+    let another = Actor::Bot(crate::memory::EntityId("bot:beta".into()));
+    assert!(prepare(&state, &[], &thought("01234567890", another)).is_ok());
+    // A run that belongs to another bot writes another's claim too.
+    let mut by_run = thought("01234567890", Actor::Operator);
+    by_run.door.run = Some(super::super::super::RunId("sb01".into()));
+    by_run.door.runs = BTreeMap::from([(
+        super::super::super::RunId("sb01".into()),
+        crate::memory::EntityId("bot:beta".into()),
+    )]);
+    assert!(prepare(&state, &[], &by_run).is_ok());
+}
+
+/// **A thing holds no more live records than its ceiling**, a write that adds
+/// none is exempt, and the reserve is one record, once.
+#[test]
+fn a_thing_holds_no_more_live_records_than_its_ceiling() {
+    let writes = |records: &[(&'static str, &'static str)]| {
+        let mut all = vec![("r0", "f1", "record_capacity", "2")];
+        all.extend(records.iter().map(|(id, label)| (*id, *label, "note", "x")));
+        replay(&held("thing", "beta", &all))
+    };
+    // A review mark and a record of jojobot's own act hold no slot.
+    let marked = replay(&held(
+        "thing",
+        "beta",
+        &[
+            ("r0", "f1", "record_capacity", "2"),
+            ("r1", "f2", "note", "x"),
+            ("r8", "f8", "review_mark", "x"),
+            ("r9", "f9", "engine_record", "x"),
+        ],
+    ));
+    assert!(matches!(
+        prepare(&marked, &[], &request("beta")),
+        Err(Refusal::OverCapacity { records, .. }) if records.len() == 2
+    ));
+    let full = writes(&[("r1", "f2")]);
+    let over = writes(&[("r1", "f2"), ("r2", "f3")]);
+    let adding = |borrow: bool| CaptureRequest {
+        borrow,
+        ..request("beta")
+    };
+    assert!(prepare(&writes(&[]), &[], &adding(false)).is_ok());
+    match prepare(&full, &[], &adding(false)) {
+        Err(Refusal::OverCapacity {
+            limit,
+            adding,
+            from_setting,
+            records,
+            ..
+        }) => {
+            assert_eq!((limit, adding, from_setting), (2, 1, true));
+            assert_eq!(records.len(), 2);
+        }
+        other => panic!("expected a full thing, got {other:?}"),
+    }
+    // The reserve: exactly full, one record, once.
+    assert!(prepare(&full, &[], &adding(true)).is_ok());
+    assert!(matches!(
+        prepare(&over, &[], &adding(true)),
+        Err(Refusal::OverCapacity { .. })
+    ));
+    // A record that takes no slot is exempt, even on a thing over its ceiling.
+    let marking = CaptureRequest {
+        route: Route::Engine,
+        fields: BTreeMap::from([("review_mark".into(), "x".into())]),
+        ..request("beta")
+    };
+    assert!(prepare(&over, &[], &marking).is_ok());
 }

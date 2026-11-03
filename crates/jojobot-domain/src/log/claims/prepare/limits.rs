@@ -9,7 +9,11 @@
 
 use super::super::{ObjectId, StarredRule, State};
 use super::{CaptureRequest, Refusal};
-use crate::memory::{self, MemoryError, RULE_SEATS, seats, types::DeclaredType};
+use crate::actor::Actor;
+use crate::memory::{
+    self, EntityKind, MemoryError, RULE_SEATS, THOUGHT_BODY_CAP, THOUGHT_CAPACITY, capacity, seats,
+    types::DeclaredType,
+};
 
 /// **The claim as a read would serve it, and the room one answer has for it.**
 /// `row` is the thing's own row and the room one answer has for it, when the row
@@ -134,4 +138,100 @@ fn subject_of(state: &State, home: &ObjectId, request: &CaptureRequest) -> Strin
     state
         .handle_of(home)
         .map_or_else(|| request.subject.clone(), |handle| handle.to_string())
+}
+
+/// **A write to a role object is judged against the lease the role holds.** The
+/// lease is read off the role's own fields, so the renewal itself stays a
+/// heartbeat off the log and this only reads it.
+pub(super) fn refuses_a_role_write(
+    state: &State,
+    declared: &[DeclaredType],
+    home: &ObjectId,
+    request: &CaptureRequest,
+) -> Option<MemoryError> {
+    let role = memory::role_named_by(&state.handle_of(home)?)?;
+    let lease = crate::session::role_state(Some(&state.fields(home, declared)));
+    memory::refuses_role_write(&role, None, &request.fields, &lease)
+}
+
+/// **Whether another bot wrote the claim**: the bot the actor is, else the bot
+/// the writing run belongs to, when that bot is not the thing it writes on.
+/// A claim no bot is known to have written is the thing's own.
+fn written_by_another(state: &State, home: &ObjectId, request: &CaptureRequest) -> bool {
+    let writer = match &request.door.actor {
+        Actor::Bot(bot) => Some(bot),
+        _ => request
+            .door
+            .run
+            .as_ref()
+            .and_then(|run| request.door.runs.get(run)),
+    };
+    writer
+        .and_then(|bot| state.resolve(bot.as_str()))
+        .is_some_and(|bot| bot != state.survivor(home))
+}
+
+/// **A thought is a claim the thing keeps of itself**: it draws a `connection`
+/// edge and no other bot wrote it.
+fn is_a_thought(state: &State, home: &ObjectId, request: &CaptureRequest) -> bool {
+    request
+        .edge
+        .as_ref()
+        .is_some_and(|(shape, _)| *shape == memory::EdgeShape::Connection)
+        && !written_by_another(state, home, request)
+}
+
+fn whole(held: &std::collections::BTreeMap<String, String>, key: &str) -> Option<usize> {
+    held.get(key).and_then(|value| value.trim().parse().ok())
+}
+
+/// **A thought over its container's own body cap is refused**, whether or not
+/// the room has space.
+pub(super) fn refuses_a_thought_over_cap(
+    state: &State,
+    declared: &[DeclaredType],
+    home: &ObjectId,
+    request: &CaptureRequest,
+) -> Option<MemoryError> {
+    if !is_a_thought(state, home, request) {
+        return None;
+    }
+    let held = state.fields(home, declared);
+    memory::refuses_thought_over_cap(
+        &state.handle_of(home)?,
+        &memory::normalize_content(&request.draft.content),
+        whole(&held, THOUGHT_BODY_CAP),
+        whole(&held, THOUGHT_CAPACITY),
+    )
+}
+
+/// **The record ceiling of a thing**, decided over the live records it holds. A
+/// write that adds none (the review mark, a record about an act of jojobot's own)
+/// is exempt, and a thing already over its ceiling admits nothing that adds.
+pub(super) fn refuses_over_the_ceiling(
+    state: &State,
+    declared: &[DeclaredType],
+    home: &ObjectId,
+    request: &CaptureRequest,
+) -> Option<Refusal> {
+    let kind = state
+        .object(home)
+        .and_then(|body| EntityKind::from_token(&body.kind.0));
+    let held = state.fields(home, declared);
+    let ceiling = capacity::ceiling_of(kind, &held)?;
+    let adding = capacity::slots_taken(&request.fields);
+    if adding == 0 {
+        return None;
+    }
+    let live = state.live_records(home);
+    match capacity::fits(ceiling.limit, live.len(), adding, request.borrow) {
+        capacity::Fits::Yes | capacity::Fits::OnTheReserve => None,
+        capacity::Fits::No => Some(Refusal::OverCapacity {
+            subject: subject_of(state, home, request),
+            limit: ceiling.limit,
+            adding,
+            from_setting: ceiling.from == capacity::CeilingFrom::Setting,
+            records: live,
+        }),
+    }
 }

@@ -27,7 +27,8 @@ mod limits;
 mod numbering;
 
 use super::{
-    ClaimBody, ClaimEvent, FieldValue, KeyId, ObjectId, RecordId, RunId, StarredRule, State,
+    ClaimBody, ClaimEvent, FieldValue, HeldRecord, KeyId, ObjectId, RecordId, RunId, StarredRule,
+    State,
 };
 use crate::actor::Actor;
 use crate::app::AppStamp;
@@ -62,6 +63,8 @@ pub struct Door {
     /// The bot each run belongs to, as the session projection reads it: a
     /// record whose first write names no bot is a bot's by its run.
     pub runs: BTreeMap<RunId, EntityId>,
+    /// The run the request is written in, for a writer that is no bot of its own.
+    pub run: Option<RunId>,
 }
 
 /// **What the caller decided about the claim itself**, as opposed to where it
@@ -102,6 +105,8 @@ pub struct CaptureRequest {
     pub derived: BTreeSet<String>,
     /// The claim this one is derived from: a spelling, a `#`, a label.
     pub derived_from: Option<String>,
+    /// Spend the one-record reserve over a full ceiling.
+    pub borrow: bool,
 }
 
 /// **The one answer a refused request gets.** Each variant names the first
@@ -141,6 +146,14 @@ pub enum Refusal {
         seats: usize,
         starred: usize,
         seated: Vec<StarredRule>,
+    },
+    /// The thing holds as many live records as its ceiling allows.
+    OverCapacity {
+        subject: String,
+        limit: usize,
+        adding: usize,
+        from_setting: bool,
+        records: Vec<HeldRecord>,
     },
     /// The write is malformed on its own. Carries the words the caller reads.
     Malformed(String),
@@ -395,6 +408,17 @@ pub fn prepare(
     }
     if let Some(refused) = limits::refuses_a_claim_too_big(state, &home, request) {
         return Err(Refusal::Invalid(refused));
+    }
+    // What the store decides inside the write, in its order: the role's lease,
+    // the thought's body, then the ceiling.
+    if let Some(refused) = limits::refuses_a_role_write(state, declared, &home, request) {
+        return Err(Refusal::Invalid(refused));
+    }
+    if let Some(refused) = limits::refuses_a_thought_over_cap(state, declared, &home, request) {
+        return Err(Refusal::Invalid(refused));
+    }
+    if let Some(refused) = limits::refuses_over_the_ceiling(state, declared, &home, request) {
+        return Err(refused);
     }
 
     let draft = &request.draft;

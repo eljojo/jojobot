@@ -24,7 +24,56 @@ pub struct StarredRule {
     pub content: String,
 }
 
+/// A record a thing holds, as a refusal of a full thing names it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HeldRecord {
+    pub record: RecordId,
+    pub label: String,
+    pub content: String,
+}
+
 impl State {
+    /// **The live records of a thing**, in the order of their labels: the active
+    /// claims homed on it that take a slot under a record ceiling. The review
+    /// mark and a record jojobot wrote about an act of its own take none.
+    pub fn live_records(&self, home: &ObjectId) -> Vec<HeldRecord> {
+        let home = self.survivor(home);
+        let mut live: Vec<HeldRecord> = self
+            .records
+            .iter()
+            .filter(|(record, held)| {
+                held.claim.status == FactStatus::Active
+                    && self.survivor(&held.claim.home) == home
+                    && !self.writes_a_key(
+                        home,
+                        record,
+                        &[review::REVIEW_MARK, memory::capacity::ENGINE_RECORD],
+                    )
+            })
+            .map(|(record, held)| HeldRecord {
+                record: record.clone(),
+                label: held.claim.label.clone(),
+                content: held.claim.content.clone(),
+            })
+            .collect();
+        live.sort_by_key(|held| {
+            (
+                memory::numbered::whole_number(held.label.trim_start_matches('f')),
+                held.label.clone(),
+            )
+        });
+        live
+    }
+
+    /// Whether the record wrote any of the keys on the thing.
+    fn writes_a_key(&self, home: &ObjectId, record: &RecordId, keys: &[&str]) -> bool {
+        self.streams.iter().any(|((subject, key), stream)| {
+            subject == home
+                && keys.contains(&key.0.as_str())
+                && stream.iter().any(|write| &write.record == record)
+        })
+    }
+
     /// **The starred rules of a bot, oldest first**: the order a boot seats them
     /// in. A record kept without a moment is older than every stamped one, and the
     /// number of the label breaks a tie.
