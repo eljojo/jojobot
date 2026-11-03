@@ -168,9 +168,9 @@ async fn restore_a_fixture(fixture_dir: &str, label: &str) -> Restored {
 /// **Every moment a store holds, moved back by `hours`**, as if the recording had
 /// been made that much earlier. The gate runs on the day it runs, so the age of
 /// a recording is whatever the calendar makes it; this makes the age a thing a
-/// case chooses. It reads every column of every table, so a moment a later build
-/// adds is aged without anybody remembering to list it. The epoch is the store's
-/// own "no moment" and stays where it is.
+/// case chooses. It reads every text column of every table and ages the event
+/// log through its own path. The epoch is the store's own "no moment" and stays
+/// where it is.
 async fn age_the_recording(pool: &sqlx::MySqlPool, hours: i64) {
     if hours == 0 {
         return;
@@ -391,10 +391,8 @@ async fn restore_a_fixture_recorded_earlier(
         jiff::SignedDuration::from_hours(earlier_hours),
         "the recording made at {git_ref} was not aged by {earlier_hours} hours"
     );
-    // **Seeded through the log after the ageing, so the row and its event carry
-    // the same time.** The ageing rewrites `session_teaching.taught_at` (text) and
-    // leaves the event payload (a blob) alone; a mark seeded before it would read
-    // back at two times in an aged case.
+    // **Seeded through the log after the ageing**, so these marks keep their
+    // fixed test times while the recording's rows and log have moved earlier.
     seed_the_teaching_marks_through_the_log(restoring.pool()).await;
     // **The old claim is moved to ten minutes ago, as the store of a deploy a
     // little while ago holds it.** The recording is hours old and its lease has
