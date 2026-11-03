@@ -30,7 +30,8 @@ use crate::actor::Actor;
 use crate::app::AppStamp;
 use crate::attention;
 use crate::memory::{
-    self, FactStatus, MemoryError, Provenance, Standing, WriteClass, types::DeclaredType,
+    self, Edge, EdgeShape, EntityId, FactStatus, MemoryError, Provenance, Standing, WriteClass,
+    receipt::Receipt, types::DeclaredType,
 };
 
 /// **Which door the request came through.** The verb is the caller-facing
@@ -67,7 +68,7 @@ pub struct Draft {
     pub happened_at: Option<Date>,
     pub happened_through: Option<Date>,
     pub stale_after: Option<Date>,
-    pub receipt: Option<String>,
+    pub receipt: Option<Receipt>,
     pub app: Option<AppStamp>,
 }
 
@@ -83,7 +84,7 @@ pub struct CaptureRequest {
     pub subject: String,
     pub draft: Draft,
     /// The edge's shape and the spelling of the object it points at.
-    pub edge: Option<(String, String)>,
+    pub edge: Option<(EdgeShape, String)>,
     pub refs: Vec<String>,
     pub fields: BTreeMap<String, String>,
     /// The keys of `fields` that are settings of the thing.
@@ -127,6 +128,11 @@ pub enum Refusal {
     Numbering(MemoryError),
     /// The write is malformed on its own. Carries the words the caller reads.
     Malformed(String),
+    /// An input the claim itself gets wrong: a subject that is no place to
+    /// write, an empty or multi-line content, a span with no start, a field the
+    /// store reserves, an observation with no source, a receipt that says
+    /// nothing or rides an unsettled claim, an edge the shape does not fit.
+    Invalid(MemoryError),
     UnknownSubject(String),
     UnknownEdgeObject(String),
     UnknownRef(String),
@@ -183,6 +189,30 @@ pub fn prepare(
             key: key.to_string(),
         });
     }
+    // The claim's own inputs, in the order the store reads them: the receipt,
+    // then the subject as a place to write, the words, the span, the fields and
+    // the source an observation names.
+    let receipt = request
+        .draft
+        .receipt
+        .clone()
+        .map(Receipt::validated)
+        .transpose()
+        .map_err(Refusal::Invalid)?;
+    memory::receipt::rides_only_settled(receipt.as_ref(), request.draft.standing)
+        .map_err(Refusal::Invalid)?;
+    // A spelling with no kind is no handle: only a handle names a kind that
+    // cannot be written.
+    let subject_spelling = EntityId(request.subject.clone());
+    if subject_spelling.kind().is_some() {
+        memory::validate_write_subject(&subject_spelling).map_err(Refusal::Invalid)?;
+    }
+    memory::validate_content(&request.draft.content).map_err(Refusal::Invalid)?;
+    memory::validate_happened_span(request.draft.happened_at, request.draft.happened_through)
+        .map_err(Refusal::Invalid)?;
+    memory::validate_fields(&request.fields).map_err(Refusal::Invalid)?;
+    memory::validate_provenance_source(request.draft.provenance, &request.fields)
+        .map_err(Refusal::Invalid)?;
     // The write alone, before any object is looked up.
     let classes = memory::classes_for_write(
         &BTreeMap::new(),
@@ -261,7 +291,17 @@ pub fn prepare(
             let object = state
                 .resolve(object)
                 .ok_or_else(|| Refusal::UnknownEdgeObject(object.clone()))?;
-            Some((shape.clone(), object.clone()))
+            if let Some(handle) = state.handle_of(object) {
+                memory::validate_resolved_edge(
+                    &Edge {
+                        shape: *shape,
+                        object: handle.clone(),
+                    },
+                    &handle,
+                )
+                .map_err(Refusal::Invalid)?;
+            }
+            Some((shape.to_string(), object.clone()))
         }
         None => None,
     };
@@ -346,7 +386,7 @@ pub fn prepare(
         derived_from,
         refs,
         stands_for: Vec::new(),
-        receipt: draft.receipt.clone(),
+        receipt,
         app: draft.app.clone(),
         inserted_at: None,
     };

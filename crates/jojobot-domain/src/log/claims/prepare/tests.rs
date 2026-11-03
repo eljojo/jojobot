@@ -8,8 +8,9 @@ use super::{CaptureRequest, Door, Draft, Refusal, Route, prepare};
 use crate::actor::Actor;
 use crate::app::AppId;
 use crate::memory::numbered::NUMBERS_BY;
+use crate::memory::receipt::Receipt;
 use crate::memory::types::{DeclaredType, Field, ValueType};
-use crate::memory::{FactStatus, Provenance, Standing};
+use crate::memory::{EdgeShape, FactStatus, MemoryError, Provenance, Standing};
 
 fn thing(id: &str) -> Vec<ClaimEvent> {
     vec![
@@ -101,7 +102,7 @@ fn two_faults_are_told_in_the_order() {
         Row {
             name: "a missing subject before a missing edge object",
             request: CaptureRequest {
-                edge: Some(("about".into(), "ghost".into())),
+                edge: Some((EdgeShape::About, "ghost".into())),
                 ..request("nobody")
             },
             refused: Refusal::UnknownSubject("nobody".into()),
@@ -109,7 +110,7 @@ fn two_faults_are_told_in_the_order() {
         Row {
             name: "a missing edge object before a missing ref",
             request: CaptureRequest {
-                edge: Some(("about".into(), "ghost".into())),
+                edge: Some((EdgeShape::About, "ghost".into())),
                 refs: vec!["phantom".into()],
                 ..request("alpha")
             },
@@ -525,7 +526,7 @@ fn a_missing_subject_is_told_before_an_owned_key_and_that_before_a_missing_edge(
         Err(Refusal::UnknownSubject("nobody".into()))
     );
     let both = CaptureRequest {
-        edge: Some(("about".into(), "ghost".into())),
+        edge: Some((EdgeShape::About, "ghost".into())),
         ..writing("bound", "state", Actor::Operator, false)
     };
     assert_eq!(
@@ -793,4 +794,89 @@ fn a_field_value_names_a_thing_where_the_link_decision_says() {
         event,
         ClaimEvent::FieldWritten { targets, .. } if targets == &vec![object("badge1")]
     )));
+}
+
+/// **The claim's own inputs are judged as the store judges them**, before the
+/// write is read for its classes and before any object is looked up.
+#[test]
+fn the_claims_own_inputs_are_judged_before_any_object_is_looked_up() {
+    crate::memory::kinds::load_shipped();
+    let (state, declared) = world();
+    let draft = |change: &dyn Fn(&mut Draft)| {
+        let mut base = request("nobody");
+        change(&mut base.draft);
+        base
+    };
+    let invalid = |request: CaptureRequest| match prepare(&state, &declared, &request) {
+        Err(Refusal::Invalid(refused)) => refused,
+        other => panic!("expected an invalid input, got {other:?}"),
+    };
+    assert!(matches!(
+        invalid(draft(&|d| d.content = "  ".into())),
+        MemoryError::InvalidFact(_)
+    ));
+    assert!(matches!(
+        invalid(draft(&|d| d.content = "one\ntwo".into())),
+        MemoryError::InvalidFact(_)
+    ));
+    assert!(matches!(
+        invalid(draft(&|d| d.happened_through = Some(day(5)))),
+        MemoryError::InvalidFact(_)
+    ));
+    assert!(matches!(
+        invalid(draft(&|d| d.receipt = Some(Receipt::Check(" ".into())))),
+        MemoryError::InvalidFact(_)
+    ));
+    assert_eq!(
+        invalid(draft(&|d| {
+            d.standing = Standing::Open;
+            d.receipt = Some(Receipt::Check("ran it".into()));
+        })),
+        MemoryError::ReceiptWithoutSettling
+    );
+    assert_eq!(
+        invalid(draft(&|d| d.provenance = Provenance::Observation)),
+        MemoryError::UnsourcedObservation
+    );
+    assert!(matches!(
+        invalid(CaptureRequest {
+            fields: BTreeMap::from([("k".into(), "@#x".into())]),
+            ..request("nobody")
+        }),
+        MemoryError::InvalidFact(_)
+    ));
+    assert!(matches!(
+        invalid(request("session:alpha")),
+        MemoryError::InvalidSubject(_)
+    ));
+    // A settled claim with a receipt that says something is admitted.
+    let settled = CaptureRequest {
+        draft: Draft {
+            receipt: Some(Receipt::Check(" ran it ".into())),
+            ..request("alpha").draft
+        },
+        ..request("alpha")
+    };
+    let events = prepare(&state, &declared, &settled).expect("admitted");
+    assert!(matches!(
+        &events[0],
+        ClaimEvent::RecordCreated { claim, .. } if claim.receipt == Some(Receipt::Check("ran it".into()))
+    ));
+}
+
+/// **An edge fits the kind its shape points at**, judged on the object the
+/// spelling resolves to.
+#[test]
+fn an_edge_points_at_the_kind_its_shape_names() {
+    crate::memory::kinds::load_shipped();
+    let events = [thing("alpha"), thing("person:gamma")].concat();
+    let state = replay(&events);
+    let located = |object: &str| CaptureRequest {
+        edge: Some((EdgeShape::Location, object.into())),
+        ..request("alpha")
+    };
+    assert!(matches!(
+        prepare(&state, &[], &located("person:gamma")),
+        Err(Refusal::Invalid(MemoryError::InvalidEdge(_)))
+    ));
 }

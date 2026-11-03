@@ -84,8 +84,8 @@ pub struct ClaimBody {
     pub derived_from: Option<RecordId>,
     pub refs: Vec<ObjectId>,
     pub stands_for: Vec<RecordId>,
-    /// The receipt as the store keeps it, settled claims only.
-    pub receipt: Option<String>,
+    /// The receipt, validated, settled claims only.
+    pub receipt: Option<crate::memory::Receipt>,
     pub app: Option<AppStamp>,
     pub inserted_at: Option<Timestamp>,
 }
