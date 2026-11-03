@@ -8,6 +8,16 @@
 //!
 //! **It measures and does not judge**, and it never fails a case: a sink that
 //! cannot be written is skipped.
+//!
+//! **The four times are not a partition of a case.** `template_ms` is the wait
+//! for the migrated store template, which on the first room of a process is the
+//! migration itself and on a later room is the wait for the first to finish;
+//! `copy_ms` is the copy of that store alone. `server_ms` runs from the spawn to
+//! the server saying it is listening, and is the time spent even when the server
+//! never came up. `life_ms` runs from the start of the open to the drop, so it
+//! stops before the room's teardown. A room whose open is retried writes one
+//! line for each attempt, and the room that builds the template writes its own
+//! line.
 
 use std::io::Write;
 use std::time::Duration;
@@ -16,10 +26,35 @@ use std::time::Duration;
 /// on the test processes it starts; with it unset, nothing is written.
 pub const SINK_VARIABLE: &str = "JOJOBOT_ROOM_TIMING";
 
+/// **The clock of a room's open**, started before anything is acquired.
+#[derive(Debug, Clone, Copy)]
+pub struct Opening {
+    /// When the open began.
+    pub began: std::time::Instant,
+    /// Waiting for the migrated store template: its build on a process's first
+    /// room, the wait for that build on a concurrent one.
+    pub template: Duration,
+    /// Copying the template, or a caller's seed, into the room's directory.
+    pub copy: Duration,
+}
+
+impl Opening {
+    /// An open that begins now, with no time spent yet.
+    pub fn begun() -> Opening {
+        Opening {
+            began: std::time::Instant::now(),
+            template: Duration::ZERO,
+            copy: Duration::ZERO,
+        }
+    }
+}
+
 /// **What one room spent**, from the moment its open began.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct RoomTime {
-    /// Copying the migrated store template into the room's directory.
+    /// Waiting for the migrated store template.
+    pub template: Duration,
+    /// Copying the store into the room's directory, and nothing else.
     pub copy: Duration,
     /// Spawning the server and waiting until it says it is listening.
     pub server: Duration,
@@ -34,7 +69,8 @@ pub struct RoomTime {
 /// for the test.
 pub fn line(case: &str, time: &RoomTime) -> String {
     format!(
-        "room-timing case={case} copy_ms={} server_ms={} furnish_ms={} life_ms={}",
+        "room-timing case={case} template_ms={} copy_ms={} server_ms={} furnish_ms={} life_ms={}",
+        time.template.as_millis(),
         time.copy.as_millis(),
         time.server.as_millis(),
         time.furnish.as_millis(),
@@ -72,6 +108,7 @@ mod tests {
 
     fn some_time() -> RoomTime {
         RoomTime {
+            template: Duration::from_millis(700),
             copy: Duration::from_millis(1_200),
             server: Duration::from_millis(3_400),
             furnish: Duration::from_millis(5_600),
@@ -79,15 +116,15 @@ mod tests {
         }
     }
 
-    /// **The line names the case and each of the four times in milliseconds**,
+    /// **The line names the case and each of the five times in milliseconds**,
     /// on one line.
     #[test]
-    fn a_room_line_names_the_case_and_its_four_times() {
+    fn a_room_line_names_the_case_and_its_five_times() {
         let said = line("vault_room::a_case", &some_time());
         assert_eq!(
             said,
-            "room-timing case=vault_room::a_case copy_ms=1200 server_ms=3400 \
-             furnish_ms=5600 life_ms=12000"
+            "room-timing case=vault_room::a_case template_ms=700 copy_ms=1200 \
+             server_ms=3400 furnish_ms=5600 life_ms=12000"
         );
         assert!(!said.contains('\n'), "{said}");
     }

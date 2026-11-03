@@ -171,6 +171,10 @@ name = "room"
 required-features = ["rooms"]
 
 [[test]]
+name = "room_timing_line"
+required-features = ["rooms"]
+
+[[test]]
 name = "seen_question"
 required-features = ["rooms"]
 
