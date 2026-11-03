@@ -288,6 +288,90 @@ async fn a_refused_companion_leaves_no_batch() {
     server.stop().await;
 }
 
+async fn row_in(tx: &mut sqlx::Transaction<'_, sqlx::MySql>, sid: &str) {
+    sqlx::query("INSERT INTO session_teaching (sid, domain, taught_at) VALUES (?, 'claims', '2026-01-01T00:00:00Z')")
+        .bind(sid)
+        .execute(&mut **tx)
+        .await
+        .unwrap();
+}
+
+async fn rows_of(pool: &MySqlPool, sid: &str) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM session_teaching WHERE sid = ?")
+        .bind(sid)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// **A batch staged in a caller's transaction commits with that transaction's
+/// rows**, and the head the owner holds moves with the acknowledged COMMIT, so
+/// the next batch stages at the new head.
+#[tokio::test]
+async fn a_staged_batch_commits_with_the_rows_of_its_transaction() {
+    let (_scratch, mut server, pool, log) = fixture().await;
+    let first = batch("staged-1", 0, &[b"a"]);
+    let second = batch("staged-2", 1, &[b"b"]);
+    let mut tx = pool.begin().await.unwrap();
+    row_in(&mut tx, "homer").await;
+    let staged = log.stage(&mut tx, Position(0), &first).await.unwrap();
+    tx.commit().await.unwrap();
+    staged.committed();
+    assert_eq!(rows_of(&pool, "homer").await, 1);
+    let mut tx = pool.begin().await.unwrap();
+    let staged = log.stage(&mut tx, Position(1), &second).await.unwrap();
+    tx.commit().await.unwrap();
+    staged.committed();
+    assert_eq!(
+        log.read_from(Position(0), 10).await.unwrap(),
+        [first, second]
+    );
+    drop(log);
+    server.stop().await;
+}
+
+/// **A transaction that rolls back leaves neither its rows nor its batch**, and
+/// the owner's head stays where it was, so the next batch lands at the same
+/// position.
+#[tokio::test]
+async fn a_rolled_back_transaction_leaves_neither_rows_nor_batch() {
+    let (_scratch, mut server, pool, log) = fixture().await;
+    let lost = batch("lost", 0, &[b"a"]);
+    let mut tx = pool.begin().await.unwrap();
+    row_in(&mut tx, "marge").await;
+    let _staged = log.stage(&mut tx, Position(0), &lost).await.unwrap();
+    tx.rollback().await.unwrap();
+    assert_eq!(rows_of(&pool, "marge").await, 0);
+    assert!(log.read_from(Position(0), 10).await.unwrap().is_empty());
+    let next = batch("next", 0, &[b"b"]);
+    assert_eq!(
+        log.append(Position(0), &next).await.unwrap(),
+        Append::Committed(next.range())
+    );
+    drop(log);
+    server.stop().await;
+}
+
+/// **The owner reads the log's tail once**, not before each write: three
+/// batches, one read.
+#[tokio::test]
+async fn the_tail_is_read_once_for_any_number_of_writes() {
+    let (_scratch, mut server, _pool, log) = fixture().await;
+    for (id, head) in [("one", 0), ("two", 1), ("three", 2)] {
+        let next = batch(id, head, &[b"a"]);
+        assert_eq!(
+            log.append(Position(head), &next).await.unwrap(),
+            Append::Committed(next.range())
+        );
+    }
+    assert_eq!(
+        log.0.tail_reads.load(std::sync::atomic::Ordering::SeqCst),
+        1
+    );
+    drop(log);
+    server.stop().await;
+}
+
 /// **The import reads every mark with its own taught_at**, including a run with
 /// no session card.
 #[tokio::test]

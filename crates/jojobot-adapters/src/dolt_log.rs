@@ -14,6 +14,12 @@ struct Inner {
     pool: MySqlPool,
     lock: String,
     session: Mutex<Session>,
+    /// **The last position the log holds, kept in memory by its one writer.**
+    /// Read from the store once, when first needed and again after a fence;
+    /// moved only after a COMMIT is acknowledged. A write never reads the tail.
+    head: std::sync::Mutex<Option<u64>>,
+    #[cfg(test)]
+    tail_reads: std::sync::atomic::AtomicU64,
     #[cfg(any(test, feature = "testing"))]
     fault: std::sync::Mutex<Option<Fault>>,
     #[cfg(any(test, feature = "testing"))]
@@ -89,11 +95,46 @@ impl DoltLog {
                 #[cfg(any(test, feature = "testing"))]
                 delayed: false,
             }),
+            head: std::sync::Mutex::new(None),
+            #[cfg(test)]
+            tail_reads: std::sync::atomic::AtomicU64::new(0),
             #[cfg(any(test, feature = "testing"))]
             fault: std::sync::Mutex::new(None),
             #[cfg(any(test, feature = "testing"))]
             acknowledged: tokio::sync::Notify::new(),
         })))
+    }
+
+    /// The head the owner holds. The one read of the log's tail is made here,
+    /// when no head is held.
+    async fn known_head(&self, connection: &mut MySqlConnection) -> Result<u64, LogError> {
+        if let Some(head) = *self.0.head.lock().expect("the head is not poisoned") {
+            return Ok(head);
+        }
+        #[cfg(test)]
+        self.0
+            .tail_reads
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let last: Option<u64> = sqlx::query_scalar(
+            "SELECT MAX(last_position) FROM event_log WHERE first_position IS NOT NULL",
+        )
+        .fetch_one(connection)
+        .await
+        .map_err(failed)?;
+        let head = last.unwrap_or(0);
+        *self.0.head.lock().expect("the head is not poisoned") = Some(head);
+        Ok(head)
+    }
+
+    /// The head after a COMMIT the store acknowledged.
+    fn moved_to(&self, head: u64) {
+        *self.0.head.lock().expect("the head is not poisoned") = Some(head);
+    }
+
+    /// An outcome that is not known leaves no head to trust: the next write
+    /// reads the tail once, after the fence.
+    fn forget_head(&self) {
+        *self.0.head.lock().expect("the head is not poisoned") = None;
     }
 
     async fn fresh(pool: &MySqlPool) -> Result<MySqlConnection, LogError> {
@@ -146,6 +187,7 @@ impl DoltLog {
         session.connection = Some(connection);
         session.id = id;
         session.uncertain = false;
+        self.forget_head();
         #[cfg(any(test, feature = "testing"))]
         {
             session.delayed = false;
@@ -198,13 +240,8 @@ impl DoltLog {
                 Err(LogError::Conflict)
             };
         }
-        let last: Option<u64> = sqlx::query_scalar(
-            "SELECT MAX(last_position) FROM event_log WHERE first_position IS NOT NULL",
-        )
-        .fetch_one(&mut *connection)
-        .await
-        .map_err(failed)?;
-        if head.0 != last.unwrap_or(0) {
+        let last = self.known_head(&mut *connection).await?;
+        if head.0 != last {
             session.uncertain = false;
             return Err(LogError::Conflict);
         }
@@ -270,7 +307,59 @@ impl DoltLog {
             return Ok(Append::Indeterminate);
         }
         session.uncertain = false;
+        self.moved_to(batch.range().last.0);
         Ok(Append::Committed(batch.range()))
+    }
+
+    /// **Put a batch into a transaction the caller owns**, so its rows and the
+    /// batch commit or roll back as one. The batch is admitted against the head
+    /// the owner holds, with no read of the log. The head moves only when the
+    /// caller reports the COMMIT acknowledged through [`Staged::committed`]; a
+    /// transaction that rolls back, or a [`Staged`] dropped, leaves it where it
+    /// was.
+    pub async fn stage(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::MySql>,
+        head: Position,
+        batch: &SealedBatch,
+    ) -> Result<Staged, LogError> {
+        if head != batch.header().expected_previous_position {
+            return Err(LogError::Conflict);
+        }
+        if head.0 != self.known_head(tx).await? {
+            return Err(LogError::Conflict);
+        }
+        let slot = format!(
+            "b:{}",
+            jojobot_domain::request::digest_of(&batch.header().batch_id.0)
+        );
+        let bytes = StoredBatch::encode(batch)?;
+        sqlx::query("INSERT INTO event_log (slot, first_position, last_position, payload) VALUES (?, ?, ?, ?)")
+            .bind(&slot)
+            .bind(batch.range().first.0)
+            .bind(batch.range().last.0)
+            .bind(&bytes)
+            .execute(&mut **tx)
+            .await
+            .map_err(failed)?;
+        Ok(Staged {
+            log: self.clone(),
+            last: batch.range().last.0,
+        })
+    }
+}
+
+/// **A batch inside a caller's transaction that has not committed.** Call
+/// [`Staged::committed`] after the COMMIT is acknowledged; dropping it any other
+/// way leaves the head where it was.
+pub struct Staged {
+    log: DoltLog,
+    last: u64,
+}
+
+impl Staged {
+    pub fn committed(self) {
+        self.log.moved_to(self.last);
     }
 }
 
