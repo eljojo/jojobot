@@ -500,3 +500,58 @@ fn the_envelope_names_the_writer_and_the_run_of_each_write() {
         Some(first)
     );
 }
+
+fn moment(text: &str) -> Timestamp {
+    text.parse().expect("a timestamp")
+}
+
+/// An envelope that names the moment the store took the event in and, for an
+/// import, the moment the source row was written.
+fn stamped(
+    written_at: Option<Timestamp>,
+    imported_source_time: Option<Timestamp>,
+    payload: ClaimEvent,
+) -> Event<ClaimEvent> {
+    Event {
+        written_at,
+        imported_source_time,
+        ..envelope(payload)
+    }
+}
+
+/// **A key write keeps the moment of its own event, never the claim's.** The
+/// claim was inserted at one moment; two writes of one key arrived at two later
+/// ones, an imported write carries its source's moment and not the importer's,
+/// and a write whose event names no moment has none.
+#[test]
+fn each_key_write_keeps_the_moment_of_its_own_event() {
+    let (t0, t1, t2) = (
+        moment("2026-04-01T00:00:00Z"),
+        moment("2026-04-02T00:00:00Z"),
+        moment("2026-04-03T00:00:00Z"),
+    );
+    let importer = moment("2026-05-01T00:00:00Z");
+    let mut state = State::default();
+    let stamped_claim = ClaimBody {
+        inserted_at: Some(t0),
+        ..claim("f1", "alpha", "a", 1)
+    };
+    state.apply(&envelope(created("r1", stamped_claim)));
+    for (ordinal, written, source) in [
+        (1, Some(t1), None),
+        (2, Some(t2), None),
+        (3, Some(importer), Some(t1)),
+        (4, None, None),
+    ] {
+        state.apply(&stamped(
+            written,
+            source,
+            write("r1", "alpha", "mood", ordinal, "calm"),
+        ));
+    }
+
+    let mut writes = state.key_writes(&object("alpha"));
+    writes.sort_by_key(|write| write.ordinal);
+    let seen: Vec<_> = writes.iter().map(|write| write.written_at).collect();
+    assert_eq!(seen, [Some(t1), Some(t2), Some(t1), None]);
+}

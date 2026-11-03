@@ -178,6 +178,10 @@ struct Write {
     /// The actor and run on the envelope of the event that made this write.
     writer: Option<Actor>,
     run: Option<RunId>,
+    /// When the store took the write in: the source's moment for an import,
+    /// else the envelope's own. `None` stays `None`; the claim's moment is
+    /// never put in its place.
+    written_at: Option<Timestamp>,
 }
 
 /// **What the events so far say.**
@@ -250,6 +254,7 @@ impl State {
                     targets: targets.clone(),
                     writer: event.actor.clone(),
                     run: event.run.clone(),
+                    written_at: event.imported_source_time.or(event.written_at),
                 });
             }
         }
@@ -377,7 +382,7 @@ impl State {
                     recorded_by: record.claim.app.clone(),
                     writer: write.writer.clone(),
                     run: write.run.as_ref().map(|run| run.0.clone()),
-                    written_at: record.claim.inserted_at,
+                    written_at: write.written_at,
                 });
             }
         }
