@@ -24,12 +24,13 @@ use crate::writer::Writer;
 use crate::dolt::teaching::RowChange;
 use crate::dolt_log::DoltLog;
 use crate::fold::teachings::{held_after_contact, held_after_forget};
+use crate::writer_log::WriterLog;
 
 pub mod codec;
 
 /// **The teaching ledger a boot serves.** It is served from the event log. The
-/// log's connection holds the one-writer lock, so a second process cannot start
-/// beside this one. The old rows seed the first boot's import; and when the
+/// writer's connection holds the one-writer lock, so a second process cannot
+/// start beside this one. The old rows seed the first boot's import; and when the
 /// shadow names the teaching family they are also kept current and compared,
 /// which is the default (see the feature registry). One function for the boot and
 /// for the case that boots it with no instance record.
@@ -39,7 +40,7 @@ pub async fn serving(
     writer: Writer,
 ) -> Result<LoggedTeachings, TeachingError> {
     let log = Arc::new(
-        DoltLog::open(pool.clone())
+        WriterLog::open(pool.clone(), writer.clone())
             .await
             .map_err(|e| TeachingError::Store(format!("the event log is unavailable: {e}")))?,
     );
@@ -104,6 +105,18 @@ impl RowsLog for DoltLog {
         rows: Vec<RowChange>,
     ) -> Result<Append, LogError> {
         DoltLog::append_with_rows(self, head, batch, rows).await
+    }
+}
+
+#[async_trait::async_trait]
+impl RowsLog for WriterLog {
+    async fn append_with_rows(
+        &self,
+        head: Position,
+        batch: &SealedBatch,
+        rows: Vec<RowChange>,
+    ) -> Result<Append, LogError> {
+        WriterLog::append_with_rows(self, head, batch, rows).await
     }
 }
 
