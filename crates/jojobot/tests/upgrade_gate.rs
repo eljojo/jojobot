@@ -297,6 +297,11 @@ async fn age_the_event_log(pool: &sqlx::MySqlPool, hours: i64) {
         .execute(pool)
         .await
         .expect("the old batches are taken out of the log");
+    // The store changed beneath the log's owner, so the head it holds is the
+    // old one: the owner reads the tail again, as it does after a fence.
+    log.settle(pool)
+        .await
+        .expect("the log's head is read again after the batches were taken out");
     for batch in &aged {
         let landed = log
             .append(batch.header().expected_previous_position, batch)
