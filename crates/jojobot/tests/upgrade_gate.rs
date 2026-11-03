@@ -1342,17 +1342,20 @@ async fn ageing_a_store_moves_its_teaching_log_with_its_rows() {
         .await
         .expect("a migrated database");
     seed_the_teaching_marks_through_the_log(&pool).await;
-    let log = DoltLog::open(pool.clone()).await.expect("the log opens");
-    let before = log
-        .read_from(Position(0), 100_000)
-        .await
-        .expect("the seeded batches read");
+    let before = {
+        let log = DoltLog::open(pool.clone()).await.expect("the log opens");
+        log.read_from(Position(0), 100_000)
+            .await
+            .expect("the seeded batches read")
+    };
     assert!(!before.is_empty(), "the seed wrote a batch");
     age_the_recording(&pool, 6).await;
-    let after = log
-        .read_from(Position(0), 100_000)
-        .await
-        .expect("the aged batches read");
+    let after = {
+        let log = DoltLog::open(pool.clone()).await.expect("the log opens");
+        log.read_from(Position(0), 100_000)
+            .await
+            .expect("the aged batches read")
+    };
     assert_eq!(after.len(), before.len(), "every batch remains");
     for (original, aged) in before.iter().zip(&after) {
         assert_eq!(aged.header().batch_id, original.header().batch_id);
