@@ -6,9 +6,11 @@
 //! **The order of refusal is part of the rule.** A request with two faults is
 //! told the first, so a caller that fixes it meets the second. The order is:
 //!
-//! 1. the guards only the verb applies: a role's lease field;
+//! 1. the guards only the verb applies: a role's lease field, then a key
+//!    jojobot writes itself (the stored due moment, the review stamp);
 //! 2. the write alone: a setting with no value, a describing key set on a thing;
-//! 3. the subject, then who may write the keys it holds, then the edge's object, then the refs, then the objects a
+//! 3. the subject, then who may write the keys it holds (an app's owned keys,
+//!    then a bot's guarded keys), then the edge's object, then the refs, then the objects a
 //!    reference field names, then the claim the write is derived from;
 //! 4. the number a container's member asks for, when another member holds it.
 //!
@@ -20,9 +22,12 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use jiff::civil::Date;
 
+mod chart;
+
 use super::{ClaimBody, ClaimEvent, FieldValue, KeyId, ObjectId, RecordId, State};
 use crate::actor::Actor;
 use crate::app::AppStamp;
+use crate::attention;
 use crate::memory::{
     self, FactStatus, MemoryError, Provenance, Standing, WriteClass, types::DeclaredType,
 };
@@ -107,6 +112,14 @@ pub enum Refusal {
         role: String,
         key: String,
     },
+    /// A bot writes a guarded key its declaration does not license it to
+    /// write, or names a manager that would invert the chart.
+    Unlicensed(MemoryError),
+    /// The verb names a key jojobot writes itself: the stored due moment, the
+    /// review stamp and the other bookkeeping keys.
+    ServerWritten {
+        key: String,
+    },
     /// The write is malformed on its own. Carries the words the caller reads.
     Malformed(String),
     UnknownSubject(String),
@@ -156,6 +169,15 @@ pub fn prepare(
     {
         return Err(Refusal::RoleFieldGuarded { role, key });
     }
+    if request.route == Route::Verb
+        && let Some(key) = request.fields.keys().map(|key| key.trim()).find(|key| {
+            *key == attention::DUE_ON || memory::review::SERVER_WRITTEN_KEYS.contains(key)
+        })
+    {
+        return Err(Refusal::ServerWritten {
+            key: key.to_string(),
+        });
+    }
     // The write alone, before any object is looked up.
     let classes = memory::classes_for_write(
         &BTreeMap::new(),
@@ -193,6 +215,39 @@ pub fn prepare(
             if request.door.actor != Actor::App(owner.clone()) {
                 return Err(Refusal::OwnedKeyWritten { subject, key });
             }
+        }
+    }
+    // A bot writes a guarded key only where its declaration licenses it, judged
+    // over the chart the state holds. An app was judged by its grant at the door.
+    if let Actor::Bot(caller) = &request.door.actor
+        && memory::names_a_guarded_key(&request.fields)
+    {
+        let subject = state
+            .handle_of(&home)
+            .unwrap_or_else(|| memory::EntityId(request.subject.clone()));
+        let chart = chart::Chart::new(state, declared);
+        let held = chart.fold(&subject);
+        // A resend of the value a key holds is not a change.
+        let changing: BTreeMap<String, String> = request
+            .fields
+            .iter()
+            .filter(|(key, value)| {
+                let guarded = memory::GUARDED_KEYS
+                    .iter()
+                    .any(|rule| rule.key == key.trim());
+                !(guarded
+                    && held
+                        .get(key.trim())
+                        .is_some_and(|now| now.trim() == value.trim()))
+            })
+            .map(|(key, value)| (key.trim().to_string(), value.clone()))
+            .collect();
+        let lineage =
+            memory::needs_the_chart(&changing).map(|named| chart.lineage(&subject, &home, named));
+        if let Some(refused) =
+            memory::refuses_unlicensed_write(&subject, caller, &changing, lineage.as_ref())
+        {
+            return Err(Refusal::Unlicensed(refused));
         }
     }
     let edge = match &request.edge {

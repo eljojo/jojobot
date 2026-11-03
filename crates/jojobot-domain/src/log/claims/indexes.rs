@@ -81,6 +81,39 @@ pub(super) fn claim_number(label: &str) -> Option<u64> {
 }
 
 impl State {
+    /// **The objects that stand**: none folded into another.
+    pub(super) fn standing_objects(&self) -> impl Iterator<Item = &ObjectId> {
+        self.objects
+            .keys()
+            .filter(|object| !self.redirects.contains_key(*object))
+    }
+
+    /// Every claim the state holds, with its identity.
+    pub(super) fn all_records(&self) -> impl Iterator<Item = (&RecordId, &super::Record)> {
+        self.records.iter()
+    }
+
+    /// The streams a claim wrote to.
+    pub(super) fn streams_written_by(&self, record: &RecordId) -> Vec<(ObjectId, KeyId)> {
+        self.indexes
+            .written_by
+            .get(record)
+            .map(|streams| streams.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// **The handle an object answers to now**: a spelling of the form
+    /// `kind:slug` bound to it.
+    pub(super) fn handle_of(&self, object: &ObjectId) -> Option<crate::memory::EntityId> {
+        let object = self.survivor(object);
+        self.addresses
+            .iter()
+            .find(|(address, bound)| {
+                self.survivor(bound) == object && address.contains(':') && !address.contains('#')
+            })
+            .map(|(address, _)| crate::memory::EntityId(address.clone()))
+    }
+
     /// **The ordinal a new write of `key` on `object` takes**: one past the
     /// highest in its stream, and one for a stream nothing was written to. The
     /// object is followed to its merge survivor.

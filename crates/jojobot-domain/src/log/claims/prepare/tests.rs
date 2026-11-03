@@ -506,3 +506,156 @@ fn a_missing_subject_is_told_before_an_owned_key_and_that_before_a_missing_edge(
         })
     );
 }
+
+/// A chart of bots: `homer` heads it, `marge` reports to `boss`, `bart` to `mid`,
+/// and `lisa` reports to `homer` too.
+fn chart_world() -> (State, Vec<DeclaredType>) {
+    // The chart walk asks the process's kind set whether a manager is a handle.
+    crate::memory::kinds::load_shipped();
+    let mut events = Vec::new();
+    for (name, manager) in [
+        ("bot:homer", None),
+        ("bot:marge", Some("bot:homer")),
+        ("bot:bart", Some("bot:marge")),
+        ("bot:lisa", Some("bot:homer")),
+    ] {
+        events.push(ClaimEvent::ObjectCreated {
+            object: object(name),
+            body: body("bot", name),
+        });
+        events.push(ClaimEvent::AddressBound {
+            object: object(name),
+            address: name.to_string(),
+        });
+        if let Some(manager) = manager {
+            events.push(created(
+                &format!("r-{name}"),
+                claim("f1", name, "reports", 1),
+            ));
+            events.push(write(&format!("r-{name}"), name, "reports_to", 1, manager));
+        }
+    }
+    (replay(&events), Vec::new())
+}
+
+fn by_bot(subject: &str, caller: &str, key: &str, value: &str) -> CaptureRequest {
+    CaptureRequest {
+        door: Door {
+            actor: Actor::Bot(crate::memory::EntityId(caller.to_string())),
+            owned_keys: BTreeSet::new(),
+            owner_revoked: false,
+        },
+        fields: BTreeMap::from([(key.into(), value.into())]),
+        ..request(subject)
+    }
+}
+
+/// **A guarded key is written only by whom its declaration licenses**, judged
+/// over the chart the state holds.
+#[test]
+fn a_guarded_key_is_written_only_by_whom_its_declaration_licenses() {
+    let (state, declared) = chart_world();
+    // A bot above the thing moves it.
+    assert!(
+        prepare(
+            &state,
+            &declared,
+            &by_bot("bot:bart", "bot:homer", "reports_to", "bot:lisa")
+        )
+        .is_ok()
+    );
+    // A bot beside it does not.
+    assert!(matches!(
+        prepare(
+            &state,
+            &declared,
+            &by_bot("bot:bart", "bot:lisa", "reports_to", "bot:lisa")
+        ),
+        Err(Refusal::Unlicensed(
+            crate::memory::MemoryError::KeyNotYours { .. }
+        ))
+    ));
+    // Nobody puts a thing under one of its own reports.
+    assert!(matches!(
+        prepare(
+            &state,
+            &declared,
+            &by_bot("bot:homer", "bot:homer", "reports_to", "bot:bart")
+        ),
+        Err(Refusal::Unlicensed(
+            crate::memory::MemoryError::ChartCycle { .. }
+        ))
+    ));
+    // A resend of the value the thing holds is not a change.
+    assert!(
+        prepare(
+            &state,
+            &declared,
+            &by_bot("bot:bart", "bot:lisa", "reports_to", "bot:marge")
+        )
+        .is_ok()
+    );
+    // A different identity's key: not the bot's own.
+    assert!(matches!(
+        prepare(
+            &state,
+            &declared,
+            &by_bot("bot:bart", "bot:bart", "rule_seats", "3")
+        ),
+        Err(Refusal::Unlicensed(
+            crate::memory::MemoryError::KeyNotYours { .. }
+        ))
+    ));
+    assert!(
+        prepare(
+            &state,
+            &declared,
+            &by_bot("bot:bart", "bot:marge", "rule_seats", "3")
+        )
+        .is_ok()
+    );
+    // An app is judged by its grant before the state sees it, and a key nobody
+    // guards is open.
+    assert!(
+        prepare(
+            &state,
+            &declared,
+            &by_bot("bot:bart", "bot:lisa", "note", "x")
+        )
+        .is_ok()
+    );
+}
+
+/// **The keys jojobot writes itself are refused on the verb**, whoever asks, and
+/// are the engine's own to write.
+#[test]
+fn a_key_jojobot_writes_itself_is_refused_on_the_verb_and_not_on_the_engine() {
+    let (state, declared) = world();
+    for key in [
+        "due_on",
+        " due_on ",
+        "defragged_at",
+        "review_mark",
+        "settings_record",
+        "engine_record",
+        "release_notes_told",
+        "archive_reason",
+    ] {
+        let sent = CaptureRequest {
+            fields: BTreeMap::from([(key.to_string(), "v".to_string())]),
+            ..request("alpha")
+        };
+        assert_eq!(
+            prepare(&state, &declared, &sent),
+            Err(Refusal::ServerWritten {
+                key: key.trim().to_string()
+            }),
+            "{key}"
+        );
+        let engine = CaptureRequest {
+            route: Route::Engine,
+            ..sent
+        };
+        assert!(prepare(&state, &declared, &engine).is_ok(), "{key}");
+    }
+}
