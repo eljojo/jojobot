@@ -11,12 +11,13 @@
 # is named `report`, not `check`, so it is never mistaken for the required
 # `check` status.
 #
-# The rooms run on the branch too, beside the report (rule 527). A change to
-# what a read returns by default can break a room that another line's card
-# built, and only a room run sees it. Without this run the defect is found at
-# the carry, one round trip after the line has reported. The job is named
-# `rooms`, as on the pull request, and it is not a required status. The year
-# room stays on the pull request and the carry only.
+# The rooms run on a push where its change selects them (rule 760): `bar plan
+# rooms` reads the crate selection, and a push that reaches no room, no room
+# document and nothing the server is built from skips the rooms step and says
+# why. The rooms run in full on the landing's pull request and at the release
+# gate, and a dispatch naming this job runs them whatever the change. The job
+# is named `rooms`, as on the pull request, and it is not a required status.
+# The year room stays on the pull request and the carry only.
 name: branch
 
 on:
