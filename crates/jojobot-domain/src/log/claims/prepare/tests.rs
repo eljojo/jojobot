@@ -370,6 +370,49 @@ fn a_member_cannot_take_a_number_a_taken_back_claim_held() {
     );
 }
 
+/// **A number a taken-back claim held stays retired when its container is
+/// merged into another**: the store derives retired numbers from the members'
+/// claims, and a container merge changes none of them.
+#[test]
+fn a_number_stays_retired_after_its_container_is_merged() {
+    let (mut state, declared) = numbered_world();
+    for event in thing("old") {
+        apply(&mut state, &event);
+    }
+    apply(&mut state, &created("c2", claim("fc2", "old", "c", 1)));
+    apply(&mut state, &write("c2", "old", NUMBERS_BY, 1, "num"));
+    apply(
+        &mut state,
+        &ClaimEvent::ObjectCreated {
+            object: object("mo"),
+            body: ObjectBody {
+                parent: Some(object("old")),
+                ..body("thing", "mo")
+            },
+        },
+    );
+    apply(&mut state, &created("t1", claim("f1", "mo", "c", 1)));
+    apply(&mut state, &write("t1", "mo", "num", 1, "5"));
+    apply(&mut state, &archived("t1", "f1", "mo"));
+    apply(
+        &mut state,
+        &ClaimEvent::ObjectsMerged {
+            folded: object("old"),
+            survivor: object("coll"),
+            records: Vec::new(),
+            writes: Vec::new(),
+        },
+    );
+    assert_eq!(
+        prepare(&state, &declared, &numbering("m3", "5")),
+        Err(Refusal::NumberRetired {
+            container: object("coll"),
+            key: "num".into(),
+            number: 5,
+        })
+    );
+}
+
 /// **A role's lease fields belong to the boot door.** The verb is refused them
 /// before any object is looked up; the engine's own routes write them.
 #[test]

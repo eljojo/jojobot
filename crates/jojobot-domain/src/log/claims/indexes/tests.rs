@@ -618,6 +618,46 @@ fn a_container_holds_the_numbers_of_the_objects_under_it() {
     }
 }
 
+/// **A number issued under a container stays issued under the container it is
+/// merged into**, asked by either name, and its taken-back state with it.
+#[test]
+fn an_issued_number_follows_its_container_into_a_merge() {
+    let events = [
+        vec![
+            thing("old", None),
+            thing("coll", None),
+            thing("m1", Some("old")),
+        ],
+        holds("o", "old", NUMBERS_BY, "num"),
+        holds("c", "coll", NUMBERS_BY, "num"),
+        holds("w1", "m1", "num", "5"),
+        vec![
+            ClaimEvent::RecordRevised {
+                record: record("w1"),
+                claim: {
+                    let mut taken_back = claim("fw1", "m1", "c", 1);
+                    taken_back.status = FactStatus::Archived;
+                    taken_back
+                },
+            },
+            merged("old", "coll", &[], &[]),
+        ],
+    ]
+    .concat();
+    let state = state(&events);
+    for container in ["coll", "old"] {
+        assert!(
+            state.number_issued(&object(container), "num", 5),
+            "{container}: issued"
+        );
+    }
+    assert_eq!(
+        state.issued_unheld(&object("coll"), "num"),
+        BTreeSet::from([5]),
+        "taken back, under the survivor"
+    );
+}
+
 fn bound(id: &str, address: &str) -> ClaimEvent {
     ClaimEvent::AddressBound {
         object: object(id),
@@ -1117,12 +1157,28 @@ fn the_indexes_equal_a_recomputation_after_any_run_of_events() {
         let mut state = State::default();
         let mut made = 0;
         let mut merges = 0;
+        // Every number seen issued under a container, by the name it was asked
+        // by: a number issued once is issued under its survivor for good.
+        let mut issued_seen: BTreeSet<(&str, u64)> = BTreeSet::new();
         for step in 0..160 {
             let event = next_event(&mut dice, &state, &mut made);
             if matches!(event, ClaimEvent::ObjectsMerged { .. }) {
                 merges += 1;
             }
             apply(&mut state, &event);
+            for (name, number) in &issued_seen {
+                assert!(
+                    state.number_issued(&object(name), "num", *number),
+                    "seed {seed} step {step} after {event:?}: {name} num {number}: issued once, lost"
+                );
+            }
+            for name in OBJECTS {
+                for number in 0..=8 {
+                    if state.number_issued(&object(name), "num", number) {
+                        issued_seen.insert((name, number));
+                    }
+                }
+            }
             assert_indexes_equal_a_recomputation(
                 &state,
                 merges,

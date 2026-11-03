@@ -334,6 +334,22 @@ impl State {
                 *into.entry(number).or_insert(0) += count;
             }
         }
+        // A number issued under the folded container is issued under the
+        // survivor: the store derives retired numbers from the members' claims,
+        // which a merge does not change.
+        let issued: Vec<Seat> = self
+            .indexes
+            .issued
+            .iter()
+            .filter(|(container, _, _)| container == folded)
+            .cloned()
+            .collect();
+        for seat in issued {
+            self.indexes.issued.remove(&seat);
+            self.indexes
+                .issued
+                .insert((survivor.clone(), seat.1, seat.2));
+        }
         let labels: Vec<(ObjectId, String)> = self
             .indexes
             .labels
