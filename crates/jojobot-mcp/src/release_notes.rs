@@ -63,6 +63,12 @@ pub(crate) const SHIPPED: &[(&str, &str)] = &[
         include_str!("../release-notes/deploy-9.3.2.1/a-plan-names-what-it-could-not-read.md"),
     ),
     (
+        "a-manager-asks-for-a-bot-with-a-request-record",
+        include_str!(
+            "../release-notes/deploy-9.3.2.1/a-manager-asks-for-a-bot-with-a-request-record.md"
+        ),
+    ),
+    (
         "blank-value-takes-the-key-off",
         include_str!("../release-notes/deploy-9.3.2/blank-value-takes-the-key-off.md"),
     ),
