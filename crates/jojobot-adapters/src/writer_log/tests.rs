@@ -12,6 +12,85 @@ use std::sync::{
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 
+/// **A second log over the same store is refused by the writer's lock.** The
+/// first owner holds the lock from the moment it opens, so a second one cannot
+/// read a head beside a predecessor that can still commit.
+#[tokio::test]
+async fn a_second_owner_is_refused_by_the_lock() {
+    let scratch = Scratch::new("writer-log-second-owner");
+    let mut server = Dolt::start(&scratch.0, free_port()).await.unwrap();
+    let pool = migrated_database(&server, "alpha").await.unwrap();
+    let first = WriterLog::open(pool.clone(), Writer::default())
+        .await
+        .unwrap();
+    let second = WriterLog::open(pool, Writer::default()).await;
+    assert!(
+        matches!(second, Err(LogError::Store(_))),
+        "a second owner must be refused while the first holds the lock"
+    );
+    drop(first);
+    server.stop().await;
+}
+
+/// **Many tasks submit at once through one log and every batch lands whole.**
+/// Each task reads the tail and appends at it, retrying on a conflict. Positions
+/// are contiguous, every batch reads back whole, and an append at the tail is
+/// admitted, so the head the log holds equals its tail.
+#[tokio::test]
+async fn many_tasks_submitting_at_once_leave_whole_batches_and_a_true_head() {
+    let scratch = Scratch::new("writer-log-many-tasks");
+    let mut server = Dolt::start(&scratch.0, free_port()).await.unwrap();
+    let pool = migrated_database(&server, "alpha").await.unwrap();
+    let writer = Writer::default();
+    let log = Arc::new(WriterLog::open(pool, writer.clone()).await.unwrap());
+    let tasks = 12usize;
+    let mut set = tokio::task::JoinSet::new();
+    for n in 0..tasks {
+        let log = log.clone();
+        set.spawn(async move {
+            let id = format!("task-{n}");
+            let members: Vec<Vec<u8>> = vec![id.clone().into_bytes(), b"x".to_vec()];
+            let refs: Vec<&[u8]> = members.iter().map(Vec::as_slice).collect();
+            loop {
+                let tail = log
+                    .read_from(Position(0), 1000)
+                    .await
+                    .unwrap()
+                    .last()
+                    .map_or(0, |b| b.range().last.0);
+                let sealed = batch(&id, tail, &refs);
+                match log.append(Position(tail), &sealed).await {
+                    Ok(Append::Committed(_)) => return sealed,
+                    Ok(Append::DefinitelyNotCommitted) | Err(LogError::Conflict) => {}
+                    other => panic!("unexpected {other:?}"),
+                }
+            }
+        });
+    }
+    let mut sent = Vec::new();
+    while let Some(done) = set.join_next().await {
+        sent.push(done.unwrap());
+    }
+    let read = log.read_from(Position(0), 1000).await.unwrap();
+    assert_eq!(read.len(), tasks, "every batch landed once");
+    let mut next = 1;
+    for stored in &read {
+        assert_eq!(stored.range().first.0, next, "positions are contiguous");
+        assert!(sent.contains(stored), "a batch reads back whole");
+        next = stored.range().last.0 + 1;
+    }
+    let tail = next - 1;
+    let after = batch("after-all", tail, &[b"z"]);
+    assert_eq!(
+        log.append(Position(tail), &after).await.unwrap(),
+        Append::Committed(after.range()),
+        "the held head equals the log's tail"
+    );
+    drop(log);
+    writer.drain().await;
+    server.stop().await;
+}
+
 /// **A commit whose answer is lost is settled once, by the writer's fence.** The
 /// proxy lets the server commit and drops its answer, so the caller cannot tell.
 /// The append answers `Indeterminate`; the writer fences and settles the head

@@ -30,12 +30,23 @@ impl WriterLog {
     /// Open the log over a migrated store, served by `writer`. A caller with no
     /// writer of its own passes a new one: it then has a private owner.
     pub async fn open(pool: MySqlPool, writer: Writer) -> Result<Self, LogError> {
-        let log = DoltLog::open(pool.clone()).await?;
-        Ok(Self {
+        let this = Self {
             writer,
-            pool: pool.into(),
-            log,
+            pool: pool.clone().into(),
+            log: DoltLog::unread(pool),
+        };
+        // The head is read on the writer's connection, which takes the lock
+        // first: a predecessor that can still commit holds the lock, so this
+        // read cannot be taken beside it, and a second owner is refused.
+        let (pool, log) = (this.pool.clone(), this.log.clone());
+        this.job(async move {
+            let mut tx = pool.begin().await.map_err(sql::store_error::<LogError>)?;
+            let settled = log.settle_on(&mut tx).await;
+            let _ = tx.rollback().await;
+            settled
         })
+        .await?;
+        Ok(this)
     }
 
     /// **Settle the head after the store was changed beneath the log**, by one

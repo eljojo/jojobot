@@ -80,15 +80,29 @@ impl DoltLog {
     /// so no write after it reads the tail. The log takes no connection and no
     /// lock of its own: its owner, the writer, holds both.
     pub async fn open(pool: MySqlPool) -> Result<Self, LogError> {
-        let log = Self(Arc::new(Inner {
+        let log = Self::unread(pool);
+        let mut connection = Self::fresh(&log.0.pool).await?;
+        log.known_head(&mut connection).await?;
+        Ok(log)
+    }
+
+    /// The log's table with no head held. The owner reads the tail once, on a
+    /// connection that already holds its lock, through [`DoltLog::settle_on`].
+    pub(crate) fn unread(pool: MySqlPool) -> Self {
+        Self(Arc::new(Inner {
             pool,
             head: std::sync::Mutex::new(None),
             #[cfg(test)]
             tail_reads: std::sync::atomic::AtomicU64::new(0),
-        }));
-        let mut connection = Self::fresh(&log.0.pool).await?;
-        log.known_head(&mut connection).await?;
-        Ok(log)
+        }))
+    }
+
+    /// Read the tail once on `connection`, which the caller has put behind the
+    /// owner's lock, and hold it as the head.
+    pub(crate) async fn settle_on(&self, connection: &mut MySqlConnection) -> Result<(), LogError> {
+        self.forget_head();
+        self.known_head(connection).await?;
+        Ok(())
     }
 
     /// **Settle the head after a commit whose outcome was not known**, by one
