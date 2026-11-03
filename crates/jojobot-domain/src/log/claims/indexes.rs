@@ -9,6 +9,8 @@
 //!   admission's.
 //! - [`State::highest_merge_number`]: the number of merges applied.
 //! - [`State::numbered_member`]: the member a container's number belongs to.
+//! - [`State::number_issued`]: whether a claim ever held a number, taken back
+//!   or not.
 //! - [`State::claim_at`]: the claim an address names.
 //!
 //! **Each index equals a recomputation from the final state.** The tests hold
@@ -16,7 +18,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::{ClaimBody, KeyId, MovedRecord, ObjectId, RecordId, State};
+use super::{ClaimBody, FieldValue, KeyId, MovedRecord, ObjectId, RecordId, State};
 use crate::memory::{
     self,
     numbered::{NUMBERS_BY, whole_number},
@@ -52,6 +54,9 @@ pub(super) struct Indexes {
     seats: BTreeMap<Seat, BTreeSet<ObjectId>>,
     /// The seats each member holds, to take them back when the member changes.
     held_seats: BTreeMap<ObjectId, BTreeSet<Seat>>,
+    /// Every seat a claim ever held, whatever became of the claim. Nothing is
+    /// removed: a number issued once is never issued again.
+    issued: BTreeSet<Seat>,
 }
 
 impl Indexes {
@@ -118,6 +123,16 @@ impl State {
             .get(&(self.survivor(container).clone(), key.to_string(), number))?
             .iter()
             .next()
+    }
+
+    /// **Whether a claim ever held `number` under `key` in `container`**, one
+    /// that stands, one taken back, or one on a member since archived. A
+    /// claim counts by its newest write of the key: an earlier wording it was
+    /// edited away from never held the number.
+    pub fn number_issued(&self, container: &ObjectId, key: &str, number: u64) -> bool {
+        self.indexes
+            .issued
+            .contains(&(self.survivor(container).clone(), key.to_string(), number))
     }
 
     /// **The containers above `member` that number their members**, nearest
@@ -398,6 +413,30 @@ impl State {
             {
                 held.insert((container, key, number));
             }
+        }
+        for container in self.ancestors(&member) {
+            let Some(key) = self.numbers_by(&container) else {
+                continue;
+            };
+            let mut newest: BTreeMap<&RecordId, &FieldValue> = BTreeMap::new();
+            for write in self
+                .streams
+                .get(&(member.clone(), KeyId(key.clone())))
+                .into_iter()
+                .flatten()
+                .filter(|write| memory::reaches_the_thing(write.class))
+            {
+                newest.insert(&write.record, &write.write);
+            }
+            let issued: Vec<Seat> = newest
+                .into_values()
+                .filter_map(|value| match value {
+                    FieldValue::Set(value) => whole_number(value),
+                    FieldValue::Clear => None,
+                })
+                .map(|number| (container.clone(), key.clone(), number))
+                .collect();
+            self.indexes.issued.extend(issued);
         }
         for seat in &held {
             self.indexes

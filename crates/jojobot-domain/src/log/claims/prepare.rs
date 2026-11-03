@@ -86,6 +86,13 @@ pub enum Refusal {
         number: u64,
         holder: ObjectId,
     },
+    /// Nobody holds the number now, and a claim that held it was taken back.
+    /// A number issued once is never issued again.
+    NumberRetired {
+        container: ObjectId,
+        key: String,
+        number: u64,
+    },
 }
 
 /// **The events a capture writes**, in the order they apply: the claim, then one
@@ -168,15 +175,24 @@ pub fn prepare(
         else {
             continue;
         };
-        if let Some(holder) = state.numbered_member(&container, &numbers_by, number)
-            && holder != &home
-        {
-            return Err(Refusal::NumberHeld {
-                container,
-                key: numbers_by,
-                number,
-                holder: holder.clone(),
-            });
+        match state.numbered_member(&container, &numbers_by, number) {
+            Some(holder) if holder != &home => {
+                return Err(Refusal::NumberHeld {
+                    container,
+                    key: numbers_by,
+                    number,
+                    holder: holder.clone(),
+                });
+            }
+            Some(_) => {}
+            None if state.number_issued(&container, &numbers_by, number) => {
+                return Err(Refusal::NumberRetired {
+                    container,
+                    key: numbers_by,
+                    number,
+                });
+            }
+            None => {}
         }
     }
 

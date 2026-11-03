@@ -1,9 +1,11 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::super::tests::{
     apply, archived, body, claim, clear, created, key, object, record, replay, write,
 };
-use super::super::{ClaimEvent, FieldValue, KindId, MovedRecord, MovedWrite, ObjectBody, State};
+use super::super::{
+    ClaimEvent, FieldValue, KindId, MovedRecord, MovedWrite, ObjectBody, ObjectId, State,
+};
 use super::{Located, claim_number};
 use crate::memory::FactStatus;
 use crate::memory::numbered::NUMBERS_BY;
@@ -987,7 +989,7 @@ fn assert_indexes_equal_a_recomputation(state: &State, merges: u64, context: &st
             continue;
         };
         for number in 0..=8u64 {
-            let want: BTreeSet<_> = OBJECTS
+            let under: Vec<ObjectId> = OBJECTS
                 .iter()
                 .map(|name| survivor(name))
                 .filter(|member| member != &container)
@@ -1011,12 +1013,39 @@ fn assert_indexes_equal_a_recomputation(state: &State, merges: u64, context: &st
                     }
                     false
                 })
+                .collect();
+            // A number any claim of a member under the container holds by its
+            // newest write of the key was issued, and the index never forgets it.
+            let wrote = |member: &ObjectId| {
+                let mut newest = BTreeMap::new();
+                for write in state
+                    .streams
+                    .get(&(member.clone(), key(&by)))
+                    .into_iter()
+                    .flatten()
+                {
+                    newest.insert(write.record.clone(), write.write.clone());
+                }
+                newest.into_values().any(|value| {
+                    matches!(&value, FieldValue::Set(v)
+                        if crate::memory::numbered::whole_number(v) == Some(number))
+                })
+            };
+            if under.iter().any(wrote) {
+                assert!(
+                    state.number_issued(&container, &by, number),
+                    "{context}: {container:?} {by} {number}: written by a claim, yet not issued"
+                );
+            }
+            let want: BTreeSet<_> = under
+                .iter()
                 .filter(|member| {
                     state
                         .held_value(member, &by)
                         .and_then(|v| crate::memory::numbered::whole_number(&v))
                         == Some(number)
                 })
+                .cloned()
                 .collect();
             let got = state.numbered_member(&container, &by, number);
             match got {

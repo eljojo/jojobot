@@ -1,6 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::super::tests::{apply, body, claim, created, day, object, record, replay, write};
+use super::super::tests::{
+    apply, archived, body, claim, created, day, object, record, replay, write,
+};
 use super::super::{ClaimEvent, ObjectBody, State};
 use super::{CaptureRequest, Draft, Refusal, prepare};
 use crate::memory::numbered::NUMBERS_BY;
@@ -291,5 +293,34 @@ fn a_missing_source_is_told_before_a_held_number() {
     assert_eq!(
         prepare(&state, &declared, &request),
         Err(Refusal::UnknownSourceHome("nobody#f1".into()))
+    );
+}
+
+/// **A number a taken-back claim held is never issued again**, though no member
+/// holds it now.
+#[test]
+fn a_member_cannot_take_a_number_a_taken_back_claim_held() {
+    let (mut state, declared) = numbered_world();
+    apply(&mut state, &created("t1", claim("f1", "m3", "c", 1)));
+    apply(&mut state, &write("t1", "m3", "num", 1, "4"));
+    assert!(
+        prepare(&state, &declared, &numbering("m3", "4")).is_ok(),
+        "a claim that stands holds the number"
+    );
+    apply(&mut state, &archived("t1", "f1", "m3"));
+    let retired = Err(Refusal::NumberRetired {
+        container: object("coll"),
+        key: "num".into(),
+        number: 4,
+    });
+    assert_eq!(
+        prepare(&state, &declared, &numbering("m3", "4")),
+        retired,
+        "the member that held it"
+    );
+    assert_eq!(
+        prepare(&state, &declared, &numbering("m1", "4")),
+        retired,
+        "another member"
     );
 }
