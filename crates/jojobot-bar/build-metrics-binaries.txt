@@ -216,4 +216,5 @@ test-wait_run
 test-wharf_lock
 test-windowed_lock
 test-write_cost_per_claim
+test-writer_log_contract
 test-year_room

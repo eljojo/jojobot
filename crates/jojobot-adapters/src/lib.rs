@@ -24,6 +24,7 @@ pub mod provisioned_boot;
 pub mod search;
 pub mod teaching_log;
 pub mod writer;
+pub mod writer_log;
 
 // The port helper the suites share lives behind this feature, exactly as the
 // domain's fake and its contract do: test support that ships is test support

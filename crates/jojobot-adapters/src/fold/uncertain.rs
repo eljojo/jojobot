@@ -37,4 +37,5 @@ classify!(SessionError, |_| "the session store could not be reached"
 classify!(RequestError, |_| "the request store could not be reached"
     .into());
 classify!(TeachingError, |why| why);
+classify!(jojobot_domain::log::LogError, |why| why);
 classify!(PushError, |why| why);

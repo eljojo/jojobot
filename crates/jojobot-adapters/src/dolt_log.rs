@@ -138,6 +138,28 @@ impl DoltLog {
         Ok(())
     }
 
+    /// **Settle the head inside a recovery's fence**: one read of the tail on the
+    /// reader that fence opened (see [`DoltLog::reader`]).
+    pub(crate) async fn settle_in_fence(&self) -> Result<(), LogError> {
+        self.forget_head();
+        let mut reader = self.reader().await?;
+        self.known_head(reader.connection()).await?;
+        Ok(())
+    }
+
+    /// The slot a batch is stored under: its identity, hashed.
+    pub(crate) fn slot_of(batch: &SealedBatch) -> String {
+        format!(
+            "b:{}",
+            jojobot_domain::request::digest_of(&batch.header().batch_id.0)
+        )
+    }
+
+    /// A stored batch read back, its checksum checked.
+    pub(crate) fn decode_stored(bytes: &[u8]) -> Result<SealedBatch, LogError> {
+        StoredBatch::decode(bytes)
+    }
+
     /// The head the owner holds. The one read of the log's tail is made here,
     /// when no head is held.
     async fn known_head(&self, connection: &mut MySqlConnection) -> Result<u64, LogError> {
