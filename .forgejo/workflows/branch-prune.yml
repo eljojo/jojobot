@@ -8,10 +8,10 @@
 # workflow cannot read the cards: only the engineering manager dispatches
 # `delete`, after reading the dry-run list against the cards.
 #
-# **It deletes nothing yet.** The schedule and a dispatch print what they would
-# delete. A dispatch with `delete` set to `true` deletes, and logs every branch
-# with its head so any can be pushed back. The schedule turns to deleting when
-# the `DELETE` line below ends in `|| 'true'`; that edit is the one switch.
+# **It deletes daily at 06:17Z.** The schedule has no inputs, so `DELETE` below
+# falls back to `true`, and the run logs every deleted branch with its head so
+# any can be pushed back. A dispatch with `delete` set to anything but `true`,
+# `false` by default, prints what it would delete and deletes nothing.
 name: branch-prune
 
 on:
@@ -33,7 +33,7 @@ jobs:
     runs-on: nix
     timeout-minutes: 20
     env:
-      DELETE: ${{ forgejo.event.inputs.delete }}
+      DELETE: ${{ forgejo.event.inputs.delete || 'true' }}
     steps:
       # Every branch head and `origin/main`, for the ancestor and patch checks.
       - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/checkout@11d5960a326750d5838078e36cf38b85af677262
