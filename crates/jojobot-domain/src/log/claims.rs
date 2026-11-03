@@ -511,8 +511,10 @@ impl State {
 pub mod import;
 mod indexes;
 mod prepare;
+mod rules;
 pub use indexes::Located;
 pub use prepare::{Admitted, CaptureRequest, Door, Draft, Refusal, Route, prepare};
+pub use rules::StarredRule;
 
 #[cfg(test)]
 mod tests;
