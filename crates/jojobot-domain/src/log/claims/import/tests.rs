@@ -461,6 +461,51 @@ fn an_event_kind_or_a_metadata_row_is_refused_by_name() {
     );
 }
 
+/// Today's store numbers a merge one above the highest, and the state counts
+/// merges, so numbers with a gap would make the count lower than the highest
+/// stored number. A gap, a repeat or a first number past one is refused by name.
+#[test]
+fn merges_numbered_with_a_gap_are_refused_by_name() {
+    let merge = |no: i64, folded: &str, survivor: &str| MergeRow {
+        no,
+        folded: object(folded),
+        survivor: object(survivor),
+        claims: Vec::new(),
+    };
+    let rows = |numbers: [i64; 2]| Rows {
+        entities: vec![
+            entity("k1", "person:homer"),
+            entity("k2", "person:marge"),
+            entity("k3", "person:bart"),
+        ],
+        merges: vec![merge(numbers[0], "k2", "k1"), merge(numbers[1], "k3", "k1")],
+        ..Rows::default()
+    };
+    assert_eq!(
+        import(&rows([1, 3])),
+        Err(ImportError::MergeNumberGap {
+            expected: 2,
+            found: 3
+        })
+    );
+    assert_eq!(
+        import(&rows([1, 1])),
+        Err(ImportError::MergeNumberGap {
+            expected: 2,
+            found: 1
+        })
+    );
+    assert_eq!(
+        import(&rows([2, 3])),
+        Err(ImportError::MergeNumberGap {
+            expected: 1,
+            found: 2
+        })
+    );
+    let events = imported(&rows([1, 2]));
+    assert_eq!(State::replay(&events).highest_merge_number(), 2);
+}
+
 /// The folded side's former handle still resolves to the survivor, and a moved
 /// claim keeps the label and the lineage it wears under the survivor.
 #[test]

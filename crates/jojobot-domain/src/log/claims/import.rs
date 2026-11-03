@@ -42,6 +42,8 @@ pub enum ImportError {
         local: String,
         key: String,
     },
+    #[error("merge numbers must run 1, 2, 3 without a gap: expected {expected}, found {found}")]
+    MergeNumberGap { expected: i64, found: i64 },
 }
 
 /// **One `type_write` row**, its declaration decoded.
@@ -305,6 +307,16 @@ pub fn import(rows: &Rows) -> Result<Vec<Event<ClaimEvent>>, ImportError> {
             local: row.local.clone(),
             key: row.key.clone(),
         });
+    }
+    // The state counts merges and today's store numbers one above the highest,
+    // so only numbers 1, 2, 3 without a gap keep the count equal to the highest.
+    let mut numbers: Vec<i64> = rows.merges.iter().map(|step| step.no).collect();
+    numbers.sort_unstable();
+    for (at, found) in numbers.into_iter().enumerate() {
+        let expected = at as i64 + 1;
+        if found != expected {
+            return Err(ImportError::MergeNumberGap { expected, found });
+        }
     }
     let mut events = Vec::new();
     for row in &rows.entities {
