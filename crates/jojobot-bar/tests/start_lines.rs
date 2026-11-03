@@ -125,14 +125,45 @@ fn workflow_job(text: &str, name: &str) -> String {
 }
 
 fn workflow_step(job: &str, name: &str) -> String {
-    job.split_once(&format!("      - name: {name}\n        run: |\n"))
-        .expect("named shell step")
-        .1
+    // The step runs from its name line to the next step's dash; its script is the
+    // block under `run: |`, wherever that key sits among the step's others.
+    let step: Vec<&str> = job
         .lines()
+        .skip_while(|line| *line != format!("      - name: {name}"))
+        .skip(1)
+        .take_while(|line| !line.starts_with("      - "))
+        .collect();
+    let run = step
+        .iter()
+        .position(|line| *line == "        run: |")
+        .expect("named shell step");
+    step[run + 1..]
+        .iter()
         .take_while(|line| line.starts_with("          "))
         .map(|line| &line[10..])
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// **A step's script is the same whatever keys the forge lets sit between its
+/// name and its `run`.** `env`, `if`, `with` and `shell` are all legal there,
+/// so a reader that needs `run: |` on the very next line breaks on a harmless
+/// reorder. The step is the real one from the workflow, with a key put in.
+#[test]
+fn a_steps_script_is_read_past_the_keys_between_its_name_and_run() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let text = fs::read_to_string(root.join(".forgejo/workflows/branch.yml")).unwrap();
+    let gate = workflow_job(&text, "static");
+    let named = "      - name: Build-free gates\n";
+    assert_eq!(gate.matches(named).count(), 1, "{gate}");
+    let keyed = gate.replace(
+        named,
+        &format!("{named}        env:\n          PADDING: one\n"),
+    );
+    assert_ne!(keyed, gate);
+    let script = workflow_step(&gate, "Build-free gates");
+    assert!(script.contains("make static"), "{script}");
+    assert_eq!(workflow_step(&keyed, "Build-free gates"), script);
 }
 
 #[test]
