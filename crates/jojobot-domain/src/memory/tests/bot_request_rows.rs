@@ -676,3 +676,75 @@ fn the_spec_a_merge_leaves_is_read_from_both_histories() {
         "a duplicate that wrote no spec key leaves the spec as it was",
     );
 }
+
+/// **A withdrawal makes a number when the folded generation would fall, even
+/// under an unchanged spec.** The history is A's 1, D's 2 and a resend E that
+/// carries none: taking D out leaves the spec as it was and the fold at 1.
+#[test]
+fn a_withdrawal_that_lowers_the_folded_generation_makes_the_next_number() {
+    use crate::memory::bot_request::{
+        generation_withdrawing, highest_generation_ever, next_generation_withdrawing,
+    };
+    use crate::memory::{FactAddress, FactId, FactStatus, FieldWrite, Provenance, Standing};
+    let write = |fact: &str, value: Option<&str>, status: FactStatus| FieldWrite {
+        written_at: None,
+        value: value.map(String::from),
+        fact: FactAddress::new(handle(REQUEST), FactId(fact.into())),
+        recorded_at: Default::default(),
+        status,
+        provenance: Provenance::Inference,
+        standing: Standing::Open,
+        note: None,
+        recorded_by: None,
+        writer: None,
+        run: None,
+    };
+    let numbers = vec![
+        write("f1", Some("1"), FactStatus::Active),
+        write("f2", Some(" 2 "), FactStatus::Active),
+    ];
+    let same: BTreeMap<String, String> = [(DESIRED.to_string(), "paused".to_string())].into();
+    let other: BTreeMap<String, String> = [(DESIRED.to_string(), "running".to_string())].into();
+    let d = FactId("f2".into());
+    assert_eq!(generation_withdrawing(&numbers, None), 2);
+    assert_eq!(generation_withdrawing(&numbers, Some(&d)), 1);
+    assert_eq!(
+        generation_withdrawing(&numbers, Some(&FactId("f9".into()))),
+        2,
+        "a claim that carries no number leaves the fold as it was",
+    );
+    assert_eq!(generation_withdrawing(&[], None), 0);
+    let mut archived = numbers.clone();
+    archived.push(write("f3", Some("7"), FactStatus::Archived));
+    assert_eq!(
+        generation_withdrawing(&archived, None),
+        2,
+        "an archived number does not count"
+    );
+    assert_eq!(highest_generation_ever(&archived), 7);
+
+    let request = handle(REQUEST);
+    let makes = |before: &BTreeMap<String, String>, after: &BTreeMap<String, String>, lowered| {
+        next_generation_withdrawing(&request, before, after, 2, if lowered { 1 } else { 2 }, 2)
+    };
+    assert_eq!(
+        makes(&same, &same, true).as_deref(),
+        Some("3"),
+        "an unchanged spec under a falling number makes the next one",
+    );
+    assert_eq!(
+        makes(&same, &same, false),
+        None,
+        "an unchanged spec under an unchanged number makes none",
+    );
+    assert_eq!(
+        makes(&same, &other, false).as_deref(),
+        Some("3"),
+        "a changed spec makes the next number as before",
+    );
+    assert_eq!(
+        next_generation_withdrawing(&handle("topic:scrapbook"), &same, &same, 2, 1, 2),
+        None,
+        "a thing that is no request holds no generation",
+    );
+}

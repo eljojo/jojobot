@@ -294,7 +294,10 @@ impl Jojobot {
         &self,
         address: &jojobot_domain::memory::FactAddress,
     ) -> Result<Option<String>, MemoryError> {
-        use jojobot_domain::memory::bot_request::{SPEC_KEYS, next_generation, spec_withdrawing};
+        use jojobot_domain::memory::bot_request::{
+            GENERATION, SPEC_KEYS, generation_withdrawing, highest_generation_ever,
+            next_generation_withdrawing, spec_withdrawing,
+        };
         if !jojobot_domain::memory::bot_request::is_request(&address.home) {
             return Ok(None);
         }
@@ -306,12 +309,14 @@ impl Jojobot {
                 Err(e) => return Err(e),
             };
         }
-        let highest = self.highest_generation_ever(&address.home).await?;
-        Ok(next_generation(
+        let numbers = self.memory.history(&address.home, GENERATION).await?;
+        Ok(next_generation_withdrawing(
             &address.home,
             &spec_withdrawing(&history, None),
             &spec_withdrawing(&history, Some(&address.local)),
-            highest,
+            generation_withdrawing(&numbers, None),
+            generation_withdrawing(&numbers, Some(&address.local)),
+            highest_generation_ever(&numbers),
         ))
     }
 

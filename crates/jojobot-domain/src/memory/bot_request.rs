@@ -219,6 +219,43 @@ pub fn next_generation(
     (is_request(subject) && before != after).then(|| (highest_ever + 1).to_string())
 }
 
+/// **The generation the fold holds once one claim is taken out**: the newest
+/// active write of [`GENERATION`] other than `withdrawn`, or 0 when no claim
+/// holds a number that parses. Read from the history of the key, as
+/// [`spec_withdrawing`] reads the spec.
+pub fn generation_withdrawing(
+    writes: &[super::FieldWrite],
+    withdrawn: Option<&super::FactId>,
+) -> u64 {
+    writes
+        .iter()
+        .rfind(|write| {
+            write.status == super::FactStatus::Active && withdrawn != Some(&write.fact.local)
+        })
+        .and_then(|write| write.value.as_deref()?.trim().parse().ok())
+        .unwrap_or(0)
+}
+
+/// **The generation a withdrawal makes, or `None` when it makes none.** A
+/// withdrawal makes the next number when it changes the folded spec
+/// ([`next_generation`]), and also when it leaves the spec as it was but would
+/// lower the folded generation: the claim that carries the newest number is taken
+/// out under a later resend of its spec, and the fold would fall to an older
+/// number that named another spec. The number never falls and never repeats.
+pub fn next_generation_withdrawing(
+    subject: &super::EntityId,
+    before: &std::collections::BTreeMap<String, String>,
+    after: &std::collections::BTreeMap<String, String>,
+    folded_before: u64,
+    folded_after: u64,
+    highest_ever: u64,
+) -> Option<String> {
+    next_generation(subject, before, after, highest_ever).or_else(|| {
+        (is_request(subject) && folded_after < folded_before)
+            .then(|| (highest_ever + 1).to_string())
+    })
+}
+
 /// **The spec the history of the spec keys holds once one claim is taken out.**
 /// Each spec key reads its newest write among the active claims other than
 /// `withdrawn`; a clear, or a blank value, leaves the key off. This is the fold

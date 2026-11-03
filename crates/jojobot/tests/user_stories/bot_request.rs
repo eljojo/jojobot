@@ -791,3 +791,78 @@ async fn merging_a_spec_onto_a_request_carries_the_next_generation() {
     );
     story.finish().await;
 }
+
+/// **Taking back the claim that carries the newest number, under a later resend
+/// that covers its spec, still carries the next number.** The spec is the same
+/// before and after, but the fold of the generation would fall to an older number
+/// that named another spec. A reads 1; D sets `desired` paused and reads 2; E
+/// sends paused again, a resend that carries no number. Taking D back leaves the
+/// spec as it was, and the number goes to 3 and never down to 1. An archive of
+/// such a carrier does the same.
+#[tokio::test]
+async fn taking_back_a_covered_carrier_carries_the_next_generation() {
+    let story = Story::begin("bot:marge").await;
+    let marge = story.session().await;
+    marge
+        .call(
+            "add_entity",
+            json!({"kind": "bot", "handle": "homer", "name": "Homer",
+                   "source": "user-named", "sets": {"reports_to": "bot:marge"}}),
+        )
+        .await;
+    marge.add("machine:theta", "Theta").await;
+    marge
+        .call("add_entity", creating(spec("bot:homer", "machine:theta")))
+        .await;
+    let read = || async {
+        let read = marge
+            .call("recall", json!({"subject": "bot-request:alpha"}))
+            .await;
+        let fields = read.json()["objects"][0]["fields"].clone();
+        (fields["generation"].clone(), fields["desired"].clone())
+    };
+    let capture = |content: &'static str, sets: serde_json::Value| {
+        let marge = &marge;
+        async move {
+            marge
+                .call(
+                    "capture",
+                    json!({"subject": "bot-request:alpha", "content": content, "sets": sets}),
+                )
+                .await
+                .field("address")
+        }
+    };
+    let carrier = capture("pause it", json!({"desired": "paused"})).await;
+    capture("pause it again", json!({"desired": "paused"})).await;
+    assert_eq!(read().await, ("2".into(), "paused".into()));
+
+    marge
+        .call(
+            "retract",
+            json!({"address": &carrier, "reason": "written in error"}),
+        )
+        .await;
+    assert_eq!(
+        read().await,
+        ("3".into(), "paused".into()),
+        "the spec is as it was, and the number never falls back to 1",
+    );
+
+    let carrier = capture("halt it", json!({"desired": "halted"})).await;
+    capture("halt it again", json!({"desired": "halted"})).await;
+    assert_eq!(read().await, ("4".into(), "halted".into()));
+    marge
+        .call(
+            "update_fact",
+            json!({"address": &carrier, "status": "archived",
+                   "details": "written in error"}),
+        )
+        .await;
+    assert_eq!(
+        read().await,
+        ("5".into(), "halted".into()),
+        "an archive of the covered carrier carries the next number too",
+    );
+    story.finish().await;
+}
