@@ -75,6 +75,10 @@ impl Selection {
     pub fn announce(&self) {
         println!("crate selection: {}", self.reason);
     }
+    /// The packages the push changed and the packages that depend on them.
+    pub fn packages(&self) -> &BTreeSet<String> {
+        &self.packages
+    }
     pub fn scoped(&self) -> bool {
         self.scope.first().is_some_and(|s| s == "-p")
     }

@@ -159,6 +159,7 @@ test-room_log_filter
 test-room_sentences
 test-room_template_vanished
 test-room_timing_line
+test-rooms_off_push
 test-roster_report
 test-run_timing
 test-runtime_room_paths
