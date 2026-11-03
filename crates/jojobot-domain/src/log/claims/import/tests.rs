@@ -540,6 +540,33 @@ fn a_merged_fixture_folds_to_what_the_rows_fold_to() {
     assert_eq!(state.fields(&object("k1"), &[])["mood"], "theirs");
 }
 
+/// Production holds thousands of claims and thousands of key writes, and the
+/// import runs once at activation. Each key write finds its claim by one lookup,
+/// so the cost grows with the rows and never with writes times claims.
+#[test]
+fn the_import_finds_each_writes_claim_without_scanning_every_claim() {
+    const CLAIMS: usize = 20_000;
+    let mut rows = Rows {
+        entities: vec![entity("k1", "person:homer")],
+        ..Rows::default()
+    };
+    for at in 0..CLAIMS {
+        let local = format!("f{at}");
+        rows.facts
+            .push(fact("k1", &local, vec![write_of(1, "c", None, 1)]));
+        rows.field_writes
+            .push(set("k1", "mood", at as u64 + 1, "calm", &local, Some(1)));
+    }
+    let began = std::time::Instant::now();
+    let events = imported(&rows);
+    assert!(
+        began.elapsed() < std::time::Duration::from_secs(5),
+        "{CLAIMS} claims and writes took {:?}",
+        began.elapsed()
+    );
+    assert!(events.len() > 2 * CLAIMS);
+}
+
 /// The spelling of a claim's identity is stored on the log and nothing outside
 /// this process declares it.
 #[test]

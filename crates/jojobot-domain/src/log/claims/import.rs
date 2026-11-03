@@ -367,13 +367,21 @@ pub fn import(rows: &Rows) -> Result<Vec<Event<ClaimEvent>>, ImportError> {
         events.extend(claim_events(fact));
     }
     let placed = placed_by_merges(rows);
+    let facts: HashMap<(&ObjectId, &str), &FactRow> = rows
+        .facts
+        .iter()
+        .map(|fact| ((&fact.home, fact.local.as_str()), fact))
+        .collect();
     for (at, write) in rows.field_writes.iter().enumerate() {
         let Some((subject, ordinal, local)) = placed.get(&at) else {
             continue;
         };
+        let stored = facts
+            .get(&(&write.fact_home, write.fact_local.as_str()))
+            .copied();
         // A claim a merge moved is filed under the survivor now, with its new id.
-        let origin = find_fact(rows, &write.fact_home, &write.fact_local)
-            .or_else(|| find_fact(rows, subject, local))
+        let origin = stored
+            .or_else(|| facts.get(&(subject, local.as_str())).copied())
             .and_then(|fact| {
                 fact.writes
                     .iter()
@@ -391,7 +399,7 @@ pub fn import(rows: &Rows) -> Result<Vec<Event<ClaimEvent>>, ImportError> {
             run,
             write.written_at,
             ClaimEvent::FieldWritten {
-                record: record_id(&claim_home(rows, write, subject), local),
+                record: record_id(&claim_home(stored.is_some(), write, subject), local),
                 subject: subject.clone(),
                 key: write.key.clone(),
                 ordinal: *ordinal,
@@ -422,16 +430,10 @@ pub fn import(rows: &Rows) -> Result<Vec<Event<ClaimEvent>>, ImportError> {
     Ok(events)
 }
 
-fn find_fact<'a>(rows: &'a Rows, home: &ObjectId, local: &str) -> Option<&'a FactRow> {
-    rows.facts
-        .iter()
-        .find(|fact| &fact.home == home && fact.local == local)
-}
-
 /// The home a key write's claim is filed under after the merges: the thing the
 /// write sits on now, unless the claim was never moved.
-fn claim_home(rows: &Rows, write: &FieldWriteRow, subject: &ObjectId) -> ObjectId {
-    if find_fact(rows, &write.fact_home, &write.fact_local).is_some() {
+fn claim_home(filed: bool, write: &FieldWriteRow, subject: &ObjectId) -> ObjectId {
+    if filed {
         write.fact_home.clone()
     } else {
         subject.clone()
