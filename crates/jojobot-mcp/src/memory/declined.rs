@@ -2639,6 +2639,52 @@ pub(crate) mod tests {
         );
     }
 
+    /// **The refusal of a request's key says the route that opens, apart from the
+    /// words the error itself carries.** The error names the subject and the key,
+    /// so a needle that is a handle passes whatever route follows. The route is
+    /// what comes after the error's own words, and each arm of the bot request is
+    /// read there: a spec with nobody allowed, a status and a generation.
+    #[test]
+    fn a_refused_request_key_names_its_route_after_the_errors_own_words() {
+        use jojobot_domain::memory::MayWrite;
+        let key_not_yours = |may, key: &str, allowed: &[&str]| MemoryError::KeyNotYours {
+            subject: "bot-request:theta".into(),
+            key: key.into(),
+            may,
+            allowed: allowed.iter().map(|who| who.to_string()).collect(),
+        };
+        let route = |may, key: &str, allowed: &[&str]| {
+            let own_words = key_not_yours(may, key, allowed).to_string();
+            let result = memory_declined("capture", key_not_yours(may, key, allowed))
+                .expect("a refusal is an answer");
+            let said = blocked(&result)["how_to_proceed"]
+                .as_str()
+                .expect("a way forward")
+                .to_string();
+            let prefix = format!("Nothing was written: {own_words}.");
+            let rest = said
+                .strip_prefix(&prefix)
+                .unwrap_or_else(|| panic!("the way forward starts with the error: {said}"))
+                .to_string();
+            assert!(!rest.trim().is_empty(), "a route follows the error: {said}");
+            rest
+        };
+        let spec = route(MayWrite::RequestSpec, "target_bot", &[]);
+        // "recorded" is in the route and not in the sentence that states the rule.
+        for word in ["target_bot", "recorded"] {
+            assert!(spec.contains(word), "{word}: {spec}");
+        }
+        let named = route(MayWrite::RequestSpec, "desired", &["bot:marge"]);
+        assert!(named.contains("bot:marge"), "{named}");
+        let status = route(MayWrite::RequestStatus, "observed_state", &[]);
+        for word in ["bound_app", "grant"] {
+            assert!(status.contains(word), "{word}: {status}");
+        }
+        let generation = route(MayWrite::RequestGeneration, "generation", &[]);
+        assert!(generation.contains("spec"), "{generation}");
+        assert!(!generation.contains("grant"), "{generation}");
+    }
+
     /// **A merge of an ordinary thing into a bot request names the clear** when the
     /// domain says it opens, and the request as the survivor. The same key on a
     /// request as the duplicate is the request's own refusal, which names no
