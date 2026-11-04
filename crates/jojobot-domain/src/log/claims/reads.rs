@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 
 use jiff::Timestamp;
 
-use super::{FieldValue, KeyId, ObjectVersion, Revision, State, Write};
+use super::{FieldValue, KeyId, ObjectVersion, Record, Revision, State, Write};
 use crate::log::{ObjectId, RecordId};
 use crate::memory::{
     self, EntityId, FactAddress, FactId, FieldBacking, FieldWrite, KeyTrails, RecordFieldWrite,
@@ -47,6 +47,42 @@ impl State {
 }
 
 impl State {
+    /// **The marker of the writes behind a thing's fields**: how many writes of
+    /// its claims and of its own row it holds, folded things included. It only
+    /// grows, so a slower read of an earlier state cannot beat one already
+    /// answering for a later state. A lease renewal is a heartbeat kept off the
+    /// log and adds none.
+    pub fn write_marker(&self, subject: &ObjectId) -> u64 {
+        let claim_writes: usize = self
+            .records_homed_on(subject)
+            .into_iter()
+            .map(|record| self.claim_history(record).len())
+            .sum();
+        (claim_writes + self.entity_versions(subject).len()) as u64
+    }
+
+    /// **The newest moment any write on a thing was taken in**: its own row, and
+    /// every write of every claim homed on it, of any status. `skip` names the
+    /// claims whose writes are no change of the thing. A write with no moment
+    /// counts for none.
+    pub fn newest_change(
+        &self,
+        subject: &ObjectId,
+        skip: &dyn Fn(&Record) -> bool,
+    ) -> Option<Timestamp> {
+        let own = self
+            .entity_versions(subject)
+            .into_iter()
+            .filter_map(|version| version.written_at);
+        let claimed = self
+            .records_homed_on(subject)
+            .into_iter()
+            .filter_map(|record| self.records.get(record))
+            .filter(|held| !skip(held))
+            .flat_map(|held| held.history.iter().filter_map(|write| write.written_at));
+        own.chain(claimed).max()
+    }
+
     /// **Every write of a thing's own row, and of every thing folded into it**,
     /// in the order they were made. Found from the thing and what was folded
     /// into it alone.
@@ -153,6 +189,8 @@ impl State {
 
 #[cfg(test)]
 mod histories_tests;
+#[cfg(test)]
+mod marker_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
