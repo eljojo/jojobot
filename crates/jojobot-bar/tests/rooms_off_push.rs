@@ -227,10 +227,15 @@ fn a_change_to_a_room_test_file_runs_the_rooms() {
 
 #[test]
 fn a_change_to_the_exercise_harness_runs_the_rooms() {
-    let dir = repository();
-    let (fast, said) = plan_rooms(&dir, "crates/jojobot-exercise/src/lib.rs", "1", "main");
-    assert_eq!(fast, "fast=false", "{said}");
-    let _ = fs::remove_dir_all(&dir);
+    for (path, expected) in [
+        ("crates/jojobot-exercise/src/lib.rs", "fast=false"),
+        ("crates/jojobot-exercise-extra/src/lib.rs", "fast=true"),
+    ] {
+        let dir = repository();
+        let (fast, said) = plan_rooms(&dir, path, "1", "main");
+        assert_eq!(fast, expected, "{path}: {said}");
+        let _ = fs::remove_dir_all(&dir);
+    }
 }
 
 #[test]
