@@ -39,6 +39,9 @@ case " $* " in
 esac
 case "$1" in
   test)
+    if [ -n "$JOJOBOT_ROOM_TIMING" ]; then
+      printf '%s\n' "$*" >> "$JOJOBOT_ROOM_TIMING"
+    fi
     # How many jobs are running right now, counting this one.
     running="$(dirname "$0")/running"
     mkdir -p "$running"
@@ -95,6 +98,7 @@ struct Ran {
     peak: usize,
     exit: Option<i32>,
     stderr: String,
+    room_timing: String,
 }
 
 /// A directory no other run in this process uses. The shared serial separates
@@ -109,10 +113,15 @@ fn run_check(env: &[(&str, &str)]) -> Ran {
 }
 
 fn run_bar(args: &[&str], env: &[(&str, &str)]) -> Ran {
+    run_bar_after(args, env, |_| {})
+}
+
+fn run_bar_after(args: &[&str], env: &[(&str, &str)], before: impl FnOnce(&Path)) -> Ran {
     let dir = a_directory_of_this_runs_own();
     fs::create_dir_all(&dir).expect("scratch dir");
     support::git_init(&dir);
     let cargo = write_cargo(&dir);
+    before(&dir);
     let out = output_fenced(
         Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
             .args(args)
@@ -122,6 +131,7 @@ fn run_bar(args: &[&str], env: &[(&str, &str)]) -> Ran {
             .env("BAR_HISTORY_DIR", dir.join("history"))
             // The caller's own limit must not decide what a case measures.
             .env_remove("BAR_JOBS")
+            .env_remove("JOJOBOT_ROOM_TIMING")
             .envs(env.iter().copied()),
     )
     .expect("run bar");
@@ -137,6 +147,8 @@ fn run_bar(args: &[&str], env: &[(&str, &str)]) -> Ran {
         .max()
         .unwrap_or(0);
     let log = fs::read_to_string(dir.join("target/bar/check.log")).unwrap_or_default();
+    let room_timing =
+        fs::read_to_string(dir.join("target/bar/rooms-room-timing.log")).unwrap_or_default();
     let _ = fs::remove_dir_all(&dir);
     Ran {
         stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
@@ -146,6 +158,7 @@ fn run_bar(args: &[&str], env: &[(&str, &str)]) -> Ran {
         peak,
         exit: out.status.code(),
         stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+        room_timing,
     }
 }
 
@@ -412,6 +425,75 @@ fn bar_rooms_builds_once_then_runs_each_named_room_and_a_red_one_stops_none() {
         "the verdict does not name the limit: {}",
         ran.stdout
     );
+}
+
+/// The rooms lane reads its history and gives every child its timing sink.
+#[test]
+fn bar_rooms_uses_recorded_order_and_connects_the_timing_sink() {
+    use jojobot_bar::{JobRecord, Run, RunHeader};
+
+    let ran = run_bar_after(
+        &[
+            "rooms", "--test", "alpha", "--test", "gamma", "--test", "beta",
+        ],
+        &[("BAR_JOBS", "1"), ("FAKE_BETA", "ok")],
+        |dir| {
+            let run = Run::begin(
+                &dir.join("history"),
+                RunHeader {
+                    run_id: "seed".into(),
+                    level: "rooms".into(),
+                    checkout: dir.display().to_string(),
+                    head: None,
+                    dirty: Some(false),
+                    started_at: "2026-04-03T10:00:00Z".into(),
+                    bar_jobs: 1,
+                    load_average: Some(0.0),
+                    cpus: Some(1),
+                },
+            )
+            .expect("begin the recorded rooms run");
+            for (room, duration_ms) in [("alpha", 1_000), ("beta", 3_000), ("gamma", 2_000)] {
+                run.record_job(
+                    &["--test".into(), room.into()],
+                    true,
+                    &JobRecord {
+                        tests: Vec::new(),
+                        duration_ms: Some(duration_ms),
+                    },
+                )
+                .expect("record the room's duration");
+            }
+            run.finish("2026-04-03T10:01:00Z")
+                .expect("finish the recorded run");
+        },
+    );
+    assert!(ran.success, "{}\n{}", ran.stdout, ran.stderr);
+    let jobs: Vec<&str> = ran
+        .calls
+        .iter()
+        .filter(|call| call.starts_with("test "))
+        .map(String::as_str)
+        .collect();
+    assert_eq!(jobs.len(), 3, "{jobs:?}");
+    for (job, room) in jobs.iter().zip(["beta", "gamma", "alpha"]) {
+        assert!(job.contains(&format!("--test {room} ")), "{jobs:?}");
+    }
+    assert_eq!(
+        ran.room_timing.lines().collect::<Vec<_>>(),
+        jobs,
+        "each child writes to the rooms lane's sink"
+    );
+    let order = ran
+        .stdout
+        .lines()
+        .find(|line| line.starts_with("order: ok"))
+        .unwrap_or_else(|| panic!("no successful order phase: {}", ran.stdout));
+    let counts: Vec<usize> = order
+        .split_whitespace()
+        .filter_map(|word| word.parse().ok())
+        .collect();
+    assert_eq!(counts, [3, 3], "{order}");
 }
 
 /// **The rooms overlap, under the same limit as the bar's test phase.** Twelve
