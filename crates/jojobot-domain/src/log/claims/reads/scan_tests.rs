@@ -225,6 +225,13 @@ fn a_scan_serves_marked_items_as_the_handles_things_answer_to_now() {
         write("r1", "work:alpha", "peer", 1, &marked(&["work:delta"])),
         write("r1", "work:alpha", "note", 1, "work:beta, plain words"),
         write("r1", "work:alpha", "ghost", 1, &marked(&["work:theta"])),
+        write(
+            "r1",
+            "work:alpha",
+            "twin",
+            1,
+            &marked(&["work:theta", "work:theta"]),
+        ),
         ClaimEvent::AddressRetired {
             object: object("work:delta"),
             address: "work:delta".to_string(),
@@ -252,8 +259,11 @@ fn a_scan_serves_marked_items_as_the_handles_things_answer_to_now() {
         "text that wears no mark is served as written"
     );
     assert_eq!(
-        fields["ghost"],
-        marked(&["work:theta"]),
-        "a mark naming no held thing is served as written"
+        fields["ghost"], "work:theta",
+        "a mark naming no thing with a handle is served as the id it names, mark off"
+    );
+    assert_eq!(
+        fields["twin"], "work:theta",
+        "two marks of one such id name it once"
     );
 }

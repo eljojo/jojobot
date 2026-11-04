@@ -86,7 +86,8 @@ impl State {
     /// **What a thing holds, as a read serves it**: every item of a value that
     /// wears the mark of a stored handle is composed to the handle its thing
     /// answers to now, each thing named once; text that wears no mark is served
-    /// as written, and so is a mark naming a thing the State does not hold.
+    /// as written. A mark naming a thing with no handle is served as the id it
+    /// names, mark off, which is what the store serves.
     pub fn fields_served(
         &self,
         subject: &ObjectId,
@@ -104,8 +105,12 @@ impl State {
             let composed = items
                 .into_iter()
                 .map(|item| {
-                    let handle = memory::stored_handle_id(item)
-                        .and_then(|id| self.handle_of(&ObjectId(id.to_string())));
+                    // A mark naming a thing with no handle is served as the id it
+                    // names, mark off, as the store serves it.
+                    let handle = memory::stored_handle_id(item).map(|id| {
+                        self.handle_of(&ObjectId(id.to_string()))
+                            .unwrap_or_else(|| EntityId(id.to_string()))
+                    });
                     let text = handle
                         .as_ref()
                         .map_or_else(|| item.to_string(), |handle| handle.to_string());
