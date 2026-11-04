@@ -84,6 +84,61 @@ async fn the_cached_asking_room_holds_what_a_live_furnish_holds() {
     assert_eq!(furnish_once::held_ids(&cached).await, live_ids);
 }
 
+/// Callers arriving during a fill wait for it, and later callers reuse it.
+#[tokio::test]
+async fn the_furnish_is_built_once_for_waiting_and_later_callers() {
+    use std::future::{Future, poll_fn};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::task::Poll;
+
+    static SEED: tokio::sync::OnceCell<std::path::PathBuf> = tokio::sync::OnceCell::const_new();
+    let fills = AtomicUsize::new(0);
+    let entered = tokio::sync::Notify::new();
+    let release = tokio::sync::Notify::new();
+    let first = furnish_once::seed_dir_after(&SEED, SERVER_DAY.as_str(), |_| async {
+        fills.fetch_add(1, Ordering::SeqCst);
+        entered.notify_one();
+        release.notified().await;
+        Ok(())
+    });
+    tokio::pin!(first);
+    tokio::select! {
+        _ = &mut first => panic!("the first fill returned before it was released"),
+        _ = entered.notified() => {}
+    }
+    let second = furnish_once::seed_dir_after(&SEED, SERVER_DAY.as_str(), |_| async {
+        fills.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    });
+    tokio::pin!(second);
+    let waiting = poll_fn(|cx| Poll::Ready(second.as_mut().poll(cx))).await;
+    assert_eq!(fills.load(Ordering::SeqCst), 1);
+    assert!(
+        waiting.is_pending(),
+        "the second caller must wait for the fill"
+    );
+    release.notify_one();
+    let (first, second) = tokio::join!(first, second);
+    assert_eq!(
+        fills.load(Ordering::SeqCst),
+        1,
+        "waiting callers share one fill"
+    );
+    assert_eq!(first, second, "waiting callers share the filled directory");
+    assert!(first.is_dir(), "the filled directory exists");
+    let later = furnish_once::seed_dir_after(&SEED, SERVER_DAY.as_str(), |_| async {
+        fills.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    })
+    .await;
+    assert_eq!(
+        fills.load(Ordering::SeqCst),
+        1,
+        "a later caller does not refill"
+    );
+    assert_eq!(first, later);
+}
+
 /// **A session for one sitting, in the day that sitting is in** — the same
 /// shape `vault_room.rs` takes: each phase is a run of its own, on its own day.
 async fn sitting(room: &Surface, day: &str) -> String {
