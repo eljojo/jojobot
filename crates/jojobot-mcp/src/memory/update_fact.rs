@@ -454,6 +454,10 @@ impl Jojobot {
         // named on the receipt.
         let unread = super::instance_unread::InstanceUnread::default();
         let address = FactAddress::parse(&args.address).map_err(memory_error)?;
+        let address = self
+            .address_a_write_is_judged_under(address)
+            .await
+            .map_err(memory_error)?;
         // **A move of a section that an earlier call wrote under this id is being
         // finished.** The checks and the plan below judge the document as it stood
         // before the section moved; the plan the first call chose is in the note of

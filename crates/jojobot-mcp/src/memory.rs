@@ -227,6 +227,25 @@ impl Jojobot {
         Ok(held)
     }
 
+    /// **The address a write of one claim is judged under**: where a merge moved
+    /// the claim, with its home under the handle its thing wears now. An address
+    /// that no merge moved is kept as sent, so a write that costs one targeted
+    /// read still costs one. The request tests, the request lock and the
+    /// generation a withdrawal makes all read the home of this address, so a claim
+    /// merged into a request is judged as the request's own however it is named.
+    pub(crate) async fn address_a_write_is_judged_under(
+        &self,
+        address: jojobot_domain::memory::FactAddress,
+    ) -> Result<jojobot_domain::memory::FactAddress, MemoryError> {
+        match self.memory.moved_address(&address).await? {
+            Some(moved) => Ok(jojobot_domain::memory::FactAddress::new(
+                self.current_handle(&moved.home).await?,
+                moved.local,
+            )),
+            None => Ok(address),
+        }
+    }
+
     /// **The lock a write of a bot request's spec is made under**, held from the
     /// read of the highest generation to the write that stores the number. It is
     /// the placement lock a list's writes already take, scoped to a request, so

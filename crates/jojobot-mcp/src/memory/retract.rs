@@ -123,6 +123,10 @@ impl Jojobot {
                 return Err(memory_error(e));
             }
         };
+        let address = match self.address_a_write_is_judged_under(address).await {
+            Ok(address) => address,
+            Err(e) => return memory_declined("retract", e),
+        };
         let date = self
             .dated(args.recorded_at.as_deref(), args.sid.as_deref())
             .await?;

@@ -308,7 +308,7 @@ async fn taking_back_a_claim_through_its_merged_away_address_carries_the_next_ge
         .await
         .expect("readable");
     assert!(
-        fields.get("model").is_none(),
+        !fields.contains_key("model"),
         "the note's model left the request: {fields:?}"
     );
     assert_eq!(
