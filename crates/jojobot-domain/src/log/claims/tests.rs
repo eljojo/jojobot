@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use super::*;
 
 /// The envelope the helpers wrap an event in: the operator, no run.

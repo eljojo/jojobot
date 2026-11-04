@@ -19,7 +19,7 @@
 //!
 //! **No renewal kind.** A role renewal is a heartbeat kept off the log.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use jiff::{Timestamp, civil::Date};
 
@@ -647,52 +647,6 @@ impl State {
         declared: &[DeclaredType],
     ) -> BTreeMap<String, String> {
         memory::folded_fields(&self.key_writes(subject), declared)
-    }
-
-    /// **The objects a thing points at now**: the frozen targets of the write
-    /// holding each of its keys, a cleared or retracted key pointing at none.
-    pub fn links_from(&self, subject: &ObjectId) -> BTreeSet<ObjectId> {
-        let subject = self.survivor(subject);
-        let mut out = BTreeSet::new();
-        for ((held, _), stream) in &self.streams {
-            if held != subject {
-                continue;
-            }
-            // The stream is kept in arrival order; the ordinal says which is newest.
-            let newest = stream
-                .iter()
-                .filter(|write| {
-                    memory::reaches_the_thing(write.class)
-                        && self
-                            .records
-                            .get(&write.record)
-                            .is_some_and(|record| record.claim.status == FactStatus::Active)
-                })
-                .max_by_key(|write| write.ordinal);
-            if let Some(write) = newest
-                && !matches!(write.write, FieldValue::Clear | FieldValue::Removed)
-            {
-                out.extend(
-                    write
-                        .targets
-                        .iter()
-                        .map(|target| self.survivor(target).clone()),
-                );
-            }
-        }
-        out
-    }
-
-    /// The things that point at an object now.
-    pub fn links_into(&self, target: &ObjectId) -> BTreeSet<ObjectId> {
-        let target = self.survivor(target);
-        let subjects: BTreeSet<&ObjectId> =
-            self.streams.keys().map(|(subject, _)| subject).collect();
-        subjects
-            .into_iter()
-            .filter(|subject| self.links_from(subject).contains(target))
-            .cloned()
-            .collect()
     }
 }
 

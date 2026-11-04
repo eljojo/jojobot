@@ -1011,7 +1011,9 @@ fn next_event(dice: &mut Dice, state: &State, made: &mut usize) -> ClaimEvent {
             };
             ClaimEvent::FieldWritten {
                 record: dice.pick(&existing).clone(),
-                subject: object(dice.pick(&OBJECTS)),
+                // A write names the object a handle resolves to, never one
+                // folded into another.
+                subject: state.survivor(&object(dice.pick(&OBJECTS))).clone(),
                 key: key(key_name),
                 ordinal: 1 + dice.roll(5) as u64,
                 class: crate::memory::WriteClass::Sets,
@@ -1020,7 +1022,11 @@ fn next_event(dice: &mut Dice, state: &State, made: &mut usize) -> ClaimEvent {
                 } else {
                     FieldValue::Set(value)
                 },
-                targets: Vec::new(),
+                targets: if dice.roll(2) == 0 {
+                    vec![object(dice.pick(&OBJECTS)), object(dice.pick(&OBJECTS))]
+                } else {
+                    Vec::new()
+                },
             }
         }
         10 | 11 if live.len() > 1 => {
@@ -1070,6 +1076,40 @@ fn next_event(dice: &mut Dice, state: &State, made: &mut usize) -> ClaimEvent {
             claim(&format!("f{n}"), dice.pick(&OBJECTS), "c", 1),
         ),
     }
+}
+
+/// **What a thing points at, read by scanning every stream of the state**: the
+/// frozen targets of the newest write of each key, among the writes that reach
+/// the thing and sit in an active claim, a cleared key pointing at none.
+fn links_from_by_scan(state: &State, subject: &ObjectId) -> BTreeSet<ObjectId> {
+    let subject = state.survivor(subject);
+    let mut out = BTreeSet::new();
+    for ((held, _), stream) in &state.streams {
+        if held != subject {
+            continue;
+        }
+        let newest = stream
+            .iter()
+            .filter(|write| {
+                crate::memory::reaches_the_thing(write.class)
+                    && state
+                        .records
+                        .get(&write.record)
+                        .is_some_and(|record| record.claim.status == FactStatus::Active)
+            })
+            .max_by_key(|write| write.ordinal);
+        if let Some(write) = newest
+            && write.write != FieldValue::Clear
+        {
+            out.extend(
+                write
+                    .targets
+                    .iter()
+                    .map(|target| state.survivor(target).clone()),
+            );
+        }
+    }
+    out
 }
 
 /// **Every index, recomputed from the final state alone**, compared with what
@@ -1198,6 +1238,31 @@ fn assert_indexes_equal_a_recomputation(state: &State, merges: u64, context: &st
                 ),
             }
         }
+    }
+    // The links: what a thing points at, and who points at a thing, as the scan
+    // of every stream of the state reads them.
+    for name in OBJECTS {
+        let want_from = links_from_by_scan(state, &object(name));
+        assert_eq!(
+            state.links_from(&object(name)),
+            want_from,
+            "{context}: links from {name}"
+        );
+        let target = survivor(name);
+        let subjects: BTreeSet<ObjectId> = state
+            .streams
+            .keys()
+            .map(|(subject, _)| subject.clone())
+            .collect();
+        let want_into: BTreeSet<ObjectId> = subjects
+            .into_iter()
+            .filter(|subject| links_from_by_scan(state, subject).contains(&target))
+            .collect();
+        assert_eq!(
+            state.links_into(&object(name)),
+            want_into,
+            "{context}: links into {name}"
+        );
     }
     // The claim lookup: a spelling to the object it answers to now or once did.
     for spelling in SPELLINGS {

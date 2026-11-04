@@ -20,7 +20,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::{ClaimBody, FieldValue, KeyId, MovedRecord, ObjectId, RecordId, State};
 use crate::memory::{
-    self,
+    self, FactStatus,
     numbered::{NUMBERS_BY, whole_number},
 };
 
@@ -57,6 +57,12 @@ pub(super) struct Indexes {
     /// Every seat a claim ever held, whatever became of the claim. Nothing is
     /// removed: a number issued once is never issued again.
     issued: BTreeSet<Seat>,
+    /// The things each thing points at now, as merge survivors. A thing that
+    /// points at none has no entry.
+    links_out: BTreeMap<ObjectId, BTreeSet<ObjectId>>,
+    /// The same pointers read the other way: a thing to the things that point
+    /// at it.
+    links_in: BTreeMap<ObjectId, BTreeSet<ObjectId>>,
 }
 
 impl Indexes {
@@ -253,8 +259,13 @@ impl State {
             .flatten()
             .cloned()
             .collect();
+        let subjects: BTreeSet<ObjectId> =
+            wrote.iter().map(|(subject, _)| subject.clone()).collect();
         for (subject, key) in wrote {
             self.refresh_written(&subject, &key);
+        }
+        for subject in subjects {
+            self.refresh_links(&subject);
         }
     }
 
@@ -312,6 +323,7 @@ impl State {
         if key.0 != NUMBERS_BY {
             self.issue_written(subject, key);
         }
+        self.refresh_links(subject);
     }
 
     /// Before a merge changes anything: the claims it moves give up the number
@@ -392,6 +404,109 @@ impl State {
         }
         self.release_seats(folded);
         self.refresh_subtree(survivor);
+        self.relink_after_merge(folded, survivor);
+    }
+
+    // Links: who points at whom.
+
+    /// **The things a thing points at now**: the frozen targets of the write
+    /// holding each of its keys, a cleared or retracted key pointing at none.
+    /// Read from the streams of the thing alone.
+    fn links_computed(&self, subject: &ObjectId) -> BTreeSet<ObjectId> {
+        let mut out = BTreeSet::new();
+        for (_, stream) in self.streams_of(subject) {
+            // The stream is kept in arrival order; the ordinal says which is newest.
+            let newest = stream
+                .iter()
+                .filter(|write| {
+                    memory::reaches_the_thing(write.class)
+                        && self
+                            .records
+                            .get(&write.record)
+                            .is_some_and(|record| record.claim.status == FactStatus::Active)
+                })
+                .max_by_key(|write| write.ordinal);
+            if let Some(write) = newest
+                && !matches!(write.write, FieldValue::Clear | FieldValue::Removed)
+            {
+                out.extend(
+                    write
+                        .targets
+                        .iter()
+                        .map(|target| self.survivor(target).clone()),
+                );
+            }
+        }
+        out
+    }
+
+    /// Read again what one thing points at, and move the maps by the difference.
+    fn refresh_links(&mut self, subject: &ObjectId) {
+        let subject = self.survivor(subject).clone();
+        let now = self.links_computed(&subject);
+        let before = self.indexes.links_out.remove(&subject).unwrap_or_default();
+        for target in before.difference(&now) {
+            if let Some(pointing) = self.indexes.links_in.get_mut(target) {
+                pointing.remove(&subject);
+                if pointing.is_empty() {
+                    self.indexes.links_in.remove(target);
+                }
+            }
+        }
+        for target in now.difference(&before) {
+            self.indexes
+                .links_in
+                .entry(target.clone())
+                .or_default()
+                .insert(subject.clone());
+        }
+        if !now.is_empty() {
+            self.indexes.links_out.insert(subject, now);
+        }
+    }
+
+    /// After a merge: what the folded thing pointed at is the survivor's to
+    /// point at, and what pointed at the folded thing points at the survivor.
+    fn relink_after_merge(&mut self, folded: &ObjectId, survivor: &ObjectId) {
+        let pointing: Vec<ObjectId> = self
+            .indexes
+            .links_in
+            .get(folded)
+            .into_iter()
+            .flatten()
+            .filter(|subject| *subject != folded)
+            .cloned()
+            .collect();
+        for target in self.indexes.links_out.remove(folded).unwrap_or_default() {
+            if let Some(held) = self.indexes.links_in.get_mut(&target) {
+                held.remove(folded);
+                if held.is_empty() {
+                    self.indexes.links_in.remove(&target);
+                }
+            }
+        }
+        for subject in pointing {
+            self.refresh_links(&subject);
+        }
+        self.refresh_links(survivor);
+    }
+
+    /// **The objects a thing points at now.**
+    pub fn links_from(&self, subject: &ObjectId) -> BTreeSet<ObjectId> {
+        self.indexes
+            .links_out
+            .get(self.survivor(subject))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// **The things that point at an object now.**
+    pub fn links_into(&self, target: &ObjectId) -> BTreeSet<ObjectId> {
+        self.indexes
+            .links_in
+            .get(self.survivor(target))
+            .cloned()
+            .unwrap_or_default()
     }
 
     // Seats: who holds which number under which container.
