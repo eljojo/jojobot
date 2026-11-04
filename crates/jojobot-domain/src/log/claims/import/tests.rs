@@ -381,39 +381,50 @@ fn a_merge_keeps_its_moment_and_its_run() {
     assert_eq!(merged[0].run, Some(RunId("run-m".into())));
 }
 
-/// **A merge made before the merge-event table has no event row**, only the mark
-/// on the folded entity, and it still arrives as a redirect to the survivor. The
-/// shape is the upgrade gate's: a chain whose first merge lost its event row.
+/// **A merge made before the merge-event table arrives as a redirect the store
+/// never numbered.** The folded entity's own mark is the only source, so the
+/// thing still answers to the survivor, and the highest merge number stays the
+/// highest the store holds: the next merge is numbered one above it, as the
+/// store numbers it. The shape is the upgrade gate's: a chain whose first merge
+/// lost its event row. **Paired**: the same chain with the event row present
+/// counts both merges.
 #[test]
-fn a_merge_with_no_event_row_arrives_as_a_redirect_from_the_entity_mark() {
-    let mut first = entity("k1", "person:homer");
-    first.merged_into = Some(object("k2"));
-    let mut second = entity("k2", "person:marge");
-    second.merged_into = Some(object("k3"));
-    let rows = Rows {
-        entities: vec![first, second, entity("k3", "person:bart")],
-        merges: vec![MergeRow {
-            no: 1,
-            folded: object("k2"),
-            survivor: object("k3"),
-            merged_at: at(10).unwrap(),
-            session: None,
-            claims: Vec::new(),
-        }],
+fn a_merge_with_no_event_row_arrives_as_a_redirect_the_store_does_not_count() {
+    let merged = |id: &str, handle: &str, into: &str| {
+        let mut row = entity(id, handle);
+        row.merged_into = Some(object(into));
+        row
+    };
+    let step = |no: i64, folded: &str, survivor: &str| MergeRow {
+        no,
+        folded: object(folded),
+        survivor: object(survivor),
+        merged_at: at(10).unwrap(),
+        session: None,
+        claims: Vec::new(),
+    };
+    let rows = |merges: Vec<MergeRow>| Rows {
+        entities: vec![
+            merged("k1", "person:homer", "k2"),
+            merged("k2", "person:marge", "k3"),
+            entity("k3", "person:bart"),
+        ],
+        merges,
         ..Rows::default()
     };
-    let events = imported(&rows);
-    let moments: Vec<_> = events
-        .iter()
-        .filter(|event| matches!(event.payload, ClaimEvent::ObjectsMerged { .. }))
-        .map(|event| event.imported_source_time)
-        .collect();
-    // One event for the merge that has a row and one, with no moment, for the other.
-    assert_eq!(moments.len(), 2);
-    assert!(moments.contains(&None) && moments.contains(&at(10)));
-    let state = state_of(&rows);
+    let legacy = rows(vec![step(1, "k2", "k3")]);
+    let state = state_of(&legacy);
     assert_eq!(state.resolve("person:homer"), Some(&object("k3")));
     assert_eq!(state.resolve("person:marge"), Some(&object("k3")));
+    assert_eq!(
+        state.highest_merge_number(),
+        1,
+        "the store holds one numbered merge"
+    );
+    let repaired = rows(vec![step(1, "k1", "k2"), step(2, "k2", "k3")]);
+    let state = state_of(&repaired);
+    assert_eq!(state.resolve("person:homer"), Some(&object("k3")));
+    assert_eq!(state.highest_merge_number(), 2);
 }
 
 /// A folded write of a claim the merge did not map is left out, as the claim is.

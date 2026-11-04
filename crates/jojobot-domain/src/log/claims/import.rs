@@ -428,11 +428,9 @@ pub fn import(rows: &Rows) -> Result<Vec<Event<ClaimEvent>>, ImportError> {
         if with_event.contains(&row.key) {
             continue;
         }
-        events.push(plain(ClaimEvent::ObjectsMerged {
+        events.push(plain(ClaimEvent::ObjectRedirected {
             folded: row.key.clone(),
             survivor: survivor.clone(),
-            records: Vec::new(),
-            writes: Vec::new(),
         }));
     }
     let mut steps: Vec<&MergeRow> = rows.merges.iter().collect();

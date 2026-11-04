@@ -137,6 +137,15 @@ pub enum ClaimEvent {
         records: Vec<MovedRecord>,
         writes: Vec<MovedWrite>,
     },
+    /// **A merge the store holds no number for**: the mark on the folded entity
+    /// is all that is left of a merge made before the merge-event table. The
+    /// folded object answers to the survivor as in [`Self::ObjectsMerged`], and
+    /// the merge count does not move, so the count stays the highest number the
+    /// store holds.
+    ObjectRedirected {
+        folded: ObjectId,
+        survivor: ObjectId,
+    },
     RecordCreated {
         record: RecordId,
         claim: ClaimBody,
@@ -243,7 +252,10 @@ impl State {
                 survivor,
                 records,
                 writes,
-            } => self.merge(folded, survivor, records, writes),
+            } => self.merge(folded, survivor, records, writes, true),
+            ClaimEvent::ObjectRedirected { folded, survivor } => {
+                self.merge(folded, survivor, &[], &[], false)
+            }
             ClaimEvent::RecordCreated { record, claim } => {
                 let before = self.records.get(record).map(|held| held.claim.clone());
                 self.records.insert(
@@ -316,6 +328,7 @@ impl State {
         survivor: &ObjectId,
         records: &[MovedRecord],
         writes: &[MovedWrite],
+        numbered: bool,
     ) {
         // A redirect that closes a loop would make `survivor` spin forever.
         if self.survivor(survivor) == self.survivor(folded) {
@@ -364,7 +377,7 @@ impl State {
             self.indexes
                 .moved_stream(&folded_key, &survivor_key, highest);
         }
-        self.index_after_merge(folded, survivor, records);
+        self.index_after_merge(folded, survivor, records, numbered);
     }
 
     /// The state after `events`, from nothing.

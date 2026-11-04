@@ -323,6 +323,7 @@ impl State {
         folded: &ObjectId,
         survivor: &ObjectId,
         records: &[MovedRecord],
+        numbered: bool,
     ) {
         if let Some(numbers) = self.indexes.claim_numbers.remove(folded) {
             let into = self
@@ -375,7 +376,10 @@ impl State {
                 .or_default()
                 .extend(children);
         }
-        self.indexes.merges += 1;
+        // A redirect the store never numbered folds the object and is not counted.
+        if numbered {
+            self.indexes.merges += 1;
+        }
         self.release_seats(folded);
         self.refresh_subtree(survivor);
     }
