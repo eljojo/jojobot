@@ -28,16 +28,17 @@ async fn a_room_writes_a_line_whose_parts_are_the_ones_that_happened() {
     // SAFETY: this binary holds one case, and the sink is read only when a room
     // is dropped, which happens below on this thread.
     unsafe { std::env::set_var(jojobot_exercise::room_timing::SINK_VARIABLE, &file) };
-    {
-        let (_room, surface) = Room::open_with_client(&server_binary().expect("a jojobot binary"))
-            .await
-            .expect("a room");
+    let binary = server_binary().expect("a jojobot binary");
+    let seed = Room::snapshot_after(&binary, |surface| async move {
         expectations::seed_for(expectations::BIKE_ROOM)
             .expect("the room has furniture")
             .furnish(&surface)
             .await
             .expect("the room is furnished");
-    }
+        Ok(())
+    })
+    .await
+    .expect("a furnished seed");
     let text = std::fs::read_to_string(&file).expect("the sink was written");
     let _ = std::fs::remove_file(&file);
     let case = std::thread::current()
@@ -70,4 +71,21 @@ async fn a_room_writes_a_line_whose_parts_are_the_ones_that_happened() {
         template > copy,
         "the first room of a process builds the template, which costs more than copying it: {line}"
     );
+
+    {
+        let (_room, _surface) = Room::open_with_client_from(&binary, &seed)
+            .await
+            .expect("a room copied from the caller's seed");
+    }
+    let text = std::fs::read_to_string(&file).expect("the caller-seed sink was written");
+    let _ = std::fs::remove_file(&file);
+    let line = text
+        .lines()
+        .rfind(|line| line.contains(&format!("case={case} ")))
+        .expect("the caller-seed room writes its timing");
+    let copy = millis(line, "copy_ms=");
+    let life = millis(line, "life_ms=");
+    assert!(copy > 0, "the caller's seed copy is recorded: {line}");
+    assert!(copy <= life, "the seed copy is inside the open: {line}");
+    assert_eq!(millis(line, "template_ms="), 0, "{line}");
 }
