@@ -758,6 +758,14 @@ fn drawn(dice: &mut Dice) -> Rows {
                 "f1",
                 Some(1),
             );
+            // **Every class a stored write can carry**, so the fold is drawn over
+            // writes that reach their thing and writes that stay on their record.
+            w.class = [
+                WriteClass::Legacy,
+                WriteClass::Own,
+                WriteClass::Sets,
+                WriteClass::Stays,
+            ][dice.roll(4)];
             w.written_at = if dice.roll(5) == 0 {
                 None
             } else {
@@ -928,4 +936,61 @@ fn no_stamp_is_invented() {
             assert_eq!(event.occurred_at, None);
         }
     }
+}
+
+/// **A write keeps the class it was stored under, and the class decides whether
+/// it reaches its thing.** One claim sets four keys, one under each class a
+/// stored write carries. The import keeps each class on its event and on the
+/// state's write, and the folded fields hold the three that reach (legacy, own,
+/// sets) and leave out the one that stays on its record. The expected fields are
+/// written out and not read through `reaches_the_thing`, so a mapper that gave
+/// every write one class cannot agree with them.
+#[test]
+fn a_write_keeps_its_class_and_the_class_decides_what_the_thing_holds() {
+    let classes = [
+        ("old", WriteClass::Legacy),
+        ("own", WriteClass::Own),
+        ("sets", WriteClass::Sets),
+        ("stays", WriteClass::Stays),
+    ];
+    let rows = Rows {
+        entities: vec![entity("k1", "person:homer")],
+        facts: vec![fact(
+            "k1",
+            "f1",
+            vec![write_of(1, "a claim", Some("run-a"), 1)],
+        )],
+        field_writes: classes
+            .iter()
+            .map(|(k, class)| {
+                let mut w = set("k1", k, 1, &format!("v-{k}"), "f1", Some(1));
+                w.class = *class;
+                w
+            })
+            .collect(),
+        ..Rows::default()
+    };
+    let events = imported(&rows);
+    for (k, class) in classes {
+        let kept: Vec<WriteClass> = events
+            .iter()
+            .filter_map(|event| match &event.payload {
+                ClaimEvent::FieldWritten {
+                    key: held, class, ..
+                } if held.0 == k => Some(*class),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(kept, vec![class], "the event for {k}");
+    }
+    let state = State::replay(&events);
+    for (k, class) in classes {
+        assert_eq!(stream(&state, "k1", k)[0].class, class, "the state's {k}");
+    }
+    let expected: BTreeMap<String, String> =
+        [("old", "v-old"), ("own", "v-own"), ("sets", "v-sets")]
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+    assert_eq!(state.fields(&object("k1"), &[]), expected);
 }
