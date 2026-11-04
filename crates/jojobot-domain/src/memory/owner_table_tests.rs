@@ -202,6 +202,13 @@ fn a_retraction_account_names_its_target_and_carries_the_reason_or_its_absence()
         "no reason, a blank reason and a space are the same account: {absent:?}"
     );
     assert_ne!(absent[0], with_reason.content);
+    // **Every account has content**: a row needs a sentence even when nobody said
+    // why, so the account of an absent reason is one the content rule accepts.
+    // Equal to each other and different from the reasoned one is satisfied by an
+    // empty string, which the store would refuse to write.
+    for content in &absent {
+        assert_eq!(validate_content(content), Ok(()), "{content:?}");
+    }
     assert!(matches!(
         retraction_of(&target, Some("one\ntwo"), day(1)),
         Err(MemoryError::InvalidFact(_))
