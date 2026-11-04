@@ -334,8 +334,8 @@ pub fn prepare(
             })
             .map(|(key, value)| (key.trim().to_string(), value.clone()))
             .collect();
-        let lineage =
-            memory::needs_the_chart(&changing).map(|named| chart.lineage(&subject, &home, named));
+        let lineage = memory::needs_the_chart(&subject, &changing)
+            .map(|named| chart.lineage(&subject, &home, named));
         if let Some(refused) =
             memory::refuses_unlicensed_write(&subject, caller, &changing, lineage.as_ref())
         {
