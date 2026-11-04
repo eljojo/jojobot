@@ -1475,9 +1475,10 @@ async fn the_operators_mail_is_on_the_operators_page_and_no_other() {
 }
 
 /// **A message the sender replaced shows as replaced on the operator's page, and
-/// names its replacement.** The mistake keeps its row, its state and its two
-/// buttons; the correction beside it carries no such mark. The box counts one new
-/// message, not two.
+/// names its replacement.** The mistake keeps its row and its state, and has no
+/// button: it is superseded, a final state, so marking it processed would write
+/// nothing. The correction beside it carries no such mark and keeps its button.
+/// The box counts one new message, not two.
 #[tokio::test]
 async fn a_replaced_message_shows_as_replaced_on_the_operators_page_and_names_its_replacement() {
     let idp = support::TestIdp::new();
@@ -1527,8 +1528,12 @@ async fn a_replaced_message_shows_as_replaced_on_the_operators_page_and_names_it
         "the replacement is not marked as replaced: {correction}"
     );
     assert!(
-        mark_form_for(&page, mail.to_the_operator.as_str()),
-        "the replaced message keeps its Mark processed button: {page}"
+        !mark_form_for(&page, mail.to_the_operator.as_str()),
+        "a superseded message offers no Mark processed button: {page}"
+    );
+    assert!(
+        mark_form_for(&page, replacement.as_str()),
+        "its replacement keeps the button: {page}"
     );
     assert!(
         page.contains("<p>1 new,"),

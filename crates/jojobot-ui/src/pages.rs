@@ -978,7 +978,8 @@ async fn operators_mailbox_section(
         };
         // **A message its sender replaced says so and names the replacement**, so
         // the operator reads the correction and knows the mistake for what it is.
-        // It keeps its state and its buttons: marking it processed stays theirs.
+        // It keeps its row and its state. It has no button: a superseded message is
+        // final, so marking it processed would write nothing.
         let state_cell = match &message.superseded_by {
             Some(by) => format!(
                 "<td data-replaced-by=\"{}\">{}, replaced by {}</td>",
