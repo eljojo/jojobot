@@ -325,11 +325,12 @@ year: ## The year room's suite
 # coverage reaches the server. A lane whose tests fail still reports; the failure
 # is listed in target/coverage/lane-failures and fails the target after both
 # reports exist. Slow: the `ledger-runs` workflow runs it, never a dev host.
-coverage: ## Coverage of the contract and rooms lanes: target/coverage/{contract,rooms}.json
+COVERAGE_BRANCH ?= --branch
+coverage: ## Coverage of the contract and rooms lanes: target/coverage/{contract,rooms}.json (COVERAGE_BRANCH= for none)
 	rm -rf target/coverage target/llvm-cov-target
 	mkdir -p target/coverage
 	RUSTC_BOOTSTRAP=1 CARGO='$(CARGO)' CARGO_TARGET_DIR="$$PWD/target/llvm-cov-target" sh -ec '\
-		eval "$$($$CARGO llvm-cov show-env --export-prefix --branch)"; \
+		eval "$$($$CARGO llvm-cov show-env --export-prefix $(COVERAGE_BRANCH))"; \
 		$$CARGO build --workspace; \
 		$(MAKE) check || echo contract >> target/coverage/lane-failures; \
 		$$CARGO llvm-cov report --json --summary-only --output-path target/coverage/contract.json; \

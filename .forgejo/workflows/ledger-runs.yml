@@ -15,6 +15,10 @@ on:
       job:
         description: 'coverage or mutants'
         required: true
+      branch:
+        description: 'coverage only: yes measures branches, no leaves them out'
+        required: false
+        default: 'yes'
       lane:
         description: 'mutants only: the lane command, make rooms or make check'
         required: false
@@ -41,6 +45,7 @@ jobs:
       LANE: ${{ forgejo.event.inputs.lane }}
       FROM: ${{ forgejo.event.inputs.from }}
       COUNT: ${{ forgejo.event.inputs.count }}
+      BRANCH: ${{ forgejo.event.inputs.branch }}
     steps:
       - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -50,24 +55,26 @@ jobs:
           case "$JOB" in coverage|mutants) ;; *) echo "job must be coverage or mutants" >&2; exit 1;; esac
           case "$LANE" in "make rooms"|"make check") ;; *) echo "lane must be make rooms or make check" >&2; exit 1;; esac
           case "$FROM$COUNT" in ''|*[!0-9]*) echo "from and count are digits" >&2; exit 1;; esac
+          case "$BRANCH" in yes|no) ;; *) echo "branch is yes or no" >&2; exit 1;; esac
           echo "level: ledger-runs, $JOB; left to full boundary: everything else"
       - name: Manifest
         if: ${{ forgejo.event.inputs.job == 'mutants' }}
         run: nix develop -c python3 scripts/mutant-sample --check
       - name: Coverage
         if: ${{ forgejo.event.inputs.job == 'coverage' }}
-        run: nix develop -c make coverage
+        run: |
+          if [ "$BRANCH" = yes ]; then nix develop -c make coverage; else nix develop -c make coverage COVERAGE_BRANCH=; fi
       - name: Branch measure
         if: ${{ forgejo.event.inputs.job == 'coverage' && !cancelled() }}
         run: |
           nix develop -c python3 -I - <<'EOF'
-          import json, sys
+          import json, os, sys
           bad = []
           for lane in ("contract", "rooms"):
               totals = json.load(open(f"target/coverage/{lane}.json"))["data"][0]["totals"]
               branches = totals.get("branches", {}).get("count", 0)
               print(lane, {k: totals[k]["percent"] for k in ("lines", "regions") if k in totals}, "branches:", branches)
-              if branches == 0:
+              if branches == 0 and os.environ.get("BRANCH") == "yes":
                   bad.append(lane)
           sys.exit(f"no branch counts in: {bad}" if bad else 0)
           EOF
