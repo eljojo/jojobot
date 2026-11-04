@@ -302,6 +302,11 @@ impl State {
             .or_default()
             .insert(stream);
         self.refresh_written(subject, key);
+        // Only the write just applied issues a number, and only while the
+        // container numbers by the key; a revision later reads no stream's last.
+        if key.0 != NUMBERS_BY {
+            self.issue_written(subject, key);
+        }
     }
 
     /// Before a merge changes anything: the claims it moves give up the number
@@ -465,13 +470,15 @@ impl State {
         order
     }
 
-    /// A write of `key` on `subject` changed what the subject holds.
+    /// A write of `key` on `subject`, or a revision of a claim that wrote it,
+    /// changed what the subject holds. It reads the seats again and issues
+    /// nothing: a number is issued by the write that makes it and by no later
+    /// revision ([`Self::issue_written`]).
     fn refresh_written(&mut self, subject: &ObjectId, key: &KeyId) {
         if key.0 == NUMBERS_BY {
             self.refresh_subtree(subject);
         } else {
             self.refresh_member(subject);
-            self.issue_written(subject, key);
         }
     }
 

@@ -658,6 +658,73 @@ fn an_issued_number_follows_its_container_into_a_merge() {
     );
 }
 
+/// **A revision issues no number**: only a write made while the container
+/// numbers issues one. A claim revised after the container began to number does
+/// not issue the number an earlier, taken-back claim wrote to the same stream
+/// before it did, and the number a later member takes stays free.
+#[test]
+fn a_revision_does_not_issue_a_number_written_before_the_container_numbered() {
+    let events = [
+        vec![thing("coll", None), thing("m1", Some("coll"))],
+        vec![
+            created("y", claim("fy", "m1", "c", 1)),
+            write("y", "m1", "num", 1, "3"),
+            created("x", claim("fx", "m1", "c", 1)),
+            write("x", "m1", "num", 2, "5"),
+            archived("x", "fx", "m1"),
+        ],
+        holds("c", "coll", NUMBERS_BY, "num"),
+    ]
+    .concat();
+    let mut state = state(&events);
+    assert!(
+        !state.number_issued(&object("coll"), "num", 5),
+        "written before the container numbered: not issued"
+    );
+    assert!(state.number_issued(&object("coll"), "num", 3), "held now");
+    let mut revised = claim("fy", "m1", "c again", 1);
+    revised.details = Some("a note".into());
+    apply(
+        &mut state,
+        &ClaimEvent::RecordRevised {
+            record: record("y"),
+            claim: revised,
+        },
+    );
+    assert!(
+        !state.number_issued(&object("coll"), "num", 5),
+        "a revision of another claim issues nothing"
+    );
+    assert!(state.number_issued(&object("coll"), "num", 3));
+}
+
+/// **A write made while the container numbers issues its number for good**,
+/// even when the write is not held: one into a claim already taken back holds
+/// nothing, and the number is retired, not free.
+#[test]
+fn a_write_made_while_the_container_numbers_issues_its_number_for_good() {
+    let events = [
+        vec![thing("coll", None), thing("m1", Some("coll"))],
+        holds("c", "coll", NUMBERS_BY, "num"),
+        vec![
+            created("y", claim("fy", "m1", "c", 1)),
+            archived("y", "fy", "m1"),
+            write("y", "m1", "num", 1, "7"),
+        ],
+    ]
+    .concat();
+    let state = state(&events);
+    assert!(
+        state.numbered_member(&object("coll"), "num", 7).is_none(),
+        "held by nobody"
+    );
+    assert!(
+        state.number_issued(&object("coll"), "num", 7),
+        "and still issued"
+    );
+    assert!(!state.number_issued(&object("coll"), "num", 8));
+}
+
 fn bound(id: &str, address: &str) -> ClaimEvent {
     ClaimEvent::AddressBound {
         object: object(id),
