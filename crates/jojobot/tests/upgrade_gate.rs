@@ -8,6 +8,8 @@ use std::process::Stdio;
 use std::time::Duration;
 #[path = "upgrade_gate/deaths.rs"]
 mod deaths;
+#[path = "upgrade_gate/import_rows.rs"]
+mod import_rows;
 #[path = "upgrade_gate/kitchen_sink.rs"]
 mod kitchen_sink;
 #[path = "upgrade_gate/oracle.rs"]
