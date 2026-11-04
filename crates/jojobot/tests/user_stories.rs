@@ -330,7 +330,7 @@ mod mail_finished_by_its_owner;
 mod mail_visible_down_the_chart;
 #[path = "user_stories/mentioning.rs"]
 mod mentioning;
-/// A merge refusal's advice to clear a ceiling is advice the clear honours.
+/// A merge refusal's advice to archive the claim that sets a ceiling is advice the archive honours.
 #[path = "user_stories/merge_writers.rs"]
 mod merge_writers;
 #[path = "user_stories/moving.rs"]

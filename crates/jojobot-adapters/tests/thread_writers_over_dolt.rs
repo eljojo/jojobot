@@ -35,7 +35,7 @@ async fn badge_of(pool: &sqlx::MySqlPool, handle: &str) -> String {
 }
 
 /// **lisa wrote a note on one duplicate and not on the other**: the merge refusal
-/// says a clear of the ceiling opens for the second and not for the first, and a
+/// names the archive route for the second and not for the first, and a
 /// bot that set a ceiling and took it off again is not made a writer by it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn dolt_counts_the_bots_that_wrote_a_record_among_the_writers_a_merge_is_judged_by() {

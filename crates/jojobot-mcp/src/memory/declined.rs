@@ -2703,13 +2703,13 @@ pub(crate) mod tests {
         assert!(!generation.contains("grant"), "{generation}");
     }
 
-    /// **A merge of an ordinary thing into a bot request names the clear** when the
-    /// domain says it opens, and the request as the survivor. The same key on a
-    /// request as the duplicate is the request's own refusal, which names no
-    /// clear (rule 68). Every key of a request is driven, and the arm that fired
-    /// is told by its output, not by a word in it: all three keys give the same
-    /// text, and that text is not the one the fall-through arm gives. A key
-    /// dropped from either arm falls through, which also names the clear.
+    /// **A merge of an ordinary thing into a bot request names the archive route**
+    /// when the domain says it opens, and the request as the survivor. The same
+    /// key on a request as the duplicate is the request's own refusal, which names
+    /// no archive (rule 68). Every key of a request is driven, and the arm that
+    /// fired is told by its output, not by a word in it: all three keys give the
+    /// same text, and that text is not the one the fall-through arm gives. A key
+    /// dropped from either arm falls through, which also names the archive route.
     #[test]
     fn an_ordinary_duplicate_merged_into_a_request_is_told_to_archive_the_claim() {
         use jojobot_domain::memory::MayWrite;
@@ -2826,7 +2826,7 @@ pub(crate) mod tests {
             "the archive route opens: {named}"
         );
         assert!(!named.contains("  "), "{named}");
-        // The clear is named only when it opens.
+        // The archive route is named only when it opens.
         let barred = refused(spec, "desired", manager.clone(), false);
         assert!(barred.contains("bot:marge"), "{barred}");
         assert!(!barred.contains("archived"), "{barred}");

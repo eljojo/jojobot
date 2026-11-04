@@ -161,8 +161,8 @@ mod tests {
 
     /// **A bot that wrote a live record of a thread is one of its writers, in the
     /// lineage a merge is judged by**, in the in-memory store as in the real one
-    /// (rule 598). The merge refusal says a clear of the duplicate's ceiling opens
-    /// only to a caller the clear would let through: lisa wrote a note on one
+    /// (rule 598). The merge refusal names archiving the claim that sets the
+    /// duplicate's ceiling only to a caller the archive would let through: lisa wrote a note on one
     /// duplicate and not on the other. The runs come from the store's own
     /// run-to-bot reader, which the shared contract cannot supply.
     #[tokio::test]

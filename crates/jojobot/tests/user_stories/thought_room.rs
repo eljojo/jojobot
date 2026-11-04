@@ -1045,8 +1045,8 @@ async fn a_shorter_edit_in_place_lands_for_a_thought_over_its_cap() {
 
 /// **A merge into your own bot is refused for any key a bot cannot set about
 /// itself, not only for the two thought ceilings.** The ageing setting is one of
-/// them. Taking the key off the duplicate first, as the refusal says, lets the
-/// same merge land.
+/// them. A clear of the key is a write of it and does not let the merge land;
+/// archiving the claim that sets it, as the refusal says, does.
 #[tokio::test]
 async fn a_merge_into_your_own_bot_is_refused_for_a_duplicate_carrying_the_ageing_setting() {
     let story = Story::begin("bot:otto").await;
