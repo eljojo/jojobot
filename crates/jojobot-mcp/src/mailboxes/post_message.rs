@@ -97,7 +97,7 @@ pub struct PostMessageArgs {
 
     /// **The id of a message you sent that this one replaces.** Optional. Use it
     /// to correct or withdraw: the reader is handed this message, and the one
-    /// it replaces is not handed over as fresh mail when nobody has read it.
+    /// it replaces becomes superseded, a final state, when nobody has read it.
     /// It must be a message YOU sent into the SAME box as this one, and one no
     /// other message has replaced; each refusal names its reason and writes
     /// nothing. If the reader already has the original, this message arrives
@@ -433,7 +433,7 @@ impl Jojobot {
                        document (put_document) and send its address. To correct or \
                        withdraw a message you sent, post again to the same box with \
                        `supersedes` set to its id: the reader is handed the new one, \
-                       and the old one, if unread, is not handed over as fresh mail. \
+                       and the old one, if unread, becomes superseded, a final state. \
                        IT ANSWERS WITH A RECEIPT, NOT THE MESSAGE: the id that \
                        list_sent shows and `supersedes` names, the state as it \
                        stands (`read` already is success), \
@@ -444,8 +444,8 @@ impl Jojobot {
                        `new` and yours to finish. Mail an earlier read already handed \
                        you is not listed again: it is counted under \
                        your_mail.leftovers and still owed, and mail replaced before \
-                       you read it is counted under your_mail.superseded; \
-                       read_mailbox lists both, and read_message returns one by id. \
+                       you read it is superseded, a final state, and no post or read names it; \
+                       read_message returns it by id. \
                        The sender is the bot behind the `sid` you pass, never one you \
                        declare, and a sid jojobot is not holding comes back status: \
                        blocked with nothing written. The receipt's `changed` lists \
@@ -1065,16 +1065,19 @@ mod tests {
         assert_eq!(drained["messages"][0]["seen_before"], true, "{drained}");
     }
 
-    /// **A box's leftovers and its superseded mail ride a post as counts, never as
-    /// lists, however many posts are made.** `otto` holds one message read and not
-    /// finished, and one that an earlier message replaced before anybody read it. Twenty posts in a row each say how many there are and which call
-    /// lists them, and none carries an id, an envelope or the list of superseded
-    /// mail. **The positive is in the same case**: the counts are there, and the
-    /// read still lists both, so what a post stopped repeating was not lost.
-    /// `leftovers`, `superseded` and `how_to_read` are keys nothing outside this
-    /// process declares, so the literals are pinned here.
+    /// **A box's leftovers ride a post as a count, never as a list, and superseded
+    /// mail does not ride it at all, however many posts are made.** `otto` holds
+    /// one message read and not finished, and one that an earlier message replaced
+    /// before anybody read it. Twenty posts in a row each say how many leftovers
+    /// there are and which call lists them, and none carries an id, an envelope
+    /// or a word about the superseded message, which is final. **The positive is
+    /// in the same case**: the read still lists the leftover, and `read_message`
+    /// still returns the replaced message in state `superseded`, so what a post
+    /// stopped repeating was not lost. `leftovers`, `superseded` and
+    /// `how_to_read` are keys nothing outside this process declares, so the
+    /// literals are pinned here.
     #[tokio::test]
-    async fn twenty_posts_carry_the_counts_of_leftover_and_superseded_mail_and_no_list() {
+    async fn twenty_posts_carry_the_count_of_leftover_mail_and_never_name_superseded_mail() {
         let jojobot = mailbox_handler();
         make_box(&jojobot, "otto").await;
         make_box(&jojobot, "epsilon").await;
@@ -1082,36 +1085,29 @@ mod tests {
         let first = first["id"].as_str().expect("an id").to_string();
         let second = replacing(&jojobot, "otto", "epsilon", "second thing waiting", &first).await;
         let second = second["id"].as_str().expect("an id").to_string();
-        // otto reads: the replacement is handed over and stays owed, the replaced
-        // message is withheld and stays in `new`.
+        // otto reads: the replacement is handed over and stays owed, and the
+        // replaced message is final, so the read does not name it.
         let read = reading(&jojobot, "otto").await;
         assert_eq!(ids_of(&read), vec![second.clone()], "{read}");
-        assert_eq!(
-            read["superseded"]["messages"][0]["id"],
-            first.as_str(),
-            "{read}"
-        );
+        assert!(read.get("superseded").is_none(), "{read}");
 
         for post in 1..=20 {
             let receipt = send(&jojobot, "epsilon", "otto", &format!("post {post}")).await;
             let mail = &receipt["your_mail"];
             assert_eq!(mail["leftovers"]["count"], 1, "post {post}: {receipt}");
-            assert_eq!(mail["superseded"]["count"], 1, "post {post}: {receipt}");
-            for held in ["leftovers", "superseded"] {
-                assert!(
-                    mail[held]["how_to_read"]
-                        .as_str()
-                        .is_some_and(|how| how.contains("read_mailbox")),
-                    "post {post}: the {held} count names the call that lists them: {receipt}"
-                );
-            }
+            assert!(
+                mail["leftovers"]["how_to_read"]
+                    .as_str()
+                    .is_some_and(|how| how.contains("read_mailbox")),
+                "post {post}: the leftovers count names the call that lists them: {receipt}"
+            );
             assert!(
                 mail["leftovers"].get("ids").is_none(),
                 "post {post}: {receipt}"
             );
             assert!(
-                mail["superseded"].get("messages").is_none(),
-                "post {post}: {receipt}"
+                mail.get("superseded").is_none(),
+                "post {post}: superseded mail is final and a post does not name it: {receipt}"
             );
             for envelope in ["messages", "mailbox", "new_only"] {
                 assert!(
@@ -1140,11 +1136,19 @@ mod tests {
                 .expect("read ok"),
         );
         assert_eq!(ids_of(&again), vec![second.clone()], "{again}");
-        assert_eq!(
-            again["superseded"]["messages"][0]["id"],
-            first.as_str(),
-            "{again}"
+        assert!(again.get("superseded").is_none(), "{again}");
+        let replaced = json_of(
+            &jojobot
+                .read_message(Parameters(ReadMessageArgs {
+                    history: None,
+                    message_id: first.clone(),
+                    sid: Some(as_bot(&jojobot, "otto")),
+                }))
+                .await
+                .expect("read_message ok"),
         );
+        assert_eq!(replaced["state"], "superseded", "{replaced}");
+        assert_eq!(replaced["superseded_by"], second.as_str(), "{replaced}");
     }
 
     /// Twenty-five messages waiting for `otto`, each `body_len` characters, and
@@ -2327,16 +2331,17 @@ mod tests {
             .collect()
     }
 
-    /// **A replaced message nobody read is not delivered, and the delivery names
-    /// it apart.** gamma sends A, then B replacing A, to delta. delta's read
-    /// carries B, lists A as replaced by B, and the counts account for both.
+    /// **A replaced message nobody read is final: no delivery names it, and it is
+    /// counted apart.** gamma sends A, then B replacing A, to delta. delta's read
+    /// carries B and says nothing of A, the counts account for both, and
+    /// `read_message` still returns A in state `superseded` naming B.
     ///
     /// The control is a pair without `supersedes`: both arrive and nothing is
-    /// listed apart, so the case does not hold on a build that withholds every
+    /// superseded, so the case does not hold on a build that withholds every
     /// second message. `superseded` and `superseded_by` are keys nothing outside
     /// this process declares, so the literals are pinned here.
     #[tokio::test]
-    async fn a_replaced_message_nobody_read_is_listed_apart_and_the_counts_account_for_it() {
+    async fn a_replaced_message_nobody_read_is_final_and_the_counts_account_for_it() {
         let jojobot = mailbox_handler();
         make_box(&jojobot, "gamma").await;
         make_box(&jojobot, "delta").await;
@@ -2370,22 +2375,13 @@ mod tests {
         let delivery = reading(&jojobot, "delta").await;
         assert_eq!(ids_of(&delivery), vec![b_id.clone()], "{delivery}");
         assert_eq!(delivery["count"], 1, "{delivery}");
-        assert_eq!(delivery["superseded"]["count"], 1, "{delivery}");
-        assert_eq!(
-            delivery["superseded"]["messages"][0]["id"],
-            a.as_str(),
-            "{delivery}"
-        );
-        assert_eq!(
-            delivery["superseded"]["messages"][0]["superseded_by"],
-            b_id.as_str(),
-            "{delivery}"
+        assert!(
+            delivery.get("superseded").is_none(),
+            "a final message is not named in a delivery: {delivery}"
         );
         assert!(
-            delivery["superseded"]["how_to_read"]
-                .as_str()
-                .is_some_and(|how| how.contains("read_message")),
-            "the listing names the call that returns it: {delivery}"
+            !ids_of(&delivery).contains(&a),
+            "the replaced message is not among the delivered ones: {delivery}"
         );
         assert!(
             delivery["messages"][0].get("already_seen").is_none(),
@@ -2400,7 +2396,8 @@ mod tests {
         assert_eq!(after["counts"]["read"], 1, "{after}");
         assert_eq!(after["counts"]["superseded"], 1, "{after}");
 
-        // The withheld message is readable on request and says what replaced it.
+        // The replaced message is readable on request, says what replaced it and
+        // is not taken by the read.
         let asked = json_of(
             &jojobot
                 .read_message(Parameters(ReadMessageArgs {
@@ -2412,7 +2409,14 @@ mod tests {
                 .expect("read_message ok"),
         );
         assert_eq!(asked["body"], "the deploy is friday", "{asked}");
+        assert_eq!(asked["state"], "superseded", "{asked}");
         assert_eq!(asked["superseded_by"], b_id.as_str(), "{asked}");
+        let still = counts(&jojobot, "delta").await;
+        assert_eq!(still["counts"]["superseded"], 1, "{still}");
+        assert_eq!(
+            still["counts"]["read"], 1,
+            "reading it took nothing: {still}"
+        );
 
         // The control.
         make_box(&jojobot, "epsilon").await;
@@ -2460,11 +2464,11 @@ mod tests {
         );
     }
 
-    /// **The delivery that rides on a post carries the same two answers.** A
-    /// reader who posts is handed the replacement and told how many messages were
-    /// withheld and which call lists them; the list itself is the read's.
+    /// **The delivery that rides on a post carries the same answers.** A reader
+    /// who posts is handed the replacement and told nothing of the replaced
+    /// original, which is final; the read does not name it either.
     #[tokio::test]
-    async fn a_post_delivers_a_replacement_and_lists_the_replaced_original_apart() {
+    async fn a_post_delivers_a_replacement_and_says_nothing_of_the_replaced_original() {
         let jojobot = mailbox_handler();
         make_box(&jojobot, "gamma").await;
         make_box(&jojobot, "delta").await;
@@ -2477,16 +2481,15 @@ mod tests {
         let mail = &posted["your_mail"];
         assert_eq!(mail["messages"][0]["id"], b_id.as_str(), "{posted}");
         assert_eq!(mail["count"], 1, "{posted}");
-        assert_eq!(mail["superseded"]["count"], 1, "{posted}");
         assert!(
-            mail["superseded"].get("messages").is_none(),
-            "a post counts the withheld mail and does not list it: {posted}"
+            mail.get("superseded").is_none(),
+            "a post does not name final mail: {posted}"
         );
         let read = reading(&jojobot, "delta").await;
-        assert_eq!(
-            read["superseded"]["messages"][0]["id"],
-            a.as_str(),
-            "the read lists what the post counted: {read}"
+        assert!(read.get("superseded").is_none(), "{read}");
+        assert!(
+            !ids_of(&read).contains(&a),
+            "the read does not deliver the replaced message: {read}"
         );
     }
 

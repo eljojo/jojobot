@@ -1848,11 +1848,11 @@ A name no colleague answers to, or a colleague whose mail is missing or doubled,
 A post to a folded bot goes to the bot it was folded into; the receipt's `folded` block says so.
 Give it a one-line `subject`, which a reader sees on a listing before opening anything.
 A body too long to be handed to its reader whole is refused with nothing written: split it, or put the text on a document (put_document) and send its address.
-To correct or withdraw a message you sent, post again to the same box with `supersedes` set to its id: the reader is handed the new one, and the old one, if unread, is not handed over as fresh mail.
+To correct or withdraw a message you sent, post again to the same box with `supersedes` set to its id: the reader is handed the new one, and the old one, if unread, becomes superseded, a final state.
 IT ANSWERS WITH A RECEIPT, NOT THE MESSAGE: the id that list_sent shows and `supersedes` names, the state as it stands (`read` already is success), body_bytes and body_elided: true.
 Your body is not echoed back; list_sent with include_bodies returns it, taking no delivery.
 POSTING ALSO DELIVERS: mail in YOUR OWN box that no read has handed you yet rides back under your_mail, out of `new` and yours to finish.
-Mail an earlier read already handed you is not listed again: it is counted under your_mail.leftovers and still owed, and mail replaced before you read it is counted under your_mail.superseded; read_mailbox lists both, and read_message returns one by id.
+Mail an earlier read already handed you is not listed again: it is counted under your_mail.leftovers and still owed, and mail replaced before you read it is superseded, a final state, and no post or read names it; read_message returns it by id.
 The sender is the bot behind the `sid` you pass, never one you declare, and a sid jojobot is not holding comes back status: blocked with nothing written.
 The receipt's `changed` lists what moved.
 ```
@@ -1955,7 +1955,7 @@ cut, because shortening your own title is yours to do. Carries
 ```text
 **The id of a message you sent that this one replaces.** Optional. Use it
 to correct or withdraw: the reader is handed this message, and the one
-it replaces is not handed over as fresh mail when nobody has read it.
+it replaces becomes superseded, a final state, when nobody has read it.
 It must be a message YOU sent into the SAME box as this one, and one no
 other message has replaced; each refusal names its reason and writes
 nothing. If the reader already has the original, this message arrives
@@ -2210,7 +2210,7 @@ Either way it changes what is shipped, never what is owed.
 The answer stops at the ceiling and takes every message anyway: a body that does not fit is flagged body_elided, and a message that does not fit even so is named under not_shown.
 No box to open comes back status: blocked and delivers nothing.
 Reading your own box with your own sid, a poll included, renews a role claim your session holds, so a session that only polls does not go stale.
-Mail its sender replaced before anyone read it is not delivered: it stays in new, is listed under superseded with the id that replaced it, and read_message returns it.
+Mail its sender replaced before anyone read it is superseded, a final state like processed: it is never delivered or listed, the counts carry it under superseded beside new, and read_message returns it by id, naming what replaced it.
 Mail from the sender `jojobot` is a release note, which lists what a deploy changed: act on it and mark it processed like any other.
 `jojobot` has no box, so a post to it is refused and writes nothing.
 An empty delivery names what it looked through, as searched.

@@ -245,9 +245,10 @@ impl Jojobot {
                        open comes back status: blocked and delivers nothing. Reading your own \
                        box with your own sid, a poll included, renews a role claim your \
                        session holds, so a session that only polls does not go stale. Mail \
-                       its sender replaced before anyone read it is not delivered: it stays in \
-                       new, is listed under superseded with the id that replaced it, and \
-                       read_message returns it. Mail from the sender `jojobot` is a \
+                       its sender replaced before anyone read it is superseded, a final \
+                       state like processed: it is never delivered or listed, the counts \
+                       carry it under superseded beside new, and read_message returns it \
+                       by id, naming what replaced it. Mail from the sender `jojobot` is a \
                        release note, which lists what a deploy changed: act on it and mark \
                        it processed like any other. `jojobot` has no box, so a post to it is \
                        refused and writes nothing. An \

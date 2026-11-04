@@ -110,8 +110,8 @@ pub(crate) fn mailbox_json(mailbox: &Mailbox) -> serde_json::Value {
         },
         "quarantined": quarantined_json(mailbox),
     });
-    // **Inside `new`, not beside it**, so it is left out when no message in the
-    // box was replaced and `total` does not add it twice.
+    // **Beside `new`, never inside it**: `new` is what a delivery hands over, and
+    // `total` adds this count. Left out when no message in the box was replaced.
     if mailbox.counts.superseded > 0
         && let Some(counts) = body["counts"].as_object_mut()
     {
@@ -391,7 +391,12 @@ impl Jojobot {
             let Ok(Some(original)) = self.mailboxes.message_by_id(replaced).await else {
                 continue;
             };
-            if original.state != mailbox::MessageState::New {
+            // **A superseded original was never delivered**, so there is nothing
+            // the reader has seen to point back at.
+            if !matches!(
+                original.state,
+                mailbox::MessageState::New | mailbox::MessageState::Superseded
+            ) {
                 note_replaces_one_already_seen(json, replaced, original.state);
             }
         }
@@ -538,11 +543,11 @@ pub(crate) fn note_leftovers(rendered: &mut serde_json::Value, leftovers: &[Deli
 const LEFTOVER_IDS_SHOWN: usize = 5;
 
 /// **What a post says about the mail it did not ship: how many, and the call that
-/// lists it.** A bot posts again and again while it works, and a leftover or a
-/// withheld message is the same mail on every post, so a post names a count where
-/// [`note_leftovers`] names every id. `read_mailbox` is the call that lists them,
-/// and its output is what [`note_leftovers`] and [`delivery_json`] write. Added only
-/// when there is something to count.
+/// lists it.** A bot posts again and again while it works, and a leftover is the
+/// same mail on every post, so a post names a count where [`note_leftovers`]
+/// names every id. `read_mailbox` is the call that lists them, and its output is
+/// what [`note_leftovers`] writes. Superseded mail is final and is not named.
+/// Added only when there is something to count.
 pub(crate) fn note_unshipped_mail_as_counts(
     rendered: &mut serde_json::Value,
     leftovers: &[Delivered],
@@ -554,18 +559,6 @@ pub(crate) fn note_unshipped_mail_as_counts(
                             it processed. read_mailbox with new_only false returns them all, \
                             flagged seen_before",
         });
-    }
-    if let Some(withheld) = rendered
-        .get_mut("superseded")
-        .and_then(serde_json::Value::as_object_mut)
-    {
-        withheld.remove("messages");
-        withheld.insert(
-            "how_to_read".into(),
-            "unread messages their sender replaced with a later one. They were not delivered \
-             and are still in new. read_mailbox lists which"
-                .into(),
-        );
     }
 }
 
