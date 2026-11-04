@@ -105,9 +105,10 @@ fn a_claims_span_covers_exactly_the_days_it_names() {
     }
 }
 
-/// **Only the key a retraction writes is refused when cleared.** Every other
-/// key, however alike, is the caller's to clear; the check is on the trimmed
-/// key, and one reserved key among others is enough.
+/// **Only the keys jojobot writes itself are refused when cleared**: the one a
+/// retraction writes and the one a merge writes. Every other key, however alike,
+/// is the caller's to clear; the check is on the trimmed key, and one reserved
+/// key among others is enough.
 #[test]
 fn only_the_reserved_keys_are_refused_when_cleared() {
     let keys = |list: &[&str]| list.iter().map(|k| k.to_string()).collect::<Vec<_>>();
@@ -270,6 +271,16 @@ fn a_new_claim_is_refused_by_the_first_clause_it_breaks() {
         .insert(RETRACTS.into(), "person:milhouse#f1".into());
     let mut beside_then_content = claim("   ");
     beside_then_content.also_written = vec![claim("another")];
+    // The two adjacent pairs of different variants no other row holds: records
+    // written beside the claim before the subject, and bad fields before the
+    // source an observation owes.
+    let mut beside_then_subject = NewFact::about(who("session:alpha"), "keeps the ledger", day(0));
+    beside_then_subject.also_written = vec![claim("another")];
+    let mut fields_then_source = claim("keeps the ledger");
+    fields_then_source
+        .fields
+        .insert(RETRACTS.into(), "person:milhouse#f1".into());
+    fields_then_source.provenance = Provenance::Observation;
     // The faults alone, to tell which clause decided a refusal of one variant.
     let (span_alone, fields_alone) = (orphan_end.clone(), reserved.clone());
     let (beside_alone, content_alone) = (beside.clone(), blank.clone());
@@ -301,6 +312,8 @@ fn a_new_claim_is_refused_by_the_first_clause_it_breaks() {
         (content_then_edge, Refused::Fact),
         (edge_then_source, Refused::Edge),
         (span_then_fields, Refused::Fact),
+        (beside_then_subject, Refused::Fact),
+        (fields_then_source, Refused::Fact),
     ];
     for (fact, refused) in table {
         let outcome = validate_new_fact(&fact);
