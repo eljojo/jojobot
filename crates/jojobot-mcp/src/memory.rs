@@ -67,6 +67,7 @@ mod recall_members;
 #[cfg(test)]
 mod recall_stored_types;
 pub mod receipt;
+mod receipt_owner;
 pub mod rename_entity;
 #[cfg(test)]
 mod resend_effects_tests;

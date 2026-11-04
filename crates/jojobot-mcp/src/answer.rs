@@ -8,9 +8,9 @@
 
 use super::*;
 
-// No verb goes through the composer yet: capture's receipt is its first client.
+// Capture's suggestions are the first client; its notes and the budget follow.
 #[allow(dead_code)]
-mod compose;
+pub(crate) mod compose;
 #[cfg(test)]
 mod compose_tests;
 

@@ -1108,7 +1108,7 @@ impl Jojobot {
                 &crate::teaching::field_shadows_argument_teaching(shadowed, &owning_verb),
             );
         }
-        json_result(&body)
+        json_result(&super::receipt_owner::own(body))
     }
 }
 
