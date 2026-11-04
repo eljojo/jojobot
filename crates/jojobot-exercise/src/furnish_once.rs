@@ -63,15 +63,24 @@ where
     .clone()
 }
 
+/// **The kinds a room holds entities of**, as the room's own boot names them under
+/// `snapshot.entities.by_kind`. `None` is a boot that names none, which a
+/// comparison must not take for a room that holds nothing.
+pub fn kinds_held(boot: &serde_json::Value) -> Option<Vec<String>> {
+    let kinds = boot["snapshot"]["entities"]["by_kind"].as_object()?;
+    Some(kinds.keys().cloned().collect())
+}
+
 /// **Every entity id a room holds, by kind**, read through the surface and
 /// sorted, so a furnish made live and one copied from the cache can be compared
-/// on what a case can find.
+/// on what a case can find. The kinds are the ones the room's boot names, so a
+/// kind the build gains or a room fills (a bot, a role) is compared as well.
 pub async fn held_ids(surface: &Surface) -> Vec<String> {
+    let boot = surface.call("start_here", json!({"brief": true})).await;
+    let boot: serde_json::Value = serde_json::from_str(&boot).expect("a JSON boot");
+    let kinds = kinds_held(&boot).expect("the boot names the kinds the room holds");
     let mut ids = Vec::new();
-    for kind in [
-        "person", "place", "work", "event", "thing", "project", "list", "thread", "topic",
-        "rhythm", "org", "machine", "document", "pet",
-    ] {
+    for kind in kinds {
         let read = surface
             .call(
                 "recall",
@@ -87,4 +96,56 @@ pub async fn held_ids(surface: &Surface) -> Vec<String> {
     }
     ids.sort();
     ids
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A boot as a room's server answers it with no bot named: the kinds it
+    /// holds entities of, with how many of each. The shape is the served one.
+    fn a_boot() -> serde_json::Value {
+        json!({
+            "snapshot": {"entities": {
+                "available": true,
+                "by_kind": {
+                    "bot": 3, "challenge": 1, "decision": 12, "document": 4, "event": 2,
+                    "list": 1, "machine": 1, "person": 1, "project": 2, "promise": 1,
+                    "rhythm": 1, "role": 3, "thing": 5, "thread": 2, "topic": 3,
+                    "view": 14, "voucher": 1, "work": 9
+                },
+                "count": 66
+            }}
+        })
+    }
+
+    /// **Every kind the boot names is read, bots and roles included.** The
+    /// comparison of a cached room with a live one is only as wide as this list,
+    /// and a list that left out `bot` let a cache that dropped a bot compare
+    /// equal. The control is a kind the old list named: it stays.
+    #[test]
+    fn every_kind_the_boot_names_is_read() {
+        let kinds = kinds_held(&a_boot()).expect("the boot names kinds");
+        for kind in [
+            "bot", "role", "view", "voucher", "decision", "person", "work",
+        ] {
+            assert!(
+                kinds.iter().any(|held| held == kind),
+                "{kind} is read: {kinds:?}"
+            );
+        }
+        assert_eq!(
+            kinds.len(),
+            18,
+            "exactly the kinds the boot names: {kinds:?}"
+        );
+    }
+
+    /// **A boot that names no kinds is not a room that holds nothing.** Taking
+    /// it for one would let two rooms compare equal over no ids at all.
+    #[test]
+    fn a_boot_that_names_no_kinds_is_not_an_empty_room() {
+        assert_eq!(kinds_held(&json!({"snapshot": {"entities": {}}})), None);
+        assert_eq!(kinds_held(&json!({"transport_error": "refused"})), None);
+    }
 }
