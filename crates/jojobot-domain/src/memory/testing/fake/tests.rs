@@ -548,8 +548,17 @@ async fn deleting_a_thing_under_the_store_clears_every_table_keyed_to_it() {
         .expect("the rename is answered")
         .written()
         .expect("nothing collides with the new handle");
-    for held in [&renamed, &kept] {
-        say(&store, held, "laughs").await;
+    for (held, colour) in [(&renamed, "blue"), (&kept, "green")] {
+        store
+            .capture(NewFact {
+                fields: [("colour".into(), colour.into())].into(),
+                sets: ["colour".into()].into(),
+                ..NewFact::about(held.clone(), "laughs", date(2026, 6, 2))
+            })
+            .await
+            .expect("the claim with a field lands")
+            .written()
+            .expect("the claim is not blocked");
         store
             .set_prose(held, "a page", None)
             .await
@@ -578,7 +587,40 @@ async fn deleting_a_thing_under_the_store_clears_every_table_keyed_to_it() {
             .and_then(|e| e.badge.clone())
             .expect("the kept thing wears a badge"),
     );
+    let entities_before = store.entities.lock().unwrap().clone();
+    let facts_before = store.facts.lock().unwrap().clone();
+    assert_ne!(
+        home, kept_home,
+        "the kept control needs another storage key"
+    );
+    let field_rows = || {
+        store
+            .writes
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|w| {
+                (
+                    w.entity.clone(),
+                    w.key.clone(),
+                    w.ordinal,
+                    w.value.clone(),
+                    w.fact.clone(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let writes_before = field_rows();
+    let claim_writes_before = store.claim_writes.lock().unwrap().clone();
     // **Before**, so each table below is shown to hold something to clear.
+    for handle in [&renamed, &kept] {
+        assert!(entities_before.iter().any(|e| &e.id == handle));
+    }
+    for held in [&home, &kept_home] {
+        assert!(facts_before.iter().any(|f| &f.home == held));
+        assert!(writes_before.iter().any(|(key, ..)| key == held));
+        assert!(claim_writes_before.iter().any(|(key, ..)| key == held));
+    }
     assert!(
         store
             .entity_writes
@@ -623,6 +665,38 @@ async fn deleting_a_thing_under_the_store_clears_every_table_keyed_to_it() {
 
     store.delete_entity_past_the_guard(&renamed);
 
+    assert_eq!(
+        *store.entities.lock().unwrap(),
+        entities_before
+            .into_iter()
+            .filter(|e| e.id != renamed)
+            .collect::<Vec<_>>(),
+        "only the deleted entity row must go"
+    );
+    assert_eq!(
+        *store.facts.lock().unwrap(),
+        facts_before
+            .into_iter()
+            .filter(|f| f.home != home)
+            .collect::<Vec<_>>(),
+        "only claims in the deleted home must go"
+    );
+    assert_eq!(
+        field_rows(),
+        writes_before
+            .into_iter()
+            .filter(|(held, ..)| held != &home)
+            .collect::<Vec<_>>(),
+        "only key writes in the deleted home must go"
+    );
+    assert_eq!(
+        *store.claim_writes.lock().unwrap(),
+        claim_writes_before
+            .into_iter()
+            .filter(|(held, ..)| held != &home)
+            .collect::<Vec<_>>(),
+        "only claim writes in the deleted home must go"
+    );
     assert!(
         store
             .entity_writes
