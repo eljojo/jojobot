@@ -185,3 +185,45 @@ fn a_write_of_a_taken_back_claim_backs_and_ages_nothing() {
     );
     assert!(state.held_since(&home, &[]).contains_key("owner"));
 }
+
+/// **A read costs the streams of its own thing**, however many other things the
+/// State holds: the streams are looked up by subject and never scanned.
+#[test]
+fn a_read_looks_only_at_the_streams_of_its_own_thing() {
+    let mut events = thing();
+    events.extend([
+        created("r0", claim("f1", "work:alpha", "a", 3)),
+        write("r0", "work:alpha", "owner", 1, "bot:alpha"),
+        write("r0", "work:alpha", "phase", 1, "now"),
+    ]);
+    for (n, name) in [
+        "delta", "epsilon", "zeta", "eta", "theta", "iota", "kappa", "lambda", "mu", "nu",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let id = format!("work:{name}");
+        events.extend([
+            ClaimEvent::ObjectCreated {
+                object: object(&id),
+                body: body("work", "Other"),
+            },
+            created(&format!("o{n}"), claim("f1", &id, "x", 3)),
+            write(&format!("o{n}"), &id, "owner", 1, "bot:beta"),
+        ]);
+    }
+    let state = plain(&events);
+    let home = object("work:alpha");
+    for read in 0..2 {
+        super::STREAMS_EXAMINED.with(|n| n.set(0));
+        match read {
+            0 => drop(state.backing(&home, &[])),
+            _ => drop(state.held_since(&home, &[])),
+        };
+        assert_eq!(
+            super::STREAMS_EXAMINED.with(|n| n.get()),
+            2,
+            "read {read} looked at the streams of other things"
+        );
+    }
+}

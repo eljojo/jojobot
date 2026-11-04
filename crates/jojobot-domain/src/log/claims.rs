@@ -576,10 +576,16 @@ impl State {
     fn key_writes(&self, subject: &ObjectId) -> Vec<KeyWrite> {
         let subject = self.survivor(subject);
         let mut out = Vec::new();
-        for ((held, key), stream) in &self.streams {
-            if held == subject {
-                self.push_key_writes(key, stream, &mut out);
-            }
+        // **The streams of one subject sit together in the map**, ordered by
+        // subject and then key, so they are found by range and never by a scan.
+        for ((_, key), stream) in self
+            .streams
+            .range((subject.clone(), KeyId(String::new()))..)
+            .take_while(|((held, _), _)| held == subject)
+        {
+            #[cfg(test)]
+            reads::STREAMS_EXAMINED.with(|n| n.set(n.get() + 1));
+            self.push_key_writes(key, stream, &mut out);
         }
         out
     }

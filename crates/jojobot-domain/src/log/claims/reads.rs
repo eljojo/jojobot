@@ -12,6 +12,13 @@ use super::State;
 use crate::log::ObjectId;
 use crate::memory::{self, FieldBacking, types::DeclaredType};
 
+// **How many streams the reads have looked at on this thread**, so a case can
+// say a read costs the streams of its own thing and not the size of the State.
+#[cfg(test)]
+thread_local! {
+    pub(super) static STREAMS_EXAMINED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 impl State {
     /// **Who backs the value each key of a thing holds**, as the store's
     /// `backing` answers it. A key whose writes are summed, and a key a later
