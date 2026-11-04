@@ -30,7 +30,7 @@ pub(crate) const CLAIMS_DOMAIN: &str = "claims";
 /// migrate.
 pub(crate) const CLAIMS_TEACHING: &str = "A further claim does not destroy the one already \
     there — capture a second claim about the same thing and it does not erase the first, even \
-    when the two contradict each other. jojobot runs no inference and settles nothing, so two \
+    when the two contradict each other. jojobot decides nothing between claims, so two \
     accounts that disagree are both allowed to stand: recording the new one is not a judgment \
     that it is the true one, and deciding between them was never the job. Reach for capture when \
     a new thing happened; reach for update_fact only to correct what the claim already says — \
@@ -191,7 +191,7 @@ pub(crate) const OPERATOR_QUOTE_DOMAIN: &str = "operator-quote";
 /// **Ships in the binary, exactly as the other teachings do.**
 pub(crate) const OPERATOR_QUOTE_TEACHING: &str = "To quote the operator, write the address of the \
     claim that holds their words, `@kind:slug#fN`, and jojobot writes those words into the \
-    message beside the address. The claim must be one they said (testimony); an inference is \
+    message beside the address. The claim must be one they said (testimony); any other is \
     refused. Quotation marks you type yourself are left alone and prove nothing. A claim \
     is an account, not a transcript, so a quote by address does not prove verbatim speech.";
 

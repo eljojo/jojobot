@@ -127,7 +127,8 @@ pub struct UpdateFactArgs {
     /// A session that wrote a claim keeps its provenance when it rewrites the
     /// words and sends none, and any session keeps an inference's. Another
     /// session rewriting an observation's words must restate its provenance,
-    /// even when unchanged. An edit that leaves the words alone keeps it.
+    /// even when unchanged. An edit that leaves the words alone keeps it,
+    /// unless it moves a due day.
     #[serde(default)]
     pub(crate) provenance: Option<String>,
     /// `settled` or `open`. **Moving a claim that is ALREADY open to settled
@@ -414,10 +415,10 @@ impl Jojobot {
                        or reworded claim: rewrite it. Archiving and retracting are \
                        one-way for a claim: nothing edits an archived claim, status \
                        included, so there is no un-archive (an archived ENTITY comes back \
-                       with restore: true). A rewrite destroys nothing — every earlier \
-                       wording stays readable (recall with history_record: the address) — \
-                       so a claim you disagree with is safe to correct, except testimony \
-                       from an earlier session: TESTIMONY IS REWRITTEN IN PLACE ONLY BY \
+                       with restore: true). A rewrite keeps every earlier wording readable (recall with \
+                       history_record: the address), so a claim you disagree with is safe \
+                       to correct, except testimony from an earlier session or an app's \
+                       claim: TESTIMONY IS REWRITTEN IN PLACE ONLY BY \
                        THE SESSION THAT WROTE IT, and any other is archived and replaced, \
                        with derived_from naming the archived claim. Two moves are \
                        gated: anything to testimony needs confirmed_by_user; open \

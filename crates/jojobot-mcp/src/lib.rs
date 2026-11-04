@@ -556,7 +556,7 @@ pub(crate) const INSTRUCTIONS: &str = "jojobot — a personal-assistant server w
                  \n\n**MEMORY.** **Entities** have typed handles, `kind:slug`, the name \
                  each is addressed by. **Facts** are dated claims about them, each \
                  with an **address** (`kind:slug#local-id`) and a **provenance** \
-                 saying who backs it; a claim nobody confirmed is a hypothesis \
+                 saying who backs it; an inferred claim is a hypothesis \
                  until the operator confirms it. **jojobot is where durable things are \
                  kept.** A thing's **fields** are its `sets` writes, folded, the \
                  newest write of each key winning (a handle, or one in a comma \

@@ -247,9 +247,8 @@ impl Jojobot {
                        name and what each is FOR, never the procedures: call again with \
                        skill: its name to get one). NAME A BOT and the answer also carries \
                        that identity: its charter, its starred rules as dated claims each \
-                       with provenance (testimony and observation are settled, inference is \
-                       a \
-                       hypothesis), and the counts of the mailbox it owns. THIS DOOR CREATES \
+                       with provenance (testimony and observation default to settled, inference to \
+                       open), and the counts of the mailbox it owns. THIS DOOR CREATES \
                        NO IDENTITY: a name that is no bot comes back blocked, listing up to \
                        twenty bots. Booting starts or resumes that bot's session — there \
                        is no separate start verb — and THIS DOOR IS WHERE A SESSION ID COMES \

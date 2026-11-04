@@ -140,13 +140,13 @@ answer: {
 ### Memory refusal `UnstatedProvenance`
 
 ```text
-reads: a claim's content cannot be replaced without saying how the new words are known: give 'provenance' — testimony, observation or inference — even to say it is known the same way as before.
+reads: another session cannot replace a claim's words without saying how they are known: give 'provenance' — testimony, observation or inference — even to say it is known as before.
 Only an inference you rewrite keeps its provenance when you send none
 answer: {
   "attempted": "",
   "candidates": [],
   "fix_by": "change",
-  "how_to_proceed": "Nothing was written: a claim's content cannot be replaced without saying how the new words are known: give 'provenance' — testimony, observation or inference — even to say it is known the same way as before. Only an inference you rewrite keeps its provenance when you send none. Nothing is missing from the store and nothing here needs the operator — the call itself is what jojobot cannot carry out. Send the same capture call again with that fixed.",
+  "how_to_proceed": "Nothing was written: another session cannot replace a claim's words without saying how they are known: give 'provenance' — testimony, observation or inference — even to say it is known as before. Only an inference you rewrite keeps its provenance when you send none. Nothing is missing from the store and nothing here needs the operator — the call itself is what jojobot cannot carry out. Send the same update_fact call again with that fixed.",
   "refusal_code": "UnstatedProvenance",
   "status": "blocked",
   "wrote": false
@@ -847,7 +847,7 @@ answer: {
   "attempted": "",
   "candidates": [],
   "fix_by": "change",
-  "how_to_proceed": "Nothing was written: settling an open claim requires a receipt, one of two shapes: `check` (what was checked, written so another agent can run it again) or `confirmed` (the operator confirmed it: the day, and where, a message id or the session). A receipt records that a check ran or that the operator said so; it does not run the check, and settling never changes who backs the claim. confirmed_by_user no longer settles a claim: it only moves one to testimony. The claim is unchanged. Send capture again with `receipt` set to `{check: ...}` or `{confirmed: {on: YYYY-MM-DD, at: ...}}`.",
+  "how_to_proceed": "Nothing was written: settling an open claim requires a receipt, one of two shapes: `check` (what was checked, written so another agent can run it again) or `confirmed` (the operator confirmed it: the day, and where, a message id or the session). A receipt records that a check ran or that the operator said so; it does not run the check, and settling never changes who backs the claim. confirmed_by_user no longer settles a claim: it only moves one to testimony. The claim is unchanged. Send update_fact again with `receipt` set to `{check: ...}` or `{confirmed: {on: YYYY-MM-DD, at: ...}}`.",
   "refusal_code": "UnreceiptedSettling",
   "status": "blocked",
   "wrote": false
@@ -889,12 +889,12 @@ answer: {
 ### Memory refusal `UnconfirmedPromotion`
 
 ```text
-reads: promoting inference → testimony requires the user's explicit confirmation (confirmed_by_user); jojobot infers freely but never blesses on its own
+reads: promoting a claim to testimony requires the user's explicit confirmation (confirmed_by_user); jojobot infers freely but never blesses on its own
 answer: {
   "attempted": "",
   "candidates": [],
   "fix_by": "person",
-  "how_to_proceed": "Nothing was written: promoting inference → testimony requires the user's explicit confirmation (confirmed_by_user); jojobot infers freely but never blesses on its own. This is not a malformed call and re-sending it will not change the answer — what is missing is the operator's word. Ask, and re-call capture with confirmed_by_user only once they have actually said so.",
+  "how_to_proceed": "Nothing was written: promoting a claim to testimony requires the user's explicit confirmation (confirmed_by_user); jojobot infers freely but never blesses on its own. This is not a malformed call and re-sending it will not change the answer — what is missing is the operator's word. Ask, and re-call update_fact with confirmed_by_user only once they have actually said so.",
   "refusal_code": "UnconfirmedPromotion",
   "status": "blocked",
   "wrote": false

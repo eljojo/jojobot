@@ -865,7 +865,7 @@ pub struct FactPatch {
     /// undated one, if [`FactPatch::clear_happened_at`] is also set) rather
     /// than a span. Its own flag for the reason `clear_happened_at` is one.
     pub clear_happened_through: bool,
-    /// New provenance. Promoting inference → testimony additionally requires
+    /// New provenance. Promoting a claim to testimony additionally requires
     /// [`FactPatch::confirmed_by_user`].
     pub provenance: Option<Provenance>,
     /// New standing. Settling an open claim requires a
@@ -6533,7 +6533,7 @@ pub enum MemoryError {
     UnsourcedObservation,
     /// A claim can only become testimony on the user's explicit confirmation.
     #[error(
-        "promoting inference → testimony requires the user's explicit confirmation \
+        "promoting a claim to testimony requires the user's explicit confirmation \
          (confirmed_by_user); jojobot infers freely but never blesses on its own"
     )]
     UnconfirmedPromotion,
@@ -6544,9 +6544,9 @@ pub enum MemoryError {
     /// rather than silently kept: a caller who meant the same provenance says so
     /// again. The claim's own writing session and an inference are not asked.
     #[error(
-        "a claim's content cannot be replaced without saying how the new words are known: give \
-         'provenance' — testimony, observation or inference — even to say it is known the same \
-         way as before. Only an inference you rewrite keeps its provenance when you send none"
+        "another session cannot replace a claim's words without saying how they are known: give \
+         'provenance' — testimony, observation or inference — even to say it is known as \
+         before. Only an inference you rewrite keeps its provenance when you send none"
     )]
     UnstatedProvenance,
     /// **Testimony is not rewritten in place by a session that did not write it.**

@@ -4121,7 +4121,7 @@ attributed, never journalled.
 ```text
 New here? Call this first — it is the ONE door, whether or not you have an identity.
 With no bot it is a read-only orientation: what jojobot is, a live snapshot (entities by kind, UP TO TWENTY BOTS NAMED so you can see which identities you could boot as, the rest counted) and the skills index (a name and what each is FOR, never the procedures: call again with skill: its name to get one).
-NAME A BOT and the answer also carries that identity: its charter, its starred rules as dated claims each with provenance (testimony and observation are settled, inference is a hypothesis), and the counts of the mailbox it owns.
+NAME A BOT and the answer also carries that identity: its charter, its starred rules as dated claims each with provenance (testimony and observation default to settled, inference to open), and the counts of the mailbox it owns.
 THIS DOOR CREATES NO IDENTITY: a name that is no bot comes back blocked, listing up to twenty bots.
 Booting starts or resumes that bot's session — there is no separate start verb — and THIS DOOR IS WHERE A SESSION ID COMES FROM: that `sid` rides every verb after it, reads included, and passing `sid` here tells you whether it still addresses your session.
 A bot with a run to pick up gets a resume-or-new choice and no sid until it answers with `resume`: the name of the run (its `run`), `new`, or the wrap_code a wrap handed back.
@@ -4580,7 +4580,7 @@ A claim that was true and has changed, or that was never true: archive it with u
 A claim about a past EVENT that turned out never to have happened: retract it, which also leaves a dated claim of the retraction.
 A mistyped or reworded claim: rewrite it.
 Archiving and retracting are one-way for a claim: nothing edits an archived claim, status included, so there is no un-archive (an archived ENTITY comes back with restore: true).
-A rewrite destroys nothing — every earlier wording stays readable (recall with history_record: the address) — so a claim you disagree with is safe to correct, except testimony from an earlier session: TESTIMONY IS REWRITTEN IN PLACE ONLY BY THE SESSION THAT WROTE IT, and any other is archived and replaced, with derived_from naming the archived claim.
+A rewrite keeps every earlier wording readable (recall with history_record: the address), so a claim you disagree with is safe to correct, except testimony from an earlier session or an app's claim: TESTIMONY IS REWRITTEN IN PLACE ONLY BY THE SESSION THAT WROTE IT, and any other is archived and replaced, with derived_from naming the archived claim.
 Two moves are gated: anything to testimony needs confirmed_by_user; open to settled needs a `receipt` (`check` or `confirmed`), which leaves provenance alone.
 A call naming no change is refused; keep: true alone touches it.
 expected_revision (recall's revision_count): a stale edit is refused with retry.
@@ -4957,7 +4957,8 @@ A claim that already carries one does not have to name it again.
 A session that wrote a claim keeps its provenance when it rewrites the
 words and sends none, and any session keeps an inference's. Another
 session rewriting an observation's words must restate its provenance,
-even when unchanged. An edit that leaves the words alone keeps it.
+even when unchanged. An edit that leaves the words alone keeps it,
+unless it moves a due day.
 ```
 
 #### `update_fact` — argument `/inputSchema.receipt`

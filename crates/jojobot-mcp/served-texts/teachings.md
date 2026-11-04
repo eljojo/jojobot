@@ -11,7 +11,7 @@ Each rides once per session on the first verb it applies to, and again after a c
 ### Teaching `CLAIMS_TEACHING`
 
 ```text
-A further claim does not destroy the one already there — capture a second claim about the same thing and it does not erase the first, even when the two contradict each other. jojobot runs no inference and settles nothing, so two accounts that disagree are both allowed to stand: recording the new one is not a judgment that it is the true one, and deciding between them was never the job. Reach for capture when a new thing happened; reach for update_fact only to correct what the claim already says — it rewrites a claim in place, and recall with history_record set to the claim's address reads the earlier wording back.
+A further claim does not destroy the one already there — capture a second claim about the same thing and it does not erase the first, even when the two contradict each other. jojobot decides nothing between claims, so two accounts that disagree are both allowed to stand: recording the new one is not a judgment that it is the true one, and deciding between them was never the job. Reach for capture when a new thing happened; reach for update_fact only to correct what the claim already says — it rewrites a claim in place, and recall with history_record set to the claim's address reads the earlier wording back.
 
 Three corrections, three different moves. Mistyped it just now? update_fact in place — the claim becomes what it should have said, and the wrong wording stays readable through history_record. It changed, or it was never true at all? Archive the old claim with update_fact (status: archived, details saying why) and capture the new one, naming the archived claim as the new one's derived_from when there is a direct replacement. A claim about a past event that never happened? retract it, which leaves a dated record. Archive it, never negate it: rewriting a claim into its own denial — 'the club does NOT meet on Tuesdays' replacing 'the club meets on Tuesdays' — leaves a sentence about what is not so where a claim about what is true belongs. A negative is still an ordinary claim when it corrects nothing: 'he did not attend' stands on its own.
 ```
@@ -86,7 +86,7 @@ This check-in named both, for different days: to record a turn that happened on 
 
 ```text
 To quote the operator, write the address of the claim that holds their words, `@kind:slug#fN`, and jojobot writes those words into the message beside the address.
-The claim must be one they said (testimony); an inference is refused.
+The claim must be one they said (testimony); any other is refused.
 Quotation marks you type yourself are left alone and prove nothing.
 A claim is an account, not a transcript, so a quote by address does not prove verbatim speech.
 ```

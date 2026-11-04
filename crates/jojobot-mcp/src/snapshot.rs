@@ -562,7 +562,19 @@ async fn refusals(doc: &mut Doc) {
                 &crate::memory::declined::TokenSlot::unsent(),
             )
         } else {
-            crate::memory::declined::memory_declined("capture", error)
+            // **The three gated moves can only be raised by `update_fact`**, so the
+            // sample is rendered as that verb answers it, not as `capture` would.
+            let verb = if matches!(
+                error,
+                jojobot_domain::memory::MemoryError::UnstatedProvenance
+                    | jojobot_domain::memory::MemoryError::UnreceiptedSettling
+                    | jojobot_domain::memory::MemoryError::UnconfirmedPromotion
+            ) {
+                "update_fact"
+            } else {
+                "capture"
+            };
+            crate::memory::declined::memory_declined(verb, error)
         });
         let said = match token {
             Some(token) => said.replace(&token, "<override_token>"),
