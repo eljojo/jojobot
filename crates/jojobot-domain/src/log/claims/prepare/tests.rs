@@ -515,6 +515,68 @@ fn a_capture_is_held_to_its_subjects_kind() {
     ));
 }
 
+/// A numbered alias is judged by its target's kind, not its written prefix.
+#[test]
+fn a_capture_is_held_to_its_subjects_kind_through_a_numbered_reference() {
+    crate::memory::kinds::load_shipped();
+    let declared = vec![DeclaredType::new(
+        "bot",
+        crate::memory::kinds::keys_of("bot"),
+    )];
+    let mut events = vec![
+        ClaimEvent::ObjectCreated {
+            object: object("bot:lisa"),
+            body: body("bot", "bot:lisa"),
+        },
+        ClaimEvent::AddressBound {
+            object: object("bot:lisa"),
+            address: "bot:lisa".into(),
+        },
+    ];
+    for (kind, handle, alias) in [
+        ("bot", "bot:marge", "work:alpha-queue/1"),
+        ("person", "person:milhouse", "work:alpha-queue/2"),
+    ] {
+        events.extend([
+            ClaimEvent::ObjectCreated {
+                object: object(handle),
+                body: ObjectBody {
+                    aliases: vec![alias.into()],
+                    ..body(kind, handle)
+                },
+            },
+            ClaimEvent::AddressBound {
+                object: object(handle),
+                address: handle.into(),
+            },
+            ClaimEvent::AddressBound {
+                object: object(handle),
+                address: alias.into(),
+            },
+        ]);
+    }
+    let state = replay(&events);
+    let admitted = prepare(
+        &state,
+        &declared,
+        &setting("bot:lisa", "reports_to", "work:alpha-queue/1"),
+    )
+    .expect("the numbered alias names a bot despite its work prefix");
+    assert!(admitted.iter().any(|event| matches!(
+        event,
+        ClaimEvent::FieldWritten { targets, .. } if targets == &vec![object("bot:marge")]
+    )));
+    assert!(matches!(
+        prepare(
+            &state,
+            &declared,
+            &setting("bot:lisa", "reports_to", "work:alpha-queue/2"),
+        ),
+        Err(Refusal::BreaksKind(MemoryError::BreaksType { name, key, value, .. }))
+            if name == "bot" && key == "reports_to" && value == "work:alpha-queue/2"
+    ));
+}
+
 /// **A role's lease fields belong to the boot door.** The verb is refused them
 /// before any object is looked up; the engine's own routes write them.
 #[test]
