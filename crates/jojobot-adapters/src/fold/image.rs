@@ -12,7 +12,7 @@
 //! [`MemoryError::UnknownEntity`], with the same candidates, that the store
 //! gives — so a read of something that is not there makes no call either.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 use super::held::Held;
@@ -354,14 +354,34 @@ impl Image {
         entities: Option<Vec<Entity>>,
         doc: Doc,
         referring: Vec<(String, Vec<Fact>)>,
-        patch_rest: Option<&Wrote>,
+        wrote: Option<&Wrote>,
     ) {
-        let patch = if let Some(wrote) = patch_rest {
-            let asked: Vec<&str> = referring.iter().map(|(name, _)| name.as_str()).collect();
-            self.referring_patch(&doc, &asked, wrote)
-        } else {
-            None
+        // Entity writes may carry a first or accompanying claim. Only those
+        // new records can add a holder; an edit to the row creates no link.
+        let created;
+        let wrote = match wrote {
+            Some(wrote) => wrote,
+            None => {
+                let previous: HashSet<_> = doc
+                    .scan
+                    .entity
+                    .as_ref()
+                    .and_then(|entity| self.docs.get(&entity.id))
+                    .into_iter()
+                    .flat_map(|old| old.scan.facts.iter().map(|fact| &fact.id))
+                    .collect();
+                created = doc
+                    .scan
+                    .facts
+                    .iter()
+                    .filter(|fact| !previous.contains(&fact.id))
+                    .map(|fact| (fact.id.clone(), fact.field_links.keys().cloned().collect()))
+                    .collect();
+                &created
+            }
         };
+        let asked: Vec<&str> = referring.iter().map(|(name, _)| name.as_str()).collect();
+        let patch = self.referring_patch(&doc, &asked, wrote);
         self.take_in_doc(doc);
         if let Some(entities) = entities {
             self.take_in_listing(entities);
@@ -369,6 +389,29 @@ impl Image {
         self.derive_numbered();
         self.referring.extend(referring);
         self.apply_referring_patch(patch);
+    }
+
+    /// A new handle or alias may already be named by another thing's records;
+    /// those holders cannot be inferred from this thing's document alone.
+    pub fn names_newly_answered(&self, doc: &Doc) -> Vec<String> {
+        let Some(entity) = &doc.scan.entity else {
+            return Vec::new();
+        };
+        let previous = self
+            .docs
+            .get(&entity.id)
+            .and_then(|old| old.scan.entity.as_ref());
+        std::iter::once(entity.id.as_str())
+            .chain(entity.aliases.iter().map(String::as_str))
+            .filter(|name| {
+                previous.is_none_or(|old| {
+                    old.id.as_str() != *name && !old.aliases.iter().any(|alias| alias == name)
+                })
+            })
+            .map(str::to_string)
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect()
     }
 
     /// **The names the patch cannot answer for**: a name an engine record of the
@@ -689,8 +732,8 @@ impl Image {
         names.into_iter().collect()
     }
 
-    /// The names to ask the store about after `doc` replaces what is held for
-    /// its thing: those the old records named and those the new ones name.
+    /// The names whose lists a document patch touches: those the old records
+    /// named and those the new ones name.
     pub fn names_touched_by(&self, doc: &Doc) -> Vec<String> {
         let old = doc.scan.entity.as_ref().and_then(|e| self.docs.get(&e.id));
         let mut both: Vec<&Doc> = vec![doc];

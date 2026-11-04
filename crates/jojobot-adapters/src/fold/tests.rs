@@ -1579,6 +1579,188 @@ impl Memory for CountsReferring {
     }
 }
 
+/// An edit that changes no handle keeps the existing holders without asking
+/// the store to read them all again.
+#[tokio::test]
+async fn entity_writes_patch_referring_without_asking_for_unchanged_names() {
+    let inner = a_store_with_links().await;
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let folded = Folded::new(Arc::new(CountsReferring(inner.clone(), calls.clone())));
+    folded.rebuild().await.expect("rebuild ok");
+    calls.store(0, std::sync::atomic::Ordering::SeqCst);
+
+    folded
+        .update_entity(
+            &EntityId::person("person:stan"),
+            EntityPatch {
+                name: Some("Stan Marsh".into()),
+                ..EntityPatch::default()
+            },
+        )
+        .await
+        .expect("edit ok")
+        .written()
+        .expect("not blocked");
+    assert_eq!(
+        calls.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "an entity edit re-asked the store for names its records already point at"
+    );
+    assert_eq!(
+        folded.referring_to(&alpha()).await.expect("fold answers"),
+        inner.referring_to(&alpha()).await.expect("store answers"),
+        "the holders and their order stay the same"
+    );
+}
+
+/// A new alias is asked once; keeping that alias on a later edit asks nothing.
+#[tokio::test]
+async fn entity_writes_ask_only_for_a_new_spelling() {
+    let inner = a_store_with_links().await;
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let folded = Folded::new(Arc::new(CountsReferring(inner, calls.clone())));
+    folded.rebuild().await.unwrap();
+    calls.store(0, std::sync::atomic::Ordering::SeqCst);
+    let stan = EntityId::person("person:stan");
+    folded
+        .update_entity(
+            &stan,
+            EntityPatch {
+                aliases: Some(vec!["person:butters".into()]),
+                ..EntityPatch::default()
+            },
+        )
+        .await
+        .unwrap()
+        .written()
+        .expect("alias lands");
+    assert_eq!(calls.swap(0, std::sync::atomic::Ordering::SeqCst), 1);
+    folded
+        .update_entity(
+            &stan,
+            EntityPatch {
+                source: Some("same-alias".into()),
+                ..EntityPatch::default()
+            },
+        )
+        .await
+        .unwrap()
+        .written()
+        .expect("edit lands");
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+}
+
+/// Entity changes keep the store's records, including their holder order, in
+/// every list; a claim written with an entity change also adds its new links.
+#[tokio::test]
+async fn entity_writes_keep_referring_lists_equal_to_the_store() {
+    let inner = a_store_with_links().await;
+    let folded = Folded::new(inner.clone());
+    folded.rebuild().await.expect("rebuild ok");
+    let stan = EntityId::person("person:stan");
+    let gamma = EntityId::person("person:gamma");
+    let milhouse = EntityId::person("person:milhouse");
+    let butters = EntityId::person("person:butters");
+    let marjorine = EntityId::person("person:marjorine");
+    let targets = [
+        alpha(),
+        beta(),
+        gamma.clone(),
+        milhouse.clone(),
+        butters.clone(),
+        marjorine.clone(),
+    ];
+    async fn check(folded: &Folded, inner: &InMemoryMemory, targets: &[EntityId], after: &str) {
+        for target in targets {
+            assert_eq!(
+                folded.referring_to(target).await.expect("fold answers"),
+                inner.referring_to(target).await.expect("store answers"),
+                "{target} after {after}"
+            );
+        }
+    }
+    assert_eq!(folded.referring_to(&alpha()).await.unwrap().len(), 2);
+    check(&folded, &inner, &targets, "fill").await;
+    folded
+        .add_entity(NewEntity::new(milhouse, "Milhouse", "user-named"))
+        .await
+        .unwrap()
+        .written()
+        .expect("add lands");
+    check(&folded, &inner, &targets, "add").await;
+    folded
+        .update_entity(
+            &stan,
+            EntityPatch {
+                source: Some("entity-parity".into()),
+                ..EntityPatch::default()
+            },
+        )
+        .await
+        .unwrap()
+        .written()
+        .expect("update lands");
+    check(&folded, &inner, &targets, "update").await;
+    folded
+        .archive_entity(&stan, "set aside", None)
+        .await
+        .unwrap();
+    check(&folded, &inner, &targets, "archive").await;
+    folded.restore_entity(&stan, None).await.unwrap();
+    check(&folded, &inner, &targets, "restore").await;
+    folded
+        .set_prose(&stan, "A friend's page.", None)
+        .await
+        .unwrap();
+    check(&folded, &inner, &targets, "set_prose").await;
+    folded
+        .add_entity_with_first_claim(
+            NewEntity::new(butters.clone(), "Butters", "user-named"),
+            contract::state(NewFact {
+                fields: BTreeMap::from([("friend".into(), alpha().to_string())]),
+                ..NewFact::about(butters, "has a friend", date(2026, 9, 2))
+            }),
+        )
+        .await
+        .unwrap()
+        .written()
+        .expect("first claim lands");
+    check(&folded, &inner, &targets, "add with first claim").await;
+    assert_eq!(folded.referring_to(&alpha()).await.unwrap().len(), 3);
+    folded
+        .update_entity_with_claim(
+            &stan,
+            EntityPatch {
+                source: Some("entity-with-claim".into()),
+                ..EntityPatch::default()
+            },
+            contract::state(NewFact {
+                fields: BTreeMap::from([("friend".into(), gamma.to_string())]),
+                ..NewFact::about(stan.clone(), "another friend", date(2026, 9, 3))
+            }),
+        )
+        .await
+        .unwrap()
+        .written()
+        .expect("edit with claim lands");
+    check(&folded, &inner, &targets, "update with claim").await;
+    assert_eq!(folded.referring_to(&gamma).await.unwrap().len(), 1);
+    folded
+        .rename_entity(
+            &gamma,
+            &marjorine,
+            None,
+            date(2026, 9, 4),
+            jojobot_domain::memory::Override::none(),
+            None,
+        )
+        .await
+        .unwrap()
+        .written()
+        .expect("rename lands");
+    check(&folded, &inner, &targets, "rename").await;
+}
+
 /// A store with the links the two cases below read: two holders of the friend
 /// field point at alpha, one at beta, and gamma has no holder.
 async fn a_store_with_links() -> Arc<InMemoryMemory> {

@@ -280,16 +280,14 @@ impl Folded {
                 None
             };
             let doc = Doc::load(&*self.inner, handle).await?;
-            // **A write to this thing's claims asks the store nothing about who
-            // points where, bar a name an engine record of the thing points at.** The image patches its lists from the thing's old and
-            // new documents ([`Image::install`]); asking `referring_to` for each
-            // name would read the claims of every other thing that names it, which
-            // costs the store and not the write. A write that can move any
-            // thing's links asks for every name.
+            // **Both entity and claim writes patch who points where from their
+            // old and new documents** ([`Image::install`]). Only a spelling the
+            // entity newly answers to, or a claim's engine-record exception,
+            // needs the store's holders; existing names already have their lists.
             let names = self
                 .held(|image| {
                     if relist {
-                        image.names_touched_by(&doc)
+                        image.names_newly_answered(&doc)
                     } else {
                         image.names_to_ask(&doc)
                     }
