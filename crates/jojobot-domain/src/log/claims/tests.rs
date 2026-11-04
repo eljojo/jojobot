@@ -541,13 +541,13 @@ fn the_envelope_names_the_writer_and_the_run_of_each_write() {
     );
 }
 
-fn moment(text: &str) -> Timestamp {
+pub(super) fn moment(text: &str) -> Timestamp {
     text.parse().expect("a timestamp")
 }
 
 /// An envelope that names the moment the store took the event in and, for an
 /// import, the moment the source row was written.
-fn stamped(
+pub(super) fn stamped(
     written_at: Option<Timestamp>,
     imported_source_time: Option<Timestamp>,
     payload: ClaimEvent,
