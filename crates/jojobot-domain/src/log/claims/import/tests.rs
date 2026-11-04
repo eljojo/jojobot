@@ -1079,3 +1079,62 @@ fn a_write_keeps_its_class_and_the_class_decides_what_the_thing_holds() {
             .collect();
     assert_eq!(state.fields(&object("k1"), &[]), expected);
 }
+
+/// **No stored row binds an object to an app, so an import leaves every object
+/// unbound.** Ownership rows come with the 9.3.3 to 9.3.5 build (rule 748, the
+/// app-api brief); until then nothing in a store says which app owns a thing,
+/// and the import has nothing to read or to refuse. **A claim an app stamped is
+/// not a binding**: the stamp says who wrote the claim, and the object stays
+/// unbound.
+///
+/// **The two patterns below name every column of an entity row and every row
+/// family, with no `..`.** The build that adds an ownership row adds a column or
+/// a family, which stops this case compiling: whoever builds the rows reads this
+/// case, maps the rows into `bound_to` in `object_body`, and replaces it with one
+/// that binds.
+#[test]
+fn no_stored_row_binds_an_object_to_an_app_so_an_import_leaves_every_object_unbound() {
+    let mut owned = entity("k1", "person:homer");
+    owned.archived = Some(("retired".into(), at(5).unwrap()));
+    let mut stamped = write_of(1, "seen by the forge", Some("run-a"), 1);
+    stamped.claim.app = Some(crate::app::AppStamp {
+        app: "bart-ci".into(),
+        grant: "report".into(),
+        received_at: "2026-11-04T00:00:00Z".into(),
+    });
+    let rows = Rows {
+        entities: vec![owned, entity("k2", "person:marge")],
+        facts: vec![fact("k1", "f1", vec![stamped])],
+        ..Rows::default()
+    };
+    let EntityRow {
+        key: _,
+        handle: _,
+        kind: _,
+        name: _,
+        source: _,
+        boot: _,
+        parent: _,
+        aliases: _,
+        crm: _,
+        prose: _,
+        badge: _,
+        archived: _,
+        merged_into: _,
+        taken_in: _,
+    } = rows.entities[0].clone();
+    let Rows {
+        entities: _,
+        former_handles: _,
+        facts: _,
+        field_writes: _,
+        merges: _,
+        type_writes: _,
+        metadata: _,
+    } = rows.clone();
+    let state = state_of(&rows);
+    for id in ["k1", "k2"] {
+        let held = state.object(&object(id)).expect("the object is imported");
+        assert_eq!(held.bound_to, None, "{id} is bound to no app");
+    }
+}

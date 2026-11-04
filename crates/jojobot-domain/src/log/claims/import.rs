@@ -224,7 +224,10 @@ fn object_body(row: &EntityRow) -> ObjectBody {
         boot: row.boot.clone(),
         metadata,
         archived: row.archived.is_some(),
-        // The rows an app binds an object by are not read here yet.
+        // **Unbound, because no stored row binds an object to an app.** The
+        // ownership rows come with the 9.3.3 to 9.3.5 build (rule 748); an app's
+        // stamp on a claim says who wrote it and is not a binding. The build that
+        // adds the rows reads them here.
         bound_to: None,
     }
 }
