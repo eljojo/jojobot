@@ -1239,6 +1239,18 @@ fn assert_indexes_equal_a_recomputation(state: &State, merges: u64, context: &st
             }
         }
     }
+    // The homes: every claim homed on a thing, whatever label it holds.
+    for name in OBJECTS {
+        let want: BTreeSet<&crate::log::RecordId> = state
+            .records
+            .iter()
+            .filter(|(_, held)| state.survivor(&held.claim.home) == &survivor(name))
+            .map(|(id, _)| id)
+            .collect();
+        let got: BTreeSet<&crate::log::RecordId> =
+            state.records_homed_on(&object(name)).into_iter().collect();
+        assert_eq!(got, want, "{context}: claims homed on {name}");
+    }
     // The links: what a thing points at, and who points at a thing, as the scan
     // of every stream of the state reads them.
     for name in OBJECTS {

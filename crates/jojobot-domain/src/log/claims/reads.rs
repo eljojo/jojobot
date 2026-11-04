@@ -11,8 +11,8 @@ use jiff::Timestamp;
 use super::{FieldValue, KeyId, ObjectBody, ObjectVersion, Record, Revision, State, Write};
 use crate::log::{ObjectId, RecordId};
 use crate::memory::{
-    self, EntityId, FactAddress, FactId, FactStatus, FieldBacking, FieldWrite, KeyTrails,
-    RecordFieldWrite, WriteClass, types::DeclaredType,
+    self, EntityId, FactAddress, FactId, FieldBacking, FieldWrite, KeyTrails, RecordFieldWrite,
+    WriteClass, types::DeclaredType,
 };
 
 // **How many streams the reads have looked at on this thread**, so a case can
@@ -57,6 +57,10 @@ pub struct ThingScan<'a> {
     /// The claims homed on the thing, every status, ordered by the number of
     /// the label and then the label.
     pub claims: Vec<(&'a RecordId, &'a Record)>,
+    /// **The claims a merge left under the home of a folded thing and listed in
+    /// no moved record**: the thing cannot serve them as its own, and they are
+    /// named here, never dropped. They may share a label with a claim above.
+    pub unmapped: Vec<(&'a RecordId, &'a Record)>,
     pub fields: BTreeMap<String, String>,
     /// For each held key, the objects its holding write pointed at when it was
     /// written, followed to their merge survivors. A key with none is absent.
@@ -70,28 +74,10 @@ impl State {
     fn held_targets(&self, subject: &ObjectId) -> BTreeMap<String, Vec<ObjectId>> {
         let mut out = BTreeMap::new();
         for (key, stream) in self.streams_of(subject) {
-            let newest = stream
-                .iter()
-                .filter(|write| {
-                    memory::reaches_the_thing(write.class)
-                        && self
-                            .records
-                            .get(&write.record)
-                            .is_some_and(|record| record.claim.status == FactStatus::Active)
-                })
-                .max_by_key(|write| write.ordinal);
-            if let Some(write) = newest
-                && write.write != FieldValue::Clear
+            if let Some(write) = self.holding_write(stream)
                 && !write.targets.is_empty()
             {
-                out.insert(
-                    key.0.clone(),
-                    write
-                        .targets
-                        .iter()
-                        .map(|target| self.survivor(target).clone())
-                        .collect(),
-                );
+                out.insert(key.0.clone(), self.survivors_of(&write.targets));
             }
         }
         out
@@ -102,21 +88,25 @@ impl State {
     pub fn scan(&self, subject: &ObjectId, declared: &[DeclaredType]) -> Option<ThingScan<'_>> {
         let subject = self.survivor(subject);
         let body = self.objects.get(subject)?;
-        let mut claims: Vec<(&RecordId, &Record)> = self
+        let (mut claims, mut unmapped): (Vec<_>, Vec<_>) = self
             .records_homed_on(subject)
             .into_iter()
             .filter_map(|id| self.records.get(id).map(|held| (id, held)))
-            .collect();
-        claims.sort_by_key(|(_, held)| {
-            (
-                memory::numbered::whole_number(held.claim.label.trim_start_matches('f')),
-                held.claim.label.clone(),
-            )
-        });
+            .partition(|(_, held)| held.claim.home == *subject);
+        for list in [&mut claims, &mut unmapped] {
+            list.sort_by_key(|(id, held)| {
+                (
+                    memory::numbered::whole_number(held.claim.label.trim_start_matches('f')),
+                    held.claim.label.clone(),
+                    (*id).clone(),
+                )
+            });
+        }
         Some(ThingScan {
             object: subject.clone(),
             body,
             claims,
+            unmapped,
             fields: self.fields(subject, declared),
             field_links: self.held_targets(subject),
         })
@@ -137,25 +127,41 @@ impl State {
     }
 
     /// **The newest moment any write on a thing was taken in**: its own row, and
-    /// every write of every claim homed on it, of any status. `skip` names the
-    /// claims whose writes are no change of the thing. A write with no moment
-    /// counts for none.
-    pub fn newest_change(
-        &self,
-        subject: &ObjectId,
-        skip: &dyn Fn(&Record) -> bool,
-    ) -> Option<Timestamp> {
+    /// every write of every claim homed on it, of any status, and every write
+    /// of a key on it, whatever its class. What is no change of the thing is
+    /// decided by the domain's one rule ([`memory::review::counts_as_a_change`]):
+    /// a bookkeeping key, and any write of a claim that carries the ledger of
+    /// release notes. A write with no moment counts for none.
+    pub fn newest_change(&self, subject: &ObjectId) -> Option<Timestamp> {
+        let subject = self.survivor(subject);
+        let streams: Vec<(&KeyId, &Vec<Write>)> = self.streams_of(subject).collect();
+        let ledgers = memory::review::ledger_records(streams.iter().flat_map(|(key, stream)| {
+            stream.iter().map(|write| {
+                let value = match &write.write {
+                    FieldValue::Set(value) => Some(value.as_str()),
+                    FieldValue::Clear => None,
+                };
+                (key.0.as_str(), value, write.record.clone())
+            })
+        }));
         let own = self
             .entity_versions(subject)
             .into_iter()
             .filter_map(|version| version.written_at);
+        let fields = streams
+            .iter()
+            .flat_map(|(key, stream)| stream.iter().map(move |write| (key, write)))
+            .filter(|(key, write)| {
+                memory::review::counts_as_a_change(Some(&key.0), &write.record, &ledgers)
+            })
+            .filter_map(|(_, write)| write.written_at);
         let claimed = self
             .records_homed_on(subject)
             .into_iter()
+            .filter(|record| memory::review::counts_as_a_change(None, *record, &ledgers))
             .filter_map(|record| self.records.get(record))
-            .filter(|held| !skip(held))
             .flat_map(|held| held.history.iter().filter_map(|write| write.written_at));
-        own.chain(claimed).max()
+        own.chain(fields).chain(claimed).max()
     }
 
     /// **Every write of a thing's own row, and of every thing folded into it**,

@@ -109,3 +109,77 @@ fn a_scan_follows_clears_taken_back_claims_and_merges() {
     let folded = state.scan(&object("work:beta"), &[]).expect("held");
     assert_eq!(folded.object, object("work:gamma"));
 }
+
+/// **Targets that meet at one survivor are served once**, in the order first
+/// met, beside a control whose targets stay distinct.
+#[test]
+fn targets_that_converge_at_a_merge_are_served_once() {
+    let state = replayed(vec![
+        made("work:alpha"),
+        made("work:beta"),
+        made("work:gamma"),
+        made("work:delta"),
+        created("r1", claim("f1", "work:alpha", "a", 3)),
+        pointing("r1", "work:alpha", "owner", 1, &["work:beta", "work:gamma"]),
+        pointing(
+            "r1",
+            "work:alpha",
+            "peers",
+            1,
+            &["work:delta", "work:beta", "work:gamma"],
+        ),
+        ClaimEvent::ObjectsMerged {
+            folded: object("work:beta"),
+            survivor: object("work:gamma"),
+            records: Vec::new(),
+            writes: Vec::new(),
+        },
+    ]);
+    let scan = state.scan(&object("work:alpha"), &[]).expect("held");
+    assert_eq!(scan.field_links["owner"], vec![object("work:gamma")]);
+    assert_eq!(
+        scan.field_links["peers"],
+        vec![object("work:delta"), object("work:gamma")],
+        "the first meeting of each survivor fixes its place"
+    );
+}
+
+/// **A claim a merge left unmapped is named apart and never replaces one of the
+/// survivor's own**, though they share a label; a mapped claim of a fresh label
+/// is the survivor's own.
+#[test]
+fn an_unmapped_claim_is_named_apart_from_the_survivors_own() {
+    for mapped in [false, true] {
+        let moved = if mapped {
+            vec![super::super::MovedRecord {
+                record: record("r2"),
+                label: "f9".to_string(),
+            }]
+        } else {
+            Vec::new()
+        };
+        let state = replayed(vec![
+            made("work:alpha"),
+            made("work:beta"),
+            created("r1", claim("f1", "work:alpha", "own", 3)),
+            created("r2", claim("f1", "work:beta", "theirs", 3)),
+            ClaimEvent::ObjectsMerged {
+                folded: object("work:beta"),
+                survivor: object("work:alpha"),
+                records: moved,
+                writes: Vec::new(),
+            },
+        ]);
+        let scan = state.scan(&object("work:alpha"), &[]).expect("held");
+        let ids = |list: &[(&super::super::RecordId, &super::super::Record)]| {
+            list.iter().map(|(id, _)| id.0.clone()).collect::<Vec<_>>()
+        };
+        if mapped {
+            assert_eq!(ids(&scan.claims), vec!["r1", "r2"]);
+            assert!(scan.unmapped.is_empty());
+        } else {
+            assert_eq!(ids(&scan.claims), vec!["r1"], "the survivor keeps its own");
+            assert_eq!(ids(&scan.unmapped), vec!["r2"], "and the other is named");
+        }
+    }
+}

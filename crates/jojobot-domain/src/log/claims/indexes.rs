@@ -46,6 +46,10 @@ pub(super) struct Indexes {
     merges: u64,
     /// (home, label) to the claim that holds it.
     labels: BTreeMap<(ObjectId, String), RecordId>,
+    /// The claims homed on each object, whatever label they hold. A merge that
+    /// retains two claims under one label leaves one slot in `labels` and both
+    /// claims here.
+    homed: BTreeMap<ObjectId, BTreeSet<RecordId>>,
     /// The objects whose parent is the key.
     children: BTreeMap<ObjectId, BTreeSet<ObjectId>>,
     /// The streams each claim wrote to: a revision changes what they fold to.
@@ -99,15 +103,16 @@ impl State {
         self.records.iter()
     }
 
-    /// **The claims homed on an object now**, found by range in the label map and
-    /// never by a scan of every claim.
+    /// **The claims homed on an object now**, every one the State holds under it,
+    /// found by the index of homes and never by a scan of every claim. A claim a
+    /// merge left unmapped is among them, under the survivor, whatever label it
+    /// shares with a claim of the survivor's own.
     pub(super) fn records_homed_on(&self, home: &ObjectId) -> Vec<&RecordId> {
-        let home = self.survivor(home);
         self.indexes
-            .labels
-            .range((home.clone(), String::new())..)
-            .take_while(|((held, _), _)| held == home)
-            .map(|(_, record)| record)
+            .homed
+            .get(self.survivor(home))
+            .into_iter()
+            .flatten()
             .collect()
     }
 
@@ -293,6 +298,11 @@ impl State {
                 .or_insert(0) += 1;
         }
         self.indexes
+            .homed
+            .entry(home.clone())
+            .or_default()
+            .insert(record.clone());
+        self.indexes
             .labels
             .insert((home, claim.label.clone()), record.clone());
     }
@@ -306,6 +316,12 @@ impl State {
             *count -= 1;
             if *count == 0 {
                 held.remove(&number);
+            }
+        }
+        if let Some(held) = self.indexes.homed.get_mut(&home) {
+            held.remove(record);
+            if held.is_empty() {
+                self.indexes.homed.remove(&home);
             }
         }
         let at = (home, claim.label.clone());
@@ -397,6 +413,15 @@ impl State {
                 self.indexes.labels.insert((survivor.clone(), at.1), record);
             }
         }
+        // Every claim still homed on the folded object, mapped or not, is the
+        // survivor's to hold; a shared label does not lose one of them here.
+        if let Some(left) = self.indexes.homed.remove(folded) {
+            self.indexes
+                .homed
+                .entry(survivor.clone())
+                .or_default()
+                .extend(left);
+        }
         for moved in records {
             if let Some(held) = self.records.get(&moved.record) {
                 let claim = held.claim.clone();
@@ -427,29 +452,43 @@ impl State {
     fn links_computed(&self, subject: &ObjectId) -> BTreeSet<ObjectId> {
         let mut out = BTreeSet::new();
         for (_, stream) in self.streams_of(subject) {
-            // The stream is kept in arrival order; the ordinal says which is newest.
-            let newest = stream
-                .iter()
-                .filter(|write| {
-                    memory::reaches_the_thing(write.class)
-                        && self
-                            .records
-                            .get(&write.record)
-                            .is_some_and(|record| record.claim.status == FactStatus::Active)
-                })
-                .max_by_key(|write| write.ordinal);
-            if let Some(write) = newest
-                && !matches!(write.write, FieldValue::Clear | FieldValue::Removed)
-            {
-                out.extend(
-                    write
-                        .targets
-                        .iter()
-                        .map(|target| self.survivor(target).clone()),
-                );
+            if let Some(write) = self.holding_write(stream) {
+                out.extend(self.survivors_of(&write.targets));
             }
         }
         out
+    }
+
+    /// **The write that holds a key now**: the newest, by ordinal, among the
+    /// writes that reach the thing from an active claim. A key a clear holds
+    /// points at none, so a clear is not returned. The one owner of that choice,
+    /// for the link maps and for the scan.
+    pub(super) fn holding_write<'a>(
+        &'a self,
+        stream: &'a [super::Write],
+    ) -> Option<&'a super::Write> {
+        // The stream is kept in arrival order; the ordinal says which is newest.
+        stream
+            .iter()
+            .filter(|write| {
+                memory::reaches_the_thing(write.class)
+                    && self
+                        .records
+                        .get(&write.record)
+                        .is_some_and(|record| record.claim.status == FactStatus::Active)
+            })
+            .max_by_key(|write| write.ordinal)
+            .filter(|write| !matches!(write.write, FieldValue::Clear | FieldValue::Removed))
+    }
+
+    /// The merge survivors of some objects, each once, in the order first met.
+    pub(super) fn survivors_of(&self, targets: &[ObjectId]) -> Vec<ObjectId> {
+        let mut seen = BTreeSet::new();
+        targets
+            .iter()
+            .map(|target| self.survivor(target).clone())
+            .filter(|survivor| seen.insert(survivor.clone()))
+            .collect()
     }
 
     /// Read again what one thing points at, and move the maps by the difference.
