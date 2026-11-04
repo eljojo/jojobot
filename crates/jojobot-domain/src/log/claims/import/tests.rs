@@ -265,6 +265,43 @@ fn an_unstamped_claim_and_write_get_no_moment() {
     assert_eq!(stream(&state, "k1", "mood")[0].written_at, None);
 }
 
+/// **A claim with no stored writes still arrives as one record**, created with the
+/// head the row holds: the writes are the only other thing that creates it, and a
+/// field write that points at the claim is kept whether or not the claim is there.
+/// Paired with a claim whose head is its one write, which creates it once.
+#[test]
+fn a_claim_with_no_stored_writes_is_imported_as_one_record_holding_its_head() {
+    let created = |events: &[Event<ClaimEvent>]| -> Vec<String> {
+        events
+            .iter()
+            .filter_map(|event| match &event.payload {
+                ClaimEvent::RecordCreated { claim, .. } => Some(claim.content.clone()),
+                _ => None,
+            })
+            .collect()
+    };
+    let bare = imported(&Rows {
+        entities: vec![entity("k1", "person:homer")],
+        facts: vec![fact("k1", "f1", Vec::new())],
+        ..Rows::default()
+    });
+    assert_eq!(created(&bare), ["head"]);
+    let state = State::replay(&bare);
+    let record = state.record(&record_id(&object("k1"), "f1")).unwrap();
+    assert_eq!(record.claim.content, "head");
+    assert_eq!(record.revisions, 0);
+    let written = imported(&Rows {
+        entities: vec![entity("k1", "person:homer")],
+        facts: vec![fact(
+            "k1",
+            "f1",
+            vec![write_of(1, "only", Some("run-a"), 1)],
+        )],
+        ..Rows::default()
+    });
+    assert_eq!(created(&written), ["only"]);
+}
+
 /// A head row that no write explains arrives as one more revision with no stamp.
 #[test]
 fn a_head_that_differs_from_its_last_write_is_one_unstamped_revision() {
