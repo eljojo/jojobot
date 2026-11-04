@@ -90,7 +90,10 @@ impl Jojobot {
                        and a failure part-way read. A reply you post with in_reply_to closes the \
                        message it answers only in your own box. The answer confirms the move (for many: processed, \
                        ids, already_processed, notes) without echoing the body, \
-                       which read_message returns unchanged for a processed message. A \
+                       which read_message returns unchanged for a processed message. A message \
+                       its sender replaced before anyone read it is superseded, a final \
+                       state: it is left as it is, nothing is written and nothing is \
+                       counted as processed, and `message_ids` names it under `superseded`. A \
                        refusal is an answer with status: blocked and nothing written, in \
                        three kinds: an id that names nothing (use one read_mailbox or \
                        post_message handed you); an item jojobot cannot read, which says why \
@@ -328,6 +331,15 @@ fn quarantine_receipt_json(quarantined: &mailbox::Quarantined) -> serde_json::Va
 }
 
 fn what_a_retirement_left_standing(processed: &Message) -> String {
+    // **A final state the store left as it was** is named as it stands: this call
+    // retired nothing.
+    if processed.state == mailbox::MessageState::Superseded {
+        return format!(
+            "{} is superseded, a final state, and nothing was written. A message its sender \
+             replaced before anyone read it stays as it is: read_message returns it.",
+            processed.id.as_str(),
+        );
+    }
     let recorded = match processed.notes.as_deref() {
         Some(_) => " Your outcome record is stored on it.",
         None => "",

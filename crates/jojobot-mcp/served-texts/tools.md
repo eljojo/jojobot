@@ -1601,6 +1601,7 @@ A message can be processed straight from `new`.
 TO CLOSE MANY AT ONCE send `message_ids` instead of `message_id`; its description says how a refusal and a failure part-way read.
 A reply you post with in_reply_to closes the message it answers only in your own box.
 The answer confirms the move (for many: processed, ids, already_processed, notes) without echoing the body, which read_message returns unchanged for a processed message.
+A message its sender replaced before anyone read it is superseded, a final state: it is left as it is, nothing is written and nothing is counted as processed, and `message_ids` names it under `superseded`.
 A refusal is an answer with status: blocked and nothing written, in three kinds: an id that names nothing (use one read_mailbox or post_message handed you); an item jojobot cannot read, which says why (no retry helps: a person has to repair it, and until then treat what it carried as unhandled and say so); and a message that is not yours to retire — one in another bot's box, or in the operator's, which no bot reads.
 TO QUARANTINE A MESSAGE INSTEAD OF RETIRING IT — a decision, not damage — pass `quarantine` with your reason and leave `notes` unset; there is no verb that lifts a quarantine.
 The receipt's `changed` lists changes, or is `nothing` or `not_read`.
@@ -2288,6 +2289,7 @@ The message remains its owner's to handle.
 Other mail above or beside you is refused in every state, processed included; post_message can ask its owner for what you need.
 THE OPERATOR'S BOX IS NOT A BOT'S: no bot opens a message in it, in any state, whoever wrote it.
 Same envelope a delivery hands over, seen_before and all: true means somebody had already taken this message, so it is a leftover rather than fresh mail.
+A message its sender replaced before anyone read it is superseded, a final state: reading it by id takes nothing, and its envelope says state superseded and names what replaced it.
 Taking delivery is NOT handling: call mark_processed once you have acted on your own mail, and only then.
 Reading your own mail renews your role claim.
 WITH `history: true` THIS VERB TAKES NO DELIVERY: it answers the message's changes of state in order, with the run that made each, and leaves the message where it is.

@@ -46,7 +46,9 @@ impl Jojobot {
                        message in it, in any state, whoever wrote it. Same envelope a \
                        delivery hands over, seen_before and all: true means somebody had \
                        already taken this message, so it is a leftover rather than fresh \
-                       mail. Taking delivery is NOT handling: call mark_processed once you \
+                       mail. A message its sender replaced before anyone read it is \
+                       superseded, a final state: reading it by id takes nothing, and its \
+                       envelope says state superseded and names what replaced it. Taking delivery is NOT handling: call mark_processed once you \
                        have acted on your own mail, and only then. Reading your own mail renews \
                        your role claim. WITH `history: true` THIS VERB TAKES NO \
                        DELIVERY: it answers the message's changes of state in order, with the \

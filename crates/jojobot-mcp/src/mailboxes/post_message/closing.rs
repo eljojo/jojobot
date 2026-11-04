@@ -124,10 +124,7 @@ impl Jojobot {
             at: self.clock().now(),
         };
         match self.mailboxes.message_by_id(replied_to).await {
-            Ok(Some(answered))
-                if answered.mailbox == mine
-                    && answered.state != mailbox::MessageState::Processed =>
-            {
+            Ok(Some(answered)) if answered.mailbox == mine && answered.state.is_unprocessed() => {
                 let note = format!("answered by {}", posted.id);
                 match self.close_for_a_post(&answered, &mine, &note, acting).await {
                     Ok(done) => {

@@ -655,3 +655,140 @@ async fn a_batch_receipt_holds_the_notes_as_stored_and_says_when_they_were_cut()
         "no note was written by this call: {nothing}"
     );
 }
+
+// ── (6) a superseded original is final, and closing it says nothing closed ──
+
+/// Post as `sender` to `to`, replacing `replaces`. The id of the replacement
+/// comes back.
+async fn replace(jojobot: &Jojobot, to: &str, sender: &str, replaces: &str) -> String {
+    let result = json_of(
+        &jojobot
+            .post_message(Parameters(PostMessageArgs {
+                request_id: None,
+                to: to.into(),
+                sid: as_bot(jojobot, sender),
+                subject: None,
+                body: format!("{sender} to {to}, replaced"),
+                in_reply_to: None,
+                supersedes: Some(replaces.to_string()),
+            }))
+            .await
+            .expect("post_message ok"),
+    );
+    assert_ne!(result["status"], "blocked", "{result}");
+    result["id"].as_str().expect("an id").to_string()
+}
+
+/// **Closing many names a superseded original apart and counts it nowhere.**
+/// The store leaves a superseded message as it is, so a close that counted it
+/// would report a message processed that is not. The control is an ordinary new
+/// message in the same call: it is closed and counted.
+/// `superseded` is a key nothing outside this process declares, so it is pinned.
+#[tokio::test]
+async fn closing_many_does_not_count_a_superseded_original_as_processed() {
+    let jojobot = mailbox_handler();
+    owning(&jojobot, "otto").await;
+    owning(&jojobot, "gamma").await;
+    let original = post(&jojobot, "otto", "gamma", None).await;
+    replace(&jojobot, "otto", "gamma", &original).await;
+    let ordinary = post(&jojobot, "otto", "gamma", None).await;
+
+    let answer = close_many(&jojobot, "otto", &[&original, &ordinary], Some("handled")).await;
+
+    assert_eq!(answer["processed"], 1, "only the ordinary one: {answer}");
+    assert_eq!(answer["ids"], serde_json::json!([ordinary]), "{answer}");
+    assert_eq!(
+        answer["superseded"],
+        serde_json::json!([original]),
+        "{answer}"
+    );
+    assert_eq!(
+        held(&jojobot, &original).await.state,
+        MessageState::Superseded
+    );
+    assert_eq!(
+        held(&jojobot, &ordinary).await.state,
+        MessageState::Processed
+    );
+}
+
+/// **Closing one superseded original does not say it is processed.** The
+/// envelope says the state it is in; the postcondition must not say another.
+/// The control is an ordinary message, whose postcondition names the processed
+/// state.
+#[tokio::test]
+async fn closing_one_superseded_original_does_not_say_it_is_processed() {
+    let jojobot = mailbox_handler();
+    owning(&jojobot, "otto").await;
+    owning(&jojobot, "gamma").await;
+    let original = post(&jojobot, "otto", "gamma", None).await;
+    replace(&jojobot, "otto", "gamma", &original).await;
+    let ordinary = post(&jojobot, "otto", "gamma", None).await;
+    let close = |id: String| {
+        let jojobot = jojobot.clone();
+        async move {
+            json_of(
+                &jojobot
+                    .mark_processed(Parameters(MarkProcessedArgs {
+                        message_id: id,
+                        message_ids: None,
+                        notes: Some("handled".into()),
+                        sid: Some(as_bot(&jojobot, "otto")),
+                        request_id: None,
+                        quarantine: None,
+                    }))
+                    .await
+                    .expect("mark_processed ok"),
+            )
+        }
+    };
+
+    let superseded = close(original.clone()).await;
+    assert_eq!(superseded["state"], "superseded", "{superseded}");
+    let said = superseded["postcondition"]
+        .as_str()
+        .expect("a postcondition");
+    assert!(
+        !said.contains("processed"),
+        "a superseded message is not processed: {superseded}"
+    );
+
+    let control = close(ordinary).await;
+    assert!(
+        control["postcondition"]
+            .as_str()
+            .is_some_and(|said| said.contains("processed")),
+        "an ordinary close says it is processed: {control}"
+    );
+}
+
+/// **A reply to a superseded original closes nothing.** The store leaves the
+/// original as it is, so the receipt must not name it as answered. The control
+/// is a reply to an ordinary message, which is closed and named.
+#[tokio::test]
+async fn a_reply_to_a_superseded_original_does_not_claim_to_close_it() {
+    let jojobot = mailbox_handler();
+    owning(&jojobot, "otto").await;
+    owning(&jojobot, "gamma").await;
+    let original = post(&jojobot, "otto", "gamma", None).await;
+    replace(&jojobot, "otto", "gamma", &original).await;
+    let ordinary = post(&jojobot, "otto", "gamma", None).await;
+    read_everything(&jojobot, "otto").await;
+
+    let reply = post_receipt(&jojobot, "gamma", "otto", Some(&original)).await;
+    assert!(
+        reply["closed"].get("answered").is_none(),
+        "nothing was closed: {reply}"
+    );
+    assert_eq!(
+        held(&jojobot, &original).await.state,
+        MessageState::Superseded
+    );
+
+    let control = post_receipt(&jojobot, "gamma", "otto", Some(&ordinary)).await;
+    assert_eq!(
+        control["closed"]["answered"],
+        ordinary.as_str(),
+        "{control}"
+    );
+}

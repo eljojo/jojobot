@@ -49,6 +49,7 @@ impl Jojobot {
         };
         let mut open: Vec<Message> = Vec::new();
         let mut already: Vec<MessageId> = Vec::new();
+        let mut superseded: Vec<MessageId> = Vec::new();
         for id in &wanted {
             let located = match self.mailboxes.message_by_id(id).await {
                 Ok(located) => located,
@@ -73,8 +74,14 @@ impl Jojobot {
                     by: mine.name.as_str().to_string(),
                 });
             }
+            // **Open is what `is_unprocessed` says it is.** A processed message is
+            // closed already. Any other final state, superseded today, is left as
+            // it is by the store, so a close would count a message that stays as
+            // it was.
             if message.state == mailbox::MessageState::Processed {
                 already.push(id.clone());
+            } else if !message.state.is_unprocessed() {
+                superseded.push(id.clone());
             } else {
                 open.push(message);
             }
@@ -126,6 +133,11 @@ impl Jojobot {
             "ids": closed,
             "already_processed": already.iter().map(MessageId::as_str).collect::<Vec<_>>(),
         });
+        // **Named apart, never counted**: a superseded message is final and this
+        // call did not close it.
+        if !superseded.is_empty() {
+            body["superseded"] = superseded.iter().map(MessageId::as_str).collect();
+        }
         // **The notes are what the store kept**, and a cut is announced the way the
         // single close announces it. A call that closed nothing wrote no note.
         if let Some(stored) = stored.as_deref() {
