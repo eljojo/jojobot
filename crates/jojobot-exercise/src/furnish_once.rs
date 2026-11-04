@@ -74,7 +74,9 @@ pub fn kinds_held(boot: &serde_json::Value) -> Option<Vec<String>> {
 /// **Every entity id a room holds, by kind**, read through the surface and
 /// sorted, so a furnish made live and one copied from the cache can be compared
 /// on what a case can find. The kinds are the ones the room's boot names, so a
-/// kind the build gains or a room fills (a bot, a role) is compared as well.
+/// kind the build gains or a room fills (a bot, a role) is compared as well. Each
+/// kind is read up to 500 objects, so a room that holds more of one kind compares
+/// its first 500 of it.
 pub async fn held_ids(surface: &Surface) -> Vec<String> {
     let boot = surface.call("start_here", json!({"brief": true})).await;
     let boot: serde_json::Value = serde_json::from_str(&boot).expect("a JSON boot");
@@ -88,14 +90,27 @@ pub async fn held_ids(surface: &Surface) -> Vec<String> {
             )
             .await;
         let read: serde_json::Value = serde_json::from_str(&read).expect("a JSON read");
-        for object in read["objects"].as_array().into_iter().flatten() {
-            if let Some(id) = object["id"].as_str() {
-                ids.push(id.to_string());
-            }
-        }
+        ids.extend(ids_read(&kind, &read));
     }
     ids.sort();
     ids
+}
+
+/// **The ids one kind's read answered**, at most 500 of them: the read asks for
+/// that many and a room past it compares its first 500 only. An answer that
+/// refused the read says so naming the kind, because a kind that contributes
+/// nothing on both sides would compare equal over ids nobody looked at.
+pub fn ids_read(kind: &str, read: &serde_json::Value) -> Vec<String> {
+    assert!(
+        read["status"] != "blocked" && read.get("transport_error").is_none(),
+        "the read of the kind {kind} was refused: {read}"
+    );
+    read["objects"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|object| object["id"].as_str().map(str::to_string))
+        .collect()
 }
 
 #[cfg(test)]
@@ -139,6 +154,33 @@ mod tests {
             18,
             "exactly the kinds the boot names: {kinds:?}"
         );
+    }
+
+    /// **A read of a kind that was refused is a failure naming the kind.** Taking
+    /// it for a kind with no ids would let two rooms compare equal over a kind
+    /// nobody read. The controls beside it are the answers a room gives: ids, and
+    /// none.
+    #[test]
+    #[should_panic(expected = "bot")]
+    fn a_refused_read_of_a_kind_names_the_kind() {
+        ids_read(
+            "bot",
+            &json!({"status": "blocked", "wrote": false, "how_to_proceed": "nothing"}),
+        );
+    }
+
+    /// The same for a read the transport lost: `Surface::call` answers it as text.
+    #[test]
+    #[should_panic(expected = "role")]
+    fn a_lost_read_of_a_kind_names_the_kind() {
+        ids_read("role", &json!({"transport_error": "connection reset"}));
+    }
+
+    #[test]
+    fn a_read_that_answered_gives_its_ids_and_an_empty_one_gives_none() {
+        let answered = json!({"objects": [{"id": "bot:otto"}, {"id": "bot:lisa"}], "count": 2});
+        assert_eq!(ids_read("bot", &answered), ["bot:otto", "bot:lisa"]);
+        assert!(ids_read("pet", &json!({"objects": [], "count": 0})).is_empty());
     }
 
     /// **A boot that names no kinds is not a room that holds nothing.** Taking
