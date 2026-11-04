@@ -318,14 +318,30 @@ pub fn import(rows: &Rows) -> Result<Vec<Event<ClaimEvent>>, ImportError> {
         });
     }
     // The state counts merges and today's store numbers one above the highest,
-    // so only numbers 1, 2, 3 without a gap keep the count equal to the highest.
+    // so the count equals the highest only when every number up to it is held. **A
+    // number a merge made before `merge_event` existed once held may be missing**:
+    // a thing marked merged with no row is there to hold it, one thing to a
+    // number. A hole no such thing accounts for is refused.
+    let with_event: std::collections::HashSet<&ObjectId> =
+        rows.merges.iter().map(|step| &step.folded).collect();
+    let marked_without_row = rows
+        .entities
+        .iter()
+        .filter(|row| row.merged_into.is_some() && !with_event.contains(&row.key))
+        .count();
     let mut numbers: Vec<i64> = rows.merges.iter().map(|step| step.no).collect();
     numbers.sort_unstable();
-    for (at, found) in numbers.into_iter().enumerate() {
-        let expected = at as i64 + 1;
-        if found != expected {
+    let (mut expected, mut holes) = (1_i64, 0_usize);
+    for found in numbers {
+        if found < expected {
             return Err(ImportError::MergeNumberGap { expected, found });
         }
+        let missing = (found - expected) as usize;
+        if holes + missing > marked_without_row {
+            return Err(ImportError::MergeNumberGap { expected, found });
+        }
+        holes += missing;
+        expected = found + 1;
     }
     let mut events = Vec::new();
     for row in &rows.entities {
@@ -418,9 +434,10 @@ pub fn import(rows: &Rows) -> Result<Vec<Event<ClaimEvent>>, ImportError> {
     }
     // A merge made before `merge_event` existed is told only by the mark on the
     // folded entity. It has no moment and no run, and it comes first because it
-    // is older than every merge that has a row.
-    let with_event: std::collections::HashSet<&ObjectId> =
-        rows.merges.iter().map(|step| &step.folded).collect();
+    // is older than every merge that has a row. **The first as many as there are
+    // holes in the numbers are counted merges, each holding a missing number**;
+    // the rest are redirects the store never numbered, which the count leaves out.
+    let mut counted = holes;
     for row in &rows.entities {
         let Some(survivor) = &row.merged_into else {
             continue;
@@ -428,9 +445,19 @@ pub fn import(rows: &Rows) -> Result<Vec<Event<ClaimEvent>>, ImportError> {
         if with_event.contains(&row.key) {
             continue;
         }
-        events.push(plain(ClaimEvent::ObjectRedirected {
-            folded: row.key.clone(),
-            survivor: survivor.clone(),
+        events.push(plain(if counted > 0 {
+            counted -= 1;
+            ClaimEvent::ObjectsMerged {
+                folded: row.key.clone(),
+                survivor: survivor.clone(),
+                records: Vec::new(),
+                writes: Vec::new(),
+            }
+        } else {
+            ClaimEvent::ObjectRedirected {
+                folded: row.key.clone(),
+                survivor: survivor.clone(),
+            }
         }));
     }
     let mut steps: Vec<&MergeRow> = rows.merges.iter().collect();

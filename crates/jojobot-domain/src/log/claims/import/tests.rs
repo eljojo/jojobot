@@ -427,6 +427,72 @@ fn a_merge_with_no_event_row_arrives_as_a_redirect_the_store_does_not_count() {
     assert_eq!(state.highest_merge_number(), 2);
 }
 
+/// **The rows the upgrade gate keeps: the event row of the first merge of a
+/// chain is deleted and the later merges keep the numbers they had.** The
+/// numbers run 2, 3, 4 and the folded entity of the deleted row carries its mark
+/// (`kitchen_sink.rs` `old_merges`: two chains of three, the first chain's first
+/// merge loses its row). The import accepts the hole, because a marked entity
+/// with no row is there to hold it, answers every old handle, and leaves the
+/// highest merge number at the store's highest, 4. **Paired**: a hole with no
+/// marked entity to account for it is still refused.
+#[test]
+fn the_rows_the_upgrade_gate_keeps_import_with_the_number_of_the_deleted_row() {
+    let merged = |id: &str, handle: &str, into: &str| {
+        let mut row = entity(id, handle);
+        row.merged_into = Some(object(into));
+        row
+    };
+    let step = |no: i64, folded: &str, survivor: &str| MergeRow {
+        no,
+        folded: object(folded),
+        survivor: object(survivor),
+        merged_at: at(10).unwrap(),
+        session: None,
+        claims: Vec::new(),
+    };
+    let kept = vec![
+        step(2, "k2", "k3"),
+        step(3, "k4", "k5"),
+        step(4, "k5", "k6"),
+    ];
+    let rows = Rows {
+        entities: vec![
+            merged("k1", "thing:zeta", "k2"),
+            merged("k2", "thing:eta", "k3"),
+            entity("k3", "thing:theta"),
+            merged("k4", "thing:phi", "k5"),
+            merged("k5", "thing:chi", "k6"),
+            entity("k6", "thing:psi"),
+        ],
+        merges: kept.clone(),
+        ..Rows::default()
+    };
+    let state = state_of(&rows);
+    for handle in ["thing:zeta", "thing:eta"] {
+        assert_eq!(state.resolve(handle), Some(&object("k3")), "{handle}");
+    }
+    for handle in ["thing:phi", "thing:chi"] {
+        assert_eq!(state.resolve(handle), Some(&object("k6")), "{handle}");
+    }
+    assert_eq!(state.highest_merge_number(), 4, "the store's highest");
+    let unmarked = Rows {
+        entities: vec![
+            entity("k1", "thing:zeta"),
+            merged("k2", "thing:eta", "k3"),
+            entity("k3", "thing:theta"),
+        ],
+        merges: vec![step(2, "k2", "k3")],
+        ..Rows::default()
+    };
+    assert_eq!(
+        import(&unmarked),
+        Err(ImportError::MergeNumberGap {
+            expected: 1,
+            found: 2
+        })
+    );
+}
+
 /// A folded write of a claim the merge did not map is left out, as the claim is.
 #[test]
 fn a_folded_write_of_an_unmapped_claim_is_left_out() {
