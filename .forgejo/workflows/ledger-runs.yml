@@ -53,14 +53,14 @@ jobs:
           echo "level: ledger-runs, $JOB; left to full boundary: everything else"
       - name: Manifest
         if: ${{ forgejo.event.inputs.job == 'mutants' }}
-        run: python3 scripts/mutant-sample --check
+        run: nix develop -c python3 scripts/mutant-sample --check
       - name: Coverage
         if: ${{ forgejo.event.inputs.job == 'coverage' }}
         run: nix develop -c make coverage
       - name: Branch measure
         if: ${{ forgejo.event.inputs.job == 'coverage' && !cancelled() }}
         run: |
-          python3 -I - <<'EOF'
+          nix develop -c python3 -I - <<'EOF'
           import json, sys
           bad = []
           for lane in ("contract", "rooms"):

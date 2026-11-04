@@ -313,28 +313,28 @@ year: ## The year room's suite
 	$(MAKE) room ROOM=year
 
 # **The coverage of the two proof lanes at one head** (rule 767: no coverage lost),
-# each with its own summary so its identity is kept: `contract.json` is the
-# workspace's tests with the default features (what `make check` runs), and
-# `rooms.json` is the room suites `make rooms` runs (the `rooms` feature and the
-# test files that require it; the year room and the retired replays are in
-# neither). Lines, regions and branches are all measured. Branch coverage is an
-# unstable compiler option, so the stable toolchain is asked for it with
-# RUSTC_BOOTSTRAP. The server binary a room spawns is built in the same
-# instrumented target, so the rooms' coverage reaches the server. A lane whose
-# tests fail still reports; the failure is listed in target/coverage/lane-failures
-# and fails the target after both reports exist. Slow: the `ledger-runs` workflow
-# runs it, never a dev host.
+# each with its own summary so its identity is kept: `contract.json` is what
+# `make check` runs and `rooms.json` is what `make rooms` runs, each run by the
+# bar itself with the instrumented environment inherited, so a lane is covered as
+# it really runs (the year room and the retired replays are in neither). Lines,
+# regions and branches are all measured. Branch coverage is an unstable compiler
+# option, so the stable toolchain is asked for it with RUSTC_BOOTSTRAP. **The
+# target dir is this checkout's own**: the runner's shared one holds objects built
+# without instrumentation, and a report over them crashes the exporter. The server
+# binary a room spawns is built in that same instrumented target, so the rooms'
+# coverage reaches the server. A lane whose tests fail still reports; the failure
+# is listed in target/coverage/lane-failures and fails the target after both
+# reports exist. Slow: the `ledger-runs` workflow runs it, never a dev host.
 coverage: ## Coverage of the contract and rooms lanes: target/coverage/{contract,rooms}.json
-	rm -rf target/coverage
+	rm -rf target/coverage target/llvm-cov-target
 	mkdir -p target/coverage
-	RUSTC_BOOTSTRAP=1 CARGO='$(CARGO)' sh -ec '\
+	RUSTC_BOOTSTRAP=1 CARGO='$(CARGO)' CARGO_TARGET_DIR="$$PWD/target/llvm-cov-target" sh -ec '\
 		eval "$$($$CARGO llvm-cov show-env --export-prefix --branch)"; \
-		$$CARGO llvm-cov clean --workspace; \
 		$$CARGO build --workspace; \
-		$$CARGO test --workspace --no-fail-fast || echo contract >> target/coverage/lane-failures; \
+		$(MAKE) check || echo contract >> target/coverage/lane-failures; \
 		$$CARGO llvm-cov report --json --summary-only --output-path target/coverage/contract.json; \
 		$$CARGO llvm-cov clean --profraw-only; \
-		$$CARGO test -p jojobot-exercise --features rooms $(addprefix --test ,$(ROOM_TESTS)) --no-fail-fast || echo rooms >> target/coverage/lane-failures; \
+		$(MAKE) rooms || echo rooms >> target/coverage/lane-failures; \
 		$$CARGO llvm-cov report --json --summary-only --output-path target/coverage/rooms.json; \
 		test ! -s target/coverage/lane-failures'
 
