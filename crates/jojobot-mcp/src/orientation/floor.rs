@@ -15,6 +15,7 @@ use super::*;
 use crate::memory::reads_left::{BOOT_FLOOR, ReadsLeft};
 use crate::orientation::instance_zone::{ZoneFrom, zone_answer};
 use crate::orientation::orient::{InstanceLines, elide_rule_details, entity_summary, floor_len};
+use jojobot_domain::memory::seats::seat_count_written;
 use jojobot_domain::memory::{FactStatus, RULE_SEATS, rule_seats_of, rules_in_force};
 
 /// The longest purpose, in characters, that a filing may give a rule while the
@@ -23,21 +24,6 @@ pub(crate) const PURPOSE_FILING_MAX: usize = 80;
 
 mod fold;
 mod rename;
-
-/// **A seat count a write names, as a number or as the refusal it earns.** Judged
-/// before any read, so a count that is no number is refused whether or not the
-/// bot's fields can be read.
-fn seat_count_written(written: Option<&str>) -> Result<Option<usize>, MemoryError> {
-    match written {
-        None => Ok(None),
-        Some(written) => match written.trim().parse::<usize>() {
-            Ok(seats) if seats > 0 => Ok(Some(seats)),
-            _ => Err(MemoryError::InvalidFact(format!(
-                "rule_seats holds a whole number above zero, and '{written}' is not one"
-            ))),
-        },
-    }
-}
 
 /// **What a boot cannot cut, measured, and what it is made of.**
 pub(crate) struct Floor {

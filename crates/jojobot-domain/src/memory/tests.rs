@@ -2844,6 +2844,38 @@ fn a_bots_seats_read_a_whole_number_and_nothing_else() {
     assert_eq!(rule_seats_of(&held("-3")), default);
 }
 
+/// **A seat count a write names is a whole number above zero, trimmed, or a
+/// refusal that quotes what was written.** No count is no refusal. Zero, a
+/// negative, text, an empty or blank string and a number past `usize` are all
+/// refused, each beside the number that is read.
+#[test]
+fn a_seat_count_a_write_names_is_a_whole_number_above_zero() {
+    use super::seats::seat_count_written;
+    assert!(matches!(seat_count_written(None), Ok(None)));
+    assert!(matches!(seat_count_written(Some("1")), Ok(Some(1))));
+    assert!(matches!(seat_count_written(Some("8")), Ok(Some(8))));
+    assert!(matches!(seat_count_written(Some(" 12 ")), Ok(Some(12))));
+    for written in [
+        "0",
+        " 0 ",
+        "-3",
+        "many",
+        "",
+        "   ",
+        "99999999999999999999999999",
+    ] {
+        match seat_count_written(Some(written)) {
+            Err(MemoryError::InvalidFact(said)) => {
+                assert!(
+                    said.contains(&format!("'{written}'")),
+                    "{written:?}: {said}"
+                );
+            }
+            other => panic!("{written:?} must be refused, got {other:?}"),
+        }
+    }
+}
+
 /// **The seats-full sentence follows the bot's own seats.** Short of them
 /// there is nothing to say; at the count and past it there is.
 #[test]
