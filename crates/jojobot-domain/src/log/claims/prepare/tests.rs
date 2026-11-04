@@ -91,6 +91,10 @@ struct Row {
 /// between the two changes.
 #[test]
 fn two_faults_are_told_in_the_order() {
+    // The rows name handles (`thing:omega`, `person:moe`), and a handle is a
+    // handle only against the kinds this process loaded, so the case loads them
+    // itself rather than rely on another case having run first.
+    crate::memory::kinds::load_shipped();
     let (state, declared) = world();
     let rows = vec![
         Row {
