@@ -6395,6 +6395,139 @@ pub async fn a_thoughts_body_is_capped_at_its_containers_own_value_or_the_defaul
     );
 }
 
+/// **A thought's details count against its body cap, and an ordinary claim's do
+/// not.** The cap measures content and details together, with the details as
+/// they are stored (trimmed): at the cap lands, one character over is refused,
+/// through a fresh capture and through an edit of the details. The same details
+/// on a claim with no connection edge land at any length, and an edit that
+/// touches neither content nor details still lands on a thought that was
+/// seeded over the cap. Each refusal rests on the landing beside it.
+pub async fn a_thoughts_details_count_against_its_body_cap<M: Memory>(store: &M) {
+    let bot = EntityId("bot:contract-thought-details-cap".into());
+    let a = EntityId("thing:jukebox".into());
+    let b = EntityId("thing:battery".into());
+    let c = EntityId("thing:the-fern".into());
+    for id in [&bot, &a, &b, &c] {
+        ensure(store, id).await;
+    }
+    let cap_of = |cap: &str, day: i8| {
+        state(NewFact {
+            fields: [(THOUGHT_BODY_CAP.to_string(), cap.to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(bot.clone(), format!("cap is {cap}"), date(2026, 11, day))
+        })
+    };
+    capture(store, cap_of("10", 1)).await;
+    let thought = |to: &EntityId, content: &str, details: &str, day: i8| NewFact {
+        edge: Some(Edge::new(EdgeShape::Connection, to.clone())),
+        details: Some(details.to_string()),
+        ..NewFact::about(bot.clone(), content, date(2026, 11, day))
+    };
+
+    // At the cap lands: five of content and five of details are ten. The
+    // details' edge whitespace is not stored, so it is not counted.
+    capture(store, thought(&a, "abcde", "  fghij  ", 2)).await;
+    // One over is refused, and says the length of both together.
+    let refused = store
+        .capture(thought(&b, "abcde", "fghijk", 3))
+        .await
+        .expect_err("content and details one character over the cap must be refused");
+    match refused {
+        MemoryError::ThoughtTooLong { len, cap, .. } => {
+            assert_eq!((len, cap), (11, 10), "the refusal counts both together");
+        }
+        other => panic!("expected ThoughtTooLong, got {other:?}"),
+    }
+    // The same details on an ordinary claim, with no connection edge, land.
+    let long = "d".repeat(DEFAULT_THOUGHT_BODY_CAP * 4);
+    let plain = capture(
+        store,
+        NewFact {
+            details: Some(long.clone()),
+            ..NewFact::about(bot.clone(), "abcde", date(2026, 11, 4))
+        },
+    )
+    .await;
+    assert_eq!(plain.details.as_deref(), Some(long.as_str()));
+
+    // An edit of the details that pushes a thought over is refused; one that
+    // keeps it under lands.
+    let held = capture(store, thought(&c, "abc", "def", 5)).await;
+    let refused = store
+        .update_fact(
+            &held.address(),
+            FactPatch {
+                details: Some("defghijklmnop".into()),
+                ..Default::default()
+            },
+            &other_caller(),
+        )
+        .await
+        .expect_err("an edit of the details that passes the cap must be refused");
+    assert!(
+        matches!(
+            refused,
+            MemoryError::ThoughtTooLong {
+                len: 16,
+                cap: 10,
+                ..
+            }
+        ),
+        "expected ThoughtTooLong 16 over 10, got {refused:?}"
+    );
+    store
+        .update_fact(
+            &held.address(),
+            FactPatch {
+                details: Some("defg".into()),
+                ..Default::default()
+            },
+            &other_caller(),
+        )
+        .await
+        .expect("update_fact ok")
+        .written()
+        .expect("details that keep the thought under the cap land");
+
+    // A thought seeded over the cap, before the cap was written, still takes an
+    // edit that touches neither its content nor its details.
+    let seeded = EntityId("bot:contract-thought-details-seeded".into());
+    ensure(store, &seeded).await;
+    let over = capture(
+        store,
+        NewFact {
+            edge: Some(Edge::new(EdgeShape::Connection, a.clone())),
+            details: Some("s".repeat(30)),
+            ..NewFact::about(seeded.clone(), "abcde", date(2026, 11, 6))
+        },
+    )
+    .await;
+    capture(
+        store,
+        state(NewFact {
+            fields: [(THOUGHT_BODY_CAP.to_string(), "10".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(seeded.clone(), "cap is 10", date(2026, 11, 7))
+        }),
+    )
+    .await;
+    store
+        .update_fact(
+            &over.address(),
+            FactPatch {
+                stale_after: Some(date(2026, 12, 1)),
+                ..Default::default()
+            },
+            &other_caller(),
+        )
+        .await
+        .expect("update_fact ok")
+        .written()
+        .expect("an edit that touches neither content nor details must land");
+}
+
 /// **The default body cap binds only a thing that carries a thought
 /// capacity of its own** (decision 347). The same long connection-edged
 /// claim lands on a thing with no capacity and is refused on a thing that
@@ -19726,6 +19859,7 @@ macro_rules! all_cases {
         $m!(update_fact_drawing_a_connection_edge_into_a_full_room_is_refused($store));
         $m!(a_thoughts_body_is_capped_at_its_containers_own_value_or_the_default($store));
         $m!(the_default_body_cap_binds_only_a_thing_that_carries_a_capacity($store));
+        $m!(a_thoughts_details_count_against_its_body_cap($store));
         $m!(
             update_fact_over_the_body_cap_is_refused_on_content_and_on_the_edge_that_makes_it_a_thought(
                 $store

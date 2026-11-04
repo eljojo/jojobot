@@ -2746,16 +2746,19 @@ impl DoltMemory {
         let was_thought = was_thought && !another_bots;
         let becomes_thought = fact.status == FactStatus::Active
             && jojobot_domain::memory::authorship::is_thought_of(fact.edge.as_ref(), another_bots);
-        // **The cap runs on a content change, or on newly becoming a
+        // TEMPORARY(9.3.3) this store's witness that it calls the domain's rule on
+        // an edit; the write path moves into the domain's pipeline there.
+        //
+        // **The cap runs on a content or details change, or on newly becoming a
         // thought — never on an edit that leaves an existing thought's
-        // content exactly as it was.** An edit seeded over the cap, or over
-        // capacity, before either check existed must still take an edit
-        // that does not touch the content the cap protects or the room
-        // membership the capacity protects.
+        // content and details exactly as they were.** An edit seeded over the
+        // cap, or over capacity, before either check existed must still take an
+        // edit that does not touch the content and details the cap protects or
+        // the room membership the capacity protects.
         let capacity = after_fold
             .get(jojobot_domain::memory::THOUGHT_CAPACITY)
             .and_then(|v| v.trim().parse::<usize>().ok());
-        if becomes_thought && (patch.content.is_some() || !was_thought) {
+        if becomes_thought && (patch.content.is_some() || patch.details.is_some() || !was_thought) {
             // **The body cap, checked before the room has anything to say.**
             // A thought over its container's cap is refused whether or not
             // the room has space — see `refuses_thought_over_cap`.
@@ -2765,6 +2768,7 @@ impl DoltMemory {
             if let Some(err) = jojobot_domain::memory::refuses_thought_over_cap(
                 &handle,
                 &fact.content,
+                fact.details.as_deref(),
                 cap,
                 capacity,
             ) {
@@ -3151,6 +3155,7 @@ impl DoltMemory {
             if let Some(err) = jojobot_domain::memory::refuses_thought_over_cap(
                 &subject_handle,
                 &jojobot_domain::memory::normalize_content(&fact.content),
+                jojobot_domain::memory::normalize_details(fact.details.as_deref()).as_deref(),
                 cap,
                 capacity,
             ) {

@@ -200,6 +200,7 @@ pub(super) fn refuses_a_thought_over_cap(
     memory::refuses_thought_over_cap(
         &state.handle_of(home)?,
         &memory::normalize_content(&request.draft.content),
+        memory::normalize_details(request.draft.details.as_deref()).as_deref(),
         whole(&held, THOUGHT_BODY_CAP),
         whole(&held, THOUGHT_CAPACITY),
     )

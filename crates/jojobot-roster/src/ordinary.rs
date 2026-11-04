@@ -366,6 +366,8 @@ pub const ORDINARY: &[&str] = &[
     "bot:contract-thought-borrow",
     "bot:contract-thought-cap-grandfathered",
     "bot:contract-thought-capacity",
+    "bot:contract-thought-details-cap",
+    "bot:contract-thought-details-seeded",
     "bot:contract-thought-rename",
     "bot:contract-thought-touch",
     "bot:contract-thought-uncapped",

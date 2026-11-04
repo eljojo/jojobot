@@ -3279,6 +3279,7 @@ impl Memory for InMemoryMemory {
             if let Some(err) = super::super::refuses_thought_over_cap(
                 &subject_entity.id,
                 &normalize_content(&fact.content),
+                normalize_details(fact.details.as_deref()).as_deref(),
                 cap,
                 capacity,
             ) {
@@ -4417,13 +4418,17 @@ impl Memory for InMemoryMemory {
         let capacity = after
             .get(super::super::THOUGHT_CAPACITY)
             .and_then(|v| v.trim().parse::<usize>().ok());
-        if becomes_thought && (patch.content.is_some() || !was_thought) {
+        if becomes_thought && (patch.content.is_some() || patch.details.is_some() || !was_thought) {
             let cap = after
                 .get(super::super::THOUGHT_BODY_CAP)
                 .and_then(|v| v.trim().parse::<usize>().ok());
-            if let Some(err) =
-                super::super::refuses_thought_over_cap(&handle, &edited.content, cap, capacity)
-            {
+            if let Some(err) = super::super::refuses_thought_over_cap(
+                &handle,
+                &edited.content,
+                edited.details.as_deref(),
+                cap,
+                capacity,
+            ) {
                 return Err(err);
             }
         }

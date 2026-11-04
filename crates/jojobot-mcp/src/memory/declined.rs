@@ -1846,8 +1846,8 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             &[],
             format!(
                 "Nothing was written: {e}. Re-call {verb} with the substance captured onto the \
-                 thing this thought points at, and the thought as a pointer at or under {cap} \
-                 characters (this one was {len}). If you were editing a thought that already \
+                 thing this thought points at, and the thought as a pointer, content and details \
+                 together, at or under {cap} characters (this one was {len}). If you were editing a thought that already \
                  stands, a shorter edit in place with update_fact lands, except over another \
                  session's testimony; or archive it (status: archived) and capture the pointer \
                  as a new claim with the old one as its derived_from. The cap is deliberate, because a thought is a pointer: do not ask \

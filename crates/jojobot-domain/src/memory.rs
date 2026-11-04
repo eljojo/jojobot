@@ -3382,8 +3382,12 @@ pub fn refuses_room_overflow(home: &EntityId, count: RoomCount) -> Option<Memory
     }
 }
 
-/// **Whether a thought's content leaves it over its own container's body
-/// cap.** `cap` is what the container wrote as [`THOUGHT_BODY_CAP`], and it
+/// **Whether a thought's content and details together leave it over its own
+/// container's body cap.** `details` is the thought's details as they are stored
+/// (see [`normalize_details`]): a thought is a pointer, and details that were
+/// left out of the count would be the way to fit a whole state under a short
+/// line. An ordinary claim's details are never counted, because the caller asks
+/// this only of a thought. `cap` is what the container wrote as [`THOUGHT_BODY_CAP`], and it
 /// binds wherever it is set. With none, [`DEFAULT_THOUGHT_BODY_CAP`] binds
 /// only a container that carries a [`THOUGHT_CAPACITY`] — `capacity` is that
 /// value as the container folds to — and a container with neither is not
@@ -3394,11 +3398,12 @@ pub fn refuses_room_overflow(home: &EntityId, count: RoomCount) -> Option<Memory
 pub fn refuses_thought_over_cap(
     home: &EntityId,
     content: &str,
+    details: Option<&str>,
     cap: Option<usize>,
     capacity: Option<usize>,
 ) -> Option<MemoryError> {
     let cap = cap.or_else(|| capacity.map(|_| DEFAULT_THOUGHT_BODY_CAP))?;
-    let len = content.chars().count();
+    let len = content.chars().count() + details.map_or(0, |details| details.chars().count());
     if len > cap {
         Some(MemoryError::ThoughtTooLong {
             subject: home.to_string(),
@@ -3434,9 +3439,13 @@ pub fn refuses_merge_into_room(
 ) -> Option<MemoryError> {
     let arriving = thought_room(incoming);
     for thought in &arriving {
-        if let Some(MemoryError::ThoughtTooLong { len, cap, .. }) =
-            refuses_thought_over_cap(survivor, &thought.content, cap, capacity)
-        {
+        if let Some(MemoryError::ThoughtTooLong { len, cap, .. }) = refuses_thought_over_cap(
+            survivor,
+            &thought.content,
+            thought.details.as_deref(),
+            cap,
+            capacity,
+        ) {
             return Some(MemoryError::MergeThoughtTooLong {
                 subject: survivor.to_string(),
                 thought: thought.address().to_string(),
@@ -6241,13 +6250,14 @@ pub enum MemoryError {
     /// leaves `subject` holding an active, connection-edged claim on
     /// itself; an ordinary claim of any length is never this.
     #[error(
-        "'{subject}' holds a thought {len} characters long, over its cap of {cap}: put the \
-         substance on the thing it points at, and keep the thought itself short"
+        "'{subject}' holds a thought whose content and details are {len} characters together, \
+         over its cap of {cap}: put the substance on the thing it points at, and keep the \
+         thought itself short"
     )]
     ThoughtTooLong {
         /// The container whose room this thought would sit in.
         subject: String,
-        /// How long the content is, in characters.
+        /// How long the content and the details are together, in characters.
         len: usize,
         /// The cap it went over.
         cap: usize,

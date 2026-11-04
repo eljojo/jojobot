@@ -414,7 +414,7 @@ STANDING (settled or open) is how sure anyone is, apart from provenance, which i
 A NEW THING THAT HAPPENED IS A NEW CLAIM: capture it again, never update_fact.
 Every entity the call names — the subject, an edge's object, refs — must ALREADY EXIST, or nothing is written and the answer is status: blocked with candidates: add_entity first, then capture.
 `fields` is a flat bag that stays on the claim (a handle, or one in a comma list, is a link and must exist; six keys describe their own claim); `sets` sets keys on the thing itself in the same call, the only bag that reaches it.
-A connection claim with your OWN bot handle as subject is a `thought`, capped in length (`thought_body_cap`, else 200 with `thought_capacity`) and in count (`thought_capacity`).
+A connection claim with your OWN bot handle as subject is a `thought`, capped in length, content and details together (`thought_body_cap`, else 200 with `thought_capacity`), and in count (`thought_capacity`).
 In a full room a new thought needs `drop` with `drop_because`, or `borrow` once to land one over; a room over capacity takes none until you archive back under it.
 Another bot's such claim is ordinary and takes no seat.
 `record_capacity` caps any thing's live claims; a THREAD holds 3 unless a bot above its writers sets it.
@@ -966,10 +966,11 @@ it.** Send this key about your own handle and the write is refused,
 whatever else the call carries — only a different identity may raise
 or lower it. The same holds for `thought_ages_after_runs`.
 
-A thought's content is capped at the bot's own `thought_body_cap`; with none,
-at 200 characters if the bot carries `thought_capacity`, and a bot with
-neither is not capped. A longer one is refused. Put the substance on the
-thing it points at and keep the thought short.
+A thought's content and details together are capped at the bot's own
+`thought_body_cap`; with none, at 200 characters if the bot carries
+`thought_capacity`, and a bot with neither is not capped. A longer one is
+refused. Put the substance on the thing it points at and keep the thought
+short. An ordinary claim's details have no cap.
 ```
 
 #### `capture` — argument `/inputSchema.sid`
