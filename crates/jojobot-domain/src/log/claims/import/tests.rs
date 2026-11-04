@@ -342,6 +342,8 @@ fn merged_pair() -> Rows {
             no: 1,
             folded: object("k2"),
             survivor: object("k1"),
+            merged_at: at(50).unwrap(),
+            session: Some("run-m".into()),
             claims: vec![("f1".into(), "f9".into())],
         }],
         ..Rows::default()
@@ -362,6 +364,20 @@ fn a_merged_pair_arrives_interleaved_under_the_survivor() {
     assert_eq!(state.resolve("person:marge"), Some(&object("k1")));
     assert!(stream(&state, "k2", "mood").is_empty());
     assert_eq!(state.fields(&object("k1"), &[])["mood"], "theirs");
+}
+
+/// A merge keeps the moment it landed and the run that made it, as every
+/// other imported row keeps its own.
+#[test]
+fn a_merge_keeps_its_moment_and_its_run() {
+    let events = imported(&merged_pair());
+    let merged: Vec<_> = events
+        .iter()
+        .filter(|event| matches!(event.payload, ClaimEvent::ObjectsMerged { .. }))
+        .collect();
+    assert_eq!(merged.len(), 1);
+    assert_eq!(merged[0].imported_source_time, at(50));
+    assert_eq!(merged[0].run, Some(RunId("run-m".into())));
 }
 
 /// A folded write of a claim the merge did not map is left out, as the claim is.
@@ -470,6 +486,8 @@ fn merges_numbered_with_a_gap_are_refused_by_name() {
         no,
         folded: object(folded),
         survivor: object(survivor),
+        merged_at: at(0).unwrap(),
+        session: None,
         claims: Vec::new(),
     };
     let rows = |numbers: [i64; 2]| Rows {

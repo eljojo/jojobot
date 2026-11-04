@@ -145,6 +145,10 @@ pub struct MergeRow {
     pub no: i64,
     pub folded: ObjectId,
     pub survivor: ObjectId,
+    /// When the fold landed.
+    pub merged_at: Timestamp,
+    /// The run that made the merge, when it had one.
+    pub session: Option<String>,
     /// Old local id under the folded thing, to the id under the survivor.
     pub claims: Vec<(String, String)>,
 }
@@ -412,20 +416,25 @@ pub fn import(rows: &Rows) -> Result<Vec<Event<ClaimEvent>>, ImportError> {
     let mut steps: Vec<&MergeRow> = rows.merges.iter().collect();
     steps.sort_by_key(|step| step.no);
     for step in steps {
-        events.push(plain(ClaimEvent::ObjectsMerged {
-            folded: step.folded.clone(),
-            survivor: step.survivor.clone(),
-            // The claims the merge gave a new id keep the label they now wear.
-            records: step
-                .claims
-                .iter()
-                .map(|(_, new)| MovedRecord {
-                    record: record_id(&step.survivor, new),
-                    label: new.clone(),
-                })
-                .collect(),
-            writes: Vec::new(),
-        }));
+        events.push(envelope(
+            None,
+            step.session.clone(),
+            Some(step.merged_at),
+            ClaimEvent::ObjectsMerged {
+                folded: step.folded.clone(),
+                survivor: step.survivor.clone(),
+                // The claims the merge gave a new id keep the label they now wear.
+                records: step
+                    .claims
+                    .iter()
+                    .map(|(_, new)| MovedRecord {
+                        record: record_id(&step.survivor, new),
+                        label: new.clone(),
+                    })
+                    .collect(),
+                writes: Vec::new(),
+            },
+        ));
     }
     Ok(events)
 }
