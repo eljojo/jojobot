@@ -122,10 +122,11 @@ pub fn ids_read(kind: &str, read: &serde_json::Value) -> Vec<String> {
         read["status"] != "blocked" && read.get("transport_error").is_none(),
         "the read of the kind {kind} was refused: {read}"
     );
-    read["objects"]
+    let objects = read["objects"]
         .as_array()
-        .into_iter()
-        .flatten()
+        .unwrap_or_else(|| panic!("the read of the kind {kind} had no list of objects: {read}"));
+    objects
+        .iter()
         .filter_map(|object| object["id"].as_str().map(str::to_string))
         .collect()
 }
@@ -191,6 +192,16 @@ mod tests {
     #[should_panic(expected = "role")]
     fn a_lost_read_of_a_kind_names_the_kind() {
         ids_read("role", &json!({"transport_error": "connection reset"}));
+    }
+
+    /// **An answer with no list of objects is a failure naming the kind, whatever
+    /// else it says.** A read of a kind always carries one, empty or not, so an
+    /// error of another shape or a malformed answer must not read as a kind with
+    /// no ids.
+    #[test]
+    #[should_panic(expected = "had no list of objects")]
+    fn an_answer_with_no_list_of_objects_names_the_kind() {
+        ids_read("pet", &json!({"error": "something else"}));
     }
 
     #[test]
