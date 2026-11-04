@@ -353,3 +353,36 @@ fn ledger_events_ignore_expiry_and_receipt_that_precede_their_commit() {
         .unwrap();
     assert_eq!(state.lookup(&key.actor, &key.id, at(0)), Some(&first));
 }
+
+/// Only the newest generation answers a retry, so expiring it hides the request
+/// and does not reveal the older generation that is still held.
+#[test]
+fn ledger_events_do_not_reveal_a_held_older_generation_when_the_newest_expires() {
+    let older = commit(1);
+    let newer = commit(2);
+    let key = older.request.key.clone();
+    let mut state = State::default();
+    for event in [
+        LedgerEvent::RequestPartCommitted(part("entity")),
+        LedgerEvent::RequestCommitted(older.clone()),
+    ] {
+        state.apply(&event).unwrap();
+    }
+    assert_eq!(state.lookup(&key.actor, &key.id, at(0)), Some(&older));
+    assert_eq!(state.parts(&key.actor, &key.id, at(0)).len(), 1);
+    state
+        .apply(&LedgerEvent::RequestCommitted(newer.clone()))
+        .unwrap();
+    assert_eq!(state.lookup(&key.actor, &key.id, at(0)), Some(&newer));
+    state
+        .apply(&LedgerEvent::RequestExpired {
+            key: newer.request.key.clone(),
+        })
+        .unwrap();
+    assert!(state.lookup(&key.actor, &key.id, at(0)).is_none());
+    assert!(state.parts(&key.actor, &key.id, at(0)).is_empty());
+    let current = state.current(&key.actor, &key.id).unwrap();
+    assert_eq!(current.committed.as_ref(), Some(&newer));
+    assert!(current.expired);
+    assert!(!state.request(&older.request.key).unwrap().expired);
+}
