@@ -10,6 +10,32 @@ use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::testing::{Scratch, free_port, migrated_database};
 use jojobot_domain::memory::{EntityId, Memory, NewEntity, NewFact, Provenance};
+use sqlx::MySqlPool;
+
+/// **How many rows each table of the database holds**, by table. It reads the
+/// rows themselves, not the store's API: a read of a handle that is not on the
+/// roster is refused or empty before any claim row is looked at, so it cannot say
+/// whether a claim row was left behind.
+async fn row_counts(pool: &MySqlPool) -> Vec<(String, i64)> {
+    let tables: Vec<String> = sqlx::query_scalar(
+        "SELECT table_name FROM information_schema.tables \
+         WHERE table_schema = DATABASE() ORDER BY table_name",
+    )
+    .fetch_all(pool)
+    .await
+    .expect("the tables read");
+    let mut counts = Vec::new();
+    for table in tables {
+        let (n,): (i64,) = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "SELECT COUNT(*) FROM `{table}`"
+        )))
+        .fetch_one(pool)
+        .await
+        .expect("the rows count");
+        counts.push((table, n));
+    }
+    counts
+}
 
 #[tokio::test]
 async fn a_first_claim_that_fails_inside_the_write_leaves_no_thing_behind() {
@@ -37,6 +63,7 @@ async fn a_first_claim_that_fails_inside_the_write_leaves_no_thing_behind() {
     // joins this table) fails after validation has passed and after the thing's
     // own row is in the batch. Nothing the call is asked is wrong; the store
     // fails it.
+    let before = row_counts(&pool).await;
     sqlx::query("RENAME TABLE fact_write TO fact_write_away")
         .execute(&pool)
         .await
@@ -54,6 +81,16 @@ async fn a_first_claim_that_fails_inside_the_write_leaves_no_thing_behind() {
     assert!(
         failed.is_err(),
         "the store failed the claim's write, so the call fails: {failed:?}"
+    );
+
+    // **Every table holds the rows it held before the call**, counted from the
+    // rows. A batch that rolled back the thing's row but left a claim, a key write
+    // or a version row keyed to its identity leaves a count higher, behind a
+    // handle that no longer reads, which the roster and the read below cannot see.
+    assert_eq!(
+        row_counts(&pool).await,
+        before,
+        "a claim that failed inside the batch left rows behind"
     );
 
     let roster = memory.list_entities(None).await.expect("the roster reads");
