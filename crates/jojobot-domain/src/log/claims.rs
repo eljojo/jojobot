@@ -576,18 +576,27 @@ impl State {
     fn key_writes(&self, subject: &ObjectId) -> Vec<KeyWrite> {
         let subject = self.survivor(subject);
         let mut out = Vec::new();
-        // **The streams of one subject sit together in the map**, ordered by
-        // subject and then key, so they are found by range and never by a scan.
-        for ((_, key), stream) in self
-            .streams
-            .range((subject.clone(), KeyId(String::new()))..)
-            .take_while(|((held, _), _)| held == subject)
-        {
-            #[cfg(test)]
-            reads::STREAMS_EXAMINED.with(|n| n.set(n.get() + 1));
+        for (key, stream) in self.streams_of(subject) {
             self.push_key_writes(key, stream, &mut out);
         }
         out
+    }
+
+    /// **The streams of one subject**, found by range: they sit together in the
+    /// map, ordered by subject and then key, so a read never scans the streams
+    /// of other things. The subject is already the survivor of any merge.
+    fn streams_of<'a>(
+        &'a self,
+        subject: &'a ObjectId,
+    ) -> impl Iterator<Item = (&'a KeyId, &'a Vec<Write>)> {
+        self.streams
+            .range((subject.clone(), KeyId(String::new()))..)
+            .take_while(move |((held, _), _)| held == subject)
+            .map(|((_, key), stream)| {
+                #[cfg(test)]
+                reads::STREAMS_EXAMINED.with(|n| n.set(n.get() + 1));
+                (key, stream)
+            })
     }
 
     /// The writes of one key of a subject, as [`Self::key_writes`] reads them.

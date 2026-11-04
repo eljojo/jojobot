@@ -8,9 +8,12 @@ use std::collections::BTreeMap;
 
 use jiff::Timestamp;
 
-use super::State;
+use super::{FieldValue, KeyId, State, Write};
 use crate::log::ObjectId;
-use crate::memory::{self, FieldBacking, types::DeclaredType};
+use crate::memory::{
+    self, EntityId, FactAddress, FactId, FieldBacking, FieldWrite, KeyTrails, RecordFieldWrite,
+    WriteClass, types::DeclaredType,
+};
 
 // **How many streams the reads have looked at on this thread**, so a case can
 // say a read costs the streams of its own thing and not the size of the State.
@@ -43,5 +46,81 @@ impl State {
     }
 }
 
+impl State {
+    /// **Every write on a thing, and the records they were written in**, as the
+    /// store's `key_trails` answers it: a key's trail is its writes that reach
+    /// the thing, a key that stays on its record keeps its writes with their
+    /// moments, and a record's key is kept off the thing when its newest write
+    /// of that key, unless a later one took the key off, was made under a class
+    /// that does not reach it. A write whose claim the State does not hold is
+    /// left out. The home of an address is the thing's permanent key.
+    pub fn key_trails(&self, subject: &ObjectId) -> KeyTrails {
+        let subject = self.survivor(subject);
+        let mut writes: Vec<(&KeyId, &Write)> = self
+            .streams_of(subject)
+            .flat_map(|(key, stream)| stream.iter().map(move |write| (key, write)))
+            .collect();
+        writes.sort_by_key(|(_, write)| write.ordinal);
+        let mut trails = KeyTrails::default();
+        let mut held: BTreeMap<(FactId, String), WriteClass> = BTreeMap::new();
+        for (key, write) in writes {
+            let Some(record) = self.records.get(&write.record) else {
+                continue;
+            };
+            let carried = FactId(record.claim.label.clone());
+            let value = match &write.write {
+                FieldValue::Set(value) => Some(value.clone()),
+                FieldValue::Clear => None,
+            };
+            match &value {
+                Some(_) => {
+                    held.insert((carried.clone(), key.0.clone()), write.class);
+                }
+                None => {
+                    held.remove(&(carried.clone(), key.0.clone()));
+                }
+            }
+            if !memory::reaches_the_thing(write.class) {
+                trails.record_writes.push(RecordFieldWrite {
+                    fact: carried,
+                    key: key.0.clone(),
+                    ordinal: write.ordinal,
+                    value,
+                    written_at: write.written_at,
+                });
+                continue;
+            }
+            trails
+                .history
+                .entry(key.0.clone())
+                .or_default()
+                .push(FieldWrite {
+                    written_at: write.written_at,
+                    recorded_by: record.claim.app.clone(),
+                    writer: write.writer.clone(),
+                    run: write.run.as_ref().map(|run| run.0.clone()),
+                    value,
+                    fact: FactAddress::new(EntityId(record.claim.home.0.clone()), carried),
+                    recorded_at: record.claim.recorded_at,
+                    status: record.claim.status,
+                    provenance: record.claim.provenance,
+                    standing: record.claim.standing,
+                    note: record.claim.details.clone(),
+                });
+        }
+        for ((fact, key), class) in held {
+            if !memory::reaches_the_thing(class) {
+                trails.kept_off.entry(fact).or_default().insert(key);
+            }
+        }
+        trails
+            .record_writes
+            .sort_by(|a, b| (&a.key, a.ordinal).cmp(&(&b.key, b.ordinal)));
+        trails
+    }
+}
+
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod trails_tests;
