@@ -4411,10 +4411,10 @@ impl Memory for InMemoryMemory {
         }
         let becomes_thought =
             edited.status == FactStatus::Active && super::super::is_thought(&edited);
-        // **The cap runs on a content change, or on newly becoming a
+        // **The cap runs on a content or details change, or on newly becoming a
         // thought — never on an edit that leaves an existing thought's
-        // content exactly as it was** — see the real store's identical
-        // comment on its own copy of this check.
+        // content and details exactly as they were** — see the real store's
+        // identical comment on its own copy of this check.
         let capacity = after
             .get(super::super::THOUGHT_CAPACITY)
             .and_then(|v| v.trim().parse::<usize>().ok());
