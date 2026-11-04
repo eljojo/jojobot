@@ -347,48 +347,63 @@ fn ci_crate_selection_takes_the_base_the_branch_is_cut_from() {
         3,
         "each job that plans takes its base from `bar trunk`"
     );
-    let step = workflow
-        .split("      - name: Job plan\n        id: plan\n        run: |\n")
-        .nth(1)
-        .unwrap()
-        .lines()
-        .take_while(|line| !line.contains("mkdir -p"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let dir = scratch();
-    // What the plan that follows the lines would see in its own environment.
-    let step = format!("{step}\nprintf 'plan sees %s' \"${{BAR_SELECT_BASE-unset}}\"");
-    for (answer, written, seen) in [
-        (
-            "origin/alpha-carry",
-            "BAR_SELECT_BASE=origin/alpha-carry\n",
-            "plan sees origin/alpha-carry",
-        ),
-        ("", "", "plan sees unset"),
-    ] {
-        support::write_executable(
-            &dir.join("nix"),
-            &format!("#!/bin/sh\nprintf '%s\\n' '{answer}'\n"),
-        );
-        let env_file = dir.join("github-env");
-        let _ = fs::remove_file(&env_file);
-        let path = std::env::join_paths(
-            std::iter::once(dir.clone())
-                .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
-        )
-        .unwrap();
-        let out = support::output_fenced(
-            Command::new("sh")
-                .args(["-c", &step])
-                .env("PATH", &path)
-                // The job running this case has its own base set.
-                .env_remove("BAR_SELECT_BASE")
-                .env("GITHUB_ENV", &env_file),
-        )
-        .unwrap();
-        assert!(out.status.success(), "{out:?}");
-        assert_eq!(fs::read_to_string(&env_file).unwrap_or_default(), written);
-        assert_eq!(String::from_utf8_lossy(&out.stdout), seen);
+    for job in ["own-crates", "report", "rooms"] {
+        let marker = format!("\n  {job}:\n");
+        let body = workflow
+            .split_once(marker.as_str())
+            .unwrap_or_else(|| panic!("the {job} job exists"))
+            .1
+            .lines()
+            .take_while(|line| line.is_empty() || line.starts_with("    "))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let step = body
+            .split_once("      - name: Job plan\n        id: plan\n        run: |\n")
+            .unwrap_or_else(|| panic!("the {job} job has its own plan"))
+            .1
+            .lines()
+            .take_while(|line| !line.contains("mkdir -p"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let dir = scratch();
+        // What the plan that follows the lines would see in its own environment.
+        let step = format!("{step}\nprintf 'plan sees %s' \"${{BAR_SELECT_BASE-unset}}\"");
+        for (answer, written, seen) in [
+            (
+                "origin/alpha-carry",
+                "BAR_SELECT_BASE=origin/alpha-carry\n",
+                "plan sees origin/alpha-carry",
+            ),
+            ("", "", "plan sees unset"),
+        ] {
+            support::write_executable(
+                &dir.join("nix"),
+                &format!("#!/bin/sh\nprintf '%s\\n' '{answer}'\n"),
+            );
+            let env_file = dir.join("github-env");
+            let _ = fs::remove_file(&env_file);
+            let path = std::env::join_paths(
+                std::iter::once(dir.clone())
+                    .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+            )
+            .unwrap();
+            let out = support::output_fenced(
+                Command::new("sh")
+                    .args(["-c", &step])
+                    .env("PATH", &path)
+                    // The job running this case has its own base set.
+                    .env_remove("BAR_SELECT_BASE")
+                    .env("GITHUB_ENV", &env_file),
+            )
+            .unwrap();
+            assert!(out.status.success(), "{job}: {out:?}");
+            assert_eq!(
+                fs::read_to_string(&env_file).unwrap_or_default(),
+                written,
+                "{job}"
+            );
+            assert_eq!(String::from_utf8_lossy(&out.stdout), seen, "{job}");
+        }
     }
 }
 
