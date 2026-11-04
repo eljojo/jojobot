@@ -1939,3 +1939,43 @@ fn a_thought_joining_a_full_room_gives_up_one_or_is_refused() {
     }
     assert!(prepare(&mixed, &[], &thinking()).is_ok());
 }
+
+/// A stored thought's first run identifies its writer when no actor was kept.
+#[test]
+fn a_stored_thoughts_first_run_identifies_its_writer() {
+    crate::memory::kinds::load_shipped();
+    let now = "2026-04-03T10:00:00Z".parse().unwrap();
+    let own = Actor::Bot(crate::memory::EntityId("bot:alpha".into()));
+    let mut state = roomy(1, own, now);
+    for event in held("bot", "bot:beta", &[]) {
+        apply(&mut state, &event);
+    }
+    let thought = ClaimBody {
+        edge: Some((EdgeShape::Connection.to_string(), object("bot:alpha"))),
+        ..claim("f3", "bot:alpha", "a thought", 1)
+    };
+    for payload in [
+        created("t1", thought),
+        write("t1", "bot:alpha", "note", 1, "x"),
+    ] {
+        let mut event = under(None, Some("sb01"), payload);
+        event.written_at = Some(now);
+        state.apply(&event);
+    }
+    let run = super::super::super::RunId("sb01".into());
+    let mut sent = thinking();
+    sent.door
+        .runs
+        .insert(run.clone(), crate::memory::EntityId("bot:beta".into()));
+    assert!(
+        prepare(&state, &[], &sent).is_ok(),
+        "another bot's run leaves a slot beside the own thought"
+    );
+    sent.door
+        .runs
+        .insert(run, crate::memory::EntityId("bot:alpha".into()));
+    assert!(matches!(
+        prepare(&state, &[], &sent),
+        Err(Refusal::RoomFull { live: 2, capacity: 2, room, .. }) if room.len() == 2
+    ));
+}
