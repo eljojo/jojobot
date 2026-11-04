@@ -464,6 +464,53 @@ fn the_account_takes_the_richest_form_that_fits() {
     }
 }
 
+/// **The floor names the call that returns what it left out.** Every form says
+/// which call returns an omitted layer (the briefs: whatever is left out is named,
+/// with the call that returns it), and the floor does it once per distinct call,
+/// in the order the layers were left out, so it stays the smallest form. Paired
+/// with the full form, which names the call beside each layer.
+#[test]
+fn the_floor_names_each_call_that_returns_what_it_left_out() {
+    let omitted = [
+        LeftOut {
+            layer: "a",
+            call: "recall with facts: true",
+        },
+        LeftOut {
+            layer: "b",
+            call: "search with include_mail: true",
+        },
+        LeftOut {
+            layer: "c",
+            call: "recall with facts: true",
+        },
+    ];
+    let layers = || -> Vec<Layer> {
+        omitted
+            .iter()
+            .map(|omitted| {
+                let mut layer = sized(omitted.layer, Kind::Detail, Tier::Medium, 200);
+                layer.returned_by = omitted.call;
+                layer
+            })
+            .collect()
+    };
+    let room = account_cost(Form::Floor, &omitted);
+    let floor = run(layers(), room, &[]);
+    assert_eq!(floor.form, Form::Floor);
+    assert_eq!(floor.over_budget, None);
+    let calls = floor.served[LEFT_OUT_KEY]["calls"]
+        .as_str()
+        .expect("the floor says its calls");
+    for call in ["recall with facts: true", "search with include_mail: true"] {
+        assert_eq!(calls.matches(call).count(), 1, "{call}: {calls}");
+    }
+    assert_eq!(account_names(&floor.served[LEFT_OUT_KEY]), ["a", "b", "c"]);
+    let full = run(layers(), account_cost(Form::Full, &omitted), &[]);
+    assert_eq!(full.form, Form::Full);
+    assert_eq!(full.served[LEFT_OUT_KEY][1]["call"], omitted[1].call);
+}
+
 /// Layers come before the richness of the account: a layer is served in the
 /// grouped form rather than left out for the sake of the full one.
 #[test]

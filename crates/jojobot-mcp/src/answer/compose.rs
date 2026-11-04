@@ -163,16 +163,14 @@ pub(crate) enum Form {
     Full,
     /// The names gathered under each distinct call, each call written once.
     Grouped,
-    /// The names alone, and one line that says the calls are left out.
+    /// The names alone, and each distinct call once, in the order its layer was
+    /// left out.
     Floor,
 }
 
 impl Form {
     pub(crate) const RICHEST_FIRST: [Form; 3] = [Form::Full, Form::Grouped, Form::Floor];
 }
-
-/// The line the floor form carries in place of the calls.
-const CALLS_LEFT_OUT: &str = "left out for room";
 
 /// What the omissions are written as under [`LEFT_OUT_KEY`], in one form.
 pub(crate) fn account(omitted: &[LeftOut], form: Form) -> Value {
@@ -198,10 +196,18 @@ pub(crate) fn account(omitted: &[LeftOut], form: Form) -> Value {
                     .collect(),
             )
         }
-        Form::Floor => json!({
-            "layers": omitted.iter().map(|omitted| omitted.layer).collect::<Vec<_>>(),
-            "calls": CALLS_LEFT_OUT,
-        }),
+        Form::Floor => {
+            let mut calls: Vec<&str> = Vec::new();
+            for omitted in omitted {
+                if !calls.contains(&omitted.call) {
+                    calls.push(omitted.call);
+                }
+            }
+            json!({
+                "layers": omitted.iter().map(|omitted| omitted.layer).collect::<Vec<_>>(),
+                "calls": calls.join(", "),
+            })
+        }
     }
 }
 
