@@ -344,6 +344,33 @@ fn the_two_budgets_are_two_levels_from_the_setting() {
     assert!(Budget::Strict.limit() < Budget::Lean.limit());
 }
 
+#[test]
+fn the_entry_uses_the_setting_budget_at_its_boundary() {
+    for (saving, charged, kept) in [
+        (false, 2400, true),
+        (false, 2401, false),
+        (true, 160, true),
+        (true, 161, false),
+    ] {
+        let answer = Answer::new(
+            core(),
+            vec![sized("a", Kind::Detail, Tier::High, charged - core_len())],
+        );
+        let composed = compose(&answer, Budget::of_setting(saving), &BTreeSet::new());
+        assert_eq!(composed.served["id"], "thing:kettle");
+        assert_eq!(
+            names(&composed),
+            if kept { vec!["a"] } else { vec![] },
+            "saving {saving}, charged {charged}"
+        );
+        assert_eq!(
+            left(&composed),
+            if kept { vec![] } else { vec!["a"] },
+            "saving {saving}, charged {charged}"
+        );
+    }
+}
+
 /// The ruler: the core is identical under every budget, and the layers a
 /// smaller limit serves are a subset of those a larger one serves, which are a
 /// subset of all. Answers come from a fixed-seed generator: the same ones on
