@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 
 use jiff::Timestamp;
 
-use super::{FieldValue, KeyId, Revision, State, Write};
+use super::{FieldValue, KeyId, ObjectVersion, Revision, State, Write};
 use crate::log::{ObjectId, RecordId};
 use crate::memory::{
     self, EntityId, FactAddress, FactId, FieldBacking, FieldWrite, KeyTrails, RecordFieldWrite,
@@ -47,6 +47,20 @@ impl State {
 }
 
 impl State {
+    /// **Every write of a thing's own row, and of every thing folded into it**,
+    /// in the order they were made. Found from the thing and what was folded
+    /// into it alone.
+    pub fn entity_versions(&self, subject: &ObjectId) -> Vec<&ObjectVersion> {
+        let subject = self.survivor(subject);
+        let mut versions: Vec<&ObjectVersion> = std::iter::once(subject)
+            .chain(self.folded_under.get(subject).into_iter().flatten())
+            .filter_map(|object| self.versions.get(object))
+            .flatten()
+            .collect();
+        versions.sort_by_key(|version| version.seq);
+        versions
+    }
+
     /// **Every write of one claim, oldest first**, the last being the claim now.
     /// A claim the State does not hold has none.
     pub fn claim_history(&self, record: &RecordId) -> &[Revision] {
@@ -143,3 +157,5 @@ mod histories_tests;
 mod tests;
 #[cfg(test)]
 mod trails_tests;
+#[cfg(test)]
+mod versions_tests;

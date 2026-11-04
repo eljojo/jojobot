@@ -19,7 +19,7 @@
 //!
 //! **No renewal kind.** A role renewal is a heartbeat kept off the log.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use jiff::{Timestamp, civil::Date};
 
@@ -291,6 +291,22 @@ pub struct Revision {
     pub written_at: Option<Timestamp>,
 }
 
+/// **One write of an object's own row**: the object complete as that write left
+/// it, and what the envelope says of the write. `seq` is the place of the write
+/// among all object writes, so the versions of an object and of the things
+/// folded into it read in the order they were made.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObjectVersion {
+    pub seq: u64,
+    /// The object that was written, which is not the one asked about when the
+    /// write was made before a merge folded it in.
+    pub thing: ObjectId,
+    pub body: ObjectBody,
+    pub actor: Option<Actor>,
+    pub run: Option<RunId>,
+    pub written_at: Option<Timestamp>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Write {
     record: RecordId,
@@ -324,6 +340,12 @@ pub struct State {
     /// Every observed write of each object's own row, in the order the events
     /// arrived, under the object that was written.
     observed: BTreeMap<ObjectId, Vec<ObservedWrite>>,
+    /// Every write of each object's own row, oldest first, under the object
+    /// that was written.
+    versions: BTreeMap<ObjectId, Vec<ObjectVersion>>,
+    /// Every object folded into each survivor, at any depth.
+    folded_under: BTreeMap<ObjectId, BTreeSet<ObjectId>>,
+    version_seq: u64,
     indexes: indexes::Indexes,
 }
 
@@ -332,10 +354,28 @@ impl State {
     /// write from the envelope.
     pub fn apply(&mut self, event: &Event<ClaimEvent>) {
         match &event.payload {
-            ClaimEvent::ObjectCreated { object, body }
-            | ClaimEvent::ObjectRevised { object, body }
-            | ClaimEvent::ObjectBaselined { object, body } => {
+            // **The current state at the cut serves the object and is never a
+            // version of it** (the baseline of an import).
+            ClaimEvent::ObjectBaselined { object, body } => {
                 let before = self.objects.get(object).map(|held| held.parent.clone());
+                self.objects.insert(object.clone(), body.clone());
+                self.index_object(object, before, &body.parent);
+            }
+            ClaimEvent::ObjectCreated { object, body }
+            | ClaimEvent::ObjectRevised { object, body } => {
+                let before = self.objects.get(object).map(|held| held.parent.clone());
+                self.version_seq += 1;
+                self.versions
+                    .entry(object.clone())
+                    .or_default()
+                    .push(ObjectVersion {
+                        seq: self.version_seq,
+                        thing: object.clone(),
+                        body: body.clone(),
+                        actor: event.actor.clone(),
+                        run: event.run.clone(),
+                        written_at: event.imported_source_time.or(event.written_at),
+                    });
                 self.objects.insert(object.clone(), body.clone());
                 self.index_object(object, before, &body.parent);
             }
@@ -494,6 +534,12 @@ impl State {
         }
         self.index_before_merge(records);
         self.redirects.insert(folded.clone(), survivor.clone());
+        let mut under = self.folded_under.remove(folded).unwrap_or_default();
+        under.insert(folded.clone());
+        self.folded_under
+            .entry(survivor.clone())
+            .or_default()
+            .extend(under);
         for address in self.addresses.values_mut() {
             if address == folded {
                 *address = survivor.clone();
