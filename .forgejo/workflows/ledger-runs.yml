@@ -33,7 +33,7 @@ on:
         default: '8'
 
 concurrency:
-  group: ledger-runs-${{ forgejo.ref }}-${{ forgejo.event.inputs.job }}-${{ forgejo.event.inputs.from }}
+  group: ledger-runs-${{ forgejo.ref }}-${{ forgejo.event.inputs.job }}-${{ forgejo.event.inputs.lane }}-${{ forgejo.event.inputs.from }}-${{ forgejo.event.inputs.branch }}
   cancel-in-progress: true
 
 jobs:
