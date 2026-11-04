@@ -183,3 +183,77 @@ fn an_unmapped_claim_is_named_apart_from_the_survivors_own() {
         }
     }
 }
+
+fn bound(name: &str, address: &str) -> ClaimEvent {
+    ClaimEvent::AddressBound {
+        object: object(name),
+        address: address.to_string(),
+    }
+}
+
+fn marked(names: &[&str]) -> String {
+    names
+        .iter()
+        .map(|name| crate::memory::marked_stored_handle(name))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// **A scan serves a marked item as the handle its thing answers to now**: a
+/// renamed thing under its new handle, two marks that meet at one survivor as
+/// one handle, and text that wears no mark, or a mark naming no thing the State
+/// holds, as written.
+#[test]
+fn a_scan_serves_marked_items_as_the_handles_things_answer_to_now() {
+    let state = replayed(vec![
+        made("work:alpha"),
+        bound("work:alpha", "work:alpha"),
+        made("work:beta"),
+        bound("work:beta", "work:beta"),
+        made("work:gamma"),
+        bound("work:gamma", "work:gamma"),
+        made("work:delta"),
+        bound("work:delta", "work:delta"),
+        created("r1", claim("f1", "work:alpha", "a", 3)),
+        write(
+            "r1",
+            "work:alpha",
+            "owner",
+            1,
+            &marked(&["work:beta", "work:gamma"]),
+        ),
+        write("r1", "work:alpha", "peer", 1, &marked(&["work:delta"])),
+        write("r1", "work:alpha", "note", 1, "work:beta, plain words"),
+        write("r1", "work:alpha", "ghost", 1, &marked(&["work:theta"])),
+        ClaimEvent::AddressRetired {
+            object: object("work:delta"),
+            address: "work:delta".to_string(),
+        },
+        bound("work:delta", "work:zeta"),
+        ClaimEvent::AddressRetired {
+            object: object("work:beta"),
+            address: "work:beta".to_string(),
+        },
+        ClaimEvent::ObjectsMerged {
+            folded: object("work:beta"),
+            survivor: object("work:gamma"),
+            records: Vec::new(),
+            writes: Vec::new(),
+        },
+    ]);
+    let fields = state.scan(&object("work:alpha"), &[]).expect("held").fields;
+    assert_eq!(
+        fields["owner"], "work:gamma",
+        "two marks, one survivor, once"
+    );
+    assert_eq!(fields["peer"], "work:zeta", "the handle it answers to now");
+    assert_eq!(
+        fields["note"], "work:beta, plain words",
+        "text that wears no mark is served as written"
+    );
+    assert_eq!(
+        fields["ghost"],
+        marked(&["work:theta"]),
+        "a mark naming no held thing is served as written"
+    );
+}

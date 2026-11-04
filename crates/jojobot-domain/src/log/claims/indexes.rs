@@ -50,6 +50,9 @@ pub(super) struct Indexes {
     /// retains two claims under one label leaves one slot in `labels` and both
     /// claims here.
     homed: BTreeMap<ObjectId, BTreeSet<RecordId>>,
+    /// The spellings bound to each object now, the reverse of the map of
+    /// addresses.
+    spellings: BTreeMap<ObjectId, BTreeSet<String>>,
     /// The objects whose parent is the key.
     children: BTreeMap<ObjectId, BTreeSet<ObjectId>>,
     /// The streams each claim wrote to: a revision changes what they fold to.
@@ -128,13 +131,44 @@ impl State {
     /// **The handle an object answers to now**: a spelling of the form
     /// `kind:slug` bound to it.
     pub(super) fn handle_of(&self, object: &ObjectId) -> Option<crate::memory::EntityId> {
-        let object = self.survivor(object);
-        self.addresses
-            .iter()
-            .find(|(address, bound)| {
-                self.survivor(bound) == object && address.contains(':') && !address.contains('#')
-            })
-            .map(|(address, _)| crate::memory::EntityId(address.clone()))
+        let survivor = self.survivor(object);
+        // The spellings bound to the object and to everything folded into it,
+        // the first in address order: no scan of every address.
+        std::iter::once(survivor)
+            .chain(self.folded_under.get(survivor).into_iter().flatten())
+            .filter_map(|held| self.indexes.spellings.get(held))
+            .flatten()
+            .filter(|address| address.contains(':') && !address.contains('#'))
+            .min()
+            .map(|address| crate::memory::EntityId(address.clone()))
+    }
+
+    pub(super) fn bind_spelling(&mut self, object: &ObjectId, address: &str) {
+        self.indexes
+            .spellings
+            .entry(object.clone())
+            .or_default()
+            .insert(address.to_string());
+    }
+
+    pub(super) fn unbind_spelling(&mut self, object: &ObjectId, address: &str) {
+        if let Some(held) = self.indexes.spellings.get_mut(object) {
+            held.remove(address);
+            if held.is_empty() {
+                self.indexes.spellings.remove(object);
+            }
+        }
+    }
+
+    /// A merge re-points every spelling of the folded object at the survivor.
+    pub(super) fn move_spellings(&mut self, folded: &ObjectId, survivor: &ObjectId) {
+        if let Some(held) = self.indexes.spellings.remove(folded) {
+            self.indexes
+                .spellings
+                .entry(survivor.clone())
+                .or_default()
+                .extend(held);
+        }
     }
 
     /// **The ordinal a new write of `key` on `object` takes**: one past the

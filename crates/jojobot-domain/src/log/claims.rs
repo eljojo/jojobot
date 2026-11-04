@@ -396,13 +396,17 @@ impl State {
                     source_time: event.imported_source_time,
                 }),
             ClaimEvent::AddressBound { object, address } => {
-                self.addresses.insert(address.clone(), object.clone());
+                if let Some(held) = self.addresses.insert(address.clone(), object.clone()) {
+                    self.unbind_spelling(&held, address);
+                }
+                self.bind_spelling(object, address);
             }
             ClaimEvent::AddressRetired {
                 object, address, ..
             } => {
                 if self.addresses.get(address) == Some(object) {
                     self.addresses.remove(address);
+                    self.unbind_spelling(object, address);
                     self.retired_addresses
                         .insert(address.clone(), object.clone());
                 }
@@ -545,6 +549,7 @@ impl State {
                 *address = survivor.clone();
             }
         }
+        self.move_spellings(folded, survivor);
         for moved in records {
             if let Some(held) = self.records.get_mut(&moved.record) {
                 held.claim.home = survivor.clone();

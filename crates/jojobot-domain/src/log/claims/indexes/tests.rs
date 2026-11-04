@@ -929,7 +929,7 @@ impl Dice {
 
 const OBJECTS: [&str; 6] = ["o0", "o1", "o2", "o3", "o4", "o5"];
 const KEYS: [&str; 3] = [NUMBERS_BY, "num", "mood"];
-const SPELLINGS: [&str; 4] = ["s0", "s1", "s2", "s3"];
+const SPELLINGS: [&str; 4] = ["s0", "work:eta", "work:iota", "work:kappa"];
 
 /// The next event of a run, read off the state the earlier ones made so that a
 /// merge moves the claims and writes that are really there.
@@ -1238,6 +1238,24 @@ fn assert_indexes_equal_a_recomputation(state: &State, merges: u64, context: &st
                 ),
             }
         }
+    }
+    // The handle an object answers to: the first `kind:slug` spelling bound to
+    // it or to anything folded into it, as a scan of every address finds it.
+    for name in OBJECTS {
+        let want = state
+            .addresses
+            .iter()
+            .find(|(address, bound)| {
+                state.survivor(bound) == &survivor(name)
+                    && address.contains(':')
+                    && !address.contains('#')
+            })
+            .map(|(address, _)| crate::memory::EntityId(address.clone()));
+        assert_eq!(
+            state.handle_of(&object(name)),
+            want,
+            "{context}: handle of {name}"
+        );
     }
     // The homes: every claim homed on a thing, whatever label it holds.
     for name in OBJECTS {

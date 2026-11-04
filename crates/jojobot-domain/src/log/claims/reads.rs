@@ -83,6 +83,40 @@ impl State {
         out
     }
 
+    /// **What a thing holds, as a read serves it**: every item of a value that
+    /// wears the mark of a stored handle is composed to the handle its thing
+    /// answers to now, each thing named once; text that wears no mark is served
+    /// as written, and so is a mark naming a thing the State does not hold.
+    pub fn fields_served(
+        &self,
+        subject: &ObjectId,
+        declared: &[DeclaredType],
+    ) -> BTreeMap<String, String> {
+        let mut fields = self.fields(subject, declared);
+        for (key, value) in fields.clone() {
+            let items: Vec<&str> = value.split(',').map(str::trim).collect();
+            if !items
+                .iter()
+                .any(|item| memory::stored_handle_id(item).is_some())
+            {
+                continue;
+            }
+            let composed = items
+                .into_iter()
+                .map(|item| {
+                    let handle = memory::stored_handle_id(item)
+                        .and_then(|id| self.handle_of(&ObjectId(id.to_string())));
+                    let text = handle
+                        .as_ref()
+                        .map_or_else(|| item.to_string(), |handle| handle.to_string());
+                    (handle, text)
+                })
+                .collect();
+            fields.insert(key, memory::list::serve_values(composed));
+        }
+        fields
+    }
+
     /// **A thing as its scan serves it**, from that thing's own objects, claims
     /// and streams. A thing the State does not hold has none.
     pub fn scan(&self, subject: &ObjectId, declared: &[DeclaredType]) -> Option<ThingScan<'_>> {
@@ -107,7 +141,7 @@ impl State {
             body,
             claims,
             unmapped,
-            fields: self.fields(subject, declared),
+            fields: self.fields_served(subject, declared),
             field_links: self.held_targets(subject),
         })
     }
