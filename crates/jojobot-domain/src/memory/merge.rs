@@ -167,7 +167,28 @@ pub async fn refuses_merge_guards<R: MergeReads + ?Sized>(
         lineage.as_ref(),
         duplicate_lineage.as_ref(),
     ) {
-        return Err(err);
+        // **A clear is no way through**: it is itself a write of the key, so the
+        // history the guards judge still holds it. The refusal must not name it.
+        return Err(match err {
+            MemoryError::MergeCarriesGuardedKeys {
+                duplicate,
+                survivor,
+                keys,
+                may,
+                allowed,
+                judged_on_duplicate,
+                ..
+            } => MemoryError::MergeCarriesGuardedKeys {
+                duplicate,
+                survivor,
+                keys,
+                may,
+                allowed,
+                clear_opens: false,
+                judged_on_duplicate,
+            },
+            other => other,
+        });
     }
     let above = reads.chain_above_survivor().await?;
     if let Some(err) = refuses_merge_below_the_duplicate(fold.survivor, fold.folded, &above) {

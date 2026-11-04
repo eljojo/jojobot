@@ -477,12 +477,13 @@ async fn a_request_is_not_merged_away_and_the_refusal_names_it() {
 }
 
 /// **An ordinary thing that carries a status key is not a request, and the
-/// refusal that keeps it out of a request tells it to clear the key.** The
-/// request is the survivor, so the key cannot land on it; the thing is the
-/// duplicate, so the caller may take the key off it first. The refusal names
-/// the thing and the clear, and the merge goes through once the key is gone.
+/// refusal that keeps it out of a request does not send the caller to clear the
+/// key.** The request is the survivor, so the key cannot land on it. Clearing the
+/// key is a write of it, and the merge judges what the thing wrote, so the clear
+/// opens nothing: the refusal does not name it, and the merge is refused after
+/// the clear as before, with the request's fields as they were.
 #[tokio::test]
-async fn an_ordinary_thing_merged_into_a_request_is_told_to_clear_its_status_key() {
+async fn an_ordinary_thing_merged_into_a_request_is_not_told_to_clear_its_status_key() {
     let story = Story::begin("bot:marge").await;
     let marge = story.session().await;
     marge
@@ -509,7 +510,7 @@ async fn an_ordinary_thing_merged_into_a_request_is_told_to_clear_its_status_key
         .await
         .says("topic:scrapbook")
         .says("bot-request:beta")
-        .says("clear_fields");
+        .never_says("clear_fields");
     marge
         .call(
             "update_fact",
@@ -517,11 +518,23 @@ async fn an_ordinary_thing_merged_into_a_request_is_told_to_clear_its_status_key
         )
         .await;
     marge
-        .call(
+        .refused(
             "merge_entities",
             json!({"duplicate": "topic:scrapbook", "survivor": "bot-request:beta"}),
         )
-        .await;
+        .await
+        .says("observed_state")
+        .never_says("clear_fields");
+    let request = marge
+        .call("recall", json!({"subject": "bot-request:beta"}))
+        .await
+        .json();
+    assert!(
+        request["objects"][0]["fields"]
+            .get("observed_state")
+            .is_none(),
+        "the refused merge put nothing of the thing on the request: {request}"
+    );
     story.finish().await;
 }
 

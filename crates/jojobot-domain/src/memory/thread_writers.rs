@@ -268,8 +268,8 @@ mod tests {
             "lisa wrote a note there, so the clear is refused to lisa and is not named"
         );
         assert!(
-            clear_opens("thread:krusty-telethon").await,
-            "lisa wrote nothing there, so the clear opens"
+            !clear_opens("thread:krusty-telethon").await,
+            "a clear is a write of the key, which the guards judge from the history, so it opens nothing"
         );
 
         // ── lisa set a ceiling on another thread through a record and took it off ──
