@@ -269,9 +269,25 @@ pub struct Record {
     /// writer no bot is named for: the run says which bot wrote it.
     pub first_run: Option<RunId>,
     pub revisions: u32,
+    /// **Every write of the claim, oldest first**: the claim as the creating
+    /// event and each revising event left it. The last is the claim now.
+    pub history: Vec<Revision>,
     /// When the store took in the newest event that created or revised the
     /// claim, by the same rule as [`Write::written_at`]. The store counts every
     /// write of a claim as a touch, whether or not it wrote a field.
+    pub written_at: Option<Timestamp>,
+}
+
+/// **One write of one claim**: the claim complete as that write left it, and
+/// what the envelope of the event says of the write.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Revision {
+    pub claim: ClaimBody,
+    /// The actor on the envelope of the event that made this write.
+    pub actor: Option<Actor>,
+    /// The run on the envelope of the event that made this write.
+    pub run: Option<RunId>,
+    /// When the store took the write in, by the rule of [`Record::written_at`].
     pub written_at: Option<Timestamp>,
 }
 
@@ -371,6 +387,12 @@ impl State {
                         first_writer: event.actor.clone(),
                         first_run: event.run.clone(),
                         revisions: 0,
+                        history: vec![Revision {
+                            claim: claim.clone(),
+                            actor: event.actor.clone(),
+                            run: event.run.clone(),
+                            written_at: event.imported_source_time.or(event.written_at),
+                        }],
                         written_at: event.imported_source_time.or(event.written_at),
                     },
                 );
@@ -381,6 +403,12 @@ impl State {
                     let before = std::mem::replace(&mut held.claim, claim.clone());
                     held.revisions += 1;
                     held.written_at = event.imported_source_time.or(event.written_at);
+                    held.history.push(Revision {
+                        claim: claim.clone(),
+                        actor: event.actor.clone(),
+                        run: event.run.clone(),
+                        written_at: held.written_at,
+                    });
                     self.index_record(record, Some(&before), claim);
                 }
             }

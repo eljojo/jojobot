@@ -8,8 +8,8 @@ use std::collections::BTreeMap;
 
 use jiff::Timestamp;
 
-use super::{FieldValue, KeyId, State, Write};
-use crate::log::ObjectId;
+use super::{FieldValue, KeyId, Revision, State, Write};
+use crate::log::{ObjectId, RecordId};
 use crate::memory::{
     self, EntityId, FactAddress, FactId, FieldBacking, FieldWrite, KeyTrails, RecordFieldWrite,
     WriteClass, types::DeclaredType,
@@ -47,6 +47,23 @@ impl State {
 }
 
 impl State {
+    /// **Every write of one claim, oldest first**, the last being the claim now.
+    /// A claim the State does not hold has none.
+    pub fn claim_history(&self, record: &RecordId) -> &[Revision] {
+        self.records
+            .get(record)
+            .map_or(&[], |held| held.history.as_slice())
+    }
+
+    /// **The writes of every claim homed on a thing**, each claim by its
+    /// identity. Found from the claims of that thing alone.
+    pub fn claim_histories(&self, subject: &ObjectId) -> BTreeMap<&RecordId, &[Revision]> {
+        self.records_homed_on(subject)
+            .into_iter()
+            .map(|record| (record, self.claim_history(record)))
+            .collect()
+    }
+
     /// **Every write on a thing, and the records they were written in**, as the
     /// store's `key_trails` answers it: a key's trail is its writes that reach
     /// the thing, a key that stays on its record keeps its writes with their
@@ -120,6 +137,8 @@ impl State {
     }
 }
 
+#[cfg(test)]
+mod histories_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

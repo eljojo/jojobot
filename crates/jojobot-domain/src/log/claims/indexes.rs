@@ -99,6 +99,18 @@ impl State {
         self.records.iter()
     }
 
+    /// **The claims homed on an object now**, found by range in the label map and
+    /// never by a scan of every claim.
+    pub(super) fn records_homed_on(&self, home: &ObjectId) -> Vec<&RecordId> {
+        let home = self.survivor(home);
+        self.indexes
+            .labels
+            .range((home.clone(), String::new())..)
+            .take_while(|((held, _), _)| held == home)
+            .map(|(_, record)| record)
+            .collect()
+    }
+
     /// The streams a claim wrote to.
     pub(super) fn streams_written_by(&self, record: &RecordId) -> Vec<(ObjectId, KeyId)> {
         self.indexes
