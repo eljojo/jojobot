@@ -23,6 +23,7 @@ async fn a_thing_erased_under_the_store_is_no_longer_served_after_the_store_is_r
 
     // ── the erasure · under the store, then the server reads it again ───────
     store.deletes_the_thing("person:nelson");
+    s.recall("person:nelson").await.says("laughs at everything");
     story.the_store_changed_underneath().await;
 
     // ── after · the erased thing is gone from both doors, and the miss is
