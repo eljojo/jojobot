@@ -964,8 +964,10 @@ pub async fn a_claim_that_sets_only_the_generation_is_not_taken_back<M: Memory>(
     )
     .await;
     // The claim that carries the number alone, as the act that took a spec off
-    // writes it.
-    let number = capture(store, spec(&[(GENERATION, "3")], 4)).await;
+    // writes it: the companion carries the settings label beside the number.
+    let mut companion = spec(&[(GENERATION, "3")], 4);
+    companion.fields = crate::memory::review::settings_fields(companion.fields);
+    let number = capture(store, companion).await;
     let generation = || async {
         store
             .fields(&request)
