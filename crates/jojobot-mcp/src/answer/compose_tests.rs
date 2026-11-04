@@ -181,49 +181,88 @@ fn rule_2_layers_fill_by_tier_then_cost_then_declared_order() {
 #[test]
 fn rule_3_at_most_one_suggestion_the_best_ranked_or_none() {
     // (suggestions as declared (name, tier, cost), room beside the account of
-    // the rest, served suggestions)
-    type Row = (Vec<(&'static str, Tier, usize)>, usize, Vec<&'static str>);
+    // the rest, served suggestions, named omissions)
+    type Row = (
+        Vec<(&'static str, Tier, usize)>,
+        usize,
+        Vec<&'static str>,
+        Vec<&'static str>,
+    );
     let rows: Vec<Row> = vec![
         // two fit: only the higher tier ships
         (
             vec![("low", Tier::Low, 30), ("high", Tier::High, 30)],
             100,
             vec!["high"],
+            vec![],
         ),
         // the best does not fit: none, though the other would
         (
             vec![("high", Tier::High, 200), ("low", Tier::Low, 30)],
             40,
             vec![],
+            vec!["high"],
         ),
         // one suggestion alone fits
-        (vec![("only", Tier::Low, 30)], 30, vec!["only"]),
+        (vec![("only", Tier::Low, 30)], 30, vec!["only"], vec![]),
     ];
-    for (declared, room, expected) in rows {
+    for (declared, room, expected, omitted) in rows {
         let layers = declared
             .iter()
             .map(|(name, tier, cost)| sized(name, Kind::Suggestion, *tier, *cost))
             .collect();
-        let omitted: Vec<&'static str> = declared
-            .iter()
-            .map(|(name, ..)| *name)
-            .filter(|name| !expected.contains(name))
-            .collect();
         let composed = run(layers, room + full(&omitted), &[]);
+        assert_eq!(left(&composed), omitted, "{declared:?} room {room}");
         assert_eq!(names(&composed), expected, "{declared:?} room {room}");
     }
-    // A second suggestion is left out without closing the fill behind it.
+    // A discarded suggestion neither names a return call nor takes budget.
     let composed = run(
         vec![
             sized("best", Kind::Suggestion, Tier::High, 30),
             sized("second", Kind::Suggestion, Tier::Medium, 30),
             sized("detail", Kind::Detail, Tier::Low, 30),
         ],
-        60 + full(&["second"]),
+        60,
         &[],
     );
+    assert!(left(&composed).is_empty(), "{:?}", composed.left_out);
+    assert!(composed.served.get(LEFT_OUT_KEY).is_none());
     assert_eq!(names(&composed), ["best", "detail"]);
-    assert_eq!(left(&composed), ["second"]);
+}
+
+#[test]
+fn a_high_tier_suggestion_is_dropped_before_a_low_tier_note_or_detail() {
+    for kind in [Kind::Note, Kind::Detail] {
+        let composed = run(
+            vec![
+                sized("suggestion", Kind::Suggestion, Tier::High, 200),
+                sized("needed", kind, Tier::Low, 200),
+            ],
+            200 + full(&["suggestion"]),
+            &[],
+        );
+        assert_eq!(names(&composed), ["needed"], "{kind:?}");
+        assert_eq!(left(&composed), ["suggestion"], "{kind:?}");
+        assert_eq!(composed.over_budget, None);
+    }
+}
+
+#[test]
+fn a_taught_suggestion_is_silent_and_does_not_hide_a_fresh_suggestion() {
+    let layers = || {
+        vec![
+            sized("taught", Kind::Suggestion, Tier::High, 200).taught_once("claims"),
+            sized("fresh", Kind::Suggestion, Tier::Low, 30),
+        ]
+    };
+    let composed = run(layers(), 30, &["claims"]);
+    assert_eq!(names(&composed), ["fresh"]);
+    assert!(left(&composed).is_empty());
+    assert!(composed.served.get(LEFT_OUT_KEY).is_none());
+
+    let not_taught = run(layers(), 200, &["other"]);
+    assert_eq!(names(&not_taught), ["taught"]);
+    assert!(left(&not_taught).is_empty());
 }
 
 /// Rule 4. `taught_domain`: a taught once-per-session note vanishes, unlisted.
@@ -327,7 +366,7 @@ fn the_core_is_identical_and_served_layers_nest_across_every_limit() {
                 let kind = [Kind::Note, Kind::Suggestion, Kind::Detail][next(3) as usize];
                 let tier = [Tier::High, Tier::Medium, Tier::Low][next(3) as usize];
                 let layer = sized(name, kind, tier, 20 + next(60) as usize);
-                if kind == Kind::Note && next(3) == 0 {
+                if kind != Kind::Detail && next(3) == 0 {
                     layer.taught_once("claims")
                 } else {
                     layer

@@ -2,9 +2,10 @@
 //! optional parts ship, and names the ones that did not.
 //!
 //! An answer is a core and a list of named layers. The core is always served
-//! whole. Layers fill to the bot's budget by relevance, at most one of them a
-//! suggestion, and each one left out is named once with the call that returns
-//! it. The account of what was left out is part of the answer and is counted
+//! whole. Layers fill to the bot's budget by relevance, with suggestions after
+//! all other layers. Only the best suggestion is kept; the rest are dropped.
+//! Each kept layer left out is named once with the call that returns it.
+//! The account of what was left out is part of the answer and is counted
 //! inside the budget; when even the core and the bare names do not fit, the
 //! answer is served over budget and says so. A tighter budget only ever drops
 //! layers: the shape never changes (rules 692, 694, 695).
@@ -19,8 +20,7 @@ use serde_json::{Map, Value, json};
 /// Key under which the omissions ride, present only when a layer was left out.
 pub(crate) const LEFT_OUT_KEY: &str = "left_out";
 
-/// What a layer is. Only a note carries a teaching domain; only one
-/// suggestion ships (rule 3).
+/// What a layer is. Only one suggestion ships (rule 3).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Kind {
     Note,
@@ -46,7 +46,7 @@ pub(crate) struct Layer {
     /// Served characters, by the door's own measure ([`super::served_len`]) of
     /// the layer as it rides under its key.
     pub(crate) cost: usize,
-    /// A once-per-session note names its teaching domain; a session already
+    /// A once-per-session layer names its teaching domain; a session already
     /// taught that domain does not see the layer, nor an omission for it.
     pub(crate) domain: Option<&'static str>,
     /// The call that returns the layer when it is left out.
@@ -228,28 +228,26 @@ pub fn compose(answer: &Answer, budget: Budget, taught: &BTreeSet<&str>) -> Comp
 
 /// [`compose`] against a number of characters, so the proof can walk every limit.
 pub(crate) fn compose_within(answer: &Answer, limit: usize, taught: &BTreeSet<&str>) -> Composed {
-    // A taught once-per-session note is dropped: no layer, no omission
+    // A taught once-per-session layer is dropped: no layer, no omission
     // (table: taught_domain).
     let mut ranked: Vec<&Layer> = answer
         .layers
         .iter()
         .filter(|layer| layer.domain.is_none_or(|domain| !taught.contains(domain)))
         .collect();
-    // Tier first, then the cheaper layer (more relevance per character);
+    // Suggestions are dropped before notes and details, so fill them last.
+    // Within each group, tier first, then the cheaper layer;
     // the sort is stable, so ties keep declared order (table: rank_order).
-    ranked.sort_by_key(|layer| (layer.tier, layer.cost));
+    ranked.sort_by_key(|layer| (layer.kind == Kind::Suggestion, layer.tier, layer.cost));
 
-    // Only the best-ranked suggestion may ship (table: one_suggestion); a
-    // later one is left out whatever the room.
+    // Only the best-ranked suggestion may ship (table: one_suggestion);
+    // later ones are discarded before either filling or naming omissions.
     let mut first_suggestion = true;
-    let eligible: Vec<bool> = ranked
-        .iter()
-        .map(|layer| match layer.kind {
-            Kind::Suggestion => std::mem::replace(&mut first_suggestion, false),
-            _ => true,
-        })
-        .collect();
-    let fillable = eligible.iter().filter(|eligible| **eligible).count();
+    ranked.retain(|layer| match layer.kind {
+        Kind::Suggestion => std::mem::replace(&mut first_suggestion, false),
+        _ => true,
+    });
+    let fillable = ranked.len();
 
     // The fill is a prefix of the eligible ranking, and the account of the
     // rest is paid for inside the limit (table: prefix_fill). The largest
@@ -260,8 +258,8 @@ pub(crate) fn compose_within(answer: &Answer, limit: usize, taught: &BTreeSet<&s
         let mut left_out = Vec::new();
         let mut taken = 0;
         let mut layers_cost = 0;
-        for (layer, eligible) in ranked.iter().zip(&eligible) {
-            if *eligible && taken < k {
+        for layer in &ranked {
+            if taken < k {
                 taken += 1;
                 layers_cost += layer.cost;
                 served.insert(layer.name.to_string(), layer.body.clone());
