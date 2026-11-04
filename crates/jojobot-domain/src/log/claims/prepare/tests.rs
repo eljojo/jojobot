@@ -1833,6 +1833,23 @@ fn a_thought_joining_a_full_room_gives_up_one_or_is_refused() {
                 && claim.details.as_deref() == Some("no longer earns it")
     ));
     assert!(matches!(&events[1], ClaimEvent::RecordCreated { .. }));
+    let mut guarded = full.clone();
+    apply(
+        &mut guarded,
+        &write("t0", "bot:alpha", "rule_seats", 1, "2"),
+    );
+    assert!(matches!(
+        prepare(&guarded, &[], &dropping("bot:alpha#f2")),
+        Err(Refusal::RoomFull { live: 2, .. })
+    ));
+    let events = prepare(&guarded, &[], &dropping("bot:alpha#f3"))
+        .expect("the ordinary thought can still be dropped");
+    assert!(matches!(
+        &events[0],
+        ClaimEvent::RecordRevised { record, claim }
+            if record == &super::super::tests::record("t1")
+                && claim.status == FactStatus::Archived
+    ));
     // Only a live thought of this room can be dropped.
     assert!(matches!(
         prepare(&full, &[], &dropping("bot:alpha#f1")),
