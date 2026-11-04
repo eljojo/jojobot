@@ -84,6 +84,9 @@ pub struct EntityRow {
     pub prose: String,
     pub badge: Option<String>,
     pub archived: Option<(String, Timestamp)>,
+    /// The thing this one was folded into, as the row marks it: the permanent key.
+    /// A merge made before `merge_event` existed has this and no event row.
+    pub merged_into: Option<ObjectId>,
     /// The moment of the row's first `entity_write`, when it has one.
     pub taken_in: Option<Timestamp>,
 }
@@ -412,6 +415,25 @@ pub fn import(rows: &Rows) -> Result<Vec<Event<ClaimEvent>>, ImportError> {
                 targets: write.targets.clone(),
             },
         ));
+    }
+    // A merge made before `merge_event` existed is told only by the mark on the
+    // folded entity. It has no moment and no run, and it comes first because it
+    // is older than every merge that has a row.
+    let with_event: std::collections::HashSet<&ObjectId> =
+        rows.merges.iter().map(|step| &step.folded).collect();
+    for row in &rows.entities {
+        let Some(survivor) = &row.merged_into else {
+            continue;
+        };
+        if with_event.contains(&row.key) {
+            continue;
+        }
+        events.push(plain(ClaimEvent::ObjectsMerged {
+            folded: row.key.clone(),
+            survivor: survivor.clone(),
+            records: Vec::new(),
+            writes: Vec::new(),
+        }));
     }
     let mut steps: Vec<&MergeRow> = rows.merges.iter().collect();
     steps.sort_by_key(|step| step.no);

@@ -28,6 +28,7 @@ fn entity(id: &str, handle: &str) -> EntityRow {
         prose: String::new(),
         badge: None,
         archived: None,
+        merged_into: None,
         taken_in: None,
     }
 }
@@ -378,6 +379,41 @@ fn a_merge_keeps_its_moment_and_its_run() {
     assert_eq!(merged.len(), 1);
     assert_eq!(merged[0].imported_source_time, at(50));
     assert_eq!(merged[0].run, Some(RunId("run-m".into())));
+}
+
+/// **A merge made before the merge-event table has no event row**, only the mark
+/// on the folded entity, and it still arrives as a redirect to the survivor. The
+/// shape is the upgrade gate's: a chain whose first merge lost its event row.
+#[test]
+fn a_merge_with_no_event_row_arrives_as_a_redirect_from_the_entity_mark() {
+    let mut first = entity("k1", "person:homer");
+    first.merged_into = Some(object("k2"));
+    let mut second = entity("k2", "person:marge");
+    second.merged_into = Some(object("k3"));
+    let rows = Rows {
+        entities: vec![first, second, entity("k3", "person:bart")],
+        merges: vec![MergeRow {
+            no: 1,
+            folded: object("k2"),
+            survivor: object("k3"),
+            merged_at: at(10).unwrap(),
+            session: None,
+            claims: Vec::new(),
+        }],
+        ..Rows::default()
+    };
+    let events = imported(&rows);
+    let moments: Vec<_> = events
+        .iter()
+        .filter(|event| matches!(event.payload, ClaimEvent::ObjectsMerged { .. }))
+        .map(|event| event.imported_source_time)
+        .collect();
+    // One event for the merge that has a row and one, with no moment, for the other.
+    assert_eq!(moments.len(), 2);
+    assert!(moments.contains(&None) && moments.contains(&at(10)));
+    let state = state_of(&rows);
+    assert_eq!(state.resolve("person:homer"), Some(&object("k3")));
+    assert_eq!(state.resolve("person:marge"), Some(&object("k3")));
 }
 
 /// A folded write of a claim the merge did not map is left out, as the claim is.
