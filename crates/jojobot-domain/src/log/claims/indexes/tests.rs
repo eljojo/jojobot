@@ -1317,6 +1317,19 @@ fn links_from_by_scan(state: &State, subject: &ObjectId) -> BTreeSet<ObjectId> {
 /// the maps kept by `apply` answer.
 fn assert_indexes_equal_a_recomputation(state: &State, merges: u64, context: &str) {
     assert_eq!(state.highest_merge_number(), merges, "{context}: merges");
+    // The streams a claim wrote: those that hold a write of it, as a scan of every
+    // stream finds them. A merge moves a stream, and the claim wrote it where it
+    // now stands.
+    for record in state.records.keys() {
+        let want: BTreeSet<_> = state
+            .streams
+            .iter()
+            .filter(|(_, stream)| stream.iter().any(|write| &write.record == record))
+            .map(|(at, _)| at.clone())
+            .collect();
+        let got: BTreeSet<_> = state.streams_written_by(record).into_iter().collect();
+        assert_eq!(got, want, "{context}: streams written by {record:?}");
+    }
     let survivor = |name: &str| state.survivor(&object(name)).clone();
     // The pair a claim was created under finds a claim made under that pair, however
     // many merges have moved it since.
