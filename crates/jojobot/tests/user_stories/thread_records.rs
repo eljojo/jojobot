@@ -1160,11 +1160,11 @@ async fn marge_writes_into(marge: &Session, thread: &str) {
 /// ceiling there is refused to marge, and the refusal for marge's merge names
 /// otto, above marge, and no clear. A thought ceiling, because a merge that
 /// would move a record ceiling is refused earlier, by the guard that names who
-/// may write it, which names no clear. Paired: marge may clear a duplicate that
-/// marge does not write into, and that route is named and followed to a merge
-/// that lands. Each route a refusal names is followed to the end.
+/// may write it, which names no clear. Paired: marge may archive the claim on a
+/// duplicate that marge does not write into, and that route is named and
+/// followed to a merge that lands. Each route a refusal names is followed to the end.
 #[tokio::test]
-async fn a_merge_refusal_names_a_clear_only_to_a_caller_who_may_make_it() {
+async fn a_merge_refusal_names_the_archive_route_only_to_a_caller_who_may_make_it() {
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
     s.add("bot:marge", "Marge").await;
@@ -1211,16 +1211,17 @@ async fn a_merge_refusal_names_a_clear_only_to_a_caller_who_may_make_it() {
         .await
         .says(THREAD);
 
-    // ── the pair: a duplicate marge does not write into, and the clear lands ─
+    // ── the pair: a duplicate marge does not write into, and archiving lands ─
     marge
         .refused("merge_entities", merge("thread:krusty-telethon"))
         .await
-        .says("clear_fields");
+        .says("archived")
+        .never_says("clear_fields");
     let address = the_record_setting(&s, "thread:krusty-telethon", "thought_capacity").await;
     marge
         .call(
             "update_fact",
-            json!({"address": address, "clear_fields": ["thought_capacity"]}),
+            json!({"address": address, "status": "archived"}),
         )
         .await;
     marge

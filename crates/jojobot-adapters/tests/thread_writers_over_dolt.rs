@@ -155,8 +155,8 @@ async fn dolt_counts_the_bots_that_wrote_a_record_among_the_writers_a_merge_is_j
         "lisa wrote a note there, so the clear is refused to lisa and is not named"
     );
     assert!(
-        !clear_opens("thread:krusty-telethon").await,
-        "a clear is a write of the key, which the guards judge from the history, so it opens nothing"
+        clear_opens("thread:krusty-telethon").await,
+        "lisa wrote nothing there, so the way of taking the key off opens"
     );
 
     // ── lisa set a ceiling on another thread through a record and took it off ──

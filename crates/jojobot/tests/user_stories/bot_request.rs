@@ -477,13 +477,15 @@ async fn a_request_is_not_merged_away_and_the_refusal_names_it() {
 }
 
 /// **An ordinary thing that carries a status key is not a request, and the
-/// refusal that keeps it out of a request does not send the caller to clear the
-/// key.** The request is the survivor, so the key cannot land on it. Clearing the
-/// key is a write of it, and the merge judges what the thing wrote, so the clear
-/// opens nothing: the refusal does not name it, and the merge is refused after
-/// the clear as before, with the request's fields as they were.
+/// refusal that keeps it out of a request tells the caller to archive the claim
+/// that sets the key.** The request is the survivor, so the key cannot land on
+/// it. The merge judges every key the thing wrote, and clearing a key is a write
+/// of it, so the merge is still refused after a clear. Archiving the claim takes
+/// its writes out of that history: the merge then lands, and the request is left
+/// without the key.
 #[tokio::test]
-async fn an_ordinary_thing_merged_into_a_request_is_not_told_to_clear_its_status_key() {
+async fn an_ordinary_thing_merged_into_a_request_is_told_to_archive_the_claim_that_sets_its_status_key()
+ {
     let story = Story::begin("bot:marge").await;
     let marge = story.session().await;
     marge
@@ -510,6 +512,7 @@ async fn an_ordinary_thing_merged_into_a_request_is_not_told_to_clear_its_status
         .await
         .says("topic:scrapbook")
         .says("bot-request:beta")
+        .says("archived")
         .never_says("clear_fields");
     marge
         .call(
@@ -524,7 +527,19 @@ async fn an_ordinary_thing_merged_into_a_request_is_not_told_to_clear_its_status
         )
         .await
         .says("observed_state")
-        .never_says("clear_fields");
+        .says("archived");
+    marge
+        .call(
+            "update_fact",
+            json!({"address": &address, "status": "archived"}),
+        )
+        .await;
+    marge
+        .call(
+            "merge_entities",
+            json!({"duplicate": "topic:scrapbook", "survivor": "bot-request:beta"}),
+        )
+        .await;
     let request = marge
         .call("recall", json!({"subject": "bot-request:beta"}))
         .await
@@ -533,7 +548,7 @@ async fn an_ordinary_thing_merged_into_a_request_is_not_told_to_clear_its_status
         request["objects"][0]["fields"]
             .get("observed_state")
             .is_none(),
-        "the refused merge put nothing of the thing on the request: {request}"
+        "the merge put the archived status key on the request: {request}"
     );
     story.finish().await;
 }

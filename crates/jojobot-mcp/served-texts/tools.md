@@ -1747,8 +1747,9 @@ A merge into your own bot is refused when the duplicate carries a key a bot
 cannot set about itself (thought_capacity, thought_body_cap,
 thought_ages_after_runs, record_capacity, rule_seats, claims_role,
 reports_to), because the merge would set it on you: have a different
-identity merge it, or take the key off the duplicate first with update_fact
-and clear_fields. A connection claim the survivor's own bot wrote counts
+identity merge it, or archive the claim that sets the key on the duplicate
+first, with update_fact and status archived (taking the key off with
+clear_fields is not enough: the merge reads what the duplicate wrote). A connection claim the survivor's own bot wrote counts
 as its thought, and a claim another bot wrote arrives as an ordinary claim
 that takes no seat. A merge that would leave a room over its capacity
 (every thought that counts is held, none ages out), or bring a thought over

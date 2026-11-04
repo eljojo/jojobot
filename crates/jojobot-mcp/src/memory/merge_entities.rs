@@ -22,8 +22,9 @@ pub struct MergeArgs {
     /// cannot set about itself (thought_capacity, thought_body_cap,
     /// thought_ages_after_runs, record_capacity, rule_seats, claims_role,
     /// reports_to), because the merge would set it on you: have a different
-    /// identity merge it, or take the key off the duplicate first with update_fact
-    /// and clear_fields. A connection claim the survivor's own bot wrote counts
+    /// identity merge it, or archive the claim that sets the key on the duplicate
+    /// first, with update_fact and status archived (taking the key off with
+    /// clear_fields is not enough: the merge reads what the duplicate wrote). A connection claim the survivor's own bot wrote counts
     /// as its thought, and a claim another bot wrote arrives as an ordinary claim
     /// that takes no seat. A merge that would leave a room over its capacity
     /// (every thought that counts is held, none ages out), or bring a thought over
@@ -489,7 +490,7 @@ mod tests {
             "bot:milhouse",
             jojobot_domain::memory::THOUGHT_CAPACITY,
             "update_fact",
-            "clear_fields",
+            "archived",
         ] {
             assert!(
                 how.contains(named),
@@ -509,8 +510,8 @@ mod tests {
         );
 
         // **The second way forward the refusal names, taken exactly as it
-        // says.** Another bot carries a ceiling; the caller takes the key off
-        // the record that sets it, and the same merge then lands.
+        // says.** Another bot carries a ceiling; the caller archives the record
+        // that sets it, and the same merge then lands.
         ensure(&jojobot, "bot:epsilon").await;
         let carrier = capture_ok(
             &jojobot,
@@ -537,7 +538,7 @@ mod tests {
         let cleared = json_of(
             &jojobot
                 .update_fact(Parameters(UpdateFactArgs {
-                    clear_fields: Some(vec![jojobot_domain::memory::THOUGHT_CAPACITY.to_string()]),
+                    status: Some("archived".into()),
                     ..crate::memory::testing::update_args(&crate::memory::testing::address_of(
                         &carrier,
                     ))

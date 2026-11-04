@@ -17,10 +17,10 @@ const DUPLICATE: &str = "thread:simpson-kitchen";
 /// **bart wrote a note on the duplicate, so bart is one of the bots that write
 /// into it, and a clear of its ceiling is refused to bart.** The merge refusal
 /// must not name that clear to bart, and bart's clear is refused. Paired with
-/// otto, above bart and a writer of no record there: the route is named to otto, the clear lands
-/// and the merge then lands.
+/// otto, above bart and a writer of no record there: the route is named to otto,
+/// archiving the claim lands and the merge then lands.
 #[tokio::test]
-async fn a_merge_refusal_names_a_clear_only_to_a_caller_whose_clear_lands() {
+async fn a_merge_refusal_names_the_archive_route_only_to_a_caller_whose_archive_lands() {
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
     s.add("bot:marge", "Marge").await;
@@ -79,11 +79,16 @@ async fn a_merge_refusal_names_a_clear_only_to_a_caller_whose_clear_lands() {
         .await
         .says("thought_capacity");
 
-    // ── otto wrote no record there: the clear is named, lands, and the merge too ──
+    // ── otto wrote no record there: archiving the claim is named, lands, and the merge too ──
     s.refused("merge_entities", merge.clone())
         .await
-        .says("clear_fields");
-    s.call("update_fact", clear).await;
+        .says("archived")
+        .never_says("clear_fields");
+    s.call(
+        "update_fact",
+        json!({"address": address, "status": "archived"}),
+    )
+    .await;
     s.call("merge_entities", merge).await;
     s.call("recall", json!({"subject": DUPLICATE}))
         .await

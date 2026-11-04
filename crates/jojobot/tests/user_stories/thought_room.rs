@@ -1071,9 +1071,21 @@ async fn a_merge_into_your_own_bot_is_refused_for_a_duplicate_carrying_the_agein
         .holds_at("/fix_by", "change")
         .holds_at("/how_to_proceed", "thought_ages_after_runs");
 
+    // Clearing the key is a write of it, so only archiving the claim lets the merge land.
     s.call(
         "update_fact",
         json!({"address": setting, "clear_fields": ["thought_ages_after_runs"]}),
+    )
+    .await;
+    s.refused(
+        "merge_entities",
+        json!({"duplicate": "thing:the-couch", "survivor": "bot:otto"}),
+    )
+    .await
+    .says("thought_ages_after_runs");
+    s.call(
+        "update_fact",
+        json!({"address": setting, "status": "archived"}),
     )
     .await;
     s.call(

@@ -1027,8 +1027,9 @@ pub async fn a_claim_that_sets_only_the_generation_is_not_taken_back<M: Memory>(
 /// but the fold interleaves its whole history, so the clear lands on the
 /// survivor and takes the key off it. The merge is refused as if the duplicate
 /// still held the key, for a spec key and a status key of a request and for an
-/// older ceiling key alike, and nothing moves. **Paired**: the same survivor
-/// takes a duplicate that never wrote a guarded key.
+/// older ceiling key alike, and nothing moves. The merge lands once the claim
+/// that set the key is archived. **Paired**: the same survivor takes a duplicate
+/// that never wrote a guarded key.
 pub async fn a_merge_judges_a_guarded_key_its_duplicate_set_and_cleared<M: Memory>(store: &M) {
     use crate::memory::THOUGHT_CAPACITY;
     let request = EntityId("bot-request:contract-cleared-ask".into());
@@ -1156,6 +1157,32 @@ pub async fn a_merge_judges_a_guarded_key_its_duplicate_set_and_cleared<M: Memor
             store.fields(survivor).await.expect("readable"),
             before,
             "{key}: the refused merge moved something onto the survivor"
+        );
+        // **The route the refusal names**: the clear above left its own write in
+        // the history, so the merge was refused after it. Archiving the claim that
+        // set the key takes the writes out of the history, and the merge lands
+        // without the key on the survivor.
+        store
+            .update_fact(
+                &set.address(),
+                FactPatch {
+                    status: Some(FactStatus::Archived),
+                    ..FactPatch::default()
+                },
+                caller,
+            )
+            .await
+            .expect("the claim that set the key is archived");
+        store
+            .merge(&duplicate, survivor, None, date(2026, 10, 4), caller, None)
+            .await
+            .unwrap_or_else(|err| {
+                panic!("{key}: an archived claim wrote nothing that counts: {err:?}")
+            });
+        assert_eq!(
+            store.fields(survivor).await.expect("readable").get(key),
+            before.get(key),
+            "{key}: the merge put the archived key on the survivor"
         );
     }
     store

@@ -2005,12 +2005,14 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             {
                 // **The route of taking the keys off the duplicate is named only
                 // when the caller may take them off**: the domain asked the
-                // licence a clear meets. Named to a caller it refuses, the clear
-                // would loop back here (rule 68).
+                // licence a clear meets. Named to a caller it refuses, the route
+                // would loop back here (rule 68). **The route is archiving, not
+                // clearing**: the merge judges every key the duplicate wrote, and a
+                // clear is a write, while an archived claim's writes no longer count.
                 let clear = if clear_opens {
                     format!(
-                        " Or take {keys} off '{duplicate}' first: update_fact the claim that \
-                         sets it with clear_fields, then merge again."
+                        " Or archive the claim that sets {keys} on '{duplicate}' first: \
+                         update_fact it with status archived, then merge again."
                     )
                 } else {
                     String::new()
@@ -2538,7 +2540,7 @@ pub(crate) mod tests {
         // always exists, taking the key off the duplicate, and no unnamed
         // somebody is sent for.
         let none = refused(MayWrite::Superior, &[]);
-        for named in ["bot:epsilon", "bot:psi", "reports_to", "clear_fields"] {
+        for named in ["bot:epsilon", "bot:psi", "reports_to", "archived"] {
             assert!(none.contains(named), "{named}: {none}");
         }
         assert!(!none.contains("whoever"), "no unnamed somebody: {none}");
@@ -2590,7 +2592,7 @@ pub(crate) mod tests {
         assert!(!named.contains("different identity"), "{named}");
         assert!(!named.contains("your own bot"), "{named}");
         let nobody = refused(&[], true);
-        for word in ["thread:milhouse-moves", "record_capacity", "clear_fields"] {
+        for word in ["thread:milhouse-moves", "record_capacity", "archived"] {
             assert!(nobody.contains(word), "{word}: {nobody}");
         }
         assert!(!nobody.contains("different identity"), "{nobody}");
@@ -2602,7 +2604,7 @@ pub(crate) mod tests {
         for word in ["thread:milhouse-moves", "record_capacity", "manager"] {
             assert!(closed.contains(word), "{word}: {closed}");
         }
-        assert!(!closed.contains("clear_fields"), "{closed}");
+        assert!(!closed.contains("archived"), "{closed}");
         assert!(!closed.contains("  "), "no empty list of bots: {closed}");
     }
 
@@ -2644,7 +2646,7 @@ pub(crate) mod tests {
                 nobody.contains("Place 'bot:lisa' under a manager"),
                 "{may:?}: {nobody}"
             );
-            assert!(!nobody.contains("clear_fields"), "{nobody}");
+            assert!(!nobody.contains("archived"), "{nobody}");
             assert!(!nobody.contains("  "), "{nobody}");
         }
         let named = refused(MayWrite::Superior, &["bot:otto"]);
@@ -2709,7 +2711,7 @@ pub(crate) mod tests {
     /// text, and that text is not the one the fall-through arm gives. A key
     /// dropped from either arm falls through, which also names the clear.
     #[test]
-    fn an_ordinary_duplicate_merged_into_a_request_is_told_to_clear_the_key() {
+    fn an_ordinary_duplicate_merged_into_a_request_is_told_to_archive_the_claim() {
         use jojobot_domain::memory::MayWrite;
         let refused = |may: MayWrite,
                        duplicate: &str,
@@ -2776,16 +2778,16 @@ pub(crate) mod tests {
             "topic:scrapbook",
             "bot-request:beta",
             "observed_state",
-            "clear_fields",
+            "archived",
         ] {
             assert!(ordinary.contains(word), "{word}: {ordinary}");
         }
         assert!(!ordinary.contains("  "), "{ordinary}");
-        assert!(!barred.contains("clear_fields"), "{barred}");
+        assert!(!barred.contains("archived"), "{barred}");
         for word in ["bot-request:alpha", "observed_state"] {
             assert!(request.contains(word), "{word}: {request}");
         }
-        assert!(!request.contains("clear_fields"), "{request}");
+        assert!(!request.contains("archived"), "{request}");
     }
 
     /// **An ordinary thing carrying a request's spec key is told who may merge
@@ -2820,20 +2822,20 @@ pub(crate) mod tests {
         let named = refused(spec, "desired", manager.clone(), true);
         assert!(named.contains("bot:marge"), "{named}");
         assert!(
-            named.contains("clear_fields"),
-            "the clear still opens: {named}"
+            named.contains("archived"),
+            "the archive route opens: {named}"
         );
         assert!(!named.contains("  "), "{named}");
         // The clear is named only when it opens.
         let barred = refused(spec, "desired", manager.clone(), false);
         assert!(barred.contains("bot:marge"), "{barred}");
-        assert!(!barred.contains("clear_fields"), "{barred}");
+        assert!(!barred.contains("archived"), "{barred}");
         // A request whose spec has no writer names nobody: the guard on the new
         // arm keeps an empty list out of a sentence that has a gap for it.
         let nobody = refused(spec, "desired", vec![], true);
         assert!(!nobody.contains("bot:marge"), "{nobody}");
         assert!(!nobody.contains("  "), "no gap where a name goes: {nobody}");
-        assert!(nobody.contains("clear_fields"), "{nobody}");
+        assert!(nobody.contains("archived"), "{nobody}");
         assert_ne!(named, nobody);
         // A duplicate that also carries a status key cannot be merged by the
         // manager, so the manager is not named, whichever key comes first.
