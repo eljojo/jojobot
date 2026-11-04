@@ -104,7 +104,9 @@ async fn the_restored_log_holds_a_batch(pool: &sqlx::MySqlPool) -> bool {
 /// **Each mark through the teaching ledger's own record path, with the shadow
 /// on**, so its legacy row lands with its event in one commit, as the recorded
 /// build writes it. The ledger opens over the rows the recording holds.
-async fn seed_the_teaching_marks_through_the_log(pool: &sqlx::MySqlPool) {
+async fn seed_the_teaching_marks_through_the_log(
+    pool: &sqlx::MySqlPool,
+) -> jojobot_adapters::teaching_log::LoggedTeachings {
     use jojobot_adapters::dolt::teaching::DoltTeachings;
     use jojobot_adapters::teaching_log::LoggedTeachings;
     use jojobot_adapters::{writer::Writer, writer_log::WriterLog};
@@ -135,6 +137,7 @@ async fn seed_the_teaching_marks_through_the_log(pool: &sqlx::MySqlPool) {
             .expect("the teaching mark lands through the log");
         assert!(landed, "the recording already holds a mark for {sid}");
     }
+    ledger
 }
 
 struct Booted {
@@ -1329,14 +1332,17 @@ async fn the_logged_marks(pool: &sqlx::MySqlPool) -> Vec<jojobot_adapters::teach
 }
 
 /// **A store that is aged moves its teaching log with its rows.** A fresh store
-/// takes the two seeded marks through the ledger, is aged six hours, and the
-/// log's fold must equal the rows, each mark six hours before it was written.
+/// takes two seeded marks through the ledger and clears one run. After six hours
+/// of ageing, the clear stays whole, the other mark moves, and the fold equals
+/// the rows with the cleared run absent.
 /// This needs no recording, so it is the local witness of the ageing step.
 #[tokio::test]
 async fn ageing_a_store_moves_its_teaching_log_with_its_rows() {
     use jojobot_adapters::dolt::teaching::DoltTeachings;
+    use jojobot_adapters::teaching_log::codec;
     use jojobot_adapters::{writer::Writer, writer_log::WriterLog};
     use jojobot_domain::log::{LogStore, Position};
+    use jojobot_domain::teaching::{Teachings, events::TeachingEvent};
     let scratch = Scratch::new("gate-ageing-log");
     let server = Dolt::start(&scratch.0, free_port())
         .await
@@ -1344,7 +1350,13 @@ async fn ageing_a_store_moves_its_teaching_log_with_its_rows() {
     let pool = jojobot_adapters::testing::migrated_database(&server, "alpha")
         .await
         .expect("a migrated database");
-    seed_the_teaching_marks_through_the_log(&pool).await;
+    {
+        let ledger = seed_the_teaching_marks_through_the_log(&pool).await;
+        ledger
+            .forget(&jojobot_domain::session::Sid("alpha".into()))
+            .await
+            .expect("the first run is cleared through the log");
+    }
     let before = {
         let log = WriterLog::open(pool.clone(), Writer::default())
             .await
@@ -1354,6 +1366,12 @@ async fn ageing_a_store_moves_its_teaching_log_with_its_rows() {
             .expect("the seeded batches read")
     };
     assert!(!before.is_empty(), "the seed wrote a batch");
+    let cleared = before.last().expect("the clear wrote its batch").members();
+    assert_eq!(cleared.len(), 1);
+    assert!(matches!(
+        codec::decode(&cleared[0]),
+        Ok(TeachingEvent::Cleared { run }) if run.0 == "alpha"
+    ));
     age_the_recording(&pool, 6).await;
     let after = {
         let log = WriterLog::open(pool.clone(), Writer::default())
@@ -1375,12 +1393,20 @@ async fn ageing_a_store_moves_its_teaching_log_with_its_rows() {
             "the batch header moves with its events"
         );
     }
+    assert_eq!(
+        after.last().expect("the clear batch remains").members(),
+        cleared,
+        "ageing preserves the clear payload"
+    );
     let rows = DoltTeachings::open(pool.clone())
         .marks()
         .await
         .expect("the teaching rows read back");
     let logged = the_logged_marks(&pool).await;
-    for (sid, taught_at) in TEACHING_MARKS {
+    for (sid, taught_at) in TEACHING_MARKS
+        .into_iter()
+        .filter(|(sid, _)| *sid != "alpha")
+    {
         let aged: jiff::Timestamp = taught_at
             .parse::<jiff::Timestamp>()
             .expect("a mark time parses")
@@ -1392,6 +1418,10 @@ async fn ageing_a_store_moves_its_teaching_log_with_its_rows() {
             "the log holds {sid} six hours earlier: {logged:?}"
         );
     }
+    assert!(
+        logged.iter().all(|mark| mark.sid.as_str() != "alpha"),
+        "the cleared run stays absent after ageing: {logged:?}"
+    );
     assert_eq!(logged, rows, "an aged store's log and rows agree");
 }
 
