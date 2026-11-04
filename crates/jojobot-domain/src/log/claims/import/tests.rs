@@ -1138,3 +1138,151 @@ fn no_stored_row_binds_an_object_to_an_app_so_an_import_leaves_every_object_unbo
         assert_eq!(held.bound_to, None, "{id} is bound to no app");
     }
 }
+
+/// **Rows that arrive in the wrong order import to the events the same rows give
+/// in the right one.** Each rule below sorts its rows by the number or ordinal the
+/// row carries, and the store hands rows back in no order a case may lean on. A
+/// write stored on the first thing of a chain of two merges ends under the last
+/// thing, with the id its claim wears there, only when the merges are applied in
+/// their numbers' order; the merge events then arrive in that order too; and a
+/// numbering whose rows come back as 2, 1 is the numbering 1, 2.
+fn a_chain_of_two_merges(descending: bool) -> Rows {
+    let mut written = write_of(1, "calm", Some("run-a"), 1);
+    written.claim.home = object("k3");
+    written.claim.label = "f9".into();
+    let step = |no: i64, folded: &str, survivor: &str, from: &str, to: &str| MergeRow {
+        no,
+        folded: object(folded),
+        survivor: object(survivor),
+        merged_at: at(10 * no).unwrap(),
+        session: None,
+        claims: vec![(from.into(), to.into())],
+    };
+    let mut merges = vec![
+        step(1, "k1", "k2", "f1", "f5"),
+        step(2, "k2", "k3", "f5", "f9"),
+    ];
+    if descending {
+        merges.reverse();
+    }
+    Rows {
+        entities: vec![
+            entity("k1", "person:homer"),
+            entity("k2", "person:marge"),
+            entity("k3", "person:bart"),
+        ],
+        facts: vec![fact("k3", "f9", vec![written])],
+        field_writes: vec![set("k1", "mood", 1, "calm", "f1", Some(1))],
+        merges,
+        ..Rows::default()
+    }
+}
+
+#[test]
+fn merges_given_in_descending_order_import_as_they_do_in_ascending_order() {
+    let ascending = imported(&a_chain_of_two_merges(false));
+    // The anchor: in order, the write sits under the last thing with the id its
+    // claim wears there, and the merges arrive oldest first.
+    let written: Vec<(&ObjectId, &RecordId)> = ascending
+        .iter()
+        .filter_map(|event| match &event.payload {
+            ClaimEvent::FieldWritten {
+                subject, record, ..
+            } => Some((subject, record)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        written,
+        [(&object("k3"), &RecordId("k3/f9".into()))],
+        "the write follows both merges"
+    );
+    let folded: Vec<&ObjectId> = ascending
+        .iter()
+        .filter_map(|event| match &event.payload {
+            ClaimEvent::ObjectsMerged { folded, .. } => Some(folded),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(folded, [&object("k1"), &object("k2")], "oldest merge first");
+    // The same rows, merges listed newest first.
+    assert_eq!(
+        import(&a_chain_of_two_merges(true)),
+        Ok(ascending),
+        "the order the rows come back in is not the order of the merges"
+    );
+}
+
+#[test]
+fn former_handles_given_in_descending_order_import_as_they_do_in_ascending_order() {
+    let formers = |descending: bool| {
+        let mut rows = vec![
+            FormerHandleRow {
+                former: "person:nelson".into(),
+                object: object("k1"),
+                ordinal: 1,
+            },
+            FormerHandleRow {
+                former: "person:milhouse".into(),
+                object: object("k1"),
+                ordinal: 2,
+            },
+        ];
+        if descending {
+            rows.reverse();
+        }
+        Rows {
+            entities: vec![entity("k1", "person:homer")],
+            former_handles: rows,
+            ..Rows::default()
+        }
+    };
+    let ascending = imported(&formers(false));
+    let bound: Vec<&str> = ascending
+        .iter()
+        .filter_map(|event| match &event.payload {
+            ClaimEvent::AddressBound { address, .. } if address != "person:homer" => {
+                Some(address.as_str())
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        bound,
+        ["person:nelson", "person:milhouse"],
+        "the first former handle is bound first"
+    );
+    assert_eq!(import(&formers(true)), Ok(ascending));
+}
+
+#[test]
+fn a_claims_writes_given_in_descending_order_import_as_they_do_in_ascending_order() {
+    let claim_of = |descending: bool| {
+        let first = write_of(1, "first", Some("run-a"), 1);
+        let second = write_of(2, "second", Some("run-b"), 2);
+        let mut row = fact(
+            "k1",
+            "f1",
+            if descending {
+                vec![second.clone(), first.clone()]
+            } else {
+                vec![first.clone(), second.clone()]
+            },
+        );
+        row.head = second.claim.clone();
+        Rows {
+            entities: vec![entity("k1", "person:homer")],
+            facts: vec![row],
+            ..Rows::default()
+        }
+    };
+    let ascending = imported(&claim_of(false));
+    let state = State::replay(&ascending);
+    let record = state.record(&record_id(&object("k1"), "f1")).unwrap();
+    assert_eq!(
+        (record.claim.content.as_str(), record.revisions),
+        ("second", 1),
+        "created by the first write and revised by the second"
+    );
+    assert_eq!(import(&claim_of(true)), Ok(ascending));
+}
