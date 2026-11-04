@@ -407,6 +407,8 @@ impl DoltMemory {
 pub(super) struct Directory {
     names: std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
     handle_of: std::collections::BTreeMap<String, String>,
+    /// Every entity by the id a stored mark holds: the badge, else the handle.
+    roster: std::collections::BTreeMap<String, Entity>,
     ids: std::collections::BTreeSet<String>,
     reference_keys: std::collections::BTreeSet<String>,
     /// Whether an older pass already decided the plain handle text of a value of
@@ -495,24 +497,21 @@ impl Directory {
                     marking.mixed = true;
                     return (*item).to_string();
                 }
-                match self.names.get(*item).map(|named| named.len()) {
-                    Some(1) if self.keep_older && only_handles => {
+                match self.resolve_marked_name(&id) {
+                    Ok(Some(_)) if self.keep_older && only_handles => {
                         marking.owned_now += 1;
                         marking.older.push((*item).to_string());
                         (*item).to_string()
                     }
-                    Some(1) => {
+                    Ok(Some(stored)) => {
                         marking.handles += 1;
                         if only_handles {
                             marking.owned_now += 1;
                         }
-                        self.names[*item]
-                            .iter()
-                            .map(|id| jojobot_domain::memory::marked_stored_handle(id))
-                            .collect()
+                        jojobot_domain::memory::marked_stored_handle(stored)
                     }
                     why => {
-                        marking.left.push(((*item).to_string(), why.is_some()));
+                        marking.left.push(((*item).to_string(), why.is_err()));
                         (*item).to_string()
                     }
                 }
@@ -520,6 +519,35 @@ impl Directory {
             .collect();
         marking.value = marked.join(", ");
         marking
+    }
+}
+
+impl Directory {
+    /// **The stored id of the thing a handle names, read through the domain's
+    /// numbered walk** (`<collection>/<N>`, chains, a renamed prefix), as a write
+    /// resolves it. `Err` when the spelling, or a prefix of it, has named more than
+    /// one thing; `Ok(None)` when it names nothing.
+    fn resolve_marked_name(&self, id: &EntityId) -> Result<Option<&str>, ()> {
+        let ambiguous = std::cell::Cell::new(false);
+        let flat = |id: &EntityId| {
+            let names = self.names.get(id.as_str())?;
+            if names.len() != 1 {
+                ambiguous.set(true);
+                return None;
+            }
+            self.roster.get(names.first()?)
+        };
+        let resolved = jojobot_domain::memory::numbered::resolve_walk(id, &flat);
+        if ambiguous.get() {
+            return Err(());
+        }
+        Ok(resolved.map(|entity| {
+            entity
+                .badge
+                .as_deref()
+                .filter(|badge| !badge.is_empty())
+                .unwrap_or_else(|| entity.id.as_str())
+        }))
     }
 }
 
@@ -562,6 +590,14 @@ impl DoltMemory {
         for (handle, badge) in former {
             names.entry(handle).or_default().insert(badge);
         }
+        // **The numbers a collection holds answer as handles** (`<collection>/<N>`),
+        // the same derived names a read of a former handle serves.
+        for former in self.derived_formers_in(tx).await? {
+            names
+                .entry(former.former.to_string())
+                .or_default()
+                .insert(former.badge);
+        }
         // A record the build supplies wears no badge, and a write stores its
         // handle as its id.
         for (entity, _) in self.supplied.records() {
@@ -572,10 +608,29 @@ impl DoltMemory {
                 .unwrap_or_else(|| entity.id.to_string());
             names.entry(entity.id.to_string()).or_default().insert(id);
         }
+        let stored_id = |entity: &Entity| {
+            entity
+                .badge
+                .clone()
+                .filter(|badge| !badge.is_empty())
+                .unwrap_or_else(|| entity.id.to_string())
+        };
+        let mut roster: BTreeMap<String, Entity> = self
+            .index(tx)
+            .await?
+            .into_iter()
+            .map(|entity| (stored_id(&entity), entity))
+            .collect();
+        for (entity, _) in self.supplied.records() {
+            roster
+                .entry(stored_id(entity))
+                .or_insert_with(|| entity.clone());
+        }
         let ids = names.values().flatten().cloned().collect();
         Ok(Directory {
             names,
             handle_of,
+            roster,
             ids,
             reference_keys,
             keep_older: false,

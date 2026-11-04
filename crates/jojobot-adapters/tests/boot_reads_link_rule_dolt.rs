@@ -14,6 +14,8 @@ use jojobot_domain::memory::boot_reader::BootReader;
 use jojobot_domain::memory::testing::contract as memory;
 use jojobot_domain::memory::{EntityId, Memory, NewEntity, NewFact};
 
+#[path = "boot_reads_link_rule_dolt/numbered_marks.rs"]
+mod numbered_marks;
 #[path = "boot_reads_link_rule_dolt/rendering.rs"]
 mod rendering;
 #[path = "boot_reads_link_rule_dolt/write_results.rs"]
