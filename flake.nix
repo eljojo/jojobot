@@ -498,6 +498,8 @@
             # checkout at one fixed path, through `unshare` and `mount`. The
             # host runner's own PATH has neither.
             pkgs.util-linux
+            # `make coverage` reads the instrumented runs of the proof lanes.
+            pkgs.cargo-llvm-cov
           ];
           # Cargo's default ./target (gitignored) — no CARGO_TARGET_DIR override,
           # which would anchor to the shell-entry $PWD and leak artifacts if run

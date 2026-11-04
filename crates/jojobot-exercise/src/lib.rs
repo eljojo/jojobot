@@ -34,6 +34,7 @@ pub mod expectations;
 pub mod failability;
 pub mod furnish_once;
 pub mod isolate;
+pub mod ledger;
 pub mod lock;
 pub mod playbook;
 pub mod replay;

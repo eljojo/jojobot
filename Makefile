@@ -29,7 +29,7 @@ AT_ROOT = $(if $(CI_ROOT),scripts/ci-root $(CI_ROOT) ,)
 BAR = $(if $(BAR_BUNDLE),cargo-target/debug/jojobot-bar,$(CARGO) run -q --locked -p jojobot-bar --)
 
 .DEFAULT_GOAL := help
-.PHONY: help check dev report narrow test lint fmt fmt-check build bundle integration rooms room year nix-build flake-check argument-coverage paid replay refresh-upgrade-fixture carried snapshot size static
+.PHONY: help check dev report narrow test lint fmt fmt-check build bundle integration rooms room year coverage mutants nix-build flake-check argument-coverage paid replay refresh-upgrade-fixture carried snapshot size static
 
 help: ## List the targets
 	@grep -hE '^[a-z-]+:.*##' $(MAKEFILE_LIST) \
@@ -311,6 +311,22 @@ room: ## One room's suite: make room ROOM=<name>
 # it: `rooms` leaves it out and `check` runs no room. Release QA runs it.
 year: ## The year room's suite
 	$(MAKE) room ROOM=year
+
+# **The coverage of the proof lanes at one head** (rule 767: no coverage lost).
+# Line and region coverage of the whole workspace's tests, rooms and contract
+# lanes included, as one JSON summary. Region coverage is the branch measure the
+# stable toolchain gives. Slow: the `ledger-runs` workflow runs it, never a dev host.
+coverage: ## Coverage summary of the workspace's tests: target/coverage/summary.json
+	mkdir -p target/coverage
+	$(CARGO) llvm-cov --workspace --all-features --no-fail-fast --json --summary-only --output-path target/coverage/summary.json
+
+# **The mutation sample against one lane**, from `crates/jojobot-exercise/ledger/mutants.tsv`:
+# `make mutants LANE="make rooms" FROM=0 COUNT=8`. The killed set goes to
+# target/mutants/killed.tsv. It runs the lane once per mutant, so the
+# `ledger-runs` workflow runs it, never a dev host.
+LANE ?= make rooms
+mutants: ## The mutation sample against a lane: make mutants LANE="make rooms" [FROM=n COUNT=m]
+	scripts/mutant-sample $(if $(FROM),--from $(FROM),) $(if $(COUNT),--count $(COUNT),) -- $(LANE)
 
 nix-build: ## The package build, as release QA runs it
 	nix build

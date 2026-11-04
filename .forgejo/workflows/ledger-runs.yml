@@ -1,0 +1,70 @@
+# The two slow runs behind the room coverage ledger (rule 767: no coverage lost):
+# the coverage of the proof lanes at one head, and the mutation sample against a
+# lane. Neither runs on a push or a dev host. Dispatch with:
+# POST actions/workflows/ledger-runs.yml/dispatches
+# {"ref":"<branch-or-sha>","inputs":{"job":"coverage"}}
+# {"ref":"<branch-or-sha>","inputs":{"job":"mutants","lane":"make rooms","from":"0","count":"8"}}
+# The run's killed set (target/mutants/killed.tsv) or coverage summary
+# (target/coverage/summary.json) is uploaded as an artifact; the card records its
+# run id and sha. This workflow is never a proof of the release gate.
+name: ledger-runs
+
+on:
+  workflow_dispatch:
+    inputs:
+      job:
+        description: 'coverage or mutants'
+        required: true
+      lane:
+        description: 'mutants only: the lane command, make rooms or make check'
+        required: false
+        default: 'make rooms'
+      from:
+        description: 'mutants only: first mutant of the slice (digits)'
+        required: false
+        default: '0'
+      count:
+        description: 'mutants only: how many mutants (digits)'
+        required: false
+        default: '8'
+
+concurrency:
+  group: ledger-runs-${{ forgejo.ref }}-${{ forgejo.event.inputs.job }}-${{ forgejo.event.inputs.from }}
+  cancel-in-progress: true
+
+jobs:
+  ledger-runs:
+    runs-on: nix
+    timeout-minutes: 360
+    env:
+      JOB: ${{ forgejo.event.inputs.job }}
+      LANE: ${{ forgejo.event.inputs.lane }}
+      FROM: ${{ forgejo.event.inputs.from }}
+      COUNT: ${{ forgejo.event.inputs.count }}
+    steps:
+      - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - name: Inputs
+        run: |
+          case "$JOB" in coverage|mutants) ;; *) echo "job must be coverage or mutants" >&2; exit 1;; esac
+          case "$LANE" in "make rooms"|"make check") ;; *) echo "lane must be make rooms or make check" >&2; exit 1;; esac
+          case "$FROM$COUNT" in ''|*[!0-9]*) echo "from and count are digits" >&2; exit 1;; esac
+          echo "level: ledger-runs, $JOB; left to full boundary: everything else"
+      - name: Coverage
+        if: ${{ forgejo.event.inputs.job == 'coverage' }}
+        run: nix develop -c make coverage
+      - name: Mutants
+        if: ${{ forgejo.event.inputs.job == 'mutants' }}
+        run: nix develop -c make mutants LANE="$LANE" FROM="$FROM" COUNT="$COUNT"
+      - if: ${{ !cancelled() }}
+        continue-on-error: true
+        uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5
+        with:
+          name: ledger-runs-${{ forgejo.event.inputs.job }}
+          path: |
+            target/coverage/summary.json
+            target/mutants/killed.tsv
+            target/bar/*.log
+          retention-days: 30
+          if-no-files-found: ignore

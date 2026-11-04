@@ -1,0 +1,90 @@
+#!/usr/bin/env python3
+"""**Run the mutation sample, and record which mutants a lane kills.**
+
+    scripts/mutant-sample [--from N] [--count M] -- <command...>
+
+Reads `crates/jojobot-exercise/ledger/mutants.tsv` (file, from, to), and for each
+mutant in the slice runs `scripts/sabotage <file> <from> <to> -- <command...>`.
+The killed set of a lane is the set of mutants the lane reddens; a lane that
+replaces another must kill the same set (rule 767: no coverage lost).
+
+The verdict of each mutant is the word `scripts/sabotage` prints: RED (killed),
+GREEN (survived), or a refusal or a break that does not build (neither colour,
+counted apart). One line per mutant goes to stdout and to
+`target/mutants/killed.tsv`: index, file, verdict. The exit code is 0 when every
+mutant gave a verdict, and 1 when the tool refused any; a surviving mutant is a
+finding for the ledger, not a failure of this tool.
+
+This runs a lane once per mutant, so it never runs on a dev host: the
+`mutants` workflow runs it.
+"""
+import os
+import re
+import subprocess
+import sys
+
+MANIFEST = "crates/jojobot-exercise/ledger/mutants.tsv"
+OUT = "target/mutants/killed.tsv"
+USAGE = "usage: scripts/mutant-sample [--from N] [--count M] -- <command...>"
+
+
+def rows(path):
+    with open(path, encoding="utf-8") as handle:
+        lines = handle.read().splitlines()[1:]
+    return [line.split("\t") for line in lines if line]
+
+
+def verdict_of(output):
+    """The word the sabotage tool ends on, or `refused`."""
+    found = re.findall(r"^SABOTAGE VERDICT (RED|GREEN)", output, re.M)
+    if found:
+        return found[-1]
+    if "SABOTAGE REFUSED" in output:
+        return "refused"
+    if "SABOTAGE VERDICT DID NOT COMPILE" in output:
+        return "unbuilt"
+    return "refused"
+
+
+def main(argv):
+    if "--" not in argv:
+        print(USAGE, file=sys.stderr)
+        return 2
+    split = argv.index("--")
+    options, command = argv[:split], argv[split + 1 :]
+    if not command:
+        print(USAGE, file=sys.stderr)
+        return 2
+    start, count = 0, None
+    it = iter(options)
+    for option in it:
+        if option == "--from":
+            start = int(next(it))
+        elif option == "--count":
+            count = int(next(it))
+        else:
+            print(USAGE, file=sys.stderr)
+            return 2
+    sample = rows(MANIFEST)
+    chosen = list(enumerate(sample))[start : None if count is None else start + count]
+    os.makedirs(os.path.dirname(OUT), exist_ok=True)
+    refused = 0
+    with open(OUT, "a", encoding="utf-8") as record:
+        for index, (file, old, new) in chosen:
+            run = subprocess.run(
+                ["scripts/sabotage", file, old, new, "--", *command],
+                capture_output=True,
+                text=True,
+            )
+            word = verdict_of(run.stdout + run.stderr)
+            if word in ("refused", "unbuilt"):
+                refused += 1
+            line = f"{index}\t{file}\t{word}"
+            print(line, flush=True)
+            record.write(line + "\n")
+            record.flush()
+    return 1 if refused else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
