@@ -531,6 +531,7 @@ async fn deleting_a_thing_under_the_store_clears_every_table_keyed_to_it() {
     let doomed = thing(&store, "person:nelson", "Nelson").await;
     let kept = thing(&store, "person:milhouse", "Milhouse").await;
     let folded = thing(&store, "person:ralph", "Ralph").await;
+    let spare = thing(&store, "person:lisa", "Lisa").await;
     let caller = EntityId("bot:sigma".into());
     // **Renamed first**, so the prose, the merge and the former handle all name
     // the handle the seam is asked to delete.
@@ -564,10 +565,12 @@ async fn deleting_a_thing_under_the_store_clears_every_table_keyed_to_it() {
             .await
             .expect("prose lands");
     }
-    store
-        .merge(&folded, &renamed, None, date(2026, 6, 3), &caller, None)
-        .await
-        .expect("the merge lands");
+    for (from, to) in [(&folded, &renamed), (&renamed, &kept), (&spare, &kept)] {
+        store
+            .merge(from, to, None, date(2026, 6, 3), &caller, None)
+            .await
+            .expect("the merge lands");
+    }
     let badge = store
         .entities
         .lock()
@@ -577,6 +580,7 @@ async fn deleting_a_thing_under_the_store_clears_every_table_keyed_to_it() {
         .and_then(|e| e.badge.clone())
         .expect("the renamed thing wears a badge");
     let home = EntityId(badge.clone());
+    let spare_home = EntityId(store.badges.lock().unwrap()[&spare].clone());
     let kept_home = EntityId(
         store
             .entities
@@ -653,6 +657,14 @@ async fn deleting_a_thing_under_the_store_clears_every_table_keyed_to_it() {
             .unwrap()
             .iter()
             .any(|m| m.survivor == home)
+    );
+    assert!(
+        store
+            .merges
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|m| m.folded == home)
     );
     assert!(
         store
@@ -737,6 +749,12 @@ async fn deleting_a_thing_under_the_store_clears_every_table_keyed_to_it() {
             .all(|m| m.survivor != home && m.folded != home),
         "a merge naming the deleted thing remains"
     );
+    {
+        let kept_merges = store.merges.lock().unwrap();
+        assert_eq!(kept_merges.len(), 1, "the unrelated merge stays");
+        assert_eq!(kept_merges[0].folded, spare_home);
+        assert_eq!(kept_merges[0].survivor, kept_home);
+    }
     assert!(
         store
             .former_handles
