@@ -331,12 +331,14 @@ fn quarantine_receipt_json(quarantined: &mailbox::Quarantined) -> serde_json::Va
 
 fn what_a_retirement_left_standing(processed: &Message) -> String {
     // **A final state the store left as it was** is named as it stands: this call
-    // retired nothing.
-    if processed.state == mailbox::MessageState::Superseded {
+    // retired nothing. Which states are final is the state's own question
+    // (`is_unprocessed`), the one the other two closing consumers ask.
+    if processed.state != mailbox::MessageState::Processed && !processed.state.is_unprocessed() {
         return format!(
-            "{} is superseded, a final state, and nothing was written. A message its sender \
-             replaced before anyone read it stays as it is: read_message returns it.",
+            "{} is {}, a final state, and nothing was written. It stays as it is: \
+             read_message returns it.",
             processed.id.as_str(),
+            processed.state.as_token(),
         );
     }
     let recorded = match processed.notes.as_deref() {
