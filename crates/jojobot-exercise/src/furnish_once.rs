@@ -75,31 +75,48 @@ pub fn kinds_held(boot: &serde_json::Value) -> Option<Vec<String>> {
 /// sorted, so a furnish made live and one copied from the cache can be compared
 /// on what a case can find. The kinds are the ones the room's boot names, so a
 /// kind the build gains or a room fills (a bot, a role) is compared as well. Each
-/// kind is read up to 500 objects, so a room that holds more of one kind compares
-/// its first 500 of it.
+/// kind is read in pages of 500 objects, and goes on where the answer says it
+/// stopped, so a kind the answer ceiling cut is compared whole.
 pub async fn held_ids(surface: &Surface) -> Vec<String> {
     let boot = surface.call("start_here", json!({"brief": true})).await;
     let boot: serde_json::Value = serde_json::from_str(&boot).expect("a JSON boot");
     let kinds = kinds_held(&boot).expect("the boot names the kinds the room holds");
     let mut ids = Vec::new();
     for kind in kinds {
-        let read = surface
-            .call(
-                "recall",
-                json!({"kind": kind, "limit": 500, "keys": ["name"]}),
-            )
-            .await;
-        let read: serde_json::Value = serde_json::from_str(&read).expect("a JSON read");
-        ids.extend(ids_read(&kind, &read));
+        let mut offset = 0;
+        loop {
+            let read = surface
+                .call(
+                    "recall",
+                    json!({"kind": kind, "limit": 500, "offset": offset, "keys": ["name"]}),
+                )
+                .await;
+            let read: serde_json::Value = serde_json::from_str(&read).expect("a JSON read");
+            ids.extend(ids_read(&kind, &read));
+            match next_offset(&kind, offset, &read) {
+                Some(next) => offset = next,
+                None => break,
+            }
+        }
     }
     ids.sort();
     ids
 }
 
-/// **The ids one kind's read answered**, at most 500 of them: the read asks for
-/// that many and a room past it compares its first 500 only. An answer that
-/// refused the read says so naming the kind, because a kind that contributes
-/// nothing on both sides would compare equal over ids nobody looked at.
+/// **Where a read that was cut goes on**, or `None` for a read that said what it
+/// left out and left out nothing. An answer stops at its ceiling as well as at its
+/// limit, and names the offset that reads on under `not_shown`.
+pub fn next_offset(kind: &str, offset: u64, read: &serde_json::Value) -> Option<u64> {
+    let cut = read.get("not_shown")?;
+    match cut["offset"].as_u64() {
+        Some(next) if next > offset => Some(next),
+        _ => panic!("the read of the kind {kind} was cut and does not go on past {offset}: {cut}"),
+    }
+}
+
+/// **The ids one page of one kind's read answered.** An answer that refused the
+/// read says so naming the kind, because a kind that contributes nothing on both
+/// sides would compare equal over ids nobody looked at.
 pub fn ids_read(kind: &str, read: &serde_json::Value) -> Vec<String> {
     assert!(
         read["status"] != "blocked" && read.get("transport_error").is_none(),
@@ -181,6 +198,49 @@ mod tests {
         let answered = json!({"objects": [{"id": "bot:otto"}, {"id": "bot:lisa"}], "count": 2});
         assert_eq!(ids_read("bot", &answered), ["bot:otto", "bot:lisa"]);
         assert!(ids_read("pet", &json!({"objects": [], "count": 0})).is_empty());
+    }
+
+    /// A read the answer ceiling cut, as a server answers it: the ids it gave, and
+    /// under `not_shown` how many it left out and the offset that reads on. The
+    /// shape is the served one, taken from an answer that was cut.
+    fn a_cut_read(next: u64) -> serde_json::Value {
+        json!({
+            "count": 1,
+            "objects": [{"id": "bot:otto"}],
+            "not_shown": {
+                "count": 5,
+                "how_to_proceed": "these come after the ones above: repeat this call with the offset",
+                "offset": next
+            }
+        })
+    }
+
+    /// **A read that was cut says where to go on, and a whole one says nothing.**
+    #[test]
+    fn a_cut_read_goes_on_where_it_stopped_and_a_whole_one_stops() {
+        assert_eq!(next_offset("bot", 0, &a_cut_read(16)), Some(16));
+        assert_eq!(
+            next_offset("bot", 0, &json!({"objects": [], "count": 0})),
+            None
+        );
+    }
+
+    /// A cut that names no way on, or one that does not move, is a failure naming
+    /// the kind: going on from the same place would read the same page for ever.
+    #[test]
+    #[should_panic(expected = "the read of the kind bot was cut and does not go on")]
+    fn a_cut_that_does_not_advance_is_a_failure_naming_the_kind() {
+        next_offset("bot", 16, &a_cut_read(16));
+    }
+
+    #[test]
+    #[should_panic(expected = "the read of the kind role was cut and does not go on")]
+    fn a_cut_that_names_no_offset_is_a_failure_naming_the_kind() {
+        next_offset(
+            "role",
+            0,
+            &json!({"objects": [], "not_shown": {"count": 3}}),
+        );
     }
 
     /// **A boot that names no kinds is not a room that holds nothing.** Taking
