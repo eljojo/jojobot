@@ -892,6 +892,10 @@ impl InMemoryMemory {
                     .map(|f| f.former.clone()),
             )
             .chain([handle.clone()])
+            // **A spelling a surviving thing holds now is that thing's page**: a
+            // handle a rename vacated can be made again, and its prose is the new
+            // holder's, not the deleted thing's.
+            .filter(|spelling| !rows.iter().any(|survivor| &survivor.id == spelling))
             .collect();
         self.prose
             .lock()

@@ -731,3 +731,78 @@ async fn deleting_a_renamed_thing_under_the_store_clears_the_prose_written_befor
         "the thing nobody deleted keeps its page"
     );
 }
+
+/// **A spelling a surviving thing holds now is not the deleted thing's page**:
+/// a thing renamed away from `person:nelson` still lists that spelling as a
+/// former handle, and a second thing made at the vacated spelling has written a
+/// page there. Erasing the first under the store clears the pages only it wrote,
+/// and the second thing keeps its row and its page. Its page sits under the very
+/// spelling the deleted thing lists as a former handle.
+#[tokio::test]
+async fn deleting_a_renamed_thing_keeps_the_page_of_a_thing_at_its_vacated_handle() {
+    let store = InMemoryMemory::booted();
+    let doomed = thing(&store, "person:nelson", "Nelson").await;
+    store
+        .set_prose(&doomed, "the first page", None)
+        .await
+        .expect("prose lands");
+    let renamed = EntityId("person:delta".into());
+    store
+        .rename_entity(
+            &doomed,
+            &renamed,
+            None,
+            date(2026, 6, 4),
+            crate::memory::Override::none(),
+            None,
+        )
+        .await
+        .expect("the rename is answered")
+        .written()
+        .expect("nothing collides with the new handle");
+    // The vacated handle is screened against the former one, so the creation is
+    // refused once and made again with the override its refusal offers.
+    let mut second = NewEntity::new(EntityId("person:nelson".into()), "Gamma Prime", "fixture");
+    let later = match store.add_entity(second.clone()).await.expect("add") {
+        crate::memory::Guarded::Written(entity) => entity.id,
+        crate::memory::Guarded::Blocked {
+            attempted,
+            candidates,
+        } => {
+            second.override_token = Some(crate::memory::guard::override_token(
+                &attempted,
+                &candidates,
+            ));
+            second.override_reason = Some("a different person at the vacated handle".into());
+            store
+                .add_entity(second)
+                .await
+                .expect("add")
+                .written()
+                .expect("the override lifts the refusal")
+                .id
+        }
+    };
+    store
+        .set_prose(&later, "the second page", None)
+        .await
+        .expect("prose lands");
+
+    store.delete_entity_past_the_guard(&renamed);
+
+    let second_page = store.prose.lock().unwrap().get(&later).cloned();
+    assert_eq!(
+        second_page.as_deref(),
+        Some("the second page"),
+        "the thing at the reused handle keeps its page"
+    );
+    assert!(
+        store
+            .list_entities(None)
+            .await
+            .expect("the roster reads")
+            .iter()
+            .any(|entity| entity.id == later),
+        "and its row survives"
+    );
+}
