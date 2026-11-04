@@ -470,7 +470,7 @@ fn a_container_holds_the_numbers_of_the_objects_under_it() {
             ask: vec![("coll", "num", 1, None)],
         },
         Row {
-            name: "a container that stops numbering holds nothing, and holds it again when it starts",
+            name: "a container that stops numbering holds nothing",
             events: with(
                 collection(),
                 [
@@ -478,13 +478,30 @@ fn a_container_holds_the_numbers_of_the_objects_under_it() {
                     holds("w1", "m1", "num", "1"),
                     vec![
                         created("w2", claim("fw2", "coll", "c", 2)),
-                        clear("w2", NUMBERS_BY.len().to_string().as_str(), "x", 1),
                         clear("w2", "coll", NUMBERS_BY, 2),
                     ],
                 ]
                 .concat(),
             ),
             ask: vec![("coll", "num", 1, None)],
+        },
+        Row {
+            name: "a container that numbers again holds the numbers its members still hold",
+            events: with(
+                collection(),
+                [
+                    vec![thing("m1", Some("coll"))],
+                    holds("w1", "m1", "num", "1"),
+                    vec![
+                        created("w2", claim("fw2", "coll", "c", 2)),
+                        clear("w2", "coll", NUMBERS_BY, 2),
+                        created("w3", claim("fw3", "coll", "c", 3)),
+                        write("w3", "coll", NUMBERS_BY, 3, "num"),
+                    ],
+                ]
+                .concat(),
+            ),
+            ask: vec![("coll", "num", 1, Some("m1")), ("coll", "num", 2, None)],
         },
         Row {
             name: "a container that numbers by another key moves its seats to it",
