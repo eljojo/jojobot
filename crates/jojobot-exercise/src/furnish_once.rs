@@ -179,7 +179,7 @@ mod tests {
     /// nobody read. The controls beside it are the answers a room gives: ids, and
     /// none.
     #[test]
-    #[should_panic(expected = "bot")]
+    #[should_panic(expected = "the read of the kind bot was refused")]
     fn a_refused_read_of_a_kind_names_the_kind() {
         ids_read(
             "bot",
@@ -189,7 +189,7 @@ mod tests {
 
     /// The same for a read the transport lost: `Surface::call` answers it as text.
     #[test]
-    #[should_panic(expected = "role")]
+    #[should_panic(expected = "the read of the kind role was refused")]
     fn a_lost_read_of_a_kind_names_the_kind() {
         ids_read("role", &json!({"transport_error": "connection reset"}));
     }
