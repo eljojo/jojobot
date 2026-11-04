@@ -1501,6 +1501,136 @@ fn the_limits_are_told_in_order() {
     ));
 }
 
+/// A competing late fault must not hide the role's held lease.
+#[test]
+fn late_refusals_tell_the_lease_before_the_body_cap() {
+    crate::memory::kinds::load_shipped();
+    let state = replay(&held(
+        "role",
+        "role:alpha",
+        &[
+            ("r1", "f1", "holder", "sa01"),
+            ("r2", "f2", "claimed_at", "2026-04-03T10:00:00Z"),
+            ("r3", "f3", "thought_body_cap", "10"),
+        ],
+    ));
+    let mut sent = CaptureRequest {
+        route: Route::Engine,
+        edge: Some((EdgeShape::Connection, "role:alpha".into())),
+        fields: BTreeMap::from([
+            ("holder".into(), "sb01".into()),
+            ("claimed_at".into(), "2026-04-03T10:10:00Z".into()),
+        ]),
+        ..request("role:alpha")
+    };
+    sent.draft.content = "01234567890".into();
+    assert!(matches!(
+        prepare(&state, &[], &sent),
+        Err(Refusal::Invalid(MemoryError::RoleTaken { .. }))
+    ));
+    sent.fields.insert("holder".into(), "sa01".into());
+    assert!(matches!(
+        prepare(&state, &[], &sent),
+        Err(Refusal::Invalid(MemoryError::ThoughtTooLong {
+            len: 11,
+            cap: 10,
+            ..
+        }))
+    ));
+    sent.draft.content = "0123456789".into();
+    assert!(prepare(&state, &[], &sent).is_ok());
+}
+
+/// The body cap wins even when the thought has no room to land.
+#[test]
+fn late_refusals_tell_the_body_cap_before_the_room() {
+    crate::memory::kinds::load_shipped();
+    let now = "2026-04-03T10:00:00Z".parse().unwrap();
+    let own = Actor::Bot(crate::memory::EntityId("bot:alpha".into()));
+    let mut state = roomy(2, own, now);
+    apply(
+        &mut state,
+        &write("r0", "bot:alpha", "thought_body_cap", 1, "10"),
+    );
+    let mut sent = thinking();
+    sent.draft.content = "01234567890".into();
+    assert!(matches!(
+        prepare(&state, &[], &sent),
+        Err(Refusal::Invalid(MemoryError::ThoughtTooLong {
+            len: 11,
+            cap: 10,
+            ..
+        }))
+    ));
+    sent.draft.content = "0123456789".into();
+    assert!(matches!(
+        prepare(&state, &[], &sent),
+        Err(Refusal::RoomFull {
+            live: 2,
+            capacity: 2,
+            ..
+        })
+    ));
+    sent.drop = Some(("bot:alpha#f2".into(), "no longer earns it".into()));
+    assert!(prepare(&state, &[], &sent).is_ok());
+}
+
+/// Quiet thoughts free room but still count against the record ceiling.
+#[test]
+fn late_refusals_tell_the_room_before_the_record_ceiling() {
+    crate::memory::kinds::load_shipped();
+    let now = "2026-04-03T10:00:00Z".parse().unwrap();
+    let own = Actor::Bot(crate::memory::EntityId("bot:alpha".into()));
+    let mut state = roomy(2, own, now);
+    apply(
+        &mut state,
+        &write("r0", "bot:alpha", "record_capacity", 1, "3"),
+    );
+    let mut sent = thinking();
+    assert!(matches!(
+        prepare(&state, &[], &sent),
+        Err(Refusal::RoomFull {
+            live: 2,
+            capacity: 2,
+            ..
+        })
+    ));
+    sent.door.aged_before = Some("2026-04-03T11:00:00Z".parse().unwrap());
+    assert!(matches!(
+        prepare(&state, &[], &sent),
+        Err(Refusal::OverCapacity { limit: 3, adding: 1, records, .. }) if records.len() == 3
+    ));
+    sent.borrow = true;
+    assert!(prepare(&state, &[], &sent).is_ok());
+}
+
+/// A kind fault is told only after the record has a slot.
+#[test]
+fn late_refusals_tell_the_record_ceiling_before_the_kind() {
+    crate::memory::kinds::load_shipped();
+    let state = replay(&held(
+        "view",
+        "view:alpha",
+        &[("r0", "f1", "record_capacity", "1")],
+    ));
+    let mut sent = CaptureRequest {
+        fields: BTreeMap::from([("asks".into(), "wrong".into())]),
+        ..request("view:alpha")
+    };
+    assert!(matches!(
+        prepare(&state, &[], &sent),
+        Err(Refusal::OverCapacity { limit: 1, adding: 1, records, .. }) if records.len() == 1
+    ));
+    sent.borrow = true;
+    assert!(matches!(
+        prepare(&state, &[], &sent),
+        Err(Refusal::BreaksKind(MemoryError::BreaksType { key, value, .. }))
+            if key == "asks" && value == "wrong"
+    ));
+    sent.fields.insert("asks".into(), "ready".into());
+    assert!(prepare(&state, &[], &sent).is_ok());
+}
+
 /// **A merged survivor is the same identity under either spelling**, so it
 /// cannot write what only a different identity may write about itself.
 #[test]
