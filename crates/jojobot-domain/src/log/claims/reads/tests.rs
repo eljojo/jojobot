@@ -213,17 +213,22 @@ fn a_read_looks_only_at_the_streams_of_its_own_thing() {
         ]);
     }
     let state = plain(&events);
-    let home = object("work:alpha");
-    for read in 0..2 {
-        super::STREAMS_EXAMINED.with(|n| n.set(0));
-        match read {
-            0 => drop(state.backing(&home, &[])),
-            _ => drop(state.held_since(&home, &[])),
-        };
-        assert_eq!(
-            super::STREAMS_EXAMINED.with(|n| n.get()),
-            2,
-            "read {read} looked at the streams of other things"
-        );
+    // The first thing in the map, and one in the middle of it, so a read that
+    // starts from the front of the map is seen as well as one that never stops.
+    // A stream past the thing's own is looked at once, to see it is another's.
+    for (name, own_streams) in [("work:alpha", 2), ("work:lambda", 1)] {
+        let home = object(name);
+        for read in 0..2 {
+            super::STREAMS_EXAMINED.with(|n| n.set(0));
+            match read {
+                0 => drop(state.backing(&home, &[])),
+                _ => drop(state.held_since(&home, &[])),
+            };
+            let examined = super::STREAMS_EXAMINED.with(|n| n.get());
+            assert!(
+                (own_streams..=own_streams + 1).contains(&examined),
+                "read {read} of {name} looked at {examined} streams, its own are {own_streams}"
+            );
+        }
     }
 }

@@ -665,12 +665,14 @@ impl State {
     ) -> impl Iterator<Item = (&'a KeyId, &'a Vec<Write>)> {
         self.streams
             .range((subject.clone(), KeyId(String::new()))..)
-            .take_while(move |((held, _), _)| held == subject)
-            .map(|((_, key), stream)| {
+            // Counted where a stream is first looked at, before any filter, so
+            // a scan of the whole map cannot hide from the case that counts.
+            .inspect(|_| {
                 #[cfg(test)]
                 reads::STREAMS_EXAMINED.with(|n| n.set(n.get() + 1));
-                (key, stream)
             })
+            .take_while(move |((held, _), _)| held == subject)
+            .map(|((_, key), stream)| (key, stream))
     }
 
     /// The writes of one key of a subject, as [`Self::key_writes`] reads them.
