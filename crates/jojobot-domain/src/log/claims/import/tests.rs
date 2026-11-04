@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use jiff::Timestamp;
 
 use super::*;
+use crate::app::{AppId, AppStamp};
 use crate::log::claims::State;
 use crate::log::claims::tests::{body, claim, key, object};
 use crate::memory::merge;
@@ -170,16 +171,33 @@ fn an_edited_claim_keeps_each_writes_own_run() {
     let mut first = write_of(1, "first", Some("run-a"), 1);
     first.bot = Some(EntityId("bot:lisa".into()));
     let second = write_of(2, "second", Some("run-b"), 2);
+    let mut fallback = write_of(3, "fallback", Some("run-c"), 3);
+    fallback.run_bot = Some(EntityId("bot:bart".into()));
+    let stamp = AppStamp {
+        app: "springfield-ci".into(),
+        grant: "record_deploy_event".into(),
+        received_at: "2026-10-18T12:00:00Z".into(),
+    };
+    let mut app = write_of(4, "app", Some("run-d"), 4);
+    app.claim.app = Some(stamp.clone());
+    let mut targeted = set("k1", "mood", 3, "quiet", "f1", Some(3));
+    targeted.targets = vec![object("k2")];
     let rows = Rows {
-        entities: vec![entity("k1", "person:homer")],
-        facts: vec![fact("k1", "f1", vec![first, second])],
+        entities: vec![entity("k1", "person:homer"), entity("k2", "person:marge")],
+        facts: vec![fact("k1", "f1", vec![first, second, fallback, app])],
         field_writes: vec![
             set("k1", "mood", 1, "calm", "f1", Some(1)),
             set("k1", "mood", 2, "loud", "f1", Some(2)),
+            targeted,
+            set("k1", "mood", 4, "bright", "f1", Some(4)),
         ],
         ..Rows::default()
     };
-    let state = state_of(&rows);
+    let events = imported(&rows);
+    for event in &events {
+        assert_eq!(event.meaning_version, 1);
+    }
+    let state = State::replay(&events);
     let writes = stream(&state, "k1", "mood");
     assert_eq!(writes[0].run, Some(RunId("run-a".into())));
     assert_eq!(
@@ -188,9 +206,22 @@ fn an_edited_claim_keeps_each_writes_own_run() {
     );
     assert_eq!(writes[1].run, Some(RunId("run-b".into())));
     assert_eq!(writes[1].writer, None);
+    assert_eq!(writes[2].run, Some(RunId("run-c".into())));
+    assert_eq!(
+        writes[2].writer,
+        Some(Actor::Bot(EntityId("bot:bart".into())))
+    );
+    assert_eq!(writes[3].run, Some(RunId("run-d".into())));
+    assert_eq!(
+        writes[3].writer,
+        Some(Actor::App(AppId::parse("springfield-ci").unwrap()))
+    );
+    assert!(writes[0].targets.is_empty());
+    assert_eq!(writes[2].targets, vec![object("k2")]);
     let record = state.record(&record_id(&object("k1"), "f1")).unwrap();
-    assert_eq!(record.claim.content, "second");
-    assert_eq!(record.revisions, 1);
+    assert_eq!(record.claim.content, "app");
+    assert_eq!(record.claim.app, Some(stamp));
+    assert_eq!(record.revisions, 3);
 }
 
 /// A write with no pointer to its claim write has no writer and no run, even
