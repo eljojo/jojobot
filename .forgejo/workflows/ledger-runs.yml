@@ -60,8 +60,15 @@ jobs:
       - name: Manifest
         if: ${{ forgejo.event.inputs.job == 'mutants' }}
         run: nix develop -c python3 scripts/mutant-sample --check
+      - name: Last deployed store
+        if: ${{ forgejo.event.inputs.job == 'coverage' }}
+        run: nix develop -c python3 scripts/prepare-upgrade-fixture
+        env:
+          UPGRADE_FIXTURE_DIR: target/upgrade-fixture
       - name: Coverage
         if: ${{ forgejo.event.inputs.job == 'coverage' }}
+        env:
+          UPGRADE_FIXTURE_DIR: target/upgrade-fixture
         run: |
           if [ "$BRANCH" = yes ]; then nix develop -c make coverage; else nix develop -c make coverage COVERAGE_BRANCH=; fi
       - name: Branch measure
