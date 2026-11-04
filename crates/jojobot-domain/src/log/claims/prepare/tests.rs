@@ -1157,16 +1157,52 @@ fn the_claims_own_inputs_are_judged_before_any_object_is_looked_up() {
 #[test]
 fn an_edge_points_at_the_kind_its_shape_names() {
     crate::memory::kinds::load_shipped();
-    let events = [thing("alpha"), thing("person:gamma")].concat();
+    let mut events = thing("alpha");
+    for (kind, handle, alias) in [
+        ("person", "person:gamma", "work:alpha-queue/1"),
+        ("place", "place:delta", "work:alpha-queue/2"),
+    ] {
+        events.extend([
+            ClaimEvent::ObjectCreated {
+                object: object(handle),
+                body: ObjectBody {
+                    aliases: vec![alias.into()],
+                    ..body(kind, handle)
+                },
+            },
+            ClaimEvent::AddressBound {
+                object: object(handle),
+                address: handle.into(),
+            },
+            ClaimEvent::AddressBound {
+                object: object(handle),
+                address: alias.into(),
+            },
+        ]);
+    }
     let state = replay(&events);
     let located = |object: &str| CaptureRequest {
         edge: Some((EdgeShape::Location, object.into())),
         ..request("alpha")
     };
-    assert!(matches!(
-        prepare(&state, &[], &located("person:gamma")),
-        Err(Refusal::Invalid(MemoryError::InvalidEdge(_)))
-    ));
+    for spelling in ["person:gamma", "work:alpha-queue/1"] {
+        assert!(
+            matches!(
+                prepare(&state, &[], &located(spelling)),
+                Err(Refusal::Invalid(MemoryError::InvalidEdge(_)))
+            ),
+            "a location edge cannot resolve to a person through {spelling}"
+        );
+    }
+    for spelling in ["place:delta", "work:alpha-queue/2"] {
+        let admitted = prepare(&state, &[], &located(spelling))
+            .expect("a location edge to a place is admitted");
+        assert!(admitted.iter().any(|event| matches!(
+            event,
+            ClaimEvent::RecordCreated { claim, .. }
+                if claim.edge == Some(("location".into(), object("place:delta")))
+        )));
+    }
 }
 
 /// A bot `alpha` with `seats` seats and one starred rule, and a thing `beta`.
