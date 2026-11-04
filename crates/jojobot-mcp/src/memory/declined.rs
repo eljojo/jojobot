@@ -2571,6 +2571,7 @@ pub(crate) mod tests {
                     may: MayWrite::DifferentIdentity,
                     allowed: Vec::new(),
                     clear_opens: true,
+                    judged_on_duplicate: false,
                 },
             )
             .expect("a refusal is an answer");
