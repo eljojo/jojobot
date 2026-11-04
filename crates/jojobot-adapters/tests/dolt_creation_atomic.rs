@@ -2,8 +2,9 @@
 //!
 //! The shared contract case refuses before the batch opens, so it passes on a
 //! store that creates the thing in one commit and the claim in a second. This
-//! case fails the claim's write from inside the batch, after the thing's row is
-//! in it, and asserts the thing is not there afterwards.
+//! case fails the claim's write from inside the batch, after the thing's row and
+//! the claim's row are in it, and asserts the thing is not there afterwards and
+//! that no table holds a row it did not hold before the call.
 
 use jiff::civil::date;
 use jojobot_adapters::dolt::Dolt;
@@ -58,35 +59,37 @@ async fn a_first_claim_that_fails_inside_the_write_leaves_no_thing_behind() {
         fact
     };
 
-    // **The claim's table is out of reach while the call runs**, so the read of
-    // what the thing already holds (the capacity preflight in `capture_in`, which
-    // joins this table) fails after validation has passed and after the thing's
-    // own row is in the batch. Nothing the call is asked is wrong; the store
-    // fails it.
+    // **The table of a claim's references is out of reach while the call runs.**
+    // The write of the claim's row (`write_fact`) puts the claim in the batch
+    // first and then clears that claim's rows in this table, so the failure comes
+    // after the thing's row AND the claim's row are in the batch, and every read
+    // the call makes before that has passed. Nothing the call is asked is wrong;
+    // the store fails it.
     let before = row_counts(&pool).await;
-    sqlx::query("RENAME TABLE fact_write TO fact_write_away")
+    sqlx::query("RENAME TABLE fact_event_ref TO fact_event_ref_away")
         .execute(&pool)
         .await
-        .expect("the claim table is moved aside");
+        .expect("the references table is moved aside");
     let failed = memory
         .add_entity_with_first_claim(
             NewEntity::new(eta.clone(), "Eta", "contract-fixture"),
             claim(&eta),
         )
         .await;
-    sqlx::query("RENAME TABLE fact_write_away TO fact_write")
+    sqlx::query("RENAME TABLE fact_event_ref_away TO fact_event_ref")
         .execute(&pool)
         .await
-        .expect("the claim table is put back");
+        .expect("the references table is put back");
     assert!(
         failed.is_err(),
         "the store failed the claim's write, so the call fails: {failed:?}"
     );
 
     // **Every table holds the rows it held before the call**, counted from the
-    // rows. A batch that rolled back the thing's row but left a claim, a key write
-    // or a version row keyed to its identity leaves a count higher, behind a
-    // handle that no longer reads, which the roster and the read below cannot see.
+    // rows. A batch that rolled back the thing's row but left the claim's row (or
+    // one a later step of the same write adds) keyed to its identity leaves a
+    // count higher, behind a handle that no longer reads, which the roster and the
+    // read below cannot see.
     assert_eq!(
         row_counts(&pool).await,
         before,
