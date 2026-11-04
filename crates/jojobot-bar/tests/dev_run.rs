@@ -419,6 +419,78 @@ fn a_branch_is_measured_against_the_base_it_names() {
     let _ = fs::remove_dir_all(&repo);
 }
 
+/// **`SIZE_BASE` selects the base when `BAR_DEV_BASE` is not set**, and only a
+/// `SIZE_BASE` other than the bare `main` does. The scratch history has three
+/// bases that select three different sets of packages: `main` (all three changes),
+/// a remote carry line one commit up (the two later ones), and `line2` (the branch's
+/// own change alone). Off CI the remote line is the base when nothing else names
+/// one, so each run differs from that default in one input: a named `SIZE_BASE`
+/// wins over the remote line; the bare `main` names nothing, so the remote line
+/// stands; and `BAR_DEV_BASE`, which outranks `SIZE_BASE`, wins over it.
+#[test]
+fn size_base_selects_the_base_unless_it_is_main_or_bar_dev_base_is_set() {
+    let repo = repository();
+    git(&repo, &["switch", "-q", "-c", "line"]);
+    fs::write(
+        repo.join("crates/jojobot-domain/src/lib.rs"),
+        "// the line's own change\n",
+    )
+    .expect("edit");
+    git(&repo, &["commit", "-q", "-a", "-m", "line"]);
+    git(&repo, &["switch", "-q", "-c", "line2"]);
+    fs::write(
+        repo.join("crates/jojobot-ports/src/lib.rs"),
+        "// the line's next change\n",
+    )
+    .expect("edit");
+    git(&repo, &["commit", "-q", "-a", "-m", "line2"]);
+    git(&repo, &["switch", "-q", "-c", "work"]);
+    fs::write(repo.join("crates/jojobot-bar/src/lib.rs"), "// changed\n").expect("edit");
+    git(&repo, &["commit", "-q", "-a", "-m", "work"]);
+    // A carry line the checkout knows as a remote one, one commit up from main.
+    git(
+        &repo,
+        &["update-ref", "refs/remotes/origin/em-carry", "line"],
+    );
+    // The remote line is the default base off CI only.
+    let off_ci = |envs: &[(&'static str, &'static str)]| {
+        let mut all = vec![("GITHUB_ACTIONS", "false")];
+        all.extend_from_slice(envs);
+        dev_run(&repo, &[], &all)
+    };
+
+    let default = off_ci(&[]);
+    assert_eq!(default.exit, Some(0), "{}", default.stdout);
+    assert_eq!(
+        default.packages_tested(),
+        ["jojobot-bar", "jojobot-ports"],
+        "off CI the remote line is the base: {:?}",
+        default.calls
+    );
+    let named = off_ci(&[("SIZE_BASE", "line2")]);
+    assert_eq!(
+        named.packages_tested(),
+        ["jojobot-bar"],
+        "a SIZE_BASE other than main is the base: {:?}",
+        named.calls
+    );
+    let bare_main = off_ci(&[("SIZE_BASE", "main")]);
+    assert_eq!(
+        bare_main.packages_tested(),
+        ["jojobot-bar", "jojobot-ports"],
+        "the bare main names no base, so the remote line stands: {:?}",
+        bare_main.calls
+    );
+    let outranked = off_ci(&[("SIZE_BASE", "line2"), ("BAR_DEV_BASE", "main")]);
+    assert_eq!(
+        outranked.packages_tested(),
+        ["jojobot-bar", "jojobot-domain", "jojobot-ports"],
+        "BAR_DEV_BASE outranks SIZE_BASE: {:?}",
+        outranked.calls
+    );
+    let _ = fs::remove_dir_all(&repo);
+}
+
 /// **A dev run ends with its whole wall time, on the last line**, and a run
 /// inside the limit does not say it is over.
 #[test]
