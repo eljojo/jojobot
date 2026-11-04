@@ -1116,9 +1116,9 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                     && let Some(said) = how.as_str()
                 {
                     *how = format!(
-                        "{said} Part of the margin is kept for the timestamp the store gives \
-                         the new record: the check holds back {stamp_margin} characters for \
-                         it, so a rule that short of the ceiling is refused."
+                        "{said} The check holds back {stamp_margin} characters for the \
+                         timestamp the store gives a new starred rule, so a rule that short \
+                         of the ceiling is refused."
                     )
                     .into();
                 }
@@ -2119,7 +2119,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                     ),
                     _ => format!(
                         "Nothing was written. '{duplicate}' carries {keys}, and merging it into \
-                         '{survivor}', your own bot, would raise your own ceiling, which only a \
+                         '{survivor}', your own bot, would set {keys} on it, which only a \
                          different identity may do. Ask a different identity to make this \
                          merge.{clear}"
                     ),
@@ -2551,6 +2551,40 @@ pub(crate) mod tests {
         assert!(!none.contains("  "), "no empty list of bots: {none}");
         let ceiling = refused(MayWrite::DifferentIdentity, &[]);
         assert!(ceiling.contains("different identity"), "{ceiling}");
+    }
+
+    /// **A merge refused for a key that is not a ceiling does not call it one.**
+    /// `claims_role` needs a different identity as `rule_seats` does, and it is a
+    /// role the bot claims, so the refusal for it must not say the merge would
+    /// raise a ceiling. Paired with `rule_seats`, which names its own key the same
+    /// way.
+    #[test]
+    fn a_merge_refused_for_claims_role_does_not_call_it_a_ceiling() {
+        use jojobot_domain::memory::MayWrite;
+        let refused = |keys: &str| {
+            let result = memory_declined(
+                "merge_entities",
+                MemoryError::MergeCarriesGuardedKeys {
+                    duplicate: "bot:epsilon".into(),
+                    survivor: "bot:psi".into(),
+                    keys: keys.into(),
+                    may: MayWrite::DifferentIdentity,
+                    allowed: Vec::new(),
+                    clear_opens: true,
+                },
+            )
+            .expect("a refusal is an answer");
+            blocked(&result)["how_to_proceed"]
+                .as_str()
+                .expect("a way forward")
+                .to_string()
+        };
+        for key in ["claims_role", "rule_seats"] {
+            let said = refused(key);
+            assert!(said.contains(key), "{said}");
+            assert!(said.contains("different identity"), "{said}");
+            assert!(!said.contains("ceiling"), "{said}");
+        }
     }
 
     /// **A merge into a thread, refused for the thread's writers, names the bots

@@ -572,9 +572,10 @@ impl Jojobot {
                      rule so a future boot carries it, write it with fields: {{\"starred\": \
                      \"true\"}} — that is the only thing a boot checks. This bot has {seat_count} \
                      seats and {starred} rules are starred. A star into full seats is refused \
-                     until a seated rule is unstarred. Every rule in force that has no seat is \
-                     listed in `unseated_rules`.",
-                    bot.as_str()
+                     until a seated rule is unstarred. `unseated_rules` lists the first {listed} \
+                     unseated and counts the rest.",
+                    bot.as_str(),
+                    listed = text::UNSEATED_LISTED
                 );
                 if let Some(seats) = &seats {
                     note.push(' ');

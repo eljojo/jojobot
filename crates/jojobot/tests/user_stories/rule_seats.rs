@@ -899,6 +899,12 @@ async fn a_boot_lists_a_bounded_number_of_unseated_rules_and_counts_the_rest_by_
     let listed = unseated["listed"].as_array().expect("the listed rules");
     assert_eq!(listed[0]["line"], "unlabelled 54", "{body}");
     assert_eq!(listed[LISTED - 1]["line"], "unlabelled 35", "{body}");
+    // The boot's own note says how many it lists: a note that said every rule
+    // with no seat is listed would be false of the fifty-five here.
+    let note = body["identity"]["rules_note"]
+        .as_str()
+        .expect("a bot holding sixty rules carries five, so the boot notes it");
+    assert!(note.contains(&LISTED.to_string()), "{note}");
     let left_out = &unseated["left_out"];
     assert_eq!(left_out["count"], 55 - LISTED, "{body}");
     let by_purpose = left_out["by_purpose"]

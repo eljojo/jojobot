@@ -556,7 +556,7 @@ answer: {
   "attempted": "bot:gamma",
   "candidates": [],
   "fix_by": "change",
-  "how_to_proceed": "Nothing was written. 'bot:gamma' carries rule_seats, and merging it into 'bot:delta', your own bot, would raise your own ceiling, which only a different identity may do. Ask a different identity to make this merge. Or archive the claim that sets rule_seats on 'bot:gamma' first: update_fact it with status archived, then merge again.",
+  "how_to_proceed": "Nothing was written. 'bot:gamma' carries rule_seats, and merging it into 'bot:delta', your own bot, would set rule_seats on it, which only a different identity may do. Ask a different identity to make this merge. Or archive the claim that sets rule_seats on 'bot:gamma' first: update_fact it with status archived, then merge again.",
   "refusal_code": "MergeCarriesGuardedKeys",
   "status": "blocked",
   "wrote": false
