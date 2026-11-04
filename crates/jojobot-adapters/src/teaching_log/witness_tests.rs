@@ -203,7 +203,9 @@ async fn no_legacy_teaching_read_is_made_after_boot() {
         offending.is_empty(),
         "legacy reads after boot: {offending:?}"
     );
-    assert_eq!(report.counts()[0].disagreements, 0);
+    let counts = &report.counts()[0];
+    assert!(counts.reads > 0, "the shadow compared nothing");
+    assert_eq!(counts.disagreements, 0);
     drop(teachings);
     drop(log);
     server.stop().await;
@@ -296,7 +298,9 @@ async fn a_rollback_and_roll_forward_on_a_real_store_reconciles_and_writes() {
         ],
         "the rows follow the log again"
     );
-    assert_eq!(report.counts()[0].disagreements, 0);
+    let counts = &report.counts()[0];
+    assert!(counts.reads > 0, "the shadow compared nothing");
+    assert_eq!(counts.disagreements, 0);
     drop(again);
     drop(log);
     server.stop().await;

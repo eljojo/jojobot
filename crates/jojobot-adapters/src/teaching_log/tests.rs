@@ -569,7 +569,9 @@ async fn a_rollback_and_roll_forward_reconciles_the_log_with_the_rows() {
             .await
             .expect("a run the old path cleared is taught again"),
     );
-    assert_eq!(report.counts()[0].disagreements, 0);
+    let counts = &report.counts()[0];
+    assert!(counts.reads > 0, "the shadow compared nothing");
+    assert_eq!(counts.disagreements, 0);
 }
 
 /// A batch holding one member whose envelope names `kind`, appended at the
