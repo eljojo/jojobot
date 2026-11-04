@@ -594,6 +594,84 @@ fn each_key_write_keeps_the_moment_of_its_own_event() {
     assert_eq!(seen, [Some(t1), Some(t2), Some(t1), None]);
 }
 
+/// **A claim's own moment follows the same rule as a write's: an imported
+/// event's source moment, else the moment the store took the event in, else
+/// none.** It holds for the event that creates the claim and for the one that
+/// revises it, and the newest of those is the one the claim keeps. Each event
+/// below names a source moment and an importer's moment that differ, so a record
+/// that took the importer's reads the wrong one; the controls name one moment or
+/// none.
+#[test]
+fn a_claim_keeps_the_source_moment_of_the_event_that_created_or_revised_it() {
+    let (t0, t1, t2) = (
+        moment("2026-04-01T00:00:00Z"),
+        moment("2026-04-02T00:00:00Z"),
+        moment("2026-04-03T00:00:00Z"),
+    );
+    let (importer, later_importer) = (
+        moment("2026-05-01T00:00:00Z"),
+        moment("2026-05-02T00:00:00Z"),
+    );
+    let mut state = State::default();
+    state.apply(&stamped(
+        Some(importer),
+        Some(t1),
+        created("r1", claim("f1", "alpha", "a", 1)),
+    ));
+    assert_eq!(
+        state.last_touched(&record("r1")),
+        Some(t1),
+        "created from an import: the source's moment, not the importer's"
+    );
+    state.apply(&stamped(
+        Some(later_importer),
+        Some(t2),
+        ClaimEvent::RecordRevised {
+            record: record("r1"),
+            claim: claim("f1", "alpha", "b", 1),
+        },
+    ));
+    assert_eq!(
+        state.last_touched(&record("r1")),
+        Some(t2),
+        "revised from an import: the source's moment, not the importer's"
+    );
+
+    state.apply(&stamped(
+        Some(t0),
+        None,
+        created("r2", claim("f2", "alpha", "c", 1)),
+    ));
+    assert_eq!(
+        state.last_touched(&record("r2")),
+        Some(t0),
+        "no source moment: the moment the store took the event in"
+    );
+    state.apply(&stamped(
+        Some(t2),
+        None,
+        ClaimEvent::RecordRevised {
+            record: record("r2"),
+            claim: claim("f2", "alpha", "d", 1),
+        },
+    ));
+    assert_eq!(
+        state.last_touched(&record("r2")),
+        Some(t2),
+        "a revision with no source moment: its own"
+    );
+    state.apply(&stamped(
+        None,
+        None,
+        created("r3", claim("f3", "alpha", "e", 1)),
+    ));
+    assert_eq!(
+        state.last_touched(&record("r3")),
+        None,
+        "an event that names no moment leaves the claim without one"
+    );
+}
+
 fn declaration(name: &str, must: Option<&str>) -> DeclaredType {
     DeclaredType {
         name: name.to_string(),
