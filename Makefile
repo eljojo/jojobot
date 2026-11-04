@@ -312,13 +312,31 @@ room: ## One room's suite: make room ROOM=<name>
 year: ## The year room's suite
 	$(MAKE) room ROOM=year
 
-# **The coverage of the proof lanes at one head** (rule 767: no coverage lost).
-# Line and region coverage of the whole workspace's tests, rooms and contract
-# lanes included, as one JSON summary. Region coverage is the branch measure the
-# stable toolchain gives. Slow: the `ledger-runs` workflow runs it, never a dev host.
-coverage: ## Coverage summary of the workspace's tests: target/coverage/summary.json
+# **The coverage of the two proof lanes at one head** (rule 767: no coverage lost),
+# each with its own summary so its identity is kept: `contract.json` is the
+# workspace's tests with the default features (what `make check` runs), and
+# `rooms.json` is the room suites `make rooms` runs (the `rooms` feature and the
+# test files that require it; the year room and the retired replays are in
+# neither). Lines, regions and branches are all measured. Branch coverage is an
+# unstable compiler option, so the stable toolchain is asked for it with
+# RUSTC_BOOTSTRAP. The server binary a room spawns is built in the same
+# instrumented target, so the rooms' coverage reaches the server. A lane whose
+# tests fail still reports; the failure is listed in target/coverage/lane-failures
+# and fails the target after both reports exist. Slow: the `ledger-runs` workflow
+# runs it, never a dev host.
+coverage: ## Coverage of the contract and rooms lanes: target/coverage/{contract,rooms}.json
+	rm -rf target/coverage
 	mkdir -p target/coverage
-	$(CARGO) llvm-cov --workspace --all-features --no-fail-fast --json --summary-only --output-path target/coverage/summary.json
+	RUSTC_BOOTSTRAP=1 CARGO='$(CARGO)' sh -ec '\
+		eval "$$($$CARGO llvm-cov show-env --export-prefix --branch)"; \
+		$$CARGO llvm-cov clean --workspace; \
+		$$CARGO build --workspace; \
+		$$CARGO test --workspace --no-fail-fast || echo contract >> target/coverage/lane-failures; \
+		$$CARGO llvm-cov report --json --summary-only --output-path target/coverage/contract.json; \
+		$$CARGO llvm-cov clean --profraw-only; \
+		$$CARGO test -p jojobot-exercise --features rooms $(addprefix --test ,$(ROOM_TESTS)) --no-fail-fast || echo rooms >> target/coverage/lane-failures; \
+		$$CARGO llvm-cov report --json --summary-only --output-path target/coverage/rooms.json; \
+		test ! -s target/coverage/lane-failures'
 
 # **The mutation sample against one lane**, from `crates/jojobot-exercise/ledger/mutants.tsv`:
 # `make mutants LANE="make rooms" FROM=0 COUNT=8`. The killed set goes to

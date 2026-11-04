@@ -5,7 +5,7 @@
 # {"ref":"<branch-or-sha>","inputs":{"job":"coverage"}}
 # {"ref":"<branch-or-sha>","inputs":{"job":"mutants","lane":"make rooms","from":"0","count":"8"}}
 # The run's killed set (target/mutants/killed.tsv) or coverage summary
-# (target/coverage/summary.json) is uploaded as an artifact; the card records its
+# summaries (target/coverage/contract.json and rooms.json) are uploaded as an artifact; the card records its
 # run id and sha. This workflow is never a proof of the release gate.
 name: ledger-runs
 
@@ -51,9 +51,26 @@ jobs:
           case "$LANE" in "make rooms"|"make check") ;; *) echo "lane must be make rooms or make check" >&2; exit 1;; esac
           case "$FROM$COUNT" in ''|*[!0-9]*) echo "from and count are digits" >&2; exit 1;; esac
           echo "level: ledger-runs, $JOB; left to full boundary: everything else"
+      - name: Manifest
+        if: ${{ forgejo.event.inputs.job == 'mutants' }}
+        run: python3 scripts/mutant-sample --check
       - name: Coverage
         if: ${{ forgejo.event.inputs.job == 'coverage' }}
         run: nix develop -c make coverage
+      - name: Branch measure
+        if: ${{ forgejo.event.inputs.job == 'coverage' && !cancelled() }}
+        run: |
+          python3 -I - <<'EOF'
+          import json, sys
+          bad = []
+          for lane in ("contract", "rooms"):
+              totals = json.load(open(f"target/coverage/{lane}.json"))["data"][0]["totals"]
+              branches = totals.get("branches", {}).get("count", 0)
+              print(lane, {k: totals[k]["percent"] for k in ("lines", "regions") if k in totals}, "branches:", branches)
+              if branches == 0:
+                  bad.append(lane)
+          sys.exit(f"no branch counts in: {bad}" if bad else 0)
+          EOF
       - name: Mutants
         if: ${{ forgejo.event.inputs.job == 'mutants' }}
         run: nix develop -c make mutants LANE="$LANE" FROM="$FROM" COUNT="$COUNT"
@@ -63,7 +80,9 @@ jobs:
         with:
           name: ledger-runs-${{ forgejo.event.inputs.job }}
           path: |
-            target/coverage/summary.json
+            target/coverage/contract.json
+            target/coverage/rooms.json
+            target/coverage/lane-failures
             target/mutants/killed.tsv
             target/bar/*.log
           retention-days: 30

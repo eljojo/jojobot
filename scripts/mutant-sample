@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """**Run the mutation sample, and record which mutants a lane kills.**
 
+    scripts/mutant-sample --check
     scripts/mutant-sample [--from N] [--count M] -- <command...>
+
+`--check` validates the manifest and mutates nothing; every run does it first and
+refuses on a problem. The workflow runs it before any lane.
 
 Reads `crates/jojobot-exercise/ledger/mutants.tsv` (file, from, to), and for each
 mutant in the slice runs `scripts/sabotage <file> <from> <to> -- <command...>`.
@@ -46,7 +50,41 @@ def verdict_of(output):
     return "refused"
 
 
+def problems(sample):
+    """**What is wrong with the manifest, before any mutation is applied.**
+
+    This check lives here and not in a test of the measured lanes: a test that
+    reads the sites would fail under every mutant, and the lane would record a
+    kill that no behavioural oracle made. Each file must exist, each `from` text
+    must occur in it exactly once (the tool refuses any other count), each `to`
+    must differ, and the sample holds about thirty.
+    """
+    found = []
+    for file, old, new in sample:
+        if old == new:
+            found.append(f"{file}: to equals from: {old}")
+            continue
+        try:
+            with open(file, encoding="utf-8") as handle:
+                count = handle.read().count(old)
+        except OSError as error:
+            found.append(f"{file}: {error}")
+            continue
+        if count != 1:
+            found.append(f"{file}: {count} sites for: {old}")
+    if len(sample) < 30:
+        found.append(f"the sample holds about thirty mutants, not {len(sample)}")
+    return found
+
+
 def main(argv):
+    if argv == ["--check"]:
+        found = problems(rows(MANIFEST))
+        for line in found:
+            print(line, file=sys.stderr)
+        if not found:
+            print(f"mutants: ok - {len(rows(MANIFEST))} sites, each unique")
+        return 1 if found else 0
     if "--" not in argv:
         print(USAGE, file=sys.stderr)
         return 2
@@ -66,6 +104,10 @@ def main(argv):
             print(USAGE, file=sys.stderr)
             return 2
     sample = rows(MANIFEST)
+    found = problems(sample)
+    if found:
+        print("\n".join(found), file=sys.stderr)
+        return 2
     chosen = list(enumerate(sample))[start : None if count is None else start + count]
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     refused = 0
