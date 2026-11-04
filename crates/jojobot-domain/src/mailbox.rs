@@ -107,14 +107,24 @@ pub enum MessageState {
     Read,
     /// Acted on. Terminal — archive, never deletion.
     Processed,
+    /// **Replaced by a later message from the same sender before anybody took
+    /// it** (rule 763). Final, like [`MessageState::Processed`]: it is never
+    /// delivered, never counted as waiting and never listed with the mail that
+    /// is. **It is read off the replacement, not stored**: a message is
+    /// superseded exactly while a replacement that has not been set aside names
+    /// it and it is still `new`, so setting the replacement aside gives the
+    /// original back, and no stored row has to move at an upgrade. Never a
+    /// column and never in [`MessageState::ALL`].
+    Superseded,
 }
 
 impl MessageState {
-    /// Every state, in funnel order — which is also the column order on the
-    /// board. What reads a board's columns walks this, so a column title that is
+    /// Every STORED state, in funnel order — which is also the column order on
+    /// the board. What reads a board's columns walks this, so a column title that is
     /// no state is never mistaken for one; **an adapter names its own columns**
     /// rather than deriving them here, because the board is that adapter's to
-    /// provision and this is the domain.
+    /// provision and this is the domain. [`MessageState::Superseded`] is read
+    /// off a replacement and is not among them.
     pub const ALL: [MessageState; 3] = [
         MessageState::New,
         MessageState::Read,
@@ -127,6 +137,7 @@ impl MessageState {
             MessageState::New => "new",
             MessageState::Read => "read",
             MessageState::Processed => "processed",
+            MessageState::Superseded => "superseded",
         }
     }
 
@@ -138,9 +149,21 @@ impl MessageState {
     }
 
     /// Whether this state means "still owed work" — the set `read_mailbox`
-    /// delivers. `processed` is terminal, so it is the one state that isn't.
+    /// delivers. `processed` and `superseded` are final, so they are the states
+    /// that aren't.
     pub fn is_unprocessed(self) -> bool {
-        !matches!(self, MessageState::Processed)
+        !matches!(self, MessageState::Processed | MessageState::Superseded)
+    }
+
+    /// **The state a stored message is served in**: a `new` message that a
+    /// replacement names is `superseded`, whatever else it is. The one rule every
+    /// store applies where it builds a [`Message`], so the real store and the
+    /// double answer alike (rule 498).
+    pub fn served(stored: MessageState, superseded_by: Option<&MessageId>) -> MessageState {
+        match (stored, superseded_by) {
+            (MessageState::New, Some(_)) => MessageState::Superseded,
+            (stored, _) => stored,
+        }
     }
 }
 
@@ -174,6 +197,9 @@ fn is_slug_byte(b: u8) -> bool {
 pub fn refuse_quarantine_of(id: &MessageId, state: MessageState) -> Result<(), MailboxError> {
     match state {
         MessageState::Processed => Err(MailboxError::AlreadyProcessed {
+            attempted: id.to_string(),
+        }),
+        MessageState::Superseded => Err(MailboxError::AlreadySuperseded {
             attempted: id.to_string(),
         }),
         MessageState::New | MessageState::Read => Ok(()),
@@ -470,14 +496,8 @@ impl StateCounts {
             MessageState::New => self.new += 1,
             MessageState::Read => self.read += 1,
             MessageState::Processed => self.processed += 1,
+            MessageState::Superseded => self.superseded += 1,
         }
-    }
-
-    /// Move one `new` message that a later one replaced out of `new` and into
-    /// `superseded`. Call this after [`StateCounts::add`] counted it as `new`.
-    pub fn add_superseded(&mut self) {
-        self.new = self.new.saturating_sub(1);
-        self.superseded += 1;
     }
 
     /// Every message in the box, whatever its state, replaced or not.
@@ -665,29 +685,15 @@ pub struct Delivered {
 }
 
 /// What `read_mailbox` hands back: every unprocessed message in the box, in the
-/// order it was posted, with the leftovers flagged. The exception is a message
-/// its sender replaced before anybody took it, which is named under `superseded`
-/// instead.
+/// order it was posted, with the leftovers flagged. **A message its sender
+/// replaced before anybody took it is superseded, a final state, and is not
+/// named here at all** (rule 763); `read_message` still returns it by id.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Delivery {
     /// The box that was read.
     pub mailbox: MailboxName,
-    /// Everything unprocessed that is not withheld, oldest first.
+    /// Everything unprocessed, oldest first.
     pub messages: Vec<Delivered>,
-    /// **Messages withheld because a later one from the same sender replaced
-    /// them before anybody read them.** They are not delivered, stay in `new`,
-    /// and are named here so nothing in the box is hidden. `read_message`
-    /// takes delivery of one on request.
-    pub superseded: Vec<Superseded>,
-}
-
-/// A message the delivery withheld, and the message that replaced it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Superseded {
-    /// The withheld message.
-    pub id: MessageId,
-    /// The message that replaced it.
-    pub by: MessageId,
 }
 
 impl Delivery {
@@ -835,6 +841,19 @@ pub enum MailboxError {
          quarantine, and it stays readable"
     )]
     AlreadyProcessed {
+        /// The id that was addressed.
+        attempted: String,
+    },
+    /// **A superseded message cannot be set aside.** It was replaced before anybody
+    /// took it, which is final, like processed (rule 763); setting it aside would
+    /// make a finished record unreadable for good. The one check is
+    /// [`refuse_quarantine_of`], which every store calls.
+    #[error(
+        "message '{attempted}' was replaced by a later message from its sender before anybody \
+         took it, so it is superseded: there is nothing left to quarantine, and it stays \
+         readable"
+    )]
+    AlreadySuperseded {
         /// The id that was addressed.
         attempted: String,
     },

@@ -370,7 +370,6 @@ impl Jojobot {
                                 seen_before: false,
                             })
                             .collect(),
-                        superseded: Vec::new(),
                     },
                     true,
                 )
@@ -763,7 +762,6 @@ pub(crate) fn body_room_beyond(new: &NewMessage) -> Option<usize> {
                 message,
                 seen_before: false,
             }],
-            superseded: Vec::new(),
         };
         let mut rendered = delivery_json(&delivery, true);
         // The notice a replacement of a message already seen carries, at the

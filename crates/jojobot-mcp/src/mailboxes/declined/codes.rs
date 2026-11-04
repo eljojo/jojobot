@@ -11,6 +11,7 @@ mailbox_refusal_code, MAILBOXES_REFUSAL_CODES, MailboxError;
     QuarantinedOnPurpose { .. },
     NotYourMessage { .. },
     AlreadyProcessed { .. },
+    AlreadySuperseded { .. },
     CannotSupersede(..),
     Store(..),
     Refused(..),

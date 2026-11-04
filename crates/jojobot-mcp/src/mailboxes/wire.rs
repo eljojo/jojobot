@@ -444,7 +444,7 @@ pub(crate) fn note_written_by_other_run(
 /// re-shipping it in full. `new_only: false` ships them whole, flagged
 /// `seen_before`.
 pub(crate) fn delivery_json(delivery: &Delivery, new_only: bool) -> serde_json::Value {
-    let mut rendered = serde_json::json!({
+    serde_json::json!({
         "mailbox": delivery.mailbox.as_str(),
         "count": delivery.messages.len(),
         "new_only": new_only,
@@ -453,27 +453,7 @@ pub(crate) fn delivery_json(delivery: &Delivery, new_only: bool) -> serde_json::
             .iter()
             .map(delivered_json)
             .collect::<Vec<_>>(),
-    });
-    // **Withheld mail is named, never hidden.** A message its sender replaced
-    // before anybody read it is not in `messages`; it stays in `new`, and this
-    // says which and what replaced it, with the call that returns it.
-    if !delivery.superseded.is_empty() {
-        rendered["superseded"] = serde_json::json!({
-            "count": delivery.superseded.len(),
-            "messages": delivery
-                .superseded
-                .iter()
-                .map(|withheld| serde_json::json!({
-                    "id": withheld.id.as_str(),
-                    "superseded_by": withheld.by.as_str(),
-                }))
-                .collect::<Vec<_>>(),
-            "how_to_read": "unread messages their sender replaced with a later one, which is in \
-                            messages. They were not delivered and are still in new. \
-                            read_message returns one by id",
-        });
-    }
-    rendered
+    })
 }
 
 /// **Say, on a delivered message, that it replaces one the reader already
@@ -521,7 +501,6 @@ pub(crate) fn split_leftovers(delivery: Delivery, new_only: bool) -> (Delivery, 
         Delivery {
             mailbox: delivery.mailbox,
             messages: fresh,
-            superseded: delivery.superseded,
         },
         leftovers,
     )

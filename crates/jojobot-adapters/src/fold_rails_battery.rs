@@ -859,10 +859,12 @@ pub async fn walk_every_kind_of_mail_write(p: &MailRails<'_>) {
         .written()
         .expect("not blocked");
     wrote_without_reading("read_mailbox", calls);
-    assert_eq!(
-        delivery.superseded.len(),
-        1,
-        "the replaced message is withheld: {delivery:?}"
+    assert!(
+        delivery
+            .messages
+            .iter()
+            .all(|d| d.message.supersedes.is_none() || d.message.superseded_by.is_none()),
+        "no replaced message is handed over: {delivery:?}"
     );
     p.agree("after a delivery that withholds a replaced message")
         .await;

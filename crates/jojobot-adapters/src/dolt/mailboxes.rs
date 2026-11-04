@@ -33,7 +33,7 @@ use jojobot_domain::mailbox::event::{Change, next_event};
 use jojobot_domain::mailbox::{
     Delivered, Delivery, Guarded, Mailbox, MailboxError, MailboxName, Mailboxes, Message,
     MessageEvent, MessageEventKind, MessageId, MessageState, NewMessage, OwnerIndex, OwnerLookup,
-    QUARANTINE_STATE_TOKEN, Quarantined, StateCounts, SupersedeRefusal, Superseded, TakenBy, guard,
+    QUARANTINE_STATE_TOKEN, Quarantined, StateCounts, SupersedeRefusal, TakenBy, guard,
     normalize_body, normalize_notes, normalize_subject, validate_body, validate_mailbox_name,
     validate_message_id, validate_notes, validate_sender, validate_subject,
 };
@@ -261,15 +261,18 @@ impl DoltMailboxes {
                 MailboxError::Store("the mailbox store could not be reached".into())
             })?;
             let tally = counts.entry(mailbox).or_default();
-            for _ in 0..n {
+            // Only a message nobody has taken can be superseded, so only a `new`
+            // one is counted as replaced, and then as superseded alone.
+            let replaced = if state == MessageState::New {
+                replaced.min(n)
+            } else {
+                0
+            };
+            for _ in 0..(n - replaced) {
                 tally.add(state);
             }
-            // Only a message nobody has taken is withheld, so only a `new`
-            // one is counted as replaced.
-            if state == MessageState::New {
-                for _ in 0..replaced {
-                    tally.add_superseded();
-                }
+            for _ in 0..replaced {
+                tally.add(MessageState::Superseded);
             }
         }
         let rest = self.cards(tx, Scope::NotCountable).await?;
@@ -281,9 +284,6 @@ impl DoltMailboxes {
                         .entry(message.mailbox.as_str().to_string())
                         .or_default();
                     tally.add(message.state);
-                    if message.state == MessageState::New && message.superseded_by.is_some() {
-                        tally.add_superseded();
-                    }
                 }
                 None => unreadable.push(card),
             }
@@ -311,9 +311,6 @@ impl DoltMailboxes {
                         .entry(message.mailbox.as_str().to_string())
                         .or_default();
                     tally.add(message.state);
-                    if message.state == MessageState::New && message.superseded_by.is_some() {
-                        tally.add_superseded();
-                    }
                 }
                 None => unreadable.push(card),
             }
@@ -740,6 +737,11 @@ fn card_from(row: &sqlx::mysql::MySqlRow) -> Result<Card, MailboxError> {
         return Ok(unreadable("its send time cannot be read as a time"));
     };
 
+    let superseded_by = row
+        .try_get::<Option<String>, _>("superseded_by")
+        .map_err(store)?
+        .map(MessageId);
+
     Ok(Card::Readable(
         Box::new(Message {
             id,
@@ -748,7 +750,7 @@ fn card_from(row: &sqlx::mysql::MySqlRow) -> Result<Card, MailboxError> {
             subject: row.try_get::<Option<String>, _>("subject").map_err(store)?,
             sender: row.try_get::<String, _>("sender").map_err(store)?,
             sent_at,
-            state,
+            state: MessageState::served(state, superseded_by.as_ref()),
             notes: row.try_get::<Option<String>, _>("notes").map_err(store)?,
             in_reply_to: row
                 .try_get::<Option<String>, _>("in_reply_to")
@@ -758,10 +760,7 @@ fn card_from(row: &sqlx::mysql::MySqlRow) -> Result<Card, MailboxError> {
                 .try_get::<Option<String>, _>("supersedes")
                 .map_err(store)?
                 .map(MessageId),
-            superseded_by: row
-                .try_get::<Option<String>, _>("superseded_by")
-                .map_err(store)?
-                .map(MessageId),
+            superseded_by,
             // A token this build cannot read says nothing rather than
             // claiming somebody looked — see `TakenBy::of_token`.
             taken_by: row
@@ -1124,7 +1123,6 @@ impl Mailboxes for DoltMailboxes {
         let mut tx = self.pool.begin().await.map_err(store)?;
         let cards = self.cards(&mut tx, Scope::Unprocessed(name)).await?;
         let mut delivered = Vec::new();
-        let mut withheld = Vec::new();
         // The ids this read moved out of `new`, which a part of a write that
         // delivers mail keeps for a resend.
         let mut taken: Vec<String> = Vec::new();
@@ -1134,18 +1132,9 @@ impl Mailboxes for DoltMailboxes {
             .filter_map(Card::readable)
             .filter(|m| m.state.is_unprocessed())
         {
-            // **A message nobody has taken, that a later one replaced, is not
-            // delivered.** It stays in `new` and is named apart. One taken
-            // before the replacement is owed like any other.
-            if message.state == MessageState::New
-                && let Some(by) = &message.superseded_by
-            {
-                withheld.push(Superseded {
-                    id: message.id.clone(),
-                    by: by.clone(),
-                });
-                continue;
-            }
+            // **A message nobody has taken, that a later one replaced, is
+            // superseded** and does not pass the filter above. One taken before
+            // the replacement is owed like any other.
             let seen_before = message.state == MessageState::Read;
             if !seen_before {
                 taken.push(message.id.as_str().to_string());
@@ -1193,7 +1182,6 @@ impl Mailboxes for DoltMailboxes {
         Ok(Guarded::Written(Delivery {
             mailbox: name.clone(),
             messages: delivered,
-            superseded: withheld,
         }))
     }
 
@@ -1345,7 +1333,10 @@ impl Mailboxes for DoltMailboxes {
         // **A message already processed is left exactly as it is**: no second
         // event, and the notes it was closed with stay. The transition is the one
         // place that says so, so every caller that closes mail is idempotent.
-        if message.state == MessageState::Processed {
+        if matches!(
+            message.state,
+            MessageState::Processed | MessageState::Superseded
+        ) {
             return Ok(message.clone());
         }
         let given = normalize_notes(notes);

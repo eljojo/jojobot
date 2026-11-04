@@ -37,7 +37,7 @@ use jojobot_domain::mailbox::event::{Change, next_event};
 use jojobot_domain::mailbox::{
     Delivered, Delivery, Guarded, Mailbox, MailboxError, MailboxName, Mailboxes, Message,
     MessageEvent, MessageEventKind, MessageId, MessageState, NewMessage, Quarantined, StateCounts,
-    Superseded, TakenBy, validate_mailbox_name, validate_message_id,
+    TakenBy, validate_mailbox_name, validate_message_id,
 };
 use jojobot_domain::memory::EntityId;
 
@@ -149,6 +149,7 @@ impl Image {
             };
             let mut old = self.messages[place].clone();
             old.superseded_by = Some(message.id.clone());
+            old.state = MessageState::served(old.state, old.superseded_by.as_ref());
             if !self.put(old) {
                 return false;
             }
@@ -175,21 +176,15 @@ impl Image {
             return None;
         }
         let mut messages = Vec::new();
-        let mut superseded = Vec::new();
         for message in self
             .messages
             .iter()
             .filter(|m| &m.mailbox == name && m.state.is_unprocessed())
         {
+            // A message nobody has taken is mail, and a delivery would move it.
+            // One a later message replaced is superseded and is not mail.
             if message.state == MessageState::New {
-                // A message nobody has taken that a later one replaced is withheld
-                // and named; one nobody has taken and nothing replaced is mail.
-                let by = message.superseded_by.clone()?;
-                superseded.push(Superseded {
-                    id: message.id.clone(),
-                    by,
-                });
-                continue;
+                return None;
             }
             messages.push(Delivered {
                 message: Message {
@@ -204,7 +199,6 @@ impl Image {
         Some(Delivery {
             mailbox: name.clone(),
             messages,
-            superseded,
         })
     }
 
@@ -221,16 +215,12 @@ impl Image {
 /// Count one message into its box's tally, as the store does.
 fn count(counts: &mut StateCounts, message: &Message) {
     counts.add(message.state);
-    if message.state == MessageState::New && message.superseded_by.is_some() {
-        counts.add_superseded();
-    }
 }
 
-/// Take one message out of its box's tally, the inverse of [`count`]. A `new`
-/// message that a later one replaced is tallied as `superseded` only.
+/// Take one message out of its box's tally, the inverse of [`count`].
 fn uncount(counts: &mut StateCounts, message: &Message) {
     match message.state {
-        MessageState::New if message.superseded_by.is_some() => counts.superseded -= 1,
+        MessageState::Superseded => counts.superseded -= 1,
         MessageState::New => counts.new -= 1,
         MessageState::Read => counts.read -= 1,
         MessageState::Processed => counts.processed -= 1,
@@ -704,8 +694,9 @@ impl Mailboxes for FoldedMailboxes {
                     return false;
                 };
                 let prior = image.messages[place].state;
-                // A message already processed was left as it is: no event.
-                if prior == MessageState::Processed {
+                // A message already processed, or superseded, was left as it is: no
+                // event.
+                if matches!(prior, MessageState::Processed | MessageState::Superseded) {
                     return true;
                 }
                 image.record(

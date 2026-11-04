@@ -312,11 +312,8 @@ impl Jojobot {
                 // Added only to a delivery that came back empty.
                 if delivery.messages.is_empty() && leftovers.is_empty() {
                     let mut left_out = vec![format!("processed mail ({archived})")];
-                    if !delivery.superseded.is_empty() {
-                        left_out.push(format!(
-                            "{} replaced messages, named under superseded",
-                            delivery.superseded.len()
-                        ));
+                    if mine.counts.superseded > 0 {
+                        left_out.push(format!("superseded mail ({})", mine.counts.superseded));
                     }
                     if unreadable > 0 {
                         left_out.push(format!("{unreadable} unreadable messages"));

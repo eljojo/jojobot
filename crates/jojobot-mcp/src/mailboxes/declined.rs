@@ -241,6 +241,7 @@ pub(crate) fn mailbox_fix_by(e: &MailboxError) -> Option<FixBy> {
         | MailboxError::UnknownMessage { .. }
         | MailboxError::NotYourMessage { .. }
         | MailboxError::AlreadyProcessed { .. }
+        | MailboxError::AlreadySuperseded { .. }
         | MailboxError::CannotSupersede(_)
         | MailboxError::NameTaken { .. }
         // A store that answered and refused: a constraint the caller's input
@@ -284,6 +285,14 @@ fn mailbox_declined_arms(e: MailboxError) -> Result<CallToolResult, McpError> {
         // **A processed message is archived and stays readable**, so there is
         // nothing to do but leave it: the error says so.
         MailboxError::AlreadyProcessed { ref attempted } => Ok(mailbox_blocked_body(
+            "MailboxDeclinedArms",
+            attempted,
+            None,
+            format!("Nothing was written: {e}. read_message returns it."),
+        )),
+        // **A superseded message is final and stays readable**, so there is
+        // nothing to do but leave it: the error says so.
+        MailboxError::AlreadySuperseded { ref attempted } => Ok(mailbox_blocked_body(
             "MailboxDeclinedArms",
             attempted,
             None,
@@ -371,6 +380,7 @@ fn mailbox_error_arms(e: MailboxError) -> McpError {
         | MailboxError::QuarantinedOnPurpose { .. }
         | MailboxError::NotYourMessage { .. }
         | MailboxError::AlreadyProcessed { .. }
+        | MailboxError::AlreadySuperseded { .. }
         | MailboxError::CannotSupersede(_)
         | MailboxError::OwnerHasMultipleBoxes { .. }
         | MailboxError::NameTaken { .. }
