@@ -976,6 +976,69 @@ fn a_collection_is_founded_only_over_members_that_keep_its_promise() {
     ));
 }
 
+/// **Taking the key off a collection is judged by the collection as it numbers
+/// now.** Every number its members hold would be freed, live and taken back
+/// alike, and the lowest handle is named, even when that member is taken back
+/// and holds the higher number; a collection whose members hold no number, and
+/// one that has no member, may stop numbering.
+#[test]
+fn a_collection_stops_numbering_only_when_no_member_holds_a_number() {
+    let member = |id: &str, parent: &str, archived: bool| {
+        vec![
+            ClaimEvent::ObjectCreated {
+                object: object(id),
+                body: ObjectBody {
+                    parent: Some(object(parent)),
+                    archived,
+                    ..body("thing", id)
+                },
+            },
+            ClaimEvent::AddressBound {
+                object: object(id),
+                address: id.to_string(),
+            },
+        ]
+    };
+    let holds = |record_id: &str, subject: &str, k: &str, value: &str| {
+        vec![
+            created(record_id, claim(&format!("f{record_id}"), subject, "c", 1)),
+            write(record_id, subject, k, 1, value),
+        ]
+    };
+    let events = [
+        thing("held"),
+        holds("c1", "held", NUMBERS_BY, "num"),
+        member("b1", "held", false),
+        holds("n1", "b1", "num", "1"),
+        member("a1", "held", true),
+        holds("n2", "a1", "num", "2"),
+        thing("quiet"),
+        holds("c2", "quiet", NUMBERS_BY, "num"),
+        member("q1", "quiet", false),
+        thing("empty"),
+        holds("c3", "empty", NUMBERS_BY, "num"),
+    ]
+    .concat();
+    let state = replay(&events);
+    let off = |subject: &str| CaptureRequest {
+        fields: BTreeMap::from([(NUMBERS_BY.into(), String::new())]),
+        sets: BTreeSet::from([NUMBERS_BY.to_string()]),
+        ..request(subject)
+    };
+    assert!(matches!(
+        prepare(&state, &[], &off("held")),
+        Err(Refusal::Numbering(
+            crate::memory::MemoryError::NumberFreed { number: 2, holder, .. }
+        )) if holder.ends_with("a1")
+    ));
+    for control in ["quiet", "empty"] {
+        assert!(
+            prepare(&state, &[], &off(control)).is_ok(),
+            "{control}: no member holds a number, so the key may come off"
+        );
+    }
+}
+
 /// **A field value names a thing only where the link decision says it does.**
 /// A handle under any key must exist; loose prose under a reference key names
 /// nothing; a lone name under a reference key is refused with the handle to
