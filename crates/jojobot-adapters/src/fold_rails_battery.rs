@@ -860,11 +860,15 @@ pub async fn walk_every_kind_of_mail_write(p: &MailRails<'_>) {
         .expect("not blocked");
     wrote_without_reading("read_mailbox", calls);
     assert!(
+        delivery.messages.iter().all(|d| d.message.id != two.id),
+        "the replaced message is not handed over: {delivery:?}"
+    );
+    assert!(
         delivery
             .messages
             .iter()
-            .all(|d| d.message.supersedes.is_none() || d.message.superseded_by.is_none()),
-        "no replaced message is handed over: {delivery:?}"
+            .any(|d| d.message.id == replacement.id),
+        "its replacement is: {delivery:?}"
     );
     p.agree("after a delivery that withholds a replaced message")
         .await;
