@@ -202,9 +202,10 @@ fn a_libtest_flag_beside_a_real_filter_rides_the_test_run_and_is_not_a_test_name
         "a listing took the flag as a filter: {argv}"
     );
 
-    let (code, stdout, argv, _, _) = run_narrow("flag-typo", "alpha::sceond --nocapture");
+    let (code, stdout, argv, _, _) =
+        run_narrow("flag-typo", "alpha::first beta::sceond --nocapture");
     assert_eq!(code, Some(2), "{stdout}");
-    assert!(stdout.contains("alpha::sceond"), "{stdout}");
+    assert!(stdout.contains("beta::sceond"), "{stdout}");
     assert!(
         !stdout.contains(", --nocapture") && !stdout.contains("FILTER word(s) --nocapture"),
         "the flag was named as an unmatched word: {stdout}"
