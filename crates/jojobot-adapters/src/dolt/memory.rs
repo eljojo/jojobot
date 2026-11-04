@@ -5121,6 +5121,15 @@ impl jojobot_domain::memory::merge::MergeReads for DoltFoldReads<'_, '_> {
         self.store.with_manager_rendered(self.tx, &carried).await
     }
 
+    async fn written_keys(&mut self) -> Result<std::collections::BTreeSet<String>, MemoryError> {
+        let writes = self.store.writes_on(self.tx, self.folded_key).await?;
+        Ok(writes
+            .into_iter()
+            .filter(|write| write.status == jojobot_domain::memory::FactStatus::Active)
+            .map(|write| write.key)
+            .collect())
+    }
+
     async fn lineage(
         &mut self,
         named: Option<EntityId>,

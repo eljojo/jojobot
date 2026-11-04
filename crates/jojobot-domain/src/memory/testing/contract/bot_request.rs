@@ -8,7 +8,7 @@
 //! nobody's business. Every refusal sits beside the same write made where it is
 //! allowed, so a store that refused every write of the keys would not pass.
 
-use super::support::{add, capture, state, state_patch};
+use super::support::{add, capture, other_caller, state, state_patch};
 use super::*;
 use crate::memory::MayWrite;
 use crate::memory::bot_request::{DESIRED, OBSERVED_STATE, TARGET_BOT};
@@ -1020,4 +1020,146 @@ pub async fn a_claim_that_sets_only_the_generation_is_not_taken_back<M: Memory>(
         Some("3"),
         "the number claim that was refused above still stands"
     );
+}
+
+/// **A merge judges the keys a duplicate wrote, not only the keys it holds.** A
+/// duplicate that set a guarded key and then cleared it holds nothing under it,
+/// but the fold interleaves its whole history, so the clear lands on the
+/// survivor and takes the key off it. The merge is refused as if the duplicate
+/// still held the key, for a spec key and a status key of a request and for an
+/// older ceiling key alike, and nothing moves. **Paired**: the same survivor
+/// takes a duplicate that never wrote a guarded key.
+pub async fn a_merge_judges_a_guarded_key_its_duplicate_set_and_cleared<M: Memory>(store: &M) {
+    use crate::memory::THOUGHT_CAPACITY;
+    let request = EntityId("bot-request:contract-cleared-ask".into());
+    let manager = EntityId("bot:contract-cleared-manager".into());
+    let target = EntityId("bot:contract-cleared-target".into());
+    let keeper = EntityId("bot:contract-cleared-keeper".into());
+    let outsider = EntityId("bot:contract-cleared-outsider".into());
+    let plain = EntityId("topic:contract-cleared-plain".into());
+    for (id, name) in [
+        (&request, "Cleared Ask"),
+        (&manager, "Cleared Manager"),
+        (&target, "Cleared Target"),
+        (&keeper, "Cleared Keeper"),
+        (&outsider, "Cleared Outsider"),
+        (&plain, "Cleared Plain"),
+    ] {
+        add(store, NewEntity::new(id.clone(), name, "contract-fixture")).await;
+    }
+    let fields = |pairs: &[(&str, &str)]| -> std::collections::BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    };
+    capture(
+        store,
+        state(NewFact {
+            fields: fields(&[(crate::memory::REPORTS_TO, manager.as_str())]),
+            ..NewFact::about(
+                target.clone(),
+                "target reports to manager",
+                date(2026, 10, 1),
+            )
+        }),
+    )
+    .await;
+    capture(
+        store,
+        state(NewFact {
+            fields: fields(&[(TARGET_BOT, target.as_str()), (DESIRED, "running")]),
+            ..NewFact::about(request.clone(), "the target should run", date(2026, 10, 2))
+        }),
+    )
+    .await;
+    capture(
+        store,
+        state(NewFact {
+            fields: fields(&[(THOUGHT_CAPACITY, "5")]),
+            ..NewFact::about(keeper.clone(), "capacity is five", date(2026, 10, 2))
+        }),
+    )
+    .await;
+
+    // (duplicate, key, value written then cleared, the survivor, the caller who merges)
+    let families = [
+        (
+            "topic:contract-cleared-alpha",
+            DESIRED,
+            "stopped",
+            &request,
+            &outsider,
+        ),
+        (
+            "topic:contract-cleared-beta",
+            OBSERVED_STATE,
+            "bound",
+            &request,
+            &manager,
+        ),
+        (
+            "topic:contract-cleared-gamma",
+            THOUGHT_CAPACITY,
+            "9",
+            &keeper,
+            &keeper,
+        ),
+    ];
+    for (duplicate, key, value, survivor, caller) in families {
+        let duplicate = EntityId(duplicate.into());
+        add(
+            store,
+            NewEntity::new(duplicate.clone(), duplicate.slug(), "contract-fixture"),
+        )
+        .await;
+        let set = capture(
+            store,
+            state(NewFact {
+                fields: fields(&[(key, value)]),
+                ..NewFact::about(duplicate.clone(), "set a guarded key", date(2026, 10, 3))
+            }),
+        )
+        .await;
+        store
+            .update_fact(
+                &set.address(),
+                FactPatch {
+                    clear_fields: vec![key.to_string()],
+                    ..FactPatch::default()
+                },
+                &other_caller(),
+            )
+            .await
+            .expect("the key is cleared on the duplicate, where it is nobody's");
+        assert!(
+            !store
+                .fields(&duplicate)
+                .await
+                .expect("readable")
+                .contains_key(key),
+            "{key}: the duplicate holds nothing under the key it cleared"
+        );
+        let before = store.fields(survivor).await.expect("readable");
+        let err = store
+            .merge(&duplicate, survivor, None, date(2026, 10, 4), caller, None)
+            .await
+            .expect_err("a clear of a guarded key does not land on the survivor unjudged");
+        assert!(
+            matches!(
+                &err,
+                MemoryError::MergeCarriesGuardedKeys { keys, .. } if keys.contains(key)
+            ),
+            "{key}: {err:?}"
+        );
+        assert_eq!(
+            store.fields(survivor).await.expect("readable"),
+            before,
+            "{key}: the refused merge moved something onto the survivor"
+        );
+    }
+    store
+        .merge(&plain, &request, None, date(2026, 10, 5), &outsider, None)
+        .await
+        .expect("a duplicate that never wrote a guarded key folds into the same request");
 }

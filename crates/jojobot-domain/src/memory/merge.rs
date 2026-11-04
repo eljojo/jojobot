@@ -105,6 +105,10 @@ pub struct SurvivorRoom {
 pub trait MergeReads: Send {
     /// What the duplicate holds as fields, its manager served as a handle.
     async fn carried(&mut self) -> Result<BTreeMap<String, String>, MemoryError>;
+    /// **Every key the duplicate has written that still counts**, a write that
+    /// took the key off included: the fold interleaves the whole history, so the
+    /// last write of the key on the survivor may be the duplicate's clear.
+    async fn written_keys(&mut self) -> Result<std::collections::BTreeSet<String>, MemoryError>;
     /// The chart around the survivor, with `named` the manager the carried keys
     /// name.
     async fn lineage(&mut self, named: Option<EntityId>) -> Result<Lineage, MemoryError>;
@@ -141,7 +145,14 @@ pub async fn refuses_merge_guards<R: MergeReads + ?Sized>(
     reads: &mut R,
 ) -> Result<(), MemoryError> {
     let carried = reads.carried().await?;
-    let (lineage, duplicate_lineage) = match needs_the_chart(fold.survivor, &carried) {
+    // **The guards judge the keys the duplicate wrote**, so a key it set and
+    // cleared stands beside the keys it holds. The placeholder is no handle and
+    // is not blank, so it names no manager and still counts as held.
+    let mut judged = carried.clone();
+    for key in reads.written_keys().await? {
+        judged.entry(key).or_insert_with(|| "-".to_string());
+    }
+    let (lineage, duplicate_lineage) = match needs_the_chart(fold.survivor, &judged) {
         Some(named) => (
             Some(reads.lineage(named).await?),
             Some(reads.lineage_of(fold.folded).await?),
@@ -152,7 +163,7 @@ pub async fn refuses_merge_guards<R: MergeReads + ?Sized>(
         fold.caller,
         fold.survivor,
         fold.folded,
-        &carried,
+        &judged,
         lineage.as_ref(),
         duplicate_lineage.as_ref(),
     ) {

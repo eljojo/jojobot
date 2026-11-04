@@ -25,6 +25,16 @@ impl crate::memory::merge::MergeReads for FakeFoldReads<'_> {
         Ok(self.store.with_manager_served(&carried))
     }
 
+    async fn written_keys(&mut self) -> Result<std::collections::BTreeSet<String>, MemoryError> {
+        Ok(self
+            .store
+            .writes_on(self.folded_key, self.facts)
+            .into_iter()
+            .filter(|write| write.status == crate::memory::FactStatus::Active)
+            .map(|write| write.key)
+            .collect())
+    }
+
     async fn lineage(
         &mut self,
         named: Option<EntityId>,

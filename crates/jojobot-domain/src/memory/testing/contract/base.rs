@@ -19612,6 +19612,7 @@ macro_rules! all_cases {
         $m!(the_head_of_a_chart_places_itself($store));
         $m!(a_bot_requests_spec_is_judged_by_the_chain_above_its_target($store));
         $m!(a_bot_request_is_not_folded_into_another_thing($store));
+        $m!(a_merge_judges_a_guarded_key_its_duplicate_set_and_cleared($store));
         $m!(a_first_target_is_judged_by_the_target_and_not_a_held_manager($store));
         $m!(a_retracted_generation_is_still_the_highest_ever_written($store));
         $m!(a_claim_that_sets_only_the_generation_is_not_taken_back($store));
