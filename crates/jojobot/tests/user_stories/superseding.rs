@@ -1,8 +1,9 @@
 //! "I sent the wrong date. Make sure nobody acts on it."
 //!
 //! A sender corrects a message by posting a second one that replaces it. If the
-//! reader has not opened the first, the box hands over the correction and names
-//! the original apart, so the reader never acts on the wrong date. If the reader
+//! reader has not opened the first, the box hands over the correction and the
+//! original is superseded, a final state no delivery names, so the reader never
+//! acts on the wrong date. If the reader
 //! has opened it, the correction arrives saying so. Nothing is deleted: the
 //! original stays readable and says what replaced it, and the sender sees the
 //! same in their own view.
@@ -84,28 +85,34 @@ async fn a_sender_corrects_a_message_before_it_is_read_and_after() {
         booted.json()
     );
 
-    // The delivery hands over the correction and names the original apart.
+    // The delivery hands over the correction and says nothing of the original,
+    // which is final: it is never delivered and never listed.
     let delivery = g.drain().await;
     delivery.says("The deploy is on monday.");
     delivery.never_says("The deploy is on friday.");
     let delivered = delivery.json();
     assert_eq!(delivered["count"], 1, "{delivered}");
     assert_eq!(
-        delivered["superseded"]["messages"][0]["id"],
-        wrong.as_str(),
-        "{delivered}"
-    );
-    assert_eq!(
-        delivered["superseded"]["messages"][0]["superseded_by"],
+        delivered["messages"][0]["id"],
         right_id.as_str(),
         "{delivered}"
     );
+    assert!(delivered.get("superseded").is_none(), "{delivered}");
 
-    // On request the original is readable, and says what replaced it.
+    // On request the original is readable, says it is superseded and what
+    // replaced it, and reading it takes nothing.
     g.call("read_message", json!({"message_id": &wrong}))
         .await
         .says("The deploy is on friday.")
+        .says("\"state\":\"superseded\"")
         .says(&format!("\"superseded_by\":\"{right_id}\""));
+    let after = g.call("read_mailbox", json!({"counts_only": true})).await;
+    assert_eq!(
+        after.json()["counts"]["superseded"],
+        1,
+        "reading it took nothing: {}",
+        after.json()
+    );
 
     // The sender sees the same in their own view.
     s.call("list_sent", json!({}))
