@@ -627,10 +627,13 @@ fn an_issued_number_follows_its_container_into_a_merge() {
             thing("old", None),
             thing("coll", None),
             thing("m1", Some("old")),
+            // A second member keeps its number held beside the taken-back one.
+            thing("m2", Some("old")),
         ],
         holds("o", "old", NUMBERS_BY, "num"),
         holds("c", "coll", NUMBERS_BY, "num"),
         holds("w1", "m1", "num", "5"),
+        holds("w2", "m2", "num", "6"),
         vec![
             ClaimEvent::RecordRevised {
                 record: record("w1"),
@@ -651,10 +654,14 @@ fn an_issued_number_follows_its_container_into_a_merge() {
             "{container}: issued"
         );
     }
+    assert!(
+        state.number_issued(&object("coll"), "num", 6),
+        "the held number is issued too, so the unheld set must leave it out"
+    );
     assert_eq!(
         state.issued_unheld(&object("coll"), "num"),
         BTreeSet::from([5]),
-        "taken back, under the survivor"
+        "taken back, under the survivor, and the held 6 is not in it"
     );
 }
 
