@@ -41,6 +41,7 @@ pub(crate) mod instance_unread;
 #[cfg(test)]
 mod keys_kept_tests;
 pub mod left_out;
+pub mod list_carry;
 pub mod list_delta;
 pub mod list_entities;
 pub mod list_linked;

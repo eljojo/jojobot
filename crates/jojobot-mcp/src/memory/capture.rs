@@ -965,6 +965,18 @@ impl Jojobot {
         crate::answer::note_postcondition(&mut body, line);
         self.note_reach_and_hint(&mut body, &fact, &own_sent, &sets_named)
             .await;
+        // **A batch decides this once, for its final receipt**, so an item of one
+        // never leaves the sentence behind.
+        if !mode.placing_held
+            && let Some((entry, ..)) = &ticked
+            && body.get("hint").is_none()
+            && let Ok(address) = FactAddress::parse(entry)
+            && let Some(carry) = self
+                .carry_teaching_after_ticks(&address.home, &caller)
+                .await
+        {
+            crate::answer::note_hint(&mut body, carry.to_string());
+        }
         if fact.edge.is_none()
             && body.get("hint").is_none()
             && jojobot_domain::memory::entries::is_entry(&fact)

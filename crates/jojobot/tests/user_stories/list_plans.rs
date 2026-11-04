@@ -274,3 +274,215 @@ async fn carrying_an_open_entry_forward_names_it_and_the_old_plan_still_reads_it
     assert!(old["entries"][1].get("carried_to").is_none(), "{old}");
     story.finish().await;
 }
+
+/// The hint a tick receipt carries, whole; empty when the receipt has none,
+/// which is how a receipt with nothing to teach reads.
+fn the_line(receipt: &Answer) -> String {
+    receipt.json()["hint"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string()
+}
+
+/// A plan or a checklist with three entries, as their addresses.
+async fn three_entries(s: &Session, covers: Option<&str>) -> Vec<String> {
+    let mut sets = json!({"tick": "sink"});
+    if let Some(covers) = covers {
+        sets["covers"] = json!(covers);
+    }
+    a_list_on_the_trip(s, "errands", sets).await;
+    let mut at = Vec::new();
+    for text in ["buy flour", "bake", "clean the oven"] {
+        at.push(add_entry(s, "list:errands", text, None).await);
+    }
+    at
+}
+
+/// Ticks `done` on the first `n` entries in one call.
+async fn tick_many(s: &Session, at: &[String], n: usize) -> Answer {
+    let ticks: Vec<Value> = at[..n]
+        .iter()
+        .map(|entry| json!({"entry": entry, "act": "done"}))
+        .collect();
+    s.call(
+        "capture",
+        json!({"subject": "list:errands", "provenance": "testimony", "ticks": ticks}),
+    )
+    .await
+}
+
+/// **Ticks that leave an entry open on a plan teach the carry in the receipt**:
+/// the next plan takes the entry with `derived_from` set to the old address. The
+/// same ticks on a list that covers no period say nothing of it, and a plan with
+/// nothing left open says nothing either.
+#[tokio::test]
+async fn ticks_leaving_an_entry_open_on_a_plan_teach_the_carry() {
+    let story = Story::begin_pretending_it_is("bot:gamma", TODAY).await;
+    let s = story.session().await;
+    let at = three_entries(&s, Some("2026-W43")).await;
+
+    let two = tick_many(&s, &at, 2).await;
+    assert!(the_line(&two).contains("derived_from"), "{}", two.raw());
+
+    let last = s
+        .call(
+            "capture",
+            json!({"subject": "list:errands", "content": "done", "provenance": "testimony",
+                   "tick": {"entry": at[2], "act": "done"}}),
+        )
+        .await;
+    assert!(
+        !the_line(&last).contains("derived_from"),
+        "nothing is open after it: {}",
+        last.raw()
+    );
+    story.finish().await;
+}
+
+/// **A single tick on a plan carries the same line**, and a list with no period
+/// does not, for one tick or for several.
+#[tokio::test]
+async fn one_tick_on_a_plan_teaches_the_carry_and_a_checklist_does_not() {
+    let story = Story::begin_pretending_it_is("bot:gamma", TODAY).await;
+    let s = story.session().await;
+    let at = three_entries(&s, Some("2026-10-22")).await;
+    let one = s
+        .call(
+            "capture",
+            json!({"subject": "list:errands", "content": "done", "provenance": "testimony",
+                   "tick": {"entry": at[0], "act": "done"}}),
+        )
+        .await;
+    assert!(the_line(&one).contains("derived_from"), "{}", one.raw());
+    story.finish().await;
+
+    let story = Story::begin_pretending_it_is("bot:gamma", TODAY).await;
+    let s = story.session().await;
+    let at = three_entries(&s, None).await;
+    let one = s
+        .call(
+            "capture",
+            json!({"subject": "list:errands", "content": "done", "provenance": "testimony",
+                   "tick": {"entry": at[0], "act": "done"}}),
+        )
+        .await;
+    assert!(!the_line(&one).contains("derived_from"), "{}", one.raw());
+    let two = tick_many(&s, &at[1..], 2).await;
+    assert!(!the_line(&two).contains("derived_from"), "{}", two.raw());
+    story.finish().await;
+}
+
+/// **A capture that ticks nothing teaches nothing of the carry**, even on a plan
+/// with entries open.
+#[tokio::test]
+async fn a_capture_that_ticks_nothing_on_a_plan_does_not_teach_the_carry() {
+    let story = Story::begin_pretending_it_is("bot:gamma", TODAY).await;
+    let s = story.session().await;
+    three_entries(&s, Some("2026-W43")).await;
+    let added = s
+        .call(
+            "capture",
+            json!({"subject": "list:errands", "content": "paint", "provenance": "testimony"}),
+        )
+        .await;
+    assert!(
+        !the_line(&added).contains("derived_from"),
+        "{}",
+        added.raw()
+    );
+    story.finish().await;
+}
+
+/// **A batch of new entries on a plan ticks nothing, so it teaches nothing of the
+/// carry** while an entry is open.
+#[tokio::test]
+async fn a_batch_of_entries_on_a_plan_does_not_teach_the_carry() {
+    let story = Story::begin_pretending_it_is("bot:gamma", TODAY).await;
+    let s = story.session().await;
+    three_entries(&s, Some("2026-W43")).await;
+    let added = s
+        .call(
+            "capture",
+            json!({"subject": "list:errands", "provenance": "testimony",
+                   "entries": ["paint", "sweep"]}),
+        )
+        .await;
+    assert!(
+        !the_line(&added).contains("derived_from"),
+        "{}",
+        added.raw()
+    );
+    story.finish().await;
+}
+
+/// One tick of `done` on an entry, as its own call.
+async fn tick_one(s: &Session, entry: &str) -> Answer {
+    s.call(
+        "capture",
+        json!({"subject": "list:errands", "content": "done", "provenance": "testimony",
+               "tick": {"entry": entry, "act": "done"}}),
+    )
+    .await
+}
+
+/// **A batch that ticks every open entry of a plan teaches nothing of the carry**:
+/// the receipt is judged once, after the last tick, and no item of the batch
+/// leaves a sentence behind. Paired with the partial batch above, which teaches.
+#[tokio::test]
+async fn a_batch_that_ticks_every_open_entry_of_a_plan_does_not_teach_the_carry() {
+    let story = Story::begin_pretending_it_is("bot:gamma", TODAY).await;
+    let s = story.session().await;
+    let at = three_entries(&s, Some("2026-W43")).await;
+    let all = tick_many(&s, &at, 3).await;
+    assert!(
+        !the_line(&all).contains("derived_from"),
+        "nothing is open after the batch: {}",
+        all.raw()
+    );
+    story.finish().await;
+}
+
+/// **A session is taught the carry once**: a second tick that still leaves an
+/// entry open says nothing, and a session that has not been taught is taught.
+#[tokio::test]
+async fn a_session_is_taught_the_carry_once_and_a_fresh_session_is_taught_again() {
+    let story = Story::begin_pretending_it_is("bot:gamma", TODAY).await;
+    let s = story.session().await;
+    let at = three_entries(&s, Some("2026-W43")).await;
+    add_entry(&s, "list:errands", "sweep", None).await;
+
+    let first = tick_one(&s, &at[0]).await;
+    assert!(the_line(&first).contains("derived_from"), "{}", first.raw());
+    let second = tick_one(&s, &at[1]).await;
+    assert!(
+        !the_line(&second).contains("derived_from"),
+        "this session was taught: {}",
+        second.raw()
+    );
+
+    // A second boot of one bot is offered its stopped run; `new` starts another.
+    let other = story.session_on(TODAY, Some("new")).await;
+    let third = tick_one(&other, &at[2]).await;
+    assert!(the_line(&third).contains("derived_from"), "{}", third.raw());
+    story.finish().await;
+}
+
+/// **A batch spends the same teaching a single tick does**, so a batch that taught
+/// the carry leaves the next single tick of the session silent.
+#[tokio::test]
+async fn a_batch_that_taught_the_carry_leaves_the_next_single_tick_silent() {
+    let story = Story::begin_pretending_it_is("bot:gamma", TODAY).await;
+    let s = story.session().await;
+    let at = three_entries(&s, Some("2026-W43")).await;
+    add_entry(&s, "list:errands", "sweep", None).await;
+
+    let batch = tick_many(&s, &at, 1).await;
+    assert!(the_line(&batch).contains("derived_from"), "{}", batch.raw());
+    let single = tick_one(&s, &at[1]).await;
+    assert!(
+        !the_line(&single).contains("derived_from"),
+        "this session was taught: {}",
+        single.raw()
+    );
+    story.finish().await;
+}

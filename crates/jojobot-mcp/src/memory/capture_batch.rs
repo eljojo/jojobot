@@ -803,6 +803,11 @@ impl Jojobot {
         notes.deliver(&mut body);
         let changed = self.changed_on(&before, &subject).await;
         crate::changed::note_changed(&mut body, changed);
+        if args.ticks.is_some()
+            && let Some(carry) = self.carry_teaching_after_ticks(&subject, &caller).await
+        {
+            crate::answer::note_hint(&mut body, carry.to_string());
+        }
         crate::answer::note_postcondition(
             &mut body,
             format!("{count} {form} landed on {subject}, each its own record, in the order sent."),
