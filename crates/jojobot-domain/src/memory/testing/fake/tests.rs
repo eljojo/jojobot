@@ -1249,8 +1249,8 @@ async fn deleting_a_thing_under_the_store_clears_every_table_keyed_to_it() {
 
 /// **A thing renamed after its prose was written is deleted with that prose.**
 /// The fake keys prose by the handle it was written under and a rename does not
-/// re-key it, so the seam finds the prose through the thing's badge, not through
-/// the handle it is asked to delete. A thing nobody deleted keeps its own.
+/// re-key it. Pages at both its creation and an intermediate handle must go;
+/// the latter is found through the former handles. An unrelated page stays.
 #[tokio::test]
 async fn deleting_a_renamed_thing_under_the_store_clears_the_prose_written_before_the_rename() {
     let store = InMemoryMemory::booted();
@@ -1280,12 +1280,33 @@ async fn deleting_a_renamed_thing_under_the_store_clears_the_prose_written_befor
         store.prose.lock().unwrap().contains_key(&doomed),
         "the page still sits under the handle it was written under"
     );
+    store
+        .set_prose(&renamed, "a later page", None)
+        .await
+        .expect("prose lands at the intermediate handle");
+    let final_handle = EntityId("person:epsilon".into());
+    store
+        .rename_entity(
+            &renamed,
+            &final_handle,
+            None,
+            date(2026, 6, 5),
+            crate::memory::Override::none(),
+            None,
+        )
+        .await
+        .expect("the second rename is answered")
+        .written()
+        .expect("nothing collides with the final handle");
+    assert!(store.prose.lock().unwrap().contains_key(&renamed));
 
-    store.delete_entity_past_the_guard(&renamed);
+    store.delete_entity_past_the_guard(&final_handle);
 
     let held = store.prose.lock().unwrap();
     assert!(
-        !held.contains_key(&doomed) && !held.contains_key(&renamed),
+        !held.contains_key(&doomed)
+            && !held.contains_key(&renamed)
+            && !held.contains_key(&final_handle),
         "prose of the deleted thing remains: {held:?}"
     );
     assert!(
