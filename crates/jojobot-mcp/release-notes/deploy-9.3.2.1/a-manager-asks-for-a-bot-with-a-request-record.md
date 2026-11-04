@@ -19,7 +19,7 @@ A write to the wrong half is refused with the code `KeyNotYours`. For a spec key
 
 Smithers manages Milhouse. Smithers calls `add_entity` with kind `bot-request`, handle `bot-request:gamma`, and `sets` of `target_bot: bot:milhouse`, `desired: running` and `bound_app: watchbot`. The request holds `generation` 1. The app watchbot later writes `observed_state` and `observed_generation: 1` on it.
 
-Smithers sets `desired: stopped`, and `generation` becomes 2. Until watchbot writes `observed_generation: 2`, Smithers knows the app has not acted on the stop yet. Milhouse tries to set `desired: running` on his own request and gets `KeyNotYours` that names `bot:smithers`. Marge's bot tries to write `observed_state` and gets `KeyNotYours` that says only the bound app writes it. Homer's bot sends `generation: 9` and gets `KeyNotYours` that says no one writes it, because jojobot works it out.
+Smithers sets `desired: stopped`, and `generation` becomes 2. Until watchbot writes `observed_generation: 2`, Smithers knows the app has not acted on the stop yet. Milhouse tries to set `desired: running` on its own request and gets `KeyNotYours` that names `bot:smithers`. Marge's bot tries to write `observed_state` and gets `KeyNotYours` that says only the bound app writes it. Homer's bot sends `generation: 9` and gets `KeyNotYours` that says no one writes it, because jojobot works it out.
 
 ## What to do
 
