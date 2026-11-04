@@ -11,8 +11,10 @@ use serde_json::Value;
 use crate::answer::compose::{Answer, Kind, Layer, Tier, compose_within};
 
 /// The advisory parts of a capture receipt, by the key each is served under.
-/// Declaration order breaks a tie within a tier. A wrong subject outranks every
-/// other suggestion, and what the write unlocked is the least urgent.
+/// The composer ranks by tier, then by cost, so inside a tier the cheaper
+/// layer ranks first and declaration order breaks only an equal cost. A wrong
+/// subject outranks every other suggestion, and what the write unlocked is the
+/// least urgent.
 /// **A fact about what the write did is not here**: a status outside the
 /// vocabulary and a view that narrows nothing say how the write stands, so they
 /// stay in the core and always ship.
@@ -91,6 +93,37 @@ mod tests {
         assert_eq!(
             receipt["left_out"][0]["layer"], "hint",
             "the dropped one is named: {receipt}"
+        );
+    }
+
+    /// **A fact about how the write stands ships beside a suggestion.** A status
+    /// outside the vocabulary lands and counts as not finished, and the receipt
+    /// says so in `status_word_note`. The words also name a known thing, which
+    /// earns the suggestion. Both are served: the fact is core, never ranked.
+    #[tokio::test]
+    async fn a_status_word_note_ships_beside_a_suggestion() {
+        let jojobot = handler();
+        ensure(&jojobot, "thing:the-furnace").await;
+        ensure(&jojobot, "work:atlas-root").await;
+        make_bot(&jojobot, "gamma").await;
+        let sid = booted(&jojobot, "gamma").await;
+        let receipt = json_of(
+            &jojobot
+                .capture(Parameters(CaptureArgs {
+                    sid: Some(sid),
+                    fields: Some([("status".to_string(), "nonsense".to_string())].into()),
+                    ..capture_args("work:atlas-root", "The furnace's service is due in March")
+                }))
+                .await
+                .expect("capture ok"),
+        );
+        assert!(
+            receipt["status_word_note"].is_string(),
+            "the fact about the status ships: {receipt}"
+        );
+        assert!(
+            receipt["possible_subject_note"].is_string(),
+            "the suggestion ships beside it: {receipt}"
         );
     }
 }
