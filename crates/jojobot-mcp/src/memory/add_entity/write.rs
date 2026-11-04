@@ -498,7 +498,7 @@ impl Jojobot {
                     format!(
                         "Nothing was written. '{attempted}' names itself as its parent, and \
                          nothing is its own parent. No override_token lifts this. Name the \
-                         entity this one sits under, or leave parent off and create it as a \
+                         entity this one sits under, or send root: true to create it as a \
                          root."
                     ),
                 ))
@@ -533,8 +533,8 @@ impl Jojobot {
                     "Nothing was written. '{attempted}' is the parent this call named, and it \
                      is not an entity jojobot knows. No override_token lifts this: nothing is \
                      created as a side effect of creating something else. Create '{attempted}' \
-                     with its own add_entity call first, then re-call this one — or drop the \
-                     parent to create '{creating}' as a root."
+                     with its own add_entity call first, then re-call this one — or send \
+                     root: true instead of the parent to create '{creating}' as a root."
                 ),
             )),
             Guarded::Blocked {

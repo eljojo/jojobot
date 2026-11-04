@@ -634,7 +634,7 @@ async fn the_page_of_a_view_selecting_on_working_on_leaves_out_a_bot_whose_write
     .await;
     otto.call(
         "add_entity",
-        json!({"kind": "view", "handle": "on-the-framing", "name": "On the framing",
+        json!({"kind": "view", "root": true, "handle": "on-the-framing", "name": "On the framing",
                "source": "user-named",
                "sets": {"selects": "bot", "where": "working_on = work:frame-the-walls"}}),
     )

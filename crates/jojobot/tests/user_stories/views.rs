@@ -586,7 +586,7 @@ async fn a_view_holding_nothing_that_narrows_is_made_and_refused_only_when_asked
     let plain = s
         .call(
             "add_entity",
-            json!({"kind": "view", "handle": "plain-listing", "name": "Plain listing",
+            json!({"kind": "view", "root": true, "handle": "plain-listing", "name": "Plain listing",
                    "source": "user-named", "sets": {"shows": "facts"}}),
         )
         .await;
@@ -684,7 +684,7 @@ async fn a_view_that_asks_what_is_ready_needs_no_kind_and_an_unsent_input_narrow
     let startable = s
         .call(
             "add_entity",
-            json!({"kind": "view", "handle": "steps-startable", "name": "Steps startable",
+            json!({"kind": "view", "root": true, "handle": "steps-startable", "name": "Steps startable",
                    "source": "user-named", "sets": {"asks": "ready"}}),
         )
         .await;
@@ -752,13 +752,13 @@ async fn a_views_page_answers_what_recall_answers_and_refuses_what_recall_refuse
     }
     s.call(
         "add_entity",
-        json!({"kind": "view", "handle": "atlas-children", "name": "Atlas children",
+        json!({"kind": "view", "root": true, "handle": "atlas-children", "name": "Atlas children",
                "source": "user-named", "sets": {"parent": "project:atlas"}}),
     )
     .await;
     s.call(
         "add_entity",
-        json!({"kind": "view", "handle": "plain-listing", "name": "Plain listing",
+        json!({"kind": "view", "root": true, "handle": "plain-listing", "name": "Plain listing",
                "source": "user-named", "sets": {"shows": "facts"}}),
     )
     .await;
@@ -804,7 +804,7 @@ async fn a_views_page_asks_what_is_ready_of_work_as_recall_does() {
     .await;
     s.call(
         "add_entity",
-        json!({"kind": "view", "handle": "steps-startable", "name": "Steps startable",
+        json!({"kind": "view", "root": true, "handle": "steps-startable", "name": "Steps startable",
                "source": "user-named", "sets": {"asks": "ready"}}),
     )
     .await;

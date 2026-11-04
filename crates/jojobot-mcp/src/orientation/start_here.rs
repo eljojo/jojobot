@@ -788,6 +788,7 @@ mod tests {
                 crm: None,
                 boot: None,
                 parent: None,
+                root: None,
                 sets: None,
                 override_token: None,
                 override_reason: None,

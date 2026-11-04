@@ -49,6 +49,8 @@ mod boot;
 /// A boot names the recovery read for mail delivered and never finished.
 #[path = "user_stories/boot_owed_mail.rs"]
 mod boot_owed_mail;
+#[path = "user_stories/bot_home.rs"]
+mod bot_home;
 /// A bot's box counted by the bot itself, through the served verb.
 #[path = "user_stories/box_as.rs"]
 mod box_as;

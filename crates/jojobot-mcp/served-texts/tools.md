@@ -40,6 +40,7 @@ A `request_id` makes a resend safe: a repeat returns the first receipt and write
 {"/inputSchema/properties/override_token":{"default":null,"type":["string","null"]}}
 {"/inputSchema/properties/parent":{"default":null,"type":["string","null"]}}
 {"/inputSchema/properties/request_id":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/root":{"default":null,"type":["boolean","null"]}}
 {"/inputSchema/properties/sets":{"additionalProperties":{"type":"string"},"default":null,"type":["object","null"]}}
 {"/inputSchema/properties/sid":{"default":null,"type":["string","null"]}}
 {"/inputSchema/properties/source":{"type":"string"}}
@@ -197,11 +198,15 @@ collision.
 #### `add_entity` — argument `/inputSchema.parent`
 
 ```text
-**The entity this one sits under**, as `kind:slug`. Optional — most
-entities are roots — and **it must already exist**, exactly as every
-other handle a write names must: a parent jojobot does not know comes
-back blocked with candidates, and nothing is written. Nothing may be its
-own parent.
+**The entity this one sits under**, as `kind:slug`. Optional — and **it
+must already exist**, exactly as every other handle a write names must: a
+parent jojobot does not know comes back blocked with candidates, and
+nothing is written. Nothing may be its own parent.
+
+**Left off, a bot's new thing sits under that bot**, and the receipt says
+so and gives the call that moves it. The assistant that holds the
+operator's life creates at the root, and so does a call that sends
+`root: true`. A `rhythm` or a `promise` is never placed for the caller.
 
 **Chosen here, and changed by `rename_entity`.** That verb takes a
 `parent` and reparents with it (naming the same handle in `to` when only
@@ -222,6 +227,14 @@ same call again with the same `request_id`: if
 the first call wrote, you get its receipt back marked `repeat` and nothing
 is written a second time, so the entity is made once. It needs a `sid`, and a call that
 wrote nothing spends no id.
+```
+
+#### `add_entity` — argument `/inputSchema.root`
+
+```text
+**`true` asks for the root on purpose**: the new thing sits under nothing,
+where a bot's call that names no parent would put it under the bot. Sent
+with `parent` it is refused, since the two say different things.
 ```
 
 #### `add_entity` — argument `/inputSchema.sets`

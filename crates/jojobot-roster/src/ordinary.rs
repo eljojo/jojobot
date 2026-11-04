@@ -1551,6 +1551,8 @@ pub const ORDINARY: &[&str] = &[
     "decision:contract-tie-",
     "decision:contract-reach-",
     "decision:contract-span-",
+    "work:shift-1",
+    "work:shift-2",
 ];
 
 pub const ORDINANCES: &[&str] = &[

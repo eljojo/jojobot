@@ -472,8 +472,8 @@ async fn keeping_track_of_bikes() {
         .says("thing:bike-chain")
         .says("\"parent\":\"thing:gravel-bike\"");
 
-    // The negative the line above rests on: a thing nobody put anywhere is a
-    // root, and it carries no parent at all; the thing listed is there, so the
+    // The negative the line above rests on: a thing created with `root: true`
+    // is a root, and it carries no parent at all; the thing listed is there, so the
     // absence is not an empty answer.
     let things = s.list("thing").await.json();
     let root = things["entities"]

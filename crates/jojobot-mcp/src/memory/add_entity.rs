@@ -121,11 +121,15 @@ pub struct AddEntityArgs {
     /// conversation reaches for it. Only the exact token `always` counts.
     #[serde(default)]
     pub(crate) boot: Option<String>,
-    /// **The entity this one sits under**, as `kind:slug`. Optional — most
-    /// entities are roots — and **it must already exist**, exactly as every
-    /// other handle a write names must: a parent jojobot does not know comes
-    /// back blocked with candidates, and nothing is written. Nothing may be its
-    /// own parent.
+    /// **The entity this one sits under**, as `kind:slug`. Optional — and **it
+    /// must already exist**, exactly as every other handle a write names must: a
+    /// parent jojobot does not know comes back blocked with candidates, and
+    /// nothing is written. Nothing may be its own parent.
+    ///
+    /// **Left off, a bot's new thing sits under that bot**, and the receipt says
+    /// so and gives the call that moves it. The assistant that holds the
+    /// operator's life creates at the root, and so does a call that sends
+    /// `root: true`. A `rhythm` or a `promise` is never placed for the caller.
     ///
     /// **Chosen here, and changed by `rename_entity`.** That verb takes a
     /// `parent` and reparents with it (naming the same handle in `to` when only
@@ -136,6 +140,11 @@ pub struct AddEntityArgs {
     /// what says on what.
     #[serde(default)]
     pub(crate) parent: Option<String>,
+    /// **`true` asks for the root on purpose**: the new thing sits under nothing,
+    /// where a bot's call that names no parent would put it under the bot. Sent
+    /// with `parent` it is refused, since the two say different things.
+    #[serde(default)]
+    pub(crate) root: Option<bool>,
     /// **What this call sets on the new thing**, written as its first claim in
     /// the same act, so a piece of work is made and says where it stands in one
     /// call. Capture validation applies, except a NEW bot may name its caller
@@ -337,6 +346,63 @@ fn entity_as_it_will_be(new: &NewEntity) -> Entity {
     }
 }
 
+/// **Where a new thing sits, decided once for both creation paths.**
+struct Placed {
+    parent: Option<EntityId>,
+    /// The caller named no parent and did not ask for the root, so the bot that
+    /// made the call is the parent.
+    defaulted: bool,
+}
+
+/// **A bot is the home of what it creates.** A parent the caller named is kept.
+/// `root: true` asks for none. A loop and a promise are never placed for the
+/// caller: their parent says whose job they are, and a default would answer
+/// that without being asked. The assistant, which holds the operator's life,
+/// keeps creating at the root so the operator's things never land under a bot.
+fn effective_parent(
+    args: &AddEntityArgs,
+    kind: Option<EntityKind>,
+    caller: &EntityId,
+    caller_is_there: bool,
+) -> Placed {
+    let named = args.parent.as_deref().map(EntityId::person);
+    let placed_for_the_caller = named.is_none()
+        && args.root != Some(true)
+        && !matches!(kind, Some(EntityKind::RHYTHM | EntityKind::PROMISE))
+        && caller_is_there
+        && caller.as_str() != jojobot_domain::memory::ASSISTANT;
+    match placed_for_the_caller {
+        true => Placed {
+            parent: Some(caller.clone()),
+            defaulted: true,
+        },
+        false => Placed {
+            parent: named,
+            defaulted: false,
+        },
+    }
+}
+
+/// **What the receipt says about a parent it chose**: where the thing went and
+/// the call that moves it, with the new parent left for the caller to fill in.
+fn parent_defaulted_json(entity: &Entity) -> serde_json::Value {
+    serde_json::json!({
+        "parent": entity.parent.as_ref().map(EntityId::as_str),
+        "note": "this call named no parent, so the thing sits under the bot that made \
+                 it. To put it under something else, call rename_entity with the \
+                 `arguments` in `move`, naming that parent. To create at the root, send \
+                 root: true on the creation.",
+        "move": {
+            "tool": "rename_entity",
+            "arguments": {
+                "handle": entity.id.as_str(),
+                "to": entity.id.as_str(),
+                "parent": "<the entity it should sit under>",
+            },
+        },
+    })
+}
+
 /// Create an entity of any kind. Screened by the write guard, so a handle
 /// or name that looks like one jojobot already knows comes back as
 /// candidates instead of a second record.
@@ -380,8 +446,30 @@ impl Jojobot {
             Err(refused) => return Ok(refused),
         };
         let day = self.dated(None, args.sid.as_deref()).await?;
+        if args.root == Some(true) && args.parent.is_some() {
+            return Ok(crate::caller::handle_declined(
+                "add_entity",
+                "Nothing was written. This call sent both `root: true` and `parent`: root \
+                 asks for the thing to sit under nothing and parent names what it sits \
+                 under. Send one of them.",
+            ));
+        }
+        // A bot that is not in the store cannot be a parent, so a caller whose
+        // bot is absent creates at the root as before. A read that failed says
+        // nothing about the bot, so it refuses the call.
+        let caller_is_there = match self.memory.scan_entity(&caller.bot).await {
+            Ok(found) => found.is_some(),
+            Err(e) => return memory_declined("add_entity", e),
+        };
+        let placed = effective_parent(
+            &args,
+            entity_id(&args.kind, &args.handle)?.kind(),
+            &caller.bot,
+            caller_is_there,
+        );
         let mut writing_args = args.clone();
         writing_args.sid = None;
+        writing_args.parent = placed.parent.as_ref().map(|p| p.as_str().to_string());
         let write::Added {
             entity,
             first_claim,
@@ -415,6 +503,11 @@ impl Jojobot {
             .await;
         let mut body = entity_json(&entity);
         dropped_keys.note(&mut body);
+        if placed.defaulted
+            && let Some(obj) = body.as_object_mut()
+        {
+            obj.insert("parent_defaulted".into(), parent_defaulted_json(&entity));
+        }
         // **The first claim's receipt**, so the claim has an address a
         // later edit goes through, and the answer says the claim exists.
         if let (Some(fact), Some(obj)) = (&first_claim, body.as_object_mut()) {
@@ -2076,5 +2169,38 @@ mod tests {
             Some(1),
             "a thing that is not a bot opens no box: {person}"
         );
+    }
+
+    /// **A store that fails the read of the calling bot does not root the
+    /// thing.** An absent bot creates at the root, but a read that failed says
+    /// nothing about the bot: the call is refused and nothing is written.
+    #[tokio::test]
+    async fn a_failed_read_of_the_calling_bot_creates_nothing() {
+        use crate::session::scripted::Scripted;
+        use jojobot_domain::memory::testing::InMemoryMemory;
+        let inner = Arc::new(InMemoryMemory::seeded());
+        let scripted = Arc::new(Scripted::over(inner.clone()));
+        let jojobot = Jojobot::new(
+            scripted.clone(),
+            Arc::new(SpySearch::default()),
+            Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner()),
+            Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),
+            Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
+            seeded_registry(),
+        );
+        writing_as(&jojobot);
+
+        scripted.script(|s| s.scan_entity_fails_on = Some(1));
+        let refused = jojobot
+            .add_entity(Parameters(add_args("person", "lisa", "Lisa")))
+            .await;
+        assert!(refused.is_err(), "the failed read refuses the call");
+        let made = inner
+            .list_entities(None)
+            .await
+            .expect("the inner store lists")
+            .into_iter()
+            .any(|e| e.id.0 == "person:lisa");
+        assert!(!made, "nothing was written");
     }
 }

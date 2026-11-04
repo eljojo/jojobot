@@ -2042,12 +2042,20 @@ impl Session {
     /// gate scans source text for handle-shaped literals**, so a story that
     /// passed its kind and slug separately would create entities the one guard
     /// against life specifics cannot see.
+    ///
+    /// **It asks for the root** (`root: true`). A bot's create that names no
+    /// parent sits under the bot, and a page is addressed by the chain of what it
+    /// sits under, so a story about anything but that default asks for the root
+    /// and keeps the address it reads. `bot_home` is the story about the default.
     pub async fn add(&self, handle: &str, name: &str) {
         let (kind, slug) = handle.split_once(':').expect("a handle is kind:slug");
         self.write(
             &format!("adding {handle}"),
             "add_entity",
-            json!({"kind": kind, "handle": slug, "name": name, "source": "user-named"}),
+            json!({
+                "kind": kind, "handle": slug, "name": name,
+                "source": "user-named", "root": true,
+            }),
         )
         .await;
     }
@@ -2061,7 +2069,10 @@ impl Session {
         let refusal = self
             .refused(
                 "add_entity",
-                json!({"kind": kind, "handle": slug, "name": name, "source": "user-named"}),
+                json!({
+                    "kind": kind, "handle": slug, "name": name,
+                    "source": "user-named", "root": true,
+                }),
             )
             .await;
         let how_to_proceed = refusal.json()["how_to_proceed"]
@@ -2079,7 +2090,7 @@ impl Session {
             "add_entity",
             json!({
                 "kind": kind, "handle": slug, "name": name, "source": "user-named",
-                "override_token": token,
+                "root": true, "override_token": token,
                 "override_reason": "a different thing sharing a name",
             }),
         )

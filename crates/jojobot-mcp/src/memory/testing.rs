@@ -240,6 +240,7 @@ pub(crate) async fn ensure(jojobot: &Jojobot, handle: &str) {
             crm: None,
             boot: None,
             parent: None,
+            root: None,
             sets: None,
             override_token: None,
             override_reason: None,
@@ -287,6 +288,7 @@ async fn add_fixture(jojobot: &Jojobot, args: AddEntityArgs) {
             crm: args.crm.clone(),
             boot: args.boot.clone(),
             parent: args.parent.clone(),
+            root: args.root,
             sets: args.sets.clone(),
             sid: args.sid.clone(),
         }))
@@ -374,6 +376,7 @@ pub(crate) fn add_args(kind: &str, handle: &str, name: &str) -> AddEntityArgs {
         crm: None,
         boot: None,
         parent: None,
+        root: None,
         sets: None,
         override_token: None,
         override_reason: None,
