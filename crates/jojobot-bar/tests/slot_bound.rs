@@ -98,8 +98,14 @@ fn run_inheriting(
     }
 }
 
+fn build_jobs_on_this_host(ceiling: usize) -> usize {
+    std::thread::available_parallelism()
+        .map_or(1, |cores| cores.get())
+        .min(ceiling)
+}
+
 /// **`bar narrow` bounds every cargo call it makes.** Six cores and two binaries at
-/// once is six build jobs and three test threads; the test call is among them.
+/// once is at most six build jobs, capped to the host, and three test threads.
 #[test]
 fn a_narrow_run_gives_every_child_the_slots_bound() {
     let ran = run(
@@ -126,18 +132,17 @@ fn a_narrow_run_gives_every_child_the_slots_bound() {
         })
         .collect();
     assert!(!working.is_empty(), "{:?}", ran.calls);
+    let wanted = format!("jobs={} threads=3", build_jobs_on_this_host(6));
     assert!(
-        working
-            .iter()
-            .all(|call| call.ends_with("jobs=6 threads=3")),
+        working.iter().all(|call| call.ends_with(&wanted)),
         "every build and test call carries the bound: {:?}",
         ran.calls
     );
 }
 
 /// **The bound never raises what the runner set.** A runner that gave two build jobs
-/// and one test thread keeps them under a six-core slot; a runner that gave more than
-/// the slot's share is brought down to it.
+/// and one test thread keeps them unless the host is smaller; a runner that gave more
+/// than the slot's share is brought down to it.
 #[test]
 fn a_narrow_run_never_raises_what_the_runner_set() {
     let working = |ran: &Ran| -> Vec<String> {
@@ -161,8 +166,9 @@ fn a_narrow_run_never_raises_what_the_runner_set() {
     assert_eq!(lower.code, Some(0), "{}", lower.stderr);
     let calls = working(&lower);
     assert!(!calls.is_empty(), "{:?}", lower.calls);
+    let wanted = format!("jobs={} threads=1", build_jobs_on_this_host(2));
     assert!(
-        calls.iter().all(|call| call.ends_with("jobs=2 threads=1")),
+        calls.iter().all(|call| call.ends_with(&wanted)),
         "the runner's lower numbers stay: {:?}",
         lower.calls
     );
@@ -174,10 +180,9 @@ fn a_narrow_run_never_raises_what_the_runner_set() {
         (Some("20"), Some("9")),
     );
     assert_eq!(higher.code, Some(0), "{}", higher.stderr);
+    let wanted = format!("jobs={} threads=3", build_jobs_on_this_host(6));
     assert!(
-        working(&higher)
-            .iter()
-            .all(|call| call.ends_with("jobs=6 threads=3")),
+        working(&higher).iter().all(|call| call.ends_with(&wanted)),
         "numbers above the share come down to it: {:?}",
         higher.calls
     );
@@ -271,14 +276,15 @@ fn the_rooms_lane_bounds_its_children_and_says_the_numbers() {
         })
         .collect();
     assert!(!working.is_empty(), "{:?}", ran.calls);
+    let build_jobs = build_jobs_on_this_host(6);
+    let wanted = format!("jobs={build_jobs} threads=3");
     assert!(
-        working
-            .iter()
-            .all(|call| call.ends_with("jobs=6 threads=3")),
+        working.iter().all(|call| call.ends_with(&wanted)),
         "every build and test call carries the bound: {:?}",
         ran.calls
     );
-    for said in ["BAR_SLOT_CORES", "6 build jobs", "3 test threads"] {
+    let jobs = format!("{build_jobs} build jobs");
+    for said in ["BAR_SLOT_CORES", jobs.as_str(), "3 test threads"] {
         assert!(
             ran.stdout.contains(said),
             "the verdict says {said:?}: {}",
