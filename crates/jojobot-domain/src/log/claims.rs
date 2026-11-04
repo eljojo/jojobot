@@ -317,6 +317,10 @@ impl State {
         records: &[MovedRecord],
         writes: &[MovedWrite],
     ) {
+        // A redirect that closes a loop would make `survivor` spin forever.
+        if self.survivor(survivor) == self.survivor(folded) {
+            return;
+        }
         self.index_before_merge(records);
         self.redirects.insert(folded.clone(), survivor.clone());
         for address in self.addresses.values_mut() {

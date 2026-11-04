@@ -363,6 +363,39 @@ fn a_merge_moves_everything_and_keeps_the_decided_interleave() {
     assert_eq!(held(&state, "beta"), map(&[("mood", "steady")]));
 }
 
+/// **A merge that would close a loop of redirects changes nothing**: a self-merge
+/// and a merge of an object into one that already folded into it both leave
+/// every read answering, and the first merge still stands.
+#[test]
+fn a_merge_that_would_loop_the_redirects_is_ignored() {
+    let merged = |folded: &str, survivor: &str| ClaimEvent::ObjectsMerged {
+        folded: object(folded),
+        survivor: object(survivor),
+        records: Vec::new(),
+        writes: Vec::new(),
+    };
+    let events = vec![
+        created("r1", claim("f1", "alpha", "alpha says", 1)),
+        created("r2", claim("f1", "beta", "beta says", 2)),
+        merged("alpha", "alpha"),
+        merged("beta", "alpha"),
+        merged("alpha", "beta"),
+    ];
+    // A loop makes `survivor` spin forever, so the read runs on its own thread.
+    let (sent, answer) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let state = replay(&events);
+        let _ = sent.send((
+            state.survivor(&object("alpha")).clone(),
+            state.survivor(&object("beta")).clone(),
+        ));
+    });
+    let (alpha, beta) = answer
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("a read of the claims state returns");
+    assert_eq!((alpha, beta), (object("alpha"), object("alpha")));
+}
+
 /// **Links follow the write holding the key**: a cleared key points at nothing,
 /// and a merged target answers as its survivor.
 #[test]
