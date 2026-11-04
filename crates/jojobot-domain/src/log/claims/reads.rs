@@ -8,11 +8,11 @@ use std::collections::BTreeMap;
 
 use jiff::Timestamp;
 
-use super::{FieldValue, KeyId, ObjectVersion, Record, Revision, State, Write};
+use super::{FieldValue, KeyId, ObjectBody, ObjectVersion, Record, Revision, State, Write};
 use crate::log::{ObjectId, RecordId};
 use crate::memory::{
-    self, EntityId, FactAddress, FactId, FieldBacking, FieldWrite, KeyTrails, RecordFieldWrite,
-    WriteClass, types::DeclaredType,
+    self, EntityId, FactAddress, FactId, FactStatus, FieldBacking, FieldWrite, KeyTrails,
+    RecordFieldWrite, WriteClass, types::DeclaredType,
 };
 
 // **How many streams the reads have looked at on this thread**, so a case can
@@ -46,7 +46,82 @@ impl State {
     }
 }
 
+/// **One thing as the store's scan serves it, in the State's own terms**: the
+/// object as it stands, the claims homed on it, what it holds, and the objects
+/// the held values point at. The prose of the page, the store's document id and
+/// the owner are not in the State; the shell supplies them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThingScan<'a> {
+    pub object: ObjectId,
+    pub body: &'a ObjectBody,
+    /// The claims homed on the thing, every status, ordered by the number of
+    /// the label and then the label.
+    pub claims: Vec<(&'a RecordId, &'a Record)>,
+    pub fields: BTreeMap<String, String>,
+    /// For each held key, the objects its holding write pointed at when it was
+    /// written, followed to their merge survivors. A key with none is absent.
+    pub field_links: BTreeMap<String, Vec<ObjectId>>,
+}
+
 impl State {
+    /// **The targets of the write holding each key of a thing**, from the
+    /// streams of that thing alone: the newest write that reaches the thing from
+    /// an active claim, a cleared key pointing at none.
+    fn held_targets(&self, subject: &ObjectId) -> BTreeMap<String, Vec<ObjectId>> {
+        let mut out = BTreeMap::new();
+        for (key, stream) in self.streams_of(subject) {
+            let newest = stream
+                .iter()
+                .filter(|write| {
+                    memory::reaches_the_thing(write.class)
+                        && self
+                            .records
+                            .get(&write.record)
+                            .is_some_and(|record| record.claim.status == FactStatus::Active)
+                })
+                .max_by_key(|write| write.ordinal);
+            if let Some(write) = newest
+                && write.write != FieldValue::Clear
+                && !write.targets.is_empty()
+            {
+                out.insert(
+                    key.0.clone(),
+                    write
+                        .targets
+                        .iter()
+                        .map(|target| self.survivor(target).clone())
+                        .collect(),
+                );
+            }
+        }
+        out
+    }
+
+    /// **A thing as its scan serves it**, from that thing's own objects, claims
+    /// and streams. A thing the State does not hold has none.
+    pub fn scan(&self, subject: &ObjectId, declared: &[DeclaredType]) -> Option<ThingScan<'_>> {
+        let subject = self.survivor(subject);
+        let body = self.objects.get(subject)?;
+        let mut claims: Vec<(&RecordId, &Record)> = self
+            .records_homed_on(subject)
+            .into_iter()
+            .filter_map(|id| self.records.get(id).map(|held| (id, held)))
+            .collect();
+        claims.sort_by_key(|(_, held)| {
+            (
+                memory::numbered::whole_number(held.claim.label.trim_start_matches('f')),
+                held.claim.label.clone(),
+            )
+        });
+        Some(ThingScan {
+            object: subject.clone(),
+            body,
+            claims,
+            fields: self.fields(subject, declared),
+            field_links: self.held_targets(subject),
+        })
+    }
+
     /// **The marker of the writes behind a thing's fields**: how many writes of
     /// its claims and of its own row it holds, folded things included. It only
     /// grows, so a slower read of an earlier state cannot beat one already
@@ -191,6 +266,8 @@ impl State {
 mod histories_tests;
 #[cfg(test)]
 mod marker_tests;
+#[cfg(test)]
+mod scan_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
