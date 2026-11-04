@@ -718,7 +718,24 @@ fn a_merged_pairs_former_handle_and_moved_claim_survive() {
     let lineage = Some(record_id(&object("k1"), "f1"));
     rows.facts[1].head.derived_from = lineage.clone();
     rows.facts[1].writes[0].claim.derived_from = lineage.clone();
-    let state = state_of(&rows);
+    // Replay already holds this claim under the survivor, so only the imported
+    // payload can show whether the merge kept its mapped record and label.
+    let events = imported(&rows);
+    let records: Vec<_> = events
+        .iter()
+        .filter_map(|event| match &event.payload {
+            ClaimEvent::ObjectsMerged { records, .. } => Some(records.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        records,
+        vec![vec![MovedRecord {
+            record: RecordId("k1/f9".into()),
+            label: "f9".into(),
+        }]]
+    );
+    let state = State::replay(&events);
     assert_eq!(
         state.retired_addresses.get("person:bart"),
         Some(&object("k2"))
