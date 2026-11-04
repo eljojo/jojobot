@@ -268,7 +268,13 @@ async fn a_bot_holds_messages_from_the_system_listing_what_shipped_and_who_to_as
             "Moe is told the name of Moe's manager, as a mention: {body}"
         );
     }
-    let note = &messages[0];
+    // The note the search below finds is the message that lists `release-notes`:
+    // the notes split into several messages and only that one carries the word.
+    let at = moes
+        .iter()
+        .position(|body| body.contains("release-notes"))
+        .expect("one of Moe's messages lists the release-notes note");
+    let note = &messages[at];
     for message in messages {
         moe.call(
             "mark_processed",
