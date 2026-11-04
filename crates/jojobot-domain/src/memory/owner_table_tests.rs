@@ -261,6 +261,13 @@ fn a_new_claim_is_refused_by_the_first_clause_it_breaks() {
     span_then_fields
         .fields
         .insert(RETRACTS.into(), "person:milhouse#f1".into());
+    let mut beside_then_content = claim("   ");
+    beside_then_content.also_written = vec![claim("another")];
+    // The faults alone, to tell which clause decided a refusal of one variant.
+    let (span_alone, fields_alone) = (orphan_end.clone(), reserved.clone());
+    let (beside_alone, content_alone) = (beside.clone(), blank.clone());
+    let (two_span_fields, two_beside_content) =
+        (span_then_fields.clone(), beside_then_content.clone());
 
     #[derive(Debug)]
     enum Refused {
@@ -299,6 +306,17 @@ fn a_new_claim_is_refused_by_the_first_clause_it_breaks() {
                 | (Refused::Unsourced, Err(MemoryError::UnsourcedObservation))
         );
         assert!(held, "{fact:?} expected {refused:?}, got {outcome:?}");
+    }
+    // **Faults of one variant are told apart by the refusal each makes alone**:
+    // two faults must come back as the earlier clause's refusal, and that
+    // refusal must differ from the later clause's, or the pair proves nothing.
+    for (both, earlier, later) in [
+        (two_span_fields, span_alone, fields_alone),
+        (two_beside_content, beside_alone, content_alone),
+    ] {
+        let (first, second) = (validate_new_fact(&earlier), validate_new_fact(&later));
+        assert!(first.is_err() && second.is_err() && first != second);
+        assert_eq!(validate_new_fact(&both), first, "{both:?}");
     }
     let week = NewFact::about(who("usage:alpha"), "keeps the ledger", day(0));
     assert!(matches!(
