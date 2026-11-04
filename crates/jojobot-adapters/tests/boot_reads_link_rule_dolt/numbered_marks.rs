@@ -26,7 +26,22 @@ async fn link_rule_marking_leaves_an_ambiguous_collection_prefix_as_text() {
     marking_resolves("ambiguous").await;
 }
 
+/// **A prefix that two things have worn blocks marking even when the full
+/// spelling names one member**: both holders of the reused handle number a member
+/// 1, so the complete numbered alias is unique while its prefix is not. Paired with
+/// the positives above, which differ by the second holder alone.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn link_rule_marking_leaves_a_numbered_alias_through_an_ambiguous_prefix_as_text() {
+    marking_resolves("ambiguous_numbered").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn link_rule_marking_leaves_a_numbered_chain_through_an_ambiguous_prefix_as_text() {
+    marking_resolves("ambiguous_chain").await;
+}
+
 async fn marking_resolves(spelling: &str) {
+    let ambiguous = spelling.starts_with("ambiguous");
     let scratch = Scratch::new("numbered-link-marks");
     let mut store = Dolt::start(&scratch.0, free_port()).await.unwrap();
     let pool = migrated_database(&store, "numbered_link_marks")
@@ -73,7 +88,7 @@ async fn marking_resolves(spelling: &str) {
             .written()
             .unwrap();
     }
-    if spelling == "former" || spelling == "ambiguous" {
+    if spelling == "former" || ambiguous {
         memory
             .rename_entity(
                 &collection,
@@ -88,7 +103,7 @@ async fn marking_resolves(spelling: &str) {
             .written()
             .unwrap();
     }
-    if spelling == "ambiguous" {
+    if spelling == "ambiguous" || spelling == "ambiguous_numbered" {
         memory
             .add_entity(NewEntity::new(
                 collection.clone(),
@@ -100,13 +115,89 @@ async fn marking_resolves(spelling: &str) {
             .written()
             .unwrap();
     }
-    let alias = if spelling == "chain" {
+    if spelling == "ambiguous_numbered" {
+        let successor = EntityId("work:beta-queue".into());
+        memory
+            .add_entity(NewEntity {
+                parent: Some(collection.clone()),
+                ..NewEntity::new(successor.clone(), "Successor", "contract-fixture")
+            })
+            .await
+            .unwrap()
+            .written()
+            .unwrap();
+        for (id, key, value) in [
+            (&collection, "numbers_by", "number"),
+            (&successor, "number", "1"),
+        ] {
+            memory
+                .capture(memory::state(NewFact {
+                    fields: [(key.into(), value.into())].into_iter().collect(),
+                    ..NewFact::about(id.clone(), "numbered fixture", date(2026, 8, 3))
+                }))
+                .await
+                .unwrap()
+                .written()
+                .unwrap();
+        }
+    }
+    if spelling == "ambiguous_chain" {
+        // The outer collection is renamed too, and its handle is reused by a
+        // second outer whose own collection numbers a member 1 under group 2.
+        memory
+            .rename_entity(
+                &outer,
+                &EntityId("topic:delta".into()),
+                None,
+                date(2026, 8, 3),
+                Override::none(),
+                None,
+            )
+            .await
+            .unwrap()
+            .written()
+            .unwrap();
+        let second = EntityId("topic:epsilon".into());
+        let successor = EntityId("work:beta-queue".into());
+        for (id, name, parent) in [
+            (outer.clone(), "Second outer", None),
+            (second.clone(), "Second collection", Some(outer.clone())),
+            (successor.clone(), "Second member", Some(second.clone())),
+        ] {
+            let outcome = memory
+                .add_entity(NewEntity {
+                    parent,
+                    ..NewEntity::new(id.clone(), name, "contract-fixture")
+                })
+                .await
+                .unwrap();
+            let shown = format!("{outcome:?}");
+            assert!(outcome.written().is_some(), "add {id}: {shown}");
+        }
+        for (id, key, value) in [
+            (&outer, "numbers_by", "group_number"),
+            (&second, "group_number", "2"),
+            (&second, "numbers_by", "number"),
+            (&successor, "number", "1"),
+        ] {
+            memory
+                .capture(memory::state(NewFact {
+                    fields: [(key.into(), value.into())].into_iter().collect(),
+                    ..NewFact::about(id.clone(), "numbered fixture", date(2026, 8, 3))
+                }))
+                .await
+                .unwrap()
+                .written()
+                .unwrap();
+        }
+    }
+    let alias = if spelling == "chain" || spelling == "ambiguous_chain" {
         format!("{outer}/2/1")
     } else {
         format!("{collection}/1")
     };
     // The ordinary read already supports this spelling; marking must share it.
-    if spelling != "ambiguous" {
+    if !ambiguous {
         assert_eq!(
             memory.fields(&EntityId(alias.clone())).await.unwrap()["number"],
             "1"
@@ -155,7 +246,7 @@ async fn marking_resolves(spelling: &str) {
         marked,
         "a canonical handle is marked as before"
     );
-    if spelling == "ambiguous" {
+    if ambiguous {
         assert_eq!(
             stored("mixed").await,
             format!("kitchen, {alias}"),

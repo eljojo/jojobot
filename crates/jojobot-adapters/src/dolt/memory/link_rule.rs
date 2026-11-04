@@ -538,6 +538,14 @@ impl Directory {
             self.roster.get(names.first()?)
         };
         let resolved = jojobot_domain::memory::numbered::resolve_walk(id, &flat);
+        // **The walk stops at a complete alias without reading its prefixes**, so
+        // a collection handle that two things have worn is read here as well: the
+        // spelling through it stays text even when its full alias names one thing.
+        let mut prefix = id.clone();
+        while let Some((outer, _)) = jojobot_domain::memory::numbered::numbered_handle(&prefix) {
+            flat(&outer);
+            prefix = outer;
+        }
         if ambiguous.get() {
             return Err(());
         }
