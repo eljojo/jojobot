@@ -107,7 +107,7 @@ jobs:
   # touched and of the crates that depend on them, through `make dev`, the one
   # way the bar picks crates. It has no `needs`, so it starts with `static` and
   # not after it, and it ends at its first red test. `report` and `rooms` run
-  # everything they ran before; a red here stops them as any sibling's red does
+  # everything they ran before; a red here leaves them running
   # (scripts/stop-with-siblings). A push only: a dispatch names the job it
   # reruns, and this is not one of them. BAR_OWN_CRATES measures the branch
   # against the trunk it is cut from, not `main`, and the SIZE_BASE here is the
