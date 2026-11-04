@@ -251,3 +251,113 @@ async fn a_merge_into_a_request_waits_for_the_requests_lock() {
     )
     .await;
 }
+
+/// **A claim merged into a request is still reached by the address it had.** The
+/// note's own address names the claim after the merge, and the store files it
+/// under the request. A route that tests the address as typed finds a note, not a
+/// request, and writes the spec with no number and no lock.
+async fn a_request_with_a_merged_note(jojobot: &Jojobot, sid: &str) -> String {
+    a_request_otto_manages(jojobot).await;
+    ensure(jojobot, "topic:tarps").await;
+    let claim = capture_ok(
+        jojobot,
+        CaptureArgs {
+            sets: Some(
+                [("model".to_string(), "model-b".to_string())]
+                    .into_iter()
+                    .collect(),
+            ),
+            ..capture_args("topic:tarps", "a model")
+        },
+    )
+    .await;
+    let address = claim["address"].as_str().expect("an address").to_string();
+    jojobot
+        .merge_entities(Parameters(crate::memory::merge_entities::MergeArgs {
+            request_id: None,
+            duplicate: "topic:tarps".into(),
+            survivor: REQUEST.into(),
+            reason: None,
+            recorded_at: None,
+            sid: Some(sid.to_string()),
+        }))
+        .await
+        .expect("the merge answers");
+    assert_eq!(
+        generation_of(jojobot, REQUEST).await,
+        "2",
+        "the merge named the next generation"
+    );
+    address
+}
+
+#[tokio::test]
+async fn taking_back_a_claim_through_its_merged_away_address_carries_the_next_generation() {
+    let jojobot = handler();
+    let sid = writing_as(&jojobot);
+    let address = a_request_with_a_merged_note(&jojobot, &sid).await;
+    jojobot
+        .retract(Parameters(args(serde_json::json!({
+            "address": address, "reason": "written in error", "sid": TEST_SID,
+        }))))
+        .await
+        .expect("the retraction answers");
+    let fields = jojobot
+        .memory
+        .fields(&EntityId::person(REQUEST))
+        .await
+        .expect("readable");
+    assert!(
+        fields.get("model").is_none(),
+        "the note's model left the request: {fields:?}"
+    );
+    assert_eq!(
+        fields.get("generation").map(String::as_str),
+        Some("3"),
+        "the spec changed, and the number names it"
+    );
+}
+
+#[tokio::test]
+async fn editing_a_claim_through_its_merged_away_address_carries_the_next_generation() {
+    let jojobot = handler();
+    let sid = writing_as(&jojobot);
+    let address = a_request_with_a_merged_note(&jojobot, &sid).await;
+    jojobot
+        .update_fact(Parameters(crate::memory::UpdateFactArgs {
+            sets: Some(
+                [("model".to_string(), "model-c".to_string())]
+                    .into_iter()
+                    .collect(),
+            ),
+            ..crate::memory::testing::update_args(&address)
+        }))
+        .await
+        .expect("the edit answers");
+    let fields = jojobot
+        .memory
+        .fields(&EntityId::person(REQUEST))
+        .await
+        .expect("readable");
+    assert_eq!(fields.get("model").map(String::as_str), Some("model-c"));
+    assert_eq!(
+        fields.get("generation").map(String::as_str),
+        Some("3"),
+        "the spec changed, and the number names it"
+    );
+}
+
+#[tokio::test]
+async fn a_retraction_through_a_merged_away_address_waits_for_the_requests_lock() {
+    let jojobot = handler();
+    let sid = writing_as(&jojobot);
+    let address = a_request_with_a_merged_note(&jojobot, &sid).await;
+    waits_for_the_requests_lock(
+        &jojobot,
+        REQUEST,
+        jojobot.retract(Parameters(args(serde_json::json!({
+            "address": address, "reason": "written in error", "sid": TEST_SID,
+        })))),
+    )
+    .await;
+}
