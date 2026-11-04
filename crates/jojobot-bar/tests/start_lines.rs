@@ -178,6 +178,44 @@ fn a_steps_script_is_read_past_the_keys_between_its_name_and_run() {
     assert_eq!(workflow_step(&keyed, "Build-free gates"), script);
 }
 
+/// The push's first crate verdict runs beside the other jobs on its own base.
+#[test]
+fn the_own_crates_job_runs_dev_on_push_without_waiting_for_another_job() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let text = fs::read_to_string(root.join(".forgejo/workflows/branch.yml")).unwrap();
+    let job = workflow_job(&text, "own-crates");
+    let (routing, steps) = job.split_once("    steps:\n").expect("own-crates steps");
+    assert!(
+        routing
+            .lines()
+            .any(|line| line.trim() == "if: ${{ forgejo.event_name == 'push' }}"),
+        "own-crates runs only on pushes: {routing}"
+    );
+    assert!(
+        !routing
+            .lines()
+            .any(|line| line.trim().starts_with("needs:")),
+        "own-crates starts without waiting for another job: {routing}"
+    );
+    let step = steps
+        .split_once("      - name: Touched crates\n")
+        .expect("the touched-crates step")
+        .1
+        .split("\n      - ")
+        .next()
+        .unwrap();
+    let (run, env) = step.split_once("        env:\n").expect("step environment");
+    for wanted in [
+        "if: ${{ steps.plan.outputs.fast != 'true' }}",
+        "run: scripts/stop-with-siblings nix develop -c make dev",
+    ] {
+        assert!(run.lines().any(|line| line.trim() == wanted), "{step}");
+    }
+    for wanted in ["BAR_OWN_CRATES: '1'", "SIZE_BASE: main"] {
+        assert!(env.lines().any(|line| line.trim() == wanted), "{step}");
+    }
+}
+
 #[test]
 fn the_startup_static_gate_stops_expensive_jobs_before_they_start() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
