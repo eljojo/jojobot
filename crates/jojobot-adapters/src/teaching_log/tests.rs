@@ -168,6 +168,78 @@ pub(super) async fn contacts_and_clears_on(log: Arc<dyn LogStore>) {
     );
 }
 
+#[derive(Default)]
+struct PausedTail {
+    log: InMemoryLog,
+    pause: std::sync::atomic::AtomicBool,
+    entered: tokio::sync::Notify,
+    release: tokio::sync::Notify,
+}
+
+#[async_trait::async_trait]
+impl LogStore for PausedTail {
+    async fn append(&self, head: Position, batch: &SealedBatch) -> Result<Append, LogError> {
+        self.log.append(head, batch).await
+    }
+
+    async fn read_from(
+        &self,
+        position: Position,
+        bound: usize,
+    ) -> Result<Vec<SealedBatch>, LogError> {
+        if self.pause.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            self.entered.notify_one();
+            self.release.notified().await;
+        }
+        self.log.read_from(position, bound).await
+    }
+
+    async fn load_snapshot(&self) -> Result<Option<ValidatedSnapshot>, LogError> {
+        self.log.load_snapshot().await
+    }
+
+    async fn store_snapshot(&self, snapshot: &ValidatedSnapshot) -> Result<(), LogError> {
+        self.log.store_snapshot(snapshot).await
+    }
+}
+
+/// **Certain reads stay ready while another run waits for the log.** The
+/// writer has entered a real tail read, so a free mutex before admission cannot
+/// make this pass. Once committed, the same reads must see the new mark.
+#[tokio::test]
+async fn certain_teaching_reads_do_not_wait_for_another_runs_tail_read() {
+    use futures_util::FutureExt;
+
+    let log = Arc::new(PausedTail::default());
+    let teachings = LoggedTeachings::open(log.clone(), &[mark("lisa", "claims", 0)])
+        .await
+        .unwrap();
+    log.pause.store(true, std::sync::atomic::Ordering::SeqCst);
+    let mut contact = tokio::spawn({
+        let teachings = teachings.clone();
+        async move { teachings.first_contact(&sid("bart"), "mail", at(1)).await }
+    });
+    tokio::select! {
+        () = log.entered.notified() => {}
+        result = &mut contact => panic!("the contact must enter the paused tail read: {result:?}"),
+    }
+    let held = teachings.has_contact(&sid("lisa"), "claims").now_or_never();
+    let absent = teachings
+        .has_contact(&sid("homer"), "claims")
+        .now_or_never();
+    let taught = teachings.taught().now_or_never();
+    log.release.notify_one();
+    assert!(contact.await.unwrap().unwrap());
+    assert!(matches!(held, Some(Ok(true))), "held: {held:?}");
+    assert!(matches!(absent, Some(Ok(false))), "absent: {absent:?}");
+    assert_eq!(
+        taught.map(Result::unwrap),
+        Some(Some(vec![(sid("lisa"), "claims".to_string())]))
+    );
+    assert!(teachings.has_contact(&sid("bart"), "mail").await.unwrap());
+    assert_eq!(teachings.taught().await.unwrap().unwrap().len(), 2);
+}
+
 /// **A domain of 64 characters is admitted and one of 65 is refused with
 /// nothing appended.**
 #[tokio::test]
