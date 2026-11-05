@@ -168,13 +168,15 @@ pub struct LoggedTeachings {
     report: Option<Arc<crate::fold::shadow::Shadow>>,
 }
 
-/// What a first contact reads without the held mutex.
+/// Publishing uncertainty beside the pairs keeps an unknown new run from
+/// reading as absent while recovery holds the state mutex over I/O.
 #[derive(Default)]
 struct Known {
     /// The log's pairs for runs whose reads are certain.
     log: BTreeSet<(String, String)>,
     /// The old path's pairs, when a shadow runs.
     legacy: BTreeSet<(String, String)>,
+    uncertain: BTreeSet<RunId>,
 }
 
 fn run(sid: &Sid) -> RunId {
@@ -399,7 +401,11 @@ impl LoggedTeachings {
         *self
             .known
             .write()
-            .expect("the known pairs are not poisoned") = Known { log, legacy };
+            .expect("the known pairs are not poisoned") = Known {
+            log,
+            legacy,
+            uncertain: held.uncertain.clone(),
+        };
     }
 
     /// Append the events as one batch and apply them from the appended value.
@@ -517,11 +523,13 @@ impl Teachings for LoggedTeachings {
     }
 
     async fn has_contact(&self, sid: &Sid, domain: &str) -> Result<bool, TeachingError> {
-        let held = self.held.lock().await;
-        if held.uncertain.contains(&run(sid)) {
+        let known = self.known.read().expect("the known pairs are not poisoned");
+        if known.uncertain.contains(&run(sid)) {
             return Err(TeachingError::Indeterminate);
         }
-        Ok(held.state.has_contact(&run(sid), domain))
+        Ok(known
+            .log
+            .contains(&(sid.as_str().to_string(), domain.to_string())))
     }
 
     async fn forget(&self, sid: &Sid) -> Result<(), TeachingError> {
@@ -531,14 +539,15 @@ impl Teachings for LoggedTeachings {
     }
 
     async fn taught(&self) -> Result<Option<Vec<(Sid, String)>>, TeachingError> {
-        let held = self.held.lock().await;
-        if !held.uncertain.is_empty() {
+        let known = self.known.read().expect("the known pairs are not poisoned");
+        if !known.uncertain.is_empty() {
             return Err(TeachingError::Indeterminate);
         }
         Ok(Some(
-            held.state
-                .taught()
-                .map(|(run, domain)| (Sid(run.0.clone()), domain.clone()))
+            known
+                .log
+                .iter()
+                .map(|(sid, domain)| (Sid(sid.clone()), domain.clone()))
                 .collect(),
         ))
     }
