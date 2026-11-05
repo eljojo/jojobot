@@ -722,6 +722,18 @@ static TEMPLATE: tokio::sync::Mutex<Option<PathBuf>> = tokio::sync::Mutex::const
 /// The first caller to find it gone rebuilds it under the lock and the rest
 /// find the new one; a copy that was already reading the old one fails and
 /// is retried by the open's own attempts, which ask again.
+async fn template(binary: &Path) -> Result<PathBuf> {
+    let mut held = TEMPLATE.lock().await;
+    if let Some(dir) = held.as_ref()
+        && dir.is_dir()
+    {
+        return Ok(dir.clone());
+    }
+    let dir = build_template(binary).await?;
+    *held = Some(dir.clone());
+    Ok(dir)
+}
+
 /// **Acquire the template, copy it into `into`, and say how long each step took.**
 ///
 /// The template is acquired first and its time is its own: on the first room of a
@@ -738,18 +750,6 @@ async fn copy_from(
     let copying = std::time::Instant::now();
     copy_dir_all(&template, into)?;
     Ok((acquired, copying.elapsed()))
-}
-
-async fn template(binary: &Path) -> Result<PathBuf> {
-    let mut held = TEMPLATE.lock().await;
-    if let Some(dir) = held.as_ref()
-        && dir.is_dir()
-    {
-        return Ok(dir.clone());
-    }
-    let dir = build_template(binary).await?;
-    *held = Some(dir.clone());
-    Ok(dir)
 }
 
 /// **The one spawn that migrates for real.** A bare room, on an empty
