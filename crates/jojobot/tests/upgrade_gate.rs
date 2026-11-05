@@ -264,9 +264,14 @@ async fn age_the_event_log(pool: &sqlx::MySqlPool, hours: i64) {
             .members()
             .iter()
             .map(|member| {
-                let event = codec::decode(member).unwrap_or_else(|e| {
+                let Some(event) = codec::decode_own(member).unwrap_or_else(|e| {
                     panic!("the ageing cannot decode an event of the recording's log: {e}")
-                });
+                }) else {
+                    // The ledger family's events: opening the log imports the old
+                    // ledger tables, whose moments the column loop above has already
+                    // aged, so these events carry the aged moments.
+                    return member.clone();
+                };
                 assert_eq!(
                     &codec::encode(&event),
                     member,
@@ -1303,7 +1308,10 @@ async fn the_logged_marks(pool: &sqlx::MySqlPool) -> Vec<jojobot_adapters::teach
         .expect("the log reads")
     {
         for member in batch.members() {
-            match codec::decode(member).expect("every stored event reads") {
+            let Some(event) = codec::decode_own(member).expect("every stored event reads") else {
+                continue;
+            };
+            match event {
                 TeachingEvent::Recorded {
                     run,
                     domain,
