@@ -13,6 +13,7 @@
 use serde_json::{Value, json};
 
 use super::dsl::{Answer, Session, Story};
+use super::list_ticks::read_states;
 use super::lists::{a_list_on_the_trip, add_entry};
 
 /// The day the stories are read on: a Wednesday, in ISO week 2026-W43, which
@@ -385,10 +386,29 @@ async fn a_capture_that_ticks_nothing_on_a_plan_does_not_teach_the_carry() {
             json!({"subject": "list:errands", "content": "paint", "provenance": "testimony"}),
         )
         .await;
+    let receipt = added.json();
+    assert_eq!(receipt["success"], true, "{receipt}");
     assert!(
-        !the_line(&added).contains("derived_from"),
-        "{}",
-        added.raw()
+        receipt["address"]
+            .as_str()
+            .is_some_and(|address| address.starts_with("list:errands#")),
+        "the new entry has an address on the plan: {receipt}"
+    );
+    assert_eq!(
+        read_states(&s, "list:errands").await,
+        [
+            "buy flour:open",
+            "bake:open",
+            "clean the oven:open",
+            "paint:open"
+        ]
+    );
+    assert!(
+        !receipt["hint"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("derived_from"),
+        "{receipt}"
     );
     story.finish().await;
 }
@@ -407,10 +427,35 @@ async fn a_batch_of_entries_on_a_plan_does_not_teach_the_carry() {
                    "entries": ["paint", "sweep"]}),
         )
         .await;
+    let receipt = added.json();
+    assert_eq!(receipt["list"], "list:errands", "{receipt}");
+    assert_eq!(receipt["count"], 2, "{receipt}");
+    let entries = receipt["entries"].as_array().expect("the entry receipts");
+    assert_eq!(entries.len(), 2, "{receipt}");
+    for entry in entries {
+        assert!(
+            entry["address"]
+                .as_str()
+                .is_some_and(|address| address.starts_with("list:errands#")),
+            "each new entry has an address on the plan: {receipt}"
+        );
+    }
+    assert_eq!(
+        read_states(&s, "list:errands").await,
+        [
+            "buy flour:open",
+            "bake:open",
+            "clean the oven:open",
+            "paint:open",
+            "sweep:open"
+        ]
+    );
     assert!(
-        !the_line(&added).contains("derived_from"),
-        "{}",
-        added.raw()
+        !receipt["hint"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("derived_from"),
+        "{receipt}"
     );
     story.finish().await;
 }
@@ -434,10 +479,26 @@ async fn a_batch_that_ticks_every_open_entry_of_a_plan_does_not_teach_the_carry(
     let s = story.session().await;
     let at = three_entries(&s, Some("2026-W43")).await;
     let all = tick_many(&s, &at, 3).await;
+    let receipt = all.json();
+    assert_eq!(receipt["list"], "list:errands", "{receipt}");
+    assert_eq!(receipt["count"], 3, "{receipt}");
+    let ticks = receipt["ticks"].as_array().expect("the tick receipts");
+    assert_eq!(ticks.len(), 3, "{receipt}");
+    for (tick, entry) in ticks.iter().zip(&at) {
+        assert_eq!(tick["entry"], entry.as_str(), "{receipt}");
+        assert_eq!(tick["act"], "done", "{receipt}");
+        assert!(tick["record"].as_str().is_some(), "{receipt}");
+    }
+    assert_eq!(
+        read_states(&s, "list:errands").await,
+        ["buy flour:done", "bake:done", "clean the oven:done"]
+    );
     assert!(
-        !the_line(&all).contains("derived_from"),
-        "nothing is open after the batch: {}",
-        all.raw()
+        !receipt["hint"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("derived_from"),
+        "nothing is open after the batch: {receipt}"
     );
     story.finish().await;
 }
