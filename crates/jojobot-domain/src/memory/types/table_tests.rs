@@ -2,7 +2,7 @@
 //! declaration may land on what a store holds under its name, and what keys a
 //! kind holds once a declaration lands. Both stores call these two functions;
 //! the contract cases that reach them through a store are not the only proof.
-//! Tables pin variants, keys and order, never refusal prose (rule 665).
+//! Tables pin variants, keys and order, never refusal prose.
 
 use super::*;
 

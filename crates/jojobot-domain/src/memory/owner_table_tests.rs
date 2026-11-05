@@ -1,7 +1,7 @@
 //! **Tables for six rules of `memory.rs`, asked of the rule alone.** Each rule
 //! has been proven only by a contract case that runs it through a store; these
 //! tables ask the deciding function directly. They pin the variant a refusal
-//! takes and the clause that fires, never the refusal's prose (rule 665).
+//! takes and the clause that fires, never the refusal's prose.
 
 use super::*;
 use jiff::civil::date;
