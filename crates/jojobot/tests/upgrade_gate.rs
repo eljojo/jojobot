@@ -398,6 +398,12 @@ async fn restore_a_fixture_recorded_earlier(
             .unwrap_or_else(|e| panic!("a recorded moment {applied:?} does not parse: {e}"))
     };
     let recorded_at = first_migration(restoring.pool().clone()).await;
+    // **A live row of each old ledger table goes in BEFORE the ageing**, because the
+    // ageing opens the event log to age it, and that first open imports the old
+    // tables once: a row put in after it is never read. The rows are dated the
+    // ageing's own hours ahead, so the ageing moves them back to now and they are
+    // inside the keep window when the gate asks for them.
+    plant_a_live_ledger(restoring.pool(), &git_ref, earlier_hours).await;
     age_the_recording(restoring.pool(), earlier_hours).await;
     // **Stated, so an ageing that moved nothing cannot pass for one that did.**
     let aged_to = first_migration(restoring.pool().clone()).await;
@@ -406,10 +412,6 @@ async fn restore_a_fixture_recorded_earlier(
         jiff::SignedDuration::from_hours(earlier_hours),
         "the recording made at {git_ref} was not aged by {earlier_hours} hours"
     );
-    // **A live row of each old ledger table goes in before the log is opened**, and
-    // after the ageing, so it is inside the keep window: the open below imports the
-    // old tables once, and a row put in later is never read.
-    plant_a_live_ledger(restoring.pool(), &git_ref).await;
     // **Seeded through the log after the ageing**, so these marks keep their
     // fixed test times while the recording's rows and log have moved earlier.
     seed_the_teaching_marks_through_the_log(restoring.pool()).await;
@@ -1734,12 +1736,15 @@ const PLANTED_RECEIPT_ID: &str = "gate-receipt";
 const PLANTED_PARTS_ID: &str = "gate-parts";
 
 /// **A live row of each old ledger table, put in before the log is first opened.**
-/// The restore's open imports the old tables once, so a row has to be in them by
-/// then to be imported, and the recording's own rows may all be older than the
-/// keep window. Each row is one a finished write leaves: a receipt, a part with
-/// the receipt that finishes its request (a part with none is a half-done write,
-/// which the boot's storage check reports), and an app attempt.
-async fn plant_a_live_ledger(pool: &sqlx::MySqlPool, git_ref: &str) {
+/// The first open of the log imports the old tables once, so a row has to be in
+/// them by then to be imported, and the recording's own rows may all be older than
+/// the keep window. When the recording is aged, the ageing is the first open: the
+/// rows are dated `earlier_hours` ahead so that the ageing, which moves every
+/// moment in the store back by that much, leaves them at now. Each row is one a
+/// finished write leaves: a receipt, a part with the receipt that finishes its
+/// request (a part with none is a half-done write, which the boot's storage check
+/// reports), and an app attempt.
+async fn plant_a_live_ledger(pool: &sqlx::MySqlPool, git_ref: &str, earlier_hours: i64) {
     use sqlx::Row;
     let bot = sqlx::query(
         "SELECT badge FROM entity WHERE kind = 'bot' AND badge IS NOT NULL ORDER BY id LIMIT 1",
@@ -1748,7 +1753,8 @@ async fn plant_a_live_ledger(pool: &sqlx::MySqlPool, git_ref: &str) {
     .await
     .unwrap_or_else(|e| panic!("the store recorded at {git_ref} holds a bot with a badge: {e}"));
     let badge: String = bot.get("badge");
-    let now = jiff::Timestamp::now().to_string();
+    let now =
+        (jiff::Timestamp::now() + jiff::SignedDuration::from_hours(earlier_hours)).to_string();
     for (id, verb, digest, landed) in [
         (
             PLANTED_RECEIPT_ID,
