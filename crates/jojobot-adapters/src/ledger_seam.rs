@@ -37,6 +37,9 @@ use crate::writer::{Writer, sql};
 mod claims_tests;
 
 #[cfg(test)]
+mod kind_set_tests;
+
+#[cfg(test)]
 mod two_families_tests;
 
 /// The generation the import gives every retained row. The old tables hold one
