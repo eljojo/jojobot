@@ -386,3 +386,54 @@ fn ledger_events_do_not_reveal_a_held_older_generation_when_the_newest_expires()
     assert!(current.expired);
     assert!(!state.request(&older.request.key).unwrap().expired);
 }
+
+/// A write under an id joins the generation that still holds a live row and starts
+/// the next one when every row of the newest generation has aged out or been
+/// expired, so the number replay reproduces never reuses an old attempt.
+#[test]
+fn ledger_events_number_the_generation_a_new_write_belongs_to() {
+    let mut state = State::default();
+    let actor = ObjectId("homer".into());
+    let id = RequestId("alpha".into());
+    assert_eq!(
+        state.generation_for(&actor, &id, at(0)),
+        1,
+        "an id never seen"
+    );
+
+    state
+        .apply(&LedgerEvent::RequestPartCommitted(part("entity")))
+        .unwrap();
+    assert_eq!(
+        state.generation_for(&actor, &id, at(5)),
+        1,
+        "a live part holds the generation open for the rest of the write"
+    );
+    assert_eq!(
+        state.generation_for(&actor, &id, at(11)),
+        2,
+        "a part past its keep window is no longer held"
+    );
+
+    state
+        .apply(&LedgerEvent::RequestCommitted(commit(2)))
+        .unwrap();
+    assert_eq!(state.generation_for(&actor, &id, at(5)), 2);
+    assert_eq!(state.generation_for(&actor, &id, at(11)), 3);
+
+    state
+        .apply(&LedgerEvent::RequestExpired {
+            key: request(2).key,
+        })
+        .unwrap();
+    assert_eq!(
+        state.generation_for(&actor, &id, at(5)),
+        3,
+        "an expired generation is not joined"
+    );
+    assert_eq!(
+        state.generation_for(&ObjectId("marge".into()), &id, at(5)),
+        1,
+        "another actor's id is its own"
+    );
+}

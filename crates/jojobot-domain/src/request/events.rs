@@ -313,6 +313,30 @@ impl State {
             .map(|(_, request)| request)
     }
 
+    /// **The generation a write under this id belongs to.** The newest
+    /// generation while one of its rows is still held at `at`; the next number
+    /// once every row of it has aged out or been expired; 1 for an id never
+    /// seen. A reused id so starts a generation of its own, and a late receipt
+    /// of the old attempt cannot attach to it.
+    pub fn generation_for(&self, actor: &ObjectId, id: &RequestId, at: Timestamp) -> u64 {
+        let Some((key, held)) = self
+            .requests
+            .iter()
+            .filter(|(key, _)| &key.actor == actor && &key.id == id)
+            .max_by_key(|(key, _)| key.generation)
+        else {
+            return 1;
+        };
+        let live = !held.expired
+            && (held.committed.iter().any(|commit| commit.expires_at >= at)
+                || held.parts.values().any(|part| part.expires_at >= at));
+        if live {
+            key.generation
+        } else {
+            key.generation + 1
+        }
+    }
+
     pub fn lookup(&self, actor: &ObjectId, id: &RequestId, at: Timestamp) -> Option<&Commit> {
         let held = self.current(actor, id)?;
         held.committed
