@@ -11,7 +11,7 @@ use jojobot_domain::log::{Event, ObjectId, RecordId, RunId};
 use jojobot_domain::memory::types::{DeclaredType, Field, Fold, Kinds, Origin, ValueType};
 use jojobot_domain::memory::{EntityKind, FactStatus, Provenance, Receipt, Standing, WriteClass};
 
-use super::codec::{DecodeError, decode, decode_own, encode};
+use super::codec::{DecodeError, SHAPES, decode, decode_own, encode};
 
 fn object(key: &str) -> ObjectId {
     ObjectId(key.to_string())
@@ -348,4 +348,88 @@ fn the_stored_spelling_is_pinned() {
         })
     );
     assert_eq!(value["meaning_version"], 1);
+}
+
+/// **The stored payload of every shape is pinned by literal.** Each literal is the
+/// payload a real event of that shape stores; a renamed key, tag or token moves
+/// the stored form and every event already in the log with it, so none of these
+/// may follow a rename. The shapes the family stores are the shape list, and the
+/// events, the literals and that list all name the same twelve.
+#[test]
+fn the_stored_payload_of_every_shape_is_pinned() {
+    use serde_json::json;
+    let body = json!({
+        "aliases": ["Homie"], "archived": false, "boot": "on-demand", "bound_to": "watchbot",
+        "kind": "person", "metadata": {"crm": "c7"}, "name": "person:homer",
+        "parent": "k0", "source": "operator",
+    });
+    let snapshot = json!({
+        "aliases": ["Homie"], "archived_at": "2026-11-04", "archived_reason": "moved",
+        "boot": "on-demand", "crm": "c7", "kind": "person", "merged_into": "k9",
+        "name": "Homer", "parent": "k0", "prose": "likes donuts", "source": "operator",
+    });
+    let claim = json!({
+        "app": {"app": "watchbot", "grant": "write", "received_at": "2026-11-05T01:00:00Z"},
+        "content": "likes donuts", "derived_from": "r0", "details": "since the wedding",
+        "edge": ["about", "k2"], "happened_at": "2026-11-01", "happened_through": "2026-11-02",
+        "home": "k1", "inserted_at": "2026-11-05T01:00:00Z", "label": "f1",
+        "provenance": "testimony",
+        "receipt": {"confirmed": {"at": "message m1", "on": "2026-11-05"}},
+        "recorded_at": "2026-11-05", "refs": ["k3"], "stale_after": "2026-12-01",
+        "standing": "settled", "stands_for": ["r9"], "status": "active",
+    });
+    let pinned = [
+        json!({"shape": "ObjectCreated", "object": "k1", "body": body}),
+        json!({"shape": "ObjectRevised", "object": "k1", "body": body}),
+        json!({"shape": "ObjectBaselined", "object": "k1", "body": body}),
+        json!({"shape": "ObjectWriteObserved", "object": "k1", "filed_under": "person:homer",
+               "ordinal": 3, "snapshot": snapshot}),
+        json!({"shape": "ObjectWriteObserved", "object": "k1", "filed_under": "person:homer",
+               "ordinal": 4, "snapshot": null}),
+        json!({"shape": "AddressBound", "object": "k1", "address": "person:homer"}),
+        json!({"shape": "AddressRetired", "object": "k1", "address": "person:marge"}),
+        json!({"shape": "ObjectsMerged", "folded": "k2", "survivor": "k1",
+               "records": [{"label": "f4", "record": "r1"}],
+               "writes": [{"from_ordinal": 2, "key": "visits", "ordinal": 5, "record": "r1"}]}),
+        json!({"shape": "ObjectRedirected", "folded": "k2", "survivor": "k1"}),
+        json!({"shape": "RecordCreated", "record": "r1", "claim": claim}),
+        json!({"shape": "RecordRevised", "record": "r1", "claim": claim}),
+        json!({"shape": "FieldWritten", "record": "r1", "subject": "k1", "key": "visits",
+               "ordinal": 2, "class": "sets", "write": "3", "targets": ["k3"]}),
+        json!({"shape": "FieldWritten", "record": "r1", "subject": "k1", "key": "visits",
+               "ordinal": 3, "class": "stays", "write": null, "targets": []}),
+        json!({"shape": "TypeDeclared", "kind": "k5", "declaration": {
+            "fields": [
+                {"folds": "sum", "holds": "number", "key": "visits", "list": false,
+                 "one_of": null, "points_at": null, "required": true},
+                {"folds": "newest", "holds": "reference", "key": "owner", "list": true,
+                 "one_of": ["a", "b"], "points_at": "person|bot", "required": false},
+            ],
+            "must": "a tally counts", "name": "tally", "origin": "declared"}}),
+    ];
+    let stored: Vec<serde_json::Value> = every_kind()
+        .into_iter()
+        .map(|payload| {
+            let bytes = encode(&enveloped(payload));
+            let value: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
+            value["payload"].clone()
+        })
+        .collect();
+    assert_eq!(stored, pinned);
+
+    let shapes_of = |values: &[serde_json::Value]| -> std::collections::BTreeSet<String> {
+        values
+            .iter()
+            .map(|value| value["shape"].as_str().expect("a shape").to_string())
+            .collect()
+    };
+    let listed: std::collections::BTreeSet<String> =
+        SHAPES.iter().map(|shape| shape.to_string()).collect();
+    assert_eq!(listed.len(), 12);
+    assert_eq!(shapes_of(&stored), listed, "an event of every shape stored");
+    assert_eq!(
+        shapes_of(&pinned),
+        listed,
+        "a literal for every shape stored"
+    );
 }

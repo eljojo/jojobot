@@ -125,6 +125,24 @@ struct DeclaredTypeWire {
 /// A written value is `Some`, and a cleared key is `None`.
 type ValueWire = Option<String>;
 
+/// **Every shape this family stores**, as `Payload` names them. Kept beside the
+/// enum so a new shape is added in both places, and checked against the events and
+/// the pinned literals in the tests.
+pub const SHAPES: [&str; 12] = [
+    "ObjectCreated",
+    "ObjectRevised",
+    "ObjectBaselined",
+    "ObjectWriteObserved",
+    "AddressBound",
+    "AddressRetired",
+    "ObjectsMerged",
+    "ObjectRedirected",
+    "RecordCreated",
+    "RecordRevised",
+    "FieldWritten",
+    "TypeDeclared",
+];
+
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "shape")]
 enum Payload {
