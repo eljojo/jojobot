@@ -487,13 +487,13 @@ pub fn prepare(
         claim,
     });
     for (key, value) in &request.fields {
-        let key = KeyId(key.trim().to_string());
+        let key = KeyId(key.clone());
         events.push(ClaimEvent::FieldWritten {
             record: request.record.clone(),
             subject: home.clone(),
             ordinal: state.next_ordinal(&home, &key),
             class: classes
-                .get(key.0.as_str())
+                .get(key.0.trim())
                 .copied()
                 .unwrap_or(WriteClass::Own),
             write: FieldValue::Set(value.clone()),

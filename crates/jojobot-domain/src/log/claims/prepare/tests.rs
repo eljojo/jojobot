@@ -1084,6 +1084,95 @@ fn a_field_value_names_a_thing_where_the_link_decision_says() {
     )));
 }
 
+#[test]
+fn padded_capture_key_keeps_its_targets_and_setting_class() {
+    crate::memory::kinds::load_shipped();
+    let (mut state, declared) = world();
+    for event in thing("person:gamma") {
+        apply(&mut state, &event);
+    }
+    let sent = CaptureRequest {
+        fields: BTreeMap::from([(" owner ".into(), "person:gamma".into())]),
+        sets: BTreeSet::from(["owner".into()]),
+        ..request("alpha")
+    };
+    let events = prepare(&state, &declared, &sent).expect("a padded key is admitted");
+    let (key, targets, class) = events
+        .iter()
+        .find_map(|event| match event {
+            ClaimEvent::FieldWritten {
+                key,
+                targets,
+                class,
+                ..
+            } => Some((key, targets, class)),
+            _ => None,
+        })
+        .expect("the field is written");
+    assert_eq!(targets, &[object("person:gamma")]);
+    assert_eq!(key.0, " owner ");
+    assert_eq!(*class, crate::memory::WriteClass::Sets);
+    for event in &events {
+        apply(&mut state, event);
+    }
+    let held = state.fields(&object("alpha"), &declared);
+    assert_eq!(held[" owner "], "person:gamma");
+    assert!(!held.contains_key("owner"));
+    assert_eq!(
+        state.links_from(&object("alpha")),
+        BTreeSet::from([object("person:gamma")])
+    );
+}
+
+#[test]
+fn padded_capture_keys_keep_separate_streams_and_targets() {
+    crate::memory::kinds::load_shipped();
+    let (mut state, declared) = world();
+    for event in [thing("person:gamma"), thing("person:delta")].concat() {
+        apply(&mut state, &event);
+    }
+    apply(&mut state, &write("r1", "alpha", " owner ", 7, "before"));
+    apply(&mut state, &write("r1", "alpha", "owner", 2, "before"));
+    let sent = CaptureRequest {
+        fields: BTreeMap::from([
+            (" owner ".into(), "person:gamma".into()),
+            ("owner".into(), "person:delta".into()),
+        ]),
+        sets: BTreeSet::from(["owner".into()]),
+        ..request("alpha")
+    };
+    let events = prepare(&state, &declared, &sent).expect("both raw keys are admitted");
+    let writes: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event {
+            ClaimEvent::FieldWritten {
+                key,
+                ordinal,
+                targets,
+                ..
+            } => Some((key.0.as_str(), *ordinal, targets.clone())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        writes,
+        vec![
+            (" owner ", 8, vec![object("person:gamma")]),
+            ("owner", 3, vec![object("person:delta")]),
+        ]
+    );
+    for event in &events {
+        apply(&mut state, event);
+    }
+    let held = state.fields(&object("alpha"), &declared);
+    assert_eq!(held[" owner "], "person:gamma");
+    assert_eq!(held["owner"], "person:delta");
+    assert_eq!(
+        state.links_from(&object("alpha")),
+        BTreeSet::from([object("person:gamma"), object("person:delta")])
+    );
+}
+
 /// **The claim's own inputs are judged as the store judges them**, before the
 /// write is read for its classes and before any object is looked up.
 #[test]
