@@ -49,7 +49,6 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  BAR_WORKFLOW_JOBS: ${{ forgejo.event.inputs.job || 'report, rooms' }}
   BAR_BOUNDARY_LEFT: ${{ forgejo.event.inputs.job == 'report' && 'rooms, history-eligible slow tests, year' || forgejo.event.inputs.job == 'rooms' && 'report tests, year' || forgejo.event_name == 'push' && 'rooms unless a room file changed, history-eligible slow tests, year' || 'history-eligible slow tests, year' }}
   BAR_CI_BASE: ${{ forgejo.event.before }}
   # Select only on working-branch pushes. Dispatch and every boundary lane
@@ -68,7 +67,7 @@ jobs:
     steps:
       - name: Level
         run: |
-          echo "level: report; workflow jobs: static, $BAR_WORKFLOW_JOBS; left to boundary: $BAR_BOUNDARY_LEFT"
+          echo "level: report; selection: pending; left to boundary: $BAR_BOUNDARY_LEFT"
       - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
@@ -119,7 +118,7 @@ jobs:
     steps:
       - name: Level
         run: |
-          echo "level: own-crates; workflow jobs: static, $BAR_WORKFLOW_JOBS; left to boundary: $BAR_BOUNDARY_LEFT"
+          echo "level: own-crates; selection: pending; left to boundary: $BAR_BOUNDARY_LEFT"
       - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
@@ -183,7 +182,7 @@ jobs:
     steps:
       - name: Level
         run: |
-          echo "level: report; workflow jobs: static, $BAR_WORKFLOW_JOBS; left to boundary: $BAR_BOUNDARY_LEFT"
+          echo "level: report; selection: pending; left to boundary: $BAR_BOUNDARY_LEFT"
       # The whole history, for the same reason as the pull-request jobs: the
       # fixture roster test reads the commit range.
       - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -263,7 +262,7 @@ jobs:
     steps:
       - name: Level
         run: |
-          echo "level: report; workflow jobs: static, $BAR_WORKFLOW_JOBS; left to boundary: $BAR_BOUNDARY_LEFT"
+          echo "level: report; selection: pending; left to boundary: $BAR_BOUNDARY_LEFT"
       - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
