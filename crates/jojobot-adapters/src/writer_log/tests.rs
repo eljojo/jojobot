@@ -322,7 +322,16 @@ async fn a_new_owner_waits_out_a_predecessor_with_a_commit_in_flight() {
         MySqlPoolOptions::new().connect_lazy_with((*pool.connect_options()).clone().port(port));
     let writer = Writer::default();
     let predecessor = WriterLog::open(source, writer.clone()).await.unwrap();
-    let appended = batch("predecessor", 0, &[b"a", b"b"]);
+    // Members are what another family writes: JSON that names its kind. The ledger
+    // replays every member at open and skips a kind that is not its own.
+    let appended = batch(
+        "predecessor",
+        0,
+        &[
+            br#"{"event_kind":"Other","n":1}"#,
+            br#"{"event_kind":"Other","n":2}"#,
+        ],
+    );
     let append = tokio::spawn({
         let (log, appended) = (predecessor.clone(), appended.clone());
         async move { log.append(Position(0), &appended).await }
@@ -358,7 +367,7 @@ async fn a_new_owner_waits_out_a_predecessor_with_a_commit_in_flight() {
     .await
     .expect("the successor opens once the predecessor is gone");
     let tail = appended.range().last;
-    let next = batch("successor", tail.0, &[b"c"]);
+    let next = batch("successor", tail.0, &[br#"{"event_kind":"Other","n":3}"#]);
     assert_eq!(
         successor.append(tail, &next).await.unwrap(),
         Append::Committed(next.range()),
