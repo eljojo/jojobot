@@ -141,6 +141,8 @@ async fn written(label: &str) -> Written {
         .written()
         .expect("not blocked");
     say(&memory, &bart, "skates", &[("mood", "mischievous")], 1).await;
+    // A key taken off: the later write is blank.
+    say(&memory, &bart, "stops skating", &[("mood", "")], 4).await;
     say(
         &memory,
         &lisa,
@@ -257,6 +259,23 @@ async fn the_state_gives_the_backing_the_store_gives() {
             world.state.backing(&at, &declared),
             stored,
             "{handle}: who backs each key"
+        );
+    }
+    world.server.stop().await;
+}
+
+/// **The writes of each key, those kept off the thing and those that stay on
+/// their record are the store's `key_trails`.**
+#[tokio::test]
+async fn the_state_gives_the_key_trails_the_store_gives() {
+    let mut world = written("parity-trails").await;
+    for handle in &world.standing {
+        let at = object_of(&world.pool, handle).await;
+        let stored = world.memory.key_trails(handle).await.expect("the store's");
+        assert_eq!(
+            world.state.key_trails(&at),
+            stored,
+            "{handle}: the writes of each key"
         );
     }
     world.server.stop().await;
