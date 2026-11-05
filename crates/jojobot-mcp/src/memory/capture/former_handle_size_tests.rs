@@ -59,7 +59,7 @@ async fn a_claim_through_a_former_handle_is_measured_before_capture() {
         );
         assert_eq!(refused["wrote"], false, "{subject}: {refused}");
         assert_eq!(
-            refused["refusal_code"], "TooBigToRead",
+            refused["refusal_code"], "ClaimTooLarge",
             "{subject}: {refused}"
         );
         assert_eq!(refused["what_is_over"], "the claim", "{subject}: {refused}");
