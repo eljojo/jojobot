@@ -2166,6 +2166,8 @@ impl Jojobot {
 }
 
 #[cfg(test)]
+mod former_handle_size_tests;
+#[cfg(test)]
 mod retyped_subject_tests;
 #[cfg(test)]
 mod tests;
