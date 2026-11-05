@@ -320,6 +320,7 @@ async fn a_scrape_reads_the_numbers_of_the_calls_made_and_the_main_listener_has_
                 }
                 "state" => matches!(value.as_str(), "new" | "read" | "processed"),
                 "read" => matches!(value.as_str(), "sessions" | "mail" | "things"),
+                "family" => matches!(value.as_str(), "referring_to" | "teachings"),
                 "version" => value == jojobot_mcp::observe::VERSION,
                 "build" => value == jojobot_mcp::observe::BUILD,
                 "le" => value == "+Inf" || value.parse::<f64>().is_ok(),
@@ -333,6 +334,14 @@ async fn a_scrape_reads_the_numbers_of_the_calls_made_and_the_main_listener_has_
     }
 
     assert!(has(&all, "jojobot_build", &[]), "{text}");
+    // **The teaching shadow is on in a booted server**, so its counts are on the
+    // scrape from the first one, per family.
+    for count in ["jojobot_shadow_comparisons", "jojobot_shadow_disagreements"] {
+        assert!(
+            has(&all, count, &[("family", "teachings")]),
+            "{count}: {text}"
+        );
+    }
     assert!(
         has(
             &all,
