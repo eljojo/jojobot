@@ -106,6 +106,41 @@ async fn a_store_written_through_the_real_verbs_reports_no_damage() {
     assert_eq!(found(&pool).await, vec![]);
 }
 
+/// Old ledger rows no longer describe writes once the log is authoritative.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_storage_check_does_not_read_the_retired_ledger_tables() {
+    let (_scratch, _server, pool) =
+        a_store_with_two_real_merges("storage-check-retired-ledgers").await;
+    assert!(found(&pool).await.is_empty());
+    two_parts(&pool, "legacy-cut", 1).await;
+    let at = ago(1);
+    sqlx::query(
+        "INSERT INTO request_receipt \
+         (bot_key, request_id, verb, args_digest, landed, receipt, written_at) \
+         VALUES ('bot-key-1', 'legacy-lost', 'capture', 'd', '[]', NULL, ?), \
+                ('bot-key-1', 'legacy-merge', 'merge_entities', 'd', '{}', '{}', ?)",
+    )
+    .bind(&at)
+    .bind(&at)
+    .execute(&pool)
+    .await
+    .expect("the old ledger rows stand");
+    let receipts: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM request_receipt")
+        .fetch_one(&pool)
+        .await
+        .expect("the old receipts count");
+    let parts: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM request_part")
+        .fetch_one(&pool)
+        .await
+        .expect("the old parts count");
+    assert_eq!((receipts, parts), (2, 2));
+    let named = found(&pool).await;
+    assert!(
+        named.is_empty(),
+        "retired ledger rows are not storage damage: {named:?}"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn each_class_is_named_by_the_one_edit_that_makes_it() {
     let (_scratch, _server, pool) = a_store_with_two_real_merges("storage-check-classes").await;
