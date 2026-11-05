@@ -676,3 +676,109 @@ async fn every_stored_row_is_read_and_the_legacy_shapes_read_as_stored() {
     );
     server.stop().await;
 }
+
+/// A legacy write names its run by the public sid, and that run still names
+/// its bot when the write has no bot column. Reused sids follow the same
+/// active/newest/lowest-id rule as the store's key-history read.
+#[tokio::test]
+async fn an_imported_write_keeps_the_bot_behind_its_public_run_name() {
+    use jojobot_domain::actor::Actor;
+    use jojobot_domain::log::RunId;
+    use jojobot_domain::log::claims::{ClaimEvent, State};
+
+    let scratch = Scratch::new("import-writer");
+    let mut server = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store");
+    let pool = migrated_database(&server, "importwriter")
+        .await
+        .expect("a database");
+    migrate::run(&pool).await.expect("the schema");
+    let memory = DoltMemory::open(pool.clone());
+    jojobot_domain::memory::kinds::seed(&memory)
+        .await
+        .expect("the kinds");
+    let homer = thing(&memory, "person:homer", "Homer").await;
+
+    for (id, sid, bot, state, day) in [
+        ("run-alpha", "run-a", "bot:beta", "active", 1),
+        ("run-beta", "run-a", "bot:gamma", "wrapped", 2),
+        ("run-gamma", "run-b", "bot:beta", "wrapped", 1),
+        ("run-delta", "run-b", "bot:gamma", "wrapped", 2),
+        ("run-epsilon", "run-c", "bot:beta", "wrapped", 1),
+        ("run-zeta", "run-c", "bot:gamma", "wrapped", 1),
+    ] {
+        sqlx::query(
+            "INSERT INTO session (id, sid, bot, focus, started_at, state) VALUES (?, ?, ?, 'the plan', ?, ?)",
+        )
+        .bind(id)
+        .bind(sid)
+        .bind(bot)
+        .bind(format!("2026-09-{day:02}T00:00:00Z"))
+        .bind(state)
+        .execute(&pool)
+        .await
+        .expect("the legacy run row");
+    }
+    let cases = [
+        ("alpha", Some("run-a"), None, Some("bot:beta")),
+        ("beta", Some("run-b"), None, Some("bot:gamma")),
+        ("gamma", Some("run-c"), None, Some("bot:beta")),
+        ("delta", Some("run-a"), Some("bot:gamma"), Some("bot:gamma")),
+        ("epsilon", Some("run-missing"), None, None),
+        ("zeta", None, None, None),
+    ];
+    let mut addresses = Vec::new();
+    for (key, run, bot, _) in cases {
+        let address = say(&memory, &homer, key, &[(key, "kept")], 1).await;
+        sqlx::query(
+            "UPDATE fact_write w JOIN entity e ON e.badge = w.entity \
+             SET w.session = ?, w.bot = ? WHERE e.id = ? AND w.fact_id = ?",
+        )
+        .bind(run)
+        .bind(bot)
+        .bind(homer.as_str())
+        .bind(address.local.as_str())
+        .execute(&pool)
+        .await
+        .expect("the write keeps the legacy attribution");
+        addresses.push(address);
+    }
+
+    let read = memory.import_rows().await.expect("the reader");
+    assert!(read.findings.is_empty(), "{:?}", read.findings);
+    let home = read
+        .rows
+        .entities
+        .iter()
+        .find(|row| row.handle == homer.as_str())
+        .expect("Homer is read")
+        .key
+        .clone();
+    let events = import::import(&read.rows).expect("the rows import");
+    let state = State::replay(&events);
+    for ((key, run, _, expected), address) in cases.into_iter().zip(addresses) {
+        let expected = expected.map(|bot| Actor::Bot(EntityId(bot.into())));
+        let run = run.map(|run| RunId(run.into()));
+        let record = state
+            .record(&import::record_id(&home, address.local.as_str()))
+            .expect("the imported claim");
+        assert_eq!(record.first_writer, expected, "claim {key}");
+        assert_eq!(record.first_run, run, "claim {key}");
+        let write = events
+            .iter()
+            .find(|event| {
+                matches!(
+                    &event.payload, ClaimEvent::FieldWritten { key: held, .. } if held.0 == key
+                )
+            })
+            .expect("the imported key write");
+        assert_eq!(write.actor, expected, "key {key}");
+        assert_eq!(write.run, run, "key {key}");
+        assert_eq!(
+            state.fields(&home, &[]).get(key).map(String::as_str),
+            Some("kept")
+        );
+    }
+    server.stop().await;
+}
