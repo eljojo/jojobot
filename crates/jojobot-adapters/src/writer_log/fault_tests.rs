@@ -111,14 +111,10 @@ async fn serve(
             bytes = [&[9, 0, 0, bytes[3]][..], b"\x16SELECT 1"].concat();
         }
         if command == 0x03 && text == "COMMIT" {
-            let fault = plan.fault.lock().unwrap().take_if(|f| {
-                matches!(
-                    f,
-                    Fault::DelayedCommit
-                        | Fault::CancelledAcknowledgement
-                        | Fault::LostAcknowledgement
-                )
-            });
+            let fault =
+                plan.fault.lock().unwrap().take_if(|f| {
+                    matches!(f, Fault::DelayedCommit | Fault::CancelledAcknowledgement)
+                });
             match fault {
                 Some(Fault::DelayedCommit) => {
                     let (commands, held) = mpsc::unbounded_channel();
@@ -129,12 +125,6 @@ async fn serve(
                     return Ok(());
                 }
                 Some(Fault::CancelledAcknowledgement) => hold_reply.store(true, Ordering::SeqCst),
-                Some(Fault::LostAcknowledgement) => {
-                    quiet.store(true, Ordering::SeqCst);
-                    to_server.write_all(&bytes).await?;
-                    let _ = to_client.lock().await.shutdown().await;
-                    continue;
-                }
                 _ => {}
             }
         }
