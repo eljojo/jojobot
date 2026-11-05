@@ -1027,6 +1027,30 @@ pub async fn boot_store_observed(
         ),
     }
 
+    // **Today's claims, fields and identities enter the event log once**, after
+    // every pass that rewrites that data and before anything serves. A start that
+    // skipped it would serve a state with no claims, so an error fails the boot
+    // loudly; the next start tries again, and a log that already holds a claims
+    // event is never imported into twice.
+    match timed(
+        "claims-import",
+        jojobot_adapters::claims_import::import_claims_once(
+            &folded.writer(),
+            store.pool(),
+            clock.now(),
+        ),
+    )
+    .await
+    {
+        Ok(jojobot_adapters::claims_import::Imported::Done { events }) => {
+            tracing::info!(events, "imported today's claims into the event log")
+        }
+        Ok(jojobot_adapters::claims_import::Imported::AlreadyDone) => {
+            tracing::info!("claims import: already done")
+        }
+        Err(why) => return Err(anyhow::anyhow!("the claims import failed: {why}")),
+    }
+
     Ok(Booted {
         store,
         memory: indexed.memory(),
