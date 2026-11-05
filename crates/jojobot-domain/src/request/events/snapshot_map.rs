@@ -33,7 +33,7 @@ impl<K: Eq + Hash, V> DerefMut for SnapshotMap<K, V> {
 impl<K: Serialize + Ord + Hash, V: Serialize> Serialize for SnapshotMap<K, V> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let mut entries: Vec<_> = self.0.iter().collect();
-        entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+        entries.sort_by_key(|(key, _)| *key);
         entries.serialize(serializer)
     }
 }
