@@ -133,10 +133,16 @@ lto = "thin"
 # unoptimised fold, search index and store client made the stories, the mcp
 # lib and the adapters lib spend most of their time in dependency code.
 # Dependencies build at opt-level 2 and the workspace crates at 1; the cost is
-# paid once, on a cold target directory.
+# paid once, on a cold target directory. **Debug info is off**: it was about
+# 80% of every test binary. A failing assert still prints its file and line,
+# because the panic location is not debug info; only backtrace frames lose their
+# line numbers. It is set here, in the dev profile the tests build under, and
+# not in [profile.test]: a test profile that differs from dev builds every
+# dependency twice. For one run with line numbers, set
+# CARGO_PROFILE_DEV_DEBUG=line-tables-only.
 [profile.dev.package."*"]
 opt-level = 2
 
 [profile.dev]
 opt-level = 1
-debug = "line-tables-only"
+debug = false
