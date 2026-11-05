@@ -28,8 +28,8 @@ mod tests;
 #[cfg(test)]
 mod writer_log_tests;
 
-const REPRESENTATION_VERSION: u32 = 1;
-const READ_BOUND: usize = 256;
+pub(crate) const REPRESENTATION_VERSION: u32 = 1;
+pub(crate) const READ_BOUND: usize = 256;
 /// Eager recovery after an unknown append: this many tail reads, waiting twice
 /// as long before each as before the one ahead of it.
 const RECOVERY_ATTEMPTS: u32 = 4;
@@ -53,7 +53,7 @@ pub enum LedgerError {
     Conflict,
 }
 
-fn refused(error: LogError) -> LedgerError {
+pub(crate) fn refused(error: LogError) -> LedgerError {
     match error {
         LogError::Indeterminate => LedgerError::Indeterminate,
         LogError::Conflict => LedgerError::Conflict,
@@ -61,7 +61,7 @@ fn refused(error: LogError) -> LedgerError {
     }
 }
 
-fn unreadable(error: codec::DecodeError) -> LedgerError {
+pub(crate) fn unreadable(error: codec::DecodeError) -> LedgerError {
     LedgerError::Store(error.to_string())
 }
 

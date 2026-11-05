@@ -189,12 +189,8 @@ async fn a_repeat_of_a_write_whose_receipt_was_never_kept_says_it_landed_and_giv
     let mut store = jojobot_adapters::dolt::Dolt::start(&state_dir.join("db"), store_port)
         .await
         .expect("the store comes up");
-    let taken = sqlx::query("UPDATE request_receipt SET receipt = NULL")
-        .execute(store.pool())
-        .await
-        .expect("the row is readable")
-        .rows_affected();
-    assert_eq!(taken, 1, "one row held a receipt");
+    let taken = jojobot_adapters::testing::drop_receipt_fills(store.pool()).await;
+    assert_eq!(taken, 1, "one batch held the receipt");
     store.stop().await;
 
     let (child, surface, sid) = running(&state_dir, store_port).await;

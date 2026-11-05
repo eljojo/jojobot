@@ -59,6 +59,10 @@ struct Driver {
     id: u64,
     sender: OnceLock<mpsc::UnboundedSender<Job>>,
     sql: OnceLock<fence::Session>,
+    /// The store's event log, one head for every family that appends to it.
+    log: OnceLock<crate::dolt_log::DoltLog>,
+    /// The request and app ledgers, opened on the first write to the store.
+    seam: tokio::sync::OnceCell<Arc<crate::ledger_seam::Seam>>,
     uncertain: Mutex<BTreeSet<&'static str>>,
     publication: publish::Publication,
     attempted: AtomicU64,
@@ -84,6 +88,8 @@ impl Default for Writer {
             id: NEXT.fetch_add(1, Ordering::Relaxed),
             sender: OnceLock::new(),
             sql: OnceLock::new(),
+            log: OnceLock::new(),
+            seam: tokio::sync::OnceCell::new(),
             uncertain: Mutex::new(BTreeSet::new()),
             publication: publish::Publication::default(),
             attempted: AtomicU64::new(0),
@@ -138,6 +144,37 @@ impl Writer {
             .lock()
             .expect("uncertainty lock")
             .contains(rail)
+    }
+
+    /// **The event log of this writer's store.** One head serves every family
+    /// that appends: a second handle on the same table would hold a head the
+    /// first one moved past, and refuse each of its own writes as a conflict.
+    pub(crate) fn shared_log(&self, pool: &sqlx::MySqlPool) -> crate::dolt_log::DoltLog {
+        self.0
+            .log
+            .get_or_init(|| crate::dolt_log::DoltLog::unread(pool.clone()))
+            .clone()
+    }
+
+    /// The ledgers, when they are open. A covered commit that finds none fails.
+    pub(crate) fn seam(&self) -> Option<Arc<crate::ledger_seam::Seam>> {
+        self.0.seam.get().cloned()
+    }
+
+    /// **Open the ledgers over the store on the first call and hand them back.**
+    /// It runs as a job of this writer and before any transaction of the caller
+    /// begins: the writer holds one connection, so the open (a replay, and the
+    /// import of the old tables into a log that holds no ledger event) cannot
+    /// run beside a transaction that has taken it.
+    pub(crate) async fn ensure_seam(
+        &self,
+        pool: &sql::Pool,
+    ) -> Result<Arc<crate::ledger_seam::Seam>, crate::ledger_log::LedgerError> {
+        self.0
+            .seam
+            .get_or_try_init(|| crate::ledger_seam::Seam::open(self, pool))
+            .await
+            .cloned()
     }
 
     pub(crate) fn current() -> Option<Self> {

@@ -8036,20 +8036,28 @@ impl DoltMemory {
     ) -> Result<jojobot_domain::app::AppOutcome, MemoryError> {
         use jojobot_domain::app::{AppOutcome, AppReceipt};
         let mut tx = self.pool.begin().await.map_err(store)?;
-        let spent =
-            sqlx::query("SELECT digest, landed FROM app_write WHERE app_id = ? AND event_key = ?")
-                .bind(&event.app)
-                .bind(&event.attempt)
-                .fetch_optional(&mut *tx)
-                .await
-                .map_err(store)?;
-        if let Some(row) = spent {
-            let digest: String = row.try_get("digest").map_err(store)?;
-            if digest != event.digest {
+        // **The attempt is decided from the ledger the writer opened**, which
+        // `begin` made sure of; a write outside the writer has no ledger and
+        // fails rather than reading the old table.
+        let seam = crate::writer::Writer::current()
+            .and_then(|writer| writer.seam())
+            .ok_or_else(|| {
+                MemoryError::Store(
+                    "the app ledger is not open on this writer; an app write cannot commit".into(),
+                )
+            })?;
+        seam.settle()
+            .await
+            .map_err(|e| MemoryError::Store(e.to_string()))?;
+        let key = jojobot_domain::request::events::AppKey {
+            app_id: event.app.clone(),
+            event_key: event.attempt.clone(),
+        };
+        if let Some(spent) = seam.read(|state| state.app(&key).cloned()) {
+            if spent.digest != event.digest {
                 return Ok(AppOutcome::Conflict);
             }
-            let landed: String = row.try_get("landed").map_err(store)?;
-            let receipt: AppReceipt = serde_json::from_str(&landed)
+            let receipt: AppReceipt = serde_json::from_str(&spent.landed)
                 .map_err(|_| unreadable("an app write's receipt cannot be read"))?;
             return Ok(AppOutcome::Repeat(receipt));
         }
@@ -8082,25 +8090,31 @@ impl DoltMemory {
             address: fact.address().to_string(),
         };
         let landed = serde_json::to_string(&receipt).expect("a receipt is two strings");
-        let inserted = sqlx::query(
-            "INSERT INTO app_write (app_id, event_key, digest, landed, written_at)
-             VALUES (?, ?, ?, ?, ?)",
-        )
-        .bind(&event.app)
-        .bind(&event.attempt)
-        .bind(&event.digest)
-        .bind(&landed)
-        .bind(self.clock.now().to_string())
-        .execute(&mut *tx)
-        .await;
-        if let Err(e) = inserted {
-            // A key held twice is another call having spent the attempt first.
-            return Err(match e.as_database_error().map(|db| db.kind()) {
-                Some(sqlx::error::ErrorKind::UniqueViolation) => MemoryError::Conflict,
-                _ => store(e),
-            });
+        let now = self.clock.now();
+        let pending = seam
+            .stage(
+                &mut tx,
+                vec![
+                    jojobot_domain::request::events::LedgerEvent::AppAttemptCommitted(
+                        jojobot_domain::request::events::AppAttempt {
+                            key,
+                            digest: event.digest.clone(),
+                            landed,
+                            written_at: now,
+                        },
+                    ),
+                ],
+                now,
+            )
+            .await
+            .map_err(|e| MemoryError::Store(e.to_string()))?;
+        match commit_native(tx).await {
+            Ok(()) => pending.committed(),
+            Err(e) => {
+                pending.unknown();
+                return Err(store(e));
+            }
         }
-        commit_native(tx).await.map_err(store)?;
         Ok(AppOutcome::Landed(Box::new(Guarded::Written((
             entity, fact,
         )))))

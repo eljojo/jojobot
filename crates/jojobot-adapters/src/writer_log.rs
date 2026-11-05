@@ -31,9 +31,9 @@ impl WriterLog {
     /// writer of its own passes a new one: it then has a private owner.
     pub async fn open(pool: MySqlPool, writer: Writer) -> Result<Self, LogError> {
         let this = Self {
+            log: writer.shared_log(&pool),
+            pool: pool.into(),
             writer,
-            pool: pool.clone().into(),
-            log: DoltLog::unread(pool),
         };
         // The head is read on the writer's connection, which takes the lock
         // first: a predecessor that can still commit holds the lock, so this

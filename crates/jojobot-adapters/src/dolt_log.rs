@@ -192,6 +192,12 @@ impl DoltLog {
         Ok(self.hold_read(last.unwrap_or(0)))
     }
 
+    /// The head the owner holds, read on `connection` only when none is held. A
+    /// caller that stages a batch of its own asks for it here.
+    pub(crate) async fn head_in(&self, connection: &mut MySqlConnection) -> Result<u64, LogError> {
+        self.known_head(connection).await
+    }
+
     /// **A read of the tail becomes the held head only if it is not behind it.**
     /// The read was made before an `await` returned, and an append can commit and
     /// move the head in that time. Storing the read as it came would set the head

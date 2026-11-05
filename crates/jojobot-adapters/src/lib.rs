@@ -18,6 +18,7 @@ pub mod dolt;
 pub mod dolt_log;
 pub mod fold;
 pub mod ledger_log;
+pub(crate) mod ledger_seam;
 pub mod log_snapshot;
 pub mod nudge;
 pub mod observe;

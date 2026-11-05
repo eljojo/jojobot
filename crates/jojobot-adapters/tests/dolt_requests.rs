@@ -11,6 +11,9 @@ use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::dolt::requests::DoltRequests;
+use jojobot_adapters::fold::Folded;
+use jojobot_adapters::fold::mail::FoldedMailboxes;
+use jojobot_adapters::fold::sessions::FoldedSessions;
 use jojobot_adapters::testing::{free_port, migrated_database};
 use jojobot_domain::memory::{EntityId, Memory, NewEntity, NewFact, Provenance};
 use jojobot_domain::request::{Request, RequestId, Requests, Scope, armed, digest_of, within};
@@ -53,11 +56,19 @@ async fn captured(memory: &dyn Memory, request: Request, fact: NewFact) -> (bool
     (stored, scope.was_spent())
 }
 
+/// How many whole writes the ledger holds a commit for: one per request key.
 async fn rows(pool: &sqlx::MySqlPool) -> i64 {
-    sqlx::query_scalar("SELECT COUNT(*) FROM request_receipt")
-        .fetch_one(pool)
+    use jojobot_domain::request::events::LedgerEvent;
+    let keys: std::collections::HashSet<_> = jojobot_adapters::testing::ledger_events(pool)
         .await
-        .expect("the ledger is readable")
+        .into_iter()
+        .filter_map(|event| match event {
+            LedgerEvent::RequestCommitted(commit) => Some(commit.request.key),
+            LedgerEvent::RequestCompleted { commit, .. } => Some(commit.request.key),
+            _ => None,
+        })
+        .collect();
+    keys.len() as i64
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -75,8 +86,8 @@ async fn a_capture_spends_its_id_with_the_claim_and_a_second_one_stores_nothing(
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
         .await
         .expect("the kinds are seeded");
-    let memory = DoltMemory::open(pool.clone());
-    let ledger = DoltRequests::new(pool.clone());
+    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
+    let ledger = DoltRequests::new(pool.clone()).with_writer(memory.writer());
 
     let milhouse = thing(&memory, "person:milhouse", "Milhouse").await;
     thing(&memory, "bot:sigma", "Sigma").await;
@@ -213,8 +224,11 @@ async fn every_covered_write_spends_its_id_with_its_own_commit() {
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
         .await
         .expect("the kinds are seeded");
-    let memory = DoltMemory::open(pool.clone());
-    let mail = DoltMailboxes::open(pool.clone(), Arc::new(AnyOwner));
+    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
+    let mail = FoldedMailboxes::new(Arc::new(
+        DoltMailboxes::open(pool.clone(), Arc::new(AnyOwner)).with_writer(memory.writer()),
+    ))
+    .with_writer(memory.writer());
     let me = thing(&memory, "bot:sigma", "Sigma").await;
     let day = date(2026, 9, 1);
 
@@ -453,8 +467,8 @@ async fn a_spent_id_follows_the_bot_through_a_rename_and_is_not_inherited_by_a_n
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
         .await
         .expect("the kinds are seeded");
-    let memory = DoltMemory::open(pool.clone());
-    let ledger = DoltRequests::new(pool.clone());
+    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
+    let ledger = DoltRequests::new(pool.clone()).with_writer(memory.writer());
     let milhouse = thing(&memory, "person:milhouse", "Milhouse").await;
     let sigma = thing(&memory, "bot:sigma", "Sigma").await;
 
@@ -530,8 +544,14 @@ async fn a_spent_id_follows_the_bot_through_a_rename_and_is_not_inherited_by_a_n
     server.stop().await;
 }
 
+/// **The rows of the old tables are imported once, before the first live event,
+/// and read from the log afterwards.** The rows are written before the writer's
+/// first job, as a store filled by the last release holds them. An id still in
+/// its keep window answers as a repeat, an id past it does not, and a write
+/// does not touch the old tables again.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn an_id_older_than_the_retention_goes_with_the_next_spend() {
+async fn the_old_ledger_rows_are_imported_once_and_read_from_the_log() {
+    use jojobot_domain::request::events::LedgerEvent;
     let dir = jojobot_adapters::testing::scratch_path("jojobot-requests-keep");
     std::fs::create_dir_all(&dir).expect("a scratch directory");
     let _scratch = Scratch(dir.clone());
@@ -545,9 +565,11 @@ async fn an_id_older_than_the_retention_goes_with_the_next_spend() {
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
         .await
         .expect("the kinds are seeded");
-    let memory = DoltMemory::open(pool.clone());
-    let milhouse = thing(&memory, "person:milhouse", "Milhouse").await;
-    thing(&memory, "bot:sigma", "Sigma").await;
+    // A plain store runs no job of the writer, so the ledger stays closed while
+    // the fixture is made.
+    let plain = DoltMemory::open(pool.clone());
+    let milhouse = thing(&plain, "person:milhouse", "Milhouse").await;
+    thing(&plain, "bot:sigma", "Sigma").await;
     let key: String = sqlx::query_scalar("SELECT badge FROM entity WHERE id = 'bot:sigma'")
         .fetch_one(&pool)
         .await
@@ -568,7 +590,39 @@ async fn an_id_older_than_the_retention_goes_with_the_next_spend() {
         .await
         .expect("a row");
     }
-    assert_eq!(rows(&pool).await, 2);
+    sqlx::query(
+        "INSERT INTO request_part (bot_key, request_id, part, verb, args_digest, landed, written_at) \
+         VALUES (?, 'recent', 'one', 'capture', 'd', '{}', '2999-01-01T00:00:00.000000000Z')",
+    )
+    .bind(&key)
+    .execute(&pool)
+    .await
+    .expect("a part");
+    sqlx::query(
+        "INSERT INTO app_write (app_id, event_key, digest, landed, written_at) \
+         VALUES ('springfield-ci', 'a1', 'd', '{}', '2999-01-01T00:00:00.000000000Z')",
+    )
+    .execute(&pool)
+    .await
+    .expect("an app row");
+
+    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
+    let ledger = DoltRequests::new(pool.clone()).with_writer(memory.writer());
+    let bot = EntityId("bot:sigma".into());
+    let id = |text: &str| RequestId::parse(text).expect("a good id");
+    assert!(
+        ledger.lookup(&bot, &id("recent")).await.unwrap().is_some(),
+        "an id inside its window is spent after the import"
+    );
+    assert!(
+        ledger.lookup(&bot, &id("old")).await.unwrap().is_none(),
+        "an id past its window is not"
+    );
+    assert_eq!(
+        ledger.parts(&bot, &id("recent")).await.unwrap().len(),
+        1,
+        "the part rows are imported too"
+    );
 
     captured(
         &memory,
@@ -576,16 +630,21 @@ async fn an_id_older_than_the_retention_goes_with_the_next_spend() {
         claim_about(&milhouse, "wears glasses"),
     )
     .await;
-    let kept: Vec<String> =
-        sqlx::query_scalar("SELECT request_id FROM request_receipt ORDER BY request_id")
-            .fetch_all(&pool)
-            .await
-            .expect("readable");
+    let imported = jojobot_adapters::testing::ledger_events(&pool)
+        .await
+        .into_iter()
+        .filter(|event| matches!(event, LedgerEvent::Imported { .. }))
+        .count();
     assert_eq!(
-        kept,
-        vec!["now".to_string(), "recent".to_string()],
-        "the old row went, the recent one and the new one stayed"
+        imported, 4,
+        "every retained row is imported once, expired or not"
     );
+    assert_eq!(rows(&pool).await, 1, "and the live write is its own event");
+    let legacy: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM request_receipt")
+        .fetch_one(&pool)
+        .await
+        .expect("readable");
+    assert_eq!(legacy, 2, "the old table is not written");
 
     server.stop().await;
 }
@@ -605,7 +664,7 @@ async fn two_calls_under_one_id_at_the_same_moment_store_one_write() {
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
         .await
         .expect("the kinds are seeded");
-    let memory = Arc::new(DoltMemory::open(pool.clone()));
+    let memory = Arc::new(Folded::new(Arc::new(DoltMemory::open(pool.clone()))));
     let milhouse = thing(memory.as_ref(), "person:milhouse", "Milhouse").await;
     thing(memory.as_ref(), "bot:sigma", "Sigma").await;
 
@@ -665,8 +724,8 @@ async fn the_calls_that_lose_a_race_under_one_id_are_told_to_send_it_again() {
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
         .await
         .expect("the kinds are seeded");
-    let memory = Arc::new(DoltMemory::open(pool.clone()));
-    let ledger = DoltRequests::new(pool.clone());
+    let memory = Arc::new(Folded::new(Arc::new(DoltMemory::open(pool.clone()))));
+    let ledger = DoltRequests::new(pool.clone()).with_writer(memory.writer());
     let milhouse = thing(memory.as_ref(), "person:milhouse", "Milhouse").await;
     thing(memory.as_ref(), "bot:sigma", "Sigma").await;
 
@@ -737,15 +796,13 @@ async fn stopped_after<F: std::future::Future>(
 }
 
 /// **A call that loses at the commit, on the rows it wrote, is told to send it
-/// again.** Two identical captures under one id overlap in the store: the first
-/// is stopped after some number of its statements, the second runs to its end
-/// and commits, and the first then finishes. The stop moves one statement at a
-/// time through the whole call, so the first call's transaction began before the
-/// second one committed at most of the stops, and it conflicts with the
-/// committed one on the claim it wrote and on the id's row when it commits. The
-/// store reports that at the commit, not at the insert of the id's row. A loser
-/// is told the write collided, never that a key is held twice: the call is good
-/// and the same call sent again finds the winner's row. Paired: in every round
+/// again.** Two identical captures under one id are sent together: the first
+/// is stopped after some number of its statements, the second is sent, and the
+/// first then finishes. The stop moves one statement at a time through the
+/// whole call. The writer runs the two calls one
+/// after the other, so the first meets the second's spent id in the ledger. A
+/// loser is told the write collided, never that a key is held twice: the call is
+/// good and the same call sent again finds the winner's row. Paired: in every round
 /// one call spent the id and stored its claim.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_call_that_loses_at_the_commit_under_one_id_is_told_to_send_it_again() {
@@ -753,15 +810,6 @@ async fn a_call_that_loses_at_the_commit_under_one_id_is_told_to_send_it_again()
     use tracing::Instrument;
 
     const STOPS: usize = 30;
-    // **The span this case's calls run in.** The log sink is the process's one
-    // sink, so a sibling case that loses a commit writes the same refusal into it.
-    // A line a call of this case logs carries the span's name, and no other case's
-    // line does.
-    //
-    // The sink is installed first: a span made before any subscriber exists is
-    // cached as disabled, and then no line carries it.
-    const CASE_SPAN: &str = "commit_race_case";
-    jojobot_adapters::testing::install_store_log_sink();
     let case = tracing::warn_span!("commit_race_case");
     let dir = jojobot_adapters::testing::scratch_path("jojobot-requests-commit");
     std::fs::create_dir_all(&dir).expect("a scratch directory");
@@ -776,7 +824,7 @@ async fn a_call_that_loses_at_the_commit_under_one_id_is_told_to_send_it_again()
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
         .await
         .expect("the kinds are seeded");
-    let memory = Arc::new(DoltMemory::open(pool.clone()));
+    let memory = Arc::new(Folded::new(Arc::new(DoltMemory::open(pool.clone()))));
     let milhouse = thing(memory.as_ref(), "person:milhouse", "Milhouse").await;
     thing(memory.as_ref(), "bot:sigma", "Sigma").await;
 
@@ -831,18 +879,6 @@ async fn a_call_that_loses_at_the_commit_under_one_id_is_told_to_send_it_again()
         losses_after_a_stop > 0,
         "no stopped call lost to a commit: the case never overlapped two transactions"
     );
-    // The store's own account of those losses is in the log: a conflict at the
-    // commit, which the insert of a second id row would not say. Only the lines
-    // this case's own calls logged count.
-    let commit_conflicts = jojobot_adapters::testing::store_log()
-        .lines()
-        .filter(|line| line.contains(CASE_SPAN) && line.contains("serialization failure"))
-        .count();
-    assert!(
-        commit_conflicts > 0,
-        "the store reported no conflict at a commit"
-    );
-
     server.stop().await;
 }
 
@@ -877,7 +913,8 @@ async fn an_id_is_a_repeat_only_while_it_is_kept() {
                 .unwrap(),
         )
     };
-    let memory = DoltMemory::open(pool.clone()).on_clock(at(0));
+    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone()).on_clock(at(0))));
+    let writer = memory.writer();
     let milhouse = thing(&memory, "person:milhouse", "Milhouse").await;
     thing(&memory, "bot:sigma", "Sigma").await;
 
@@ -894,7 +931,9 @@ async fn an_id_is_a_repeat_only_while_it_is_kept() {
     );
 
     // ── inside the window: two days on, the id is still a repeat ────────────
-    let two_days_on = DoltRequests::new(pool.clone()).on_clock(at(2));
+    let two_days_on = DoltRequests::new(pool.clone())
+        .with_writer(writer.clone())
+        .on_clock(at(2));
     assert!(
         two_days_on
             .lookup(&first.bot, &first.id)
@@ -905,7 +944,9 @@ async fn an_id_is_a_repeat_only_while_it_is_kept() {
     );
 
     // ── past the window, with no other write: the id is no repeat ───────────
-    let four_days_on = DoltRequests::new(pool.clone()).on_clock(at(4));
+    let four_days_on = DoltRequests::new(pool.clone())
+        .with_writer(writer.clone())
+        .on_clock(at(4));
     assert!(
         four_days_on
             .lookup(&first.bot, &first.id)
@@ -916,7 +957,8 @@ async fn an_id_is_a_repeat_only_while_it_is_kept() {
     );
 
     // ── and a different write under the same id writes ──────────────────────
-    let later = DoltMemory::open(pool.clone()).on_clock(at(4));
+    let later = Folded::new(Arc::new(DoltMemory::open(pool.clone()).on_clock(at(4))))
+        .with_writer(writer.clone());
     assert_eq!(
         captured(
             &later,
@@ -928,6 +970,23 @@ async fn an_id_is_a_repeat_only_while_it_is_kept() {
         "a different write under an id past the window stores and spends it again"
     );
     assert_eq!(later.recall(&milhouse).await.expect("recall").len(), 2);
+
+    // ── the reused id is a generation of its own, and the log says so ───────
+    let generations: Vec<u64> = jojobot_adapters::testing::ledger_events(&pool)
+        .await
+        .into_iter()
+        .filter_map(|event| match event {
+            jojobot_domain::request::events::LedgerEvent::RequestCommitted(commit) => {
+                Some(commit.request.key.generation)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        generations,
+        [1, 2],
+        "the second spend starts a new generation"
+    );
 
     server.stop().await;
 }
@@ -950,8 +1009,8 @@ async fn two_ids_that_differ_only_in_case_are_two_ids_in_the_ledger() {
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
         .await
         .expect("the kinds are seeded");
-    let memory = DoltMemory::open(pool.clone());
-    let ledger = DoltRequests::new(pool.clone());
+    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
+    let ledger = DoltRequests::new(pool.clone()).with_writer(memory.writer());
     let milhouse = thing(&memory, "person:milhouse", "Milhouse").await;
     thing(&memory, "bot:sigma", "Sigma").await;
 
@@ -1022,8 +1081,8 @@ async fn a_handle_two_bots_have_worn_belongs_to_the_newer_one_in_the_ledger() {
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
         .await
         .expect("the kinds are seeded");
-    let memory = DoltMemory::open(pool.clone());
-    let ledger = DoltRequests::new(pool.clone());
+    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
+    let ledger = DoltRequests::new(pool.clone()).with_writer(memory.writer());
     let milhouse = thing(&memory, "person:milhouse", "Milhouse").await;
 
     // One bot wears `bot:sigma`, moves off it, and a second bot takes the name
@@ -1131,14 +1190,14 @@ async fn a_claim_that_fails_before_it_inserts_leaves_the_request_for_the_next_co
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
         .await
         .expect("the kinds are seeded");
-    let memory = DoltMemory::open(pool.clone());
+    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
     let milhouse = thing(&memory, "person:milhouse", "Milhouse").await;
     thing(&memory, "bot:sigma", "Sigma").await;
 
     let scope = Scope::new(request("bot:sigma", "r1"));
     // The ledger is out of reach for the first commit: the claim's first
-    // statement on it fails.
-    sqlx::query("RENAME TABLE request_receipt TO request_receipt_away")
+    // statement on it fails: the ledger event goes into the log.
+    sqlx::query("RENAME TABLE event_log TO event_log_away")
         .execute(&pool)
         .await
         .expect("the table moves");
@@ -1150,7 +1209,7 @@ async fn a_claim_that_fails_before_it_inserts_leaves_the_request_for_the_next_co
     assert!(failed.is_err(), "the commit cannot reach the ledger");
     assert!(!scope.was_spent());
 
-    sqlx::query("RENAME TABLE request_receipt_away TO request_receipt")
+    sqlx::query("RENAME TABLE event_log_away TO event_log")
         .execute(&pool)
         .await
         .expect("the table comes back");
@@ -1189,7 +1248,7 @@ async fn two_merges_under_one_id_leave_one_event() {
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
         .await
         .expect("the kinds are seeded");
-    let memory = DoltMemory::open(pool.clone());
+    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
     let survivor = thing(&memory, "person:lisa", "Lisa").await;
     let first = thing(&memory, "person:nelson", "Nelson").await;
     let second = thing(&memory, "person:milhouse", "Milhouse").await;
@@ -1244,10 +1303,12 @@ async fn captured_as_part(
 }
 
 async fn part_rows(pool: &sqlx::MySqlPool) -> i64 {
-    sqlx::query_scalar("SELECT COUNT(*) FROM request_part")
-        .fetch_one(pool)
+    use jojobot_domain::request::events::LedgerEvent;
+    jojobot_adapters::testing::ledger_events(pool)
         .await
-        .expect("the part ledger is readable")
+        .into_iter()
+        .filter(|event| matches!(event, LedgerEvent::RequestPartCommitted(_)))
+        .count() as i64
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -1265,8 +1326,8 @@ async fn each_part_is_stored_with_its_own_row_and_the_id_is_spent_when_the_verb_
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
         .await
         .expect("the kinds are seeded");
-    let memory = DoltMemory::open(pool.clone());
-    let ledger = DoltRequests::new(pool.clone());
+    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
+    let ledger = DoltRequests::new(pool.clone()).with_writer(memory.writer());
 
     let milhouse = thing(&memory, "person:milhouse", "Milhouse").await;
     thing(&memory, "bot:sigma", "Sigma").await;
@@ -1404,9 +1465,14 @@ async fn the_note_of_a_charter_change_is_a_part_of_its_own_in_the_real_store() {
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
         .await
         .expect("the kinds are seeded");
-    let memory = DoltMemory::open(pool.clone());
-    let sessions = DoltSessions::open(pool.clone());
-    let ledger = DoltRequests::new(pool.clone());
+    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
+    let sessions = FoldedSessions::new(
+        Arc::new(DoltSessions::open(pool.clone()).with_writer(memory.writer())),
+        jojobot_domain::session::history::WriteStamp::new(),
+        jojobot_domain::clock::Clock::Real,
+    )
+    .with_writer(memory.writer());
+    let ledger = DoltRequests::new(pool.clone()).with_writer(memory.writer());
     let gamma = thing(&memory, "bot:gamma", "Gamma").await;
     thing(&memory, "bot:sigma", "Sigma").await;
     let first = request_on("set_charter", "charter-part-1");
@@ -1506,8 +1572,8 @@ async fn a_restore_as_a_part_keeps_what_it_cleared_for_the_claim_that_records_it
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
         .await
         .expect("the kinds are seeded");
-    let memory = DoltMemory::open(pool.clone());
-    let ledger = DoltRequests::new(pool.clone());
+    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
+    let ledger = DoltRequests::new(pool.clone()).with_writer(memory.writer());
     let milhouse = thing(&memory, "person:milhouse", "Milhouse").await;
     thing(&memory, "bot:sigma", "Sigma").await;
     memory
@@ -1554,9 +1620,12 @@ async fn a_rename_and_the_move_of_its_box_are_two_parts_in_the_real_store() {
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
         .await
         .expect("the kinds are seeded");
-    let memory = DoltMemory::open(pool.clone());
-    let mail = DoltMailboxes::open(pool.clone(), Arc::new(AnyOwner));
-    let ledger = DoltRequests::new(pool.clone());
+    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
+    let mail = FoldedMailboxes::new(Arc::new(
+        DoltMailboxes::open(pool.clone(), Arc::new(AnyOwner)).with_writer(memory.writer()),
+    ))
+    .with_writer(memory.writer());
+    let ledger = DoltRequests::new(pool.clone()).with_writer(memory.writer());
     let delta = thing(&memory, "bot:delta", "Delta").await;
     thing(&memory, "bot:sigma", "Sigma").await;
     mail.create_mailbox(&MailboxName("delta".into()), &delta, None)
@@ -1623,9 +1692,12 @@ async fn a_bot_and_its_box_are_two_parts_and_a_box_another_call_opened_is_not_op
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
         .await
         .expect("the kinds are seeded");
-    let memory = DoltMemory::open(pool.clone());
-    let mail = DoltMailboxes::open(pool.clone(), Arc::new(AnyOwner));
-    let ledger = DoltRequests::new(pool.clone());
+    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
+    let mail = FoldedMailboxes::new(Arc::new(
+        DoltMailboxes::open(pool.clone(), Arc::new(AnyOwner)).with_writer(memory.writer()),
+    ))
+    .with_writer(memory.writer());
+    let ledger = DoltRequests::new(pool.clone()).with_writer(memory.writer());
     thing(&memory, "bot:sigma", "Sigma").await;
     let delta = EntityId("bot:delta".into());
     let first = request_on("add_entity", "bot-part-1");
@@ -1699,9 +1771,12 @@ async fn the_mail_a_post_took_for_its_sender_is_kept_with_the_part_that_took_it(
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
         .await
         .expect("the kinds are seeded");
-    let memory = DoltMemory::open(pool.clone());
-    let mail = DoltMailboxes::open(pool.clone(), Arc::new(AnyOwner));
-    let ledger = DoltRequests::new(pool.clone());
+    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
+    let mail = FoldedMailboxes::new(Arc::new(
+        DoltMailboxes::open(pool.clone(), Arc::new(AnyOwner)).with_writer(memory.writer()),
+    ))
+    .with_writer(memory.writer());
+    let ledger = DoltRequests::new(pool.clone()).with_writer(memory.writer());
     thing(&memory, "bot:sigma", "Sigma").await;
     let inbox = MailboxName("sigma".into());
     mail.create_mailbox(&inbox, &EntityId("bot:sigma".into()), None)
@@ -1770,9 +1845,14 @@ async fn the_entry_of_a_beat_and_the_focus_it_moves_are_two_parts_in_the_real_st
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
         .await
         .expect("the kinds are seeded");
-    let memory = DoltMemory::open(pool.clone());
-    let sessions = DoltSessions::open(pool.clone());
-    let ledger = DoltRequests::new(pool.clone());
+    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
+    let sessions = FoldedSessions::new(
+        Arc::new(DoltSessions::open(pool.clone()).with_writer(memory.writer())),
+        jojobot_domain::session::history::WriteStamp::new(),
+        jojobot_domain::clock::Clock::Real,
+    )
+    .with_writer(memory.writer());
+    let ledger = DoltRequests::new(pool.clone()).with_writer(memory.writer());
     thing(&memory, "bot:sigma", "Sigma").await;
     let now = Timestamp::now();
     let run = sessions

@@ -28,27 +28,9 @@ async fn booted(pool: &sqlx::MySqlPool) {
         .expect("the kinds are seeded");
 }
 
-/// **The app contract, against the real store.**
-#[tokio::test]
-async fn dolt_satisfies_the_app_contract() {
-    let scratch = Scratch::new("contract");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "appcontract")
-        .await
-        .expect("a database of this case's own");
-    migrate::run(&pool).await.expect("the schema");
-    booted(&pool).await;
-
-    memory::run_all_app(&DoltMemory::open(pool)).await;
-
-    store.stop().await;
-}
-
-/// **The app contract, through the fold.** The image answers a claim from what
-/// the store gave it, so a mark the store kept and the image dropped passes the
-/// case above and fails here.
+/// **The app contract, through the fold.** An app write runs only as a job of
+/// the writer, which the fold owns: the attempt is decided from the ledger the
+/// writer opened, never from a plain store.
 #[tokio::test]
 async fn dolt_satisfies_the_app_contract_when_folded() {
     let scratch = Scratch::new("contract-folded");
@@ -118,7 +100,7 @@ async fn calls_racing_on_one_attempt_land_one_event() {
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
     booted(&pool).await;
-    let memory = Arc::new(DoltMemory::open(pool.clone()));
+    let memory = Arc::new(Folded::new(Arc::new(DoltMemory::open(pool.clone()))));
     let thread = EntityId("thread:deploys-alpha".into());
     memory
         .add_entity(NewEntity::new(thread.clone(), "Deploys Alpha", "fixture"))

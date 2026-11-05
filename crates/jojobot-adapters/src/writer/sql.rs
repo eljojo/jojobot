@@ -196,6 +196,14 @@ impl Pool {
             return self.reader().begin().await;
         }
         set_phase(Phase::BeforeCommit);
+        // **The ledgers open before the first transaction of a job begins**, never
+        // inside one: the writer holds one connection, and the open writes.
+        if let Some(writer) = Writer::current() {
+            writer
+                .ensure_seam(self)
+                .await
+                .map_err(|e| sqlx::Error::Protocol(e.to_string()))?;
+        }
         self.writer().begin().await
     }
 

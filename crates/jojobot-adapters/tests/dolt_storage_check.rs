@@ -466,9 +466,12 @@ async fn a_store_with_a_merge_under_a_request_id(label: &str) -> (Scratch, Dolt,
         verb: "merge_entities".to_string(),
         digest: digest_of("{}"),
     });
+    // A write under a request id runs as a job of the writer, which the fold owns.
+    let served =
+        jojobot_adapters::fold::Folded::new(std::sync::Arc::new(DoltMemory::open(pool.clone())));
     within(
         scope,
-        armed(memory.merge(
+        armed(served.merge(
             &gone,
             &kept,
             Some("filed twice"),
@@ -479,6 +482,8 @@ async fn a_store_with_a_merge_under_a_request_id(label: &str) -> (Scratch, Dolt,
     )
     .await
     .expect("the merge lands");
+    drop(served);
+    jojobot_adapters::testing::mirror_ledger_into_old_tables(&pool).await;
     (scratch, server, pool)
 }
 

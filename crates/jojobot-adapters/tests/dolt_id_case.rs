@@ -17,6 +17,7 @@ use jojobot_adapters::dolt::mailboxes::DoltMailboxes;
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::dolt::requests::DoltRequests;
+use jojobot_adapters::fold::Folded;
 use jojobot_adapters::testing::{free_port, migrated_database};
 use jojobot_domain::mailbox::{
     MailboxError, MailboxName, Mailboxes, MessageId, NewMessage, OwnerIndex, OwnerLookup,
@@ -243,8 +244,8 @@ async fn request_ids_that_differ_only_in_case_are_two_in_the_real_ledger() {
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
         .await
         .expect("the kinds are seeded");
-    let memory = DoltMemory::open(pool.clone());
-    let ledger = DoltRequests::new(pool.clone());
+    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
+    let ledger = DoltRequests::new(pool.clone()).with_writer(memory.writer());
     let subject = EntityId("thing:kettle".into());
     memory
         .add_entity(NewEntity::new(subject.clone(), "Kettle", "fixture"))

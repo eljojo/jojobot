@@ -1,30 +1,32 @@
-//! The ledger of spent request ids, in the store. See [`jojobot_domain::request`].
+//! The ledger of spent request ids. See [`jojobot_domain::request`].
 //!
 //! **A write spends its id in its own transaction.** The commit that stores the
-//! write calls [`claim`] before it commits, and the row for the id goes in with
-//! the write. A process that stops before the commit stores neither.
+//! write calls [`claim`] before it commits, and the ledger event for the id goes
+//! into the event log in that same transaction. A process that stops before the
+//! commit stores neither. A read of the ledger is answered from the state the
+//! writer's ledger holds ([`crate::ledger_seam`]); the old tables are not read
+//! or written after the writer opened it.
 //!
 //! **A row is keyed by the permanent identity of the bot**, found the way every
 //! other lookup finds it: the entity's badge, or its id when it holds none, and a
 //! former handle resolves through the badge it belonged to. A rename moves the
 //! handle and leaves the key.
 
-use crate::writer::owned;
+use std::sync::Arc;
+
+use crate::ledger_log::LedgerError;
+use crate::ledger_seam::{Pending, Seam};
 pub(crate) use crate::writer::sql::commit as commit_native;
-use jiff::Timestamp;
+use crate::writer::{Writer, owned};
 use jojobot_domain::clock::Clock;
+use jojobot_domain::log::{ObjectId, RequestId as LogRequestId};
 use jojobot_domain::memory::EntityId;
+use jojobot_domain::request::events::{self, LedgerEvent, RequestKey};
 use jojobot_domain::request::{
     KEPT_FOR, PartRow, Recorded, Request, RequestError, RequestId, Requests, Reservation, Stored,
     take,
 };
 use sqlx::{MySql, MySqlConnection, MySqlPool, Row, Transaction};
-
-/// An instant as this table stores it: fixed width, so a text comparison is an
-/// instant comparison.
-fn stamp(at: Timestamp) -> String {
-    at.strftime("%Y-%m-%dT%H:%M:%S%.9fZ").to_string()
-}
 
 fn store(e: sqlx::Error) -> RequestError {
     tracing::error!(error = %e, "the request store failed");
@@ -75,17 +77,6 @@ impl sqlx::error::DatabaseError for SpentByAnother {
     }
 }
 
-/// **The error of a write that carried an id, with a key held twice read as the
-/// id having been spent.** Any other error is returned as it came.
-fn read_as_spent(e: sqlx::Error) -> sqlx::Error {
-    match e.as_database_error() {
-        Some(db) if db.kind() == sqlx::error::ErrorKind::UniqueViolation => {
-            sqlx::Error::Database(Box::new(SpentByAnother))
-        }
-        _ => e,
-    }
-}
-
 /// The permanent identity of the bot a handle answers to, or `None` when the
 /// handle answers to nothing.
 async fn bot_key(
@@ -111,7 +102,7 @@ async fn bot_key(
     .await
 }
 
-/// The ledger over the one table.
+/// The ledger of spent ids.
 #[derive(Clone)]
 pub struct DoltRequests {
     writer: crate::writer::Writer,
@@ -144,35 +135,78 @@ impl DoltRequests {
     }
 }
 
+fn ledger_failed(e: LedgerError) -> RequestError {
+    match e {
+        LedgerError::Indeterminate => RequestError::Indeterminate,
+        other => {
+            tracing::error!(error = %other, "the request ledger failed");
+            RequestError::Store(other.to_string())
+        }
+    }
+}
+
+impl DoltRequests {
+    /// **The ledger, open and settled.** Opened on the first call as a job of the
+    /// writer (a replay of the log, and the import of the old tables into a log
+    /// that holds no ledger event), and brought up to the log again when a commit
+    /// left its outcome unknown. After that a read touches no store.
+    async fn seam(&self) -> Result<Arc<Seam>, RequestError> {
+        if let Some(seam) = self.writer.seam()
+            && !seam.behind()
+        {
+            return Ok(seam);
+        }
+        let (writer, pool) = (self.writer.clone(), self.pool.clone());
+        self.writer
+            .run(async move {
+                let seam = writer.ensure_seam(&pool).await?;
+                seam.settle().await?;
+                Ok(seam)
+            })
+            .await
+            .map_err(ledger_failed)
+    }
+
+    /// The identity a handle answers to, read from the entity tables.
+    async fn actor(&self, bot: &EntityId) -> Result<Option<ObjectId>, RequestError> {
+        let mut conn = self.pool.acquire().await.map_err(store)?;
+        Ok(bot_key(&mut conn, bot).await.map_err(store)?.map(ObjectId))
+    }
+
+    /// Append events to the log as a batch of their own, in a job of the writer.
+    async fn append(&self, events: Vec<LedgerEvent>) -> Result<(), RequestError> {
+        let (writer, pool, now) = (self.writer.clone(), self.pool.clone(), self.clock.now());
+        self.writer
+            .run(async move {
+                let seam = writer.ensure_seam(&pool).await?;
+                seam.settle().await?;
+                seam.append_event_batch(&pool, events, now).await
+            })
+            .await
+            .map_err(ledger_failed)
+    }
+}
+
 #[async_trait::async_trait]
 impl Requests for DoltRequests {
     async fn lookup(&self, bot: &EntityId, id: &RequestId) -> Result<Option<Stored>, RequestError> {
-        let mut conn = self.pool.acquire().await.map_err(store)?;
-        let Some(key) = bot_key(&mut conn, bot).await.map_err(store)? else {
+        let Some(actor) = self.actor(bot).await? else {
             return Ok(None);
         };
+        let seam = self.seam().await?;
+        let id = LogRequestId(id.as_str().to_string());
         // **A row older than the keep window is not a spent id**, whether or not a
         // later write has removed it yet: the id answers as a repeat exactly while
         // the ledger keeps it.
-        let row = sqlx::query(
-            "SELECT verb, args_digest, landed, receipt FROM request_receipt \
-             WHERE bot_key = ? AND request_id = ? AND written_at >= ?",
-        )
-        .bind(&key)
-        .bind(id.as_str())
-        .bind(stamp(self.clock.now() - KEPT_FOR))
-        .fetch_optional(&mut *conn)
-        .await
-        .map_err(store)?;
-        row.map(|row| {
-            Ok(Stored {
-                verb: row.try_get("verb").map_err(store)?,
-                digest: row.try_get("args_digest").map_err(store)?,
-                landed: row.try_get("landed").map_err(store)?,
-                receipt: row.try_get("receipt").map_err(store)?,
+        let now = self.clock.now();
+        Ok(seam.read(|state| {
+            state.lookup(&actor, &id, now).map(|commit| Stored {
+                verb: commit.request.verb.clone(),
+                digest: commit.request.digest.clone(),
+                landed: commit.landed.clone(),
+                receipt: commit.receipt.clone(),
             })
-        })
-        .transpose()
+        }))
     }
 
     async fn fill(&self, request: &Request, receipt: &str) -> Result<(), RequestError> {
@@ -182,51 +216,48 @@ impl Requests for DoltRequests {
             [request = request.clone(), receipt = receipt.to_string()],
             this.fill(&request, &receipt).await
         );
-        let mut conn = self.pool.acquire().await.map_err(store)?;
-        let Some(key) = bot_key(&mut conn, &request.bot).await.map_err(store)? else {
+        let Some(actor) = self.actor(&request.bot).await? else {
             return Ok(());
         };
-        sqlx::query("UPDATE request_receipt SET receipt = ? WHERE bot_key = ? AND request_id = ?")
-            .bind(receipt)
-            .bind(&key)
-            .bind(request.id.as_str())
-            .execute(&mut *conn)
-            .await
-            .map_err(store)?;
-        Ok(())
+        let seam = self.seam().await?;
+        let id = LogRequestId(request.id.as_str().to_string());
+        // Filling an id nobody spent changes nothing, and appends nothing.
+        let Some(key) = seam.read(|state| {
+            state
+                .current(&actor, &id)
+                .and_then(|held| held.committed.as_ref())
+                .map(|commit| commit.request.key.clone())
+        }) else {
+            return Ok(());
+        };
+        self.append(vec![LedgerEvent::RequestReceiptRecorded {
+            key,
+            receipt: receipt.to_string(),
+        }])
+        .await
     }
 
     async fn parts(&self, bot: &EntityId, id: &RequestId) -> Result<Vec<PartRow>, RequestError> {
-        let mut conn = self.pool.acquire().await.map_err(store)?;
-        let Some(key) = bot_key(&mut conn, bot).await.map_err(store)? else {
+        let Some(actor) = self.actor(bot).await? else {
             return Ok(Vec::new());
         };
+        let seam = self.seam().await?;
+        let id = LogRequestId(id.as_str().to_string());
+        let now = self.clock.now();
         // **Oldest first, in the order the parts were written**, and the keep
         // window applies as it does to the whole write's row.
-        let rows = sqlx::query(
-            "SELECT part, verb, args_digest, landed, note FROM request_part \
-             WHERE bot_key = ? AND request_id = ? AND written_at >= ? \
-             ORDER BY written_at, part",
-        )
-        .bind(&key)
-        .bind(id.as_str())
-        .bind(stamp(self.clock.now() - KEPT_FOR))
-        .fetch_all(&mut *conn)
-        .await
-        .map_err(store)?;
-        rows.into_iter()
-            .map(|row| {
-                Ok(PartRow {
-                    part: row.try_get("part").map_err(store)?,
-                    verb: row.try_get("verb").map_err(store)?,
-                    digest: row.try_get("args_digest").map_err(store)?,
-                    recorded: Recorded {
-                        landed: row.try_get("landed").map_err(store)?,
-                        note: row.try_get("note").map_err(store)?,
-                    },
+        Ok(seam.read(|state| {
+            state
+                .parts(&actor, &id, now)
+                .into_iter()
+                .map(|part| PartRow {
+                    part: part.name.clone(),
+                    verb: part.request.verb.clone(),
+                    digest: part.request.digest.clone(),
+                    recorded: part.recorded.clone(),
                 })
-            })
-            .collect()
+                .collect()
+        }))
     }
 
     async fn finish(&self, request: &Request, receipt: &str) -> Result<(), RequestError> {
@@ -236,35 +267,59 @@ impl Requests for DoltRequests {
             [request = request.clone(), receipt = receipt.to_string()],
             this.finish(&request, &receipt).await
         );
-        let parts = self.parts(&request.bot, &request.id).await?;
-        let mut conn = self.pool.acquire().await.map_err(store)?;
-        let Some(key) = bot_key(&mut conn, &request.bot).await.map_err(store)? else {
+        let Some(actor) = self.actor(&request.bot).await? else {
             return Ok(());
         };
-        let names = parts
-            .iter()
-            .map(|row| format!("{:?}", row.part))
-            .collect::<Vec<_>>()
-            .join(",");
+        let seam = self.seam().await?;
+        let id = LogRequestId(request.id.as_str().to_string());
+        let now = self.clock.now();
+        let (generation, parts, spent) = seam.read(|state| {
+            (
+                state.generation_for(&actor, &id, now),
+                state
+                    .parts(&actor, &id, now)
+                    .iter()
+                    .map(|part| part.name.clone())
+                    .collect::<Vec<_>>(),
+                state
+                    .lookup(&actor, &id, now)
+                    .map(|commit| commit.request.key.clone()),
+            )
+        });
         // **One row for one id**: a second finish keeps the row and takes the
         // newer receipt.
-        sqlx::query(
-            "INSERT INTO request_receipt \
-             (bot_key, request_id, verb, args_digest, landed, receipt, written_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?) \
-             ON DUPLICATE KEY UPDATE receipt = VALUES(receipt)",
-        )
-        .bind(&key)
-        .bind(request.id.as_str())
-        .bind(&request.verb)
-        .bind(&request.digest)
-        .bind(format!("{{\"parts\":[{names}]}}"))
-        .bind(receipt)
-        .bind(stamp(self.clock.now()))
-        .execute(&mut *conn)
+        if let Some(key) = spent {
+            return self
+                .append(vec![LedgerEvent::RequestReceiptRecorded {
+                    key,
+                    receipt: receipt.to_string(),
+                }])
+                .await;
+        }
+        let names = parts
+            .iter()
+            .map(|name| format!("{name:?}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        self.append(vec![LedgerEvent::RequestCompleted {
+            commit: events::Commit {
+                request: events::Request {
+                    key: RequestKey {
+                        actor,
+                        id,
+                        generation,
+                    },
+                    verb: request.verb.clone(),
+                    digest: request.digest.clone(),
+                },
+                landed: format!("{{\"parts\":[{names}]}}"),
+                receipt: Some(receipt.to_string()),
+                written_at: now,
+                expires_at: now + KEPT_FOR,
+            },
+            required_parts: parts,
+        }])
         .await
-        .map_err(store)?;
-        Ok(())
     }
 }
 
@@ -273,22 +328,35 @@ impl Requests for DoltRequests {
 ///
 /// Call [`Claim::committed`] after the transaction commits. A claim dropped any
 /// other way (the commit failed, or an earlier step returned) leaves the id
-/// unspent, because the row went in the same transaction and the transaction did
-/// not commit.
+/// unspent, because the ledger event went into the same transaction and the
+/// transaction did not commit.
 pub(crate) struct Claim {
     reservation: Option<Reservation>,
-    /// What the store returned for a part, as the row holds it. Empty for the
+    /// What the store returned for a part, as the event holds it. Empty for the
     /// whole write.
     landed: String,
+    /// The ledger event, staged in the transaction of the write.
+    pending: Option<Pending>,
 }
 
 impl Claim {
     pub(crate) fn committed(mut self) {
+        if let Some(pending) = self.pending.take() {
+            pending.committed();
+        }
         if let Some(reservation) = self.reservation.take() {
             match reservation.part() {
                 Some(_) => reservation.spent_with(std::mem::take(&mut self.landed)),
                 None => reservation.spent(),
             }
+        }
+    }
+
+    /// The COMMIT's outcome is not known. The id stays unspent for this call; the
+    /// ledger settles from the log before anything else is built on it.
+    fn unknown(mut self) {
+        if let Some(pending) = self.pending.take() {
+            pending.unknown();
         }
     }
 }
@@ -301,11 +369,17 @@ impl Drop for Claim {
     }
 }
 
-/// **Put the id's row into the transaction that stores the write**, when the
-/// call carries an id. `landed` says what the write returned, as JSON text, and
-/// is only built for a call that carries one.
+fn ledger(e: LedgerError) -> sqlx::Error {
+    sqlx::Error::Protocol(e.to_string())
+}
+
+/// **Stage the id's ledger event in the transaction that stores the write**, when
+/// the call carries an id. `landed` says what the write returned, as JSON text,
+/// and is only built for a call that carries one.
 ///
-/// Rows older than [`KEPT_FOR`] go in the same transaction.
+/// The ledger is the one the writer opened (see
+/// [`crate::writer::Writer::ensure_seam`]); a commit that finds none fails and
+/// never writes the old tables.
 pub(crate) async fn claim(
     tx: &mut Transaction<'_, MySql>,
     clock: &Clock,
@@ -315,6 +389,7 @@ pub(crate) async fn claim(
         return Ok(Claim {
             reservation: None,
             landed: String::new(),
+            pending: None,
         });
     };
     // **Held by the claim from here on**, so every way out of this function that
@@ -322,6 +397,7 @@ pub(crate) async fn claim(
     let mut claim = Claim {
         reservation: Some(reservation),
         landed: String::new(),
+        pending: None,
     };
     let request = claim
         .reservation
@@ -332,67 +408,93 @@ pub(crate) async fn claim(
     let Some(key) = bot_key(tx, &request.bot).await? else {
         return Err(sqlx::Error::RowNotFound);
     };
+    let seam = Writer::current()
+        .and_then(|writer| writer.seam())
+        .ok_or_else(|| {
+            sqlx::Error::Protocol(
+                "the request ledger is not open on this writer; a write that carries a request \
+                 id cannot commit without it"
+                    .into(),
+            )
+        })?;
+    if seam.behind() {
+        seam.settle().await.map_err(ledger)?;
+    }
     let now = clock.now();
-    sqlx::query("DELETE FROM request_receipt WHERE written_at < ?")
-        .bind(stamp(now - KEPT_FOR))
-        .execute(&mut **tx)
-        .await?;
-    // **A part of a write that commits in several has a row of its own** in the
-    // same transaction, and the whole write's row waits for the verb to finish.
+    let actor = ObjectId(key);
+    let id = LogRequestId(request.id.as_str().to_string());
     let part = claim.reservation.as_ref().and_then(|held| {
         held.part()
             .map(|name| (name.to_string(), held.note().map(str::to_string)))
     });
-    if let Some((name, note)) = part {
-        sqlx::query("DELETE FROM request_part WHERE written_at < ?")
-            .bind(stamp(now - KEPT_FOR))
-            .execute(&mut **tx)
-            .await?;
-        claim.landed = landed();
-        sqlx::query(
-            "INSERT INTO request_part \
-             (bot_key, request_id, part, verb, args_digest, landed, note, written_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind(&key)
-        .bind(request.id.as_str())
-        .bind(&name)
-        .bind(&request.verb)
-        .bind(&request.digest)
-        .bind(&claim.landed)
-        .bind(note)
-        .bind(stamp(now))
-        .execute(&mut **tx)
-        .await
-        .map_err(read_as_spent)?;
-        return Ok(claim);
+    let (generation, spent) = seam.read(|state| {
+        let spent = match &part {
+            // **A part has a row of its own**; the whole write's row waits for the
+            // verb to finish.
+            Some((name, _)) => state
+                .parts(&actor, &id, now)
+                .iter()
+                .any(|held| &held.name == name),
+            None => state.lookup(&actor, &id, now).is_some(),
+        };
+        (state.generation_for(&actor, &id, now), spent)
+    });
+    if spent {
+        return Err(sqlx::Error::Database(Box::new(SpentByAnother)));
     }
-    sqlx::query(
-        "INSERT INTO request_receipt (bot_key, request_id, verb, args_digest, landed, written_at) \
-         VALUES (?, ?, ?, ?, ?, ?)",
-    )
-    .bind(&key)
-    .bind(request.id.as_str())
-    .bind(&request.verb)
-    .bind(&request.digest)
-    .bind(landed())
-    .bind(stamp(now))
-    .execute(&mut **tx)
-    .await
-    .map_err(read_as_spent)?;
+    let request = events::Request {
+        key: RequestKey {
+            actor,
+            id,
+            generation,
+        },
+        verb: request.verb,
+        digest: request.digest,
+    };
+    let (written_at, expires_at) = (now, now + KEPT_FOR);
+    let event = match part {
+        Some((name, note)) => {
+            claim.landed = landed();
+            LedgerEvent::RequestPartCommitted(events::Part {
+                request,
+                name,
+                recorded: Recorded {
+                    landed: claim.landed.clone(),
+                    note,
+                },
+                written_at,
+                expires_at,
+            })
+        }
+        None => LedgerEvent::RequestCommitted(events::Commit {
+            request,
+            landed: landed(),
+            receipt: None,
+            written_at,
+            expires_at,
+        }),
+    };
+    claim.pending = Some(seam.stage(tx, vec![event], now).await.map_err(ledger)?);
     Ok(claim)
 }
 
-/// **Commit the transaction that stores a write, with the id's row in it** when
-/// the call carries an id. This is the whole of what a covered write does at its
-/// commit point.
+/// **Commit the transaction that stores a write, with the id's ledger event in
+/// it** when the call carries an id. This is the whole of what a covered write
+/// does at its commit point.
 pub(crate) async fn commit(
     mut tx: Transaction<'_, MySql>,
     clock: &Clock,
     landed: impl FnOnce() -> String,
 ) -> Result<(), sqlx::Error> {
     let claim = claim(&mut tx, clock, landed).await?;
-    crate::writer::sql::commit(tx).await?;
-    claim.committed();
-    Ok(())
+    match crate::writer::sql::commit(tx).await {
+        Ok(()) => {
+            claim.committed();
+            Ok(())
+        }
+        Err(e) => {
+            claim.unknown();
+            Err(e)
+        }
+    }
 }
