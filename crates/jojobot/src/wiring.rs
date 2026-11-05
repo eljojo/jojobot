@@ -385,6 +385,9 @@ pub struct Booted {
     pub clock: Clock,
     /// **The one writer**, which subscribers read the State's changes from.
     pub writer: jojobot_adapters::writer::Writer,
+    /// The shadow the serving rails report their comparisons to, which the
+    /// metrics listener reports.
+    pub shadow: Arc<jojobot_adapters::fold::shadow::Shadow>,
 }
 
 /// **The fill a server makes before it serves**: the fold takes a full read of
@@ -1041,6 +1044,7 @@ pub async fn boot_store_observed(
         )),
         clock,
         writer: folded.writer(),
+        shadow: folded.shadow(),
     })
 }
 

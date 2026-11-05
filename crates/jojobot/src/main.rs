@@ -177,6 +177,9 @@ async fn main() -> anyhow::Result<()> {
         booted.mailboxes.clone(),
         booted.clock,
     );
+    if let Some(metrics) = &metrics {
+        metrics.watch_shadow(booted.shadow.clone());
+    }
     let scraped = jojobot::metrics::Ports {
         sessions: booted.sessions.clone(),
         mailboxes: booted.mailboxes.clone(),
