@@ -136,6 +136,128 @@ async fn claimed_edit_rollback_restores_a_dropped_thought() {
     refused_claimed_edit(true).await;
 }
 
+/// What a store shows of its own substrates: the write summary, which counts
+/// every write of an entity and a claim and hashes the rows, and the entities
+/// listed. A creation that was refused must leave both as they were.
+async fn shown(store: &InMemoryMemory) -> (Option<crate::memory::WriteSummary>, Vec<Entity>) {
+    (
+        store.write_summary().await.unwrap(),
+        store.list_entities(None).await.unwrap(),
+    )
+}
+
+fn first_claim_about(subject: &EntityId, what: &str) -> NewFact {
+    NewFact::about(subject.clone(), what, date(2026, 6, 2))
+}
+
+/// **A creation refused at its first claim leaves nothing.** The first claim is
+/// refused for a line break in its text, after the entity was made; the refusal
+/// is the claim's own, and the store shows what it showed before the call, the
+/// entity absent. **Paired**: the same creation with a clean first claim lands
+/// and its claim is readable, so the refusal above is about the claim.
+#[tokio::test]
+async fn a_creation_refused_at_its_first_claim_leaves_the_store_as_it_was() {
+    let store = InMemoryMemory::booted();
+    let before = shown(&store).await;
+    let homer = EntityId("person:milhouse".to_string());
+    let refused = store
+        .add_entity_with_first_claim(
+            NewEntity::new(homer.clone(), "Milhouse", "fixture"),
+            first_claim_about(&homer, "wears glasses\nand a scarf"),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(refused, MemoryError::InvalidFact(_)),
+        "{refused:?}"
+    );
+    assert_eq!(shown(&store).await, before, "nothing of the creation stays");
+    let (entity, fact) = store
+        .add_entity_with_first_claim(
+            NewEntity::new(homer.clone(), "Milhouse", "fixture"),
+            first_claim_about(&homer, "wears glasses"),
+        )
+        .await
+        .unwrap()
+        .written()
+        .unwrap();
+    assert_eq!(entity.id, homer);
+    assert_eq!(store.recall(&homer).await.unwrap(), vec![fact]);
+}
+
+/// **A creation whose companion record is refused after the first claim landed
+/// leaves nothing**: not the entity, and not the claim that was written before
+/// the refusal. The companion is refused for a line break; the first claim is
+/// clean. **Paired**: with a clean companion both records are readable.
+#[tokio::test]
+async fn a_creation_refused_at_a_companion_record_takes_the_first_claim_back_too() {
+    let store = InMemoryMemory::booted();
+    let before = shown(&store).await;
+    let homer = EntityId("person:milhouse".to_string());
+    let with_companion = |companion: &str| NewFact {
+        also_written: vec![first_claim_about(&homer, companion)],
+        ..first_claim_about(&homer, "wears glasses")
+    };
+    let refused = store
+        .add_entity_with_first_claim(
+            NewEntity::new(homer.clone(), "Milhouse", "fixture"),
+            with_companion("noted\nover two lines"),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(refused, MemoryError::InvalidFact(_)),
+        "{refused:?}"
+    );
+    assert_eq!(shown(&store).await, before, "no write of the act stays");
+    store
+        .add_entity_with_first_claim(
+            NewEntity::new(homer.clone(), "Milhouse", "fixture"),
+            with_companion("noted in one line"),
+        )
+        .await
+        .unwrap()
+        .written()
+        .unwrap();
+    assert_eq!(store.recall(&homer).await.unwrap().len(), 2);
+}
+
+/// **A creation whose request id was spent by another call leaves nothing.** The
+/// id is spent by a first creation; the second, under the same id, is refused at
+/// its final spend, after its entity and claim were written, and the store shows
+/// what it showed after the first.
+#[tokio::test]
+async fn a_creation_refused_at_the_spend_of_its_request_leaves_the_store_as_it_was() {
+    use crate::request::{Request, RequestId, Scope, armed, digest_of, within};
+    let store =
+        InMemoryMemory::booted().with_requests(crate::request::testing::InMemoryRequests::new());
+    let creation = |slug: &'static str| {
+        let store = &store;
+        let id = EntityId(format!("person:{slug}"));
+        async move {
+            let scope = Scope::new(Request {
+                bot: EntityId("bot:sigma".into()),
+                id: RequestId::parse("creation-1").unwrap(),
+                verb: "add_entity".into(),
+                digest: digest_of("{}"),
+            });
+            within(
+                scope,
+                armed(store.add_entity_with_first_claim(
+                    NewEntity::new(id.clone(), slug, "fixture"),
+                    first_claim_about(&id, "was here"),
+                )),
+            )
+            .await
+        }
+    };
+    creation("milhouse").await.unwrap().written().unwrap();
+    let after_the_first = shown(&store).await;
+    let refused = creation("nelson").await.unwrap_err();
+    assert!(matches!(refused, MemoryError::Conflict), "{refused:?}");
+    assert_eq!(shown(&store).await, after_the_first);
+}
+
 /// **Two merges under one request id leave one event.** The first spends the
 /// id and lands; the second finds it spent and is refused, and the store holds
 /// nothing of it: the event is recorded after the id is spent, as the real

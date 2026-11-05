@@ -2338,7 +2338,29 @@ impl Memory for InMemoryMemory {
         // **One spend for the act**, after its last step: the inner writes take
         // nothing because this has taken the claim.
         let claim = crate::request::take();
-        let id = new.id.clone();
+        // **Every row the act can write is kept to put back**: the entity, its
+        // badge, its writes and versions, and the claims and writes of the first
+        // claim and the records beside it. The real store does this in one
+        // transaction; removing only the entity left the rest behind.
+        let entities_before = self.entities.lock().expect("fake mutex poisoned").clone();
+        let badges_before = self.badges.lock().expect("fake mutex poisoned").clone();
+        let facts_before = self.facts.lock().expect("fake mutex poisoned").clone();
+        let writes_before = self.writes.lock().expect("fake mutex poisoned").clone();
+        let claim_writes_before = self
+            .claim_writes
+            .lock()
+            .expect("fake mutex poisoned")
+            .clone();
+        let entity_writes_before = self
+            .entity_writes
+            .lock()
+            .expect("fake mutex poisoned")
+            .clone();
+        let entity_versions_before = self
+            .entity_versions
+            .lock()
+            .expect("fake mutex poisoned")
+            .clone();
         let entity = match self.add_entity(new).await? {
             Guarded::Written(entity) => entity,
             Guarded::Blocked {
@@ -2352,11 +2374,15 @@ impl Memory for InMemoryMemory {
             }
         };
         let take_back = || {
-            self.entities
-                .lock()
-                .expect("fake mutex poisoned")
-                .retain(|held| held.id != id);
-            self.badges.lock().expect("fake mutex poisoned").remove(&id);
+            *self.entities.lock().expect("fake mutex poisoned") = entities_before.clone();
+            *self.badges.lock().expect("fake mutex poisoned") = badges_before.clone();
+            *self.facts.lock().expect("fake mutex poisoned") = facts_before.clone();
+            *self.writes.lock().expect("fake mutex poisoned") = writes_before.clone();
+            *self.claim_writes.lock().expect("fake mutex poisoned") = claim_writes_before.clone();
+            *self.entity_writes.lock().expect("fake mutex poisoned") = entity_writes_before.clone();
+            *self.entity_versions.lock().expect("fake mutex poisoned") =
+                entity_versions_before.clone();
+            *self.world_cache.lock().expect("fake mutex poisoned") = None;
         };
         match self.capture(first).await {
             Ok(Guarded::Written(fact)) => {
