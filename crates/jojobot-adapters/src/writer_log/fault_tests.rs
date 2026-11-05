@@ -203,6 +203,10 @@ impl Faulted {
 
 #[async_trait::async_trait]
 impl LogStore for Faulted {
+    async fn validity(&self) -> Result<Validity, LogError> {
+        self.log().validity().await
+    }
+
     async fn append(&self, head: Position, batch: &SealedBatch) -> Result<Append, LogError> {
         let fault = *self.plan.fault.lock().unwrap();
         let _release = matches!(fault, Some(Fault::CancelledAcknowledgement))

@@ -208,6 +208,16 @@ pub async fn cancelling_an_acknowledgement_does_not_cancel_the_commit(log: &impl
     assert_eq!(log.read_from(Position(0), 10).await.unwrap(), [next]);
 }
 
+pub async fn validity_belongs_to_the_log_across_appends_and_snapshots(log: &impl LogStore) {
+    let before = log.validity().await.unwrap();
+    assert!(!before.log_identity.is_empty());
+    assert_eq!(before.representation_epoch, 0);
+    assert_eq!(before.erasure_epoch, 0);
+    assert_eq!(before.earliest_affected_position, None);
+    snapshot_blob_round_trips(log).await;
+    assert_eq!(log.validity().await.unwrap(), before);
+}
+
 pub async fn snapshot_blob_round_trips(log: &impl LogStore) {
     assert_eq!(log.load_snapshot().await.unwrap(), None);
     let next = batch("alpha", 0, &[b"a"]);
@@ -302,6 +312,7 @@ mod log_store_contract {
         a_fenced_abort_leaves_the_same_head,
         restart_excludes_a_late_predecessor,
         cancelling_an_acknowledgement_does_not_cancel_the_commit,
+        validity_belongs_to_the_log_across_appends_and_snapshots,
         snapshot_blob_round_trips,
         an_events_actor_reads_back_as_it_was_appended
     );

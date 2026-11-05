@@ -31,6 +31,7 @@ mod writer_log_contract {
         stale_heads_never_append,
         a_head_ahead_of_storage_never_appends,
         snapshot_blob_round_trips,
+        validity_belongs_to_the_log_across_appends_and_snapshots,
         an_events_actor_reads_back_as_it_was_appended
     );
 }

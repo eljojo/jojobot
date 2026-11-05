@@ -157,9 +157,22 @@ pub struct ValidatedSnapshot {
     pub blob: Vec<u8>,
 }
 
+/// Snapshot validity belongs to the log generation. An erasure invalidates
+/// snapshots covering its earliest affected position, including that position.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct Validity {
+    pub log_identity: String,
+    pub representation_epoch: u64,
+    pub erasure_epoch: u64,
+    pub earliest_affected_position: Option<Position>,
+}
+
 /// No maintenance, erasure or Memory methods are available through this port.
 #[async_trait::async_trait]
 pub trait LogStore: Send + Sync {
+    /// Read the identity and validity epochs together, from one log generation.
+    async fn validity(&self) -> Result<Validity, LogError>;
+
     async fn append(
         &self,
         expected_head: Position,

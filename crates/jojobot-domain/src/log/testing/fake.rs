@@ -9,8 +9,8 @@ struct Shared {
     inner: Mutex<Inner>,
 }
 
-#[derive(Default)]
 struct Inner {
+    validity: Validity,
     batches: Vec<SealedBatch>,
     snapshot: Option<ValidatedSnapshot>,
     fault: Option<Fault>,
@@ -19,8 +19,38 @@ struct Inner {
     acknowledgement_waiter: Option<std::task::Waker>,
 }
 
+impl Default for Inner {
+    fn default() -> Self {
+        Self {
+            validity: Validity {
+                log_identity: crate::handle::draw(26),
+                representation_epoch: 0,
+                erasure_epoch: 0,
+                earliest_affected_position: None,
+            },
+            batches: Vec::new(),
+            snapshot: None,
+            fault: None,
+            pending: None,
+            acknowledgement_pending: false,
+            acknowledgement_waiter: None,
+        }
+    }
+}
+
+impl InMemoryLog {
+    /// Change a whole generation's facts together for snapshot discard cases.
+    pub fn set_validity(&self, validity: Validity) {
+        self.0.inner.lock().unwrap().validity = validity;
+    }
+}
+
 #[async_trait::async_trait]
 impl LogStore for InMemoryLog {
+    async fn validity(&self) -> Result<Validity, LogError> {
+        Ok(self.0.inner.lock().unwrap().validity.clone())
+    }
+
     async fn append(
         &self,
         expected_head: Position,

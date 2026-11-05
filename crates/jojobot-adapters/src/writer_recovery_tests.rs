@@ -171,6 +171,12 @@ struct ReadCountingLog {
 
 #[async_trait]
 impl jojobot_domain::log::LogStore for ReadCountingLog {
+    async fn validity(
+        &self,
+    ) -> Result<jojobot_domain::log::Validity, jojobot_domain::log::LogError> {
+        self.log.validity().await
+    }
+
     async fn append(
         &self,
         head: jojobot_domain::log::Position,

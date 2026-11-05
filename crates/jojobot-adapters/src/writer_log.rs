@@ -41,6 +41,7 @@ impl WriterLog {
         let (pool, log) = (this.pool.clone(), this.log.clone());
         this.job(async move {
             let mut tx = pool.begin().await.map_err(sql::store_error::<LogError>)?;
+            log.create_validity().await?;
             let settled = log.settle_on(&mut tx).await;
             let _ = tx.rollback().await;
             settled
@@ -165,6 +166,11 @@ impl WriterLog {
 
 #[async_trait::async_trait]
 impl LogStore for WriterLog {
+    async fn validity(&self) -> Result<Validity, LogError> {
+        let log = self.log.clone();
+        self.job(async move { log.validity().await }).await
+    }
+
     async fn append(&self, head: Position, batch: &SealedBatch) -> Result<Append, LogError> {
         self.append_with_rows(head, batch, Vec::new()).await
     }

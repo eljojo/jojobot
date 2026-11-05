@@ -16,6 +16,30 @@ async fn fixture() -> (Scratch, Dolt, MySqlPool, DoltLog) {
     (scratch, server, pool, log)
 }
 
+/// A reopen preserves the log's identity; another store starts a different log.
+/// Metadata is not a batch and cannot advance its head or appear in its tail.
+#[tokio::test]
+async fn log_validity_survives_a_reopen_and_belongs_to_one_store() {
+    let (_scratch, mut server, pool, log) = fixture().await;
+    let before = log.validity().await.unwrap();
+    let reopened = DoltLog::open(pool).await.unwrap();
+    assert_eq!(reopened.validity().await.unwrap(), before);
+    assert!(
+        reopened
+            .read_from(Position(0), 10)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    let other = migrated_database(&server, "beta").await.unwrap();
+    let other = DoltLog::open(other).await.unwrap();
+    assert_ne!(
+        other.validity().await.unwrap().log_identity,
+        before.log_identity
+    );
+    server.stop().await;
+}
+
 pub(crate) async fn packet(reader: &mut (impl AsyncRead + Unpin)) -> std::io::Result<Vec<u8>> {
     let mut header = [0; 4];
     reader.read_exact(&mut header).await?;

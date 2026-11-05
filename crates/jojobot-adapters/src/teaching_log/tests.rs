@@ -396,6 +396,10 @@ struct ErrLog(InMemoryLog);
 
 #[async_trait::async_trait]
 impl LogStore for ErrLog {
+    async fn validity(&self) -> Result<jojobot_domain::log::Validity, LogError> {
+        self.0.validity().await
+    }
+
     async fn append(&self, head: Position, batch: &SealedBatch) -> Result<Append, LogError> {
         self.0.append(head, batch).await?;
         Err(LogError::Indeterminate)
@@ -450,6 +454,10 @@ struct RowLog {
 
 #[async_trait::async_trait]
 impl LogStore for RowLog {
+    async fn validity(&self) -> Result<jojobot_domain::log::Validity, LogError> {
+        self.log.validity().await
+    }
+
     async fn append(&self, head: Position, batch: &SealedBatch) -> Result<Append, LogError> {
         self.log.append(head, batch).await
     }

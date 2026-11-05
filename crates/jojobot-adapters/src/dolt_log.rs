@@ -81,9 +81,41 @@ impl DoltLog {
     /// lock of its own: its owner, the writer, holds both.
     pub async fn open(pool: MySqlPool) -> Result<Self, LogError> {
         let log = Self::unread(pool);
+        log.create_validity().await?;
         let mut connection = Self::fresh(&log.0.pool).await?;
         log.known_head(&mut connection).await?;
         Ok(log)
+    }
+
+    /// The first opener gives this log its identity. Reopens preserve it; the
+    /// primary key chooses one identity if two initializers arrive together.
+    pub(crate) async fn create_validity(&self) -> Result<(), LogError> {
+        // This creation is one autocommitted statement, independent of the
+        // writer's append transaction and its commit-acknowledgement fence.
+        let mut connection = Self::fresh(&self.0.pool).await?;
+        let validity = Validity {
+            log_identity: jojobot_domain::handle::draw(26),
+            representation_epoch: 0,
+            erasure_epoch: 0,
+            earliest_affected_position: None,
+        };
+        let bytes = serde_json::to_vec(&validity).map_err(failed)?;
+        sqlx::query("INSERT IGNORE INTO event_log (slot, first_position, last_position, payload) VALUES ('validity', NULL, 0, ?)")
+            .bind(bytes)
+            .execute(&mut connection)
+            .await
+            .map_err(failed)?;
+        Ok(())
+    }
+
+    pub(crate) async fn validity(&self) -> Result<Validity, LogError> {
+        let mut reader = self.reader().await?;
+        let bytes: Vec<u8> =
+            sqlx::query_scalar("SELECT payload FROM event_log WHERE slot = 'validity'")
+                .fetch_one(reader.connection())
+                .await
+                .map_err(failed)?;
+        serde_json::from_slice(&bytes).map_err(failed)
     }
 
     /// The log's table with no head held. The owner reads the tail once, on a
