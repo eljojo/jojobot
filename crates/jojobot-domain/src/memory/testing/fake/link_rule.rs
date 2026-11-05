@@ -37,6 +37,7 @@ impl InMemoryMemory {
     ) {
         let declared = self.declarations();
         let known = self.known();
+        let kinds = self.own_kinds();
         for (key, value) in fields.clone() {
             // A key a type declares a reference also takes the bare id of an existing
             // thing; that is read here, once, and the mark it is given is what stays.
@@ -52,7 +53,7 @@ impl InMemoryMemory {
                 .map(|item| {
                     let item = item.trim();
                     let id = EntityId(item.to_string());
-                    if crate::memory::validate_subject(&id).is_err() {
+                    if crate::memory::validate_subject_in(&kinds, &id).is_err() {
                         let worn = reference
                             && known
                                 .iter()

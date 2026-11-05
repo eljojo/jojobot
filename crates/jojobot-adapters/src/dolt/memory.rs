@@ -347,6 +347,17 @@ impl DoltMemory {
         Ok(read)
     }
 
+    /// **The kinds this store declares, read in the caller's transaction**, for a
+    /// pass that holds a connection and must not ask the pool for a second.
+    async fn kinds_in(tx: &mut Transaction<'_, MySql>) -> Result<KindSet, MemoryError> {
+        let rows: Vec<(String, String)> =
+            sqlx::query_as("SELECT token, origin FROM kind ORDER BY token")
+                .fetch_all(&mut **tx)
+                .await
+                .map_err(store)?;
+        Ok(KindSet::new(rows.into_iter().map(kind_row).collect()))
+    }
+
     /// **This store with own fields reaching their thing.** See the field.
     pub fn with_own_fields_reaching(mut self) -> Self {
         self.own_fields_reach = true;
@@ -7869,14 +7880,15 @@ impl Memory for DoltMemory {
                 .fetch_all(&self.pool)
                 .await
                 .map_err(store)?;
-        Ok(rows
-            .into_iter()
-            // A row whose origin names nothing this build knows reads as a
-            // caller's, which is the weaker claim: it says the software does
-            // not vouch for the kind rather than that it does.
-            .map(|(token, origin)| (token, Origin::of_token(&origin).unwrap_or(Origin::Declared)))
-            .collect())
+        Ok(rows.into_iter().map(kind_row).collect())
     }
+}
+
+/// **A kind row as the port reports it.** A row whose origin names nothing this
+/// build knows reads as a caller's, which is the weaker claim: it says the
+/// software does not vouch for the kind rather than that it does.
+fn kind_row((token, origin): (String, String)) -> (String, Origin) {
+    (token, Origin::of_token(&origin).unwrap_or(Origin::Declared))
 }
 
 /// **Keep one declaration a caller made, in the transaction that replaced the

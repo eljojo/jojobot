@@ -84,6 +84,7 @@ impl DoltMemory {
         fields: &mut std::collections::BTreeMap<String, String>,
     ) -> Result<(), MemoryError> {
         let declared = Self::types_in(tx).await?;
+        let kinds = self.own_kinds().await?;
         for (key, value) in fields.clone() {
             // A key a type declares a reference also takes a bare id of an existing
             // thing, as a write has always read it; that is read here, once, and
@@ -99,7 +100,7 @@ impl DoltMemory {
             let mut changed = false;
             for item in value.split(',').map(str::trim) {
                 let id = EntityId(item.to_string());
-                if jojobot_domain::memory::validate_subject(&id).is_err() {
+                if jojobot_domain::memory::validate_subject_in(&kinds, &id).is_err() {
                     if reference && self.resolve_by_badge(tx, item).await?.is_some() {
                         lowered.push(jojobot_domain::memory::marked_stored_handle(item));
                         changed = true;
@@ -411,6 +412,8 @@ pub(super) struct Directory {
     roster: std::collections::BTreeMap<String, Entity>,
     ids: std::collections::BTreeSet<String>,
     reference_keys: std::collections::BTreeSet<String>,
+    /// The kinds the store declares, read with the rest of the directory.
+    kinds: KindSet,
     /// Whether an older pass already decided the plain handle text of a value of
     /// only handles. Then a handle it left as text stays text: a thing that wears
     /// the spelling today is not evidence of what the value meant.
@@ -475,7 +478,11 @@ impl Directory {
         let items: Vec<&str> = value.split(',').map(str::trim).collect();
         let only_handles = items.iter().all(|item| {
             jojobot_domain::memory::stored_handle_id(item).is_some()
-                || jojobot_domain::memory::validate_subject(&EntityId((*item).to_string())).is_ok()
+                || jojobot_domain::memory::validate_subject_in(
+                    &self.kinds,
+                    &EntityId((*item).to_string()),
+                )
+                .is_ok()
         });
         let reference = self.reference_keys.contains(key);
         let marked: Vec<String> = items
@@ -486,7 +493,7 @@ impl Directory {
                     return (*item).to_string();
                 }
                 let id = EntityId((*item).to_string());
-                if jojobot_domain::memory::validate_subject(&id).is_err() {
+                if jojobot_domain::memory::validate_subject_in(&self.kinds, &id).is_err() {
                     if reference && self.ids.contains(*item) {
                         marking.bare += 1;
                         return jojobot_domain::memory::marked_stored_handle(item);
@@ -641,6 +648,7 @@ impl DoltMemory {
             roster,
             ids,
             reference_keys,
+            kinds: Self::kinds_in(tx).await?,
             keep_older: false,
         })
     }
