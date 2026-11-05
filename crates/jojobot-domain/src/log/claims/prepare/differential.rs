@@ -15,7 +15,7 @@ use jiff::civil::date;
 
 use super::super::tests::{apply, body, object};
 use super::super::{ClaimEvent, ObjectBody, State};
-use super::{CaptureRequest, Door, Draft, Measures, Refusal, Route, prepare};
+use super::{CaptureRequest, ClaimSize, Door, Draft, Measures, Refusal, Route, prepare};
 use crate::actor::Actor;
 use crate::log::RecordId;
 use crate::memory::testing::InMemoryMemory;
@@ -97,7 +97,14 @@ fn request_of(fact: &NewFact, record: &str) -> CaptureRequest {
             actor: Actor::Operator,
             owned_keys: BTreeSet::new(),
             owner_revoked: false,
-            measures: Measures::default(),
+            measures: Measures {
+                claim: Some(ClaimSize {
+                    size: 1,
+                    room: 100,
+                    row: None,
+                }),
+                ..Measures::default()
+            },
             runs: BTreeMap::new(),
             run: None,
             aged_before: None,

@@ -4,8 +4,9 @@
 //! The sizes come from the door. Rendering a claim as a read serves it, or a
 //! bot's boot, belongs to the served text, so the domain does not render
 //! anything twice: it is handed what the server measured and decides "at most
-//! the room". A size the door could not measure is not a size known to be over,
-//! and it passes.
+//! the room". **A size the door could not measure for a thing the State holds
+//! is refused**, as a failure the same call can be sent again after, because
+//! admitting a write whose size nobody read admits a claim no answer may carry.
 
 use super::super::{ClaimEvent, HeldRecord, ObjectId, RecordId, StarredRule, State};
 use super::{CaptureRequest, Refusal};
@@ -115,7 +116,15 @@ pub(super) fn refuses_a_claim_too_big(
     home: &ObjectId,
     request: &CaptureRequest,
 ) -> Option<MemoryError> {
-    let measured = request.door.measures.claim.as_ref()?;
+    let Some(measured) = request.door.measures.claim.as_ref() else {
+        return state.object(home).map(|_| {
+            MemoryError::Store(
+                "the size of this claim could not be checked, so nothing was written; the same \
+                 call is safe to send again"
+                    .to_string(),
+            )
+        });
+    };
     if measured.size <= measured.room {
         return None;
     }

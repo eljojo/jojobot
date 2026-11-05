@@ -45,6 +45,18 @@ fn world() -> (State, Vec<DeclaredType>) {
     (replay(&events), declared)
 }
 
+/// What the door measures for a claim that fits: the size of one answer's room.
+fn fitting() -> Measures {
+    Measures {
+        claim: Some(ClaimSize {
+            size: 1,
+            room: 100,
+            row: None,
+        }),
+        ..Measures::default()
+    }
+}
+
 fn request(subject: &str) -> CaptureRequest {
     CaptureRequest {
         record: record("new"),
@@ -53,7 +65,7 @@ fn request(subject: &str) -> CaptureRequest {
             actor: Actor::Operator,
             owned_keys: BTreeSet::new(),
             owner_revoked: false,
-            measures: Measures::default(),
+            measures: fitting(),
             runs: BTreeMap::new(),
             run: None,
             aged_before: None,
@@ -655,7 +667,7 @@ fn writing(subject: &str, key: &str, actor: Actor, revoked: bool) -> CaptureRequ
             actor,
             owned_keys: BTreeSet::from(["state".to_string()]),
             owner_revoked: revoked,
-            measures: Measures::default(),
+            measures: fitting(),
             runs: BTreeMap::new(),
             run: None,
             aged_before: None,
@@ -802,7 +814,7 @@ fn by_bot(subject: &str, caller: &str, key: &str, value: &str) -> CaptureRequest
             actor: Actor::Bot(crate::memory::EntityId(caller.to_string())),
             owned_keys: BTreeSet::new(),
             owner_revoked: false,
-            measures: Measures::default(),
+            measures: fitting(),
             runs: BTreeMap::new(),
             run: None,
             aged_before: None,
@@ -1468,6 +1480,22 @@ fn a_claim_too_big_for_one_answer_is_refused() {
             room: 100
         }))
     );
+}
+
+/// **A size nobody measured is refused for a thing the State holds**, as a
+/// failure of the store the same call can be sent again after. A thing the State
+/// does not hold yet has nothing to measure against, so it is not refused here.
+#[test]
+fn an_unmeasured_claim_on_a_held_thing_is_refused_for_a_retry() {
+    let (state, declared) = world();
+    let unmeasured = |subject: &str| CaptureRequest {
+        door: measured(|measures| measures.claim = None),
+        ..request(subject)
+    };
+    assert!(matches!(
+        prepare(&state, &declared, &unmeasured("alpha")),
+        Err(Refusal::Invalid(MemoryError::Store(_)))
+    ));
 }
 
 /// **The three limits are told in the order the verb asks them.**
