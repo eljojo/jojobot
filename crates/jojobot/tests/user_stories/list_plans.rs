@@ -486,3 +486,55 @@ async fn a_batch_that_taught_the_carry_leaves_the_next_single_tick_silent() {
     );
     story.finish().await;
 }
+
+/// A warning about filing the furnace's service on the plan wins over the carry
+/// hint. The next plain tick still teaches carrying unfinished errands, and a
+/// later tick stays silent only after that sentence actually reached the session.
+#[tokio::test]
+async fn a_dropped_carry_hint_does_not_spend_the_sessions_teaching() {
+    let story = Story::begin_pretending_it_is("bot:gamma", TODAY).await;
+    let s = story.session().await;
+    let at = three_entries(&s, Some("2026-W43")).await;
+    let open = add_entry(&s, "list:errands", "sweep", None).await;
+    s.add("thing:the-furnace", "The furnace").await;
+
+    let competing = s
+        .call(
+            "capture",
+            json!({"subject": "list:errands", "content": "The furnace service is complete",
+                   "provenance": "testimony", "tick": {"entry": at[0], "act": "done"}}),
+        )
+        .await;
+    assert_eq!(
+        competing.json()["ticked"]["entry"],
+        at[0],
+        "{}",
+        competing.raw()
+    );
+    assert!(
+        competing.json()["possible_subject_note"].is_string(),
+        "{}",
+        competing.raw()
+    );
+    assert!(
+        competing.json().get("hint").is_none(),
+        "{}",
+        competing.raw()
+    );
+
+    let taught = tick_one(&s, &at[1]).await;
+    assert_eq!(taught.json()["ticked"]["entry"], at[1], "{}", taught.raw());
+    assert!(
+        the_line(&taught).contains("derived_from"),
+        "{}",
+        taught.raw()
+    );
+
+    let later = tick_one(&s, &at[2]).await;
+    assert_eq!(later.json()["ticked"]["entry"], at[2], "{}", later.raw());
+    assert!(later.json().get("hint").is_none(), "{}", later.raw());
+    let plan = read(&s, "list:errands").await;
+    assert_eq!(plan["entries"][0]["address"], open, "{plan}");
+    assert_eq!(plan["entries"][0]["state"], "open", "{plan}");
+    story.finish().await;
+}

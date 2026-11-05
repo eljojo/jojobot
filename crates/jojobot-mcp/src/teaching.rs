@@ -284,6 +284,8 @@ tokio::task_local! {
     /// the ledger is told the first time an item reaches it and the batch remembers
     /// it, and the batch writes the rows only when it delivers its receipt. A batch
     /// that stops partway writes none, so it spends nothing it did not deliver.
+    /// A ranked carry hint uses the same scope while it is only a candidate;
+    /// its receipt owner spends the domain after selection if the hint survived.
     pub(crate) static BATCH_SPENDS: std::sync::Arc<std::sync::Mutex<Vec<String>>>;
 }
 

@@ -9,6 +9,36 @@ use std::collections::BTreeSet;
 use serde_json::Value;
 
 use crate::answer::compose::{Answer, Kind, Layer, Tier, compose_within};
+use crate::{Jojobot, caller::Caller};
+
+impl Jojobot {
+    /// A dropped carry hint never spends its teaching. If another receipt already
+    /// claimed the domain, or its ledger write fails, choose again without it.
+    pub(crate) async fn own_capture_receipt(
+        &self,
+        mut body: Value,
+        caller: &Caller,
+        carry_hint: bool,
+    ) -> Value {
+        if !carry_hint {
+            return own(body);
+        }
+        let served = own(body.clone());
+        if served.get("hint").is_none() {
+            return served;
+        }
+        if self
+            .first_contact(super::list_carry::PLAN_CARRY_DOMAIN, Some(caller))
+            .await
+        {
+            return served;
+        }
+        body.as_object_mut()
+            .expect("a capture receipt is an object")
+            .remove("hint");
+        own(body)
+    }
+}
 
 /// The advisory parts of a capture receipt, by the key each is served under.
 /// The composer ranks by tier, then by cost, so inside a tier the cheaper

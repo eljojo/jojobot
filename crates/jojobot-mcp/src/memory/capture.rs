@@ -968,15 +968,17 @@ impl Jojobot {
             .await;
         // **A batch decides this once, for its final receipt**, so an item of one
         // never leaves the sentence behind.
+        let mut carry_hint = false;
         if !mode.placing_held
             && let Some((entry, ..)) = &ticked
             && body.get("hint").is_none()
             && let Ok(address) = FactAddress::parse(entry)
             && let Some(carry) = self
-                .carry_teaching_after_ticks(&address.home, &caller)
+                .pending_carry_teaching_after_ticks(&address.home, &caller)
                 .await
         {
             crate::answer::note_hint(&mut body, carry.to_string());
+            carry_hint = true;
         }
         if fact.edge.is_none()
             && body.get("hint").is_none()
@@ -1108,7 +1110,7 @@ impl Jojobot {
                 &crate::teaching::field_shadows_argument_teaching(shadowed, &owning_verb),
             );
         }
-        json_result(&super::receipt_owner::own(body))
+        json_result(&self.own_capture_receipt(body, &caller, carry_hint).await)
     }
 }
 

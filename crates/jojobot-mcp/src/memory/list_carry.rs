@@ -20,6 +20,22 @@ const CARRY_LINE: &str = "To carry an open entry to the next plan, capture it th
     derived_from set to the old entry's address.";
 
 impl Jojobot {
+    /// Prepare the ordinary receipt's hint without spending it. The existing
+    /// deferred-spend scope checks the same ledger and small-receipt gates as a
+    /// batch; the receipt owner commits only the hint its composer actually kept.
+    pub(crate) async fn pending_carry_teaching_after_ticks(
+        &self,
+        list: &EntityId,
+        caller: &Caller,
+    ) -> Option<&'static str> {
+        crate::teaching::BATCH_SPENDS
+            .scope(
+                std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+                self.carry_teaching_after_ticks(list, caller),
+            )
+            .await
+    }
+
     /// **The carry sentence for a list just ticked, or none.** None when the list
     /// covers no day or week, when no entry reads open after the ticks, or when
     /// the list could not be read: the tick landed, so a sentence that cannot be
