@@ -257,7 +257,12 @@ impl LoggedTeachings {
         let this = self;
         {
             let mut held = this.held.lock().await;
-            this.catch_up(&mut held, false).await?;
+            let restored = crate::log_snapshot::boot(this.log.as_ref())
+                .await
+                .map_err(refused)?;
+            held.state = restored.state.teaching;
+            held.head = restored.position;
+            this.publish(&held);
             if held.head == Position::default() && !marks.is_empty() {
                 let mut ordered = marks.to_vec();
                 ordered.sort_by(|a, b| (&a.sid, &a.domain).cmp(&(&b.sid, &b.domain)));

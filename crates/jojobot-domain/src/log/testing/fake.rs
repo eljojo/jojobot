@@ -43,6 +43,11 @@ impl InMemoryLog {
     pub fn set_validity(&self, validity: Validity) {
         self.0.inner.lock().unwrap().validity = validity;
     }
+
+    /// A damaged or foreign stored representation, for boot discard witnesses.
+    pub fn replace_snapshot(&self, snapshot: Option<ValidatedSnapshot>) {
+        self.0.inner.lock().unwrap().snapshot = snapshot;
+    }
 }
 
 #[async_trait::async_trait]
@@ -137,7 +142,11 @@ impl LogStore for InMemoryLog {
     }
 
     async fn store_snapshot(&self, snapshot: &ValidatedSnapshot) -> Result<(), LogError> {
-        self.0.inner.lock().unwrap().snapshot = Some(snapshot.clone());
+        let mut inner = self.0.inner.lock().unwrap();
+        if !inner.validity.permits_publication(snapshot) {
+            return Err(LogError::Conflict);
+        }
+        inner.snapshot = Some(snapshot.clone());
         Ok(())
     }
 }

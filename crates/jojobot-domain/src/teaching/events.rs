@@ -16,11 +16,13 @@
 use std::collections::BTreeSet;
 
 use jiff::Timestamp;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
 use super::DOMAIN_WIDTH;
 
 /// **The public name of a run**, valid before the run has a session card.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema)]
 pub struct RunId(pub String);
 
 /// One fact about teaching, complete when written.
@@ -39,7 +41,7 @@ pub enum TeachingEvent {
 
 /// **What the events so far say**: the marks that are active, and every
 /// `Recorded` event kept in order with its `taught_at`, cleared or not.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct State {
     active: BTreeSet<(RunId, String)>,
     history: Vec<(RunId, String, Timestamp)>,

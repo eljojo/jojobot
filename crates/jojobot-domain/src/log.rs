@@ -8,13 +8,14 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 pub mod claims;
+pub mod projection;
 
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 
 macro_rules! identity {
     ($($name:ident),+ $(,)?) => {$(
-        #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+        #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize, schemars::JsonSchema)]
         pub struct $name(pub String);
     )+};
 }
@@ -165,6 +166,15 @@ pub struct Validity {
     pub representation_epoch: u64,
     pub erasure_epoch: u64,
     pub earliest_affected_position: Option<Position>,
+}
+
+impl Validity {
+    /// A serializer from an earlier generation cannot publish after a rewrite.
+    pub fn permits_publication(&self, snapshot: &ValidatedSnapshot) -> bool {
+        snapshot.log_identity == self.log_identity
+            && snapshot.representation_epoch == self.representation_epoch
+            && snapshot.erasure_epoch == self.erasure_epoch
+    }
 }
 
 /// No maintenance, erasure or Memory methods are available through this port.

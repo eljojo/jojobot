@@ -2,30 +2,34 @@
 //! nor re-runs admission. A request generation keeps a late receipt attached
 //! to the attempt that produced it; app attempts have their own namespace.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 use jiff::Timestamp;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
 use crate::log::{ObjectId, RequestId};
 
 /// A generation is an identity within a reusable request key, not a count of
 /// historical calls. Import assigns one to the retained rows without inventing
 /// generations that the old store has already removed.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
 pub struct RequestKey {
     pub actor: ObjectId,
     pub id: RequestId,
     pub generation: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Request {
     pub key: RequestKey,
     pub verb: String,
     pub digest: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Commit {
     pub request: Request,
     pub landed: String,
@@ -34,7 +38,7 @@ pub struct Commit {
     pub expires_at: Timestamp,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Part {
     pub request: Request,
     pub name: String,
@@ -43,13 +47,15 @@ pub struct Part {
     pub expires_at: Timestamp,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
 pub struct AppKey {
     pub app_id: String,
     pub event_key: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct AppAttempt {
     pub key: AppKey,
     pub digest: String,
@@ -194,19 +200,22 @@ impl LegacyRow {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct RequestProjection {
     pub committed: Option<Commit>,
     pub parts: BTreeMap<String, Part>,
     pub expired: bool,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct State {
-    requests: HashMap<RequestKey, RequestProjection>,
-    apps: HashMap<AppKey, AppAttempt>,
+    requests: snapshot_map::SnapshotMap<RequestKey, RequestProjection>,
+    apps: snapshot_map::SnapshotMap<AppKey, AppAttempt>,
+    #[serde(skip)]
     history: Vec<LedgerEvent>,
 }
+
+mod snapshot_map;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("a completed request names a part that has not committed")]

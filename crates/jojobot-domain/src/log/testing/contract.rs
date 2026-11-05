@@ -226,10 +226,11 @@ pub async fn snapshot_blob_round_trips(log: &impl LogStore) {
         Append::Committed(next.range())
     );
     let blob = vec![0, 255, 0];
+    let validity = log.validity().await.unwrap();
     let snapshot = ValidatedSnapshot {
         snapshot_format_version: 1,
         projection_version: 1,
-        log_identity: "alpha".into(),
+        log_identity: validity.log_identity,
         representation_epoch: 0,
         erasure_epoch: 0,
         covered_position: Position(1),

@@ -217,7 +217,9 @@ pub struct Scope {
 }
 
 /// **What a part of a write left in the ledger**, as a later call reads it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub struct Recorded {
     /// What the store returned for the part, as JSON text.
     pub landed: String,

@@ -16,6 +16,7 @@ jojobot-ports = { workspace = true, optional = true }
 async-trait = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sha2 = "0.10"
 jiff = { workspace = true }
 # The search projection: an in-RAM full-text index over facts, entities and prose.
 tantivy = { workspace = true }
@@ -48,6 +49,7 @@ tracing-log = { workspace = true, optional = true }
 testing = ["dep:jojobot-ports", "dep:tracing-subscriber", "dep:tracing-log"]
 
 [dev-dependencies]
+schemars = { workspace = true }
 tokio = { workspace = true }
 jojobot-roster.workspace = true
 # This crate's own integration suites use its test support, which the feature
@@ -56,3 +58,9 @@ jojobot-adapters = { path = ".", features = ["testing"] }
 # The shared contract + fake live behind the domain's `testing` feature; the
 # contract runs here against the real Dolt store (tests/dolt_store.rs).
 jojobot-domain = { workspace = true, features = ["testing"] }
+
+[build-dependencies]
+jojobot-domain.workspace = true
+schemars.workspace = true
+serde_json.workspace = true
+sha2 = "0.10"

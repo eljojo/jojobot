@@ -110,9 +110,13 @@ impl DoltLog {
 
     pub(crate) async fn validity(&self) -> Result<Validity, LogError> {
         let mut reader = self.reader().await?;
+        Self::read_validity(reader.connection()).await
+    }
+
+    async fn read_validity(connection: &mut MySqlConnection) -> Result<Validity, LogError> {
         let bytes: Vec<u8> =
-            sqlx::query_scalar("SELECT payload FROM event_log WHERE slot = 'validity'")
-                .fetch_one(reader.connection())
+            sqlx::query_scalar("SELECT payload FROM event_log WHERE slot = 'validity' FOR UPDATE")
+                .fetch_one(connection)
                 .await
                 .map_err(failed)?;
         serde_json::from_slice(&bytes).map_err(failed)
@@ -324,6 +328,12 @@ impl DoltLog {
         connection: &mut MySqlConnection,
         snapshot: &ValidatedSnapshot,
     ) -> Result<(), LogError> {
+        if !Self::read_validity(connection)
+            .await?
+            .permits_publication(snapshot)
+        {
+            return Err(LogError::Conflict);
+        }
         let bytes = encode_snapshot(snapshot)?;
         sqlx::query("REPLACE INTO event_log (slot, first_position, last_position, payload) VALUES ('snapshot', NULL, ?, ?)")
             .bind(snapshot.covered_position.0)

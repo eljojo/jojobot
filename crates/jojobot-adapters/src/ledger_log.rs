@@ -81,18 +81,17 @@ pub struct LoggedLedger {
 impl LoggedLedger {
     /// Replay the log into the held state.
     pub async fn open(log: Arc<dyn LogStore>) -> Result<Self, LedgerError> {
+        let restored = crate::log_snapshot::boot(log.as_ref())
+            .await
+            .map_err(refused)?;
         let this = Self {
             writer: Writer::default(),
             log,
             held: Arc::new(Mutex::new(Held {
-                state: State::default(),
-                head: Position::default(),
+                state: restored.state.ledger,
+                head: restored.position,
             })),
         };
-        {
-            let mut held = this.held.lock().await;
-            this.catch_up(&mut held).await?;
-        }
         Ok(this)
     }
 

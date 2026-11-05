@@ -22,6 +22,8 @@ jojobot-forward = { path = "../jojobot-forward" }
 # nothing about a fronted service crosses with it.
 getrandom = { workspace = true }
 serde = { workspace = true }
+# Snapshot compatibility describes the serialized projection types, without I/O.
+schemars = { workspace = true, features = ["jiff02"] }
 # The shared log contract encodes event envelopes only with the testing feature.
 serde_json = { workspace = true, optional = true }
 # sha2: a run's key is stored as its SHA-256 and never as itself, and the hash
