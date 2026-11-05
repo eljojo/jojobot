@@ -406,6 +406,10 @@ async fn restore_a_fixture_recorded_earlier(
         jiff::SignedDuration::from_hours(earlier_hours),
         "the recording made at {git_ref} was not aged by {earlier_hours} hours"
     );
+    // **A live row of each old ledger table goes in before the log is opened**, and
+    // after the ageing, so it is inside the keep window: the open below imports the
+    // old tables once, and a row put in later is never read.
+    plant_a_live_ledger(restoring.pool(), &git_ref).await;
     // **Seeded through the log after the ageing**, so these marks keep their
     // fixed test times while the recording's rows and log have moved earlier.
     seed_the_teaching_marks_through_the_log(restoring.pool()).await;
@@ -1573,9 +1577,10 @@ async fn imported_ledger_lines(pool: &sqlx::MySqlPool) -> std::collections::BTre
 /// **What the old ledger tables held for the recorded store, read before the
 /// first boot.** The gate's restore opens the log once, and that open imports the
 /// old tables into it (once: a log that holds a ledger event is never imported
-/// into again), so the rows the recording holds are the rows the log is compared
-/// with. A row written to the old tables after that open is never read, so the
-/// gate plants none.
+/// into again), so the rows the tables hold at the first boot are the rows the log
+/// is compared with: the recording's own and the live ones the restore planted
+/// ([`plant_a_live_ledger`]) before that open. A row written after that open is
+/// never read.
 struct OldLedger {
     lines: std::collections::BTreeSet<String>,
     /// Each receipt as the old lookup knew it: its bot's badge, its id and the
@@ -1652,6 +1657,8 @@ async fn assert_the_import_answers_what_the_old_tables_answered(
     let ledger = DoltRequests::new(pool.clone()).with_writer(memory.writer());
     let now = jiff::Timestamp::now();
     let margin = jiff::SignedDuration::from_secs(120);
+    let mut asked = 0_usize;
+    let mut found = std::collections::BTreeSet::<String>::new();
     for (badge, id, written_at) in &old.receipts {
         let age_left = KEPT_FOR - now.duration_since(*written_at);
         // A row within two minutes of the edge of the window is not asked: the
@@ -1665,13 +1672,30 @@ async fn assert_the_import_answers_what_the_old_tables_answered(
             .await
             .unwrap_or_else(|e| panic!("the bot {badge} of receipt {id} is held at {git_ref}: {e}"))
             .get("id");
+        let bot = jojobot_domain::memory::EntityId(handle);
+        let request = RequestId::parse(id).expect("a good id");
         let answer = ledger
-            .lookup(
-                &jojobot_domain::memory::EntityId(handle),
-                &RequestId::parse(id).expect("a good id"),
-            )
+            .lookup(&bot, &request)
             .await
             .expect("the ledger reads");
+        asked += 1;
+        if answer.is_some() {
+            found.insert(id.clone());
+        }
+        if id == PLANTED_PARTS_ID && answer.is_some() {
+            let parts = ledger
+                .parts(&bot, &request)
+                .await
+                .expect("the ledger reads");
+            assert_eq!(
+                parts
+                    .iter()
+                    .map(|part| (part.part.as_str(), part.digest.as_str()))
+                    .collect::<Vec<_>>(),
+                [("entry", "digest-gate-part")],
+                "the planted part answers as the old row held it"
+            );
+        }
         assert_eq!(
             answer.is_some(),
             age_left.is_positive(),
@@ -1688,7 +1712,89 @@ async fn assert_the_import_answers_what_the_old_tables_answered(
             },
         );
     }
+    // **The positive control.** The recording may be older than the keep window, so
+    // every one of its receipts is rightly not found, and a ledger that answered
+    // nothing at all would pass the loop above. The two live receipts the restore
+    // planted are inside the window, so they are asked, and each must be found.
+    assert!(
+        asked >= 2,
+        "only {asked} receipts were asked at {git_ref}: the planted ones are missing"
+    );
+    for planted in [PLANTED_RECEIPT_ID, PLANTED_PARTS_ID] {
+        assert!(
+            found.contains(planted),
+            "the live receipt {planted} planted before the import is not found in the imported ledger at {git_ref}: found {found:?}"
+        );
+    }
     store.stop().await;
+}
+
+/// The ids of the live rows the restore plants in the old ledger tables.
+const PLANTED_RECEIPT_ID: &str = "gate-receipt";
+const PLANTED_PARTS_ID: &str = "gate-parts";
+
+/// **A live row of each old ledger table, put in before the log is first opened.**
+/// The restore's open imports the old tables once, so a row has to be in them by
+/// then to be imported, and the recording's own rows may all be older than the
+/// keep window. Each row is one a finished write leaves: a receipt, a part with
+/// the receipt that finishes its request (a part with none is a half-done write,
+/// which the boot's storage check reports), and an app attempt.
+async fn plant_a_live_ledger(pool: &sqlx::MySqlPool, git_ref: &str) {
+    use sqlx::Row;
+    let bot = sqlx::query(
+        "SELECT badge FROM entity WHERE kind = 'bot' AND badge IS NOT NULL ORDER BY id LIMIT 1",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or_else(|e| panic!("the store recorded at {git_ref} holds a bot with a badge: {e}"));
+    let badge: String = bot.get("badge");
+    let now = jiff::Timestamp::now().to_string();
+    for (id, verb, digest, landed) in [
+        (
+            PLANTED_RECEIPT_ID,
+            "capture",
+            "digest-gate-receipt",
+            "{\"gate\":\"receipt\"}",
+        ),
+        (
+            PLANTED_PARTS_ID,
+            "journal",
+            "digest-gate-part",
+            "{\"gate\":\"finished\"}",
+        ),
+    ] {
+        sqlx::query(
+            "INSERT INTO request_receipt (bot_key, request_id, verb, args_digest, landed, written_at) \
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&badge)
+        .bind(id)
+        .bind(verb)
+        .bind(digest)
+        .bind(landed)
+        .bind(&now)
+        .execute(pool)
+        .await
+        .expect("a planted receipt");
+    }
+    sqlx::query(
+        "INSERT INTO request_part (bot_key, request_id, part, verb, args_digest, landed, written_at) \
+         VALUES (?, ?, 'entry', 'journal', 'digest-gate-part', '{\"gate\":\"part\"}', ?)",
+    )
+    .bind(&badge)
+    .bind(PLANTED_PARTS_ID)
+    .bind(&now)
+    .execute(pool)
+    .await
+    .expect("a planted part");
+    sqlx::query(
+        "INSERT INTO app_write (app_id, event_key, digest, landed, written_at) \
+         VALUES ('gate-app', 'attempt-1', 'digest-gate-app', '{\"gate\":\"app\"}', ?)",
+    )
+    .bind(&now)
+    .execute(pool)
+    .await
+    .expect("a planted app attempt");
 }
 
 /// **A lease on a role object survives a restart, and a renewal past the renewal
