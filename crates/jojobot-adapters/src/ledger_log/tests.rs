@@ -369,3 +369,211 @@ async fn a_lost_acknowledgement_is_settled_by_the_tail_read() {
     assert_eq!(ledger.head().await, Position(1));
     assert_eq!(ledger.lookup(&actor(), &id(), at(0)).await, Some(commit(1)));
 }
+
+/// **The stored payload spelling is pinned, key by key.** The keys of a payload,
+/// the `shape` tags of an imported row and the envelope's request, part and
+/// source time are stored, and nothing outside this process declares them. Encode
+/// then decode passes under any consistent rename, so each shape is asserted
+/// against a literal written out here, not one the codec made.
+#[test]
+fn the_stored_payload_spelling_is_pinned() {
+    use serde_json::{Value, json};
+    let request = |generation: u64| {
+        json!({
+            "key": {"actor": "bot:homer", "id": "alpha", "generation": generation},
+            "verb": "capture",
+            "digest": "digest-alpha",
+        })
+    };
+    let landed = "{\"address\":\"topic:alpha#f1\"}";
+    let (t0, t10) = ("2023-11-14T22:13:20Z", "2023-11-14T22:13:30Z");
+    let expected = [
+        (
+            Some("alpha"),
+            Some("entity"),
+            None,
+            json!({
+                "request": request(1), "name": "entity", "landed": "entity",
+                "note": "frozen-plan", "written_at": t0, "expires_at": t10,
+            }),
+        ),
+        (
+            Some("alpha"),
+            None,
+            None,
+            json!({
+                "request": request(1), "landed": landed, "receipt": null,
+                "written_at": t0, "expires_at": t10,
+            }),
+        ),
+        (
+            Some("alpha"),
+            None,
+            None,
+            json!({
+                "key": {"actor": "bot:homer", "id": "alpha", "generation": 1},
+                "receipt": "receipt-one",
+            }),
+        ),
+        (
+            Some("alpha"),
+            None,
+            None,
+            json!({
+                "commit": {
+                    "request": request(2), "landed": landed, "receipt": null,
+                    "written_at": t0, "expires_at": t10,
+                },
+                "required_parts": ["entity", "claim"],
+            }),
+        ),
+        (
+            Some("alpha"),
+            None,
+            None,
+            json!({"key": {"actor": "bot:homer", "id": "alpha", "generation": 1}}),
+        ),
+        (
+            None,
+            None,
+            None,
+            json!({
+                "app_id": "homer", "event_key": "alpha", "digest": "app-digest",
+                "landed": "app-result", "written_at": t0,
+            }),
+        ),
+        (
+            None,
+            None,
+            Some("2023-11-14T22:13:21Z"),
+            json!({
+                "row": {
+                    "shape": "RequestReceipt", "bot_key": "bot:homer",
+                    "request_id": "alpha", "verb": "capture",
+                    "args_digest": "digest-alpha", "landed": "{}",
+                    "receipt": "receipt", "written_at": "2023-11-14T22:13:21Z",
+                },
+                "generation": 3,
+            }),
+        ),
+        (
+            None,
+            None,
+            Some("2023-11-14T22:13:22Z"),
+            json!({
+                "row": {
+                    "shape": "RequestPart", "bot_key": "bot:homer",
+                    "request_id": "alpha", "part": "entity", "verb": "capture",
+                    "args_digest": "digest-alpha", "landed": "{}", "note": null,
+                    "written_at": "2023-11-14T22:13:22Z",
+                },
+                "generation": 3,
+            }),
+        ),
+        (
+            None,
+            None,
+            Some("2023-11-14T22:13:23Z"),
+            json!({
+                "row": {
+                    "shape": "AppWrite", "app_id": "homer", "event_key": "alpha",
+                    "digest": "app-digest", "landed": "app-result",
+                    "written_at": "2023-11-14T22:13:23Z",
+                },
+                "generation": 1,
+            }),
+        ),
+    ];
+    for (event, (request, part, source, payload)) in every_event().iter().zip(expected) {
+        let stored: Value = serde_json::from_slice(&codec::encode(event)).unwrap();
+        assert_eq!(stored["payload"], payload, "{event:?}");
+        assert_eq!(stored["request"], json!(request), "{event:?}");
+        assert_eq!(stored["part"], json!(part), "{event:?}");
+        assert_eq!(stored["imported_source_time"], json!(source), "{event:?}");
+    }
+}
+
+/// **A write reads the log tail before it checks and seals.** Two ledgers over
+/// one log: each write has to take what the other appended first, or it seals at
+/// a stale head and the log refuses it. After four writes taking turns, each
+/// ledger holds what the other wrote.
+pub(super) async fn a_write_takes_the_other_ledgers_batch_first(log: Arc<dyn LogStore>) {
+    let first = ledger(&log).await;
+    let second = ledger(&log).await;
+    first
+        .append(vec![LedgerEvent::RequestCommitted(commit(1))], at(0))
+        .await
+        .unwrap();
+    second
+        .append(vec![LedgerEvent::AppAttemptCommitted(app())], at(1))
+        .await
+        .unwrap();
+    first
+        .append(
+            vec![LedgerEvent::RequestReceiptRecorded {
+                key: key(1),
+                receipt: "receipt-one".into(),
+            }],
+            at(2),
+        )
+        .await
+        .unwrap();
+    let other = AppAttempt {
+        key: AppKey {
+            app_id: "homer".into(),
+            event_key: "beta".into(),
+        },
+        ..app()
+    };
+    second
+        .append(vec![LedgerEvent::AppAttemptCommitted(other.clone())], at(3))
+        .await
+        .unwrap();
+    assert_eq!(second.head().await, Position(4));
+    let held = second.lookup(&actor(), &id(), at(0)).await.unwrap();
+    assert_eq!(held.receipt.as_deref(), Some("receipt-one"));
+    assert_eq!(first.app(&app().key).await, Some(app()));
+    assert_eq!(second.app(&other.key).await, Some(other));
+}
+
+/// **A member of another family appended behind the ledger does not stop its
+/// next write**: the write takes the batch first, skips the member, and seals at
+/// the head after it.
+pub(super) async fn a_foreign_member_behind_the_ledger_does_not_stop_a_write(
+    log: Arc<dyn LogStore>,
+) {
+    use jojobot_domain::teaching::events::{RunId, TeachingEvent};
+    let ledger = ledger(&log).await;
+    let foreign = crate::teaching_log::codec::encode(&TeachingEvent::Cleared {
+        run: RunId("homer".into()),
+    });
+    let behind = SealedBatch::seal(
+        BatchId("behind".into()),
+        Position(0),
+        at(0),
+        REPRESENTATION_VERSION,
+        vec![foreign],
+    )
+    .unwrap();
+    assert!(matches!(
+        log.append(Position(0), &behind).await.unwrap(),
+        Append::Committed(_)
+    ));
+    ledger
+        .append(vec![LedgerEvent::RequestCommitted(commit(1))], at(1))
+        .await
+        .unwrap();
+    assert_eq!(ledger.head().await, Position(2));
+    assert_eq!(ledger.lookup(&actor(), &id(), at(0)).await, Some(commit(1)));
+}
+
+#[tokio::test]
+async fn a_write_takes_the_other_ledgers_batch_before_it_checks() {
+    a_write_takes_the_other_ledgers_batch_first(Arc::new(InMemoryLog::default())).await;
+}
+
+#[tokio::test]
+async fn a_foreign_member_behind_the_ledger_leaves_its_next_write_landing() {
+    a_foreign_member_behind_the_ledger_does_not_stop_a_write(Arc::new(InMemoryLog::default()))
+        .await;
+}

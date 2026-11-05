@@ -41,4 +41,8 @@ on_the_writers_log!(
         => |log| another_family_leaves_the_replay_equal(log.clone()),
     an_unknown_kind_of_the_ledgers_own_family_fails_the_replay_on_the_writers_log
         => |log| an_unknown_own_kind_fails_the_replay(log.clone()),
+    a_write_takes_the_other_ledgers_batch_before_it_checks_on_the_writers_log
+        => |log| a_write_takes_the_other_ledgers_batch_first(log.clone()),
+    a_foreign_member_behind_the_ledger_leaves_its_next_write_landing_on_the_writers_log
+        => |log| a_foreign_member_behind_the_ledger_does_not_stop_a_write(log.clone()),
 );
