@@ -1278,6 +1278,62 @@ async fn an_edit_that_moves_the_cadence_keeps_the_due_moment_current() {
     );
 }
 
+#[tokio::test]
+async fn clearing_a_due_source_removes_its_stored_day_through_both_routes() {
+    for route in ["clear_fields", "blank sets"] {
+        let jojobot = handler();
+        let captured = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                sets: Some([("decide_by".into(), "2026-09-01".into())].into()),
+                ..capture_args("thing:kettle", "a decision has a day")
+            },
+        )
+        .await;
+        assert_eq!(
+            fields_of(&jojobot, "thing:kettle").await["due_on"],
+            "2026-09-01"
+        );
+        if route == "clear_fields" {
+            update_ok(
+                &jojobot,
+                UpdateFactArgs {
+                    clear_fields: Some(vec!["decide_by".into()]),
+                    ..update_args(&address_of(&captured))
+                },
+            )
+            .await;
+        } else {
+            capture_ok(
+                &jojobot,
+                CaptureArgs {
+                    sets: Some([("decide_by".into(), String::new())].into()),
+                    ..capture_args("thing:kettle", "the decision has no day")
+                },
+            )
+            .await;
+        }
+        let held = fields_of(&jojobot, "thing:kettle").await;
+        assert!(held.get("decide_by").is_none(), "{route}: {held}");
+        assert!(held.get("due_on").is_none(), "{route}: {held}");
+        let overdue = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    overdue: Some(super::recall::OverdueArgs {
+                        as_of: Some("2026-12-31".into()),
+                    }),
+                    ..recall_args("thing:kettle")
+                }))
+                .await
+                .expect("the due view reads"),
+        );
+        assert!(
+            overdue["objects"].as_array().unwrap().is_empty(),
+            "{route}: {overdue}"
+        );
+    }
+}
+
 /// **The mover could only ever say "here is a new date" — this proves
 /// the other half, that it can also say "remove it".**
 ///

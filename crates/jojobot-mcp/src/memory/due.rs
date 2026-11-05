@@ -9,6 +9,26 @@
 
 use super::*;
 use jojobot_domain::attention;
+use std::collections::BTreeMap;
+
+fn projected_due_fields(
+    held: &BTreeMap<String, String>,
+    incoming: &BTreeMap<String, String>,
+    cleared: &[String],
+) -> BTreeMap<String, String> {
+    let mut projected = held.clone();
+    for key in cleared {
+        projected.remove(key);
+    }
+    for (key, value) in incoming {
+        if jojobot_domain::memory::types::holds_a_value(value) {
+            projected.insert(key.clone(), value.clone());
+        } else {
+            projected.remove(key);
+        }
+    }
+    projected
+}
 
 /// **Which keys make a thing fall due, in words**, built from the carriers so a
 /// carrier added later is named with no edit here.
@@ -228,7 +248,7 @@ impl Jojobot {
         if !touches_incoming && !touches_cleared {
             return (attention::DueMove::Unchanged, false);
         }
-        let mut projected = match self.memory.fields(subject).await {
+        let held = match self.memory.fields(subject).await {
             Ok(fields) => fields,
             // **A thing that does not exist yet holds nothing**, so the first claim
             // of a creation is worked out over what it sends alone. A capture on a
@@ -239,15 +259,11 @@ impl Jojobot {
             }
             Err(_) => return (attention::DueMove::Unchanged, false),
         };
-        let held = projected.clone();
         let instance = self.instance_fields().await;
-        let existing_due_on = projected
+        let existing_due_on = held
             .get(attention::DUE_ON)
             .and_then(|v| v.trim().parse().ok());
-        for key in cleared {
-            projected.remove(key);
-        }
-        projected.extend(incoming.iter().map(|(k, v)| (k.clone(), v.clone())));
+        let projected = projected_due_fields(&held, incoming, cleared);
         let moved = match instance {
             Ok(instance) => attention::moved_due_moment_as(
                 &kind,
@@ -747,6 +763,95 @@ mod tests {
     use super::*;
     use jojobot_domain::memory::types::{DeclaredType, Field, ValueType};
     use std::collections::BTreeMap;
+
+    #[test]
+    fn due_source_projection_clears_blank_and_removed_sources() {
+        let fields = |pairs: &[(&str, &str)]| -> BTreeMap<String, String> {
+            pairs
+                .iter()
+                .map(|(key, value)| (key.to_string(), value.to_string()))
+                .collect()
+        };
+        let today = "2026-09-01".parse().unwrap();
+        let replacement = "2026-10-01".parse().unwrap();
+        let shipped = attention::shipped();
+        let carriers: Vec<&dyn attention::Carrier> = shipped.iter().map(AsRef::as_ref).collect();
+        let mut failures = Vec::new();
+        for (source, due, held) in [
+            (
+                "decide_by",
+                "2026-08-01",
+                fields(&[("decide_by", "2026-08-01")]),
+            ),
+            (
+                "runs_out",
+                "2026-08-01",
+                fields(&[("runs_out", "2026-08-01")]),
+            ),
+            (
+                "promised_by",
+                "2026-08-01",
+                fields(&[("promised_by", "2026-08-01")]),
+            ),
+            (
+                "counts_from",
+                "2026-08-08",
+                fields(&[
+                    ("cadence_days", "7"),
+                    ("advances_from", "check_in_date"),
+                    ("counts_from", "2026-08-01"),
+                ]),
+            ),
+        ] {
+            let existing = Some(due.parse().unwrap());
+            let moved = |incoming: &BTreeMap<String, String>, cleared: &[String]| {
+                attention::moved_due_moment_as(
+                    "thing",
+                    &carriers,
+                    existing,
+                    &held,
+                    &projected_due_fields(&held, incoming, cleared),
+                    &BTreeMap::new(),
+                    today,
+                )
+            };
+            for (route, incoming, cleared) in [
+                ("blank sets", fields(&[(source, "")]), vec![]),
+                ("clear_fields", BTreeMap::new(), vec![source.to_string()]),
+            ] {
+                let actual = moved(&incoming, &cleared);
+                if actual != attention::DueMove::Cleared {
+                    failures.push(format!("{source}/{route}: {actual:?}"));
+                }
+            }
+            let mut replaced: BTreeMap<String, String> = held
+                .keys()
+                .map(|key| (key.clone(), String::new()))
+                .collect();
+            replaced.insert("decide_by".into(), "2026-10-01".into());
+            let actual = moved(&replaced, &[]);
+            if actual != attention::DueMove::Set(replacement) {
+                failures.push(format!("{source}/replacement: {actual:?}"));
+            }
+            let ending = if source == "counts_from" {
+                held.keys()
+                    .map(|key| (key.clone(), String::new()))
+                    .collect()
+            } else {
+                fields(&[("ended", "delivered")])
+            };
+            let actual = moved(&ending, &[]);
+            if actual != attention::DueMove::Cleared {
+                failures.push(format!("{source}/ended: {actual:?}"));
+            }
+            assert_eq!(
+                moved(&fields(&[("note", "unchanged")]), &[]),
+                attention::DueMove::Unchanged,
+                "an unrelated write keeps {source}"
+            );
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
 
     /// **The text says which word acts beside which keys.** `ended` is named
     /// beside the dates it ends, `outcome` beside the loop's schedule, and a

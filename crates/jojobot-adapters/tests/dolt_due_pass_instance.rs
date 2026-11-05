@@ -108,3 +108,57 @@ async fn the_due_day_pass_runs_over_an_absent_record_and_is_skipped_over_an_unre
 
     store.stop().await;
 }
+
+/// The stored fold removes a blank source; the due arithmetic belongs to MCP.
+#[tokio::test]
+async fn a_blank_due_source_is_absent_from_the_stored_fold() {
+    let scratch = Scratch::new("due_source_clear");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "memory")
+        .await
+        .expect("a database of this case's own");
+    let memory_store = DoltMemory::open(pool);
+    jojobot_domain::memory::kinds::seed(&memory_store)
+        .await
+        .expect("the kinds are seeded");
+    let work = EntityId("work:sigma".into());
+    memory_store
+        .add_entity(NewEntity::new(work.clone(), "sigma", "fixture"))
+        .await
+        .expect("add ok")
+        .written()
+        .expect("not blocked");
+    memory_store
+        .capture(memory::state(NewFact {
+            fields: [
+                ("decide_by".into(), "2026-09-01".into()),
+                ("note".into(), "retained".into()),
+            ]
+            .into(),
+            ..NewFact::about(work.clone(), "a decision has a day", date(2026, 8, 1))
+        }))
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("not blocked");
+    assert_eq!(
+        memory_store.fields(&work).await.expect("fields read")["decide_by"],
+        "2026-09-01"
+    );
+    memory_store
+        .capture(memory::state(NewFact {
+            fields: [("decide_by".into(), String::new())].into(),
+            ..NewFact::about(work.clone(), "the decision has no day", date(2026, 8, 2))
+        }))
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("not blocked");
+    let held = memory_store.fields(&work).await.expect("fields read");
+    assert!(!held.contains_key("decide_by"), "{held:?}");
+    assert!(!held.contains_key("due_on"), "{held:?}");
+    assert_eq!(held["note"], "retained");
+    store.stop().await;
+}
