@@ -9,12 +9,13 @@
 //! **It measures and does not judge**, and it never fails a case: a sink that
 //! cannot be written is skipped.
 //!
-//! **The four times are not a partition of a case.** `template_ms` is the wait
+//! **The five times overlap; they are not a partition of a case.** `template_ms` is the wait
 //! for the migrated store template, which on the first room of a process is the
 //! migration itself and on a later room is the wait for the first to finish;
 //! `copy_ms` is the copy of that store alone. `server_ms` runs from the spawn to
 //! the server saying it is listening, and is the time spent even when the server
-//! never came up. `life_ms` runs from the start of the open to the drop, so it
+//! never came up. `furnish_ms` sums the seed's writes across every `furnish` on
+//! the room's surface. `life_ms` runs from the start of the open to the drop, so it
 //! stops before the room's teardown. A room whose open is retried writes one
 //! line for each attempt, and the room that builds the template writes its own
 //! line.
