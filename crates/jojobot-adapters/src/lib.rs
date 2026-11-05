@@ -16,6 +16,7 @@ pub mod deferred_counts;
 pub mod dolt;
 pub mod dolt_log;
 pub mod fold;
+pub mod ledger_log;
 pub mod nudge;
 pub mod observe;
 pub mod owners;
