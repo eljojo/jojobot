@@ -654,10 +654,11 @@ fn a_card_adds_no_key_to_a_review_report() {
         &files.repo,
         "http://127.0.0.1:1/api/v1/repos/homer/jojobot",
         &review(&files, &lines),
-        Some(&card()),
+        Some(&card_with("owner", Value::Null)),
     );
     assert_eq!(code, 0, "{out}\n{err}");
     assert!(failures(&out).is_empty(), "{out}");
+    assert!(!out.contains("CARD-OWNER"), "{out}");
 }
 
 /// The card with `falsify` set to `falsify`.
