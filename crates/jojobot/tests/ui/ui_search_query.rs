@@ -1,4 +1,4 @@
-mod support;
+use crate::support;
 
 use jojobot_domain::actor::Actor;
 use jojobot_domain::memory::search::Hit;

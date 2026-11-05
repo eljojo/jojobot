@@ -1,7 +1,7 @@
 //! The homepage orders its top level by the newest write of any kind on a thing,
 //! as recall's `written_at` says it.
 
-mod support;
+use crate::support;
 
 use std::sync::Arc;
 

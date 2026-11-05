@@ -1,7 +1,7 @@
 //! The typed pages read their data through the shared read, not through the
 //! store: what a page shows is what the verb's answer carries.
 
-mod support;
+use crate::support;
 
 use support::ui_board::{CLIENT_ID, READER, read, seeded_board_over, seeded_memory, set_on};
 use support::{browser, log_in, spawn_idp};

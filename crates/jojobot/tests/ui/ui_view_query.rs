@@ -1,4 +1,4 @@
-mod support;
+use crate::support;
 
 use jojobot_domain::memory::{EntityId, Memory, NewEntity, NewFact};
 use jojobot_query_api::{Question, ViewOutcome};

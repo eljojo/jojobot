@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use jojobot_adapters::counted::Counted;
 
-mod support;
+use crate::support;
 use support::ui_board::{
     CLIENT_ID, OPERATOR_SUBJECT, READER, open_in_the_ui, read, seeded_board_over, seeded_memory,
     spawn_jojobot_over, with_an_operators_mail,

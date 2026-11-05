@@ -60,6 +60,12 @@ prometheus-client = "0.25"
 name = "lock_query_harness"
 required-features = ["room-harness"]
 
+# One target for the UI area. The existing large ui.rs stays a module at its
+# original path, so it does not become a new file under the test-file byte cap.
+[[test]]
+name = "ui"
+path = "tests/ui/main.rs"
+
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
 # A case on the slow-call warning moves the clock instead of waiting a minute.

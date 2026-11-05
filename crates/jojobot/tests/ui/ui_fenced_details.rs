@@ -1,7 +1,7 @@
 //! The node page links a mention in a claim, and reads the claim's content and
 //! details as one text for what is code.
 
-mod support;
+use crate::support;
 
 use jiff::civil::Date;
 use jojobot_domain::memory::{EntityId, Guarded, NewEntity, NewFact};

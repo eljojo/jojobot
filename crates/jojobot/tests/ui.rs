@@ -23,7 +23,7 @@ use tokio_util::sync::CancellationToken;
 
 #[path = "support/served_tools.rs"]
 mod served_tools;
-mod support;
+use crate::support;
 #[path = "ui/test_quality_views.rs"]
 mod test_quality_views;
 use support::{browser, location, log_in, log_in_raw, query_of, session_pair, spawn_idp};

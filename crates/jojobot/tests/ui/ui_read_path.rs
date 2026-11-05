@@ -1,7 +1,7 @@
 //! Declared type fit is retired from the node page under rule 742, while the
 //! folded fields remain readable.
 
-mod support;
+use crate::support;
 
 use support::ui_board::{CLIENT_ID, READER, read, spawn_jojobot};
 use support::{browser, log_in, spawn_idp};

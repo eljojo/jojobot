@@ -22,7 +22,7 @@ use jojobot_domain::session::Sessions;
 use jojobot_domain::session::testing::InMemorySessions;
 use tokio_util::sync::CancellationToken;
 
-mod support;
+use crate::support;
 use support::{browser, log_in, spawn_idp};
 
 const CLIENT_ID: &str = "jojobot-ui";
