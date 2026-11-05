@@ -103,8 +103,9 @@ pub async fn boot(log: &dyn LogStore) -> Result<Boot, LogError> {
 }
 
 /// Capture every family at one completed position; later appends stay in the tail.
-/// Publication checks the generation again atomically in the backend.
-pub async fn take_snapshot(log: &dyn LogStore, at: jiff::Timestamp) -> Result<(), LogError> {
+/// Publication checks the generation again atomically in the backend. Returns the
+/// position the snapshot covers.
+pub async fn take_snapshot(log: &dyn LogStore, at: jiff::Timestamp) -> Result<Position, LogError> {
     let validity = log.validity().await?;
     let boot = boot(log).await?;
     let blob = serde_json::to_vec(&boot.state).map_err(unreadable)?;
@@ -121,7 +122,8 @@ pub async fn take_snapshot(log: &dyn LogStore, at: jiff::Timestamp) -> Result<()
         serialized_length: blob.len() as u64,
         blob,
     };
-    log.store_snapshot(&snapshot).await
+    log.store_snapshot(&snapshot).await?;
+    Ok(snapshot.covered_position)
 }
 
 #[cfg(test)]

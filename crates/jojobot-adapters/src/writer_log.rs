@@ -49,6 +49,12 @@ impl WriterLog {
         Ok(this)
     }
 
+    /// The last position the log holds, as its one writer knows it. None while a
+    /// commit of unknown outcome has left the head unsettled.
+    pub fn head(&self) -> Option<Position> {
+        self.log.held_head().map(Position)
+    }
+
     /// **Settle the head after the store was changed beneath the log**, by one
     /// read of its tail on a connection the caller has fenced. A restore, a
     /// migration tool or a test that writes the table itself calls this; the

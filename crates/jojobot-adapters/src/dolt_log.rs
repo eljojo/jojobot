@@ -210,6 +210,11 @@ impl DoltLog {
         head
     }
 
+    /// The head the owner holds now, or none while it is unsettled.
+    pub(crate) fn held_head(&self) -> Option<u64> {
+        *self.0.head.lock().expect("the head is not poisoned")
+    }
+
     /// The head after a COMMIT the store acknowledged.
     fn moved_to(&self, head: u64) {
         *self.0.head.lock().expect("the head is not poisoned") = Some(head);
