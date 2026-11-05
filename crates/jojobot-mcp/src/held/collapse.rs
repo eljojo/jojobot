@@ -95,10 +95,31 @@ fn shape_of(fields: &Map<String, Value>) -> Shape {
                         if BARE.contains(&key.as_str()) {
                             continue;
                         }
-                        let window = (key == "history")
-                            .then(|| inner.get("key").and_then(Value::as_str))
-                            .flatten();
-                        out.insert(token(owner, key, window));
+                        // A history is named by the key it reads and the window it
+                        // shows (how many records, and which one opens it).
+                        let window = (key == "history").then(|| {
+                            let records = inner.get("records").and_then(Value::as_array);
+                            format!(
+                                "{}:{}:{}",
+                                inner.get("key").and_then(Value::as_str).unwrap_or_default(),
+                                records.map_or(0, Vec::len),
+                                records
+                                    .and_then(|rows| rows.first())
+                                    .and_then(|row| row.get("record"))
+                                    .and_then(Value::as_str)
+                                    .unwrap_or_default(),
+                            )
+                        });
+                        out.insert(token(owner, key, window.as_deref()));
+                        // A read narrowed by `keys` serves some of the fields, so
+                        // each field key is a part of its own (names, never values).
+                        if key == "fields"
+                            && let Some(served) = inner.as_object()
+                        {
+                            for field in served.keys() {
+                                out.insert(token(owner, &format!("fields.{field}"), None));
+                            }
+                        }
                     }
                 }
                 fields.values().for_each(|inner| collect(inner, owner, out));
@@ -473,6 +494,51 @@ mod tests {
             let count = collapse(&mut body, &unchanged, &received);
             assert_eq!(count == 1, collapses, "{row}: {body}");
         }
+    }
+
+    /// **A narrower read of a thing's fields is not a read of all of them.** A
+    /// recall that asked for one key served that key; the same thing, unmoved,
+    /// asked again for every key carries fields the session never received, so
+    /// it comes back whole. The same keys again are a handle.
+    #[test]
+    fn a_narrowed_fields_read_is_not_the_whole_fields() {
+        let narrow = json!({"objects": [{"id": "person:homer", "name": "Homer",
+            "fields": {"status": "calm"}}]});
+        let wide = json!({"objects": [{"id": "person:homer", "name": "Homer",
+            "fields": {"status": "calm", "owner": "marge"}}]});
+        let unchanged = vec![entity("person:homer")];
+
+        let mut asked = wide.clone();
+        assert_eq!(collapse(&mut asked, &unchanged, &received_of(&narrow)), 0);
+        assert_eq!(asked, wide, "the other fields were never served: {asked}");
+
+        let mut again = narrow.clone();
+        assert_eq!(collapse(&mut again, &unchanged, &received_of(&narrow)), 1);
+    }
+
+    /// **A wider window of the same history is rows the session never received.**
+    /// The key is the same and the thing has not moved; the second window
+    /// carries a record the first did not, so it comes back whole. The same
+    /// window again is a handle.
+    #[test]
+    fn a_wider_history_window_is_delivered() {
+        let history = |records: Value| {
+            json!({"objects": [{"id": "person:homer", "name": "Homer",
+                "history": {"key": "mood", "records": records}}]})
+        };
+        let first = history(json!([{"record": "r1", "value": "calm"}]));
+        let wider = history(json!([
+            {"record": "r1", "value": "calm"},
+            {"record": "r0", "value": "tired"}
+        ]));
+        let unchanged = vec![entity("person:homer")];
+
+        let mut asked = wider.clone();
+        assert_eq!(collapse(&mut asked, &unchanged, &received_of(&first)), 0);
+        assert_eq!(asked, wider, "{asked}");
+
+        let mut again = first.clone();
+        assert_eq!(collapse(&mut again, &unchanged, &received_of(&first)), 1);
     }
 
     /// **Received parts are kept while a thing has not moved and start again when
