@@ -163,5 +163,51 @@ impl SnapshotKeeper {
     }
 }
 
+/// How often the serving loop asks whether a snapshot is due.
+pub const TICK: Duration = Duration::from_secs(30);
+
+/// **The snapshots of the log the process serves from**: the keeper, and the
+/// writer's log it reads the head of.
+pub struct ServingSnapshots {
+    keeper: SnapshotKeeper,
+    log: Arc<crate::writer_log::WriterLog>,
+}
+
+impl ServingSnapshots {
+    pub async fn open(log: Arc<crate::writer_log::WriterLog>) -> Result<Self, LogError> {
+        let keeper = SnapshotKeeper::open(log.clone(), CADENCE).await?;
+        Ok(Self { keeper, log })
+    }
+
+    /// The head the log's writer holds.
+    pub fn head(&self) -> Option<Position> {
+        self.log.head()
+    }
+
+    pub fn covered(&self) -> Position {
+        self.keeper.covered()
+    }
+
+    /// A family import landed: cover it, so the next boot does not replay it.
+    /// A failure is logged and left to the cadence.
+    pub async fn after_import(&self) {
+        let Some(head) = self.head() else { return };
+        match self.keeper.flush(head, jiff::Timestamp::now()).await {
+            Ok(Some(covered)) => tracing::info!(covered = covered.0, "snapshot taken after import"),
+            Ok(None) => {}
+            Err(error) => {
+                tracing::warn!(%error, "no snapshot after import; the cadence tries later")
+            }
+        }
+    }
+
+    /// Serve until `stop` ends, then take the last snapshot.
+    pub async fn run(&self, stop: impl std::future::Future<Output = ()>) {
+        self.keeper.run(|| self.head(), TICK, stop).await;
+    }
+}
+
+#[cfg(test)]
+mod serving_tests;
 #[cfg(test)]
 mod tests;

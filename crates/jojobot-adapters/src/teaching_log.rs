@@ -33,14 +33,43 @@ pub async fn serving(
     pool: &sqlx::MySqlPool,
     writer: Writer,
 ) -> Result<LoggedTeachings, TeachingError> {
+    serving_kept(pool, writer).await.map(|(ledger, _)| ledger)
+}
+
+/// **The same boot, and the snapshots of the log it serves from.** A boot that
+/// found the log empty and imported the old rows covers the import with a
+/// snapshot before it returns; the caller runs the keeper's loop and stops it at
+/// shutdown.
+pub async fn serving_kept(
+    pool: &sqlx::MySqlPool,
+    writer: Writer,
+) -> Result<
+    (
+        LoggedTeachings,
+        Arc<crate::snapshot_keeper::ServingSnapshots>,
+    ),
+    TeachingError,
+> {
+    let unavailable = |e: jojobot_domain::log::LogError| {
+        TeachingError::Store(format!("the event log is unavailable: {e}"))
+    };
     let log = Arc::new(
         WriterLog::open(pool.clone(), writer.clone())
             .await
-            .map_err(|e| TeachingError::Store(format!("the event log is unavailable: {e}")))?,
+            .map_err(unavailable)?,
     );
+    let snapshots = Arc::new(
+        crate::snapshot_keeper::ServingSnapshots::open(log.clone())
+            .await
+            .map_err(unavailable)?,
+    );
+    let was_empty = log.head() == Some(Position::default());
     let marks = import_marks(pool).await?;
     let ledger = LoggedTeachings::open(log, &marks).await?;
-    Ok(ledger.with_writer(writer))
+    if was_empty {
+        snapshots.after_import().await;
+    }
+    Ok((ledger.with_writer(writer), snapshots))
 }
 
 #[cfg(test)]
