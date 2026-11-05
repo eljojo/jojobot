@@ -831,14 +831,20 @@ pub async fn a_fill_asks_the_store_only_for_the_names_an_engine_record_points_at
     direct: &dyn Memory,
 ) -> usize {
     use jojobot_domain::memory::capacity::ENGINE_RECORD;
-    use jojobot_domain::memory::{names_in_fact, validate_subject};
+    use jojobot_domain::memory::{kinds::KindSet, names_in_fact, validate_subject_in};
+    let kinds = KindSet::new(
+        direct
+            .declared_kinds()
+            .await
+            .expect("the store lists its kinds"),
+    );
     let mut every = std::collections::BTreeSet::new();
     let mut by_engine = std::collections::BTreeSet::new();
     for doc in direct.scan().await.expect("the store scans") {
         for fact in &doc.facts {
             let names: Vec<String> = names_in_fact(fact)
                 .into_iter()
-                .filter(|name| validate_subject(&id(name)).is_ok())
+                .filter(|name| validate_subject_in(&kinds, &id(name)).is_ok())
                 .collect();
             if fact.fields.contains_key(ENGINE_RECORD) {
                 by_engine.extend(names.iter().cloned());

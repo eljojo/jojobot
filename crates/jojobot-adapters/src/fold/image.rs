@@ -25,10 +25,12 @@ use jojobot_domain::memory::numbered::{
 };
 use jojobot_domain::memory::{
     ClaimWrite, Entity, EntityId, EntityKind, EntityVersion, Fact, FactAddress, FactId, FieldAges,
-    FieldBacking, FormerHandle, KeyTrails, Memory, MemoryError, guard, names_in_fact,
+    FieldBacking, FormerHandle, KeyTrails, Memory, MemoryError, guard,
+    kinds::KindSet,
+    names_in_fact,
     search::DocScan,
     types::{DeclaredType, Origin, ValueType},
-    validate_subject,
+    validate_subject_in,
 };
 
 pub(super) mod patch;
@@ -170,6 +172,8 @@ pub(super) struct Image {
     numbered: Vec<FormerHandle>,
     types: std::sync::Arc<Vec<DeclaredType>>,
     kinds: Vec<(String, Origin)>,
+    /// The same kinds as a set, asked at every admission the image answers.
+    kind_set: KindSet,
     docs: HashMap<EntityId, Doc>,
     /// Position in `entities` of the thing wearing each handle now.
     by_id: HashMap<EntityId, usize>,
@@ -311,7 +315,7 @@ impl Image {
         image.referring = image.referring_from_documents(from_documents);
         image
             .referring
-            .extend(ask_referring(inner, from_store).await?);
+            .extend(ask_referring(inner, &image.kind_set, from_store).await?);
         fill_phase("referring", started, asked);
         let started = std::time::Instant::now();
         image.events = inner.merge_events(None).await?;
@@ -338,6 +342,7 @@ impl Image {
             former,
             numbered: Vec::new(),
             types: std::sync::Arc::new(types),
+            kind_set: KindSet::new(kinds.clone()),
             kinds,
             docs,
             by_id: HashMap::new(),
@@ -448,11 +453,9 @@ impl Image {
                 .fields
                 .contains_key(jojobot_domain::memory::capacity::ENGINE_RECORD)
             {
-                names.extend(
-                    names_in_fact(fact)
-                        .into_iter()
-                        .filter(|name| validate_subject(&EntityId(name.clone())).is_ok()),
-                );
+                names.extend(names_in_fact(fact).into_iter().filter(|name| {
+                    validate_subject_in(&self.kind_set, &EntityId(name.clone())).is_ok()
+                }));
             }
         }
         names.into_iter().collect()
@@ -485,7 +488,8 @@ impl Image {
         names
             .into_iter()
             .filter(|name| {
-                jojobot_domain::memory::validate_subject(&EntityId(name.clone())).is_ok()
+                jojobot_domain::memory::validate_subject_in(&self.kind_set, &EntityId(name.clone()))
+                    .is_ok()
             })
             .map(|name| {
                 let list = naming.remove(&name).unwrap_or_default();
@@ -509,7 +513,11 @@ impl Image {
             .into_iter()
             .filter(|name| {
                 !asked.contains(&name.as_str())
-                    && jojobot_domain::memory::validate_subject(&EntityId(name.clone())).is_ok()
+                    && jojobot_domain::memory::validate_subject_in(
+                        &self.kind_set,
+                        &EntityId(name.clone()),
+                    )
+                    .is_ok()
             })
             .collect();
         // Targets are read from stored marks, one pass over the records: each
@@ -1019,6 +1027,10 @@ impl Image {
         self.types.clone()
     }
 
+    pub fn kind_set(&self) -> KindSet {
+        self.kind_set.clone()
+    }
+
     pub fn kinds(&self) -> Vec<(String, Origin)> {
         self.kinds.clone()
     }
@@ -1085,7 +1097,7 @@ impl Image {
     /// folded into another, have none; the thread is found as every other read
     /// finds a thing, by its handle or one it wore.
     pub fn thought_writers(&self, thread: &EntityId) -> Result<Vec<EntityId>, MemoryError> {
-        jojobot_domain::memory::validate_subject(thread)?;
+        jojobot_domain::memory::validate_subject_in(&self.kind_set, thread)?;
         let Some(thread) = self.entity(thread) else {
             return Ok(Vec::new());
         };
@@ -1184,7 +1196,7 @@ impl Image {
     /// answered it. A name no record's fields point at has no entry, and the
     /// store's answer for it is the empty list.
     pub fn referring_to(&self, target: &EntityId) -> Result<Vec<Fact>, MemoryError> {
-        jojobot_domain::memory::validate_subject(target)?;
+        jojobot_domain::memory::validate_subject_in(&self.kind_set, target)?;
         Ok(self
             .referring
             .get(target.as_str())
@@ -1225,7 +1237,7 @@ impl Image {
     }
 
     pub fn built_on(&self, source: &FactAddress) -> Result<Vec<Fact>, MemoryError> {
-        jojobot_domain::memory::validate_subject(&source.home)?;
+        jojobot_domain::memory::validate_subject_in(&self.kind_set, &source.home)?;
         let home = self
             .entity(&source.home)
             .map(|e| e.id.clone())
@@ -1281,11 +1293,12 @@ type ReferringPatch = (EntityId, Vec<(String, Vec<Fact>)>);
 /// store would refuse are skipped, as [`ask_referring`] skips them.
 pub(super) fn referring_in(
     state: &jojobot_domain::log::claims::State,
+    kinds: &KindSet,
     names: &[String],
 ) -> Vec<(String, Vec<Fact>)> {
     names
         .iter()
-        .filter(|name| jojobot_domain::memory::validate_subject(&EntityId((*name).clone())).is_ok())
+        .filter(|name| validate_subject_in(kinds, &EntityId((*name).clone())).is_ok())
         .map(|name| (name.clone(), state.referring(&EntityId(name.clone()))))
         .collect()
 }
@@ -1295,11 +1308,14 @@ pub(super) fn referring_in(
 /// store would refuse the question.
 pub(super) async fn ask_referring(
     inner: &Arc<dyn Memory>,
+    kinds: &KindSet,
     names: Vec<String>,
 ) -> Result<Vec<(String, Vec<Fact>)>, MemoryError> {
     let names: Vec<String> = names
         .into_iter()
-        .filter(|name| jojobot_domain::memory::validate_subject(&EntityId(name.clone())).is_ok())
+        .filter(|name| {
+            jojobot_domain::memory::validate_subject_in(kinds, &EntityId(name.clone())).is_ok()
+        })
         .collect();
     let mut asked = Vec::with_capacity(names.len());
     for chunk in names.chunks(inner.read_width().max(1)) {

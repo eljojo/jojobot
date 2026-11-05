@@ -448,9 +448,10 @@ impl Folded {
                     }
                 })
                 .unwrap_or_default();
+            let kinds = self.held(|image| image.kind_set()).unwrap_or_default();
             let held = if in_state {
                 Some(
-                    self.claims(|state| image::referring_in(state, &names))
+                    self.claims(|state| image::referring_in(state, &kinds, &names))
                         .map_err(Self::without_state)?,
                 )
             } else {
@@ -458,7 +459,7 @@ impl Folded {
             };
             let referring = match held {
                 Some(referring) => referring,
-                None => image::ask_referring(&self.inner, names).await?,
+                None => image::ask_referring(&self.inner, &kinds, names).await?,
             };
             Ok::<_, MemoryError>((entities, doc, referring))
         }
@@ -1605,6 +1606,8 @@ impl Memory for Folded {
 mod counting_scan;
 #[cfg(test)]
 mod from_state_tests;
+#[cfg(test)]
+mod kind_tests;
 #[cfg(test)]
 mod landed_tests;
 #[cfg(test)]

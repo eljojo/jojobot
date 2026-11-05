@@ -230,7 +230,8 @@ impl Folded {
         }
         names.sort();
         names.dedup();
-        let asked = ask_referring(&self.inner, names.clone()).await?;
+        let kinds = self.held(|image| image.kind_set()).unwrap_or_default();
+        let asked = ask_referring(&self.inner, &kinds, names.clone()).await?;
         let reads = Reads {
             entities,
             former,
