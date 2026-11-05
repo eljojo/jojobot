@@ -613,3 +613,44 @@ async fn a_search_hit_on_a_thing_already_recalled_comes_back_as_its_handle() {
     assert!(whole.get("held_collapsed").is_none(), "{whole}");
     story.finish().await;
 }
+
+/// **A wider window of a history the session was already served is served.** A
+/// key written three times, read with a window of one, then with a window of two
+/// by the same session and with nothing changed in between: the second answer
+/// carries the write the first left out, and is not a handle.
+#[tokio::test]
+async fn a_wider_history_window_of_an_unmoved_thing_is_served() {
+    let (story, otto, _other, _claim) = otto_holds_homer().await;
+    for mood in ["mood-a", "mood-b", "mood-c"] {
+        otto.call(
+            "capture",
+            json!({
+                "subject": "person:homer",
+                "content": format!("{mood} was written"),
+                "sets": {"mood": mood},
+            }),
+        )
+        .await;
+    }
+
+    let narrow = otto
+        .call(
+            "recall",
+            json!({"subject": "person:homer", "history": "mood", "history_most": 1}),
+        )
+        .await
+        .json();
+    assert!(narrow.to_string().contains("mood-c"), "{narrow}");
+    assert!(!narrow.to_string().contains("mood-b"), "{narrow}");
+
+    let wider = otto
+        .call(
+            "recall",
+            json!({"subject": "person:homer", "history": "mood", "history_most": 2}),
+        )
+        .await
+        .json();
+    assert!(wider.get("held_collapsed").is_none(), "{wider}");
+    assert!(wider.to_string().contains("mood-b"), "{wider}");
+    story.finish().await;
+}

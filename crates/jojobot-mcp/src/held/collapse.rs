@@ -95,19 +95,37 @@ fn shape_of(fields: &Map<String, Value>) -> Shape {
                         if BARE.contains(&key.as_str()) {
                             continue;
                         }
-                        // A history is named by the key it reads and the window it
-                        // shows (how many records, and which one opens it).
-                        let window = (key == "history").then(|| {
-                            let records = inner.get("records").and_then(Value::as_array);
+                        // A history is named by what it reads (the key, or the claim
+                        // for a record history) and the window it shows: how many
+                        // writes it shows of how many, and the write that opens it.
+                        // The shape is the one the server serves: `key` or `record`,
+                        // `count`, `shown` and `writes`.
+                        let window = (key == "history" || key == "record_history").then(|| {
+                            let text = |name: &str| {
+                                inner.get(name).and_then(Value::as_str).unwrap_or_default()
+                            };
+                            let number = |name: &str| {
+                                inner.get(name).and_then(Value::as_u64).unwrap_or_default()
+                            };
+                            let opens = inner
+                                .get("writes")
+                                .and_then(Value::as_array)
+                                .and_then(|writes| writes.first())
+                                .map(|write| {
+                                    ["record", "nth", "position"]
+                                        .iter()
+                                        .find_map(|name| write.get(name))
+                                        .map(Value::to_string)
+                                        .unwrap_or_default()
+                                })
+                                .unwrap_or_default();
                             format!(
-                                "{}:{}:{}",
-                                inner.get("key").and_then(Value::as_str).unwrap_or_default(),
-                                records.map_or(0, Vec::len),
-                                records
-                                    .and_then(|rows| rows.first())
-                                    .and_then(|row| row.get("record"))
-                                    .and_then(Value::as_str)
-                                    .unwrap_or_default(),
+                                "{}{}:{}:{}:{}",
+                                text("key"),
+                                text("record"),
+                                number("count"),
+                                number("shown"),
+                                opens
                             )
                         });
                         out.insert(token(owner, key, window.as_deref()));
@@ -403,9 +421,9 @@ mod tests {
     #[test]
     fn a_value_never_received_in_a_familiar_layout_is_delivered() {
         let mood = json!({"objects": [{"id": "person:homer", "name": "Homer",
-            "history": {"key": "mood", "records": [{"record": "r1", "value": "calm"}]}}]});
+            "history": {"key": "mood", "count": 1, "shown": 1, "writes": [{"record": "person:homer#f2", "value": "calm"}]}}]});
         let colour = json!({"objects": [{"id": "person:homer", "name": "Homer",
-            "history": {"key": "colour", "records": [{"record": "r2", "value": "yellow"}]}}]});
+            "history": {"key": "colour", "count": 1, "shown": 1, "writes": [{"record": "person:homer#f3", "value": "yellow"}]}}]});
         let unchanged = vec![entity("person:homer")];
         let mut asked = colour.clone();
         assert_eq!(collapse(&mut asked, &unchanged, &received_of(&mood)), 0);
@@ -522,23 +540,35 @@ mod tests {
     /// window again is a handle.
     #[test]
     fn a_wider_history_window_is_delivered() {
-        let history = |records: Value| {
+        // The shape the server serves (recall's history_json and record_history_json).
+        let history = |shown: usize| {
+            let writes: Vec<Value> = ["person:homer#f4", "person:homer#f3", "person:homer#f2"]
+                .iter()
+                .take(shown)
+                .map(|record| json!({"record": record, "value": "calm"}))
+                .collect();
             json!({"objects": [{"id": "person:homer", "name": "Homer",
-                "history": {"key": "mood", "records": records}}]})
+                "history": {"key": "mood", "count": 3, "shown": shown, "writes": writes}}]})
         };
-        let first = history(json!([{"record": "r1", "value": "calm"}]));
-        let wider = history(json!([
-            {"record": "r1", "value": "calm"},
-            {"record": "r0", "value": "tired"}
-        ]));
+        let record_history = |shown: usize| {
+            let writes: Vec<Value> = (1..=shown).rev().map(|nth| json!({"nth": nth})).collect();
+            json!({"objects": [{"id": "person:homer", "name": "Homer",
+                "record_history": {"record": "person:homer#f1", "count": 3, "shown": shown,
+                    "writes": writes}}]})
+        };
         let unchanged = vec![entity("person:homer")];
 
-        let mut asked = wider.clone();
-        assert_eq!(collapse(&mut asked, &unchanged, &received_of(&first)), 0);
-        assert_eq!(asked, wider, "{asked}");
+        for (narrow, wide) in [
+            (history(1), history(2)),
+            (record_history(1), record_history(2)),
+        ] {
+            let mut asked = wide.clone();
+            assert_eq!(collapse(&mut asked, &unchanged, &received_of(&narrow)), 0);
+            assert_eq!(asked, wide, "{asked}");
 
-        let mut again = first.clone();
-        assert_eq!(collapse(&mut again, &unchanged, &received_of(&first)), 1);
+            let mut again = narrow.clone();
+            assert_eq!(collapse(&mut again, &unchanged, &received_of(&narrow)), 1);
+        }
     }
 
     /// **Received parts are kept while a thing has not moved and start again when
