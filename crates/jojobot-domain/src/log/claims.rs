@@ -64,6 +64,40 @@ pub struct ObjectBody {
     pub bound_to: Option<AppId>,
 }
 
+/// **What one write of an object's own row left, as that write recorded it.**
+/// The columns of a stored snapshot, decoded: `parent` and `merged_into` are the
+/// permanent keys they name. `merged_into` is history only; identity is decided
+/// by the merge events and nothing else.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObjectSnapshot {
+    pub kind: String,
+    pub name: String,
+    pub source: String,
+    pub crm: Option<String>,
+    pub parent: Option<ObjectId>,
+    pub boot: String,
+    pub archived_reason: Option<String>,
+    pub archived_at: Option<String>,
+    pub merged_into: Option<ObjectId>,
+    pub aliases: Vec<String>,
+    pub prose: String,
+}
+
+/// **One write of an object's own row that an import observed**: where it was
+/// filed, which write of that stream it was, and what it left. A write an older
+/// build recorded with no snapshot has none: the snapshot is unknown, and nothing
+/// stands in for it. The moment and the run are the envelope's, as for any other
+/// imported write.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObservedWrite {
+    /// The handle the row was filed under when it was written.
+    pub filed_under: String,
+    pub ordinal: u64,
+    pub snapshot: Option<ObjectSnapshot>,
+    pub run: Option<RunId>,
+    pub source_time: Option<Timestamp>,
+}
+
 /// **Everything a claim says, complete when written.** `label` is the address
 /// binding (`fN`) and never the claim's identity.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -118,6 +152,22 @@ pub enum ClaimEvent {
     ObjectRevised {
         object: ObjectId,
         body: ObjectBody,
+    },
+    /// **An object as an import observed it at the cut.** The state it serves
+    /// from then on, and never a version of it: "observed in this state at
+    /// activation", not "this was created then".
+    ObjectBaselined {
+        object: ObjectId,
+        body: ObjectBody,
+    },
+    /// **A write of an object's own row that an import observed.** A historical
+    /// observation, never shown as a newly performed act, and it changes no
+    /// object: the baseline is what the object is.
+    ObjectWriteObserved {
+        object: ObjectId,
+        filed_under: String,
+        ordinal: u64,
+        snapshot: Option<ObjectSnapshot>,
     },
     /// A spelling now answers to the object.
     AddressBound {
@@ -223,6 +273,9 @@ pub struct State {
     streams: BTreeMap<(ObjectId, KeyId), Vec<Write>>,
     /// Every declaration of each kind, oldest first.
     declarations: BTreeMap<ObjectId, Vec<DeclaredType>>,
+    /// Every observed write of each object's own row, in the order the events
+    /// arrived, under the object that was written.
+    observed: BTreeMap<ObjectId, Vec<ObservedWrite>>,
     indexes: indexes::Indexes,
 }
 
@@ -232,11 +285,28 @@ impl State {
     pub fn apply(&mut self, event: &Event<ClaimEvent>) {
         match &event.payload {
             ClaimEvent::ObjectCreated { object, body }
-            | ClaimEvent::ObjectRevised { object, body } => {
+            | ClaimEvent::ObjectRevised { object, body }
+            | ClaimEvent::ObjectBaselined { object, body } => {
                 let before = self.objects.get(object).map(|held| held.parent.clone());
                 self.objects.insert(object.clone(), body.clone());
                 self.index_object(object, before, &body.parent);
             }
+            ClaimEvent::ObjectWriteObserved {
+                object,
+                filed_under,
+                ordinal,
+                snapshot,
+            } => self
+                .observed
+                .entry(object.clone())
+                .or_default()
+                .push(ObservedWrite {
+                    filed_under: filed_under.clone(),
+                    ordinal: *ordinal,
+                    snapshot: snapshot.clone(),
+                    run: event.run.clone(),
+                    source_time: event.imported_source_time,
+                }),
             ClaimEvent::AddressBound { object, address } => {
                 self.addresses.insert(address.clone(), object.clone());
             }
@@ -407,6 +477,13 @@ impl State {
 
     pub fn object(&self, object: &ObjectId) -> Option<&ObjectBody> {
         self.objects.get(self.survivor(object))
+    }
+
+    /// **The writes of an object's own row that an import observed**, under that
+    /// object and in the order they arrived. A thing folded into another keeps its
+    /// own; they are read under the key they were written for.
+    pub fn observed_writes(&self, object: &ObjectId) -> &[ObservedWrite] {
+        self.observed.get(object).map_or(&[], Vec::as_slice)
     }
 
     pub fn record(&self, record: &RecordId) -> Option<&Record> {

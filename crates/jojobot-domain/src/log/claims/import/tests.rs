@@ -1125,6 +1125,7 @@ fn no_stored_row_binds_an_object_to_an_app_so_an_import_leaves_every_object_unbo
     } = rows.entities[0].clone();
     let Rows {
         entities: _,
+        entity_writes: _,
         former_handles: _,
         facts: _,
         field_writes: _,
@@ -1285,4 +1286,195 @@ fn a_claims_writes_given_in_descending_order_import_as_they_do_in_ascending_orde
         "created by the first write and revised by the second"
     );
     assert_eq!(import(&claim_of(true)), Ok(ascending));
+}
+
+fn snapshot_of(name: &str) -> ObjectSnapshot {
+    ObjectSnapshot {
+        kind: "person".into(),
+        name: name.into(),
+        source: "fixture".into(),
+        crm: None,
+        parent: None,
+        boot: String::new(),
+        archived_reason: None,
+        archived_at: None,
+        merged_into: None,
+        aliases: Vec::new(),
+        prose: String::new(),
+    }
+}
+
+fn entity_write(
+    thing: &str,
+    ordinal: u64,
+    stamp: Option<i64>,
+    session: Option<&str>,
+    snapshot: Option<ObjectSnapshot>,
+) -> EntityWriteRow {
+    EntityWriteRow {
+        thing: object(thing),
+        filed_under: match thing {
+            "k1" => "person:homer",
+            _ => "person:marge",
+        }
+        .into(),
+        ordinal,
+        written_at: stamp.and_then(at),
+        session: session.map(String::from),
+        snapshot,
+    }
+}
+
+/// What an observation event says, with the envelope it wears.
+#[derive(Debug, PartialEq)]
+struct Seen {
+    object: ObjectId,
+    filed_under: String,
+    ordinal: u64,
+    snapshot: Option<ObjectSnapshot>,
+    moment: Option<Timestamp>,
+    run: Option<RunId>,
+}
+
+fn observations(events: &[Event<ClaimEvent>]) -> Vec<Seen> {
+    events
+        .iter()
+        .filter_map(|event| match &event.payload {
+            ClaimEvent::ObjectWriteObserved {
+                object,
+                filed_under,
+                ordinal,
+                snapshot,
+            } => Some(Seen {
+                object: object.clone(),
+                filed_under: filed_under.clone(),
+                ordinal: *ordinal,
+                snapshot: snapshot.clone(),
+                moment: event.imported_source_time,
+                run: event.run.clone(),
+            }),
+            _ => None,
+        })
+        .collect()
+}
+
+/// An `entity_write` row is one observation of its own: the stream it was filed
+/// in, its ordinal, what it left, its stamp as the source's moment and its
+/// session as the run. A row with no stamp has no moment and one with no snapshot
+/// has none, and the entity's own moment is not put in their place.
+#[test]
+fn an_entity_write_row_is_an_observation_with_its_own_moment_and_run() {
+    let mut homer = entity("k1", "person:homer");
+    homer.taken_in = at(5);
+    let mut full = snapshot_of("Homer");
+    full.aliases = vec!["Homie".into()];
+    full.prose = "a note".into();
+    full.crm = Some("crm-7".into());
+    full.parent = Some(object("k2"));
+    let rows = Rows {
+        entities: vec![homer, entity("k2", "person:marge")],
+        entity_writes: vec![
+            entity_write("k1", 1, Some(10), Some("run-a"), Some(full.clone())),
+            entity_write("k1", 2, None, None, None),
+        ],
+        ..Rows::default()
+    };
+    assert_eq!(
+        observations(&imported(&rows)),
+        [
+            Seen {
+                object: object("k1"),
+                filed_under: "person:homer".into(),
+                ordinal: 2,
+                snapshot: None,
+                moment: None,
+                run: None,
+            },
+            Seen {
+                object: object("k1"),
+                filed_under: "person:homer".into(),
+                ordinal: 1,
+                snapshot: Some(full),
+                moment: at(10),
+                run: Some(RunId("run-a".into())),
+            },
+        ],
+        "a row nobody stamped sorts first, as the store reads it"
+    );
+}
+
+/// **The current state at the cut is the baseline and never a version.** No
+/// `ObjectCreated` is made for an entity, each entity has one baseline, the state
+/// still serves the object, and the observed writes number the rows and no more.
+#[test]
+fn the_current_state_is_a_baseline_and_not_a_version() {
+    let rows = Rows {
+        entities: vec![entity("k1", "person:homer")],
+        entity_writes: vec![entity_write(
+            "k1",
+            1,
+            Some(10),
+            None,
+            Some(snapshot_of("Homer")),
+        )],
+        ..Rows::default()
+    };
+    let events = imported(&rows);
+    let created = events
+        .iter()
+        .filter(|event| matches!(event.payload, ClaimEvent::ObjectCreated { .. }))
+        .count();
+    let baselined = events
+        .iter()
+        .filter(|event| matches!(event.payload, ClaimEvent::ObjectBaselined { .. }))
+        .count();
+    assert_eq!((created, baselined), (0, 1));
+    let state = State::replay(&events);
+    assert_eq!(state.object(&object("k1")).unwrap().name, "person:homer");
+    assert_eq!(state.observed_writes(&object("k1")).len(), 1);
+    assert_eq!(
+        state.observed_writes(&object("k1"))[0].source_time,
+        at(10),
+        "the state keeps the observation's own moment"
+    );
+}
+
+/// The writes of a thing folded into another are read in one order with the
+/// survivor's: unstamped first, then by moment, and the folded thing's own key and
+/// its snapshot's `merged_into` stay as stored.
+#[test]
+fn a_folded_things_writes_arrive_in_one_order_with_the_survivors() {
+    let mut folded = snapshot_of("Marge");
+    folded.merged_into = Some(object("k1"));
+    let rows = Rows {
+        entities: vec![entity("k1", "person:homer"), entity("k2", "person:marge")],
+        entity_writes: vec![
+            entity_write("k1", 1, Some(30), None, Some(snapshot_of("Homer"))),
+            entity_write("k2", 1, Some(20), None, Some(snapshot_of("Marge"))),
+            entity_write("k2", 2, None, None, None),
+            entity_write("k2", 3, Some(25), Some("run-m"), Some(folded.clone())),
+        ],
+        merges: vec![MergeRow {
+            no: 1,
+            folded: object("k2"),
+            survivor: object("k1"),
+            merged_at: at(26).unwrap(),
+            session: None,
+            claims: Vec::new(),
+        }],
+        ..Rows::default()
+    };
+    let seen = observations(&imported(&rows));
+    let order: Vec<(&str, u64)> = seen
+        .iter()
+        .map(|one| (one.object.0.as_str(), one.ordinal))
+        .collect();
+    assert_eq!(order, [("k2", 2), ("k2", 1), ("k2", 3), ("k1", 1)]);
+    assert_eq!(
+        seen[2].snapshot.as_ref().unwrap().merged_into,
+        Some(object("k1"))
+    );
+    let state = State::replay(&imported(&rows));
+    assert_eq!(state.observed_writes(&object("k2")).len(), 3);
+    assert_eq!(state.observed_writes(&object("k1")).len(), 1);
 }

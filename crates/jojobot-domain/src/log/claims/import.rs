@@ -22,7 +22,9 @@ use std::collections::{BTreeMap, HashMap};
 
 use jiff::Timestamp;
 
-use super::{ClaimBody, ClaimEvent, FieldValue, KeyId, KindId, MovedRecord, ObjectBody};
+use super::{
+    ClaimBody, ClaimEvent, FieldValue, KeyId, KindId, MovedRecord, ObjectBody, ObjectSnapshot,
+};
 use crate::actor::Actor;
 use crate::log::{Event, ObjectId, RecordId, RunId};
 use crate::memory::merge::{self, MergeStep, ServedWrite};
@@ -89,6 +91,22 @@ pub struct EntityRow {
     pub merged_into: Option<ObjectId>,
     /// The moment of the row's first `entity_write`, when it has one.
     pub taken_in: Option<Timestamp>,
+}
+
+/// **One `entity_write` row**: a write of an entity's own row. The thing is the
+/// permanent key the write is attributed to (a thing folded into another keeps
+/// its own), `filed_under` the handle the row was written under, and `snapshot`
+/// what the write left, or `None` for a row an older build appended with no
+/// snapshot. `written_at` is the stamp as stored, read once by the one parser;
+/// a stamp that does not parse is `None`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EntityWriteRow {
+    pub thing: ObjectId,
+    pub filed_under: String,
+    pub ordinal: u64,
+    pub written_at: Option<Timestamp>,
+    pub session: Option<String>,
+    pub snapshot: Option<ObjectSnapshot>,
 }
 
 /// **One `entity_former_handle` row**: a handle the thing no longer wears.
@@ -160,6 +178,7 @@ pub struct MergeRow {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Rows {
     pub entities: Vec<EntityRow>,
+    pub entity_writes: Vec<EntityWriteRow>,
     pub former_handles: Vec<FormerHandleRow>,
     pub facts: Vec<FactRow>,
     pub field_writes: Vec<FieldWriteRow>,
@@ -352,9 +371,31 @@ pub fn import(rows: &Rows) -> Result<Vec<Event<ClaimEvent>>, ImportError> {
             None,
             None,
             row.taken_in,
-            ClaimEvent::ObjectCreated {
+            ClaimEvent::ObjectBaselined {
                 object: row.key.clone(),
                 body: object_body(row),
+            },
+        ));
+    }
+    // **Every write of an entity's own row is an observation, in the order the
+    // store reads them**: a write nobody stamped first, then by moment. Rows of
+    // equal moment fall in the order of their thing's key and ordinal, so the same
+    // rows always give the same events. No moment is put in the place of a missing
+    // one, and a row with no snapshot keeps none.
+    let mut written: Vec<&EntityWriteRow> = rows.entity_writes.iter().collect();
+    written.sort_by(|a, b| {
+        (a.written_at, &a.thing, a.ordinal).cmp(&(b.written_at, &b.thing, b.ordinal))
+    });
+    for write in written {
+        events.push(envelope(
+            None,
+            write.session.clone(),
+            write.written_at,
+            ClaimEvent::ObjectWriteObserved {
+                object: write.thing.clone(),
+                filed_under: write.filed_under.clone(),
+                ordinal: write.ordinal,
+                snapshot: write.snapshot.clone(),
             },
         ));
     }
