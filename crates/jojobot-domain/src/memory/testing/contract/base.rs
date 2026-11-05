@@ -6491,7 +6491,8 @@ pub async fn a_thoughts_details_count_against_its_body_cap<M: Memory>(store: &M)
         .expect("details that keep the thought under the cap land");
 
     // A thought seeded over the cap, before the cap was written, still takes an
-    // edit that touches neither its content nor its details.
+    // edit that touches neither its content nor its details, including a resend
+    // of the same details with the edge whitespace the store trims.
     let seeded = EntityId("bot:contract-thought-details-seeded".into());
     ensure(store, &seeded).await;
     let over = capture(
@@ -6513,19 +6514,51 @@ pub async fn a_thoughts_details_count_against_its_body_cap<M: Memory>(store: &M)
         }),
     )
     .await;
-    store
+    for (day, details) in [
+        (1, None),
+        (2, Some("s".repeat(30))),
+        (3, Some(format!("  {}\n", "s".repeat(30)))),
+    ] {
+        store
+            .update_fact(
+                &over.address(),
+                FactPatch {
+                    stale_after: Some(date(2026, 12, day)),
+                    details,
+                    ..Default::default()
+                },
+                &other_caller(),
+            )
+            .await
+            .expect("a metadata edit with unchanged normalized details must land")
+            .written()
+            .expect("nothing blocks the metadata edit");
+        let read = read_back(store, &seeded, &over.id).await;
+        assert_eq!(read.stale_after, Some(date(2026, 12, day)));
+        assert_eq!(read.details, over.details, "the body stays as stored");
+    }
+    let refused = store
         .update_fact(
             &over.address(),
             FactPatch {
-                stale_after: Some(date(2026, 12, 1)),
+                details: Some("s".repeat(31)),
                 ..Default::default()
             },
             &other_caller(),
         )
         .await
-        .expect("update_fact ok")
-        .written()
-        .expect("an edit that touches neither content nor details must land");
+        .expect_err("changed details still recheck the legacy thought's cap");
+    assert!(
+        matches!(
+            refused,
+            MemoryError::ThoughtTooLong {
+                len: 36,
+                cap: 10,
+                ..
+            }
+        ),
+        "expected ThoughtTooLong 36 over 10, got {refused:?}"
+    );
 }
 
 /// **The default body cap binds only a thing that carries a thought

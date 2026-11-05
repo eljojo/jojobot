@@ -2092,6 +2092,9 @@ pub fn settle_rewrite(
             .details
             .as_deref()
             .is_some_and(|details| normalize_details(Some(details)) != fact.details);
+    if !rewrites_details {
+        patch.details = None;
+    }
     // **Setting a key, changing one and taking one off are the same rewrite.** A
     // key set to the value the claim already holds, or taken off a claim that does
     // not carry it, changes nothing. **Some keys are not the operator's
