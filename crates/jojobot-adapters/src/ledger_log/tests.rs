@@ -484,6 +484,11 @@ fn the_stored_payload_spelling_is_pinned() {
             }),
         ),
     ];
+    assert_eq!(
+        every_event().len(),
+        expected.len(),
+        "every shape needs its literal"
+    );
     for (event, (request, part, source, payload)) in every_event().iter().zip(expected) {
         let stored: Value = serde_json::from_slice(&codec::encode(event)).unwrap();
         assert_eq!(stored["payload"], payload, "{event:?}");
