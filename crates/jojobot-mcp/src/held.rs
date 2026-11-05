@@ -44,15 +44,26 @@ const RESULTS_ONLY: &str = "jojobot/search-results-only";
 /// The caller asked for what it holds served whole (`reship: true`).
 const RESHIP: &str = "jojobot/reship";
 
-/// Mark an answer as one whose caller sent `reship: true`, so nothing in it is
-/// collapsed. The dispatch reads the argument once for every verb.
-pub(crate) fn reship_asked(answered: &mut CallToolResponse) {
-    if let CallToolResponse::Complete(result) = answered {
-        result
-            .meta
-            .get_or_insert_with(Default::default)
-            .0
-            .insert(RESHIP.into(), Value::Bool(true));
+/// The answer is one the held pass may collapse: its verb publishes `reship`.
+const COLLAPSIBLE: &str = "jojobot/collapsible";
+
+/// **The verbs whose answers may collapse**: those that publish `reship`, so a
+/// collapsed answer always has a call that returns it whole.
+const OFFERS_RESHIP: [&str; 3] = ["recall", "search", "list_entities"];
+
+/// Mark the answer of `verb` for the held pass: a verb that publishes `reship` is
+/// collapsible, and one whose caller sent `reship: true` is served whole. The
+/// dispatch reads the argument once for every verb.
+pub(crate) fn mark_call(answered: &mut CallToolResponse, verb: &str, reship: bool) {
+    let CallToolResponse::Complete(result) = answered else {
+        return;
+    };
+    let meta = &mut result.meta.get_or_insert_with(Default::default).0;
+    if reship {
+        meta.insert(RESHIP.into(), Value::Bool(true));
+    }
+    if OFFERS_RESHIP.contains(&verb) {
+        meta.insert(COLLAPSIBLE.into(), Value::Bool(true));
     }
 }
 
@@ -83,7 +94,7 @@ pub(crate) fn search_answer(mut result: CallToolResult) -> CallToolResult {
     result
 }
 
-fn take_search(result: &mut CallToolResult) -> (bool, bool, bool) {
+fn take_search(result: &mut CallToolResult) -> (bool, bool, bool, bool) {
     let search = result
         .meta
         .as_mut()
@@ -99,10 +110,15 @@ fn take_search(result: &mut CallToolResult) -> (bool, bool, bool) {
         .as_mut()
         .and_then(|meta| meta.0.remove(RESHIP))
         .is_some();
+    let collapsible = result
+        .meta
+        .as_mut()
+        .and_then(|meta| meta.0.remove(COLLAPSIBLE))
+        .is_some();
     if result.meta.as_ref().is_some_and(|meta| meta.0.is_empty()) {
         result.meta = None;
     }
-    (search, results_only, reship)
+    (search, results_only, reship, collapsible)
 }
 
 /// The state a quarantined message is told as.
@@ -355,7 +371,7 @@ impl Jojobot {
         let CallToolResponse::Complete(result) = answered else {
             return;
         };
-        let (search, results_only, reship) = take_search(result);
+        let (search, results_only, reship, collapsible) = take_search(result);
         let Ok(Some(caller)) = self.caller(sid) else {
             return;
         };
@@ -377,6 +393,7 @@ impl Jojobot {
             return;
         }
         let served = served_in(if search { &body["results"] } else { &body });
+        let shapes_before_collapse = collapse::shapes_in(&body);
         let scope = if search {
             self.search_news_scope(&body["results"], &served).await
         } else {
@@ -432,14 +449,22 @@ impl Jojobot {
         }
         // **Decided before the answer is held in turn**: what the session held
         // before this call, at the version it stands at now, is not shipped again.
-        let collapsed = if results_only || reship {
+        let held_shapes = self.registry.shapes_by(&me);
+        let collapsed = if results_only || reship || !collapsible {
             0
         } else {
             let unchanged = collapse::unchanged(&held_before, &served_now);
-            collapse::collapse(&mut body, &unchanged)
+            collapse::collapse(&mut body, &unchanged, &held_shapes)
         };
+        let received = collapse::received(
+            &held_before,
+            &held_shapes,
+            &served_now,
+            shapes_before_collapse,
+        );
         moved.extend(served_now);
         self.registry.note_held(&me, moved);
+        self.registry.note_shapes(&me, received);
         let notices = notices_to_send(&told);
         if notices.is_empty() && collapsed == 0 {
             return;

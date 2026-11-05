@@ -1416,6 +1416,7 @@ An empty answer carries `searched`: one line naming what it looked through and w
 {"/inputSchema/properties/kind":{"default":null,"type":["string","null"]}}
 {"/inputSchema/properties/offset":{"default":null,"format":"uint32","minimum":0,"type":["integer","null"]}}
 {"/inputSchema/properties/parent":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/reship":{"default":null,"type":["boolean","null"]}}
 {"/inputSchema/properties/sid":{"default":null,"type":["string","null"]}}
 {"/inputSchema/type":"object"}
 {"/name":"list_entities"}
@@ -1444,6 +1445,14 @@ subtree: zoom one level at a time, the same way the tree itself is
 built one `parent` at a time. A handle that names no entity comes
 back blocked with candidates, never an empty list — an empty list
 means "nothing is under it", which is a different answer.
+```
+
+#### `list_entities` — argument `/inputSchema.reship`
+
+```text
+**Send `true` to be served in full what you already hold.** An entity you
+were served earlier in this session, still as it stood, comes back as its
+handle alone; with `reship: true` the same call returns it whole.
 ```
 
 #### `list_entities` — argument `/inputSchema.sid`

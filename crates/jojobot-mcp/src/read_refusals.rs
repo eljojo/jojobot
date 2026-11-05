@@ -87,6 +87,7 @@ async fn a_refusal_a_read_verb_earns_does_not_say_a_write_was_skipped() {
                     parent: Some("person:milhouse".into()),
                     offset: None,
                     sid: Some(sid.clone()),
+                    reship: None,
                 }))
                 .await
                 .expect("an answer"),

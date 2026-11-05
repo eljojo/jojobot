@@ -1469,6 +1469,7 @@ mod tests {
                                 parent: None,
                                 sid,
                                 offset: None,
+                                reship: None,
                             }))
                             .await
                             .expect("call ok"),

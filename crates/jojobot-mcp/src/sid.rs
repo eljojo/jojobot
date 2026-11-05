@@ -557,6 +557,32 @@ impl SessionRegistry {
             .held_by(name)
     }
 
+    /// Remember which parts of the things a read served the session received.
+    pub(crate) fn note_shapes(
+        &self,
+        name: &str,
+        shapes: Vec<(crate::seen::Held, crate::seen::Shape)>,
+    ) {
+        if shapes.is_empty() || !self.holds(name) {
+            return;
+        }
+        self.seen
+            .lock()
+            .expect("the seen ledger is poisoned")
+            .hold_shapes(name, shapes);
+    }
+
+    /// Which parts of each held thing a run was served.
+    pub(crate) fn shapes_by(
+        &self,
+        name: &str,
+    ) -> std::collections::HashMap<crate::seen::Held, crate::seen::Shape> {
+        self.seen
+            .lock()
+            .expect("the seen ledger is poisoned")
+            .shapes_by(name)
+    }
+
     /// Forget everything one run was shown and asked about.
     pub(crate) fn forget_shown(&self, name: &str) {
         self.seen

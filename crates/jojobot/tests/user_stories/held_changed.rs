@@ -516,3 +516,34 @@ async fn a_thing_the_session_holds_unchanged_comes_back_as_its_handle() {
     assert!(changed.get("held_collapsed").is_none(), "{changed}");
     story.finish().await;
 }
+
+/// **Every verb that can hand a handle back publishes the call that returns the
+/// thing whole.** Otto lists the people, then lists them again with nothing
+/// changed: the second listing carries Homer's handle and no name, and says how
+/// many it left out. The same call with `reship: true` lists him in full.
+#[tokio::test]
+async fn a_listing_the_session_holds_unchanged_collapses_and_reship_lists_it_whole() {
+    let story = Story::begin("bot:otto").await;
+    let otto = story.session().await;
+    otto.add("person:homer", "Homer").await;
+    let ask = json!({"kind": "person"});
+
+    let first = otto.call("list_entities", ask.clone()).await.json();
+    assert!(first.to_string().contains("Homer"), "{first}");
+
+    let again = otto.call("list_entities", ask.clone()).await.json();
+    assert!(again.to_string().contains("person:homer"), "{again}");
+    assert!(!again.to_string().contains("Homer"), "{again}");
+    assert!(
+        again["held_collapsed"]["count"].as_u64() >= Some(1),
+        "{again}"
+    );
+
+    let whole = otto
+        .call("list_entities", json!({"kind": "person", "reship": true}))
+        .await
+        .json();
+    assert!(whole.to_string().contains("Homer"), "{whole}");
+    assert!(whole.get("held_collapsed").is_none(), "{whole}");
+    story.finish().await;
+}

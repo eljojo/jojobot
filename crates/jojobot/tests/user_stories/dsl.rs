@@ -1745,6 +1745,14 @@ impl Session {
 
     async fn read(&self, what: String, tool: &str, mut args: Value) -> Answer {
         self.riding(&mut args);
+        // A named read helper is asked for the bodies its beat asserts inside, so
+        // it is never served a handle for what the session already holds; a story
+        // about the handle makes its calls through [`Session::call`].
+        if matches!(tool, "recall" | "search" | "list_entities")
+            && let Some(fields) = args.as_object_mut()
+        {
+            fields.entry("reship").or_insert(Value::Bool(true));
+        }
         let body = call(&self.client, tool, args).await;
         Answer {
             what,

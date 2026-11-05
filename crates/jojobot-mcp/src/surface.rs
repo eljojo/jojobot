@@ -4065,6 +4065,7 @@ mod a_write_needs_an_identity {
                     parent: None,
                     offset: None,
                     sid: Some(sid.clone()),
+                    reship: None,
                 }))
                 .await
                 .expect("list_entities answers"),
@@ -4129,6 +4130,7 @@ mod a_write_needs_an_identity {
                     parent: None,
                     offset: None,
                     sid: None,
+                    reship: None,
                 }))
                 .await
                 .expect("an anonymous read answers"),

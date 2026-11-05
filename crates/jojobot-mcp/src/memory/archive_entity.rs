@@ -346,6 +346,7 @@ mod tests {
                     parent: None,
                     offset: None,
                     sid: None,
+                    reship: None,
                 }))
                 .await
                 .expect("list_entities ok"),

@@ -1120,6 +1120,7 @@ mod tests {
                     parent: None,
                     offset: None,
                     sid: Some(crate::harness::TEST_SID.into()),
+                    reship: None,
                 }))
                 .await
                 .expect("list ok"),
@@ -1221,6 +1222,7 @@ mod tests {
                     parent: None,
                     offset: None,
                     sid: Some(crate::harness::TEST_SID.into()),
+                    reship: None,
                 }))
                 .await
                 .expect("list ok"),

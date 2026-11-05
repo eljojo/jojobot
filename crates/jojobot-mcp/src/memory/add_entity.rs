@@ -914,6 +914,7 @@ mod tests {
                 parent: None,
                 offset: None,
                 sid: None,
+                reship: None,
             }))
             .await
             .expect("list ok");
@@ -1156,6 +1157,7 @@ mod tests {
                     parent: None,
                     offset: None,
                     sid: None,
+                    reship: None,
                 }))
                 .await
                 .expect("list ok"),
@@ -1378,6 +1380,7 @@ mod tests {
                 parent: None,
                 offset: None,
                 sid: Some(sid.into()),
+                reship: None,
             }))
             .await
             .expect("list_entities ok");
@@ -1746,6 +1749,7 @@ mod tests {
                             parent: None,
                             sid,
                             offset: None,
+                            reship: None,
                         }))
                         .await
                         .expect("list_entities ok"),
@@ -1816,6 +1820,7 @@ mod tests {
                     parent: None,
                     offset: None,
                     sid: None,
+                    reship: None,
                 }))
                 .await
                 .expect("list ok"),
@@ -2033,6 +2038,7 @@ mod tests {
                     parent: None,
                     offset: None,
                     sid: None,
+                    reship: None,
                 }))
                 .await
                 .expect("list ok"),

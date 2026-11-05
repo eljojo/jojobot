@@ -10,12 +10,19 @@
 //! session held before the call is a candidate. **A changed thing stays whole**
 //! beside its `held_changed` notice. **An entity collapses only when everything it
 //! carries is held unchanged too**, so a claim the session never saw is never
-//! hidden behind a handle it did. Messages are not collapsed: the mailbox already
-//! says by the store which messages were delivered.
+//! hidden behind a handle it did. **A version says the thing has not moved, not
+//! that the session received every part of it**: prose, details or a field the
+//! session never asked for are parts, so a thing collapses only when the paths of
+//! the object now are among the paths the session was served. Messages are not
+//! collapsed: the mailbox already says by the store which messages were delivered.
+
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 
 use serde_json::{Map, Value, json};
 
 use super::{Held, Version, claim_address_of, served_in};
+use crate::seen::Shape;
 
 /// The key the count rides under, at the top of an answer that collapsed.
 pub(crate) const COLLAPSED: &str = "held_collapsed";
@@ -35,14 +42,109 @@ pub(super) fn unchanged(before: &[(Held, Version)], served: &[(Held, Version)]) 
         .collect()
 }
 
+/// What the object `fields` is, when it is an entity or a claim: the thing, the
+/// key it is named under and its name.
+fn thing_of(fields: &Map<String, Value>) -> Option<(Held, &'static str, &str)> {
+    if let Some(handle) = crate::seen::entity_handle_of(fields) {
+        Some((Held::Entity(handle.to_string()), "id", handle))
+    } else {
+        claim_address_of(fields)
+            .map(|address| (Held::Claim(address.to_string()), "address", address))
+    }
+}
+
+/// **The paths of one served object**, hashed: each key, a data key of `fields`
+/// under it, an array as `[]`. A nested entity or claim is one leaf, because it
+/// is a thing of its own with a shape of its own.
+fn shape_of(fields: &Map<String, Value>) -> Shape {
+    fn leaf(path: &str) -> u64 {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        path.hash(&mut hasher);
+        hasher.finish()
+    }
+    fn walk(value: &Value, path: &str, out: &mut Shape) {
+        out.insert(leaf(path));
+        match value {
+            Value::Object(fields) if thing_of(fields).is_none() => {
+                for (key, inner) in fields {
+                    walk(inner, &format!("{path}.{key}"), out);
+                }
+            }
+            Value::Array(items) => {
+                for item in items {
+                    walk(item, &format!("{path}[]"), out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = Shape::new();
+    for (key, inner) in fields {
+        walk(inner, key, &mut out);
+    }
+    out
+}
+
+/// **The shape of every entity and claim an answer names**, once for each time it
+/// names one.
+pub(super) fn shapes_in(body: &Value) -> Vec<(Held, Shape)> {
+    fn walk(value: &Value, out: &mut Vec<(Held, Shape)>) {
+        match value {
+            Value::Object(fields) => {
+                if let Some((what, ..)) = thing_of(fields) {
+                    out.push((what, shape_of(fields)));
+                }
+                fields.values().for_each(|inner| walk(inner, out));
+            }
+            Value::Array(items) => items.iter().for_each(|item| walk(item, out)),
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    walk(body, &mut out);
+    out
+}
+
+/// **What the session has received of each thing after this answer**: the parts
+/// it had before, when the thing has not moved, and the parts of this answer.
+pub(super) fn received(
+    before: &[(Held, Version)],
+    held_shapes: &HashMap<Held, Shape>,
+    served: &[(Held, Version)],
+    shapes: Vec<(Held, Shape)>,
+) -> Vec<(Held, Shape)> {
+    let mut out: HashMap<Held, Shape> = HashMap::new();
+    for (what, shape) in shapes {
+        let entry = out.entry(what.clone()).or_insert_with(|| {
+            let not_moved = served.iter().any(|(held, now)| {
+                *held == what
+                    && before
+                        .iter()
+                        .any(|(was, version)| *was == what && version == now)
+            });
+            if not_moved {
+                held_shapes.get(&what).cloned().unwrap_or_default()
+            } else {
+                Shape::new()
+            }
+        });
+        entry.extend(shape);
+    }
+    out.into_iter().collect()
+}
+
 /// **Replace each unchanged thing in `body` with its handle or address**, and say
 /// so once at the top. Returns how many were replaced.
-pub(super) fn collapse(body: &mut Value, unchanged: &[Held]) -> usize {
+pub(super) fn collapse(
+    body: &mut Value,
+    unchanged: &[Held],
+    received: &HashMap<Held, Shape>,
+) -> usize {
     if unchanged.is_empty() {
         return 0;
     }
     let mut count = 0;
-    visit(body, unchanged, &mut count);
+    visit(body, unchanged, received, &mut count);
     if count > 0
         && let Some(fields) = body.as_object_mut()
     {
@@ -58,36 +160,46 @@ pub(super) fn collapse(body: &mut Value, unchanged: &[Held]) -> usize {
     count
 }
 
-fn visit(value: &mut Value, unchanged: &[Held], count: &mut usize) {
+fn visit(
+    value: &mut Value,
+    unchanged: &[Held],
+    received: &HashMap<Held, Shape>,
+    count: &mut usize,
+) {
     match value {
         Value::Object(fields) => {
-            if let Some(stub) = stub_of(fields, unchanged) {
+            if let Some(stub) = stub_of(fields, unchanged, received) {
                 *fields = stub;
                 *count += 1;
                 return;
             }
             for held in fields.values_mut() {
-                visit(held, unchanged, count);
+                visit(held, unchanged, received, count);
             }
         }
         Value::Array(items) => items
             .iter_mut()
-            .for_each(|item| visit(item, unchanged, count)),
+            .for_each(|item| visit(item, unchanged, received, count)),
         _ => {}
     }
 }
 
 /// The handle or address alone, when `fields` is a thing held unchanged and
 /// everything it carries is held unchanged too.
-fn stub_of(fields: &Map<String, Value>, unchanged: &[Held]) -> Option<Map<String, Value>> {
-    let (what, key, name) = if let Some(handle) = crate::seen::entity_handle_of(fields) {
-        (Held::Entity(handle.to_string()), "id", handle)
-    } else if let Some(address) = claim_address_of(fields) {
-        (Held::Claim(address.to_string()), "address", address)
-    } else {
-        return None;
-    };
+fn stub_of(
+    fields: &Map<String, Value>,
+    unchanged: &[Held],
+    received: &HashMap<Held, Shape>,
+) -> Option<Map<String, Value>> {
+    let (what, key, name) = thing_of(fields)?;
     if !unchanged.contains(&what) {
+        return None;
+    }
+    // A part the session never received is delivered, whatever the version says.
+    if !received
+        .get(&what)
+        .is_some_and(|had| shape_of(fields).is_subset(had))
+    {
         return None;
     }
     let carried_whole = fields
@@ -141,6 +253,15 @@ mod tests {
         );
     }
 
+    /// What a session has received of each thing named in `body`.
+    fn received_of(body: &Value) -> HashMap<Held, Shape> {
+        let mut out: HashMap<Held, Shape> = HashMap::new();
+        for (what, shape) in shapes_in(body) {
+            out.entry(what).or_default().extend(shape);
+        }
+        out
+    }
+
     fn homer_whole() -> Value {
         json!({
             "id": "person:homer",
@@ -157,11 +278,12 @@ mod tests {
     #[test]
     fn a_held_entity_comes_back_as_its_handle_alone() {
         let mut body = json!({"objects": [homer_whole()]});
+        let received = received_of(&body);
         let unchanged = vec![
             entity("person:homer"),
             Held::Claim("person:homer#f1".into()),
         ];
-        assert_eq!(collapse(&mut body, &unchanged), 1);
+        assert_eq!(collapse(&mut body, &unchanged, &received), 1);
         assert_eq!(
             body["objects"][0],
             json!({"id": "person:homer", "held": UNCHANGED}),
@@ -175,14 +297,16 @@ mod tests {
     #[test]
     fn an_entity_carrying_an_unseen_claim_stays_whole() {
         let mut body = json!({"objects": [homer_whole()]});
+        let received = received_of(&body);
         let unchanged = vec![entity("person:homer")];
-        assert_eq!(collapse(&mut body, &unchanged), 0);
+        assert_eq!(collapse(&mut body, &unchanged, &received), 0);
         assert_eq!(body["objects"][0], homer_whole(), "{body}");
         assert!(body.get(COLLAPSED).is_none(), "{body}");
 
         let both = vec![entity("person:bart"), Held::Claim("person:homer#f1".into())];
         let mut body = json!({"objects": [homer_whole()]});
-        assert_eq!(collapse(&mut body, &both), 1);
+        let received = received_of(&body);
+        assert_eq!(collapse(&mut body, &both, &received), 1);
         assert_eq!(
             body["objects"][0]["facts"][0],
             json!({"address": "person:homer#f1", "held": UNCHANGED}),
@@ -195,7 +319,66 @@ mod tests {
     #[test]
     fn nothing_held_leaves_the_answer_alone() {
         let mut body = json!({"objects": [homer_whole()]});
-        assert_eq!(collapse(&mut body, &[]), 0);
+        let received = received_of(&body);
+        assert_eq!(collapse(&mut body, &[], &received), 0);
         assert_eq!(body, json!({"objects": [homer_whole()]}));
+    }
+
+    /// **A part the session never received is delivered, though the version has
+    /// not moved.** Homer was served bare; asked again with his prose, the page
+    /// has never been read, so he comes back whole. Served whole and asked again
+    /// bare, he is a handle: the session has every part of that answer.
+    #[test]
+    fn a_part_never_received_is_delivered_and_a_part_received_is_not_again() {
+        let bare = json!({"objects": [{"id": "person:homer", "name": "Homer"}]});
+        let with_prose = json!({"objects": [
+            {"id": "person:homer", "name": "Homer", "prose": "Lives next door."}
+        ]});
+        let unchanged = vec![entity("person:homer")];
+
+        let mut asked = with_prose.clone();
+        assert_eq!(collapse(&mut asked, &unchanged, &received_of(&bare)), 0);
+        assert_eq!(asked, with_prose, "the page was never read: {asked}");
+
+        let mut again = bare.clone();
+        assert_eq!(
+            collapse(&mut again, &unchanged, &received_of(&with_prose)),
+            1,
+            "the session has every part of the bare answer: {again}"
+        );
+    }
+
+    /// **Received parts are kept while a thing has not moved and start again when
+    /// it has.**
+    #[test]
+    fn received_parts_are_kept_until_the_thing_moves() {
+        let homer = entity("person:homer");
+        let bare = json!({"id": "person:homer", "name": "Homer"});
+        let rich = json!({"id": "person:homer", "name": "Homer", "prose": "x"});
+        let held_shapes = received_of(&rich);
+        let before = vec![(homer.clone(), at(1))];
+
+        let still = received(
+            &before,
+            &held_shapes,
+            &[(homer.clone(), at(1))],
+            shapes_in(&bare),
+        );
+        assert!(
+            still[0].1.is_superset(&held_shapes[&homer]),
+            "a bare answer adds nothing to what was received"
+        );
+
+        let moved = received(
+            &before,
+            &held_shapes,
+            &[(homer.clone(), at(2))],
+            shapes_in(&bare),
+        );
+        assert_eq!(
+            moved[0].1,
+            shapes_in(&bare)[0].1,
+            "a new version starts again"
+        );
     }
 }

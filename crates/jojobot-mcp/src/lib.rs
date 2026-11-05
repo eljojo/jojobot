@@ -796,6 +796,7 @@ impl Jojobot {
         // **`reship` is read here for the same reason**: the held pass that
         // collapses what the session holds is the one hook every answer passes,
         // and it must not have to know which verb declared the argument.
+        let verb = request.name.to_string();
         let reship = request
             .arguments
             .as_ref()
@@ -868,9 +869,7 @@ impl Jojobot {
         }
         self.teach_argument_names(&aliases, &mut answered, sid.as_deref())
             .await;
-        if reship {
-            held::reship_asked(&mut answered);
-        }
+        held::mark_call(&mut answered, &verb, reship);
         self.finish_unshaped(&mut answered, sid.as_deref()).await;
         // **What a spent id stores is the answer as the caller was told it**, so a
         // repeat gives back the same words. Taken before the answer is shaped for

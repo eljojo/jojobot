@@ -24,6 +24,13 @@ pub struct ListEntitiesArgs {
     /// with it to walk the rest.
     #[serde(default)]
     pub(crate) offset: Option<u32>,
+    /// **Send `true` to be served in full what you already hold.** An entity you
+    /// were served earlier in this session, still as it stood, comes back as its
+    /// handle alone; with `reship: true` the same call returns it whole.
+    // Read from the raw arguments by the dispatch, which every verb passes.
+    #[allow(dead_code)]
+    #[serde(default)]
+    pub(crate) reship: Option<bool>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
     /// every call — it is what tells jojobot which bot is asking. Reads are
     /// attributed, never journalled.
@@ -257,6 +264,7 @@ mod tests {
                     parent: None,
                     offset: None,
                     sid: None,
+                    reship: None,
                 }))
                 .await
                 .expect("list_entities ok"),
@@ -298,6 +306,7 @@ mod tests {
                     parent: None,
                     offset: None,
                     sid: None,
+                    reship: None,
                 }))
                 .await
                 .expect("list_entities ok"),
@@ -318,6 +327,7 @@ mod tests {
                     parent: None,
                     offset: None,
                     sid: None,
+                    reship: None,
                 }))
                 .await
                 .expect("list_entities ok"),
@@ -346,6 +356,7 @@ mod tests {
             parent: None,
             offset: None,
             sid: None,
+            reship: None,
         };
 
         let empty = json_of(
@@ -398,6 +409,7 @@ mod tests {
                     parent: Some("person:alpha".into()),
                     offset: None,
                     sid: None,
+                    reship: None,
                 }))
                 .await
                 .expect("list_entities ok"),
@@ -521,6 +533,7 @@ mod tests {
                     parent: Some("person:alpha".into()),
                     offset: None,
                     sid: None,
+                    reship: None,
                 }))
                 .await
                 .expect("list_entities ok"),
@@ -580,6 +593,7 @@ mod tests {
                     parent: Some("person:alpha".into()),
                     offset: None,
                     sid: None,
+                    reship: None,
                 }))
                 .await
                 .expect("list_entities ok"),
@@ -611,6 +625,7 @@ mod tests {
                 parent: Some("person:alphaa".into()),
                 offset: None,
                 sid: None,
+                reship: None,
             }))
             .await
             .expect("the call succeeds; the guard answers in the body");
@@ -679,6 +694,7 @@ mod tests {
                     parent: None,
                     offset: None,
                     sid: None,
+                    reship: None,
                 }))
                 .await
                 .expect("list_entities ok"),
@@ -763,6 +779,7 @@ mod tests {
                     parent: None,
                     offset,
                     sid: None,
+                    reship: None,
                 }))
                 .await
                 .expect("list_entities ok"),

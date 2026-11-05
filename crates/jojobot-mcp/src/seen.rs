@@ -44,7 +44,7 @@ pub(crate) struct Shown {
 
 /// **What a session holds, by what names it.** An entity by its handle, a claim
 /// by its address, a message by its id.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "room-harness", derive(serde::Serialize, serde::Deserialize))]
 pub(crate) enum Held {
     Entity(String),
@@ -94,7 +94,14 @@ struct Session {
     asked: HashSet<String>,
     /// What it holds and how each stood when it was served, oldest first.
     held: VecDeque<(Held, Version)>,
+    /// **Which parts of each held thing it was served**, as the paths of the
+    /// object it received. A version says the thing has not moved; this says
+    /// whether a later answer carries a part the session never received.
+    shapes: HashMap<Held, Shape>,
 }
+
+/// The paths of one served object (see `held::collapse`), hashed.
+pub(crate) type Shape = std::collections::BTreeSet<u64>;
 
 /// **The whole ledger.**
 #[derive(Debug, Default)]
@@ -172,8 +179,32 @@ impl Ledger {
             session.held.push_back((what, version));
         }
         while session.held.len() > MAX_HELD_PER_SESSION {
-            session.held.pop_front();
+            if let Some((evicted, _)) = session.held.pop_front() {
+                session.shapes.remove(&evicted);
+            }
         }
+    }
+
+    /// **Remember which parts of a thing the session was served.** Meaningful only
+    /// beside [`Ledger::hold`] of the same thing: a shape of a thing the session
+    /// does not hold is dropped.
+    pub(crate) fn hold_shapes(&mut self, sid: &str, shapes: Vec<(Held, Shape)>) {
+        let Some(session) = self.sessions.get_mut(sid) else {
+            return;
+        };
+        for (what, shape) in shapes {
+            if session.held.iter().any(|(held, _)| *held == what) {
+                session.shapes.insert(what, shape);
+            }
+        }
+    }
+
+    /// The parts of each held thing the session was served.
+    pub(crate) fn shapes_by(&self, sid: &str) -> HashMap<Held, Shape> {
+        self.sessions
+            .get(sid)
+            .map(|session| session.shapes.clone())
+            .unwrap_or_default()
     }
 
     /// What a session holds, oldest first. Nothing for a session the ledger does
@@ -194,6 +225,7 @@ impl Ledger {
             session
                 .held
                 .retain(|(held, _)| *held != Held::Entity(handle.to_string()));
+            session.shapes.remove(&Held::Entity(handle.to_string()));
         }
     }
 
