@@ -34,9 +34,9 @@ pub struct PostMessageArgs {
     ///
     /// Write `@kind:slug` to link to something that already exists, e.g.
     /// `@person:milhouse`, or `@<collection>/<N>` for its numbered member.
-    /// Missing numbers are refused with the numbers held; links keep the name that does
-    /// not move and serve today's handle, even after a rename. Text inside backticks
-    /// or a fenced block is literal, kept as written and never becomes a link.
+    /// Missing numbers are kept as written and marked unresolved on read; links keep the
+    /// name that does not move and serve today's handle, even after a rename. Text inside
+    /// backticks or a fenced block is literal, kept as written and never becomes a link.
     ///
     /// To quote the operator, write the address of the claim that holds their
     /// words, `@kind:slug#fN`: jojobot writes those words in beside it, and

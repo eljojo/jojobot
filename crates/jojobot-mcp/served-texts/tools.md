@@ -325,7 +325,7 @@ Write `@kind:slug` to link to something that already exists, e.g.
 `@person:milhouse` — stored as the name that does not move, served as
 the handle that thing wears today, even after a rename.
 Use `@<collection>/<N>` to link the member holding N; a missing number
-is refused with the numbers held.
+is kept as written and marked unresolved on read.
 Text inside backticks or a fenced block is literal: a handle there is
 kept as written and never becomes a link.
 ```
@@ -1350,7 +1350,7 @@ Write `@kind:slug` to link to something that already exists, e.g.
 `@person:milhouse` — stored as the name that does not move, served as
 the handle that thing wears today, even after a rename.
 Use `@<collection>/<N>` to link the member holding N; a missing number
-is refused with the numbers held.
+is kept as written and marked unresolved on read.
 Text inside backticks or a fenced block is literal: a handle there is
 kept as written and never becomes a link.
 ```
@@ -1672,7 +1672,7 @@ Write `@kind:slug` to link to something that already exists, e.g.
 `@person:milhouse` — stored as the name that does not move, served as
 the handle that thing wears today, even after a rename.
 Use `@<collection>/<N>` to link the member holding N; a missing number
-is refused with the numbers held.
+is kept as written and marked unresolved on read.
 A note is one plain line, so no code is literal in it: one with a
 backtick or a line break is refused and nothing is written.
 
@@ -1903,9 +1903,9 @@ The message itself. Prose: paragraphs are fine.
 
 Write `@kind:slug` to link to something that already exists, e.g.
 `@person:milhouse`, or `@<collection>/<N>` for its numbered member.
-Missing numbers are refused with the numbers held; links keep the name that does
-not move and serve today's handle, even after a rename. Text inside backticks
-or a fenced block is literal, kept as written and never becomes a link.
+Missing numbers are kept as written and marked unresolved on read; links keep the
+name that does not move and serve today's handle, even after a rename. Text inside
+backticks or a fenced block is literal, kept as written and never becomes a link.
 
 To quote the operator, write the address of the claim that holds their
 words, `@kind:slug#fN`: jojobot writes those words in beside it, and

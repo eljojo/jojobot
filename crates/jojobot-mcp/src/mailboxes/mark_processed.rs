@@ -30,7 +30,7 @@ pub struct MarkProcessedArgs {
     /// `@person:milhouse` — stored as the name that does not move, served as
     /// the handle that thing wears today, even after a rename.
     /// Use `@<collection>/<N>` to link the member holding N; a missing number
-    /// is refused with the numbers held.
+    /// is kept as written and marked unresolved on read.
     /// A note is one plain line, so no code is literal in it: one with a
     /// backtick or a line break is refused and nothing is written.
     ///
