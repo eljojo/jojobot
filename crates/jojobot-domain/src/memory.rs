@@ -1562,12 +1562,21 @@ pub fn validate_subject_in(kinds: &kinds::KindSet, subject: &EntityId) -> Result
     kind_refusal(subject, kinds.standing(subject.kind_token()))
 }
 
-/// **A kind is declared under a name that parsing accepts**, so a store never
-/// holds a kind no handle can wear. One check for both, through [`kinds::KindToken`].
+/// **A kind is declared under a name that parsing accepts, spelled as parsing
+/// spells it**, so a store never holds a kind no handle can wear. Parsing trims,
+/// and a store keeps the token it is handed, so a padded name is refused instead
+/// of kept as a spelling no handle carries. One check for both, through
+/// [`kinds::KindToken`].
 pub fn validate_kind_declaration(token: &str) -> Result<(), MemoryError> {
-    kinds::KindToken::parse(token)
-        .map(drop)
-        .map_err(|why| MemoryError::InvalidType(format!("'{token}': {why}")))
+    let parsed = kinds::KindToken::parse(token)
+        .map_err(|why| MemoryError::InvalidType(format!("'{token}': {why}")))?;
+    if parsed.as_str() != token {
+        return Err(MemoryError::InvalidType(format!(
+            "'{token}': a kind's name carries no padding; declare '{}'",
+            parsed.as_str()
+        )));
+    }
+    Ok(())
 }
 
 /// **The two failures have two repairs, so they are two errors.** A caller can

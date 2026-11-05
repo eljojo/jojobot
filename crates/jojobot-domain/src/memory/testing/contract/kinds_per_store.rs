@@ -57,9 +57,18 @@ pub async fn two_stores_each_see_only_the_kinds_they_declare<A: Memory, B: Memor
 }
 
 /// **A kind is declared under a name that could be a handle's kind**, the same
-/// shape parsing accepts, so a store never holds a kind no handle can wear.
+/// shape parsing accepts and spelled as a handle spells it, with no padding, so a
+/// store never holds a kind no handle can wear.
 pub async fn a_kind_declaration_is_checked_for_shape<M: Memory>(store: &M) {
-    for token in ["", "two words", "person:homer", "a/b"] {
+    for token in [
+        "",
+        "two words",
+        "person:homer",
+        "a/b",
+        " otter",
+        "otter ",
+        " otter ",
+    ] {
         let refused = store
             .declare_kind(token, Origin::Declared, Vec::new())
             .await;
@@ -70,8 +79,9 @@ pub async fn a_kind_declaration_is_checked_for_shape<M: Memory>(store: &M) {
     }
     let held = store.declared_kinds().await.expect("the store reads");
     assert!(
-        held.iter().all(|(held, _)| held != "two words"),
-        "a refused declaration leaves no kind behind"
+        held.iter()
+            .all(|(held, _)| held != "two words" && held.trim() == held),
+        "a refused declaration leaves no kind behind, padded or not"
     );
     store
         .declare_kind("otter", Origin::Declared, Vec::new())
