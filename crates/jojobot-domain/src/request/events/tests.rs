@@ -513,3 +513,62 @@ fn ledger_events_ignore_a_receipt_for_an_evicted_generation() {
     state.apply(&LedgerEvent::RequestExpired { key }).unwrap();
     assert_eq!(state, before);
 }
+
+/// **An id is kept for 72 hours and no longer, to the second.** At the last
+/// instant of the window the id is still spent and a write under it joins its
+/// generation; one second later it is unspent, and a write under it starts the
+/// next generation, whose event evicts the old one by its own instant.
+#[test]
+fn ledger_events_keep_an_id_for_the_window_and_not_one_second_longer() {
+    use crate::request::KEPT_FOR;
+    let written = at(0);
+    let spent = Commit {
+        request: request(1),
+        landed: "{}".into(),
+        receipt: None,
+        written_at: written,
+        expires_at: written + KEPT_FOR,
+    };
+    let key = spent.request.key.clone();
+    let mut state = State::default();
+    state
+        .apply(&LedgerEvent::RequestCommitted(spent.clone()))
+        .unwrap();
+
+    let last = written + KEPT_FOR;
+    let after = last + jiff::SignedDuration::from_secs(1);
+    assert!(state.lookup(&key.actor, &key.id, last).is_some());
+    assert_eq!(state.generation_for(&key.actor, &key.id, last), 1);
+    assert!(state.lookup(&key.actor, &key.id, after).is_none());
+    assert_eq!(state.generation_for(&key.actor, &key.id, after), 2);
+
+    // An event at the last instant evicts nothing; one a second later does.
+    let mut again = spent.clone();
+    again.request.key.generation = 2;
+    again.written_at = last;
+    again.expires_at = last + KEPT_FOR;
+    let mut at_the_edge = state.clone();
+    at_the_edge
+        .apply(&LedgerEvent::RequestCommitted(commit_of("beta", 72 * 3600)))
+        .unwrap();
+    assert!(
+        at_the_edge.request(&key).is_some(),
+        "an event at the last instant evicts nothing"
+    );
+
+    again.written_at = after;
+    again.expires_at = after + KEPT_FOR;
+    state
+        .apply(&LedgerEvent::RequestCommitted(again.clone()))
+        .unwrap();
+    assert!(
+        state.request(&key).is_none(),
+        "the first generation left when an event a second past its window was applied"
+    );
+    assert_eq!(
+        state
+            .lookup(&key.actor, &key.id, after)
+            .map(|held| held.request.key.generation),
+        Some(2)
+    );
+}
