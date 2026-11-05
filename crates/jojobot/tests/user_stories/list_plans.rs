@@ -332,10 +332,26 @@ async fn ticks_leaving_an_entry_open_on_a_plan_teach_the_carry() {
                    "tick": {"entry": at[2], "act": "done"}}),
         )
         .await;
+    let receipt = last.json();
+    assert_eq!(receipt["success"], true, "{receipt}");
+    assert_eq!(receipt["ticked"]["entry"], at[2], "{receipt}");
+    assert_eq!(receipt["ticked"]["act"], "done", "{receipt}");
     assert!(
-        !the_line(&last).contains("derived_from"),
-        "nothing is open after it: {}",
-        last.raw()
+        receipt["address"]
+            .as_str()
+            .is_some_and(|address| address.starts_with("list:errands#")),
+        "{receipt}"
+    );
+    assert_eq!(
+        read_states(&s, "list:errands").await,
+        ["buy flour:done", "bake:done", "clean the oven:done"]
+    );
+    assert!(
+        !receipt["hint"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("derived_from"),
+        "nothing is open after it: {receipt}"
     );
     story.finish().await;
 }
@@ -367,9 +383,49 @@ async fn one_tick_on_a_plan_teaches_the_carry_and_a_checklist_does_not() {
                    "tick": {"entry": at[0], "act": "done"}}),
         )
         .await;
-    assert!(!the_line(&one).contains("derived_from"), "{}", one.raw());
+    let receipt = one.json();
+    assert_eq!(receipt["success"], true, "{receipt}");
+    assert_eq!(receipt["ticked"]["entry"], at[0], "{receipt}");
+    assert_eq!(receipt["ticked"]["act"], "done", "{receipt}");
+    assert!(
+        receipt["address"]
+            .as_str()
+            .is_some_and(|address| address.starts_with("list:errands#")),
+        "{receipt}"
+    );
+    assert_eq!(
+        read_states(&s, "list:errands").await,
+        ["bake:open", "clean the oven:open", "buy flour:done"]
+    );
+    assert!(
+        !receipt["hint"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("derived_from"),
+        "{receipt}"
+    );
     let two = tick_many(&s, &at[1..], 2).await;
-    assert!(!the_line(&two).contains("derived_from"), "{}", two.raw());
+    let receipt = two.json();
+    assert_eq!(receipt["list"], "list:errands", "{receipt}");
+    assert_eq!(receipt["count"], 2, "{receipt}");
+    let ticks = receipt["ticks"].as_array().expect("the tick receipts");
+    assert_eq!(ticks.len(), 2, "{receipt}");
+    for (tick, entry) in ticks.iter().zip(&at[1..]) {
+        assert_eq!(tick["entry"], entry.as_str(), "{receipt}");
+        assert_eq!(tick["act"], "done", "{receipt}");
+        assert!(tick["record"].is_string(), "{receipt}");
+    }
+    assert_eq!(
+        read_states(&s, "list:errands").await,
+        ["buy flour:done", "bake:done", "clean the oven:done"]
+    );
+    assert!(
+        !receipt["hint"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("derived_from"),
+        "{receipt}"
+    );
     story.finish().await;
 }
 
@@ -516,10 +572,31 @@ async fn a_session_is_taught_the_carry_once_and_a_fresh_session_is_taught_again(
     let first = tick_one(&s, &at[0]).await;
     assert!(the_line(&first).contains("derived_from"), "{}", first.raw());
     let second = tick_one(&s, &at[1]).await;
+    let receipt = second.json();
+    assert_eq!(receipt["success"], true, "{receipt}");
+    assert_eq!(receipt["ticked"]["entry"], at[1], "{receipt}");
+    assert_eq!(receipt["ticked"]["act"], "done", "{receipt}");
     assert!(
-        !the_line(&second).contains("derived_from"),
-        "this session was taught: {}",
-        second.raw()
+        receipt["address"]
+            .as_str()
+            .is_some_and(|address| address.starts_with("list:errands#")),
+        "{receipt}"
+    );
+    assert_eq!(
+        read_states(&s, "list:errands").await,
+        [
+            "clean the oven:open",
+            "sweep:open",
+            "buy flour:done",
+            "bake:done"
+        ]
+    );
+    assert!(
+        !receipt["hint"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("derived_from"),
+        "this session was taught: {receipt}"
     );
 
     // A second boot of one bot is offered its stopped run; `new` starts another.
@@ -549,10 +626,31 @@ async fn a_batch_that_taught_the_carry_leaves_the_next_single_tick_silent() {
     let batch = tick_many(&s, &at, 1).await;
     assert!(the_line(&batch).contains("derived_from"), "{}", batch.raw());
     let single = tick_one(&s, &at[1]).await;
+    let receipt = single.json();
+    assert_eq!(receipt["success"], true, "{receipt}");
+    assert_eq!(receipt["ticked"]["entry"], at[1], "{receipt}");
+    assert_eq!(receipt["ticked"]["act"], "done", "{receipt}");
     assert!(
-        !the_line(&single).contains("derived_from"),
-        "this session was taught: {}",
-        single.raw()
+        receipt["address"]
+            .as_str()
+            .is_some_and(|address| address.starts_with("list:errands#")),
+        "{receipt}"
+    );
+    assert_eq!(
+        read_states(&s, "list:errands").await,
+        [
+            "clean the oven:open",
+            "sweep:open",
+            "buy flour:done",
+            "bake:done"
+        ]
+    );
+    assert!(
+        !receipt["hint"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("derived_from"),
+        "this session was taught: {receipt}"
     );
     story.finish().await;
 }
