@@ -22,7 +22,8 @@
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use jiff::Timestamp;
-use jojobot_domain::log::{BatchId, ObjectId, Position, RequestId, SealedBatch};
+use jojobot_domain::log::claims::ClaimEvent;
+use jojobot_domain::log::{BatchId, Event, ObjectId, Position, RequestId, SealedBatch};
 use jojobot_domain::request::events::{LedgerEvent, LegacyRow, State};
 use sqlx::{MySql, Row, Transaction};
 
@@ -34,6 +35,9 @@ use crate::writer::{Writer, sql};
 
 #[cfg(test)]
 mod claims_tests;
+
+#[cfg(test)]
+mod two_families_tests;
 
 /// The generation the import gives every retained row. The old tables hold one
 /// row per id, so they never held two attempts under one key.
@@ -68,6 +72,8 @@ pub(crate) struct Pending {
     seam: Arc<Seam>,
     staged: Staged,
     events: Vec<LedgerEvent>,
+    /// The claims events of the batch, as the log stores them.
+    claims: Vec<Event<ClaimEvent>>,
     last: Position,
 }
 
@@ -82,7 +88,11 @@ impl Pending {
                 tracing::error!(%error, "a committed ledger event could not be applied");
             }
         }
-        held.seen = true;
+        for claim in &self.claims {
+            held.claims.apply(claim);
+        }
+        // Only a ledger event says the log holds one.
+        held.seen |= !self.events.is_empty();
         held.applied = self.last;
     }
 
@@ -223,6 +233,21 @@ impl Seam {
         events: Vec<LedgerEvent>,
         at: Timestamp,
     ) -> Result<Pending, LedgerError> {
+        self.stage_with(tx, events, Vec::new(), at).await
+    }
+
+    /// **Stage the events of two families as one batch in `tx`**: one batch per
+    /// transaction, the ledger members first and the claims members after them.
+    /// The claims events are read back through their codec before anything is
+    /// staged, so an event the log could not read again is refused here, before
+    /// the transaction commits, and never after it.
+    pub(crate) async fn stage_with(
+        self: &Arc<Self>,
+        tx: &mut Transaction<'_, MySql>,
+        events: Vec<LedgerEvent>,
+        claims: Vec<Event<ClaimEvent>>,
+        at: Timestamp,
+    ) -> Result<Pending, LedgerError> {
         if self.lock().behind {
             self.catch_up().await?;
         }
@@ -232,8 +257,15 @@ impl Seam {
             .state
             .check(&events)
             .map_err(|error| LedgerError::Refused(error.to_string()))?;
+        let claims: Vec<Event<ClaimEvent>> = claims
+            .iter()
+            .map(|event| {
+                crate::claims_log::codec::decode(&crate::claims_log::codec::encode(event))
+                    .map_err(|error| LedgerError::Refused(error.to_string()))
+            })
+            .collect::<Result<_, _>>()?;
         let head = self.log.head_in(tx).await.map_err(refused)?;
-        let batch = Self::seal(head, &events, at)?;
+        let batch = Self::seal(head, &events, &claims, at)?;
         let staged = self
             .log
             .stage(tx, Position(head), &batch)
@@ -243,6 +275,7 @@ impl Seam {
             seam: Arc::clone(self),
             staged,
             events,
+            claims,
             last: batch.range().last,
         })
     }
@@ -256,7 +289,7 @@ impl Seam {
         events: Vec<LedgerEvent>,
         at: Timestamp,
     ) -> Result<Pending, LedgerError> {
-        let batch = Self::seal(after.0, &events, at)?;
+        let batch = Self::seal(after.0, &events, &[], at)?;
         let staged = self
             .log
             .stage_after(tx, after, &batch)
@@ -266,12 +299,22 @@ impl Seam {
             seam: Arc::clone(self),
             staged,
             events,
+            claims: Vec::new(),
             last: batch.range().last,
         })
     }
 
-    fn seal(head: u64, events: &[LedgerEvent], at: Timestamp) -> Result<SealedBatch, LedgerError> {
-        let members: Vec<Vec<u8>> = events.iter().map(codec::encode).collect();
+    fn seal(
+        head: u64,
+        events: &[LedgerEvent],
+        claims: &[Event<ClaimEvent>],
+        at: Timestamp,
+    ) -> Result<SealedBatch, LedgerError> {
+        let members: Vec<Vec<u8>> = events
+            .iter()
+            .map(codec::encode)
+            .chain(claims.iter().map(crate::claims_log::codec::encode))
+            .collect();
         let identity = jojobot_domain::request::digest_of(&format!(
             "{head}:{}",
             members
