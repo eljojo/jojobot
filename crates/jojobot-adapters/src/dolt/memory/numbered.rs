@@ -164,7 +164,7 @@ impl DoltMemory {
                  {}
                  WHERE w.entity IN ({marks})",
                 super::write_origin::ORIGIN_COLUMNS,
-                super::write_origin::ORIGIN_JOINS,
+                super::write_origin::origin_joins(),
             );
             let mut query = sqlx::query(AssertSqlSafe(sql.as_str()));
             for name in chunk {
@@ -227,7 +227,7 @@ impl DoltMemory {
                  {}
                  WHERE w.`key` = ? AND w.entity IN ({marks})",
                 super::write_origin::ORIGIN_COLUMNS,
-                super::write_origin::ORIGIN_JOINS,
+                super::write_origin::origin_joins(),
             );
             let mut query = sqlx::query(AssertSqlSafe(sql.as_str())).bind(key);
             for name in chunk {

@@ -374,7 +374,7 @@ impl DoltBootReader {
             " FROM field_write w
              JOIN fact f ON f.entity = w.entity AND f.id = w.fact_id ",
         );
-        query.push(super::write_origin::ORIGIN_JOINS);
+        query.push(super::write_origin::origin_joins());
         if let Some(keys) = keys {
             if keys.is_empty() {
                 query.push(" WHERE 1 = 0");
@@ -664,7 +664,7 @@ impl BootReader for DoltBootReader {
                     w.written_at, {} \
              FROM field_write w {} ORDER BY w.entity, w.ordinal",
             super::write_origin::ORIGIN_COLUMNS,
-            super::write_origin::ORIGIN_JOINS,
+            super::write_origin::origin_joins(),
         )))
         .fetch_all(&mut *tx)
         .await

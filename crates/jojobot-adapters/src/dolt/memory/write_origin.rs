@@ -18,20 +18,25 @@ pub(super) const ORIGIN_COLUMNS: &str = "w.fact_write_ordinal AS origin_ordinal,
      o.bot AS origin_bot, o.session AS origin_run, o.app_stamp AS origin_app_stamp, \
      os.bot AS origin_run_bot";
 
-/// **The joins that reach those columns.** Left joins: a write with no pointer
-/// still comes back, with no origin.
-///
 /// **One run per sid, so a write comes back once.** A sid is unique only among
 /// the runs that are active, so a wrapped run and a later one can share it, and a
 /// join by sid alone would return the write once for each. The run that answers
 /// is the active one, else the latest to start, else the lowest id. The table is
 /// grouped once for the whole read, where a join by sid with no index on it
 /// would scan the runs for every key write.
-pub(super) const ORIGIN_JOINS: &str = "LEFT JOIN fact_write o ON o.entity = w.entity \
-     AND o.fact_id = w.fact_id AND o.ordinal = w.fact_write_ordinal \
-     LEFT JOIN (SELECT sid, SUBSTRING_INDEX(GROUP_CONCAT(bot \
+pub(super) const RUN_BOTS: &str = "SELECT sid, SUBSTRING_INDEX(GROUP_CONCAT(bot \
          ORDER BY (state = 'active') DESC, started_at DESC, id ASC SEPARATOR ' '), ' ', 1) AS bot \
-         FROM session WHERE sid IS NOT NULL GROUP BY sid) os ON os.sid = o.session";
+         FROM session WHERE sid IS NOT NULL GROUP BY sid";
+
+/// **The joins that reach those columns.** Left joins: a write with no pointer
+/// still comes back, with no origin.
+pub(super) fn origin_joins() -> String {
+    format!(
+        "LEFT JOIN fact_write o ON o.entity = w.entity \
+         AND o.fact_id = w.fact_id AND o.ordinal = w.fact_write_ordinal \
+         LEFT JOIN ({RUN_BOTS}) os ON os.sid = o.session"
+    )
+}
 
 /// **What the claim write kept**, or `None` for a key write with no pointer: an
 /// older build appended it, and nothing says which claim write it was.

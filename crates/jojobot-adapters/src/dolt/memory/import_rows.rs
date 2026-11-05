@@ -400,12 +400,12 @@ impl DoltMemory {
         read: &mut Read,
         rows: &mut Rows,
     ) -> Result<(), MemoryError> {
-        let runs: HashMap<String, String> = sqlx::query("SELECT id, bot FROM session")
+        let runs: HashMap<String, String> = sqlx::query(super::write_origin::RUN_BOTS)
             .fetch_all(&mut **tx)
             .await
             .map_err(store)?
             .iter()
-            .map(|row| Ok((text(row, "id")?, text(row, "bot")?)))
+            .map(|row| Ok((text(row, "sid")?, text(row, "bot")?)))
             .collect::<Result<_, MemoryError>>()?;
         let write_rows = sqlx::query(AssertSqlSafe(format!(
             "SELECT {FACT_WRITE_COLUMNS}, w.ordinal, w.written_at, w.session, w.refs, \

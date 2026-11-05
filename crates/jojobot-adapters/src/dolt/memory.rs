@@ -3739,7 +3739,7 @@ impl DoltMemory {
                 "SELECT w.`key`, w.ordinal, w.value, w.fact_id, w.write_class, w.written_at,
                             {} FROM field_write w {} WHERE w.entity = ? ORDER BY w.ordinal",
                 write_origin::ORIGIN_COLUMNS,
-                write_origin::ORIGIN_JOINS,
+                write_origin::origin_joins(),
             )))
             .bind(&key)
             .fetch_all(&mut **tx)
@@ -3856,7 +3856,7 @@ impl DoltMemory {
              {}
              WHERE w.entity = ?",
             write_origin::ORIGIN_COLUMNS,
-            write_origin::ORIGIN_JOINS,
+            write_origin::origin_joins(),
         )))
         .bind(entity.as_str())
         .fetch_all(&mut **tx)
