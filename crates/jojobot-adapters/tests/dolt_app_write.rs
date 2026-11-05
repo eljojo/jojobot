@@ -86,6 +86,75 @@ fn event_for(attempt: &str) -> jojobot_domain::app::AppEvent {
     )
 }
 
+/// **An attempt sent again after a restart writes nothing and answers with its
+/// first receipt.** The second writer is built anew over the same store and holds
+/// nothing; the attempt is found in the log it replays, and the repeat comes back
+/// through the app seam with the first call's handle and address. The store holds
+/// one event, and a different attempt, sent through the same new writer, still
+/// lands (the control: the new writer is not simply refusing).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_attempt_sent_again_after_a_restart_writes_once() {
+    let scratch = Scratch::new("restart");
+    let mut server = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&server, "app_restart")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let thread = EntityId("thread:deploys-alpha".into());
+    let first_receipt = {
+        let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
+        memory
+            .add_entity(NewEntity::new(thread.clone(), "Deploys Alpha", "fixture"))
+            .await
+            .expect("add")
+            .written()
+            .expect("not blocked");
+        let (entity, fact) = memory
+            .record_app_event(event_for("restart-1"))
+            .await
+            .expect("answered")
+            .landed()
+            .expect("the first call lands");
+        (entity.id.to_string(), fact.address().to_string())
+    };
+
+    // A new writer is a new process: it holds nothing and replays the log.
+    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
+    let again = memory
+        .record_app_event(event_for("restart-1"))
+        .await
+        .expect("answered");
+    let AppOutcome::Repeat(receipt) = again else {
+        panic!("the attempt sent again must answer as a repeat: {again:?}");
+    };
+    assert_eq!((receipt.handle, receipt.address), first_receipt);
+    let events = memory
+        .list_entities(Some(EntityKind::EVENT))
+        .await
+        .expect("lists");
+    assert_eq!(events.len(), 1, "the repeat wrote no second event");
+
+    memory
+        .record_app_event(event_for("restart-2"))
+        .await
+        .expect("answered")
+        .landed()
+        .expect("a new attempt lands through the new writer");
+    assert_eq!(
+        memory
+            .list_entities(Some(EntityKind::EVENT))
+            .await
+            .expect("lists")
+            .len(),
+        2
+    );
+
+    server.stop().await;
+}
+
 /// **Calls racing on one attempt land one event**, and every call is answered
 /// with that event's receipt. Each call builds its own event with its own
 /// handle, so the only thing that can stop the second is the attempt's row.

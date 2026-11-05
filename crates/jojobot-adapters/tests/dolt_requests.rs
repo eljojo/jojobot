@@ -1984,3 +1984,203 @@ async fn a_restart_recognises_spent_ids_from_the_log_alone() {
 
     server.stop().await;
 }
+
+/// **A restart recognises the ids a memory write, a mail write and a session
+/// write each spent, from the log alone, and a resend of each stores nothing.**
+/// The first process writes through the three rails under three ids; the second
+/// builds every rail anew over the same store and holds nothing. Each id is found
+/// with its own digest, the session's id keeps its part, an id nobody used is
+/// unspent, and the resend of each write is refused with no new row, message or
+/// entry.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_restart_recognises_the_ids_of_a_memory_a_mail_and_a_session_write() {
+    use jojobot_adapters::dolt::sessions::DoltSessions;
+    use jojobot_domain::session::{NewEntry, NewSession, Sessions, Sid};
+
+    let dir = jojobot_adapters::testing::scratch_path("jojobot-requests-restart-rails");
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    let _scratch = Scratch(dir.clone());
+    let mut server = Dolt::start(&dir, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&server, "requests_restart_rails")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
+        .await
+        .expect("the kinds are seeded");
+    let rails = |pool: &sqlx::MySqlPool| {
+        let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
+        let mail = FoldedMailboxes::new(Arc::new(
+            DoltMailboxes::open(pool.clone(), Arc::new(AnyOwner)).with_writer(memory.writer()),
+        ))
+        .with_writer(memory.writer());
+        let sessions = FoldedSessions::new(
+            Arc::new(DoltSessions::open(pool.clone()).with_writer(memory.writer())),
+            jojobot_domain::session::history::WriteStamp::new(),
+            jojobot_domain::clock::Clock::Real,
+        )
+        .with_writer(memory.writer());
+        let ledger = DoltRequests::new(pool.clone()).with_writer(memory.writer());
+        (memory, mail, sessions, ledger)
+    };
+    let inbox = MailboxName("inbox".into());
+    let note = |body: &str| NewMessage {
+        mailbox: inbox.clone(),
+        body: body.to_string(),
+        subject: None,
+        sender: "omega".to_string(),
+        sent_at: Timestamp::now(),
+        in_reply_to: None,
+        sender_mail_waiting_at_send: None,
+        posted_by_session: None,
+        supersedes: None,
+    };
+    let now = Timestamp::now();
+    let run;
+    let milhouse;
+    {
+        let (memory, mail, sessions, ledger) = rails(&pool);
+        milhouse = thing(&memory, "person:milhouse", "Milhouse").await;
+        thing(&memory, "bot:sigma", "Sigma").await;
+        mail.create_mailbox(&inbox, &EntityId("bot:sigma".into()), None)
+            .await
+            .expect("a box")
+            .written()
+            .expect("not blocked");
+        run = sessions
+            .begin(NewSession {
+                bot: EntityId("bot:sigma".into()),
+                sid: Sid("rst1".into()),
+                focus: "working".into(),
+                started_at: now,
+                timezone: None,
+                started_on: None,
+                id: None,
+                key_hash: None,
+            })
+            .await
+            .expect("begin")
+            .id;
+
+        let (landed, spent) = spending(
+            "capture",
+            "r-memory",
+            memory.capture(claim_about(&milhouse, "wears glasses")),
+        )
+        .await;
+        landed.expect("the capture lands");
+        assert!(spent);
+        let (landed, spent) =
+            spending("post_message", "r-mail", mail.post_message(note("first"))).await;
+        landed.expect("the post lands");
+        assert!(spent);
+        let session_request = request_on("journal", "r-session");
+        let scope = Scope::new(session_request.clone());
+        within(
+            Arc::clone(&scope),
+            jojobot_domain::request::armed_part(
+                "entry",
+                None,
+                sessions.append(&run, NewEntry::manual("found the cause", now, None)),
+            ),
+        )
+        .await
+        .expect("the entry lands");
+        ledger
+            .finish(&session_request, "{\"ok\":true}")
+            .await
+            .expect("the verb finishes");
+    }
+    let receipts: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM request_receipt")
+        .fetch_one(&pool)
+        .await
+        .expect("readable");
+    let parts: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM request_part")
+        .fetch_one(&pool)
+        .await
+        .expect("readable");
+    assert_eq!(
+        (receipts, parts),
+        (0, 0),
+        "no write left a row in the old tables"
+    );
+
+    // A new process: every rail anew, nothing held, the log replayed.
+    let (memory, mail, sessions, ledger) = rails(&pool);
+    let bot = EntityId("bot:sigma".into());
+    for (verb, id) in [
+        ("capture", "r-memory"),
+        ("post_message", "r-mail"),
+        ("journal", "r-session"),
+    ] {
+        let expected = request_on(verb, id);
+        let held = ledger
+            .lookup(&bot, &expected.id)
+            .await
+            .expect("the ledger is readable")
+            .unwrap_or_else(|| panic!("{id} is spent after a restart"));
+        assert_eq!(held.digest, expected.digest, "{id}");
+        assert_eq!(held.verb, verb, "{id}");
+    }
+    assert!(
+        ledger
+            .lookup(&bot, &request_on("capture", "never-used").id)
+            .await
+            .expect("readable")
+            .is_none(),
+        "an id nobody used is unspent"
+    );
+    let parts = ledger
+        .parts(&bot, &request_on("journal", "r-session").id)
+        .await
+        .expect("readable");
+    assert_eq!(parts.len(), 1);
+    assert_eq!(parts[0].part, "entry");
+
+    // The resend of each write is refused and stores nothing.
+    let facts_before = memory.recall(&milhouse).await.expect("recall").len();
+    let (refused, spent) = spending(
+        "capture",
+        "r-memory",
+        memory.capture(claim_about(&milhouse, "wears a hat")),
+    )
+    .await;
+    assert!(refused.is_err() && !spent, "the memory resend is refused");
+    assert_eq!(
+        memory.recall(&milhouse).await.expect("recall").len(),
+        facts_before
+    );
+    let (refused, spent) =
+        spending("post_message", "r-mail", mail.post_message(note("second"))).await;
+    assert!(refused.is_err() && !spent, "the mail resend is refused");
+    let posted: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM message")
+        .fetch_one(&pool)
+        .await
+        .expect("readable");
+    assert_eq!(posted, 1, "the second post stored no message");
+    let again = Scope::new(request_on("journal", "r-session"));
+    let refused = within(
+        Arc::clone(&again),
+        jojobot_domain::request::armed_part(
+            "entry",
+            None,
+            sessions.append(&run, NewEntry::manual("found it twice", now, None)),
+        ),
+    )
+    .await;
+    assert!(refused.is_err(), "the session resend is refused");
+    assert_eq!(
+        sessions
+            .read_session(&run)
+            .await
+            .expect("readable")
+            .entries
+            .len(),
+        1,
+        "the second entry was rolled back"
+    );
+
+    server.stop().await;
+}
