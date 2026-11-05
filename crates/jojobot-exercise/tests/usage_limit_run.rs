@@ -438,3 +438,30 @@ async fn a_failed_read_after_a_limit_is_named_beside_the_limit() {
         "the verdict names the read: {rendered}"
     );
 }
+
+#[tokio::test]
+async fn a_boundary_read_after_a_limit_keeps_the_limit_and_the_failed_read() {
+    let (results, launched) = run_failing_at_judged_by(
+        2,
+        LIMIT_WORDS,
+        vec![Box::new(ReadsWhatTheRoomDoesNotServe {
+            ending: Some("Phase 2"),
+        })],
+    )
+    .await;
+    let incomplete = results.incomplete.as_ref().expect("the limit ends the run");
+    assert_eq!(incomplete.named, "usage limit");
+    assert_eq!(incomplete.reset.as_deref(), Some("3pm"));
+    assert!(incomplete.phase.starts_with("Phase 2"));
+    assert!(
+        incomplete
+            .failed_read
+            .as_deref()
+            .is_some_and(|failure| failure.contains("no_such_verb")),
+        "the failed boundary read is kept beside the limit: {:?}",
+        incomplete.failed_read,
+    );
+    assert_eq!(launched, 2, "the next sitting must not launch");
+    assert_eq!(results.transcript.len(), 2, "paid sittings are kept");
+    assert!(!results.held(), "an incomplete run must never hold");
+}
