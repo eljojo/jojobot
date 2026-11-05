@@ -7,6 +7,7 @@ use jiff::civil::date;
 use jojobot_domain::memory::{FactPatch, NewEntity, NewFact};
 
 mod current_handle;
+mod held_kinds;
 
 /// Legacy writes with no bot recover their run's writer exactly as the import does.
 #[tokio::test]

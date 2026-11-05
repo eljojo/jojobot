@@ -331,14 +331,16 @@ impl DoltMemory {
 
     /// **The same, for a caller that holds a transaction.** A cold set is read
     /// on that connection, never on a second one from the pool.
+    ///
+    /// **What the transaction reads is for this call and is never kept.** A
+    /// transaction sees the rows as they stood when it began, so one that began
+    /// before a kind was declared reads the kinds without it; published, that
+    /// view would stand for the store until the next kind write.
     async fn own_kinds_in(&self, tx: &mut Transaction<'_, MySql>) -> Result<KindSet, MemoryError> {
-        let generation = match self.kinds.get() {
-            Ok(held) => return Ok(held),
-            Err(generation) => generation,
-        };
-        let read = Self::kinds_in(tx).await?;
-        self.kinds.publish(generation, &read);
-        Ok(read)
+        match self.kinds.get() {
+            Ok(held) => Ok(held),
+            Err(_) => Self::kinds_in(tx).await,
+        }
     }
 
     /// **The kinds this store declares, read in the caller's transaction**, for a
