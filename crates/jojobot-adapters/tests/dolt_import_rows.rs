@@ -2,15 +2,20 @@
 //! cannot place as a finding.** A store written through the port in every shape
 //! the import names (a rename, a merge, an archive, a claim rewritten, a key that
 //! points at another thing, a declaration) is read once. Each table's row count
-//! must equal the store's, the rows must map through the import with no error, and
-//! the legacy shapes an older build left must read as they were stored.
+//! must equal the store's (counting shared entity writes once), the rows must map
+//! through the import with no error, and the legacy shapes an older build left
+//! must read as they were stored.
+
+use std::collections::BTreeSet;
 
 use jiff::civil::date;
 use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::testing::{Scratch, free_port, migrated_database};
+use jojobot_domain::log::ObjectId;
 use jojobot_domain::log::claims::FieldValue;
+use jojobot_domain::log::claims::State;
 use jojobot_domain::log::claims::import;
 use jojobot_domain::memory::WriteClass;
 use jojobot_domain::memory::types::{DeclaredType, Field, ValueType};
@@ -74,6 +79,171 @@ async fn stored(pool: &sqlx::MySqlPool, table: &str) -> i64 {
         .fetch_one(pool)
         .await
         .expect("a count")
+}
+
+#[tokio::test]
+async fn a_shared_stored_row_keeps_both_former_owners_histories() {
+    let scratch = Scratch::new("import-shared-write");
+    let mut server = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&server, "sharedwrite")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    let memory = DoltMemory::open(pool.clone());
+    jojobot_domain::memory::kinds::seed(&memory)
+        .await
+        .expect("the kinds are seeded");
+
+    // These rows predate snapshots. Later writes reuse their handles and append
+    // new ordinals; the old rows cannot identify which wearer wrote them.
+    for (handle, at) in [
+        ("person:bart", "2026-01-01T00:00:00Z"),
+        ("person:nelson", "2026-01-02T00:00:00Z"),
+        ("person:marge", "2026-01-03T00:00:00Z"),
+    ] {
+        sqlx::query("INSERT INTO entity_write (entity, ordinal, written_at) VALUES (?, 1, ?)")
+            .bind(handle)
+            .bind(at)
+            .execute(&pool)
+            .await
+            .expect("a legacy write");
+    }
+    for (from, old_name, to) in [
+        ("person:bart", "Bart", "person:homer"),
+        ("person:bart", "Bart", "person:lisa"),
+        ("person:nelson", "Nelson", "person:ralph"),
+    ] {
+        let before = thing(&memory, from, old_name).await;
+        let after = EntityId(to.into());
+        let rename = |token: Option<String>| {
+            let (memory, before, after) = (&memory, &before, &after);
+            async move {
+                memory
+                    .rename_entity(
+                        before,
+                        after,
+                        None,
+                        date(2026, 9, 4),
+                        Override::new(
+                            token.as_deref(),
+                            token.as_ref().map(|_| "a fixture of one family"),
+                        ),
+                        None,
+                    )
+                    .await
+                    .expect("the rename answers")
+            }
+        };
+        match rename(None).await {
+            Guarded::Blocked {
+                attempted,
+                candidates,
+            } => {
+                rename(Some(guard::override_token(&attempted, &candidates)))
+                    .await
+                    .written()
+                    .expect("the rename lands");
+            }
+            other => {
+                other.written().expect("the rename lands");
+            }
+        }
+    }
+    thing(&memory, "person:bart", "Bart").await;
+    thing(&memory, "person:marge", "Marge").await;
+
+    let read = memory.import_rows().await.expect("the reader reads");
+    let events = import::import(&read.rows).expect("the rows map to events");
+    let state = State::replay(&events);
+    for (handle, name, legacy, owns_legacy) in [
+        ("person:homer", "Bart", "2026-01-01T00:00:00Z", true),
+        ("person:lisa", "Bart", "2026-01-01T00:00:00Z", true),
+        ("person:bart", "Bart", "2026-01-01T00:00:00Z", false),
+        ("person:ralph", "Nelson", "2026-01-02T00:00:00Z", true),
+        ("person:marge", "Marge", "2026-01-03T00:00:00Z", true),
+    ] {
+        let legacy = legacy.parse::<jiff::Timestamp>().expect("a moment");
+        let history = memory
+            .entity_history(&EntityId(handle.into()))
+            .await
+            .expect("history");
+        assert_eq!(
+            history
+                .iter()
+                .any(|write| write.written_at == Some(legacy) && write.snapshot.is_none()),
+            owns_legacy,
+            "{handle}: the old history's ownership is pinned independently"
+        );
+        assert!(
+            history.iter().any(|write| write
+                .snapshot
+                .as_ref()
+                .is_some_and(|snapshot| snapshot.name == name)),
+            "{handle}: its stamped snapshot is also present"
+        );
+        let badge: String = sqlx::query_scalar("SELECT badge FROM entity WHERE id = ?")
+            .bind(handle)
+            .fetch_one(&pool)
+            .await
+            .expect("the current badge");
+        let expected: Vec<_> = history
+            .iter()
+            .map(|write| {
+                (
+                    write.written_at,
+                    write.session.clone(),
+                    write
+                        .snapshot
+                        .as_ref()
+                        .map(|snapshot| snapshot.name.clone()),
+                )
+            })
+            .collect();
+        let actual: Vec<_> = state
+            .observed_writes(&ObjectId(badge))
+            .iter()
+            .map(|write| {
+                (
+                    write.source_time,
+                    write.run.as_ref().map(|run| run.0.clone()),
+                    write
+                        .snapshot
+                        .as_ref()
+                        .map(|snapshot| snapshot.name.clone()),
+                )
+            })
+            .collect();
+        assert_eq!(
+            actual, expected,
+            "{handle}: import keeps every owned version"
+        );
+    }
+    assert_eq!(
+        read.findings
+            .iter()
+            .map(|finding| (finding.table, finding.row.as_str()))
+            .collect::<Vec<_>>(),
+        vec![("entity_write", "person:bart#1")]
+    );
+    let writes = &read.rows.entity_writes;
+    let physical: BTreeSet<_> = writes
+        .iter()
+        .map(|write| (&write.filed_under, write.ordinal))
+        .collect();
+    let attributed: BTreeSet<_> = writes
+        .iter()
+        .map(|write| (&write.thing, &write.filed_under, write.ordinal))
+        .collect();
+    assert_eq!(physical.len() as i64, stored(&pool, "entity_write").await);
+    assert_eq!(attributed.len(), writes.len(), "each owner gets a row once");
+    assert_eq!(
+        writes.len(),
+        physical.len() + 1,
+        "only the shared row fans out"
+    );
+    server.stop().await;
 }
 
 #[tokio::test]
@@ -211,6 +381,16 @@ async fn every_stored_row_is_read_and_the_legacy_shapes_read_as_stored() {
         read.findings
     );
     let rows = &read.rows;
+    let attributed: BTreeSet<_> = rows
+        .entity_writes
+        .iter()
+        .map(|row| (&row.thing, &row.filed_under, row.ordinal))
+        .collect();
+    assert_eq!(
+        attributed.len(),
+        rows.entity_writes.len(),
+        "each owner gets a row once"
+    );
 
     // ── every table's count equals the store's ─────────────────────────────
     let counts = [
@@ -223,7 +403,14 @@ async fn every_stored_row_is_read_and_the_legacy_shapes_read_as_stored() {
                 .sum(),
         ),
         ("entity_former_handle", rows.former_handles.len() as i64),
-        ("entity_write", rows.entity_writes.len() as i64),
+        (
+            "entity_write",
+            rows.entity_writes
+                .iter()
+                .map(|row| (&row.filed_under, row.ordinal))
+                .collect::<BTreeSet<_>>()
+                .len() as i64,
+        ),
         ("fact", rows.facts.len() as i64),
         (
             "fact_write",

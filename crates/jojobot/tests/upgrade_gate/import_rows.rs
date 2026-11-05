@@ -1,6 +1,7 @@
 //! The import reader keeps every row of the last deployed store.
 use super::*;
 use jojobot_domain::log::claims::import::{self, Rows};
+use std::collections::BTreeSet;
 
 /// The rows of the recording, read by the one import reader. What it could not
 /// place is printed, so a run shows it beside the verdict.
@@ -32,6 +33,16 @@ async fn the_last_deployed_claim_rows_import_without_losing_a_row() {
         .await
         .expect("the current schema reads the recording");
     let rows = read_import_rows(pool).await;
+    let attributed: BTreeSet<_> = rows
+        .entity_writes
+        .iter()
+        .map(|row| (&row.thing, &row.filed_under, row.ordinal))
+        .collect();
+    assert_eq!(
+        attributed.len(),
+        rows.entity_writes.len(),
+        "each owner gets a row once"
+    );
     let counts = [
         ("entity", "SELECT COUNT(*) FROM entity", rows.entities.len()),
         (
@@ -42,7 +53,11 @@ async fn the_last_deployed_claim_rows_import_without_losing_a_row() {
         (
             "entity_write",
             "SELECT COUNT(*) FROM entity_write",
-            rows.entity_writes.len(),
+            rows.entity_writes
+                .iter()
+                .map(|row| (&row.filed_under, row.ordinal))
+                .collect::<BTreeSet<_>>()
+                .len(),
         ),
         (
             "field_link",

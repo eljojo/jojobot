@@ -271,16 +271,32 @@ impl Written {
 }
 
 impl DoltMemory {
-    /// **Every `entity_write` row, filed to the thing it is a version of.** The row
-    /// names a badge, and that badge's thing owns it; a row from before the
-    /// snapshot names none, so the handle it was filed under decides: a thing that
-    /// left the handle owns it, else the thing that wears it. A handle several
-    /// things left, or one nobody holds, is a finding.
+    /// **Every `entity_write` row, attributed by the history's one owner.** A
+    /// shared old row stays in every history that reads it. Several owners, or
+    /// none, leave a finding; a finding never selects one history over another.
     async fn entity_write_rows(
         &self,
         tx: &mut Transaction<'_, MySql>,
         read: &mut Read,
     ) -> Result<Written, MemoryError> {
+        let mut owners: HashMap<(String, u64), Vec<ObjectId>> = HashMap::new();
+        for (handle, key) in &read.keys.by_id {
+            for row in entity_writes_of(
+                tx,
+                &EntityId(handle.clone()),
+                &EntityId(key.clone()),
+                "entity, ordinal",
+            )
+            .await?
+            {
+                let filed_under = text(&row, "entity")?;
+                let ordinal = row.try_get::<i64, _>("ordinal").map_err(store)? as u64;
+                owners
+                    .entry((filed_under, ordinal))
+                    .or_default()
+                    .push(ObjectId(key.clone()));
+            }
+        }
         let rows = sqlx::query(
             "SELECT entity, ordinal, written_at, aliases, archived_at, archived_reason, badge, \
              boot, crm, kind, merged_into, name, parent, prose, session, source \
@@ -297,76 +313,81 @@ impl DoltMemory {
             let filed_under = text(row, "entity")?;
             let ordinal = row.try_get::<i64, _>("ordinal").map_err(store)? as u64;
             let at = format!("{filed_under}#{ordinal}");
-            let owner = match maybe(row, "badge")? {
-                Some(badge) => read.key("entity_write", &at, "badge", &badge),
-                None => match read.keys.former.get(&filed_under).map(Vec::as_slice) {
-                    Some([only]) => ObjectId(only.clone()),
-                    Some(several) => {
-                        read.findings.push(Finding {
-                            table: "entity_write",
-                            row: at.clone(),
-                            what: format!(
-                                "handle {filed_under:?} was left by {} things; the row is filed under the first",
-                                several.len()
-                            ),
-                        });
-                        ObjectId(several[0].clone())
-                    }
-                    None => read.key("entity_write", &at, "entity", &filed_under),
-                },
-            };
-            let moment = parse_stamp(Some(text(row, "written_at")?), &filed_under);
-            let snapshot = match maybe(row, "name")? {
-                // A row an older build appended holds no name, and no other column.
-                None => None,
-                Some(name) => {
-                    let aliases: Vec<String> = match maybe(row, "aliases")? {
-                        None => Vec::new(),
-                        Some(raw) => serde_json::from_str(&raw).map_err(|e| {
-                            MemoryError::Store(format!("a stored alias set is not readable: {e}"))
-                        })?,
-                    };
-                    let parent = maybe(row, "parent")?
-                        .map(|stored| read.key("entity_write", &at, "parent", &stored));
-                    // The survivor is found by the merge, as entity_history finds it:
-                    // the version kept the handle the survivor wore at the fold.
-                    let merged_into = match maybe(row, "merged_into")? {
-                        None => None,
-                        Some(stored) => {
-                            match self.survivor_of(tx, &EntityId(owner.0.clone())).await? {
-                                Some(survivor) => Some(ObjectId(survivor.0)),
-                                None => Some(read.key("entity_write", &at, "merged_into", &stored)),
+            let mut owners = owners
+                .remove(&(filed_under.clone(), ordinal))
+                .unwrap_or_default();
+            if owners.len() != 1 {
+                read.findings.push(Finding {
+                    table: "entity_write",
+                    row: at.clone(),
+                    what: format!("{} entity histories own this row", owners.len()),
+                });
+            }
+            if owners.is_empty() {
+                // No history owns it: keep the stored spelling, not a guessed key.
+                owners.push(ObjectId(
+                    maybe(row, "badge")?.unwrap_or_else(|| filed_under.clone()),
+                ));
+            }
+            owners.sort();
+            for owner in owners {
+                let moment = parse_stamp(Some(text(row, "written_at")?), &filed_under);
+                let snapshot = match maybe(row, "name")? {
+                    // A row an older build appended holds no name, and no other column.
+                    None => None,
+                    Some(name) => {
+                        let aliases: Vec<String> = match maybe(row, "aliases")? {
+                            None => Vec::new(),
+                            Some(raw) => serde_json::from_str(&raw).map_err(|e| {
+                                MemoryError::Store(format!(
+                                    "a stored alias set is not readable: {e}"
+                                ))
+                            })?,
+                        };
+                        let parent = maybe(row, "parent")?
+                            .map(|stored| read.key("entity_write", &at, "parent", &stored));
+                        // The survivor is found by the merge, as entity_history finds it:
+                        // the version kept the handle the survivor wore at the fold.
+                        let merged_into = match maybe(row, "merged_into")? {
+                            None => None,
+                            Some(stored) => {
+                                match self.survivor_of(tx, &EntityId(owner.0.clone())).await? {
+                                    Some(survivor) => Some(ObjectId(survivor.0)),
+                                    None => {
+                                        Some(read.key("entity_write", &at, "merged_into", &stored))
+                                    }
+                                }
                             }
-                        }
-                    };
-                    Some(ObjectSnapshot {
-                        kind: maybe(row, "kind")?.unwrap_or_default(),
-                        name,
-                        source: maybe(row, "source")?.unwrap_or_default(),
-                        crm: maybe(row, "crm")?,
-                        parent,
-                        boot: maybe(row, "boot")?.unwrap_or_default(),
-                        archived_reason: maybe(row, "archived_reason")?,
-                        archived_at: maybe(row, "archived_at")?,
-                        merged_into,
-                        aliases,
-                        prose: maybe(row, "prose")?.unwrap_or_default(),
-                    })
-                }
-            };
-            written
-                .first
-                .entry(owner.0.clone())
-                .and_modify(|first| *first = (*first).min(moment))
-                .or_insert(moment);
-            written.rows.push(EntityWriteRow {
-                thing: owner,
-                filed_under,
-                ordinal,
-                written_at: moment,
-                session: maybe(row, "session")?,
-                snapshot,
-            });
+                        };
+                        Some(ObjectSnapshot {
+                            kind: maybe(row, "kind")?.unwrap_or_default(),
+                            name,
+                            source: maybe(row, "source")?.unwrap_or_default(),
+                            crm: maybe(row, "crm")?,
+                            parent,
+                            boot: maybe(row, "boot")?.unwrap_or_default(),
+                            archived_reason: maybe(row, "archived_reason")?,
+                            archived_at: maybe(row, "archived_at")?,
+                            merged_into,
+                            aliases,
+                            prose: maybe(row, "prose")?.unwrap_or_default(),
+                        })
+                    }
+                };
+                written
+                    .first
+                    .entry(owner.0.clone())
+                    .and_modify(|first| *first = (*first).min(moment))
+                    .or_insert(moment);
+                written.rows.push(EntityWriteRow {
+                    thing: owner,
+                    filed_under: filed_under.clone(),
+                    ordinal,
+                    written_at: moment,
+                    session: maybe(row, "session")?,
+                    snapshot,
+                });
+            }
         }
         Ok(written)
     }
