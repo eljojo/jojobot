@@ -263,19 +263,7 @@ pub struct DoltMemory {
     /// kind clears it, and the next admission reads it again. This process is
     /// the store's only writer, so a held set is never stale. Shared across a
     /// clone, like the pool.
-    kinds: std::sync::Arc<std::sync::RwLock<Option<KindSet>>>,
-}
-
-/// Clears a store's held kind set when a kind write ends, by any path.
-struct ForgetKinds<'a>(&'a std::sync::RwLock<Option<KindSet>>);
-
-impl Drop for ForgetKinds<'_> {
-    fn drop(&mut self) {
-        *self
-            .0
-            .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
-    }
+    kinds: std::sync::Arc<held_kinds::HeldKinds>,
 }
 
 /// **How an edit of a claim is committed by the caller that owns its
@@ -328,22 +316,28 @@ impl DoltMemory {
         }
     }
 
-    /// **The kinds this store declares**, from memory once the first admission
-    /// has read them.
+    /// **The kinds this store declares**, from memory once an admission has read
+    /// them. Not for a caller that holds a transaction: a cold read here asks
+    /// the pool for a second connection ([`own_kinds_in`](Self::own_kinds_in)).
     async fn own_kinds(&self) -> Result<KindSet, MemoryError> {
-        if let Some(held) = self
-            .kinds
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .as_ref()
-        {
-            return Ok(held.clone());
-        }
+        let generation = match self.kinds.get() {
+            Ok(held) => return Ok(held),
+            Err(generation) => generation,
+        };
         let read = KindSet::new(self.declared_kinds().await?);
-        *self
-            .kinds
-            .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(read.clone());
+        self.kinds.publish(generation, &read);
+        Ok(read)
+    }
+
+    /// **The same, for a caller that holds a transaction.** A cold set is read
+    /// on that connection, never on a second one from the pool.
+    async fn own_kinds_in(&self, tx: &mut Transaction<'_, MySql>) -> Result<KindSet, MemoryError> {
+        let generation = match self.kinds.get() {
+            Ok(held) => return Ok(held),
+            Err(generation) => generation,
+        };
+        let read = Self::kinds_in(tx).await?;
+        self.kinds.publish(generation, &read);
         Ok(read)
     }
 
@@ -1910,8 +1904,9 @@ impl DoltMemory {
         // **Wrong by kind alone, before either side's existence is even
         // asked.** A fold naming a session steps past the same three things
         // any other memory write onto its handle would.
-        validate_write_subject_in(&self.own_kinds().await?, folded)?;
-        validate_write_subject_in(&self.own_kinds().await?, survivor)?;
+        let kinds = self.own_kinds_in(tx).await?;
+        validate_write_subject_in(&kinds, folded)?;
+        validate_write_subject_in(&kinds, survivor)?;
         if folded == survivor {
             return Err(MemoryError::NothingToMerge {
                 attempted: folded.to_string(),
@@ -3250,7 +3245,7 @@ impl DoltMemory {
             });
         }
         for object in &fact.refs {
-            validate_write_subject_in(&self.own_kinds().await?, object)?;
+            validate_write_subject_in(&self.own_kinds_in(tx).await?, object)?;
             if let guard::Decision::Block(candidates) = guard::decide_named(
                 object,
                 self.resolve(tx, object).await?.as_ref().map(|(_, h)| h),
@@ -7602,7 +7597,7 @@ impl Memory for DoltMemory {
         fields: Vec<Field>,
     ) -> Result<bool, MemoryError> {
         validate_kind_declaration(token)?;
-        let _forget = ForgetKinds(&self.kinds);
+        let _forget = held_kinds::ForgetKinds(&self.kinds);
         // The keys are screened exactly as a schema's are — one declaration
         // shape, one validator, so a kind cannot name a key twice where a type
         // could not.
@@ -7839,7 +7834,7 @@ impl Memory for DoltMemory {
     }
 
     async fn reclaim_kind(&self, token: &str) -> Result<(), MemoryError> {
-        let _forget = ForgetKinds(&self.kinds);
+        let _forget = held_kinds::ForgetKinds(&self.kinds);
         // **One transaction**, for the reason declaring one is: a kind whose
         // row went and whose keys stayed would leave key rows describing a
         // kind nothing can be.
@@ -8511,6 +8506,7 @@ pub mod import_rows;
 #[cfg(test)]
 mod row_writer_tests;
 use boot_reads::trails_from;
+mod held_kinds;
 mod link_rule;
 mod numbered;
 mod repair;

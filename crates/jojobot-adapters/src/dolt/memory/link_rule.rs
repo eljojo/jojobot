@@ -84,7 +84,7 @@ impl DoltMemory {
         fields: &mut std::collections::BTreeMap<String, String>,
     ) -> Result<(), MemoryError> {
         let declared = Self::types_in(tx).await?;
-        let kinds = self.own_kinds().await?;
+        let kinds = self.own_kinds_in(tx).await?;
         for (key, value) in fields.clone() {
             // A key a type declares a reference also takes a bare id of an existing
             // thing, as a write has always read it; that is read here, once, and

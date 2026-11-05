@@ -595,6 +595,16 @@ impl Dolt {
     /// would let one case's rows satisfy another's assertions. Production uses
     /// [`pool`](Self::pool) and the one database.
     pub async fn database(&self, name: &str) -> Result<MySqlPool, StartError> {
+        self.database_with(name, 4).await
+    }
+
+    /// [`database`](Self::database) with a pool of this many connections, for a
+    /// case about what a caller does when it holds all of them.
+    pub async fn database_with(
+        &self,
+        name: &str,
+        max_connections: u32,
+    ) -> Result<MySqlPool, StartError> {
         sqlx::query(AssertSqlSafe(format!(
             "CREATE DATABASE IF NOT EXISTS `{name}`"
         )))
@@ -602,7 +612,7 @@ impl Dolt {
         .await
         .map_err(|e| StartError::Spawn(e.to_string()))?;
         MySqlPoolOptions::new()
-            .max_connections(4)
+            .max_connections(max_connections)
             .connect(&format!("{}/{name}", self.server))
             .await
             .map_err(|e| StartError::Spawn(e.to_string()))
