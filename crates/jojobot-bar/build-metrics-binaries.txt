@@ -89,6 +89,7 @@ test-dolt_restore_atomic
 test-dolt_search_after_a_merge
 test-dolt_search_after_a_write
 test-dolt_search_after_an_entity_write
+test-dolt_state_parity
 test-dolt_storage_check
 test-dolt_storage_check_rows
 test-dolt_store
