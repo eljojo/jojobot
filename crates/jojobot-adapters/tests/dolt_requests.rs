@@ -1213,6 +1213,11 @@ async fn a_claim_that_fails_before_it_inserts_leaves_the_request_for_the_next_co
         .execute(&pool)
         .await
         .expect("the table comes back");
+    assert_eq!(rows(&pool).await, 0, "the refused write left no event");
+    assert!(
+        memory.recall(&milhouse).await.expect("recall").is_empty(),
+        "and no claim"
+    );
     // The same call, committing again: it can take the request, and spends it.
     within(
         Arc::clone(&scope),
@@ -1923,6 +1928,59 @@ async fn the_entry_of_a_beat_and_the_focus_it_moves_are_two_parts_in_the_real_st
     );
     let read = sessions.read_session(&run).await.expect("readable");
     assert_eq!(read.entries.len(), 1, "the repeated entry was rolled back");
+
+    server.stop().await;
+}
+
+/// **A restart recognises the ids spent by mail, memory and session writes from
+/// the log alone.** The second writer replays the log; the old tables hold no
+/// row of these writes, and the repeat of each is found.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_restart_recognises_spent_ids_from_the_log_alone() {
+    let dir = jojobot_adapters::testing::scratch_path("jojobot-requests-restart");
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    let _scratch = Scratch(dir.clone());
+    let mut server = Dolt::start(&dir, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&server, "requests_restart")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
+        .await
+        .expect("the kinds are seeded");
+    let first = request("bot:sigma", "r1");
+    {
+        let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
+        let milhouse = thing(&memory, "person:milhouse", "Milhouse").await;
+        thing(&memory, "bot:sigma", "Sigma").await;
+        assert_eq!(
+            captured(
+                &memory,
+                first.clone(),
+                claim_about(&milhouse, "wears glasses")
+            )
+            .await,
+            (true, true)
+        );
+    }
+    let legacy: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM request_receipt")
+        .fetch_one(&pool)
+        .await
+        .expect("readable");
+    assert_eq!(legacy, 0, "the write left no row in the old table");
+
+    // A new writer is a new process: it holds nothing and replays the log.
+    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
+    let ledger = DoltRequests::new(pool.clone()).with_writer(memory.writer());
+    let held = ledger
+        .lookup(&first.bot, &first.id)
+        .await
+        .expect("the ledger is readable")
+        .expect("the id is spent after a restart");
+    assert_eq!(held.digest, first.digest);
+    assert!(held.landed.contains("person:milhouse#"), "{}", held.landed);
 
     server.stop().await;
 }
