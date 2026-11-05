@@ -19798,6 +19798,7 @@ macro_rules! all_cases {
         $m!(thought_writers_are_the_bots_whose_claims_point_at_the_thread($store));
         $m!(a_bot_renamed_twice_still_reads_its_own_thought_as_its_own($store));
         $m!(a_bot_folded_into_another_reads_as_the_survivor_in_a_claims_history($store));
+        $m!(a_nested_merge_keeps_a_foreign_thoughts_author_when_the_cap_is_judged($store));
         $m!(a_dropped_thought_is_archived_by_the_session_that_captured($store));
         $m!(a_record_filed_by_a_folded_bot_makes_its_survivor_a_writer($store));
         $m!(a_run_with_no_session_row_that_filled_a_thread_is_a_writer_of_it($store));

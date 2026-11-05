@@ -3279,6 +3279,31 @@ async fn a_dropped_thought_is_archived_by_the_capturing_session_in_the_real_stor
     store.stop().await;
 }
 
+/// **A foreign thought keeps its author through a chain of merges**, on the
+/// real store: the claim sits under the key it was made under while it is served
+/// under another, and the survivor's cap is judged against who wrote it.
+#[tokio::test]
+async fn a_nested_merge_keeps_a_foreign_thoughts_author_in_the_real_store() {
+    let scratch = Scratch::new("nested-merge-author");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "nested_merge_author")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    let memory = DoltMemory::open(pool.clone());
+    jojobot_domain::memory::kinds::seed(&memory)
+        .await
+        .expect("the kinds are seeded");
+
+    jojobot_domain::memory::testing::contract::a_nested_merge_keeps_a_foreign_thoughts_author_when_the_cap_is_judged(
+        &memory,
+    )
+    .await;
+    store.stop().await;
+}
+
 /// **A bot folded into another reads as the survivor in a claim's history**,
 /// on the real store: the write holds the folded bot's id, and the reader
 /// follows the fold to the survivor.

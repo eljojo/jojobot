@@ -252,3 +252,97 @@ pub async fn a_bot_folded_into_another_reads_as_the_survivor_in_a_claims_history
         "another bot's write is untouched"
     );
 }
+
+/// **A thought another bot wrote stays another's through a chain of merges, so
+/// the survivor's body cap is judged only against what the survivor wrote.**
+/// A thought arrives on the survivor by a direct merge and by a merge of a thing
+/// that had it merged in earlier; both are ordinary claims there, and the cap does
+/// not apply. Paired with a thought the survivor itself wrote, which the same
+/// cap still refuses, so a store that exempted every thought would not pass.
+pub async fn a_nested_merge_keeps_a_foreign_thoughts_author_when_the_cap_is_judged<M: Memory>(
+    store: &M,
+) {
+    let author = EntityId("bot:contract-nested-author".into());
+    let middle = EntityId("bot:contract-nested-middle".into());
+    let direct = EntityId("bot:contract-nested-direct".into());
+    let survivor = EntityId("bot:contract-nested-survivor".into());
+    let object = EntityId("thing:contract-nested-object".into());
+    let own = EntityId("thing:contract-nested-own".into());
+    for id in [&author, &middle, &direct, &survivor, &object, &own] {
+        ensure(store, id).await;
+    }
+    capture(
+        store,
+        state(NewFact {
+            fields: [(THOUGHT_BODY_CAP.to_string(), "5".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(survivor.clone(), "cap is five", date(2026, 10, 10))
+        }),
+    )
+    .await;
+    let thought = |home: &EntityId, writer: &EntityId| NewFact {
+        edge: Some(Edge::new(EdgeShape::Connection, object.clone())),
+        written_by_bot: Some(writer.clone()),
+        ..NewFact::about(home.clone(), "abcdefgh", date(2026, 10, 10))
+    };
+    capture(store, thought(&author, &author)).await;
+    capture(store, thought(&direct, &direct)).await;
+    capture(store, thought(&own, &survivor)).await;
+
+    // The pair: a foreign thought of eight characters lands directly, and lands
+    // after it was merged into a second thing first.
+    store
+        .merge(
+            &direct,
+            &survivor,
+            None,
+            date(2026, 10, 11),
+            &other_caller(),
+            None,
+        )
+        .await
+        .expect("a foreign thought is ordinary on the survivor, whatever its length");
+    store
+        .merge(
+            &author,
+            &middle,
+            None,
+            date(2026, 10, 12),
+            &other_caller(),
+            None,
+        )
+        .await
+        .expect("the first merge lands");
+    store
+        .merge(
+            &middle,
+            &survivor,
+            None,
+            date(2026, 10, 13),
+            &other_caller(),
+            None,
+        )
+        .await
+        .expect("a foreign thought merged in earlier is still ordinary on the survivor");
+
+    // The control: a thought the survivor wrote itself is still judged by the cap.
+    let refused = store
+        .merge(
+            &own,
+            &survivor,
+            None,
+            date(2026, 10, 14),
+            &other_caller(),
+            None,
+        )
+        .await
+        .expect_err("a thought the survivor wrote is held to its cap");
+    assert!(
+        matches!(
+            refused,
+            MemoryError::MergeThoughtTooLong { len: 8, cap: 5, .. }
+        ),
+        "expected MergeThoughtTooLong, got {refused:?}"
+    );
+}

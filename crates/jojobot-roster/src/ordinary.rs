@@ -1553,6 +1553,12 @@ pub const ORDINARY: &[&str] = &[
     "decision:contract-span-",
     "work:shift-1",
     "work:shift-2",
+    "bot:contract-nested-author",
+    "bot:contract-nested-direct",
+    "bot:contract-nested-middle",
+    "bot:contract-nested-survivor",
+    "thing:contract-nested-object",
+    "thing:contract-nested-own",
 ];
 
 pub const ORDINANCES: &[&str] = &[

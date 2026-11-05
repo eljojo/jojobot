@@ -78,3 +78,14 @@ async fn a_capture_returns_whose_claim_it_wrote() {
     )
     .await;
 }
+
+/// **A foreign thought keeps its author through a chain of merges**, in the
+/// fake, through the contract case the real store runs too.
+#[tokio::test]
+async fn a_nested_merge_keeps_a_foreign_thoughts_author() {
+    let store = crate::memory::testing::InMemoryMemory::booted();
+    crate::memory::testing::contract::a_nested_merge_keeps_a_foreign_thoughts_author_when_the_cap_is_judged(
+        &store,
+    )
+    .await;
+}

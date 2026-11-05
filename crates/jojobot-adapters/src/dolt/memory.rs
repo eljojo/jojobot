@@ -5164,9 +5164,17 @@ impl jojobot_domain::memory::merge::MergeReads for DoltFoldReads<'_, '_> {
         // the duplicate.
         for claim in &mut claims {
             if jojobot_domain::memory::authorship::is_connection(claim.edge.as_ref()) {
+                // **Asked where the claim is stored**: one an earlier merge brought
+                // here is served at an id the duplicate's key holds no writes under.
+                let served = FactAddress::new(self.folded_key.clone(), claim.id.clone());
+                let at = self
+                    .store
+                    .stored_address_of(self.tx, &served)
+                    .await?
+                    .unwrap_or(served);
                 claim.written_by_another = self
                     .store
-                    .another_bots_claim(self.tx, self.folded_key, &claim.id, self.survivor_key)
+                    .another_bots_claim(self.tx, &at.home, &at.local, self.survivor_key)
                     .await?;
             }
         }
