@@ -590,13 +590,16 @@ async fn boots_on_a_restored_store(fixture_dir: &str, restored: Restored) {
     // boot, and no read of the store would say so. The store is stopped and
     // dumped after each boot, before anything reads it, because a read through
     // the surface is itself attributed.
-    let planted = plant_the_old_ledger(&state_dir, store_port, &git_ref).await;
+    let old_ledger = read_the_old_ledger(&state_dir, store_port, &git_ref).await;
     let first = boot_current(&state_dir, store_port, &git_ref).await;
     first.stop().await;
     assert_the_ledger_ends_whole(&state_dir, &git_ref).await;
     assert_the_teaching_marks_equal_the_rows(&state_dir, store_port, &git_ref).await;
     assert_the_import_answers_what_the_old_tables_answered(
-        &state_dir, store_port, &git_ref, &planted,
+        &state_dir,
+        store_port,
+        &git_ref,
+        &old_ledger,
     )
     .await;
     let after_first = dump_store(&state_dir).await;
@@ -1567,142 +1570,124 @@ async fn imported_ledger_lines(pool: &sqlx::MySqlPool) -> std::collections::BTre
         .collect()
 }
 
-/// **What the gate put in the old ledger tables, so the comparison after the
-/// import cannot pass over nothing.** The recording may hold no retained key, and
-/// an equality between two empty sets proves nothing: the gate writes one row of
-/// each table, as the build that wrote the tables did, before the first boot.
-struct PlantedLedger {
-    bot: jojobot_domain::memory::EntityId,
-    receipt: (String, String, String),
-    part: (String, String, String, String),
-    before: std::collections::BTreeSet<String>,
+/// **What the old ledger tables held for the recorded store, read before the
+/// first boot.** The gate's restore opens the log once, and that open imports the
+/// old tables into it (once: a log that holds a ledger event is never imported
+/// into again), so the rows the recording holds are the rows the log is compared
+/// with. A row written to the old tables after that open is never read, so the
+/// gate plants none.
+struct OldLedger {
+    lines: std::collections::BTreeSet<String>,
+    /// Each receipt as the old lookup knew it: its bot's badge, its id and the
+    /// moment it was written.
+    receipts: Vec<(String, String, jiff::Timestamp)>,
 }
 
-async fn plant_the_old_ledger(
+async fn read_the_old_ledger(
     state_dir: &std::path::Path,
     store_port: u16,
     git_ref: &str,
-) -> PlantedLedger {
+) -> OldLedger {
     use sqlx::Row;
     let mut store = open_the_store(state_dir, store_port).await;
     let pool = store.pool().clone();
-    let bot = sqlx::query(
-        "SELECT id, badge FROM entity WHERE kind = 'bot' AND badge IS NOT NULL ORDER BY id LIMIT 1",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap_or_else(|e| panic!("the store recorded at {git_ref} holds a bot with a badge: {e}"));
-    let (handle, badge): (String, String) = (bot.get("id"), bot.get("badge"));
-    let now = jiff::Timestamp::now().to_string();
-    sqlx::query(
-        "INSERT INTO request_receipt (bot_key, request_id, verb, args_digest, landed, written_at) \
-         VALUES (?, 'gate-receipt', 'capture', 'digest-gate-receipt', '{\"gate\":\"receipt\"}', ?)",
-    )
-    .bind(&badge)
-    .bind(&now)
-    .execute(&pool)
-    .await
-    .expect("a planted receipt");
-    sqlx::query(
-        "INSERT INTO request_part (bot_key, request_id, part, verb, args_digest, landed, written_at) \
-         VALUES (?, 'gate-parts', 'entry', 'journal', 'digest-gate-part', '{\"gate\":\"part\"}', ?)",
-    )
-    .bind(&badge)
-    .bind(&now)
-    .execute(&pool)
-    .await
-    .expect("a planted part");
-    // **The planted part's request is finished**, so the storage check does not call
-    // it a half-done write: a request that wrote parts and has no receipt is
-    // damage by that check's own rule, and the boot says so.
-    sqlx::query(
-        "INSERT INTO request_receipt (bot_key, request_id, verb, args_digest, landed, written_at) \
-         VALUES (?, 'gate-parts', 'journal', 'digest-gate-part', '{\"gate\":\"finished\"}', ?)",
-    )
-    .bind(&badge)
-    .bind(&now)
-    .execute(&pool)
-    .await
-    .expect("a planted receipt for the parts");
-    sqlx::query(
-        "INSERT INTO app_write (app_id, event_key, digest, landed, written_at) \
-         VALUES ('gate-app', 'attempt-1', 'digest-gate-app', '{\"gate\":\"app\"}', ?)",
-    )
-    .bind(&now)
-    .execute(&pool)
-    .await
-    .expect("a planted app attempt");
-    let before = old_ledger_lines(&pool).await;
+    let lines = old_ledger_lines(&pool).await;
+    let receipts: Vec<(String, String, jiff::Timestamp)> =
+        sqlx::query("SELECT bot_key, request_id, written_at FROM request_receipt")
+            .fetch_all(&pool)
+            .await
+            .expect("the receipts read")
+            .into_iter()
+            .map(|row| {
+                (
+                    row.get::<String, _>("bot_key"),
+                    row.get::<String, _>("request_id"),
+                    row.get::<String, _>("written_at")
+                        .parse()
+                        .expect("a receipt time parses"),
+                )
+            })
+            .collect();
+    // **Not empty, so the equality after the boot can fail.** The recording holds
+    // retained receipts and parts of its own.
+    assert!(
+        lines.iter().any(|line| line.starts_with("receipt|"))
+            && lines.iter().any(|line| line.starts_with("part|")),
+        "the store recorded at {git_ref} holds no retained receipt and part in its old ledger tables: {lines:?}"
+    );
     store.stop().await;
-    PlantedLedger {
-        bot: jojobot_domain::memory::EntityId(handle),
-        receipt: (
-            "gate-receipt".into(),
-            "digest-gate-receipt".into(),
-            "{\"gate\":\"receipt\"}".into(),
-        ),
-        part: (
-            "gate-parts".into(),
-            "entry".into(),
-            "digest-gate-part".into(),
-            "{\"gate\":\"part\"}".into(),
-        ),
-        before,
-    }
+    OldLedger { lines, receipts }
 }
 
 /// **The import answers what the old tables answered, and leaves them as they
-/// were.** Every row the old tables held, the recording's own and the planted
-/// ones, is an imported ledger event after the first boot, line for line; the
-/// ledger the writer opens over the log answers the planted receipt and part with
-/// the digest and the landed text the old row held; and the old tables hold the
-/// same rows they held before the boot.
+/// were.** Every row the old tables held is an imported ledger event after the
+/// first boot, line for line; the old tables hold the same rows they held before
+/// the boot; and the ledger the writer opens over the log answers each receipt as
+/// the old lookup did: found while the row is inside the keep window, not found
+/// once it is outside it.
 async fn assert_the_import_answers_what_the_old_tables_answered(
     state_dir: &std::path::Path,
     store_port: u16,
     git_ref: &str,
-    planted: &PlantedLedger,
+    old: &OldLedger,
 ) {
     use jojobot_adapters::dolt::memory::DoltMemory;
     use jojobot_adapters::dolt::requests::DoltRequests;
     use jojobot_adapters::fold::Folded;
-    use jojobot_domain::request::{RequestId, Requests};
+    use jojobot_domain::request::{KEPT_FOR, RequestId, Requests};
+    use sqlx::Row;
     let mut store = open_the_store(state_dir, store_port).await;
     let pool = store.pool().clone();
-    assert!(
-        planted.before.len() >= 3,
-        "the old tables hold a retained key of each kind before the boot of {git_ref}: {:?}",
-        planted.before
-    );
     assert_eq!(
         old_ledger_lines(&pool).await,
-        planted.before,
+        old.lines,
         "the first boot over the store recorded at {git_ref} changed a row of the old ledger tables"
     );
     assert_eq!(
         imported_ledger_lines(&pool).await,
-        planted.before,
+        old.lines,
         "the ledger events the first boot imported differ from the rows of the old tables recorded at {git_ref}"
     );
     let memory = Folded::new(std::sync::Arc::new(DoltMemory::open(pool.clone())));
     let ledger = DoltRequests::new(pool.clone()).with_writer(memory.writer());
-    let (id, digest, landed) = &planted.receipt;
-    let held = ledger
-        .lookup(&planted.bot, &RequestId::parse(id).expect("a good id"))
-        .await
-        .expect("the ledger reads")
-        .unwrap_or_else(|| panic!("the planted receipt {id} is spent in the log of {git_ref}"));
-    assert_eq!((&held.digest, &held.landed), (digest, landed));
-    let (id, part, digest, landed) = &planted.part;
-    let held = ledger
-        .parts(&planted.bot, &RequestId::parse(id).expect("a good id"))
-        .await
-        .expect("the ledger reads");
-    assert_eq!(held.len(), 1, "the planted part of {id}: {held:?}");
-    assert_eq!(
-        (&held[0].part, &held[0].digest, &held[0].recorded.landed),
-        (part, digest, landed)
-    );
+    let now = jiff::Timestamp::now();
+    let margin = jiff::SignedDuration::from_secs(120);
+    for (badge, id, written_at) in &old.receipts {
+        let age_left = KEPT_FOR - now.duration_since(*written_at);
+        // A row within two minutes of the edge of the window is not asked: the
+        // two answers may fall either side of it.
+        if age_left.abs() < margin {
+            continue;
+        }
+        let handle: String = sqlx::query("SELECT id FROM entity WHERE badge = ?")
+            .bind(badge)
+            .fetch_one(&pool)
+            .await
+            .unwrap_or_else(|e| panic!("the bot {badge} of receipt {id} is held at {git_ref}: {e}"))
+            .get("id");
+        let answer = ledger
+            .lookup(
+                &jojobot_domain::memory::EntityId(handle),
+                &RequestId::parse(id).expect("a good id"),
+            )
+            .await
+            .expect("the ledger reads");
+        assert_eq!(
+            answer.is_some(),
+            age_left.is_positive(),
+            "receipt {id} of {badge} written at {written_at}: the old lookup answered {} for a row {} the window, the imported ledger answered {answer:?}",
+            if age_left.is_positive() {
+                "found"
+            } else {
+                "not found"
+            },
+            if age_left.is_positive() {
+                "inside"
+            } else {
+                "outside"
+            },
+        );
+    }
     store.stop().await;
 }
 
