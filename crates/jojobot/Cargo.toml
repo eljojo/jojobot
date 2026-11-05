@@ -66,6 +66,15 @@ required-features = ["room-harness"]
 name = "ui"
 path = "tests/ui/main.rs"
 
+# **The boot measures need the store the last deployed tag recorded**
+# (`UPGRADE_FIXTURE_DIR`), which the report and check lanes restore for the upgrade
+# gate and the dev lane and the flake's sandbox do not have. The feature keeps the
+# file out of both; it asks for the harness feature only because the lanes that
+# have the store already pass it.
+[[test]]
+name = "boot_measures"
+required-features = ["room-harness"]
+
 [dev-dependencies]
 jojobot-mcp = { workspace = true, features = ["testing"] }
 tower = { version = "0.5", features = ["util"] }
