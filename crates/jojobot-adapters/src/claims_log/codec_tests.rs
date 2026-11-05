@@ -290,3 +290,62 @@ fn a_kind_that_does_not_match_its_payload_is_unreadable() {
         Err(DecodeError::Unreadable(_))
     ));
 }
+
+/// **The stored spelling is pinned.** Nothing outside this process declares the
+/// kind names or the payload keys, and a record already in the log cannot fail a
+/// test, so a renamed constant would move both sides of a round trip together and
+/// leave every stored event unreadable. These literals are the spelling.
+#[test]
+fn the_stored_spelling_is_pinned() {
+    let names: Vec<String> = every_kind()
+        .into_iter()
+        .map(|payload| {
+            let stored = encode(&enveloped(payload));
+            let value: serde_json::Value = serde_json::from_slice(&stored).expect("json");
+            value["event_kind"].as_str().expect("a kind").to_string()
+        })
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "ClaimsObjectCreated",
+            "ClaimsObjectRevised",
+            "ClaimsObjectBaselined",
+            "ClaimsObjectWriteObserved",
+            "ClaimsObjectWriteObserved",
+            "ClaimsAddressBound",
+            "ClaimsAddressRetired",
+            "ClaimsObjectsMerged",
+            "ClaimsObjectRedirected",
+            "ClaimsRecordCreated",
+            "ClaimsRecordRevised",
+            "ClaimsFieldWritten",
+            "ClaimsFieldWritten",
+            "ClaimsTypeDeclared",
+        ]
+    );
+    let written = encode(&enveloped(ClaimEvent::FieldWritten {
+        record: record("r1"),
+        subject: object("k1"),
+        key: KeyId("visits".into()),
+        ordinal: 2,
+        class: WriteClass::Sets,
+        write: FieldValue::Set("3".into()),
+        targets: vec![object("k3")],
+    }));
+    let value: serde_json::Value = serde_json::from_slice(&written).expect("json");
+    assert_eq!(
+        value["payload"],
+        serde_json::json!({
+            "shape": "FieldWritten",
+            "record": "r1",
+            "subject": "k1",
+            "key": "visits",
+            "ordinal": 2,
+            "class": "sets",
+            "write": "3",
+            "targets": ["k3"],
+        })
+    );
+    assert_eq!(value["meaning_version"], 1);
+}
