@@ -178,6 +178,10 @@ struct PausedTail {
 
 #[async_trait::async_trait]
 impl LogStore for PausedTail {
+    async fn validity(&self) -> Result<jojobot_domain::log::Validity, LogError> {
+        self.log.validity().await
+    }
+
     async fn append(&self, head: Position, batch: &SealedBatch) -> Result<Append, LogError> {
         self.log.append(head, batch).await
     }
