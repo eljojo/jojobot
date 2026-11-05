@@ -34,6 +34,9 @@ struct Plan {
     fault: Mutex<Option<Fault>>,
     /// Present while a COMMIT is held back by the proxy.
     delayed: Mutex<Option<mpsc::UnboundedSender<Delayed>>>,
+    /// How many `KILL CONNECTION` statements reached the proxy: only a recovery
+    /// that fences an old connection sends one.
+    kills: std::sync::atomic::AtomicUsize,
     acknowledged: Notify,
     released: Notify,
 }
@@ -102,6 +105,9 @@ async fn serve(
                     .await?;
                 continue;
             }
+        }
+        if command == 0x16 && text.starts_with("KILL CONNECTION") {
+            plan.kills.fetch_add(1, Ordering::SeqCst);
         }
         if command == 0x16
             && text.starts_with("KILL CONNECTION")
@@ -294,3 +300,117 @@ case!(
     restart_excludes_a_late_predecessor,
     cancelling_an_acknowledgement_does_not_cancel_the_commit,
 );
+
+fn committed(id: &str) -> jojobot_domain::request::events::LedgerEvent {
+    use jojobot_domain::log::{ObjectId, RequestId};
+    use jojobot_domain::request::events::{Commit, LedgerEvent, Request, RequestKey};
+    let at = jiff::Timestamp::from_second(1_700_000_000).unwrap();
+    LedgerEvent::RequestCommitted(Commit {
+        request: Request {
+            key: RequestKey {
+                actor: ObjectId("bot:homer".into()),
+                id: RequestId(id.into()),
+                generation: 1,
+            },
+            verb: "capture".into(),
+            digest: "digest-alpha".into(),
+        },
+        landed: "{}".into(),
+        receipt: None,
+        written_at: at,
+        expires_at: at + std::time::Duration::from_secs(60),
+    })
+}
+
+/// **A standalone ledger commit whose answer is lost closes the old connection
+/// before anything reads the tail.** The writer's recovery fences the connection
+/// with a `KILL CONNECTION`; only a commit the writer classifies as uncertain
+/// sends one. An acknowledged standalone commit sends none, so the control shows
+/// the count moves for this cause alone.
+#[tokio::test]
+async fn a_lost_standalone_ledger_commit_fences_the_old_connection() {
+    let scratch = Scratch::new("writer-log-faults");
+    let mut server = Dolt::start(&scratch.0, free_port()).await.unwrap();
+    let store = migrated_database(&server, "alpha").await.unwrap();
+    let plan = Arc::new(Plan::default());
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let upstream = store.connect_options().get_port();
+    let proxy = tokio::spawn({
+        let plan = plan.clone();
+        async move {
+            while let Ok((client, _)) = listener.accept().await {
+                tokio::spawn(serve(client, upstream, plan.clone()));
+            }
+        }
+    });
+    let pool = crate::writer::sql::Pool::from(
+        MySqlPoolOptions::new().connect_lazy_with((*store.connect_options()).clone().port(port)),
+    );
+    let writer = Writer::default();
+    let seam = {
+        let (opener, pool) = (writer.clone(), pool.clone());
+        writer
+            .run(async move { opener.ensure_seam(&pool).await })
+            .await
+            .expect("the ledger opens")
+    };
+    let at = jiff::Timestamp::now();
+
+    // Control: an acknowledged commit fences nothing.
+    {
+        let (seam, pool) = (seam.clone(), pool.clone());
+        writer
+            .run(async move {
+                seam.append_event_batch(&pool, vec![committed("alpha")], at)
+                    .await
+            })
+            .await
+            .expect("an acknowledged commit lands");
+    }
+    assert_eq!(plan.kills.load(Ordering::SeqCst), 0);
+
+    // The COMMIT of the next one is held back and the connection is lost.
+    *plan.fault.lock().unwrap() = Some(Fault::DelayedCommit);
+    let lost = tokio::spawn({
+        let (seam, pool, writer) = (seam.clone(), pool.clone(), writer.clone());
+        async move {
+            writer
+                .run(async move {
+                    seam.append_event_batch(&pool, vec![committed("beta")], at)
+                        .await
+                })
+                .await
+        }
+    });
+    let fenced = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        while plan.kills.load(Ordering::SeqCst) == 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await;
+    // Release the held COMMIT whatever the verdict, so nothing waits on it.
+    let commands = plan.delayed.lock().unwrap().clone();
+    if let Some(commands) = commands {
+        let (done, finished) = oneshot::channel();
+        if commands.send(Delayed::Abort(done)).is_ok() {
+            let _ = finished.await;
+        }
+    }
+    let answer = tokio::time::timeout(std::time::Duration::from_secs(30), lost)
+        .await
+        .expect("the job ends")
+        .expect("the task ends");
+    assert!(
+        matches!(answer, Err(crate::ledger_log::LedgerError::Indeterminate)),
+        "{answer:?}"
+    );
+    assert!(
+        fenced.is_ok(),
+        "the lost commit sent no KILL CONNECTION: the old connection was never fenced"
+    );
+    proxy.abort();
+    server.stop().await;
+}

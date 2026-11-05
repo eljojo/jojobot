@@ -224,9 +224,13 @@ impl Seam {
                 pending.committed();
                 Ok(())
             }
-            Err(_) => {
+            Err(error) => {
                 pending.unknown();
-                Err(LedgerError::Indeterminate)
+                // **The error goes through the writer's own classification**, which
+                // marks the native connection uncertain: the job then closes it at a
+                // terminal boundary before any read of the tail, as for every other
+                // commit of this writer.
+                Err(sql::store_error::<LedgerError>(error))
             }
         }
     }

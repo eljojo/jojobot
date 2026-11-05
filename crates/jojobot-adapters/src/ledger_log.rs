@@ -53,6 +53,18 @@ pub enum LedgerError {
     Conflict,
 }
 
+impl crate::writer::recovery::StoreError for LedgerError {
+    fn store(why: String) -> Self {
+        Self::Store(why)
+    }
+    fn indeterminate() -> Self {
+        Self::Indeterminate
+    }
+    fn unknown(&self) -> bool {
+        matches!(self, Self::Store(_) | Self::Indeterminate)
+    }
+}
+
 pub(crate) fn refused(error: LogError) -> LedgerError {
     match error {
         LogError::Indeterminate => LedgerError::Indeterminate,
