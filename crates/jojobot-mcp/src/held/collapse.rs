@@ -11,10 +11,11 @@
 //! beside its `held_changed` notice. **An entity collapses only when everything it
 //! carries is held unchanged too**, so a claim the session never saw is never
 //! hidden behind a handle it did. **A version says the thing has not moved, not
-//! that the session received this text of it**: prose, details, a field, a history
-//! window or a nested part the session never asked for make different text, so a
-//! thing collapses only when the exact text of its object now is text the session
-//! was served at this version ([`Shape`], a fingerprint of that text). Messages
+//! that the session received every part of it**: prose, details, facts, a history
+//! window the session never asked for are parts it was not handed, so a thing
+//! collapses only when every part its object now carries was served at this
+//! version ([`Shape`], the set of those parts). The rendering is never compared:
+//! a search hit carries the bare parts, so it collapses after any recall. Messages
 //! are not collapsed: the mailbox already says by the store which messages were
 //! delivered.
 
@@ -55,15 +56,60 @@ fn thing_of(fields: &Map<String, Value>) -> Option<(Held, &'static str, &str)> {
     }
 }
 
-/// **The text of one served object, fingerprinted.** The object as the answer
-/// carries it, nested things and all, so any difference in what the session would
-/// read is a different fingerprint.
+/// **The keys every rendering of a thing carries**, a recall and a search hit
+/// alike: who it is and how a hit frames it. Serving them is not serving a part.
+const BARE: [&str; 13] = [
+    "id",
+    "name",
+    "type",
+    "source",
+    "boot",
+    "hit",
+    "parent",
+    "address",
+    "content",
+    "provenance",
+    "recorded_at",
+    "standing",
+    "status",
+];
+
+/// **The parts one served object carries, nested things and all.** A part is a
+/// key beyond [`BARE`] on a thing (prose, facts, details, history and the rest),
+/// named with the thing that carries it; a history is named by the key it reads
+/// too. The values are never compared: the version says whether a thing moved,
+/// and the parts say what of it the session was handed.
 fn shape_of(fields: &Map<String, Value>) -> Shape {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    serde_json::to_string(fields)
-        .unwrap_or_default()
-        .hash(&mut hasher);
-    Shape::from([hasher.finish()])
+    fn token(owner: &str, key: &str, window: Option<&str>) -> u64 {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        (owner, key, window).hash(&mut hasher);
+        hasher.finish()
+    }
+    fn collect(value: &Value, owner: &str, out: &mut Shape) {
+        match value {
+            Value::Object(fields) => {
+                let named = thing_of(fields).map(|(_, _, name)| name);
+                let owner = named.unwrap_or(owner);
+                if named.is_some() {
+                    for (key, inner) in fields {
+                        if BARE.contains(&key.as_str()) {
+                            continue;
+                        }
+                        let window = (key == "history")
+                            .then(|| inner.get("key").and_then(Value::as_str))
+                            .flatten();
+                        out.insert(token(owner, key, window));
+                    }
+                }
+                fields.values().for_each(|inner| collect(inner, owner, out));
+            }
+            Value::Array(items) => items.iter().for_each(|item| collect(item, owner, out)),
+            _ => {}
+        }
+    }
+    let mut out = Shape::new();
+    collect(&Value::Object(fields.clone()), "", &mut out);
+    out
 }
 
 /// **The fingerprint of every entity and claim an answer names**, once for each

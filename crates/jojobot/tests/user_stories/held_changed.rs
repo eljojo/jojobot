@@ -578,3 +578,38 @@ async fn a_notice_of_a_change_does_not_stand_for_the_changed_text() {
     assert!(read.get("held_collapsed").is_none(), "{read}");
     story.finish().await;
 }
+
+/// **A search that reaches a thing the session was already served, unchanged,
+/// names it by its handle alone.** Otto recalled Homer with his claims; a search
+/// that finds Homer again carries his handle and not his body, and says how to
+/// have him whole. The same search with `reship: true` returns him whole.
+#[tokio::test]
+async fn a_search_hit_on_a_thing_already_recalled_comes_back_as_its_handle() {
+    let (story, otto, _other, _claim) = otto_holds_homer().await;
+
+    let found = otto.call("search", json!({"query": "homer"})).await.json();
+    let hit = found["results"]
+        .as_array()
+        .and_then(|hits| {
+            hits.iter()
+                .find(|hit| hit["hit"] == "entity" || hit["id"] == "person:homer")
+        })
+        .unwrap_or_else(|| panic!("no hit on Homer: {found}"));
+    assert_eq!(
+        *hit,
+        json!({"id": "person:homer", "held": "unchanged since served"}),
+        "{found}"
+    );
+    assert!(
+        found["held_collapsed"]["count"].as_u64() >= Some(1),
+        "{found}"
+    );
+    assert!(!found.to_string().contains("likes donuts"), "{found}");
+
+    let whole = otto
+        .call("search", json!({"query": "homer", "reship": true}))
+        .await
+        .json();
+    assert!(whole.get("held_collapsed").is_none(), "{whole}");
+    story.finish().await;
+}
