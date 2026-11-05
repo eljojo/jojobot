@@ -42,7 +42,7 @@ use jojobot_domain::memory::{
     KeyWrite, Memory, MemoryError, Merge, NewEntity, NewFact, Provenance, Receipt, Retraction,
     Standing, WriteSummary, apply_entity_patch, apply_fact_patch, folded_ages, folded_fields,
     guard,
-    kinds::{self, NotAKind},
+    kinds::{self, KindSet, NotAKind},
     merge_account,
     must::judge,
     normalize_content, normalize_details, normalize_prose, referenced_by, retraction_of,
@@ -51,8 +51,9 @@ use jojobot_domain::memory::{
         DeclaredType, Displaced, Field, Fold, HeldKindKey, Origin, ValueType, guard_replacement,
         plan_kind_keys, validate_type,
     },
-    validate_edge, validate_entity, validate_field, validate_kind_declaration, validate_new_fact,
-    validate_prose, validate_subject, validate_write_subject, writes_of,
+    validate_edge, validate_entity, validate_field, validate_kind_declaration,
+    validate_new_fact_in, validate_prose, validate_subject_in, validate_write_subject_in,
+    writes_of,
 };
 use sqlx::{AssertSqlSafe, MySql, MySqlPool, Row, Transaction};
 
@@ -257,6 +258,24 @@ pub struct DoltMemory {
     /// clone**, so the boot serves one store and turns the journal on for all of
     /// its clones in one step, after the passes that rewrite rows.
     journaled: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// **The kinds this store declares, held in memory** and asked at every
+    /// admission. Empty until the first admission reads the store; a write of a
+    /// kind clears it, and the next admission reads it again. This process is
+    /// the store's only writer, so a held set is never stale. Shared across a
+    /// clone, like the pool.
+    kinds: std::sync::Arc<std::sync::RwLock<Option<KindSet>>>,
+}
+
+/// Clears a store's held kind set when a kind write ends, by any path.
+struct ForgetKinds<'a>(&'a std::sync::RwLock<Option<KindSet>>);
+
+impl Drop for ForgetKinds<'_> {
+    fn drop(&mut self) {
+        *self
+            .0
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+    }
 }
 
 /// **How an edit of a claim is committed by the caller that owns its
@@ -305,7 +324,27 @@ impl DoltMemory {
             clock: Clock::default(),
             warned: Default::default(),
             journaled: Default::default(),
+            kinds: Default::default(),
         }
+    }
+
+    /// **The kinds this store declares**, from memory once the first admission
+    /// has read them.
+    async fn own_kinds(&self) -> Result<KindSet, MemoryError> {
+        if let Some(held) = self
+            .kinds
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .as_ref()
+        {
+            return Ok(held.clone());
+        }
+        let read = KindSet::new(self.declared_kinds().await?);
+        *self
+            .kinds
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(read.clone());
+        Ok(read)
     }
 
     /// **This store with own fields reaching their thing.** See the field.
@@ -422,6 +461,7 @@ impl DoltMemory {
             clock: Clock::default(),
             warned: Default::default(),
             journaled: Default::default(),
+            kinds: Default::default(),
         }
     }
 
@@ -1859,8 +1899,8 @@ impl DoltMemory {
         // **Wrong by kind alone, before either side's existence is even
         // asked.** A fold naming a session steps past the same three things
         // any other memory write onto its handle would.
-        validate_write_subject(folded)?;
-        validate_write_subject(survivor)?;
+        validate_write_subject_in(&self.own_kinds().await?, folded)?;
+        validate_write_subject_in(&self.own_kinds().await?, survivor)?;
         if folded == survivor {
             return Err(MemoryError::NothingToMerge {
                 attempted: folded.to_string(),
@@ -3199,7 +3239,7 @@ impl DoltMemory {
             });
         }
         for object in &fact.refs {
-            validate_write_subject(object)?;
+            validate_write_subject_in(&self.own_kinds().await?, object)?;
             if let guard::Decision::Block(candidates) = guard::decide_named(
                 object,
                 self.resolve(tx, object).await?.as_ref().map(|(_, h)| h),
@@ -5556,10 +5596,10 @@ impl Memory for DoltMemory {
                     record.subject, new.id
                 )));
             }
-            validate_new_fact(record)?;
+            validate_new_fact_in(&self.own_kinds().await?, record)?;
         }
         validate_new_entity(&new)?;
-        validate_new_fact(&first)?;
+        validate_new_fact_in(&self.own_kinds().await?, &first)?;
         // **One transaction for both writes.** A refusal or a block of the claim
         // returns before the commit, so the entity is never stored without it.
         let mut tx = self.pool.begin().await.map_err(store)?;
@@ -5621,7 +5661,7 @@ impl Memory for DoltMemory {
             )));
         }
         validate_new_entity(&event.entity)?;
-        validate_new_fact(&event.first)?;
+        validate_new_fact_in(&self.own_kinds().await?, &event.first)?;
         // **A race for one attempt is settled by the key and answered by a
         // second look.** The loser's insert fails as a key held twice, or its
         // commit fails as a conflict; either rolls its whole write back, and the
@@ -5658,7 +5698,7 @@ impl Memory for DoltMemory {
         handle: &EntityId,
         patch: EntityPatch,
     ) -> Result<Guarded<Entity>, MemoryError> {
-        validate_write_subject(handle)?;
+        validate_write_subject_in(&self.own_kinds().await?, handle)?;
         let mut tx = self.pool.begin().await.map_err(store)?;
         let edited = self.update_entity_in(&mut tx, handle, patch).await?;
         if let Guarded::Written(entity) = &edited {
@@ -5677,14 +5717,14 @@ impl Memory for DoltMemory {
         patch: EntityPatch,
         claim: NewFact,
     ) -> Result<Guarded<(Entity, Fact)>, MemoryError> {
-        validate_write_subject(handle)?;
+        validate_write_subject_in(&self.own_kinds().await?, handle)?;
         if claim.subject != *handle {
             return Err(MemoryError::InvalidFact(format!(
                 "the claim is about {}, and the thing being edited is {handle}",
                 claim.subject
             )));
         }
-        validate_new_fact(&claim)?;
+        validate_new_fact_in(&self.own_kinds().await?, &claim)?;
         // **One transaction for both writes.** A refusal or a block of the claim
         // returns before the commit, so the edit is never stored without it.
         let mut tx = self.pool.begin().await.map_err(store)?;
@@ -5757,7 +5797,7 @@ impl Memory for DoltMemory {
         reason: &str,
         session: Option<&str>,
     ) -> Result<Entity, MemoryError> {
-        validate_write_subject(id)?;
+        validate_write_subject_in(&self.own_kinds().await?, id)?;
         validate_field("reason", reason)?;
         let mut tx = self.pool.begin().await.map_err(store)?;
         // **A row, never a supplied record** — the same exception
@@ -5819,7 +5859,7 @@ impl Memory for DoltMemory {
         id: &EntityId,
         session: Option<&str>,
     ) -> Result<(Entity, Archived), MemoryError> {
-        validate_write_subject(id)?;
+        validate_write_subject_in(&self.own_kinds().await?, id)?;
         let mut tx = self.pool.begin().await.map_err(store)?;
         // **A row, never a supplied record**, for the reason archiving reads
         // the same way: a build-shipped record has no row to change.
@@ -5883,7 +5923,7 @@ impl Memory for DoltMemory {
         resemblance: jojobot_domain::memory::Override<'_>,
         session: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
-        validate_write_subject(from)?;
+        validate_write_subject_in(&self.own_kinds().await?, from)?;
         let mut tx = self.pool.begin().await.map_err(store)?;
         let from = &self.row_handle(&mut tx, from).await?;
         // **A row, never a supplied record** — the same exception
@@ -6164,7 +6204,7 @@ impl Memory for DoltMemory {
     }
 
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
-        validate_new_fact(&fact)?;
+        validate_new_fact_in(&self.own_kinds().await?, &fact)?;
         // A call that carries a capture job is decided over the claims State.
         if let Some(job) = jojobot_domain::log::claims::job::current() {
             return self.capture_on_the_log(fact, job).await;
@@ -6897,7 +6937,7 @@ impl Memory for DoltMemory {
         if let Some(refused) = jojobot_domain::memory::refuses_an_unapplied_text_edit(&patch) {
             return Err(refused);
         }
-        validate_new_fact(&claim)?;
+        validate_new_fact_in(&self.own_kinds().await?, &claim)?;
         let mut tx = self.pool.begin().await.map_err(store)?;
         let mut how = Commit::None;
         let edited = match self
@@ -6979,7 +7019,7 @@ impl Memory for DoltMemory {
         caller: &EntityId,
         claim: NewFact,
     ) -> Result<Guarded<(Merge, Fact)>, MemoryError> {
-        validate_new_fact(&claim)?;
+        validate_new_fact_in(&self.own_kinds().await?, &claim)?;
         let session = claim.session.clone();
         let mut tx = self.pool.begin().await.map_err(store)?;
         let merged = self
@@ -7059,7 +7099,7 @@ impl Memory for DoltMemory {
         session: Option<&str>,
         claim: NewFact,
     ) -> Result<Guarded<(Retraction, Fact)>, MemoryError> {
-        validate_new_fact(&claim)?;
+        validate_new_fact_in(&self.own_kinds().await?, &claim)?;
         let mut tx = self.pool.begin().await.map_err(store)?;
         let taken_back = self
             .retract_in(&mut tx, address, reason, date, caller, session)
@@ -7134,7 +7174,7 @@ impl Memory for DoltMemory {
     /// the pointer lives in carries an index, so the claims standing on one
     /// claim are a query.
     async fn built_on(&self, source: &FactAddress) -> Result<Vec<Fact>, MemoryError> {
-        validate_subject(&source.home)?;
+        validate_subject_in(&self.own_kinds().await?, &source.home)?;
         self.counted_targeted_read();
         let mut tx = self.pool.begin().await.map_err(store)?;
         let moved = self.moved_in(&mut tx, source).await?;
@@ -7213,7 +7253,7 @@ impl Memory for DoltMemory {
     /// so a key that was written and later overwritten does not come back as a
     /// pointer that is no longer there.
     async fn referring_to(&self, target: &EntityId) -> Result<Vec<Fact>, MemoryError> {
-        validate_subject(target)?;
+        validate_subject_in(&self.own_kinds().await?, target)?;
         self.counted_targeted_read();
         let mut tx = self.pool.begin().await.map_err(store)?;
         // **The rows hold the permanent id**, and a caller's handle may be a
@@ -7268,7 +7308,7 @@ impl Memory for DoltMemory {
     /// the write path and the licence agree on who the writers are. The default
     /// lists every bot and recalls each one.
     async fn thought_writers(&self, thread: &EntityId) -> Result<Vec<EntityId>, MemoryError> {
-        validate_subject(thread)?;
+        validate_subject_in(&self.own_kinds().await?, thread)?;
         let mut tx = self.pool.begin().await.map_err(store)?;
         let writers = self.thought_writers_in(&mut tx, thread).await?;
         commit_native(tx).await.map_err(store)?;
@@ -7281,7 +7321,7 @@ impl Memory for DoltMemory {
         prose: &str,
         session: Option<&str>,
     ) -> Result<String, MemoryError> {
-        validate_write_subject(entity)?;
+        validate_write_subject_in(&self.own_kinds().await?, entity)?;
         validate_prose(prose)?;
         let mut tx = self.pool.begin().await.map_err(store)?;
         let index = self.index(&mut tx).await?;
@@ -7551,6 +7591,7 @@ impl Memory for DoltMemory {
         fields: Vec<Field>,
     ) -> Result<bool, MemoryError> {
         validate_kind_declaration(token)?;
+        let _forget = ForgetKinds(&self.kinds);
         // The keys are screened exactly as a schema's are — one declaration
         // shape, one validator, so a kind cannot name a key twice where a type
         // could not.
@@ -7787,6 +7828,7 @@ impl Memory for DoltMemory {
     }
 
     async fn reclaim_kind(&self, token: &str) -> Result<(), MemoryError> {
+        let _forget = ForgetKinds(&self.kinds);
         // **One transaction**, for the reason declaring one is: a kind whose
         // row went and whose keys stayed would leave key rows describing a
         // kind nothing can be.
@@ -7815,6 +7857,10 @@ impl Memory for DoltMemory {
         }
         entity_events::commit_kind_write(tx, token, &self.clock).await?;
         Ok(())
+    }
+
+    async fn kind_declared(&self, token: &str) -> Result<Result<(), NotAKind>, MemoryError> {
+        Ok(self.own_kinds().await?.standing(token))
     }
 
     async fn declared_kinds(&self) -> Result<Vec<(String, Origin)>, MemoryError> {
