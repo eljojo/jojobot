@@ -271,6 +271,45 @@ async fn every_stored_row_is_read_and_the_legacy_shapes_read_as_stored() {
     }
     import::import(rows).expect("the rows map through the import with no error");
 
+    // ── what the counts cannot see: a fold, a declaration and a reference ──
+    let key_of = |rows: &import::Rows, handle: &str| {
+        rows.entities
+            .iter()
+            .find(|row| row.handle == handle)
+            .unwrap_or_else(|| panic!("{handle} is read"))
+            .key
+            .clone()
+    };
+    let lisa_row = rows
+        .entities
+        .iter()
+        .find(|row| row.handle == "person:lisa")
+        .expect("the folded thing is read");
+    assert_eq!(
+        lisa_row.merged_into,
+        Some(key_of(rows, "person:bart")),
+        "a folded thing is read as redirected to its survivor's key"
+    );
+    let sketch = rows
+        .type_writes
+        .iter()
+        .find(|row| row.declaration.name == "sketch")
+        .expect("the declaration is read");
+    assert_eq!(
+        sketch.declaration.fields,
+        vec![Field::new("mood", ValueType::Text)],
+        "a declared key keeps what it holds"
+    );
+    let married = |rows: &import::Rows| {
+        rows.facts
+            .iter()
+            .find(|row| row.head.content == "is married to Homer")
+            .expect("the claim with a reference is read")
+            .head
+            .clone()
+    };
+    assert_eq!(married(rows).refs, vec![key_of(rows, "person:homer")]);
+
     // ── a rename keeps the permanent key, and the old handle points at it ──
     let ralph = rows
         .entities
@@ -321,6 +360,41 @@ async fn every_stored_row_is_read_and_the_legacy_shapes_read_as_stored() {
     .execute(&pool)
     .await
     .expect("an orphan version row");
+    // A claim last written before its write kept references holds NULL there, and
+    // the reference it holds now is in the table the store's reads take it from.
+    sqlx::query(
+        "UPDATE fact_write SET refs = NULL, stands_for = NULL WHERE content = 'is married to Homer'",
+    )
+    .execute(&pool)
+    .await
+    .expect("an old write");
+    // A fold made before merge events were kept has a forwarding row and no event.
+    // One forwards to a handle one thing wore, and one to a handle nothing ever wore.
+    // A third forwards to a handle a thing left on a rename and a new thing wears now,
+    // which the text alone cannot place: Nelson left person:nelson for person:ralph, and
+    // another thing has taken it.
+    sqlx::query(
+        "INSERT INTO entity (id, kind, name, source, boot, prose) \
+         VALUES ('person:nelson', 'person', 'Another', 'fixture', 'on-demand', '')",
+    )
+    .execute(&pool)
+    .await
+    .expect("a new wearer of a freed handle");
+    for (id, forwards_to) in [
+        ("person:apu", "person:bart"),
+        ("person:moe", "person:maggie"),
+        ("person:smithers", "person:nelson"),
+    ] {
+        sqlx::query(
+            "INSERT INTO entity (id, kind, name, source, boot, prose, merged_into) \
+             VALUES (?, 'person', 'Folded', 'fixture', 'on-demand', '', ?)",
+        )
+        .bind(id)
+        .bind(forwards_to)
+        .execute(&pool)
+        .await
+        .expect("an old fold");
+    }
     // A key written with no value is a clear, and its class is the one stored.
     sqlx::query(
         "INSERT INTO field_write (entity, `key`, ordinal, value, fact_id, write_class) \
@@ -368,8 +442,44 @@ async fn every_stored_row_is_read_and_the_legacy_shapes_read_as_stored() {
         marge_row.taken_in.is_some(),
         "a stamped first write is the first moment"
     );
-    assert_eq!(read.findings.len(), 1, "{:?}", read.findings);
-    assert_eq!(read.findings[0].table, "entity_write");
+    assert_eq!(
+        married(&read.rows).refs,
+        vec![key_of(&read.rows, "person:homer")],
+        "a head keeps the references it holds now, whatever its newest write kept"
+    );
+    let forwarded = |handle: &str| {
+        read.rows
+            .entities
+            .iter()
+            .find(|row| row.handle == handle)
+            .and_then(|row| row.merged_into.clone())
+    };
+    assert_eq!(
+        forwarded("person:apu"),
+        Some(key_of(&read.rows, "person:bart")),
+        "a forward is placed on the thing that wore the handle"
+    );
+    assert_eq!(
+        forwarded("person:moe"),
+        Some(jojobot_domain::log::ObjectId("person:maggie".into())),
+        "a forward to a handle nothing wore keeps its spelling"
+    );
+    let mut tables: Vec<(&str, &str)> = read
+        .findings
+        .iter()
+        .map(|one| (one.table, one.row.as_str()))
+        .collect();
+    tables.sort_unstable();
+    assert_eq!(
+        tables,
+        [
+            ("entity", "person:moe"),
+            ("entity", "person:smithers"),
+            ("entity_write", "person:milhouse#1")
+        ],
+        "a forward the owner cannot place is a finding, whoever wears the handle now: {:?}",
+        read.findings
+    );
     assert!(
         read.rows
             .entity_writes

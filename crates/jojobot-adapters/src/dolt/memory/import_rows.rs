@@ -105,12 +105,15 @@ impl DoltMemory {
     /// **Every row the claims import names, read from this store.**
     pub async fn import_rows(&self) -> Result<ImportRead, MemoryError> {
         let mut tx = self.pool.begin().await.map_err(store)?;
-        let read = Self::read_import_rows(&mut tx).await?;
+        let read = self.read_import_rows(&mut tx).await?;
         commit_native(tx).await.map_err(store)?;
         Ok(read)
     }
 
-    async fn read_import_rows(tx: &mut Transaction<'_, MySql>) -> Result<ImportRead, MemoryError> {
+    async fn read_import_rows(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+    ) -> Result<ImportRead, MemoryError> {
         let entity_rows = sqlx::query(
             "SELECT id, kind, name, source, crm, parent, boot, prose, badge, merged_into, \
              archived_reason, archived_at FROM entity ORDER BY id",
@@ -166,14 +169,30 @@ impl DoltMemory {
                 .or_default()
                 .push(text(row, "alias")?);
         }
-        let written = Self::entity_write_rows(tx, &mut read).await?;
+        let written = self.entity_write_rows(tx, &mut read).await?;
         for row in &entity_rows {
             let handle = text(row, "id")?;
             let key = read.keys.by_id[&handle].clone();
             let parent =
                 maybe(row, "parent")?.map(|stored| read.key("entity", &handle, "parent", &stored));
-            let merged_into = maybe(row, "merged_into")?
-                .map(|stored| read.key("entity", &handle, "merged_into", &stored));
+            // A forward is placed by the one owner of that decision: the merge
+            // event of the fold, else the wearer of the handle the row forwards to.
+            let merged_into = match maybe(row, "merged_into")? {
+                None => None,
+                Some(stored) => match self.survivor_of(tx, &EntityId(key.clone())).await? {
+                    Some(survivor) => Some(ObjectId(survivor.0)),
+                    None => {
+                        read.findings.push(Finding {
+                                table: "entity",
+                                row: handle.clone(),
+                                what: format!(
+                                    "forwards to {stored:?}, which no merge event and no wearer of that handle places"
+                                ),
+                            });
+                        Some(ObjectId(stored))
+                    }
+                },
+            };
             // Both halves or neither, as the store reads an archive.
             let archived = match (maybe(row, "archived_reason")?, maybe(row, "archived_at")?) {
                 (Some(reason), Some(at)) => at.parse::<Timestamp>().ok().map(|at| (reason, at)),
@@ -258,6 +277,7 @@ impl DoltMemory {
     /// left the handle owns it, else the thing that wears it. A handle several
     /// things left, or one nobody holds, is a finding.
     async fn entity_write_rows(
+        &self,
         tx: &mut Transaction<'_, MySql>,
         read: &mut Read,
     ) -> Result<Written, MemoryError> {
@@ -308,8 +328,17 @@ impl DoltMemory {
                     };
                     let parent = maybe(row, "parent")?
                         .map(|stored| read.key("entity_write", &at, "parent", &stored));
-                    let merged_into = maybe(row, "merged_into")?
-                        .map(|stored| read.key("entity_write", &at, "merged_into", &stored));
+                    // The survivor is found by the merge, as entity_history finds it:
+                    // the version kept the handle the survivor wore at the fold.
+                    let merged_into = match maybe(row, "merged_into")? {
+                        None => None,
+                        Some(stored) => {
+                            match self.survivor_of(tx, &EntityId(owner.0.clone())).await? {
+                                Some(survivor) => Some(ObjectId(survivor.0)),
+                                None => Some(read.key("entity_write", &at, "merged_into", &stored)),
+                            }
+                        }
+                    };
                     Some(ObjectSnapshot {
                         kind: maybe(row, "kind")?.unwrap_or_default(),
                         name,
@@ -371,6 +400,42 @@ impl DoltMemory {
         .await
         .map_err(store)?;
 
+        // The references and the mark a claim holds NOW sit in two tables of their
+        // own, which the store's reads take a claim's head from. A write made before
+        // its columns existed holds NULL there and nothing is backfilled, so the head
+        // never takes them from its newest write.
+        let mut now_refs: HashMap<(String, String), Vec<EntityId>> = HashMap::new();
+        for row in &sqlx::query(
+            "SELECT fact_home, fact_id, entity FROM fact_event_ref \
+             ORDER BY fact_home, fact_id, ordinal",
+        )
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(store)?
+        {
+            now_refs
+                .entry((text(row, "fact_home")?, text(row, "fact_id")?))
+                .or_default()
+                .push(EntityId(text(row, "entity")?));
+        }
+        let mut now_stands: HashMap<(String, String), Vec<FactAddress>> = HashMap::new();
+        for row in &sqlx::query(
+            "SELECT fact_home, fact_id, source_home, source_id FROM fact_stands_for \
+             ORDER BY fact_home, fact_id, ordinal",
+        )
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(store)?
+        {
+            now_stands
+                .entry((text(row, "fact_home")?, text(row, "fact_id")?))
+                .or_default()
+                .push(FactAddress::new(
+                    EntityId(text(row, "source_home")?),
+                    FactId(text(row, "source_id")?),
+                ));
+        }
+
         type Cells = (Vec<EntityId>, Vec<FactAddress>);
         let mut writes: BTreeMap<(String, String), Vec<(FactWriteRow, Cells)>> = BTreeMap::new();
         for row in &write_rows {
@@ -424,10 +489,11 @@ impl DoltMemory {
             let held = writes
                 .remove(&(stored.clone(), local.clone()))
                 .unwrap_or_default();
-            let cells = held
-                .last()
-                .map(|(_, cells)| cells.clone())
-                .unwrap_or_default();
+            let key = (stored.clone(), local.clone());
+            let cells: Cells = (
+                now_refs.remove(&key).unwrap_or_default(),
+                now_stands.remove(&key).unwrap_or_default(),
+            );
             let at = format!("{stored}/{local}");
             let head = Self::claim_body(read, "fact", &at, row, &stored, &local, &cells)?;
             rows.facts.push(FactRow {
