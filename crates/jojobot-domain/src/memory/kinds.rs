@@ -624,13 +624,69 @@ pub fn standing_in(held: &[(String, super::types::Origin)], token: &str) -> Resu
     }
 }
 
+/// **A token that could be a kind's name, whatever any store declares.** Parsing
+/// checks this and nothing else: whether a store declares the kind is that
+/// store's answer, asked at admission. It holds no `&'static str`, so a caller's
+/// token never reaches the interner.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KindToken(String);
+
+/// The longest a kind's name may be, in bytes.
+pub const KIND_TOKEN_LIMIT: usize = 64;
+
+/// Why a token cannot be a kind's name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BadKindToken {
+    Empty,
+    TooLong,
+    /// A space, a control character or a `:` or `/`, which handles use.
+    BadCharacter(char),
+}
+
+impl std::fmt::Display for BadKindToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BadKindToken::Empty => f.write_str("a kind is named by at least one character"),
+            BadKindToken::TooLong => {
+                write!(f, "a kind's name is at most {KIND_TOKEN_LIMIT} bytes")
+            }
+            BadKindToken::BadCharacter(c) => write!(
+                f,
+                "a kind's name holds no spaces, control characters, ':' or '/', and {c:?} is one"
+            ),
+        }
+    }
+}
+
+impl KindToken {
+    pub fn parse(raw: &str) -> Result<Self, BadKindToken> {
+        let token = raw.trim();
+        if token.is_empty() {
+            return Err(BadKindToken::Empty);
+        }
+        if token.len() > KIND_TOKEN_LIMIT {
+            return Err(BadKindToken::TooLong);
+        }
+        if let Some(bad) = token
+            .chars()
+            .find(|c| c.is_whitespace() || c.is_control() || *c == ':' || *c == '/')
+        {
+            return Err(BadKindToken::BadCharacter(bad));
+        }
+        Ok(KindToken(token.to_string()))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
 /// **A loaded token, with the lifetime a kind carries.** A kind is `Copy` and
 /// hands out `&'static str`, so a token that arrived at runtime is leaked
 /// deliberately: the set is small, loaded at startup, and a token that has
 /// been a kind once stays readable for as long as the process runs.
 pub fn intern(token: &str) -> &'static str {
-    static INTERNED: OnceLock<RwLock<BTreeSet<&'static str>>> = OnceLock::new();
-    let interned = INTERNED.get_or_init(|| RwLock::new(BTreeSet::new()));
+    let interned = interner();
     if let Some(held) = interned
         .read()
         .expect("the tokens are not poisoned")
@@ -645,6 +701,20 @@ pub fn intern(token: &str) -> &'static str {
     let held: &'static str = Box::leak(token.to_string().into_boxed_str());
     writing.insert(held);
     held
+}
+
+fn interner() -> &'static RwLock<BTreeSet<&'static str>> {
+    static INTERNED: OnceLock<RwLock<BTreeSet<&'static str>>> = OnceLock::new();
+    INTERNED.get_or_init(|| RwLock::new(BTreeSet::new()))
+}
+
+/// Has this token been interned? For a case that pins which tokens may be.
+#[cfg(test)]
+fn is_interned(token: &str) -> bool {
+    interner()
+        .read()
+        .expect("the tokens are not poisoned")
+        .contains(token)
 }
 
 /// **Reconcile the kinds this build ships, then load what the store holds.**
@@ -733,6 +803,42 @@ pub fn all() -> Vec<String> {
 mod tests {
     use super::*;
     use crate::attention::Outcome;
+
+    /// **A kind's name is checked for shape and for nothing else.** Every shipped
+    /// kind is well formed; empty, over-long and handle-shaped tokens are not.
+    #[test]
+    fn a_kind_token_is_checked_for_shape_alone() {
+        for shipped in SHIPPED {
+            assert_eq!(KindToken::parse(shipped).unwrap().as_str(), shipped);
+        }
+        let long = "k".repeat(KIND_TOKEN_LIMIT + 1);
+        //   (the token, the answer)
+        let table = [
+            ("", Err(BadKindToken::Empty)),
+            ("   ", Err(BadKindToken::Empty)),
+            (long.as_str(), Err(BadKindToken::TooLong)),
+            ("two words", Err(BadKindToken::BadCharacter(' '))),
+            ("person:homer", Err(BadKindToken::BadCharacter(':'))),
+            ("a/b", Err(BadKindToken::BadCharacter('/'))),
+            ("never-declared-kind", Ok("never-declared-kind")),
+            ("  padded  ", Ok("padded")),
+        ];
+        for (token, answer) in table {
+            let parsed = KindToken::parse(token).map(|ok| ok.as_str().to_string());
+            assert_eq!(parsed, answer.map(str::to_string), "{token:?}");
+        }
+    }
+
+    /// **A caller's token that no store declares never reaches the interner.**
+    /// The interner leaks what it holds, so it may grow only from a declaration.
+    #[test]
+    fn a_token_nobody_declared_is_never_interned() {
+        let stranger = "never-declared-stranger";
+        assert!(resolve(stranger).is_err());
+        assert!(!is_interned(stranger));
+        assert!(KindToken::parse(stranger).is_ok());
+        assert!(!is_interned(stranger));
+    }
 
     /// **What one store's kinds say about a token, whatever the store.** An
     /// empty set is a store that was never seeded, which is not the same

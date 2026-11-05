@@ -35,7 +35,9 @@ pub(crate) type ParsedEdge = Result<Result<Option<Edge>, CallToolResult>, McpErr
 /// says so**, because a caller told "kind must be one of person, …, got
 /// 'person'" has been handed a contradiction and no way forward (rule 68).
 pub(crate) fn parse_kind(raw: &str) -> Result<EntityKind, McpError> {
-    kinds::resolve(raw.trim())
+    let token = kinds::KindToken::parse(raw)
+        .map_err(|why| McpError::invalid_params(format!("kind '{raw}': {why}"), None))?;
+    kinds::resolve(token.as_str())
         .map_err(|why| McpError::invalid_params(format!("kind '{raw}': {why}"), None))
 }
 
@@ -379,6 +381,20 @@ pub(crate) fn parse_date(raw: Option<&str>) -> Result<Option<jiff::civil::Date>,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **A malformed kind and an undeclared one are refused for different
+    /// reasons.** The first never reaches the set; the second is asked of it.
+    /// The second refusal lists the declared kinds, which are data (`person`
+    /// among them); the first never consults the set and lists none.
+    #[test]
+    fn a_malformed_kind_is_refused_by_shape_and_an_undeclared_one_by_the_set() {
+        kinds::load_shipped();
+        let shape = parse_kind("two words").expect_err("a space is not a kind");
+        assert!(!shape.message.contains("person"), "{shape:?}");
+        let set = parse_kind("never-declared-kind").expect_err("nobody declared it");
+        assert!(set.message.contains("person"), "{set:?}");
+        assert!(parse_kind(" person ").is_ok(), "padding is trimmed");
+    }
 
     /// **This build can resolve an IANA zone, and says so when it cannot.**
     ///
