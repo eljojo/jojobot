@@ -22,6 +22,9 @@ use std::sync::{OnceLock, RwLock};
 
 use super::EntityKind;
 
+mod set;
+pub use set::KindSet;
+
 /// **The kinds the software ships**, in the order they are seeded and listed.
 ///
 /// They are here as tokens rather than as a type, because the point of the

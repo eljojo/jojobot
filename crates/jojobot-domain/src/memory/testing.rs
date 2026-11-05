@@ -19,7 +19,7 @@ use super::{
     guard::{self, Decision},
     merge_account, normalize_content, normalize_details, normalize_prose, resolve_handle,
     retraction_of, screen_entity_patch, search, standing_of, validate_edge, validate_entity,
-    validate_field, validate_new_fact, validate_prose, validate_write_subject,
+    validate_field, validate_new_fact_in, validate_prose, validate_write_subject_in,
 };
 
 mod fake;

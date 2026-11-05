@@ -340,6 +340,12 @@ impl InMemoryMemory {
         fake
     }
 
+    /// **The kinds this store declares**, which its admission asks rather than
+    /// the set this process parses against.
+    fn own_kinds(&self) -> crate::memory::kinds::KindSet {
+        crate::memory::kinds::KindSet::new(self.kinds.lock().unwrap().clone())
+    }
+
     /// How many times the whole listing has been asked for. A caller measures a
     /// delta across the call it is checking.
     pub fn listings(&self) -> usize {
@@ -2634,7 +2640,7 @@ impl Memory for InMemoryMemory {
     /// the default instead, which lists every bot, and the listing counter is how
     /// a case sees it.
     async fn thought_writers(&self, thread: &EntityId) -> Result<Vec<EntityId>, MemoryError> {
-        super::super::validate_subject(thread)?;
+        super::super::validate_subject_in(&self.own_kinds(), thread)?;
         // **The thread is found as every read finds a thing**, by the handle it
         // wears or one it wore, and a thread nothing answers to has no writers.
         // The real store resolves it the same way before it reads a claim.
@@ -2653,7 +2659,7 @@ impl Memory for InMemoryMemory {
     async fn built_on(&self, source: &FactAddress) -> Result<Vec<Fact>, MemoryError> {
         let moved = self.moved(source);
         let source = moved.as_ref().unwrap_or(source);
-        super::super::validate_subject(&source.home)?;
+        super::super::validate_subject_in(&self.own_kinds(), &source.home)?;
         // A pointer names its source by the handle the thing wears now, so an
         // address written under a former handle is compared as the current one.
         let current = super::resolve_handle(&source.home, &self.known(), &self.former())
@@ -2694,7 +2700,7 @@ impl Memory for InMemoryMemory {
         patch: EntityPatch,
     ) -> Result<Guarded<Entity>, MemoryError> {
         let session = patch.session.clone();
-        validate_write_subject(handle)?;
+        validate_write_subject_in(&self.own_kinds(), handle)?;
         let handle = &self.row_handle(handle);
         // Taken before the lock: known() locks too.
         let index = self.known_by_name();
@@ -2745,7 +2751,7 @@ impl Memory for InMemoryMemory {
         reason: &str,
         session: Option<&str>,
     ) -> Result<Entity, MemoryError> {
-        validate_write_subject(id)?;
+        validate_write_subject_in(&self.own_kinds(), id)?;
         validate_field("reason", reason)?;
         let id = &self.row_handle(id);
         let mut entities = self.entities.lock().expect("fake mutex poisoned");
@@ -2787,7 +2793,7 @@ impl Memory for InMemoryMemory {
         id: &EntityId,
         session: Option<&str>,
     ) -> Result<(Entity, Archived), MemoryError> {
-        validate_write_subject(id)?;
+        validate_write_subject_in(&self.own_kinds(), id)?;
         let id = &self.row_handle(id);
         let mut entities = self.entities.lock().expect("fake mutex poisoned");
         let Some(entity) = entities.iter_mut().find(|e| &e.id == id) else {
@@ -2836,7 +2842,7 @@ impl Memory for InMemoryMemory {
         resemblance: crate::memory::Override<'_>,
         session: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
-        validate_write_subject(from)?;
+        validate_write_subject_in(&self.own_kinds(), from)?;
         let from = &self.row_handle(from);
         // **A row, never a supplied record** — the same exception
         // `update_entity` reads off: a rename mutates a stored row, and a
@@ -3091,7 +3097,7 @@ impl Memory for InMemoryMemory {
 
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
         // Same guards the real adapter applies, so the fake can't drift.
-        validate_new_fact(&fact)?;
+        validate_new_fact_in(&self.own_kinds(), &fact)?;
         // **The receipt is judged after the fields**, in the order the real store
         // asks, so one call with two faults is told the same fault by both.
         let receipt = fact
@@ -3156,7 +3162,7 @@ impl Memory for InMemoryMemory {
         // provisioned its own entity would make the open hatch the one place on
         // the surface where that stopped being true.
         for object in &fact.refs {
-            validate_write_subject(object)?;
+            validate_write_subject_in(&self.own_kinds(), object)?;
             if let Decision::Block(candidates) = self.decide_named(object, &index) {
                 return Ok(Guarded::Blocked {
                     attempted: object.clone(),
@@ -3601,7 +3607,7 @@ impl Memory for InMemoryMemory {
     /// through [`Memory::list_entities`], so a case that counts listings sees
     /// what it saw.
     async fn referring_to(&self, target: &EntityId) -> Result<Vec<Fact>, MemoryError> {
-        super::super::validate_subject(target)?;
+        super::super::validate_subject_in(&self.own_kinds(), target)?;
         let entities = self.list_entities(None).await?;
         let stored: Vec<Fact> = self.facts_view();
         // **Shared by every claim this call serves**, so what it costs does not
@@ -4534,8 +4540,8 @@ impl Memory for InMemoryMemory {
         // **Wrong by kind alone, before either side's existence is even
         // asked.** A fold naming a session steps past the same three things
         // any other memory write onto its handle would.
-        validate_write_subject(folded)?;
-        validate_write_subject(survivor)?;
+        validate_write_subject_in(&self.own_kinds(), folded)?;
+        validate_write_subject_in(&self.own_kinds(), survivor)?;
         if folded == survivor {
             return Err(MemoryError::NothingToMerge {
                 attempted: folded.to_string(),
@@ -5123,7 +5129,7 @@ impl Memory for InMemoryMemory {
         prose: &str,
         session: Option<&str>,
     ) -> Result<String, MemoryError> {
-        validate_write_subject(entity)?;
+        validate_write_subject_in(&self.own_kinds(), entity)?;
         validate_prose(prose)?;
         // Never creates: a handle that names nothing is a miss with its near
         // candidates, exactly as it is for every other verb here.

@@ -1548,19 +1548,36 @@ fn slug_shaped(slug: &str) -> bool {
 /// most ordinary handle in the system has no way forward from it (rule 68).
 pub fn validate_subject(subject: &EntityId) -> Result<(), MemoryError> {
     validate_shape(subject)?;
-    let s = subject.as_str();
     // The kind is asked of the loaded set, which is what makes the answer say
     // what is really wrong: nothing seeded this process, or nobody declared
     // this kind.
-    match kinds::resolve(subject.kind_token()) {
-        Ok(_) => Ok(()),
-        // **The two failures have two repairs, so they are two errors.** A
-        // caller can spell a kind differently; nobody can spell their way out
-        // of a process that loaded nothing.
+    kind_refusal(subject, kinds::resolve(subject.kind_token()).map(drop))
+}
+
+/// [`validate_subject`], with the kind asked of one store's own set. The same
+/// two refusals, so a store that holds its own kinds answers as the process set
+/// did.
+pub fn validate_subject_in(kinds: &kinds::KindSet, subject: &EntityId) -> Result<(), MemoryError> {
+    validate_shape(subject)?;
+    kind_refusal(subject, kinds.standing(subject.kind_token()))
+}
+
+/// **The two failures have two repairs, so they are two errors.** A caller can
+/// spell a kind differently; nobody can spell their way out of a store that
+/// declares nothing.
+fn kind_refusal(
+    subject: &EntityId,
+    standing: Result<(), kinds::NotAKind>,
+) -> Result<(), MemoryError> {
+    match standing {
+        Ok(()) => Ok(()),
         Err(kinds::NotAKind::SetNeverLoaded) => Err(MemoryError::KindsNeverLoaded {
-            attempted: Some(s.to_string()),
+            attempted: Some(subject.as_str().to_string()),
         }),
-        Err(why) => Err(MemoryError::InvalidSubject(format!("'{s}': {why}"))),
+        Err(why) => Err(MemoryError::InvalidSubject(format!(
+            "'{}': {why}",
+            subject.as_str()
+        ))),
     }
 }
 
@@ -1707,6 +1724,19 @@ pub fn validate_entity(
 /// step past all three, and no read has any reason to.
 pub fn validate_write_subject(subject: &EntityId) -> Result<(), MemoryError> {
     validate_subject(subject)?;
+    refuse_unwritable(subject)
+}
+
+/// [`validate_write_subject`], with the kind asked of one store's own set.
+pub fn validate_write_subject_in(
+    kinds: &kinds::KindSet,
+    subject: &EntityId,
+) -> Result<(), MemoryError> {
+    validate_subject_in(kinds, subject)?;
+    refuse_unwritable(subject)
+}
+
+fn refuse_unwritable(subject: &EntityId) -> Result<(), MemoryError> {
     if subject.kind() == Some(EntityKind::SESSION) {
         return Err(MemoryError::InvalidSubject(format!(
             "'{subject}' is a session, and a session is not written through the memory verbs. \
@@ -1969,6 +1999,18 @@ pub fn validate_cleared_fields(cleared: &[String]) -> Result<(), MemoryError> {
 /// check of a batch's items, so an item is refused for the same reasons a single
 /// claim is.
 pub fn validate_new_fact(fact: &NewFact) -> Result<(), MemoryError> {
+    validate_new_fact_with(fact, validate_write_subject)
+}
+
+/// [`validate_new_fact`], with the subject's kind asked of one store's own set.
+pub fn validate_new_fact_in(kinds: &kinds::KindSet, fact: &NewFact) -> Result<(), MemoryError> {
+    validate_new_fact_with(fact, |subject| validate_write_subject_in(kinds, subject))
+}
+
+fn validate_new_fact_with(
+    fact: &NewFact,
+    subject_check: impl FnOnce(&EntityId) -> Result<(), MemoryError>,
+) -> Result<(), MemoryError> {
     if !fact.also_written.is_empty() {
         return Err(MemoryError::InvalidFact(
             "records written in the same act belong to the creation of a thing; no other \
@@ -1976,7 +2018,7 @@ pub fn validate_new_fact(fact: &NewFact) -> Result<(), MemoryError> {
                 .into(),
         ));
     }
-    validate_write_subject(&fact.subject)?;
+    subject_check(&fact.subject)?;
     validate_content(&fact.content)?;
     if let Some(edge) = &fact.edge {
         validate_edge(edge)?;
