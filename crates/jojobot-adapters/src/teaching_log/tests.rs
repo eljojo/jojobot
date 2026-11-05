@@ -577,12 +577,12 @@ async fn a_rollback_and_roll_forward_reconciles_the_log_with_the_rows() {
 /// A batch holding one member whose envelope names `kind`, appended at the
 /// log's head, as another family's writer would append it.
 pub(super) async fn append_member_of_kind(log: &dyn LogStore, kind: &str) {
-    append_members(log, vec![foreign_member(kind)]).await;
+    append_members(log, vec![teaching_member_of_kind(kind)]).await;
 }
 
-/// A member whose envelope names `kind`, which is not teaching's unless the
-/// kind starts with Teaching.
-fn foreign_member(kind: &str) -> Vec<u8> {
+/// A member of teaching's own family that names `kind`, built from teaching's
+/// own envelope: it carries a run, as every teaching member does.
+fn teaching_member_of_kind(kind: &str) -> Vec<u8> {
     let mut value: serde_json::Value =
         serde_json::from_slice(&codec::encode(&TeachingEvent::Cleared {
             run: RunId("homer".into()),
@@ -590,6 +590,50 @@ fn foreign_member(kind: &str) -> Vec<u8> {
         .unwrap();
     value["event_kind"] = kind.into();
     serde_json::to_vec(&value).unwrap()
+}
+
+/// A member another family emits: the envelope of the first event the claims
+/// import makes for one entity row, so it carries no run and the family's own
+/// kind. The claims payload has no encoder yet, so the payload is a stand-in
+/// object; teaching can pass the member only by reading the family before the
+/// rest.
+fn foreign_member() -> Vec<u8> {
+    use jojobot_domain::log::ObjectId;
+    use jojobot_domain::log::claims::import::{EntityRow, Rows, import};
+    let rows = Rows {
+        entities: vec![EntityRow {
+            key: ObjectId("alpha".into()),
+            handle: "person:alpha".into(),
+            kind: "person".into(),
+            name: "Alpha".into(),
+            source: "fixture".into(),
+            boot: None,
+            parent: None,
+            aliases: Vec::new(),
+            crm: None,
+            prose: String::new(),
+            badge: None,
+            archived: None,
+            merged_into: None,
+            taken_in: None,
+        }],
+        ..Rows::default()
+    };
+    let made = import(&rows).expect("one entity row imports").remove(0);
+    let envelope = jojobot_domain::log::Event {
+        event_kind: made.event_kind,
+        meaning_version: made.meaning_version,
+        actor: made.actor,
+        run: made.run,
+        session_card: made.session_card,
+        request: made.request,
+        part: made.part,
+        occurred_at: made.occurred_at,
+        written_at: made.written_at,
+        imported_source_time: made.imported_source_time,
+        payload: serde_json::json!({ "ObjectCreated": {} }),
+    };
+    serde_json::to_vec(&envelope).unwrap()
 }
 
 /// One batch of these members, appended at the log's head.
@@ -619,7 +663,7 @@ pub(super) async fn a_mixed_batch_is_applied(log: Arc<dyn LogStore>, foreign_fir
         domain: "mail".into(),
         taught_at: at(3),
     });
-    let foreign = foreign_member("RequestCommitted");
+    let foreign = foreign_member();
     let members = if foreign_first {
         vec![foreign, recorded]
     } else {
@@ -671,7 +715,7 @@ pub(super) async fn another_family_leaves_the_replay_equal(log: Arc<dyn LogStore
         .first_contact(&sid("homer"), "claims", at(0))
         .await
         .unwrap();
-    append_member_of_kind(&*log, "RequestCommitted").await;
+    append_members(&*log, vec![foreign_member()]).await;
     let second = LoggedTeachings::open(log.clone(), &[])
         .await
         .expect("a foreign member does not stop the replay");
