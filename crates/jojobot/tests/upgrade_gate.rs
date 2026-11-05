@@ -1612,6 +1612,18 @@ async fn plant_the_old_ledger(
     .execute(&pool)
     .await
     .expect("a planted part");
+    // **The planted part's request is finished**, so the storage check does not call
+    // it a half-done write: a request that wrote parts and has no receipt is
+    // damage by that check's own rule, and the boot says so.
+    sqlx::query(
+        "INSERT INTO request_receipt (bot_key, request_id, verb, args_digest, landed, written_at) \
+         VALUES (?, 'gate-parts', 'journal', 'digest-gate-part', '{\"gate\":\"finished\"}', ?)",
+    )
+    .bind(&badge)
+    .bind(&now)
+    .execute(&pool)
+    .await
+    .expect("a planted receipt for the parts");
     sqlx::query(
         "INSERT INTO app_write (app_id, event_key, digest, landed, written_at) \
          VALUES ('gate-app', 'attempt-1', 'digest-gate-app', '{\"gate\":\"app\"}', ?)",
