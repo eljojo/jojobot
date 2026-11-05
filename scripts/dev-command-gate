@@ -27,7 +27,7 @@ import sys
 
 
 MESSAGE = (
-    "REFUSED: use make dev or make narrow CRATE=<crate> FILTER=<one substring>; "
+    "REFUSED: use make dev, make static or make narrow CRATE=<crate> [FILTER=<one substring>]; "
     "keep the checkout and inherited CARGO_TARGET_DIR."
 )
 ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z_0-9]*\+?=")
@@ -289,11 +289,17 @@ def blocked(words, depth=0):
     if any(sets_target(word) for word in args):
         return True
     targets = [word for word in args if not ASSIGNMENT.match(word)]
-    if not targets or any(target not in {"dev", "narrow"} for target in targets):
+    if not targets or any(target not in {"dev", "narrow", "static"} for target in targets):
+        return True
+    # `make static` takes no argument and is the only target on its line.
+    if "static" in targets and targets != ["static"]:
         return True
     if "narrow" in targets:
-        for name in ("CRATE", "FILTER"):
+        # CRATE is required; FILTER is optional, and one non-empty word when given.
+        for name, required in (("CRATE", True), ("FILTER", False)):
             values = [word.split("=", 1)[1] for word in args if word.startswith(name + "=")]
+            if not values and not required:
+                continue
             if len(values) != 1 or not values[0] or len(values[0].split()) != 1:
                 return True
     return False

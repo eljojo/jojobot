@@ -70,7 +70,11 @@ fn dev_command_gate_refuses_local_build_bypasses() {
         "nix develop -c env CARGO_TARGET_DIR=/tmp/alpha make dev",
         "make narrow CRATE=jojobot-bar FILTER='foo bar'",
         "make narrow CRATE=jojobot-bar FILTER=foo FILTER=bar",
-        "make narrow CRATE=jojobot-bar",
+        "make narrow",
+        "make narrow CRATE=jojobot-bar CRATE=jojobot-domain",
+        "make narrow CRATE=jojobot-bar FILTER=",
+        "make static narrow CRATE=jojobot-bar",
+        "make static check",
         "git status && cargo test",
         "git status\nmake report",
         "scripts/sabotage file before after -- make check",
@@ -202,6 +206,10 @@ fn dev_command_gate_refuses_local_build_bypasses() {
 fn dev_command_gate_allows_narrow_and_read_commands() {
     let commands = [
         "make dev",
+        "make static",
+        "nix develop -c make static",
+        "make narrow CRATE=jojobot-domain",
+        "make narrow CRATE=jojobot-domain > /tmp/alpha.log 2>&1",
         "make narrow CRATE=jojobot-domain FILTER=foo",
         "nix develop -c make narrow CRATE=jojobot-bar FILTER=foo",
         "scripts/sabotage file before after -- make narrow CRATE=jojobot-domain FILTER=foo",
