@@ -139,6 +139,13 @@ async fn a_batch_carries_both_families_and_the_seam_applies_both() {
         "the address answers from the claims"
     );
 
+    // The first writer holds the store's connection, so it is let go before a
+    // restarted process's writer opens a seam over the same log.
+    let applied = seam.read_claims(Clone::clone);
+    drop(seam);
+    writer.drain().await;
+    drop(writer);
+
     let second = Writer::default();
     let reopened = {
         let (opener, pool) = (second.clone(), pool.clone());
@@ -149,11 +156,10 @@ async fn a_batch_carries_both_families_and_the_seam_applies_both() {
     };
     assert_eq!(
         reopened.read_claims(Clone::clone),
-        seam.read_claims(Clone::clone),
+        applied,
         "the replay builds the claims the commit applied"
     );
     assert!(reopened.read(|state| state.lookup(&actor(), &id(), at(1)).is_some()));
-    writer.drain().await;
     second.drain().await;
     server.stop().await;
 }

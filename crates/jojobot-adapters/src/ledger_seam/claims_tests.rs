@@ -64,20 +64,24 @@ async fn opening_the_seam_replays_the_claims_members_of_the_log() {
     let scratch = Scratch::new("seam-claims");
     let mut server = Dolt::start(&scratch.0, free_port()).await.unwrap();
     let store = migrated_database(&server, "alpha").await.unwrap();
-    let writer = Writer::default();
 
+    // **The log is seeded by a writer of its own.** A writer opens its seam at its
+    // first transaction, and a seam does not see a batch appended after it by
+    // another holder; so the seam under test belongs to a second writer, which
+    // opens over the seeded log as a restarted process would.
+    let seeding = Writer::default();
     // Seed the log through the claims owner, then put a foreign member in a batch
     // of its own after it: the family test is by the kind of each member.
     {
         let log: Arc<dyn LogStore> = Arc::new(
-            WriterLog::open(store.clone(), writer.clone())
+            WriterLog::open(store.clone(), seeding.clone())
                 .await
                 .unwrap(),
         );
         let owner = crate::claims_log::LoggedClaims::open(log.clone())
             .await
             .unwrap()
-            .with_writer(writer.clone());
+            .with_writer(seeding.clone());
         owner
             .append(claims_events(), jiff::Timestamp::now())
             .await
@@ -97,7 +101,7 @@ async fn opening_the_seam_replays_the_claims_members_of_the_log() {
     }
     let expected = {
         let log: Arc<dyn LogStore> = Arc::new(
-            WriterLog::open(store.clone(), writer.clone())
+            WriterLog::open(store.clone(), seeding.clone())
                 .await
                 .unwrap(),
         );
@@ -107,7 +111,10 @@ async fn opening_the_seam_replays_the_claims_members_of_the_log() {
             .state()
             .await
     };
+    seeding.drain().await;
+    drop(seeding);
 
+    let writer = Writer::default();
     let pool = crate::writer::sql::Pool::from(store.clone());
     let seam = {
         let (opener, pool) = (writer.clone(), pool.clone());

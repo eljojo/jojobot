@@ -56,10 +56,13 @@ async fn open_over(member: Vec<u8>) -> Result<(), LedgerError> {
     let scratch = Scratch::new("seam-kind-set");
     let mut server = Dolt::start(&scratch.0, free_port()).await.unwrap();
     let store = migrated_database(&server, "alpha").await.unwrap();
-    let writer = Writer::default();
+    // The log is seeded by a writer of its own: a writer opens its seam at its
+    // first transaction, so the seam under test belongs to a second writer that
+    // opens over the seeded log.
+    let seeding = Writer::default();
     {
         let log: Arc<dyn LogStore> = Arc::new(
-            WriterLog::open(store.clone(), writer.clone())
+            WriterLog::open(store.clone(), seeding.clone())
                 .await
                 .unwrap(),
         );
@@ -73,6 +76,9 @@ async fn open_over(member: Vec<u8>) -> Result<(), LedgerError> {
         .unwrap();
         log.append(Position(0), &batch).await.unwrap();
     }
+    seeding.drain().await;
+    drop(seeding);
+    let writer = Writer::default();
     let pool = sql::Pool::from(store.clone());
     let opened = {
         let (opener, pool) = (writer.clone(), pool.clone());
