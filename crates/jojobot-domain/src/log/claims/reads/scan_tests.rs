@@ -269,3 +269,81 @@ fn a_scan_serves_marked_items_as_the_handles_things_answer_to_now() {
         "two marks of one such id name it once"
     );
 }
+
+/// The import keeps a folded row's name for resolution, but references serve
+/// the survivor's current handle, whatever the names' lexical order.
+#[test]
+fn canonical_handle_survives_an_imported_merge() {
+    use super::super::import::{self, EntityRow, Rows};
+
+    let row = |key: &str, handle: &str| EntityRow {
+        key: object(key),
+        handle: handle.into(),
+        kind: "work".into(),
+        name: handle.into(),
+        source: "fixture".into(),
+        boot: None,
+        parent: None,
+        aliases: Vec::new(),
+        crm: None,
+        prose: String::new(),
+        badge: Some(key.into()),
+        archived: None,
+        merged_into: None,
+        taken_in: None,
+    };
+    for merged in [false, true] {
+        let mut folded = row("folded", "work:alpha");
+        if merged {
+            folded.merged_into = Some(object("kept"));
+        }
+        let events = import::import(&Rows {
+            entities: vec![folded, row("kept", "work:zeta")],
+            ..Rows::default()
+        })
+        .expect("ordinary retained rows import");
+        let mut state = State::replay(&events);
+        for event in [
+            made("work:delta"),
+            created("r1", claim("f1", "work:delta", "a", 3)),
+            write("r1", "work:delta", "owner", 1, &marked(&["folded", "kept"])),
+        ] {
+            state.apply(&stamped(None, None, event));
+        }
+        let fields = state.fields_served(&object("work:delta"), &[]);
+        if merged {
+            assert_eq!(state.resolve("work:alpha"), Some(&object("kept")));
+            assert_eq!(
+                fields["owner"], "work:zeta",
+                "the folded row's earlier-sorting handle is not the survivor's handle"
+            );
+        } else {
+            assert_eq!(
+                fields["owner"], "work:alpha, work:zeta",
+                "distinct objects retain their own handles"
+            );
+        }
+    }
+}
+
+/// Numbered spellings still resolve, but never replace a thing's own handle
+/// when marked values are composed for a read.
+#[test]
+fn canonical_handle_is_not_an_earlier_sorting_numbered_alias() {
+    for alias in ["work:zeta", "work:alpha-queue/1"] {
+        let state = replayed(vec![
+            made("work:delta"),
+            made("kept"),
+            bound("kept", "work:zeta"),
+            bound("kept", alias),
+            created("r1", claim("f1", "work:delta", "a", 3)),
+            write("r1", "work:delta", "owner", 1, &marked(&["kept"])),
+        ]);
+        assert_eq!(state.resolve(alias), Some(&object("kept")));
+        assert_eq!(
+            state.fields_served(&object("work:delta"), &[])["owner"],
+            "work:zeta",
+            "the numbered alias {alias} resolves without becoming the served handle"
+        );
+    }
+}

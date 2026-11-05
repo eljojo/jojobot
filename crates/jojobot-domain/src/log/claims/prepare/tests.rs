@@ -1541,6 +1541,48 @@ fn an_edge_points_at_the_kind_its_shape_names() {
     }
 }
 
+/// A location's resolved kind stays a place even when its numbered alias has
+/// an earlier-sorting person's prefix.
+#[test]
+fn canonical_handle_keeps_a_numbered_location_target_a_place() {
+    crate::memory::kinds::load_shipped();
+    for alias in ["work:alpha-queue/2", "person:gamma/1"] {
+        let mut events = thing("alpha");
+        for (kind, handle) in [("person", "person:gamma"), ("place", "place:delta")] {
+            events.extend([
+                ClaimEvent::ObjectCreated {
+                    object: object(handle),
+                    body: body(kind, handle),
+                },
+                ClaimEvent::AddressBound {
+                    object: object(handle),
+                    address: handle.into(),
+                },
+            ]);
+        }
+        events.push(ClaimEvent::AddressBound {
+            object: object("place:delta"),
+            address: alias.into(),
+        });
+        let state = replay(&events);
+        let located = |target: &str| CaptureRequest {
+            edge: Some((EdgeShape::Location, target.into())),
+            ..request("alpha")
+        };
+        assert!(matches!(
+            prepare(&state, &[], &located("person:gamma")),
+            Err(Refusal::Invalid(MemoryError::InvalidEdge(_)))
+        ));
+        let admitted = prepare(&state, &[], &located(alias))
+            .expect("the numbered location target is a place, regardless of its prefix");
+        assert!(admitted.iter().any(|event| matches!(
+            event,
+            ClaimEvent::RecordCreated { claim, .. }
+                if claim.edge == Some(("location".into(), object("place:delta")))
+        )));
+    }
+}
+
 /// A bot `alpha` with `seats` seats and one starred rule, and a thing `beta`.
 fn seated_world(seats: &str) -> State {
     let events = [
