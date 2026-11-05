@@ -2724,7 +2724,7 @@ impl Jojobot {
                        write of each key winning (a snoozed rhythm also carries \
                        `snooze` {until, in_force}). facts, prose, charter, history, \
                        history_record, values, backing, stood_for and review_marks ask for more, each off \
-                       by default, each saying what it left out; `keys` asks for less, list \
+                       by default; `keys` asks for less, list \
                        blocks too, and `record_keys` for less of each fact record (`records_narrowed` names what it hid; \
                        `fields_left_out` does for a view's shows_keys). A merged thing carries \
                        `foldedNames` and can carry `claims_left_out`: \

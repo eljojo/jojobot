@@ -41,10 +41,11 @@ pub struct UpdateFactArgs {
     /// Text inside backticks or a fenced block is literal: a handle there is
     /// kept as written and never becomes a link.
     ///
-    /// An edit that would leave the claim too big to be read back whole in one
-    /// answer is refused with the claim unchanged: shorten it, split it into claims
+    /// An edit that would grow the claim past what one answer can read back whole
+    /// is refused with the claim unchanged: shorten it, split it into claims
     /// that each say one thing, or keep the long text on a document (`put_document`)
-    /// and write a pointer claim.
+    /// and write a pointer claim. An edit that does not grow it is allowed, so a
+    /// claim already too big can be shortened.
     #[serde(default)]
     pub(crate) content: Option<String>,
     /// Replacement details; pass an empty string to clear them. They may hold

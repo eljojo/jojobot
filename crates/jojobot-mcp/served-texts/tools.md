@@ -2361,7 +2361,7 @@ THREE AXES COMBINE INTO ONE QUESTION.
 WHICH OBJECTS: subject (one handle or `<collection>/<N>`; a named handle that names nothing is blocked with the nearest), kind, parent, answers_type, fields (a key and the value it holds), where (one line over keys, status != done && owner = bot:gamma) or view (a question worked out, asked by name; start with one if it fits).
 A call that narrows nothing is refused: name one of subject, kind, parent, roots (the things under nothing standing), answers_type, fields, where, view, unreviewed or near, or a claim's address (history_record, built_on).
 WHAT OF EACH: every object comes back as its FIELDS, what the thing HOLDS: every write on it folded, the newest write of each key winning (a snoozed rhythm also carries `snooze` {until, in_force}).
-facts, prose, charter, history, history_record, values, backing, stood_for and review_marks ask for more, each off by default, each saying what it left out; `keys` asks for less, list blocks too, and `record_keys` for less of each fact record (`records_narrowed` names what it hid; `fields_left_out` does for a view's shows_keys).
+facts, prose, charter, history, history_record, values, backing, stood_for and review_marks ask for more, each off by default; `keys` asks for less, list blocks too, and `record_keys` for less of each fact record (`records_narrowed` names what it hid; `fields_left_out` does for a view's shows_keys).
 A merged thing carries `foldedNames` and can carry `claims_left_out`: claims under a thing merged into it that it cannot serve, each with a reason and an address that history_record reads with no subject (records reads several).
 An app's claim carries a server-set `recorded_by` {app, grant, received_at}, not the describing key; archive and re-capture it, never rewrite it.
 WHICH EDGES: follow {shape or relation, direction, depth, keeping, fits_type}, and the answer nests.
@@ -4443,7 +4443,7 @@ A rule's `starred` mark stays on its claim, so it is not set here: update_fact o
 On a record the build supplies (a shipped view), `name` and `aliases` are yours, laid over the build's: once you name it, the shipped name no longer answers (it returns only as an alias you list), so a new thing may take it; your aliases ADD to the build's and `[]` clears only yours; an upgrade leaves yours on top.
 `source` and `crm` stay the build's, refused with no token.
 A handle that names nothing comes back blocked with the nearest handles — it never creates.
-Aliases or `sets` that would leave the thing, or its claim, too big to be read back whole in one answer are refused with nothing written.
+Aliases or `sets` that would grow the thing, or its claim, past what one answer can read back whole are refused with nothing written.
 The receipt's `changed` lists changes.
 ```
 
@@ -4843,10 +4843,11 @@ is refused with the numbers held.
 Text inside backticks or a fenced block is literal: a handle there is
 kept as written and never becomes a link.
 
-An edit that would leave the claim too big to be read back whole in one
-answer is refused with the claim unchanged: shorten it, split it into claims
+An edit that would grow the claim past what one answer can read back whole
+is refused with the claim unchanged: shorten it, split it into claims
 that each say one thing, or keep the long text on a document (`put_document`)
-and write a pointer claim.
+and write a pointer claim. An edit that does not grow it is allowed, so a
+claim already too big can be shortened.
 ```
 
 #### `update_fact` — argument `/inputSchema.derived_from`
