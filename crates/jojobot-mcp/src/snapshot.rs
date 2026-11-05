@@ -1030,6 +1030,42 @@ fn served_text(verb: &str, argument: Option<&str>) -> String {
     }
 }
 
+/// **Journal and mail keep a missing numbered mention and mark it unresolved
+/// on read**, while screened memory writes refuse it. Their argument text
+/// must let a caller predict that difference.
+#[test]
+fn journal_and_mail_descriptions_keep_missing_numbers_unresolved() {
+    for (verb, argument) in [
+        ("journal", "entry"),
+        ("amend_journal", "entry"),
+        ("post_message", "body"),
+        ("mark_processed", "notes"),
+    ] {
+        let text = served_text(verb, Some(argument)).to_lowercase();
+        let numbered: Vec<_> = text
+            .split('.')
+            .filter(|sentence| sentence.contains("number"))
+            .collect();
+        assert!(
+            !numbered.is_empty() && numbered.iter().all(|sentence| !sentence.contains("refus")),
+            "{verb}.{argument} must not promise to refuse a missing number: {text}"
+        );
+        assert!(
+            numbered.iter().any(|sentence| {
+                sentence.contains("kept as written") && sentence.contains("unresolved")
+            }),
+            "{verb}.{argument} must explain how the missing number reads back: {text}"
+        );
+    }
+    let memory = served_text("capture", Some("content")).to_lowercase();
+    assert!(
+        memory
+            .split('.')
+            .any(|sentence| sentence.contains("missing number") && sentence.contains("refus")),
+        "screened memory writes must still promise the missing-number refusal: {memory}"
+    );
+}
+
 /// **Every reason the guard asks a caller for a reason on is named in the
 /// `override_reason` argument of each verb that screens a name** (rule 498).
 /// The list a model reads is the one `needs_a_reason` holds, so a reason added
