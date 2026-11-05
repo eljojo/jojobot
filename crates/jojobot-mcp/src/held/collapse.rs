@@ -414,6 +414,67 @@ mod tests {
         assert_eq!(with_details, claim(Some("since the wedding")));
     }
 
+    /// **The collapse decision, one row per case**: what the session held before
+    /// the call, the parts it was handed, and what the answer now serves. The
+    /// version decides moved or not; the parts decide received or not; the
+    /// rendering is never compared. (`reship: true` is decided before this
+    /// function, in the held pass, and is pinned by held_changed's story.)
+    #[test]
+    fn the_collapse_decision_table() {
+        let homer = entity("person:homer");
+        let bare = json!({"id": "person:homer", "name": "Homer"});
+        let with_prose = json!({"id": "person:homer", "name": "Homer", "prose": "x"});
+        let with_facts = json!({"id": "person:homer", "name": "Homer", "facts": []});
+        //   (the row, what was held before as (version, the answer it was served
+        //    in), the version now, the answer now, whether it collapses)
+        let table = [
+            (
+                "same version, bare again",
+                Some((1, &with_facts)),
+                1,
+                &bare,
+                true,
+            ),
+            (
+                "same version, same parts",
+                Some((1, &with_prose)),
+                1,
+                &with_prose,
+                true,
+            ),
+            (
+                "same version, a part never served",
+                Some((1, &bare)),
+                1,
+                &with_prose,
+                false,
+            ),
+            (
+                "held, then changed",
+                Some((1, &with_facts)),
+                2,
+                &with_facts,
+                false,
+            ),
+            ("not held before this call", None, 1, &with_facts, false),
+        ];
+        for (row, before, now, answer, collapses) in table {
+            let held_before: Vec<(Held, Version)> = before
+                .iter()
+                .map(|(version, _)| (homer.clone(), at(*version)))
+                .collect();
+            let received: HashMap<Held, Shape> = before
+                .iter()
+                .flat_map(|(_, served)| shapes_in(served))
+                .collect();
+            let served = vec![(homer.clone(), at(now))];
+            let mut body = json!({"objects": [answer]});
+            let unchanged = unchanged(&held_before, &served);
+            let count = collapse(&mut body, &unchanged, &received);
+            assert_eq!(count == 1, collapses, "{row}: {body}");
+        }
+    }
+
     /// **Received parts are kept while a thing has not moved and start again when
     /// it has.**
     #[test]
