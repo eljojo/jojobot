@@ -127,10 +127,11 @@ impl Jojobot {
             Ok(Some(answered)) if answered.mailbox == mine && answered.state.is_unprocessed() => {
                 let note = format!("answered by {}", posted.id);
                 match self.close_for_a_post(&answered, &mine, &note, acting).await {
-                    Ok(done) => {
+                    Ok(Some(done)) => {
                         closed.changed = closed.changed.and(done);
                         closed.answered = Some(answered.id.clone());
                     }
+                    Ok(None) => {}
                     Err(_) => closed.failed.push(answered.id.clone()),
                 }
             }
@@ -185,10 +186,11 @@ impl Jojobot {
                 .close_for_a_post(&older, &posted.mailbox, &note, acting)
                 .await
             {
-                Ok(done) => {
+                Ok(Some(done)) => {
                     closed.changed = closed.changed.and(done);
                     closed.older.push(older.id.clone());
                 }
+                Ok(None) => {}
                 Err(_) => closed.failed.push(older.id.clone()),
             }
         }
@@ -196,23 +198,28 @@ impl Jojobot {
     }
 
     /// The close both rules make: the domain transition, and what it changed.
+    /// **`None` when the store left the message as it is**, as it does for one
+    /// replaced since it was read: nothing was closed, so nothing is claimed.
     async fn close_for_a_post(
         &self,
         message: &Message,
         by: &mailbox::MailboxName,
         note: &str,
         acting: mailbox::Acting<'_>,
-    ) -> Result<crate::changed::Changed, MailboxError> {
+    ) -> Result<Option<crate::changed::Changed>, MailboxError> {
         let processed = self
             .mailboxes
             .mark_processed(&message.id, by, Some(note), acting)
             .await?;
-        Ok(crate::changed::Changed::value(
+        if processed.state != mailbox::MessageState::Processed {
+            return Ok(None);
+        }
+        Ok(Some(crate::changed::Changed::value(
             processed.id.as_str(),
             crate::changed::STATE,
             Some(message.state.as_token()),
             Some(processed.state.as_token()),
-        ))
+        )))
     }
 
     /// **The first message of the thread `from` belongs to**, found by following

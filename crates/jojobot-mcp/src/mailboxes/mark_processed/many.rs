@@ -105,6 +105,11 @@ impl Jojobot {
             )
             .await
             {
+                // **A message replaced after the preflight is left as it is by the
+                // store**, so it is named apart and never counted.
+                Ok(processed) if processed.state != mailbox::MessageState::Processed => {
+                    superseded.push(message.id.clone());
+                }
                 Ok(processed) => {
                     changed = changed.and(crate::changed::Changed::value(
                         processed.id.as_str(),

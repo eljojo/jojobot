@@ -792,3 +792,61 @@ async fn a_reply_to_a_superseded_original_does_not_claim_to_close_it() {
         "{control}"
     );
 }
+
+// ── (7) a close the store did not make is not counted ───────────────────────
+
+/// **Closing many does not count an original that was replaced after the
+/// call looked at it.** The call saw it open, the sender's replacement landed,
+/// and the store left it as it is. It is named apart under `superseded`, and
+/// the ordinary message beside it is still closed and counted.
+/// `superseded` is a key nothing outside this process declares, so it is pinned.
+#[tokio::test]
+async fn closing_many_that_loses_the_race_to_a_replacement_does_not_count_the_original() {
+    let (jojobot, store) = superseding_handler();
+    owning(&jojobot, "otto").await;
+    owning(&jojobot, "gamma").await;
+    let original = post(&jojobot, "otto", "gamma", None).await;
+    let ordinary = post(&jojobot, "otto", "gamma", None).await;
+    store.arm(&original);
+
+    let answer = close_many(&jojobot, "otto", &[&original, &ordinary], Some("handled")).await;
+
+    assert_eq!(answer["processed"], 1, "only the ordinary one: {answer}");
+    assert_eq!(answer["ids"], serde_json::json!([ordinary]), "{answer}");
+    assert_eq!(
+        answer["superseded"],
+        serde_json::json!([original]),
+        "{answer}"
+    );
+    assert_eq!(
+        held(&jojobot, &original).await.state,
+        MessageState::Superseded
+    );
+    assert_eq!(
+        held(&jojobot, &ordinary).await.state,
+        MessageState::Processed
+    );
+}
+
+/// **A reply does not name as answered a message that was replaced after the
+/// reply looked at it.** The store left it as it is, so no close happened. The
+/// original is still new: only a new message can be replaced.
+#[tokio::test]
+async fn a_reply_that_loses_the_race_to_a_replacement_does_not_claim_to_close_it() {
+    let (jojobot, store) = superseding_handler();
+    owning(&jojobot, "otto").await;
+    owning(&jojobot, "gamma").await;
+    let original = post(&jojobot, "otto", "gamma", None).await;
+    store.arm(&original);
+
+    let reply = post_receipt(&jojobot, "gamma", "otto", Some(&original)).await;
+
+    assert!(
+        reply["closed"].get("answered").is_none(),
+        "nothing was closed: {reply}"
+    );
+    assert_eq!(
+        held(&jojobot, &original).await.state,
+        MessageState::Superseded
+    );
+}

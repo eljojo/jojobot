@@ -418,6 +418,84 @@ pub(crate) fn renaming_handler() -> (Jojobot, Arc<RenamingMailboxes>) {
     (jojobot, mailboxes)
 }
 
+/// **A store whose message is replaced between a close's preflight and the
+/// close itself.** The sender's replacement lands right before the store is
+/// asked to close the armed message, once, so the preflight saw it open and the
+/// store leaves it as it is and says it is superseded, as the real stores do.
+pub(crate) struct SupersedingMailboxes {
+    inner: InMemoryMailboxes,
+    replace: std::sync::Mutex<Option<mailbox::MessageId>>,
+}
+
+impl SupersedingMailboxes {
+    /// Replace `id`, from its own sender into its own box, right before the
+    /// next close of it. Armed after the fixtures, which close mail too.
+    pub(crate) fn arm(&self, id: &str) {
+        *self.replace.lock().expect("replace lock") = Some(mailbox::MessageId(id.into()));
+    }
+}
+
+#[jojobot_domain::forward(jojobot_domain::forward_mailboxes, via = inner)]
+impl mailbox::Mailboxes for SupersedingMailboxes {
+    async fn mark_processed(
+        &self,
+        id: &mailbox::MessageId,
+        by: &mailbox::MailboxName,
+        notes: Option<&str>,
+        acting: mailbox::Acting<'_>,
+    ) -> Result<mailbox::Message, mailbox::MailboxError> {
+        let due = {
+            let mut armed = self.replace.lock().expect("replace lock");
+            if armed.as_ref() == Some(id) {
+                armed.take()
+            } else {
+                None
+            }
+        };
+        if due.is_some() {
+            let original = self
+                .inner
+                .message_by_id(id)
+                .await
+                .expect("the store reads")
+                .expect("the armed message exists");
+            self.inner
+                .post_message(mailbox::NewMessage {
+                    mailbox: original.mailbox.clone(),
+                    body: "the sender replaced it".into(),
+                    subject: None,
+                    sender: original.sender.clone(),
+                    sent_at: original.sent_at,
+                    in_reply_to: None,
+                    supersedes: Some(original.id.clone()),
+                    sender_mail_waiting_at_send: None,
+                    posted_by_session: None,
+                })
+                .await
+                .expect("the replacement lands");
+        }
+        self.inner.mark_processed(id, by, notes, acting).await
+    }
+}
+
+/// A handler over a board whose message is replaced mid-close, and the handle
+/// the test arms it with.
+pub(crate) fn superseding_handler() -> (Jojobot, Arc<SupersedingMailboxes>) {
+    let mailboxes = Arc::new(SupersedingMailboxes {
+        inner: InMemoryMailboxes::knowing_any_owner(),
+        replace: std::sync::Mutex::new(None),
+    });
+    let jojobot = Jojobot::new(
+        Arc::new(InMemoryMemory::booted()),
+        Arc::new(SpySearch::default()),
+        mailboxes.clone(),
+        Arc::new(InMemorySessions::new()),
+        Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
+        crate::harness::seeded_registry(),
+    );
+    (jojobot, mailboxes)
+}
+
 /// Write a bot straight to Memory, with no box — the damage the heal exists
 /// to repair. The surface cannot produce this state, which is the point.
 pub(crate) async fn broken_bot(jojobot: &Jojobot, slug: &str) {
