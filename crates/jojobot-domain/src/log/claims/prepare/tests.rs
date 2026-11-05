@@ -1928,15 +1928,29 @@ fn a_thing_holds_no_more_live_records_than_its_ceiling() {
         "beta",
         &[
             ("r0", "f1", "record_capacity", "2"),
-            ("r1", "f2", "note", "x"),
-            ("r8", "f8", "review_mark", "x"),
-            ("r9", "f9", "engine_record", "x"),
+            ("r1", "f10", "note", "x"),
+            ("r9", "f2", "note", "x"),
+            ("r2", "f9", "note", "x"),
+            ("review", "f11", "review_mark", "x"),
+            ("engine", "f12", "engine_record", "x"),
         ],
     ));
-    assert!(matches!(
-        prepare(&marked, &[], &request("beta")),
-        Err(Refusal::OverCapacity { records, .. }) if records.len() == 2
-    ));
+    match prepare(&marked, &[], &request("beta")) {
+        Err(Refusal::OverCapacity { records, .. }) => assert_eq!(
+            records
+                .iter()
+                .map(|held| (held.record.clone(), held.label.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                (record("r0"), "f1"),
+                (record("r9"), "f2"),
+                (record("r2"), "f9"),
+                (record("r1"), "f10"),
+            ],
+            "the refusal lists numeric labels, excluding records that take no slot"
+        ),
+        other => panic!("expected a full thing, got {other:?}"),
+    }
     let full = writes(&[("r1", "f2")]);
     let over = writes(&[("r1", "f2"), ("r2", "f3")]);
     let adding = |borrow: bool| CaptureRequest {
