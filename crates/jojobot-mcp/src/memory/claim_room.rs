@@ -182,8 +182,9 @@ impl Jojobot {
     }
 
     /// **The thing as a read serves it: its row and its folded fields**, in one
-    /// targeted read of that thing. A listing of every entity to find one would
-    /// make every write cost the size of the store.
+    /// targeted read for a current handle. Only a miss resolves a former handle;
+    /// listing every entity on the ordinary path would make every write cost the
+    /// size of the store.
     async fn thing_as_read(
         &self,
         id: &EntityId,
@@ -195,7 +196,13 @@ impl Jojobot {
         // A member's number is measured as the member, never as a thing nobody
         // holds, which no measure would refuse.
         let id = self.row_handle(id).await.ok()?;
-        let scanned = self.memory.scan_entity(&id).await.ok()??;
+        let scanned = match self.memory.scan_entity(&id).await.ok()? {
+            Some(scanned) => scanned,
+            None => {
+                let current = self.current_handle(&id).await.ok()?;
+                self.memory.scan_entity(&current).await.ok()??
+            }
+        };
         Some((scanned.entity?, scanned.fields))
     }
 
