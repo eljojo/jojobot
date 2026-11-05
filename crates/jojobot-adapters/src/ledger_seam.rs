@@ -32,13 +32,20 @@ use crate::ledger_log::{
 };
 use crate::writer::{Writer, sql};
 
+#[cfg(test)]
+mod claims_tests;
+
 /// The generation the import gives every retained row. The old tables hold one
 /// row per id, so they never held two attempts under one key.
 const IMPORTED_GENERATION: u64 = 1;
 
 struct Held {
     state: State,
-    /// The position of the last batch applied to `state`.
+    /// **The claims family's state, held beside the ledgers'.** One replay of the
+    /// log fills both, because the log holds every family's members and a batch
+    /// may carry both (one batch per transaction).
+    claims: jojobot_domain::log::claims::State,
+    /// The position of the last batch applied to `state` and `claims`.
     applied: Position,
     /// A commit's outcome was not known: the log may hold a batch `state` has not
     /// applied.
@@ -107,6 +114,7 @@ impl Seam {
             log,
             held: Mutex::new(Held {
                 state: State::default(),
+                claims: jojobot_domain::log::claims::State::default(),
                 applied: Position::default(),
                 behind: false,
                 seen: false,
@@ -135,8 +143,15 @@ impl Seam {
             let mut held = self.lock();
             for batch in batches {
                 for member in batch.members() {
-                    // Another family's member is that family's to read.
+                    // A member of the ledger family is applied to the ledgers; a
+                    // member of the claims family, to the claims; any other
+                    // family's member is that family's to read.
                     let Some(event) = codec::decode_own(member).map_err(unreadable)? else {
+                        if let Some(claim) = crate::claims_log::codec::decode_own(member)
+                            .map_err(|error| LedgerError::Store(error.to_string()))?
+                        {
+                            held.claims.apply(&claim);
+                        }
                         continue;
                     };
                     held.state
@@ -319,6 +334,17 @@ impl Seam {
     /// Read the held state.
     pub(crate) fn read<T>(&self, read: impl FnOnce(&State) -> T) -> T {
         read(&self.lock().state)
+    }
+
+    /// Read the held claims state. The capture job reads the State it prepares
+    /// against through this, and it is the next commit; until then only the case
+    /// that replays the log reads it.
+    #[allow(dead_code)]
+    pub(crate) fn read_claims<T>(
+        &self,
+        read: impl FnOnce(&jojobot_domain::log::claims::State) -> T,
+    ) -> T {
+        read(&self.lock().claims)
     }
 }
 
