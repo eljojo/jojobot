@@ -26,5 +26,7 @@ async fn two_dolt_stores_each_see_only_the_kinds_they_declare() {
         &first, &second,
     )
     .await;
+    jojobot_domain::memory::testing::contract::a_kind_declaration_is_checked_for_shape(&first)
+        .await;
     server.stop().await;
 }

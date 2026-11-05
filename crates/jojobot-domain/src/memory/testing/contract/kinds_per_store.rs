@@ -56,10 +56,38 @@ pub async fn two_stores_each_see_only_the_kinds_they_declare<A: Memory, B: Memor
     }
 }
 
+/// **A kind is declared under a name that could be a handle's kind**, the same
+/// shape parsing accepts, so a store never holds a kind no handle can wear.
+pub async fn a_kind_declaration_is_checked_for_shape<M: Memory>(store: &M) {
+    for token in ["", "two words", "person:homer", "a/b"] {
+        let refused = store
+            .declare_kind(token, Origin::Declared, Vec::new())
+            .await;
+        assert!(
+            matches!(refused, Err(MemoryError::InvalidType(_))),
+            "{token:?} is not a kind's name: {refused:?}"
+        );
+    }
+    let held = store.declared_kinds().await.expect("the store reads");
+    assert!(
+        held.iter().all(|(held, _)| held != "two words"),
+        "a refused declaration leaves no kind behind"
+    );
+    store
+        .declare_kind("otter", Origin::Declared, Vec::new())
+        .await
+        .expect("a well formed name is declared");
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::memory::testing::InMemoryMemory;
+
+    #[tokio::test]
+    async fn a_fake_checks_a_kind_declaration_for_shape() {
+        a_kind_declaration_is_checked_for_shape(&InMemoryMemory::new()).await;
+    }
 
     #[tokio::test]
     async fn two_fakes_each_see_only_the_kinds_they_declare() {

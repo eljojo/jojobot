@@ -1562,6 +1562,14 @@ pub fn validate_subject_in(kinds: &kinds::KindSet, subject: &EntityId) -> Result
     kind_refusal(subject, kinds.standing(subject.kind_token()))
 }
 
+/// **A kind is declared under a name that parsing accepts**, so a store never
+/// holds a kind no handle can wear. One check for both, through [`kinds::KindToken`].
+pub fn validate_kind_declaration(token: &str) -> Result<(), MemoryError> {
+    kinds::KindToken::parse(token)
+        .map(drop)
+        .map_err(|why| MemoryError::InvalidType(format!("'{token}': {why}")))
+}
+
 /// **The two failures have two repairs, so they are two errors.** A caller can
 /// spell a kind differently; nobody can spell their way out of a store that
 /// declares nothing.

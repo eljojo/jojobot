@@ -5316,6 +5316,7 @@ impl Memory for InMemoryMemory {
         // **Whether the store holds anything different afterwards**, read off
         // the same places the real store keeps a kind: its row, its keys and who
         // wrote each key.
+        crate::memory::validate_kind_declaration(token)?;
         let before = self.kind_state(token);
         self.declare_kind_rows(token, origin, fields)?;
         Ok(self.kind_state(token) != before)

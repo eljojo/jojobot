@@ -51,8 +51,8 @@ use jojobot_domain::memory::{
         DeclaredType, Displaced, Field, Fold, HeldKindKey, Origin, ValueType, guard_replacement,
         plan_kind_keys, validate_type,
     },
-    validate_edge, validate_entity, validate_field, validate_new_fact, validate_prose,
-    validate_subject, validate_write_subject, writes_of,
+    validate_edge, validate_entity, validate_field, validate_kind_declaration, validate_new_fact,
+    validate_prose, validate_subject, validate_write_subject, writes_of,
 };
 use sqlx::{AssertSqlSafe, MySql, MySqlPool, Row, Transaction};
 
@@ -7161,6 +7161,7 @@ impl Memory for DoltMemory {
         origin: Origin,
         fields: Vec<Field>,
     ) -> Result<bool, MemoryError> {
+        validate_kind_declaration(token)?;
         // The keys are screened exactly as a schema's are — one declaration
         // shape, one validator, so a kind cannot name a key twice where a type
         // could not.
