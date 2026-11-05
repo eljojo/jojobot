@@ -13,7 +13,7 @@ use super::dsl::Story;
 
 /// What the kettle's `visits` reads now.
 async fn visits(s: &Session) -> String {
-    s.call("recall", json!({"subject": "thing:kettle"}))
+    s.call("recall", json!({"subject": "thing:kettle", "reship": true}))
         .await
         .json()["objects"][0]["fields"]["visits"]
         .as_str()

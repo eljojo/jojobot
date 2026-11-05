@@ -330,7 +330,9 @@ async fn set_charter_accepts_charter() {
         let stored = served(
             &jojobot,
             "recall",
-            json!({"subject": "bot:gamma", "prose": true, "sid": TEST_SID}),
+            // The fake store's clock stands still, so a second write shares the
+            // first one's moment; this read proves what was stored, in full.
+            json!({"subject": "bot:gamma", "prose": true, "reship": true, "sid": TEST_SID}),
         )
         .await;
         assert_eq!(stored["objects"][0]["prose"], text, "{stored}");

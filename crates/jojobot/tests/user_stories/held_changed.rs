@@ -547,3 +547,31 @@ async fn a_listing_the_session_holds_unchanged_collapses_and_reship_lists_it_who
     assert!(whole.get("held_collapsed").is_none(), "{whole}");
     story.finish().await;
 }
+
+/// **A notice names a change and serves none of the new words.** Otto holds
+/// Homer, another session edits a claim on him, and Otto reads Lisa, which
+/// brings the notice. Reading Homer next serves the edited claim in full: the
+/// notice did not give Otto the new text, so it is not text he already holds.
+#[tokio::test]
+async fn a_notice_of_a_change_does_not_stand_for_the_changed_text() {
+    let (story, otto, other, claim) = otto_holds_homer().await;
+    other
+        .call(
+            "update_fact",
+            json!({"address": claim, "content": "likes donuts and beer", "provenance": "inference"}),
+        )
+        .await;
+    let notice = some_other_read(&otto).await;
+    assert_eq!(
+        notice["held_changed"][0]["handle"], "person:homer",
+        "{notice}"
+    );
+
+    let read = otto
+        .call("recall", json!({"subject": "person:homer", "facts": true}))
+        .await
+        .json();
+    assert!(read.to_string().contains("likes donuts and beer"), "{read}");
+    assert!(read.get("held_collapsed").is_none(), "{read}");
+    story.finish().await;
+}

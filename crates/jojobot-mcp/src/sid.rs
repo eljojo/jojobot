@@ -572,7 +572,7 @@ impl SessionRegistry {
             .hold_shapes(name, shapes);
     }
 
-    /// Which parts of each held thing a run was served.
+    /// Which texts of each held thing a run was served.
     pub(crate) fn shapes_by(
         &self,
         name: &str,

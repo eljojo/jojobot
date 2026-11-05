@@ -94,13 +94,13 @@ struct Session {
     asked: HashSet<String>,
     /// What it holds and how each stood when it was served, oldest first.
     held: VecDeque<(Held, Version)>,
-    /// **Which parts of each held thing it was served**, as the paths of the
+    /// **Which text of each held thing it was served**, as fingerprints of the
     /// object it received. A version says the thing has not moved; this says
-    /// whether a later answer carries a part the session never received.
+    /// whether a later answer carries text the session never received.
     shapes: HashMap<Held, Shape>,
 }
 
-/// The paths of one served object (see `held::collapse`), hashed.
+/// The fingerprints of the texts served of one object (see `held::collapse`).
 pub(crate) type Shape = std::collections::BTreeSet<u64>;
 
 /// **The whole ledger.**
@@ -185,7 +185,7 @@ impl Ledger {
         }
     }
 
-    /// **Remember which parts of a thing the session was served.** Meaningful only
+    /// **Remember which text of a thing the session was served.** Meaningful only
     /// beside [`Ledger::hold`] of the same thing: a shape of a thing the session
     /// does not hold is dropped.
     pub(crate) fn hold_shapes(&mut self, sid: &str, shapes: Vec<(Held, Shape)>) {
@@ -199,7 +199,7 @@ impl Ledger {
         }
     }
 
-    /// The parts of each held thing the session was served.
+    /// The texts of each held thing the session was served.
     pub(crate) fn shapes_by(&self, sid: &str) -> HashMap<Held, Shape> {
         self.sessions
             .get(sid)
