@@ -1,7 +1,7 @@
 //! **What a boot costs over a log with a tail, in each state its snapshot can be
 //! in, and that an orderly stop leaves a snapshot the next boot loads.** Each case
 //! spawns the real binary over a store it prepared, times process start to the
-//! first answer of `/healthz`, reads the process's peak resident memory, and
+//! first answer of `/healthz`, reads the peak resident memory of the server and its store, and
 //! prints one line. The release promises a boot under [`BOOT_BOUND`] and a process
 //! under [`MEMORY_BOUND_KIB`] (`MemoryMax=1G`); a case fails with the measured
 //! number when it is over.
@@ -143,14 +143,53 @@ impl Running {
         self.started.elapsed()
     }
 
-    /// Peak resident memory of the process, from the kernel's own account.
-    fn peak_kib(&self) -> u64 {
-        std::fs::read_to_string(format!("/proc/{}/status", self.pid))
-            .expect("the process status")
-            .lines()
-            .find_map(|line| line.strip_prefix("VmHWM:"))
-            .and_then(|rest| rest.trim().trim_end_matches("kB").trim().parse().ok())
-            .expect("VmHWM is in the status")
+    /// **Peak resident memory of the server and the store it started**, from the
+    /// kernel's own account, as `(server, store)`. `MemoryMax=1G` covers the
+    /// service's whole cgroup, so the bound is on their sum. The store is every
+    /// descendant of the server's pid.
+    fn peaks_kib(&self) -> (u64, u64) {
+        fn field(status: &str, name: &str) -> Option<u64> {
+            status
+                .lines()
+                .find_map(|line| line.strip_prefix(name))
+                .and_then(|rest| rest.trim().trim_end_matches("kB").trim().parse().ok())
+        }
+        let mut parents = std::collections::HashMap::new();
+        let mut peaks = std::collections::HashMap::new();
+        for entry in std::fs::read_dir("/proc").expect("/proc").flatten() {
+            let Some(pid) = entry
+                .file_name()
+                .to_str()
+                .and_then(|n| n.parse::<u32>().ok())
+            else {
+                continue;
+            };
+            // A process can exit between the listing and the read.
+            let Ok(status) = std::fs::read_to_string(entry.path().join("status")) else {
+                continue;
+            };
+            parents.insert(pid, field(&status, "PPid:").unwrap_or(0) as u32);
+            peaks.insert(pid, field(&status, "VmHWM:").unwrap_or(0));
+        }
+        let server = *peaks.get(&self.pid).expect("the server's VmHWM");
+        let mut below = std::collections::HashSet::from([self.pid]);
+        loop {
+            let found: Vec<u32> = parents
+                .iter()
+                .filter(|(pid, parent)| below.contains(parent) && !below.contains(pid))
+                .map(|(pid, _)| *pid)
+                .collect();
+            if found.is_empty() {
+                break;
+            }
+            below.extend(found);
+        }
+        let store = below
+            .iter()
+            .filter(|pid| **pid != self.pid)
+            .map(|pid| peaks[pid])
+            .sum();
+        (server, store)
     }
 
     fn signal(&self, signal: &str) {
@@ -206,6 +245,22 @@ impl Running {
     }
 
     /// The event log boot line, as the server wrote it.
+    /// A number from the event log boot line, such as `tail_batches=2`.
+    fn boot_field(&self, name: &str) -> u64 {
+        let line = self.log_boot();
+        let from = line
+            .find(&format!("{name}="))
+            .unwrap_or_else(|| panic!("no {name} in {line}"))
+            + name.len()
+            + 1;
+        line[from..]
+            .chars()
+            .take_while(char::is_ascii_digit)
+            .collect::<String>()
+            .parse()
+            .unwrap_or_else(|_| panic!("{name} is no number in {line}"))
+    }
+
     fn log_boot(&self) -> String {
         self.seen
             .iter()
@@ -317,6 +372,9 @@ enum Plan {
     /// A snapshot at the head, then made unusable by a change of the log's
     /// representation epoch.
     Invalidated,
+    /// A snapshot of the log as it was before the tail, so the tail alone is
+    /// uncovered whatever the recorded log held.
+    Behind,
 }
 
 /// Append `events` events to the log of the store in `state`, then leave the
@@ -336,6 +394,11 @@ async fn prepare(state: &Scratch, plan: Plan, events: u64) -> Size {
         .execute(&pool)
         .await
         .expect("the snapshot slot is cleared");
+    if matches!(plan, Plan::Behind) {
+        take_snapshot(&log, jiff::Timestamp::now())
+            .await
+            .expect("the baseline snapshot");
+    }
     let half = (events / PER_BATCH) / 2;
     let mut head = log.head().expect("the log holds a head");
     for n in 0..events / PER_BATCH {
@@ -415,7 +478,8 @@ fn record(text: &str) {
 /// One measured boot: record its numbers and assert the bounds.
 fn measured(case: &str, size: &Size, run: &mut Running) -> Duration {
     let took = run.first_answer();
-    let peak = run.peak_kib();
+    let (server, store) = run.peaks_kib();
+    let peak = server + store;
     // The boot steps the server timed itself: the snapshot load and replay, the
     // fold fill, the search index and the rest.
     let steps: Vec<&str> = run
@@ -426,7 +490,7 @@ fn measured(case: &str, size: &Size, run: &mut Running) -> Duration {
         .collect();
     record(&format!(
         "boot-measure {case}: things={} messages={} log_events={} \
-         start_to_first_answer_ms={} peak_rss_kib={peak}\n  {}",
+         start_to_first_answer_ms={} peak_rss_kib={peak} (server {server} + store {store})\n  {}",
         size.things,
         size.messages,
         size.events,
@@ -439,7 +503,8 @@ fn measured(case: &str, size: &Size, run: &mut Running) -> Duration {
     );
     assert!(
         peak < MEMORY_BOUND_KIB,
-        "{case}: peak memory was {peak} kB, over {MEMORY_BOUND_KIB} kB (MemoryMax=1G)"
+        "{case}: peak memory was {peak} kB (server {server} + store {store}), over \
+         {MEMORY_BOUND_KIB} kB (MemoryMax=1G)"
     );
     took
 }
@@ -520,12 +585,20 @@ async fn a_boot_after_a_crash_loads_the_snapshot_the_stop_left() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn an_orderly_stop_publishes_a_snapshot_the_next_boot_loads() {
     let state = restored_store("jojobot-measure-stop").await;
-    let size = prepare(&state, Plan::None, SMALL_TAIL).await;
+    let size = prepare(&state, Plan::Behind, SMALL_TAIL).await;
     let mut first = spawn(state);
     first.first_answer();
+    // The snapshot is of the log before the tail, so exactly the tail is replayed
+    // and exactly the tail is uncovered, whatever size the recorded log has.
     assert!(
-        first.log_boot().contains("from_snapshot=false"),
-        "the case starts with no snapshot: {}",
+        first.log_boot().contains("from_snapshot=true"),
+        "the case starts from the baseline snapshot: {}",
+        first.log_boot()
+    );
+    assert_eq!(
+        first.boot_field("tail_batches"),
+        SMALL_TAIL / PER_BATCH,
+        "{}",
         first.log_boot()
     );
     let (state, seen) = first.stopped();
@@ -543,8 +616,27 @@ async fn an_orderly_stop_publishes_a_snapshot_the_next_boot_loads() {
     );
     let mut second = spawn(state);
     measured("stop", &size, &mut second);
+    // The stop's snapshot covers the head: loaded, with nothing left to replay.
     assert!(
         second.log_boot().contains("from_snapshot=true"),
+        "{}",
+        second.log_boot()
+    );
+    assert_eq!(
+        second.boot_field("tail_batches"),
+        0,
+        "{}",
+        second.log_boot()
+    );
+    assert_eq!(
+        second.boot_field("restored_at"),
+        second.boot_field("head"),
+        "{}",
+        second.log_boot()
+    );
+    assert_eq!(
+        second.boot_field("head"),
+        size.events,
         "{}",
         second.log_boot()
     );
