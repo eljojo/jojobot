@@ -8,7 +8,6 @@ use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::dolt::storage_check::DoltStorageCheck;
 use jojobot_adapters::testing::{Scratch, free_port, migrated_database};
-use jojobot_domain::clock::Clock;
 use jojobot_domain::memory::{EntityId, Memory, NewEntity, NewFact, Override};
 use jojobot_domain::request::{Request, RequestId, Scope, armed, digest_of, within};
 use jojobot_domain::storage_check::{StorageCheck, StorageClass};
@@ -59,7 +58,7 @@ async fn badge_of(pool: &sqlx::MySqlPool, handle: &str) -> String {
 
 /// What the check found for one class: its count and its ids.
 async fn found(pool: &sqlx::MySqlPool, class: StorageClass) -> (u64, Vec<String>) {
-    let finding = DoltStorageCheck::open(pool.clone(), Clock::default())
+    let finding = DoltStorageCheck::open(pool.clone())
         .check_storage()
         .await
         .expect("the check reads")
@@ -99,7 +98,6 @@ async fn a_merge_under_a_request_id(label: &str) -> (Scratch, Dolt, sqlx::MySqlP
     .await
     .expect("the merge lands");
     drop(served);
-    jojobot_adapters::testing::mirror_ledger_into_old_tables(&pool).await;
     (scratch, server, pool, memory)
 }
 
@@ -236,64 +234,5 @@ mod precision {
             .and_then(|doc| doc.entity)
             .expect("the scan names the entity");
         assert_eq!(scanned.merged_into, listed.merged_into);
-    }
-
-    /// **A handle a rename freed and a new thing took does not hide a lost merge.**
-    /// The receipt names the survivor by the handle it wore when the merge landed. The
-    /// survivor is renamed away, a new thing takes the handle, the merge is lost, and
-    /// the folded thing is merged into the new thing by another act. Both wore the
-    /// handle; the receipt meant the first. The check asks which wore it when the
-    /// receipt was written and finds the merge missing; it used to accept any wearer.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-    async fn a_lost_merge_is_named_when_the_retaker_of_the_survivors_handle_holds_the_folded_thing()
-    {
-        let (_scratch, _server, pool, memory) = a_merge_under_a_request_id("precision-d2").await;
-        memory
-            .rename_entity(
-                &EntityId("person:krusty".into()),
-                &EntityId("person:nelson".into()),
-                None,
-                date(2026, 9, 3),
-                Override::none(),
-                Some("run-a"),
-            )
-            .await
-            .expect("the rename")
-            .written()
-            .expect("not blocked");
-        run(
-            &pool,
-            "UPDATE entity SET name = 'Principal' WHERE id = 'person:nelson'",
-        )
-        .await;
-        let retaker = thing(&memory, "person:krusty", "Seymour").await;
-        assert_eq!(
-            found(&pool, StorageClass::LandedMergeMissing).await.0,
-            0,
-            "while the merge stands the receipt is whole"
-        );
-        // The merge is lost, and the folded thing is merged into the retaker.
-        run(
-            &pool,
-            "UPDATE entity SET merged_into = NULL WHERE id = 'person:skinner'",
-        )
-        .await;
-        memory
-            .merge(
-                &EntityId("person:skinner".into()),
-                &retaker,
-                Some("filed again"),
-                date(2026, 9, 5),
-                &EntityId("bot:sigma".into()),
-                Some("run-b"),
-            )
-            .await
-            .expect("the second merge lands");
-        let (count, ids) = found(&pool, StorageClass::LandedMergeMissing).await;
-        assert_eq!(count, 1, "the receipt's merge is not in the store: {ids:?}");
-        assert!(
-            ids[0].contains("person:skinner into person:krusty"),
-            "{ids:?}"
-        );
     }
 }

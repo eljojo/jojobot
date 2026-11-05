@@ -138,7 +138,7 @@ mod tests {
             store = store.with(*class, &format!("the-one-of-{}", class.token()));
         }
         for n in 0..(IDS_SHOWN + 5) {
-            store = store.with(StorageClass::HalfDoneWrite, &format!("extra-{n}"));
+            store = store.with(StorageClass::DanglingReference, &format!("extra-{n}"));
         }
         report_storage_damage(&store).await;
         let lines = kept.lines();
@@ -155,8 +155,8 @@ mod tests {
         );
         let cut = warnings
             .iter()
-            .find(|l| l.contains(StorageClass::HalfDoneWrite.token()))
-            .expect("the half-done class is warned about");
+            .find(|l| l.contains(StorageClass::DanglingReference.token()))
+            .expect("the dangling-reference class is warned about");
         assert!(
             cut.contains(&format!("count={}", IDS_SHOWN + 6)),
             "the count is whole: {cut}"

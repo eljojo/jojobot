@@ -8,23 +8,13 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use jiff::{SignedDuration, Timestamp};
-use jojobot_domain::clock::Clock;
 use jojobot_domain::memory::{EntityId, FactAddress, FactId, MemoryError};
-use jojobot_domain::request::KEPT_FOR;
 use jojobot_domain::storage_check::{
     Finding, IDS_SHOWN, StorageCheck, StorageCheckError, StorageClass,
 };
 use sqlx::{MySql, MySqlPool, Transaction};
 
-use super::memory::{DoltMemory, Moment, Wearer};
-
-/// A receipt written this long ago and still empty was lost.
-const RECEIPT_GRACE: SignedDuration = SignedDuration::from_mins(10);
-
-fn stamp(at: Timestamp) -> String {
-    at.strftime("%Y-%m-%dT%H:%M:%S%.9fZ").to_string()
-}
+use super::memory::DoltMemory;
 
 fn store(e: sqlx::Error) -> StorageCheckError {
     StorageCheckError(format!("the store could not be read: {e}"))
@@ -34,12 +24,11 @@ fn store(e: sqlx::Error) -> StorageCheckError {
 #[derive(Clone)]
 pub struct DoltStorageCheck {
     pool: MySqlPool,
-    clock: Clock,
 }
 
 impl DoltStorageCheck {
-    pub fn open(pool: MySqlPool, clock: Clock) -> Self {
-        DoltStorageCheck { pool, clock }
+    pub fn open(pool: MySqlPool) -> Self {
+        DoltStorageCheck { pool }
     }
 }
 
@@ -47,7 +36,6 @@ impl DoltStorageCheck {
 impl StorageCheck for DoltStorageCheck {
     async fn check_storage(&self) -> Result<Vec<Finding>, StorageCheckError> {
         let mut tx = self.pool.begin().await.map_err(store)?;
-        let now = self.clock.now();
         let mut found = Vec::new();
         let mut merge_event_loops = Counted::default();
         for class in StorageClass::ALL {
@@ -63,9 +51,6 @@ impl StorageCheck for DoltStorageCheck {
                 }
                 StorageClass::MergeEventLoop => std::mem::take(&mut merge_event_loops),
                 StorageClass::HandleHomedWrite => writes_homed_under_a_handle(&mut tx).await?,
-                StorageClass::LandedMergeMissing => landed_merges_missing(&mut tx).await?,
-                StorageClass::HalfDoneWrite => half_done_writes(&mut tx, now).await?,
-                StorageClass::LostReceipt => lost_receipts(&mut tx, now).await?,
             };
             found.push(Finding {
                 class: *class,
@@ -366,163 +351,4 @@ async fn dangling_references(
         add(named_rows_of(tx, sql).await?);
     }
     Ok((rows, found))
-}
-
-/// **D2.** A `merge_entities` receipt names, in `landed`, the folded thing and the
-/// survivor by the handles they had when the merge landed. The folded thing must
-/// be merged, and the chain of `merged_into` from it must end where the chain
-/// from the survivor ends. A handle that was renamed since, or taken by another
-/// thing, is placed by [`DoltMemory::wearer_of_handle_at`], the one decider of
-/// which thing wore a handle, asked at the moment the receipt was written. A
-/// handle that two things wore and the moments do not tell apart is not placed
-/// and is not reported: the check does not guess which of the two the merge meant.
-/// A handle no thing ever wore is reported. Every receipt in the retention
-/// window is checked.
-async fn landed_merges_missing(
-    tx: &mut Transaction<'_, MySql>,
-) -> Result<Counted, StorageCheckError> {
-    let receipts: Vec<(String, String, String, String)> = sqlx::query_as(
-        "SELECT bot_key, request_id, landed, written_at FROM request_receipt
-         WHERE verb = 'merge_entities' ORDER BY written_at",
-    )
-    .fetch_all(&mut **tx)
-    .await
-    .map_err(store)?;
-    if receipts.is_empty() {
-        return Ok((0, Vec::new()));
-    }
-    let things: Vec<(String, Option<String>, Option<String>)> =
-        sqlx::query_as("SELECT id, badge, merged_into FROM entity")
-            .fetch_all(&mut **tx)
-            .await
-            .map_err(store)?;
-    let by_handle: BTreeMap<&str, usize> = things
-        .iter()
-        .enumerate()
-        .map(|(at, (id, _, _))| (id.as_str(), at))
-        .collect();
-    // A thing's key is its badge, else its handle, as the decider answers it.
-    let by_key: BTreeMap<&str, usize> = things
-        .iter()
-        .enumerate()
-        .map(|(at, (id, badge, _))| (badge.as_deref().unwrap_or(id.as_str()), at))
-        .collect();
-    // Where a thing's chain of `merged_into` ends, and whether it was merged at
-    // all. A loop has no end.
-    let end_of = |start: usize| -> Option<usize> {
-        let mut at = start;
-        let mut seen = BTreeSet::from([at]);
-        while let Some(into) = &things[at].2 {
-            at = *by_handle.get(into.as_str())?;
-            if !seen.insert(at) {
-                return None;
-            }
-        }
-        Some(at)
-    };
-    let mut missing = Vec::new();
-    for (bot, request, landed, written_at) in receipts {
-        let named: Option<(String, String)> = serde_json::from_str::<serde_json::Value>(&landed)
-            .ok()
-            .and_then(|v| {
-                Some((
-                    v.get("folded")?.as_str()?.to_string(),
-                    v.get("survivor")?.as_str()?.to_string(),
-                ))
-            });
-        let Some((folded, survivor)) = named else {
-            missing.push(format!(
-                "{bot}/{request}: the receipt's landed record does not name a merge"
-            ));
-            continue;
-        };
-        let Ok(at) = written_at.parse::<Timestamp>() else {
-            continue;
-        };
-        let folded_wore = DoltMemory::wearer_of_handle_at(tx, &folded, Moment::At(at))
-            .await
-            .map_err(|e| StorageCheckError(format!("the store could not be read: {e}")))?;
-        let survivor_wore = DoltMemory::wearer_of_handle_at(tx, &survivor, Moment::At(at))
-            .await
-            .map_err(|e| StorageCheckError(format!("the store could not be read: {e}")))?;
-        // **The folded thing decides first**: a thing that was never merged
-        // cannot hold the merge, whoever the survivor was. A survivor handle the
-        // decider cannot place is not guessed at.
-        let held = match folded_wore {
-            Wearer::NeverWorn => false,
-            Wearer::Undecidable(_) => true,
-            Wearer::Placed(folded_key) => match by_key.get(folded_key.as_str()).copied() {
-                Some(folded_at) if things[folded_at].2.is_some() => match survivor_wore {
-                    Wearer::NeverWorn => false,
-                    Wearer::Undecidable(_) => true,
-                    Wearer::Placed(survivor_key) => {
-                        let survivor_at = by_key.get(survivor_key.as_str()).copied();
-                        end_of(folded_at).is_some()
-                            && survivor_at.and_then(end_of) == end_of(folded_at)
-                    }
-                },
-                _ => false,
-            },
-        };
-        if !held {
-            missing.push(format!("{bot}/{request}: {folded} into {survivor}"));
-        }
-    }
-    Ok((missing.len() as u64, missing))
-}
-
-/// **D1.** Parts with no receipt for the same bot and request id, inside the
-/// window the ledger keeps ids for. One id per request: its verb, its part count
-/// and when its oldest part landed.
-///
-/// **A part older than the window is not damage.** A write purges a receipt
-/// older than the window on every claim, and a part only on a claim that is a
-/// part, so a request that finished leaves parts with no receipt once it ages.
-/// A request cut part-way and left past the window cannot be finished by a
-/// resend either: the ledger no longer reads its parts.
-async fn half_done_writes(
-    tx: &mut Transaction<'_, MySql>,
-    now: Timestamp,
-) -> Result<Counted, StorageCheckError> {
-    let rows: Vec<(String, String, String, i64, String)> = sqlx::query_as(
-        "SELECT p.verb, p.bot_key, p.request_id, COUNT(*), MIN(p.written_at)
-         FROM request_part p
-         WHERE p.written_at >= ?
-           AND NOT EXISTS (SELECT 1 FROM request_receipt r
-                           WHERE r.bot_key = p.bot_key AND r.request_id = p.request_id)
-         GROUP BY p.verb, p.bot_key, p.request_id
-         ORDER BY MIN(p.written_at)",
-    )
-    .bind(stamp(now - KEPT_FOR))
-    .fetch_all(&mut **tx)
-    .await
-    .map_err(store)?;
-    let ids = rows
-        .into_iter()
-        .map(|(verb, bot, request, parts, since)| {
-            format!("{verb} {bot}/{request}: {parts} parts since {since}")
-        })
-        .collect::<Vec<_>>();
-    Ok((ids.len() as u64, ids))
-}
-
-/// **D3.** A receipt row with no receipt body, written before the grace period.
-async fn lost_receipts(
-    tx: &mut Transaction<'_, MySql>,
-    now: Timestamp,
-) -> Result<Counted, StorageCheckError> {
-    let rows: Vec<(String, String, String, String)> = sqlx::query_as(
-        "SELECT verb, bot_key, request_id, written_at FROM request_receipt
-         WHERE receipt IS NULL AND written_at < ?
-         ORDER BY written_at",
-    )
-    .bind(stamp(now - RECEIPT_GRACE))
-    .fetch_all(&mut **tx)
-    .await
-    .map_err(store)?;
-    let ids = rows
-        .into_iter()
-        .map(|(verb, bot, request, at)| format!("{verb} {bot}/{request}: written {at}"))
-        .collect::<Vec<_>>();
-    Ok((ids.len() as u64, ids))
 }

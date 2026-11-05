@@ -9,7 +9,6 @@ use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::dolt::storage_check::DoltStorageCheck;
 use jojobot_adapters::testing::{Scratch, free_port, migrated_database};
-use jojobot_domain::clock::Clock;
 use jojobot_domain::memory::types::{DeclaredType, Field};
 use jojobot_domain::memory::{EntityId, EntityKind, FactPatch, Memory, NewEntity, NewFact};
 use jojobot_domain::storage_check::{StorageCheck, StorageClass};
@@ -98,7 +97,7 @@ async fn bare_line(
 }
 
 async fn dangling(pool: &sqlx::MySqlPool) -> (u64, Vec<String>) {
-    let finding = DoltStorageCheck::open(pool.clone(), Clock::default())
+    let finding = DoltStorageCheck::open(pool.clone())
         .check_storage()
         .await
         .expect("the check reads")

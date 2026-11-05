@@ -547,57 +547,6 @@ pub async fn claims_events(
     events
 }
 
-/// **Copy the ledger's events into the old tables, as the last release wrote
-/// them.** The storage check still reads `request_receipt` and `request_part`;
-/// until it reads the ledger, a case that wants the check to see a write made
-/// under a request id calls this after the write. It writes what the write
-/// stored, so the rows have the shape the old code made.
-pub async fn mirror_ledger_into_old_tables(pool: &sqlx::MySqlPool) {
-    use jojobot_domain::request::events::LedgerEvent;
-    let stamp = |at: jiff::Timestamp| at.strftime("%Y-%m-%dT%H:%M:%S%.9fZ").to_string();
-    for event in ledger_events(pool).await {
-        match event {
-            LedgerEvent::RequestCommitted(commit)
-            | LedgerEvent::RequestCompleted { commit, .. } => {
-                sqlx::query(
-                    "INSERT INTO request_receipt \
-                     (bot_key, request_id, verb, args_digest, landed, receipt, written_at) \
-                     VALUES (?, ?, ?, ?, ?, ?, ?)",
-                )
-                .bind(&commit.request.key.actor.0)
-                .bind(&commit.request.key.id.0)
-                .bind(&commit.request.verb)
-                .bind(&commit.request.digest)
-                .bind(&commit.landed)
-                .bind(&commit.receipt)
-                .bind(stamp(commit.written_at))
-                .execute(pool)
-                .await
-                .expect("a receipt row");
-            }
-            LedgerEvent::RequestPartCommitted(part) => {
-                sqlx::query(
-                    "INSERT INTO request_part \
-                     (bot_key, request_id, part, verb, args_digest, landed, note, written_at) \
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                )
-                .bind(&part.request.key.actor.0)
-                .bind(&part.request.key.id.0)
-                .bind(&part.name)
-                .bind(&part.request.verb)
-                .bind(&part.request.digest)
-                .bind(&part.recorded.landed)
-                .bind(&part.recorded.note)
-                .bind(stamp(part.written_at))
-                .execute(pool)
-                .await
-                .expect("a part row");
-            }
-            _ => {}
-        }
-    }
-}
-
 /// **Take the receipt fills out of the log, as a stop between a write's commit
 /// and the store of its receipt leaves it.** Returns how many batches went. Only
 /// a batch that holds nothing but receipt fills is removed.

@@ -11,10 +11,9 @@ use sqlx::{MySql, Row, Transaction};
 use super::{DoltMemory, Wearer, store};
 
 /// **The moment a handle's wearer is asked at**: the newest write of a folded
-/// row (its handle and key), or an instant the caller gives.
+/// row (its handle and key).
 pub(in crate::dolt) enum Moment<'a> {
     Folded(&'a str, &'a str),
-    At(jiff::Timestamp),
 }
 
 impl DoltMemory {
@@ -369,10 +368,8 @@ impl DoltMemory {
 }
 
 impl DoltMemory {
-    /// **The same decision for any moment the caller names**: which thing wore
-    /// `forwarded` then. A fold's own moment is the newest write of the folded
-    /// row ([`Moment::Folded`]); the storage check asks it at the moment a receipt
-    /// was written ([`Moment::At`]). One decider for both (rule 498).
+    /// **Which thing wore `forwarded` at the fold's own moment**: the newest
+    /// write of the folded row ([`Moment::Folded`]).
     pub(in crate::dolt) async fn wearer_of_handle_at(
         tx: &mut Transaction<'_, MySql>,
         forwarded: &str,
@@ -426,12 +423,10 @@ impl DoltMemory {
         let left_at = Self::write_moments(tx, now, wore, Some(now))
             .await?
             .and_then(|moments| moments.into_iter().min());
-        let folded_at = match moment {
-            Moment::At(at) => Some(at),
-            Moment::Folded(handle, key) => Self::write_moments(tx, handle, key, None)
-                .await?
-                .and_then(|moments| moments.into_iter().max()),
-        };
+        let Moment::Folded(handle, key) = moment;
+        let folded_at = Self::write_moments(tx, handle, key, None)
+            .await?
+            .and_then(|moments| moments.into_iter().max());
         let (Some(left_at), Some(folded_at)) = (left_at, folded_at) else {
             return undecidable("a write on one side of the fold has no readable moment");
         };

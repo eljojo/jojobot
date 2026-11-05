@@ -9,7 +9,6 @@ use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::dolt::storage_check::DoltStorageCheck;
 use jojobot_adapters::dolt::{Dolt, Migrated};
 use jojobot_adapters::testing::{Scratch, free_port, migrated_database};
-use jojobot_domain::clock::Clock;
 
 use jojobot_domain::memory::{EntityId, Guarded, Memory, NewEntity, NewFact};
 use jojobot_domain::storage_check::{StorageCheck, StorageClass};
@@ -69,7 +68,7 @@ async fn run(pool: &sqlx::MySqlPool, sql: &str, bind: &[&str]) {
 }
 
 async fn found(pool: &sqlx::MySqlPool, class: StorageClass) -> (u64, Vec<String>) {
-    let finding = DoltStorageCheck::open(pool.clone(), Clock::default())
+    let finding = DoltStorageCheck::open(pool.clone())
         .check_storage()
         .await
         .expect("the check reads")

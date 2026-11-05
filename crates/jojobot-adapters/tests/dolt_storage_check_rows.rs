@@ -12,7 +12,6 @@ use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::dolt::storage_check::DoltStorageCheck;
 use jojobot_adapters::testing::{free_port, migrated_database};
-use jojobot_domain::clock::Clock;
 use jojobot_domain::memory::{EntityId, Memory, NewEntity, NewFact, Provenance};
 use jojobot_domain::storage_check::{StorageCheck, StorageClass};
 
@@ -78,7 +77,7 @@ async fn a_store_with_a_derived_claim(label: &str) -> (Scratch, Dolt, sqlx::MySq
 
 /// The dangling-reference finding: its row count and the ids it names.
 async fn dangling(pool: &sqlx::MySqlPool) -> Option<(u64, Vec<String>)> {
-    let findings = DoltStorageCheck::open(pool.clone(), Clock::default())
+    let findings = DoltStorageCheck::open(pool.clone())
         .check_storage()
         .await
         .expect("the check reads");
@@ -154,9 +153,7 @@ async fn a_merge_event_loop_and_an_unrelated_dangling_reference_are_both_reporte
     )
     .await;
     let before = table_hashes(&pool).await;
-    let report = DoltStorageCheck::open(pool.clone(), Clock::default())
-        .check_storage()
-        .await;
+    let report = DoltStorageCheck::open(pool.clone()).check_storage().await;
     assert_eq!(
         table_hashes(&pool).await,
         before,
@@ -207,9 +204,7 @@ async fn a_query_outage_while_resolving_a_source_still_aborts_the_storage_check(
     )
     .await;
     let before = table_hashes(&pool).await;
-    let report = DoltStorageCheck::open(pool.clone(), Clock::default())
-        .check_storage()
-        .await;
+    let report = DoltStorageCheck::open(pool.clone()).check_storage().await;
     assert_eq!(
         table_hashes(&pool).await,
         before,

@@ -35,15 +35,6 @@ pub enum StorageClass {
     /// gives a row, or a row removed by hand, so it is reported and not called
     /// damage.
     HandleHomedWrite,
-    /// A merge's request receipt whose `landed` record names a merge that the
-    /// store does not hold: the folded thing is not merged, or not into the
-    /// survivor. Only an edit outside jojobot or a restore makes this.
-    LandedMergeMissing,
-    /// A request, inside the window the ledger keeps ids for, that wrote some of
-    /// its parts and never recorded its receipt.
-    HalfDoneWrite,
-    /// A request receipt with no receipt body, older than ten minutes.
-    LostReceipt,
 }
 
 impl StorageClass {
@@ -57,9 +48,6 @@ impl StorageClass {
         // The source scan must finish before its loop findings are reported.
         StorageClass::MergeEventLoop,
         StorageClass::HandleHomedWrite,
-        StorageClass::LandedMergeMissing,
-        StorageClass::HalfDoneWrite,
-        StorageClass::LostReceipt,
     ];
 
     /// **Whether the boot reports this class at info level and does not call it
@@ -81,9 +69,6 @@ impl StorageClass {
             StorageClass::DanglingReference => "B dangling reference",
             StorageClass::MergeEventLoop => "A5 merge-event loop",
             StorageClass::HandleHomedWrite => "B write homed under a handle with no row",
-            StorageClass::LandedMergeMissing => "D2 landed merge not in the store",
-            StorageClass::HalfDoneWrite => "D1 half-done write",
-            StorageClass::LostReceipt => "D3 lost receipt",
         }
     }
 
@@ -134,20 +119,6 @@ impl StorageClass {
             StorageClass::HandleHomedWrite => {
                 "a claim or field write is homed under a handle that no row wears; the boot \
                  gives a row to a handle a build once supplied and leaves the others alone"
-            }
-            StorageClass::LandedMergeMissing => {
-                "a merge receipt says a merge landed and the store does not hold it; only an \
-                 edit outside jojobot or a restore does this; a person restores the copy of the \
-                 store that held the merge, or sends the merge again with merge_entities under \
-                 a new request_id, because the same id answers with its first receipt and \
-                 writes nothing"
-            }
-            StorageClass::HalfDoneWrite => {
-                "a request wrote some parts and has no receipt; only the same caller sending \
-                 the same call again can finish it"
-            }
-            StorageClass::LostReceipt => {
-                "a request's receipt was never stored; a resend answers without its first receipt"
             }
         }
     }

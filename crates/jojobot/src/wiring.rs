@@ -765,10 +765,7 @@ pub async fn boot_store_observed(
     timed(
         "storage-check",
         crate::storage_check::report_storage_damage(
-            &jojobot_adapters::dolt::storage_check::DoltStorageCheck::open(
-                store.pool().clone(),
-                clock,
-            ),
+            &jojobot_adapters::dolt::storage_check::DoltStorageCheck::open(store.pool().clone()),
         ),
     )
     .await;
