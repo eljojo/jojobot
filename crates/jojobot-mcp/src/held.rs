@@ -462,6 +462,14 @@ impl Jojobot {
             &served_now,
             shapes_before_collapse,
         );
+        // **A held thing that moved without being served has new text the session
+        // was not handed**, whether another session or this one wrote it, so what
+        // it had received of it starts again.
+        let received: Vec<_> = moved
+            .iter()
+            .map(|(what, _)| (what.clone(), crate::seen::Shape::new()))
+            .chain(received)
+            .collect();
         moved.extend(served_now);
         self.registry.note_held(&me, moved);
         self.registry.note_shapes(&me, received);
