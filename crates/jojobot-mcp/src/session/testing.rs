@@ -285,6 +285,8 @@ pub(crate) struct Refusing {
     pub(crate) void_fails: std::sync::atomic::AtomicBool,
     /// Whether opening a wrap window is refused.
     pub(crate) open_fails: std::sync::atomic::AtomicBool,
+    /// Whether reading a run's change history is refused.
+    pub(crate) history_fails: std::sync::atomic::AtomicBool,
 }
 
 impl Refusing {
@@ -296,6 +298,7 @@ impl Refusing {
             reopen_fails: false.into(),
             void_fails: false.into(),
             open_fails: false.into(),
+            history_fails: false.into(),
         }
     }
 
@@ -307,6 +310,7 @@ impl Refusing {
             reopen_fails: true.into(),
             void_fails: false.into(),
             open_fails: false.into(),
+            history_fails: false.into(),
         }
     }
 
@@ -318,6 +322,7 @@ impl Refusing {
             reopen_fails: false.into(),
             void_fails: false.into(),
             open_fails: false.into(),
+            history_fails: false.into(),
         }
     }
 }
@@ -345,6 +350,18 @@ impl Sessions for Refusing {
             ));
         }
         self.inner.reopen(id).await
+    }
+
+    async fn session_history(
+        &self,
+        id: &SessionId,
+    ) -> Result<Vec<jojobot_domain::session::history::SessionChange>, SessionError> {
+        if self.history_fails.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(SessionError::Store(
+                "the history of the run could not be read".into(),
+            ));
+        }
+        self.inner.session_history(id).await
     }
 
     async fn set_key_hash(

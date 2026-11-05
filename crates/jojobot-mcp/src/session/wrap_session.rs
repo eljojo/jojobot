@@ -117,10 +117,17 @@ impl Jojobot {
         // reads like a first wrap that failed at the same step. The two differ
         // by how many entries a wrap closed the run with: a run that holds two
         // has been wrapped before, and its retry offers no new window.
-        let second_wrap = before.as_ref().is_some_and(|read| {
-            read.state == SessionState::Wrapped
-                && (read.takes_writes() || read.entries.iter().filter(|e| e.closing).count() >= 2)
-        });
+        // **A second wrap with the same story adds no entry**, so the entries
+        // cannot tell its retry from a first wrap's: the run's own record of
+        // closes can ([`Jojobot::was_wrapped_twice`]).
+        let second_wrap = match before.as_ref() {
+            Some(read) if read.state == SessionState::Wrapped => {
+                read.takes_writes()
+                    || read.entries.iter().filter(|e| e.closing).count() >= 2
+                    || self.was_wrapped_twice(&session).await
+            }
+            _ => false,
+        };
         // **A focus DERIVED from this same story carries nothing new.** A
         // wrap that is the session's first write creates the card with a
         // focus made out of the story itself (`display_line`), so keeping it
@@ -356,6 +363,26 @@ impl Jojobot {
             }
         }
         json_result(&receipt)
+    }
+
+    /// **Whether the run's own record says it was closed as wrapped twice.** Every
+    /// close writes a change, so two changes to `wrapped` are two wraps whatever
+    /// the stories were. **A record that cannot be read counts as two**: the cost
+    /// is a code not offered, never a window reopened that a second wrap had ended.
+    async fn was_wrapped_twice(&self, card: &SessionId) -> bool {
+        match self.sessions.session_history(card).await {
+            Ok(changes) => {
+                changes
+                    .iter()
+                    .filter(|change| {
+                        change.changed == Some(jojobot_domain::session::history::ChangeKind::State)
+                            && change.value.as_deref() == Some(SessionState::Wrapped.as_token())
+                    })
+                    .count()
+                    >= 2
+            }
+            Err(_) => true,
+        }
     }
 }
 
@@ -730,6 +757,55 @@ mod tests {
         );
     }
 
+    /// **A retry whose run history cannot be read offers no code.** The run holds
+    /// one closing entry, so only its change history can tell a first wrap from an
+    /// identical second one. When that read fails, the answer is no code: a code
+    /// handed to a second wrap reopens a window it already ended.
+    #[tokio::test]
+    async fn a_retry_whose_run_history_cannot_be_read_offers_no_code() {
+        let store = Arc::new(Refusing::refusing_nothing());
+        let (jojobot, _memory) = with_sessions_port_and_memory(store.clone());
+        make_bot(&jojobot, "gamma").await;
+        let sid = booted(&jojobot, "gamma").await;
+        let card = SessionId(
+            journal_entry(&jojobot, &sid, "started").await["session"]
+                .as_str()
+                .expect("the run it landed in")
+                .to_string(),
+        );
+        store
+            .inner
+            .append(
+                &card,
+                NewEntry::manual("done", jiff::Timestamp::now(), None).closing(None),
+            )
+            .await
+            .expect("the first attempt told the story");
+        store
+            .inner
+            .close(&card, SessionState::Wrapped)
+            .await
+            .expect("…and closed the run");
+        store
+            .history_fails
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+
+        let retried = json_of(
+            &jojobot
+                .wrap_session(Parameters(WrapSessionArgs {
+                    story: "done".into(),
+                    sid: sid.clone(),
+                }))
+                .await
+                .expect("wrap answers"),
+        );
+        assert_ne!(retried["status"], "blocked", "{retried}");
+        assert!(
+            retried.get("wrap_code").is_none(),
+            "a retry that could not tell its wrap offered a code: {retried}"
+        );
+    }
+
     /// **A second wrap whose key could not be ended says what landed, and its
     /// retry carries no new wrap code.** The run was wrapped once and reopened by
     /// its code. The second wrap told its story and closed the run, and the store
@@ -806,6 +882,96 @@ mod tests {
             jojobot.caller(Some(&key)).is_err(),
             "the retry ended the key"
         );
+    }
+
+    /// **An identical second wrap whose key cannot be ended offers no code on its
+    /// retry.** The second story equals the first, so it adds no closing entry and
+    /// the run holds one, as it does after a first wrap. The second close has still
+    /// ended the window, and the retry must not hand back a code that reopens it.
+    #[tokio::test]
+    async fn an_identical_second_wrap_whose_key_cannot_be_ended_offers_no_code_on_its_retry() {
+        let store = Arc::new(Refusing::refusing_nothing());
+        let (jojobot, _memory) = with_sessions_port_and_memory(store.clone());
+        make_bot(&jojobot, "gamma").await;
+        let first_key = booted(&jojobot, "gamma").await;
+        journal_entry(&jojobot, &first_key, "started").await;
+        let first = json_of(
+            &jojobot
+                .wrap_session(Parameters(WrapSessionArgs {
+                    story: "first story".into(),
+                    sid: first_key,
+                }))
+                .await
+                .expect("wrap answers"),
+        );
+        let code = first["wrap_code"].as_str().expect("a code").to_string();
+        let reopened = boot_answering(&jojobot, "gamma", &code).await;
+        let key = reopened["session"]["sid"]
+            .as_str()
+            .unwrap_or_else(|| panic!("the code reopens the run: {reopened}"))
+            .to_string();
+        let run = store
+            .inner
+            .sessions_of(&EntityId("bot:gamma".into()))
+            .await
+            .expect("the runs")[0]
+            .id
+            .clone();
+
+        store
+            .void_fails
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let refused = json_of(
+            &jojobot
+                .wrap_session(Parameters(WrapSessionArgs {
+                    story: "first story".into(),
+                    sid: key.clone(),
+                }))
+                .await
+                .expect("wrap answers"),
+        );
+        assert_eq!(refused["status"], "blocked", "{refused}");
+        assert_eq!(refused["key_ended"], false, "{refused}");
+        let stopped = store.inner.read_session(&run).await.expect("read ok");
+        assert!(
+            stopped.wrap_window.is_none(),
+            "the second close ended the window: {:?}",
+            stopped.wrap_window
+        );
+        assert_eq!(
+            stopped.entries.iter().filter(|e| e.closing).count(),
+            1,
+            "the identical story is not told twice"
+        );
+
+        store
+            .void_fails
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        let retried = json_of(
+            &jojobot
+                .wrap_session(Parameters(WrapSessionArgs {
+                    story: "first story".into(),
+                    sid: key.clone(),
+                }))
+                .await
+                .expect("wrap answers"),
+        );
+        assert_ne!(retried["status"], "blocked", "{retried}");
+        assert!(
+            retried.get("wrap_code").is_none(),
+            "a retried second wrap offered a new window: {retried}"
+        );
+        assert!(
+            jojobot.caller(Some(&key)).is_err(),
+            "the retry ended the key"
+        );
+        let ended = store.inner.read_session(&run).await.expect("read ok");
+        assert!(
+            ended.wrap_window.is_none(),
+            "the retry left a window: {:?}",
+            ended.wrap_window
+        );
+        assert_eq!(ended.entries.iter().filter(|e| e.closing).count(), 1);
     }
 
     /// **A wrapped run whose wrap window is open takes `journal`,
