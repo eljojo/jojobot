@@ -1745,14 +1745,7 @@ impl Session {
 
     async fn read(&self, what: String, tool: &str, mut args: Value) -> Answer {
         self.riding(&mut args);
-        // A named read helper is asked for the bodies its beat asserts inside, so
-        // it is never served a handle for what the session already holds; a story
-        // about the handle makes its calls through [`Session::call`].
-        if matches!(tool, "recall" | "search" | "list_entities")
-            && let Some(fields) = args.as_object_mut()
-        {
-            fields.entry("reship").or_insert(Value::Bool(true));
-        }
+        asks_whole(tool, &mut args);
         let body = call(&self.client, tool, args).await;
         Answer {
             what,
@@ -1781,6 +1774,7 @@ impl Session {
     pub async fn call(&self, tool: &str, args: Value) -> Answer {
         let mut args = args;
         self.riding(&mut args);
+        asks_whole(tool, &mut args);
         let body = call(&self.client, tool, args).await;
         assert_ne!(
             body["status"], "blocked",
@@ -1798,6 +1792,7 @@ impl Session {
     pub async fn answer_size(&self, tool: &str, args: Value) -> usize {
         let mut args = args;
         self.riding(&mut args);
+        asks_whole(tool, &mut args);
         call_measured(&self.client, tool, args).await.1
     }
 
@@ -1807,6 +1802,7 @@ impl Session {
     pub async fn answer_and_size(&self, tool: &str, args: Value) -> (Value, usize) {
         let mut args = args;
         self.riding(&mut args);
+        asks_whole(tool, &mut args);
         call_measured(&self.client, tool, args).await
     }
 
@@ -2979,6 +2975,19 @@ async fn within_a_deadline<T>(tool: &str, answering: impl std::future::Future<Ou
                 A_VERB_MAY_TAKE.as_secs()
             )
         })
+}
+
+/// **A story's read asks for the whole body unless the story says otherwise.** A
+/// session that already holds a thing unchanged is served its handle alone, and
+/// most beats assert inside the body they read, so a read of a verb that
+/// publishes `reship` sends `reship: true`. A story about the handle sends
+/// `reship: false` and sees the collapse.
+fn asks_whole(tool: &str, args: &mut Value) {
+    if matches!(tool, "recall" | "search" | "list_entities")
+        && let Some(fields) = args.as_object_mut()
+    {
+        fields.entry("reship").or_insert(Value::Bool(true));
+    }
 }
 
 async fn call(client: &Client, tool: &str, args: Value) -> Value {
