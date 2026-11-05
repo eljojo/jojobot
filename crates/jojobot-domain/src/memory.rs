@@ -7971,6 +7971,13 @@ pub trait Memory: Send + Sync {
     /// is a kind this process must stop parsing, and a list here could not
     /// say so.
     async fn declared_kinds(&self) -> Result<Vec<(String, types::Origin)>, MemoryError>;
+
+    /// **Is this token a kind THIS store declares?** The answer comes from the
+    /// store's own declarations, so two stores in one process each answer for
+    /// themselves.
+    async fn kind_declared(&self, token: &str) -> Result<Result<(), kinds::NotAKind>, MemoryError> {
+        Ok(kinds::standing_in(&self.declared_kinds().await?, token))
+    }
 }
 
 #[cfg(any(test, feature = "testing"))]

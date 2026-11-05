@@ -607,6 +607,23 @@ pub fn resolve(token: &str) -> Result<EntityKind, NotAKind> {
     }
 }
 
+/// **Is this token among the kinds one store holds?** The same two answers as
+/// [`resolve`], asked of a store's own declarations instead of the process set.
+pub fn standing_in(held: &[(String, super::types::Origin)], token: &str) -> Result<(), NotAKind> {
+    if held.is_empty() {
+        return Err(NotAKind::SetNeverLoaded);
+    }
+    let known: BTreeSet<&str> = held.iter().map(|(held, _)| held.as_str()).collect();
+    if known.contains(token) {
+        Ok(())
+    } else {
+        Err(NotAKind::NotDeclared {
+            token: token.to_string(),
+            known: known.into_iter().map(str::to_string).collect(),
+        })
+    }
+}
+
 /// **A loaded token, with the lifetime a kind carries.** A kind is `Copy` and
 /// hands out `&'static str`, so a token that arrived at runtime is leaked
 /// deliberately: the set is small, loaded at startup, and a token that has
