@@ -6,10 +6,13 @@
 //! under [`MEMORY_BOUND_KIB`] (`MemoryMax=1G`); a case fails with the measured
 //! number when it is over.
 //!
-//! The store is a fresh one the binary created, with [`EVENTS`] teaching events
-//! appended to its log beside their legacy rows, so a boot that replays the log
-//! has real work to do. It is built here and never committed (rule 661). The
-//! counts are printed, so a reader of the run knows what size was measured.
+//! The store is the one the last deployed build recorded (`UPGRADE_FIXTURE_DIR`,
+//! as for the upgrade gate), booted once by the binary under test, with [`EVENTS`]
+//! teaching events appended to its log beside their legacy rows, so a boot that
+//! replays the log has real work to do. It is built here and never committed
+//! (rule 661). Each case appends its numbers and the server's own timed boot steps
+//! to `target/bar/boot-measures.log`, with the counts of things, messages and log
+//! events, so a reader of the run knows what size was measured.
 
 use std::io::{BufRead, Read, Write};
 use std::net::TcpStream;
@@ -34,6 +37,9 @@ const MEMORY_BOUND_KIB: u64 = 1024 * 1024;
 /// Teaching events in the log's tail, in batches of [`PER_BATCH`].
 const EVENTS: u64 = 20_000;
 const PER_BATCH: u64 = 500;
+/// A tail under the snapshot cadence of 10,000 events, for the case that needs the
+/// stop to be the only moment a snapshot is due.
+const SMALL_TAIL: u64 = 1_000;
 const STOP_PATIENCE: Duration = Duration::from_secs(60);
 
 struct Running {
@@ -186,9 +192,9 @@ impl Running {
         (state, seen)
     }
 
-    /// A crash: SIGKILL to the server and the store it started, with no stop. The
-    /// server leads a group of its own, so the store cannot outlive it and hold
-    /// the directory against the next start.
+    /// A crash: SIGKILL to the server's process group, with no stop. The store
+    /// starts its own group and is killed when its parent dies, so it does not
+    /// hold the directory against the next start either.
     fn killed(mut self) -> Scratch {
         let sent = Command::new("kill")
             .args(["-s", "KILL", "--", &format!("-{}", self.pid)])
@@ -209,14 +215,70 @@ impl Running {
     }
 }
 
-/// A store the binary created and stopped, with nothing in its log.
-fn fresh_store(name: &str) -> Scratch {
+/// **The statements of a dump, split at the semicolons that end one.** A
+/// semicolon inside a quoted value ends nothing. The same reader as the upgrade
+/// gate's.
+fn split_sql_statements(dump: &str) -> Vec<String> {
+    let mut statements = Vec::new();
+    let mut current = String::new();
+    let mut in_value = false;
+    let mut chars = dump.chars().peekable();
+    while let Some(c) = chars.next() {
+        current.push(c);
+        if in_value {
+            match c {
+                '\\' => current.extend(chars.next()),
+                '\'' if chars.peek() == Some(&'\'') => current.extend(chars.next()),
+                '\'' => in_value = false,
+                _ => {}
+            }
+        } else if c == '\'' {
+            in_value = true;
+        } else if c == ';' {
+            statements.push(std::mem::take(&mut current).trim().to_string());
+        }
+    }
+    let rest = current.trim();
+    if !rest.is_empty() {
+        statements.push(format!("{rest};"));
+    }
+    statements.retain(|statement| statement != ";");
+    statements
+}
+
+/// **The store the last deployed build recorded**, which CI restores for the
+/// upgrade gate and names in `UPGRADE_FIXTURE_DIR`, replayed into a store of this
+/// case's own and then booted once by the binary under test, so its migrations
+/// and imports are done before anything is measured. This is the size of a real
+/// instance's rows; the log's tail is added on top by [`prepare`].
+async fn restored_store(name: &str) -> Scratch {
+    let fixture = std::env::var("UPGRADE_FIXTURE_DIR")
+        .expect("CI supplies UPGRADE_FIXTURE_DIR, the store the last deployed tag recorded");
     let dir = jojobot_adapters::testing::scratch_path(name);
     std::fs::create_dir_all(&dir).expect("a scratch directory");
-    let first = spawn(Scratch(dir));
-    let mut first = first;
+    let state = Scratch(dir);
+    let mut store = Dolt::start(&state.0.join("db"), free_port())
+        .await
+        .expect("a store comes up to receive the recording");
+    let dump = std::fs::read_to_string(format!("{fixture}/doltdump.sql"))
+        .unwrap_or_else(|e| panic!("reading {fixture}/doltdump.sql: {e}"));
+    for statement in split_sql_statements(&dump) {
+        sqlx::raw_sql(sqlx::AssertSqlSafe(statement.as_str()))
+            .execute(store.pool())
+            .await
+            .unwrap_or_else(|e| panic!("replaying the recording failed on:\n{statement}\n{e}"));
+    }
+    store.stop().await;
+    let mut first = spawn(state);
     first.first_answer();
     first.stopped().0
+}
+
+/// What the store held when a case was measured.
+struct Size {
+    things: i64,
+    messages: i64,
+    events: u64,
 }
 
 fn batch(id: &str, head: Position, first: u64, count: u64) -> (SealedBatch, Vec<RowChange>) {
@@ -257,9 +319,9 @@ enum Plan {
     Invalidated,
 }
 
-/// Append [`EVENTS`] events to the log of the store in `state`, then leave the
-/// snapshot as `plan` says.
-async fn prepare(state: &Scratch, plan: Plan) {
+/// Append `events` events to the log of the store in `state`, then leave the
+/// snapshot as `plan` says. Returns what the store held.
+async fn prepare(state: &Scratch, plan: Plan, events: u64) -> Size {
     let mut store = Dolt::start(&state.0.join("db"), free_port())
         .await
         .expect("the store comes up with no binary over it");
@@ -268,10 +330,21 @@ async fn prepare(state: &Scratch, plan: Plan) {
     let log = WriterLog::open(pool.clone(), writer.clone())
         .await
         .expect("the log opens");
-    let half = (EVENTS / PER_BATCH) / 2;
-    let mut head = Position(0);
-    for n in 0..EVENTS / PER_BATCH {
-        let (sealed, rows) = batch(&format!("measure-{n}"), head, n * PER_BATCH, PER_BATCH);
+    // **The binary's first boot and stop left a snapshot of the restored log**,
+    // so the case starts from none unless it takes one.
+    sqlx::query("DELETE FROM event_log WHERE slot = 'snapshot'")
+        .execute(&pool)
+        .await
+        .expect("the snapshot slot is cleared");
+    let half = (events / PER_BATCH) / 2;
+    let mut head = log.head().expect("the log holds a head");
+    for n in 0..events / PER_BATCH {
+        let (sealed, rows) = batch(
+            &format!("measure-{n}"),
+            head,
+            1_000_000 + n * PER_BATCH,
+            PER_BATCH,
+        );
         log.append_with_rows(head, &sealed, rows)
             .await
             .expect("the batch lands");
@@ -302,23 +375,64 @@ async fn prepare(state: &Scratch, plan: Plan) {
             .await
             .expect("the validity changes");
     }
+    let count = |table: &'static str| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(format!(
+                "SELECT COUNT(*) FROM {table}"
+            )))
+            .fetch_one(&pool)
+            .await
+            .expect("a count")
+        }
+    };
+    let size = Size {
+        things: count("entity").await,
+        messages: count("message").await,
+        events: head.0,
+    };
     drop(log);
     writer.drain().await;
     drop(writer);
     store.stop().await;
+    size
 }
 
-/// One measured boot: print its line and assert the bounds.
-fn measured(case: &str, run: &mut Running) -> Duration {
+/// **Where the numbers are kept.** A passing test's output is captured and the
+/// job log shows none of it, so each measured boot appends to a file under
+/// `target/bar`, which CI uploads with the run's other logs.
+fn record(text: &str) {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/bar");
+    std::fs::create_dir_all(&dir).expect("target/bar");
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join("boot-measures.log"))
+        .expect("the measures file");
+    writeln!(file, "{text}").expect("the measures file takes the line");
+}
+
+/// One measured boot: record its numbers and assert the bounds.
+fn measured(case: &str, size: &Size, run: &mut Running) -> Duration {
     let took = run.first_answer();
     let peak = run.peak_kib();
-    println!(
-        "boot-measure {case}: events={EVENTS} batches={} start_to_first_answer_ms={} \
-         peak_rss_kib={peak} | {}",
-        EVENTS / PER_BATCH,
+    // The boot steps the server timed itself: the snapshot load and replay, the
+    // fold fill, the search index and the rest.
+    let steps: Vec<&str> = run
+        .seen
+        .iter()
+        .filter(|line| line.contains("elapsed_ms") || line.contains("event log boot"))
+        .map(String::as_str)
+        .collect();
+    record(&format!(
+        "boot-measure {case}: things={} messages={} log_events={} \
+         start_to_first_answer_ms={} peak_rss_kib={peak}\n  {}",
+        size.things,
+        size.messages,
+        size.events,
         took.as_millis(),
-        run.log_boot()
-    );
+        steps.join("\n  ")
+    ));
     assert!(
         took < BOOT_BOUND,
         "{case}: the first answer took {took:?}, over {BOOT_BOUND:?}"
@@ -331,10 +445,10 @@ fn measured(case: &str, run: &mut Running) -> Duration {
 }
 
 async fn case(name: &str, plan: Plan, from_snapshot: bool) {
-    let state = fresh_store(&format!("jojobot-measure-{name}"));
-    prepare(&state, plan).await;
+    let state = restored_store(&format!("jojobot-measure-{name}")).await;
+    let size = prepare(&state, plan, EVENTS).await;
     let mut run = spawn(state);
-    measured(name, &mut run);
+    measured(name, &size, &mut run);
     let line = run.log_boot();
     assert!(
         line.contains(&format!("from_snapshot={from_snapshot}")),
@@ -373,13 +487,13 @@ async fn a_boot_with_an_invalidated_snapshot_replays_the_log() {
 /// snapshot with the tail it had.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_boot_after_a_crash_loads_the_snapshot_the_stop_left() {
-    let state = fresh_store("jojobot-measure-crash");
-    prepare(&state, Plan::None).await;
+    let state = restored_store("jojobot-measure-crash").await;
+    let size = prepare(&state, Plan::None, EVENTS).await;
     let mut first = spawn(state);
     first.first_answer();
     let (state, seen) = first.stopped();
-    // The tick can publish it just before the stop does; either way the log holds
-    // a snapshot by the time the process has exited.
+    // The tick can publish it just before the stop does (the tail is past the
+    // cadence); either way the log holds a snapshot once the process has exited.
     assert!(
         seen.iter().any(|line| line.contains("snapshot taken")),
         "the first process took no snapshot. What it said:\n{}",
@@ -390,11 +504,49 @@ async fn a_boot_after_a_crash_loads_the_snapshot_the_stop_left() {
     assert!(second.log_boot().contains("from_snapshot=true"));
     let state = second.killed();
     let mut third = spawn(state);
-    measured("crash", &mut third);
+    measured("crash", &size, &mut third);
     assert!(
         third.log_boot().contains("from_snapshot=true"),
         "{}",
         third.log_boot()
     );
     let _ = third.stopped();
+}
+
+/// **An orderly stop publishes a snapshot the next boot loads, and the stop is
+/// what published it.** The tail is far under the cadence and the process runs
+/// for seconds, so no tick finds a snapshot due: the only moment that can publish
+/// it is the stop, and the log line says that is the one that did.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_orderly_stop_publishes_a_snapshot_the_next_boot_loads() {
+    let state = restored_store("jojobot-measure-stop").await;
+    let size = prepare(&state, Plan::None, SMALL_TAIL).await;
+    let mut first = spawn(state);
+    first.first_answer();
+    assert!(
+        first.log_boot().contains("from_snapshot=false"),
+        "the case starts with no snapshot: {}",
+        first.log_boot()
+    );
+    let (state, seen) = first.stopped();
+    assert!(
+        seen.iter()
+            .any(|line| line.contains("snapshot taken at shutdown")),
+        "the stop took no snapshot. What it said:\n{}",
+        seen.join("\n")
+    );
+    assert!(
+        !seen
+            .iter()
+            .any(|line| line.contains("snapshot taken covered")),
+        "a tick published it before the stop"
+    );
+    let mut second = spawn(state);
+    measured("stop", &size, &mut second);
+    assert!(
+        second.log_boot().contains("from_snapshot=true"),
+        "{}",
+        second.log_boot()
+    );
+    let _ = second.stopped();
 }
