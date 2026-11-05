@@ -7506,17 +7506,33 @@ fn unresolvable_only_because_unloaded(token: &str) -> bool {
 
 /// **One stored key, read back as the field it declares.**
 fn field_of_row(row: &sqlx::mysql::MySqlRow) -> Result<Field, MemoryError> {
-    let key: String = row.get("key_name");
-    let holds_token: String = row.get("holds");
-    let held = Field::of_token(&key, &holds_token);
-    if held.is_none() && unresolvable_only_because_unloaded(&holds_token) {
+    field_of_cells(
+        &row.get::<String, _>("key_name"),
+        &row.get::<String, _>("holds"),
+        &row.get::<String, _>("folds"),
+        row.get::<bool, _>("required"),
+        row.get::<Option<String>, _>("one_of").as_deref(),
+    )
+}
+
+/// **A field out of the five cells a store keeps for it**, whether they sit in a
+/// `type_field` row or in a `type_write` account of one: the one decoder of both.
+fn field_of_cells(
+    key: &str,
+    holds_token: &str,
+    folds: &str,
+    required: bool,
+    one_of: Option<&str>,
+) -> Result<Field, MemoryError> {
+    let held = Field::of_token(key, holds_token);
+    if held.is_none() && unresolvable_only_because_unloaded(holds_token) {
         return Err(MemoryError::KindsNeverLoaded { attempted: None });
     }
     Ok(Field {
-        folds: Fold::of_token(&row.get::<String, _>("folds")).unwrap_or_default(),
-        required: row.get::<bool, _>("required"),
-        one_of: Field::one_of_from_cell(row.get::<Option<String>, _>("one_of").as_deref()),
-        ..held.unwrap_or_else(|| Field::new(&key, ValueType::Text))
+        folds: Fold::of_token(folds).unwrap_or_default(),
+        required,
+        one_of: Field::one_of_from_cell(one_of),
+        ..held.unwrap_or_else(|| Field::new(key, ValueType::Text))
     })
 }
 
@@ -7978,6 +7994,7 @@ mod adopt;
 mod ages;
 mod assembly;
 mod boot_reads;
+pub mod import_rows;
 use boot_reads::trails_from;
 mod link_rule;
 mod numbered;

@@ -65,6 +65,7 @@ test-dolt_creation_atomic
 test-dolt_due_pass_instance
 test-dolt_due_pass_unread
 test-dolt_id_case
+test-dolt_import_rows
 test-dolt_kinds_per_store
 test-dolt_links_by_mark
 test-dolt_must_back
