@@ -252,14 +252,17 @@ const HARNESS_READ: &str = "harness read";
 
 /// **The run stopped because a harness read failed.** A paid run must still
 /// return the transcript it kept, so the failure ends the run as incomplete
-/// and says which read failed.
-fn read_failed(phase: &str, failure: String) -> Incomplete {
-    Incomplete {
+/// and says which read failed. An existing stop reason, including its phase
+/// and reset time, stays the reason beside the failed read.
+fn read_failed(previous: Option<Incomplete>, phase: &str, failure: String) -> Incomplete {
+    let mut cut = previous.unwrap_or_else(|| Incomplete {
         named: HARNESS_READ,
         phase: phase.to_string(),
         reset: None,
-        failed_read: Some(failure),
-    }
+        failed_read: None,
+    });
+    cut.failed_read = Some(failure);
+    cut
 }
 
 /// **Whether a lock sits at or after the phase that hit the limit.** A lock
@@ -1071,7 +1074,7 @@ pub async fn go(
         let refused_before = match surface.refusal_count().await {
             Ok(count) => count,
             Err(failure) => {
-                incomplete = Some(read_failed(&phase.name, format!("{failure:#}")));
+                incomplete = Some(read_failed(None, &phase.name, format!("{failure:#}")));
                 break;
             }
         };
@@ -1138,10 +1141,11 @@ pub async fn go(
         // **The sitting is kept before a failed read ends the run**, and a limit
         // the sitting hit stays the reason, with the failed read named beside it.
         if let Err(failure) = refused_after {
-            let mut cut = stops_the_run(hit_limit, &phase.name)
-                .unwrap_or_else(|| read_failed(&phase.name, String::new()));
-            cut.failed_read = Some(format!("{failure:#}"));
-            incomplete = Some(cut);
+            incomplete = Some(read_failed(
+                stops_the_run(hit_limit, &phase.name),
+                &phase.name,
+                format!("{failure:#}"),
+            ));
             break;
         }
         // Taken after every phase and named for the one that comes next, so a
@@ -1150,7 +1154,11 @@ pub async fn go(
         match crate::surface::catching(boundary_asking(&surface, &named[at + 1], &asked)).await {
             Ok(taken) => boundaries.push(taken),
             Err(failure) => {
-                incomplete = Some(read_failed(&phase.name, failure));
+                incomplete = Some(read_failed(
+                    stops_the_run(hit_limit, &phase.name),
+                    &phase.name,
+                    failure,
+                ));
                 break;
             }
         }
@@ -1188,11 +1196,8 @@ pub async fn go(
     // A lock whose read failed has no verdict, and a phase name that places no
     // lock leaves every lock unjudged.
     if let Err(failure) = graded {
-        match incomplete.as_mut() {
-            // A limit stays the reason the run stopped; the read is named beside it.
-            Some(cut) => cut.failed_read = Some(failure),
-            None => incomplete = Some(read_failed("the locks", failure)),
-        }
+        // A limit stays the reason the run stopped; the read is named beside it.
+        incomplete = Some(read_failed(incomplete, "the locks", failure));
     }
 
     let uncovered = uncovered_phases(playbook, expectations);
