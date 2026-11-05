@@ -83,21 +83,36 @@ fn apply(state: &mut State, batch: &SealedBatch) -> Result<(), LogError> {
 
 /// Restore a compatible whole State, or replay from zero when it is disposable.
 pub async fn boot(log: &dyn LogStore) -> Result<Boot, LogError> {
+    let began = std::time::Instant::now();
     let validity = log.validity().await?;
-    let mut boot = restored(log, &validity).await?.unwrap_or(Boot {
+    let snapshot = restored(log, &validity).await?;
+    let from_snapshot = snapshot.is_some();
+    let mut boot = snapshot.unwrap_or(Boot {
         state: State::default(),
         position: Position(0),
         batch_checksum: [0; 32],
     });
+    let (restored_at, loaded_ms) = (boot.position, began.elapsed().as_millis() as u64);
+    let mut tail_batches = 0u64;
     loop {
         let batches = log.read_from(boot.position, READ_BOUND).await?;
         if batches.is_empty() {
+            tracing::info!(
+                from_snapshot,
+                restored_at = restored_at.0,
+                snapshot_load_ms = loaded_ms,
+                tail_batches,
+                head = boot.position.0,
+                total_ms = began.elapsed().as_millis() as u64,
+                "event log boot"
+            );
             return Ok(boot);
         }
         for batch in batches {
             apply(&mut boot.state, &batch)?;
             boot.position = batch.range().last;
             boot.batch_checksum = batch.header().checksum;
+            tail_batches += 1;
         }
     }
 }
