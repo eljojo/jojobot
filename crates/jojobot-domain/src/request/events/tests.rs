@@ -86,7 +86,11 @@ fn ledger_events_interpret_the_request_and_app_lifecycles() {
                 assert!(state.lookup(&key.actor, &key.id, at(0)).is_none());
                 assert_eq!(state.parts(&key.actor, &key.id, at(0)).len(), index + 1);
             }
-            2 => assert_eq!(state.lookup(&key.actor, &key.id, at(0)), Some(&first)),
+            2 => {
+                assert_eq!(state.lookup(&key.actor, &key.id, at(0)), Some(&first));
+                let parts = &state.request(key).unwrap().parts;
+                assert_eq!(parts["claim"].recorded.note.as_deref(), Some("frozen-plan"));
+            }
             3 => {
                 assert_eq!(
                     state
@@ -117,11 +121,8 @@ fn ledger_events_interpret_the_request_and_app_lifecycles() {
             }
             _ => unreachable!(),
         }
-        assert_eq!(state.history(), &events[..=index]);
         assert_eq!(State::replay(&events[..=index]).unwrap(), state);
     }
-    let parts = &state.request(&first.request.key).unwrap().parts;
-    assert_eq!(parts["claim"].recorded.note.as_deref(), Some("frozen-plan"));
 }
 
 #[test]
@@ -191,8 +192,10 @@ fn ledger_events_import_each_legacy_row_shape_without_inventing_completion() {
         },
     ];
     let mut state = State::default();
+    let mut imported = Vec::new();
     for row in rows {
         let event = row.clone().into_event(7);
+        imported.push(event.clone());
         assert_eq!(
             event,
             LedgerEvent::Imported {
@@ -269,8 +272,7 @@ fn ledger_events_import_each_legacy_row_shape_without_inventing_completion() {
             }
         }
     }
-    assert_eq!(state.history().len(), 3);
-    assert_eq!(State::replay(state.history()).unwrap(), state);
+    assert_eq!(State::replay(&imported).unwrap(), state);
 }
 
 /// A completion replayed after the receipt fill must not take the receipt back.
@@ -381,10 +383,12 @@ fn ledger_events_do_not_reveal_a_held_older_generation_when_the_newest_expires()
         .unwrap();
     assert!(state.lookup(&key.actor, &key.id, at(0)).is_none());
     assert!(state.parts(&key.actor, &key.id, at(0)).is_empty());
-    let current = state.current(&key.actor, &key.id).unwrap();
-    assert_eq!(current.committed.as_ref(), Some(&newer));
-    assert!(current.expired);
-    assert!(!state.request(&older.request.key).unwrap().expired);
+    assert!(state.current(&key.actor, &key.id).is_none());
+    assert!(state.request(&newer.request.key).is_none());
+    assert!(
+        state.request(&older.request.key).is_none(),
+        "the older generation goes with it"
+    );
 }
 
 /// A write under an id joins the generation that still holds a live row and starts
@@ -428,12 +432,84 @@ fn ledger_events_number_the_generation_a_new_write_belongs_to() {
         .unwrap();
     assert_eq!(
         state.generation_for(&actor, &id, at(5)),
-        3,
-        "an expired generation is not joined"
+        1,
+        "an expired generation is evicted, so none is joined"
     );
     assert_eq!(
         state.generation_for(&ObjectId("marge".into()), &id, at(5)),
         1,
         "another actor's id is its own"
     );
+}
+
+fn commit_of(id: &str, written: i64) -> Commit {
+    Commit {
+        request: Request {
+            key: RequestKey {
+                actor: ObjectId("homer".into()),
+                id: RequestId(id.into()),
+                generation: 1,
+            },
+            verb: "capture".into(),
+            digest: "digest-beta".into(),
+        },
+        landed: "{}".into(),
+        receipt: None,
+        written_at: at(written),
+        expires_at: at(written + 10),
+    }
+}
+
+/// A generation whose rows have all expired leaves the state when an event
+/// that carries a later instant is applied. The instant is the event's own, so
+/// replaying the same events holds the same state.
+#[test]
+fn ledger_events_evict_a_generation_when_an_event_past_its_window_is_applied() {
+    let old = commit(1);
+    let key = old.request.key.clone();
+    let events = [
+        LedgerEvent::RequestPartCommitted(part("entity")),
+        LedgerEvent::RequestCommitted(old),
+        LedgerEvent::RequestCommitted(commit_of("beta", 10)),
+    ];
+    let mut state = State::default();
+    for event in &events {
+        state.apply(event).unwrap();
+    }
+    assert!(
+        state.request(&key).is_some(),
+        "an event at the last instant of the window evicts nothing"
+    );
+    let late = LedgerEvent::RequestCommitted(commit_of("gamma", 11));
+    state.apply(&late).unwrap();
+    assert!(state.request(&key).is_none(), "the expired generation left");
+    assert!(
+        state.request(&commit_of("beta", 10).request.key).is_some(),
+        "a generation still inside its window stays"
+    );
+    let replayed = State::replay(events.iter().chain([&late])).unwrap();
+    assert_eq!(replayed, state, "replay evicts the same generations");
+}
+
+/// A fill or an expiry that addresses an evicted generation changes nothing, so
+/// it can never attach to a newer attempt that reuses the id.
+#[test]
+fn ledger_events_ignore_a_receipt_for_an_evicted_generation() {
+    let old = commit(1);
+    let key = old.request.key.clone();
+    let mut state = State::default();
+    state.apply(&LedgerEvent::RequestCommitted(old)).unwrap();
+    state
+        .apply(&LedgerEvent::RequestCommitted(commit_of("beta", 11)))
+        .unwrap();
+    assert!(state.request(&key).is_none());
+    let before = state.clone();
+    state
+        .apply(&LedgerEvent::RequestReceiptRecorded {
+            key: key.clone(),
+            receipt: "late".into(),
+        })
+        .unwrap();
+    state.apply(&LedgerEvent::RequestExpired { key }).unwrap();
+    assert_eq!(state, before);
 }

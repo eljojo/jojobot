@@ -43,6 +43,9 @@ struct Held {
     /// A commit's outcome was not known: the log may hold a batch `state` has not
     /// applied.
     behind: bool,
+    /// The log holds a ledger event. The state cannot say, because it evicts, and
+    /// the import runs only into a log that holds none.
+    seen: bool,
 }
 
 pub(crate) struct Seam {
@@ -72,6 +75,7 @@ impl Pending {
                 tracing::error!(%error, "a committed ledger event could not be applied");
             }
         }
+        held.seen = true;
         held.applied = self.last;
     }
 
@@ -105,10 +109,11 @@ impl Seam {
                 state: State::default(),
                 applied: Position::default(),
                 behind: false,
+                seen: false,
             }),
         });
         seam.catch_up().await?;
-        if seam.lock().state.history().is_empty() {
+        if !seam.lock().seen {
             seam.import(pool).await?;
         }
         Ok(seam)
@@ -137,6 +142,7 @@ impl Seam {
                     held.state
                         .apply(&event)
                         .map_err(|error| LedgerError::Store(error.to_string()))?;
+                    held.seen = true;
                 }
                 held.applied = batch.range().last;
             }

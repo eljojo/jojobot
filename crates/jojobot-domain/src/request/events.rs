@@ -2,7 +2,7 @@
 //! nor re-runs admission. A request generation keeps a late receipt attached
 //! to the attempt that produced it; app attempts have their own namespace.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use jiff::Timestamp;
 use schemars::JsonSchema;
@@ -204,15 +204,36 @@ impl LegacyRow {
 pub struct RequestProjection {
     pub committed: Option<Commit>,
     pub parts: BTreeMap<String, Part>,
-    pub expired: bool,
 }
 
+impl RequestProjection {
+    /// The last instant any row of this generation is kept to. A generation with
+    /// no row has none.
+    fn horizon(&self) -> Option<Timestamp> {
+        self.committed
+            .iter()
+            .map(|commit| commit.expires_at)
+            .chain(self.parts.values().map(|part| part.expires_at))
+            .max()
+    }
+}
+
+/// The ledgers as projections. **The log is the history, so the state keeps no
+/// copy of the events it applied.** A request is held under its `(actor, id)`,
+/// with its generations beneath it, so a lookup is one keyed read however many
+/// requests are held. **A generation whose rows have all expired is evicted**,
+/// and the instant that decides it is one an event carries, never the clock at
+/// apply time, so a replay holds the same state the live run held.
+///
+/// **A snapshot carries the eviction index with the requests**, so a state
+/// restored from one goes on evicting what the live state would have.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct State {
-    requests: snapshot_map::SnapshotMap<RequestKey, RequestProjection>,
+    requests: snapshot_map::SnapshotMap<(ObjectId, RequestId), BTreeMap<u64, RequestProjection>>,
+    /// Each held generation under the instant its last row expires, so eviction
+    /// reads the oldest and stops at the first that is still kept.
+    horizons: BTreeSet<(Timestamp, ObjectId, RequestId, u64)>,
     apps: snapshot_map::SnapshotMap<AppKey, AppAttempt>,
-    #[serde(skip)]
-    history: Vec<LedgerEvent>,
 }
 
 mod snapshot_map;
@@ -221,39 +242,117 @@ mod snapshot_map;
 #[error("a completed request names a part that has not committed")]
 pub struct MissingPart;
 
+impl LedgerEvent {
+    /// The instant this event carries for eviction. A receipt and an expiry carry
+    /// none.
+    fn carried_instant(&self) -> Option<Timestamp> {
+        match self {
+            Self::RequestPartCommitted(part) => Some(part.written_at),
+            Self::RequestCommitted(commit) | Self::RequestCompleted { commit, .. } => {
+                Some(commit.written_at)
+            }
+            Self::AppAttemptCommitted(attempt) => Some(attempt.written_at),
+            Self::Imported { row, .. } => Some(match row {
+                LegacyRow::RequestReceipt { written_at, .. }
+                | LegacyRow::RequestPart { written_at, .. }
+                | LegacyRow::AppWrite { written_at, .. } => *written_at,
+            }),
+            Self::RequestReceiptRecorded { .. } | Self::RequestExpired { .. } => None,
+        }
+    }
+}
+
 impl State {
-    /// Structural interpretation only. A failed completion publishes nothing;
-    /// the original baseline event stays distinguishable in the history.
+    /// Structural interpretation only. A failed completion changes nothing.
     pub fn apply(&mut self, event: &LedgerEvent) -> Result<(), MissingPart> {
         self.project(event)?;
-        self.history.push(event.clone());
+        if let Some(instant) = event.carried_instant() {
+            self.evict_before(instant);
+        }
         Ok(())
+    }
+
+    /// Change one generation, keeping the horizon index in step with it.
+    fn edit(&mut self, key: &RequestKey, change: impl FnOnce(&mut RequestProjection)) {
+        let held = self
+            .requests
+            .entry((key.actor.clone(), key.id.clone()))
+            .or_default()
+            .entry(key.generation)
+            .or_default();
+        let before = held.horizon();
+        change(held);
+        let after = held.horizon();
+        if before != after {
+            if let Some(at) = before {
+                self.horizons
+                    .remove(&(at, key.actor.clone(), key.id.clone(), key.generation));
+            }
+            if let Some(at) = after {
+                self.horizons
+                    .insert((at, key.actor.clone(), key.id.clone(), key.generation));
+            }
+        }
+    }
+
+    fn remove_generation(&mut self, actor: &ObjectId, id: &RequestId, generation: u64) {
+        let slot = (actor.clone(), id.clone());
+        let Some(generations) = self.requests.get_mut(&slot) else {
+            return;
+        };
+        if let Some(gone) = generations.remove(&generation)
+            && let Some(at) = gone.horizon()
+        {
+            self.horizons
+                .remove(&(at, actor.clone(), id.clone(), generation));
+        }
+        if generations.is_empty() {
+            self.requests.remove(&slot);
+        }
+    }
+
+    /// Drop every generation whose last row expired before `instant`.
+    fn evict_before(&mut self, instant: Timestamp) {
+        while let Some((at, actor, id, generation)) = self.horizons.first().cloned() {
+            if at >= instant {
+                break;
+            }
+            self.remove_generation(&actor, &id, generation);
+        }
     }
 
     fn project(&mut self, event: &LedgerEvent) -> Result<(), MissingPart> {
         match event {
             LedgerEvent::RequestPartCommitted(part) => {
-                self.requests
-                    .entry(part.request.key.clone())
-                    .or_default()
-                    .parts
-                    .insert(part.name.clone(), part.clone());
+                self.edit(&part.request.key, |held| {
+                    held.parts.insert(part.name.clone(), part.clone());
+                });
             }
             LedgerEvent::RequestCommitted(commit) => {
-                let held = self.requests.entry(commit.request.key.clone()).or_default();
-                // A commit replayed after the fill must not take the receipt back.
-                let filled = held.committed.as_ref().and_then(|old| old.receipt.clone());
-                let mut commit = commit.clone();
-                commit.receipt = commit.receipt.or(filled);
-                held.committed = Some(commit);
+                self.edit(&commit.request.key, |held| {
+                    // A commit replayed after the fill must not take the receipt back.
+                    let filled = held.committed.as_ref().and_then(|old| old.receipt.clone());
+                    let mut commit = commit.clone();
+                    commit.receipt = commit.receipt.or(filled);
+                    held.committed = Some(commit);
+                });
             }
             LedgerEvent::RequestReceiptRecorded { key, receipt } => {
-                if let Some(commit) = self
+                // A receipt addresses a generation that is held, or nothing.
+                let held = self
                     .requests
-                    .get_mut(key)
-                    .and_then(|held| held.committed.as_mut())
-                {
-                    commit.receipt = Some(receipt.clone());
+                    .get(&(key.actor.clone(), key.id.clone()))
+                    .is_some_and(|generations| {
+                        generations
+                            .get(&key.generation)
+                            .is_some_and(|held| held.committed.is_some())
+                    });
+                if held {
+                    self.edit(key, |held| {
+                        if let Some(commit) = held.committed.as_mut() {
+                            commit.receipt = Some(receipt.clone());
+                        }
+                    });
                 }
             }
             LedgerEvent::RequestCompleted {
@@ -262,8 +361,7 @@ impl State {
             } => {
                 if required_parts.iter().any(|part| {
                     !self
-                        .requests
-                        .get(&commit.request.key)
+                        .request(&commit.request.key)
                         .is_some_and(|held| held.parts.contains_key(part))
                 }) {
                     return Err(MissingPart);
@@ -271,8 +369,21 @@ impl State {
                 self.project(&LedgerEvent::RequestCommitted(commit.clone()))?;
             }
             LedgerEvent::RequestExpired { key } => {
-                if let Some(held) = self.requests.get_mut(key) {
-                    held.expired = true;
+                // **Expiring a generation hides the request**, and the older
+                // generations of the id go with it: none of them may answer a
+                // retry in its place.
+                let older: Vec<u64> = self
+                    .requests
+                    .get(&(key.actor.clone(), key.id.clone()))
+                    .map(|generations| {
+                        generations
+                            .range(..=key.generation)
+                            .map(|(g, _)| *g)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                for generation in older {
+                    self.remove_generation(&key.actor, &key.id, generation);
                 }
             }
             LedgerEvent::AppAttemptCommitted(attempt) => {
@@ -295,58 +406,50 @@ impl State {
         Ok(state)
     }
 
-    pub fn history(&self) -> &[LedgerEvent] {
-        &self.history
-    }
-
     pub fn request(&self, key: &RequestKey) -> Option<&RequestProjection> {
-        self.requests.get(key)
+        self.requests
+            .get(&(key.actor.clone(), key.id.clone()))?
+            .get(&key.generation)
     }
 
-    /// Only the newest generation can answer a retry. An expired newest
-    /// generation must not reveal an older attempt with the same public id.
+    /// Only the newest generation can answer a retry.
     pub fn current(&self, actor: &ObjectId, id: &RequestId) -> Option<&RequestProjection> {
         self.requests
-            .iter()
-            .filter(|(key, _)| &key.actor == actor && &key.id == id)
-            .max_by_key(|(key, _)| key.generation)
+            .get(&(actor.clone(), id.clone()))?
+            .last_key_value()
             .map(|(_, request)| request)
     }
 
     /// **The generation a write under this id belongs to.** The newest
     /// generation while one of its rows is still held at `at`; the next number
-    /// once every row of it has aged out or been expired; 1 for an id never
-    /// seen. A reused id so starts a generation of its own, and a late receipt
-    /// of the old attempt cannot attach to it.
+    /// once every row of it has aged out; 1 for an id with no generation held. A
+    /// reused id so starts a generation of its own, and a late receipt of the
+    /// old attempt cannot attach to it.
     pub fn generation_for(&self, actor: &ObjectId, id: &RequestId, at: Timestamp) -> u64 {
-        let Some((key, held)) = self
+        let Some((generation, held)) = self
             .requests
-            .iter()
-            .filter(|(key, _)| &key.actor == actor && &key.id == id)
-            .max_by_key(|(key, _)| key.generation)
+            .get(&(actor.clone(), id.clone()))
+            .and_then(|generations| generations.last_key_value())
         else {
             return 1;
         };
-        let live = !held.expired
-            && (held.committed.iter().any(|commit| commit.expires_at >= at)
-                || held.parts.values().any(|part| part.expires_at >= at));
-        if live {
-            key.generation
+        if held.horizon().is_some_and(|horizon| horizon >= at) {
+            *generation
         } else {
-            key.generation + 1
+            generation + 1
         }
     }
 
     pub fn lookup(&self, actor: &ObjectId, id: &RequestId, at: Timestamp) -> Option<&Commit> {
-        let held = self.current(actor, id)?;
-        held.committed
+        self.current(actor, id)?
+            .committed
             .as_ref()
-            .filter(|commit| !held.expired && commit.expires_at >= at)
+            .filter(|commit| commit.expires_at >= at)
     }
 
     /// The old parts reader orders equal-time rows by part name.
     pub fn parts(&self, actor: &ObjectId, id: &RequestId, at: Timestamp) -> Vec<&Part> {
-        let Some(held) = self.current(actor, id).filter(|held| !held.expired) else {
+        let Some(held) = self.current(actor, id) else {
             return Vec::new();
         };
         let mut parts: Vec<_> = held
