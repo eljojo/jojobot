@@ -9,7 +9,7 @@ use jojobot_adapters::testing::{Scratch, free_port, migrated_database};
 #[tokio::test]
 async fn two_dolt_stores_each_see_only_the_kinds_they_declare() {
     let scratch = Scratch::new("kinds-per-store");
-    let server = Dolt::start(&scratch.0, free_port())
+    let mut server = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
     let first = DoltMemory::open(
@@ -26,4 +26,5 @@ async fn two_dolt_stores_each_see_only_the_kinds_they_declare() {
         &first, &second,
     )
     .await;
+    server.stop().await;
 }

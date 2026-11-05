@@ -734,6 +734,37 @@ mod tests {
     use super::*;
     use crate::attention::Outcome;
 
+    /// **What one store's kinds say about a token, whatever the store.** An
+    /// empty set is a store that was never seeded, which is not the same
+    /// refusal as a typo; a held token is accepted; any other token is named
+    /// with the held kinds, sorted.
+    #[test]
+    fn a_stores_kinds_answer_a_token_in_one_of_three_ways() {
+        use super::super::types::Origin;
+        let held = |tokens: &[&str]| -> Vec<(String, Origin)> {
+            tokens
+                .iter()
+                .map(|token| (token.to_string(), Origin::Declared))
+                .collect()
+        };
+        //   (the store's kinds, the token, the answer)
+        let table = [
+            (held(&[]), "sloth", Err(NotAKind::SetNeverLoaded)),
+            (held(&["walrus", "sloth"]), "sloth", Ok(())),
+            (
+                held(&["walrus", "sloth"]),
+                "otter",
+                Err(NotAKind::NotDeclared {
+                    token: "otter".into(),
+                    known: vec!["sloth".into(), "walrus".into()],
+                }),
+            ),
+        ];
+        for (kinds, token, answer) in table {
+            assert_eq!(standing_in(&kinds, token), answer, "{kinds:?} / {token}");
+        }
+    }
+
     /// **A list declares how a tick behaves and which period it covers, and
     /// requires neither.** `tick` is a closed set of three; `covers` holds one
     /// calendar day or one ISO week. A bare list is whole with neither.
