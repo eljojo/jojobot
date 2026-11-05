@@ -286,9 +286,11 @@ pub fn test_jobs(listing: &str) -> Vec<Vec<String>> {
             }
         } else if let Some(file) = executable.strip_prefix("tests/")
             && let Some((name, _)) = file.split_once(".rs")
-            && !files.iter().any(|f| f == name)
         {
-            files.push(name.to_string());
+            let name = name.strip_suffix("/main").unwrap_or(name);
+            if !files.iter().any(|f| f == name) {
+                files.push(name.to_string());
+            }
         }
     }
     jobs_of(libs, unnamed_lib, bins, files)
@@ -686,6 +688,23 @@ mod tests {
     const COMPILE_ERROR: &str = include_str!("../tests/fixtures/compile-error.txt");
     /// A verbatim `cargo test --workspace --no-run` capture on this workspace.
     const NO_RUN_LISTING: &str = include_str!("../tests/fixtures/no-run-listing.txt");
+
+    /// Cargo prints the source path, but a directory's main.rs is run by the
+    /// area's target name. The listing is observed Cargo output with a scratch
+    /// target-directory prefix, beside an ordinary test file as its control.
+    #[test]
+    fn a_directory_main_is_one_job_named_for_its_area() {
+        let listing = "  Executable tests/ui/main.rs (/tmp/target/debug/deps/ui-40da95d13ad31de1)\n\
+                       Executable tests/user_stories.rs (/tmp/target/debug/deps/user_stories-eace6869c5d80a86)\n";
+        assert_eq!(
+            test_jobs(listing),
+            [
+                vec!["--test", "ui"],
+                vec!["--test", "user_stories"],
+                vec!["--doc"]
+            ]
+        );
+    }
 
     /// **Every test binary a real listing names is in exactly one job.** The
     /// fixture is what cargo printed, so this reads the real format. Integration
