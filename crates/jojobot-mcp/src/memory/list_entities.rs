@@ -232,6 +232,7 @@ mod tests {
             view: None,
             inputs: None,
             sid: None,
+            reship: None,
         }
     }
 

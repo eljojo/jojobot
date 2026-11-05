@@ -2406,6 +2406,7 @@ Empty answers name what they searched.
 {"/inputSchema/properties/prose":{"default":null,"type":["boolean","null"]}}
 {"/inputSchema/properties/record_keys":{"default":null,"items":{"type":"string"},"type":["array","null"]}}
 {"/inputSchema/properties/records":{"default":null,"items":{"type":"string"},"type":["array","null"]}}
+{"/inputSchema/properties/reship":{"default":null,"type":["boolean","null"]}}
 {"/inputSchema/properties/review_marks":{"default":null,"type":["boolean","null"]}}
 {"/inputSchema/properties/roots":{"default":null,"type":["boolean","null"]}}
 {"/inputSchema/properties/scope":{"default":null,"type":["string","null"]}}
@@ -3281,6 +3282,15 @@ arguments ask about a list's ticks. A long list stops at the
 answer ceiling; `not_shown` names the `offset` that reads on.
 ```
 
+#### `recall` — argument `/inputSchema.reship`
+
+```text
+**Send `true` to be served in full what you already hold.** An entity or
+claim you were served earlier in this session, still as it stood, comes
+back as its handle or address alone; with `reship: true` the same call
+returns it whole.
+```
+
 #### `recall` — argument `/inputSchema.review_marks`
 
 ```text
@@ -3792,6 +3802,7 @@ See each argument for details.
 {"/inputSchema/properties/offset":{"default":null,"format":"uint32","minimum":0,"type":["integer","null"]}}
 {"/inputSchema/properties/provenance":{"default":null,"type":["string","null"]}}
 {"/inputSchema/properties/query":{"default":null,"type":["string","null"]}}
+{"/inputSchema/properties/reship":{"default":null,"type":["boolean","null"]}}
 {"/inputSchema/properties/review_marks":{"default":null,"type":["boolean","null"]}}
 {"/inputSchema/properties/sid":{"default":null,"type":["string","null"]}}
 {"/inputSchema/properties/standing":{"default":null,"type":["string","null"]}}
@@ -3997,6 +4008,15 @@ Free text over entity handles/names, fact claims and details, and an
 entity's prose. **Words are matched by stem, and a record needs at least
 half of the query's terms, rounded up: two terms need one.** Optional when at least one filter
 below is given.
+```
+
+#### `search` — argument `/inputSchema.reship`
+
+```text
+**Send `true` to be served in full what you already hold.** An entity or
+claim you were served earlier in this session, still as it stood, comes
+back as its handle or address alone; with `reship: true` the same call
+returns it whole.
 ```
 
 #### `search` — argument `/inputSchema.review_marks`

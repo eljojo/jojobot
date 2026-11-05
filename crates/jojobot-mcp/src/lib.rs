@@ -793,6 +793,15 @@ impl Jojobot {
             .and_then(|args| args.get("sid"))
             .and_then(|sid| sid.as_str())
             .map(str::to_string);
+        // **`reship` is read here for the same reason**: the held pass that
+        // collapses what the session holds is the one hook every answer passes,
+        // and it must not have to know which verb declared the argument.
+        let reship = request
+            .arguments
+            .as_ref()
+            .and_then(|args| args.get("reship"))
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
         // Read before dispatch for the same reason `sid` is: dispatch takes the
         // context. Where the body rides is the agreed revision's to decide, and
         // deciding it here rather than in each verb is what makes it true of
@@ -859,6 +868,9 @@ impl Jojobot {
         }
         self.teach_argument_names(&aliases, &mut answered, sid.as_deref())
             .await;
+        if reship {
+            held::reship_asked(&mut answered);
+        }
         self.finish_unshaped(&mut answered, sid.as_deref()).await;
         // **What a spent id stores is the answer as the caller was told it**, so a
         // repeat gives back the same words. Taken before the answer is shaped for

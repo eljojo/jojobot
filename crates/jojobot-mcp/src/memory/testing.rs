@@ -403,6 +403,7 @@ pub(crate) fn search_args() -> SearchArgs {
         offset: None,
         clock: None,
         sid: None,
+        reship: None,
         fits_type: None,
     }
 }

@@ -18,12 +18,14 @@
 //! **A thing's prose and its own row move its version; a link another thing
 //! holds to it does not**, because the pointer is a record of the other thing.
 //!
-//! Nothing a verb returns is shortened by this, and nothing is stored: the
-//! ledger lives in the process and a restart empties it (a missed notice, never
-//! a wrong one).
+//! **A thing the session holds, unchanged, comes back as its handle alone**
+//! ([`collapse`]), and the answer says how many and how to have them whole
+//! (`reship`). Nothing is stored: the ledger lives in the process and a restart
+//! empties it (a missed notice, and everything shipped whole, never a wrong one).
 
 use super::*;
 
+mod collapse;
 #[cfg(feature = "room-harness")]
 mod room_harness;
 
@@ -39,6 +41,20 @@ pub(crate) const HELD_CHANGED: &str = "held_changed";
 /// An internal mark, consumed before the answer reaches the transport.
 const SEARCH_ANSWER: &str = "jojobot/search-answer";
 const RESULTS_ONLY: &str = "jojobot/search-results-only";
+/// The caller asked for what it holds served whole (`reship: true`).
+const RESHIP: &str = "jojobot/reship";
+
+/// Mark an answer as one whose caller sent `reship: true`, so nothing in it is
+/// collapsed. The dispatch reads the argument once for every verb.
+pub(crate) fn reship_asked(answered: &mut CallToolResponse) {
+    if let CallToolResponse::Complete(result) = answered {
+        result
+            .meta
+            .get_or_insert_with(Default::default)
+            .0
+            .insert(RESHIP.into(), Value::Bool(true));
+    }
+}
 
 /// Only successful token-saving searches carry this mark; refusals keep guidance.
 pub(crate) fn token_saving_search(mut result: CallToolResult, enabled: bool) -> CallToolResult {
@@ -67,7 +83,7 @@ pub(crate) fn search_answer(mut result: CallToolResult) -> CallToolResult {
     result
 }
 
-fn take_search(result: &mut CallToolResult) -> (bool, bool) {
+fn take_search(result: &mut CallToolResult) -> (bool, bool, bool) {
     let search = result
         .meta
         .as_mut()
@@ -78,10 +94,15 @@ fn take_search(result: &mut CallToolResult) -> (bool, bool) {
         .as_mut()
         .and_then(|meta| meta.0.remove(RESULTS_ONLY))
         .is_some();
+    let reship = result
+        .meta
+        .as_mut()
+        .and_then(|meta| meta.0.remove(RESHIP))
+        .is_some();
     if result.meta.as_ref().is_some_and(|meta| meta.0.is_empty()) {
         result.meta = None;
     }
-    (search, results_only)
+    (search, results_only, reship)
 }
 
 /// The state a quarantined message is told as.
@@ -156,6 +177,16 @@ fn notices_to_send(told: &[(Held, Value)]) -> Vec<Value> {
         .collect()
 }
 
+/// **The address an object names itself by, when the object is a claim**: an
+/// `address` with a `#`, beside the claim's words and provenance (a receipt of a
+/// write names an address and carries neither).
+pub(crate) fn claim_address_of(fields: &Map<String, Value>) -> Option<&str> {
+    let text = |key: &str| fields.get(key).and_then(Value::as_str);
+    let address = text("address")?;
+    (address.contains('#') && text("content").is_some() && text("provenance").is_some())
+        .then_some(address)
+}
+
 /// **Every entity, claim and message an answer names**, in the order the answer
 /// has them. An entity is what [`crate::seen::entities_in`] reads. A claim is an
 /// object with an `address` and the words and provenance of a claim (a receipt
@@ -166,11 +197,7 @@ pub(crate) fn served_in(body: &Value) -> Vec<Held> {
         match value {
             Value::Object(fields) => {
                 let text = |key: &str| fields.get(key).and_then(Value::as_str);
-                if let Some(address) = text("address")
-                    && address.contains('#')
-                    && text("content").is_some()
-                    && text("provenance").is_some()
-                {
+                if let Some(address) = claim_address_of(fields) {
                     out.push(Held::Claim(address.to_string()));
                 }
                 if let Some(id) = text("id")
@@ -328,7 +355,7 @@ impl Jojobot {
         let CallToolResponse::Complete(result) = answered else {
             return;
         };
-        let (search, results_only) = take_search(result);
+        let (search, results_only, reship) = take_search(result);
         let Ok(Some(caller)) = self.caller(sid) else {
             return;
         };
@@ -355,11 +382,11 @@ impl Jojobot {
         } else {
             Vec::new()
         };
-        let held: Vec<_> = self
-            .registry
-            .held_by(&me)
-            .into_iter()
+        let held_before = self.registry.held_by(&me);
+        let held: Vec<_> = held_before
+            .iter()
             .filter(|(what, _)| !results_only && (!search || scope.contains(what)))
+            .cloned()
             .collect();
         let messages = self
             .held_messages(held.iter().map(|(what, _)| what).chain(served.iter()))
@@ -397,17 +424,29 @@ impl Jojobot {
                 Changed::Unread => {}
             }
         }
+        let mut served_now: Vec<(Held, Version)> = Vec::new();
         for what in served {
             if let Some(version) = self.version_of(&what, &messages).await {
-                moved.push((what, version));
+                served_now.push((what, version));
             }
         }
+        // **Decided before the answer is held in turn**: what the session held
+        // before this call, at the version it stands at now, is not shipped again.
+        let collapsed = if results_only || reship {
+            0
+        } else {
+            let unchanged = collapse::unchanged(&held_before, &served_now);
+            collapse::collapse(&mut body, &unchanged)
+        };
+        moved.extend(served_now);
         self.registry.note_held(&me, moved);
         let notices = notices_to_send(&told);
-        if notices.is_empty() {
+        if notices.is_empty() && collapsed == 0 {
             return;
         }
-        body[HELD_CHANGED] = Value::Array(notices);
+        if !notices.is_empty() {
+            body[HELD_CHANGED] = Value::Array(notices);
+        }
         result.content[at] = ContentBlock::text(body.to_string());
     }
 

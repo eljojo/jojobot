@@ -470,3 +470,49 @@ async fn a_claim_another_session_wrote_before_this_one_did_is_named() {
     assert_eq!(told[0]["claim"], "edited", "{next}");
     story.finish().await;
 }
+
+/// **"It shouldn't show me the same text twice."** Otto was served Homer and the
+/// claim on him. Asked again, with nothing changed, the answer names Homer by his
+/// handle alone and says how many it left out and how to have them whole. With
+/// `reship: true` the same call returns Homer in full. When another session
+/// changes him, he comes back whole beside the notice.
+#[tokio::test]
+async fn a_thing_the_session_holds_unchanged_comes_back_as_its_handle() {
+    let (story, otto, other, claim) = otto_holds_homer().await;
+    let ask = json!({"subject": "person:homer", "facts": true});
+
+    let again = otto.call("recall", ask.clone()).await.json();
+    assert_eq!(
+        again["objects"][0],
+        json!({"id": "person:homer", "held": "unchanged since served"}),
+        "{again}"
+    );
+    assert_eq!(again["held_collapsed"]["count"], 1, "{again}");
+    assert!(!again.to_string().contains("likes donuts"), "{again}");
+
+    let whole = otto
+        .call(
+            "recall",
+            json!({"subject": "person:homer", "facts": true, "reship": true}),
+        )
+        .await
+        .json();
+    assert_eq!(whole["objects"][0]["name"], "Homer", "{whole}");
+    assert!(whole.to_string().contains("likes donuts"), "{whole}");
+    assert!(whole.get("held_collapsed").is_none(), "{whole}");
+
+    other
+        .call(
+            "update_fact",
+            json!({"address": claim, "content": "likes donuts and beer", "provenance": "inference"}),
+        )
+        .await;
+    let changed = otto.call("recall", ask).await.json();
+    assert_eq!(changed["objects"][0]["name"], "Homer", "{changed}");
+    assert!(
+        changed.to_string().contains("likes donuts and beer"),
+        "{changed}"
+    );
+    assert!(changed.get("held_collapsed").is_none(), "{changed}");
+    story.finish().await;
+}

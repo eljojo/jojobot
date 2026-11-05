@@ -898,6 +898,14 @@ pub struct RecallArgs {
     /// its shape.
     #[serde(default)]
     pub(crate) inputs: Option<std::collections::BTreeMap<String, serde_json::Value>>,
+    /// **Send `true` to be served in full what you already hold.** An entity or
+    /// claim you were served earlier in this session, still as it stood, comes
+    /// back as its handle or address alone; with `reship: true` the same call
+    /// returns it whole.
+    // Read from the raw arguments by the dispatch, which every verb passes.
+    #[allow(dead_code)]
+    #[serde(default)]
+    pub(crate) reship: Option<bool>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
     /// every call — it is what tells jojobot which bot is asking. Reads are
     /// attributed, never journalled.
@@ -4973,6 +4981,7 @@ fn selection_beside_records(args: &RecallArgs, addresses: &[String]) -> Option<S
         view,
         inputs,
         sid: _,
+        reship: _,
     } = args;
     if let Some(subject) = subject
         && let Some(home) = addresses

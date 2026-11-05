@@ -1598,6 +1598,7 @@ mod tests {
                     overdue: None,
                     near: None,
                     sid: Some(reader),
+                    reship: None,
                     history: None,
                     history_record: None,
                     records: None,

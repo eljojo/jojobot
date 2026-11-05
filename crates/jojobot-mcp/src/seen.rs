@@ -326,6 +326,25 @@ impl Noticed {
     }
 }
 
+/// **The handle an object names itself by, when the object is an entity**: an
+/// `id` that is a handle of a kind this build knows, beside a `name`. A merged-away
+/// handle answers as a status naming its survivor; it is no thing, so it has none.
+pub(crate) fn entity_handle_of(
+    fields: &serde_json::Map<String, serde_json::Value>,
+) -> Option<&str> {
+    let handle = fields.get("id").and_then(serde_json::Value::as_str)?;
+    let (kind, slug) = handle.split_once(':')?;
+    (EntityKind::ALL.iter().any(|known| known.as_token() == kind)
+        && !slug.is_empty()
+        && !slug.contains('#')
+        && fields
+            .get("name")
+            .and_then(serde_json::Value::as_str)
+            .is_some()
+        && fields.get("status").and_then(serde_json::Value::as_str) != Some("merged"))
+    .then_some(handle)
+}
+
 /// **Every entity a read answer returned**, read off the body before it is sent.
 ///
 /// An entity is an object with an `id` that is a handle of a kind this build
@@ -336,15 +355,9 @@ pub(crate) fn entities_in(body: &serde_json::Value) -> Vec<Shown> {
     fn walk(value: &serde_json::Value, out: &mut Vec<Shown>) {
         match value {
             serde_json::Value::Object(fields) => {
-                if let Some(handle) = fields.get("id").and_then(serde_json::Value::as_str)
-                    && let Some((kind, slug)) = handle.split_once(':')
-                    && EntityKind::ALL.iter().any(|known| known.as_token() == kind)
-                    && !slug.is_empty()
-                    && !slug.contains('#')
+                if let Some(handle) = entity_handle_of(fields)
+                    && let Some((kind, _)) = handle.split_once(':')
                     && let Some(name) = fields.get("name").and_then(serde_json::Value::as_str)
-                    // A merged-away handle answers as a status naming its
-                    // survivor. It is no thing, so it is not shown.
-                    && fields.get("status").and_then(serde_json::Value::as_str) != Some("merged")
                 {
                     out.push(Shown {
                         handle: handle.to_string(),
