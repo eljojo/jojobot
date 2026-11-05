@@ -340,6 +340,13 @@ impl InMemoryMemory {
         fake
     }
 
+    /// **Replace the kinds this store holds**, for a case about a store that
+    /// declares nothing, or that has its kinds back. A case reads them first
+    /// with `declared_kinds` and puts them back with this.
+    pub fn set_kinds(&self, held: Vec<(String, crate::memory::types::Origin)>) {
+        *self.kinds.lock().unwrap() = held;
+    }
+
     /// **The kinds this store declares**, which its admission asks rather than
     /// the set this process parses against.
     fn own_kinds(&self) -> crate::memory::kinds::KindSet {

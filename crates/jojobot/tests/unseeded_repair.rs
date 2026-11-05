@@ -30,7 +30,7 @@ async fn the_never_loaded_refusal_does_not_send_the_caller_back_into_the_same_ca
     // handle, so the store is booted for it — and the set is emptied before
     // the call under test, which is the state this case is about.
     let store = Arc::new(InMemoryMemory::booted());
-    let indexed = Arc::new(IndexedMemory::new(store).expect("the search index opens"));
+    let indexed = Arc::new(IndexedMemory::new(store.clone()).expect("the search index opens"));
     let state = AppState {
         apps: Default::default(),
         metrics: None,
@@ -70,6 +70,11 @@ async fn the_never_loaded_refusal_does_not_send_the_caller_back_into_the_same_ca
     let session = open(&http, &url).await;
     let sid = boot(&http, &url, &session).await;
 
+    // **Both sets are emptied**: the one this process parses against, and the
+    // store's own, which is what admission asks.
+    use jojobot_domain::memory::Memory;
+    let declared = store.declared_kinds().await.expect("the store reads");
+    store.set_kinds(Vec::new());
     jojobot_domain::memory::kinds::load::<[&str; 0], &str>([]);
     let never_loaded = advice(&ask(&http, &url, &session, &capture(&sid, "a claim")).await);
 
@@ -79,6 +84,7 @@ async fn the_never_loaded_refusal_does_not_send_the_caller_back_into_the_same_ca
     // because it is telling the caller to send it again. Without this half,
     // the assertion below passes on a build where no answer ever names a verb.
     jojobot_domain::memory::kinds::load_shipped();
+    store.set_kinds(declared);
     let ordinary = advice(&ask(&http, &url, &session, &capture(&sid, "   ")).await);
 
     assert!(
