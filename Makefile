@@ -115,21 +115,23 @@ snapshot: ## Rewrite the checked-in files of every text a model reads
 # **The dev bar.** The everyday loop, a level below the report: the cheap size,
 # source-roster and commit-message gates, then format, a build and the fast tests
 # of the packages the branch touches. The touched packages hold a path that differs
-# from the merge base with `main` (committed, uncommitted or untracked). **The
+# from the merge base with the base ref (committed, uncommitted or untracked). **The
 # packages that depend on them are not tested here**: their tests are the branch
 # run's, and the verdict names them and the run to read. A test file counts as
 # slow on the history's word, as in the report level, and a file with no
 # history runs. It then lints those same packages, whatever the tests said. It
 # runs no room and no doc-test, and its verdict names every file and package
-# it left out. **A branch is measured against `main` unless `BASE` names another
-# ref**: `make dev BASE=forgejo/em-93-base` for a branch built on a release line,
-# whose own commits `main` does not hold. **Its last line is its whole wall time**, and a run over five
+# it left out. **Off CI a branch is measured against the remote line it was cut
+# from, or `main` when it has none, and `BASE` names another ref**: `make dev
+# BASE=forgejo/em-93-base` for a branch built on a release line, whose own commits
+# `main` does not hold. **Its last line is its whole wall time**, and a run over five
 # minutes says to push and let CI run it; a cold target directory may take
 # longer, once.
 #
 # 🚨 **It is not a boundary run.** A defect that exists only where two packages
 # meet, or in a file it skipped, is invisible to it. `make check` is the bar
-# before a report or a carry. A diff that touches no package is refused.
+# before a report or a carry. A diff that touches no package is refused, except
+# in the forge's own-crates job (BAR_OWN_CRATES), which passes it and runs nothing.
 # Set JOJOBOT_DEV_METRICS_URL to opt dev and narrow into build SLO samples.
 # It is off by default; a metrics push never changes the command's exit code.
 dev: ## The dev bar: format, build, and the tests and lint of what the branch touched

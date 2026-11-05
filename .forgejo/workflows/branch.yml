@@ -104,10 +104,10 @@ jobs:
           JOJOBOT_METRICS_OUTCOME: ${{ job.status }}
 
   # The first verdict of a push: the tests and lint of the crates the branch
-  # touched and of the crates that depend on them, through `make dev`, the one
-  # way the bar picks crates. It has no `needs`, so it starts with `static` and
-  # not after it, and it ends at its first red test. `report` and `rooms` run
-  # everything they ran before; a red here leaves them running
+  # touched, through `make dev`, the one way the bar picks crates. The crates
+  # that depend on them are left to `report`. It has no `needs`, so it starts
+  # with `static` and not after it, and it ends at its first red test. `report`
+  # and `rooms` run everything they ran before; a red here leaves them running
   # (scripts/stop-with-siblings). A push only: a dispatch names the job it
   # reruns, and this is not one of them. BAR_OWN_CRATES measures the branch
   # against the trunk it is cut from, not `main`, and the SIZE_BASE here is the
@@ -123,9 +123,10 @@ jobs:
       - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
-      # A push that changed only docs has no crate to run: `make dev` refuses a
-      # diff that touches no package, so the plan skips the step as it does for
-      # the jobs beside this one.
+      # A push that changed only docs has no crate to run, so the plan skips the
+      # step as it does for the jobs beside this one. A push that touches no
+      # package and is not docs-only still runs `make dev`, which passes under
+      # BAR_OWN_CRATES and runs nothing.
       # The crate selection diffs against the remote line this branch is cut
       # from, the one `make dev` measures against. One fixed carry made every
       # branch cut from a later one a full run. No line found leaves the base
