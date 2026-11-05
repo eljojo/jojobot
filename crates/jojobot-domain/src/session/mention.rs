@@ -74,6 +74,7 @@ impl Mentioning {
     async fn known_for(&self, texts: &[&str]) -> Result<Vec<Entity>, SessionError> {
         mention::roster_for(&*self.memory, texts)
             .await
+            .map(|roster| roster.known)
             .map_err(|e| SessionError::Store(e.to_string()))
     }
 

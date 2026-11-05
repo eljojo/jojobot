@@ -25,7 +25,7 @@ fn thing(handle: &str, badge: Option<&str>) -> Entity {
 #[test]
 fn text_is_screened_for_the_mark_and_for_handles_that_name_nothing() {
     let _booted = crate::memory::testing::InMemoryMemory::booted();
-    let known = [thing("person:milhouse", Some("k7h2mn"))];
+    let known = Roster::from([thing("person:milhouse", Some("k7h2mn"))]);
     assert!(refusal_for_text(&["saw @person:milhouse"], &known).is_none());
     assert!(refusal_for_text(&["`@person:ralph` in code"], &known).is_none());
     assert_eq!(
@@ -110,7 +110,7 @@ fn a_mention_of_something_wearing_no_badge_is_kept_as_written() {
 #[test]
 fn a_handle_in_a_saved_expression_follows_the_thing_it_names() {
     let _booted = crate::memory::testing::InMemoryMemory::booted();
-    let known = [thing("person:milhouse", Some("k7h2mn"))];
+    let known = Roster::from([thing("person:milhouse", Some("k7h2mn"))]);
     let saved = bound_expression(
         r#"owner = person:milhouse && status in (now, "person:milhouse") && due < 2026-11-01"#,
         &known,
@@ -271,10 +271,10 @@ async fn a_scan_serves_a_saved_expression_with_the_handles_it_names() {
 fn a_saved_expression_binds_only_what_exists() {
     use super::super::MemoryError;
     let _booted = crate::memory::testing::InMemoryMemory::booted();
-    let known = [
+    let known = Roster::from([
         thing("person:milhouse", Some("k7h2mn")),
         thing("view:loops", None),
-    ];
+    ]);
     for kept in [
         "starts = 12:30",
         "view = view:loops",

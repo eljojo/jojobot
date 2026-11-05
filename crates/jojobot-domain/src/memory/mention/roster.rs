@@ -68,10 +68,15 @@ impl super::Mentioning {
             .filter(|(key, _)| super::holds_an_expression(key, &declared))
             .flat_map(|(_, value)| expression_member_mentions(value))
             .collect();
-        let mut roster = known.to_vec();
+        let mut roster = Roster {
+            known: known.to_vec(),
+            offers: Offers::new(),
+        };
         if !mentions.is_empty() {
             let texts: Vec<&str> = mentions.iter().map(String::as_str).collect();
-            roster.extend(roster_for(&*self.beneath, &texts).await?);
+            let named = roster_for(&*self.beneath, &texts).await?;
+            roster.known.extend(named.known);
+            roster.offers = named.offers;
         }
         super::bind_expression_fields(fields, &declared, &roster, owner)
     }
@@ -124,11 +129,12 @@ pub fn members_named(text: &str, known: &[Entity]) -> String {
 pub async fn roster_for(
     memory: &dyn crate::memory::Memory,
     texts: &[&str],
-) -> Result<Vec<Entity>, crate::memory::MemoryError> {
+) -> Result<Roster, crate::memory::MemoryError> {
     let mut known = render_roster(memory).await?;
+    let mut offers = Offers::new();
     let addresses = numbered_addresses(texts);
     if addresses.is_empty() {
-        return Ok(known);
+        return Ok(Roster { known, offers });
     }
     let former = memory.former_handles().await?;
     for (collection, number) in addresses {
@@ -156,7 +162,6 @@ pub async fn roster_for(
             });
         }
         let mut holder: Option<Entity> = None;
-        let mut held_numbers = Vec::new();
         let mut read_fields = std::collections::BTreeMap::new();
         // **Only real things hold a number.** A marker or an address entered earlier
         // is no thing the store knows, so it is never read for a number.
@@ -169,15 +174,9 @@ pub async fn roster_for(
                 .get(&key)
                 .and_then(|v| crate::memory::numbered::whole_number(v));
             read_fields.insert(member.id.clone(), value);
-            if let Some(held_number) = held_value {
-                held_numbers.push(Entity {
-                    id: EntityId(format!("{collection}/{held_number}")),
-                    ..member.clone()
-                });
-                if held_number == number {
-                    holder = Some(member.clone());
-                    break;
-                }
+            if held_value == Some(number) {
+                holder = Some(member.clone());
+                break;
             }
         }
         if let Some(member) = holder {
@@ -190,8 +189,8 @@ pub async fn roster_for(
         } else {
             // **A miss offers what the domain's one answer offers**
             // ([`crate::memory::numbered::nearest_numbers`]): the numbers the
-            // collection holds. The aliases it names carry the member's badge, so
-            // a later mention of a held number in the same texts still resolves.
+            // collection holds, spelled as the text wrote the collection, which
+            // may be a handle it wore.
             read_fields.insert(
                 resolved.clone(),
                 std::collections::BTreeMap::from([(
@@ -205,27 +204,56 @@ pub async fn roster_for(
                 .cloned()
                 .collect();
             let asked = EntityId(format!("{resolved}/{number}"));
-            for offered in crate::memory::numbered::nearest_numbers(&asked, &real, &read_fields)
-                .unwrap_or_default()
-            {
-                // **Spelled as the text wrote the collection**, which may be a
-                // handle it wore: `screened` finds the aliases by that spelling.
-                let Some((_, offered_number)) =
-                    crate::memory::numbered::numbered_handle(&offered.handle)
-                else {
-                    continue;
-                };
-                let spelled = EntityId(format!("{collection}/{offered_number}"));
-                if known.iter().any(|held| held.id == spelled) {
-                    continue;
-                }
-                if let Some(alias) = held_numbers.iter().find(|a| a.id == spelled) {
-                    known.push(alias.clone());
-                }
+            let offered: Vec<_> =
+                crate::memory::numbered::nearest_numbers(&asked, &real, &read_fields)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter_map(|offer| {
+                        let (_, held) = crate::memory::numbered::numbered_handle(&offer.handle)?;
+                        let handle = EntityId(format!("{collection}/{held}"));
+                        Some(crate::memory::guard::EntityMatch { handle, ..offer })
+                    })
+                    .collect();
+            if !offered.is_empty() {
+                offers.push((address, offered));
             }
         }
     }
-    Ok(known)
+    Ok(Roster { known, offers })
+}
+
+/// **The suggestions of each missed numbered address**, as the matches the
+/// domain's one answer ([`crate::memory::numbered::nearest_numbers`]) gives.
+pub type Offers = Vec<(EntityId, Vec<crate::memory::guard::EntityMatch>)>;
+
+/// **What exists, and what a miss offers.** It reads as the list of entities.
+#[derive(Debug, Default)]
+pub struct Roster {
+    pub known: Vec<Entity>,
+    pub offers: Offers,
+}
+
+#[cfg(test)]
+impl<const N: usize> From<[Entity; N]> for Roster {
+    fn from(known: [Entity; N]) -> Self {
+        Roster {
+            known: known.into(),
+            offers: Offers::new(),
+        }
+    }
+}
+
+impl std::ops::Deref for Roster {
+    type Target = Vec<Entity>;
+    fn deref(&self) -> &Vec<Entity> {
+        &self.known
+    }
+}
+
+impl std::ops::DerefMut for Roster {
+    fn deref_mut(&mut self) -> &mut Vec<Entity> {
+        &mut self.known
+    }
 }
 
 /// Whether an id is one this module entered in the roster beside the real
@@ -322,28 +350,12 @@ pub fn served_names(content: &str, details: Option<&str>) -> Vec<EntityId> {
 pub(super) fn screened(
     handle: &EntityId,
     known: &[Entity],
+    offers: &[(EntityId, Vec<crate::memory::guard::EntityMatch>)],
 ) -> Vec<crate::memory::guard::EntityMatch> {
-    if let Some((collection, _)) = crate::memory::numbered::numbered_handle(handle) {
-        let held: Vec<crate::memory::guard::EntityMatch> = known
-            .iter()
-            .filter(|e| {
-                crate::memory::numbered::numbered_handle(&e.id)
-                    .is_some_and(|(parent, _)| parent == collection)
-            })
-            .map(|e| crate::memory::guard::EntityMatch {
-                handle: e.id.clone(),
-                kind: e.kind,
-                name: e.name.clone(),
-                source: e.source.clone(),
-                reason: crate::memory::guard::MatchReason::HeldNumber,
-                told_apart_by: None,
-            })
-            .collect();
-        // **A collection that holds no number offers none**, and the ordinary
-        // screen answers, as the store's own miss does.
-        if !held.is_empty() {
-            return held;
-        }
+    // **A collection that holds no number offers none**, and the ordinary
+    // screen answers, as the store's own miss does.
+    if let Some((_, offered)) = offers.iter().find(|(address, _)| address == handle) {
+        return offered.clone();
     }
     let real: Vec<Entity> = known
         .iter()
@@ -539,6 +551,24 @@ mod tests {
                 .iter()
                 .all(|e| e.id.as_str() != "topic:contract-ordinances-story/9"),
             "no member holds 9"
+        );
+    }
+
+    /// **A miss enters no stand-in for the numbers it offers in the roster.** The
+    /// offers come back beside the roster as the matches the domain's one answer
+    /// gives, so nothing converts a stand-in into a match afterwards.
+    #[tokio::test]
+    async fn a_missed_number_adds_no_stand_in_member_to_the_roster() {
+        let memory = nested_numbering().await;
+        let missing = roster_for(&memory, &["see @topic:contract-ordinances-story/9"])
+            .await
+            .expect("a number nobody holds is a miss and not a failure");
+        assert!(
+            missing
+                .iter()
+                .all(|e| crate::memory::numbered::numbered_handle(&e.id).is_none()),
+            "the roster holds a stand-in for a held number: {:?}",
+            missing.iter().map(|e| e.id.to_string()).collect::<Vec<_>>()
         );
     }
 }

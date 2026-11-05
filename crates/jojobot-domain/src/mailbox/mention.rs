@@ -85,6 +85,7 @@ impl Mentioning {
     async fn known_for(&self, texts: &[&str]) -> Result<Vec<Entity>, MailboxError> {
         mention::roster_for(&*self.memory, texts)
             .await
+            .map(|roster| roster.known)
             .map_err(|e| MailboxError::Store(e.to_string()))
     }
 

@@ -521,7 +521,7 @@ fn handle_at(text: &str, at: usize) -> Attempt {
 
 pub mod roster;
 use roster::mention_at;
-pub use roster::{render_roster, roster_for, served_names};
+pub use roster::{Offers, Roster, render_roster, roster_for, served_names};
 
 /// **Whether a caller's text carries the stored mark.** [`rendered`] reads an
 /// `@` and `#` followed by a badge as a link to whatever wears that badge, so
@@ -564,7 +564,7 @@ fn refuse_forged(text: &[&str], known: &[Entity]) -> Result<(), super::MemoryErr
 /// is refused with candidates: the two refusals [`Mentioning`] gives a capture, for
 /// a caller that has many claims to write and must know none is refused before
 /// it writes the first.
-pub fn refusal_for_text(text: &[&str], known: &[Entity]) -> Option<super::MemoryError> {
+pub fn refusal_for_text(text: &[&str], known: &Roster) -> Option<super::MemoryError> {
     refuse_forged(text, known)
         .err()
         .or_else(|| Mentioning::screen_or_unknown(text, known))
@@ -666,7 +666,7 @@ pub fn rendered_words(
 pub fn refusal_for_words(
     content: &str,
     details: Option<&str>,
-    known: &[Entity],
+    known: &Roster,
 ) -> Option<super::MemoryError> {
     let parts: Vec<&str> = std::iter::once(content).chain(details).collect();
     refuse_forged(&parts, known).err().or_else(|| {
@@ -718,7 +718,7 @@ fn is_badge_byte(b: u8) -> bool {
 /// written, and so is a handle of a record the build supplies, which wears no
 /// badge. An expression that does not parse is refused with the words the
 /// parser gives.
-pub fn bound_expression(text: &str, known: &[Entity]) -> Result<String, super::MemoryError> {
+pub fn bound_expression(text: &str, known: &Roster) -> Result<String, super::MemoryError> {
     let values = super::filter::expression::saved_value_words(text)?;
     let chars: Vec<char> = text.chars().collect();
     let mut out = String::with_capacity(text.len());
@@ -731,7 +731,7 @@ pub fn bound_expression(text: &str, known: &[Entity]) -> Result<String, super::M
             continue;
         }
         let Some(entity) = known.iter().find(|e| e.id == handle) else {
-            let nearest = roster::screened(&handle, known);
+            let nearest = roster::screened(&handle, known, &known.offers);
             return Err(super::MemoryError::UnknownEntity {
                 attempted: handle.to_string(),
                 nearest,
@@ -775,7 +775,7 @@ pub fn unbound_expression(text: &str, known: &[Entity]) -> String {
 fn bind_expression_fields(
     fields: &mut std::collections::BTreeMap<String, String>,
     declared: &[super::types::DeclaredType],
-    known: &[Entity],
+    known: &Roster,
     owner: &EntityId,
 ) -> Result<(), super::MemoryError> {
     for (key, value) in fields.iter_mut() {
@@ -843,7 +843,7 @@ impl Mentioning {
     }
 
     /// **The roster for these texts** — [`roster_for`] over the store beneath.
-    async fn known_for(&self, texts: &[&str]) -> Result<Vec<Entity>, super::MemoryError> {
+    async fn known_for(&self, texts: &[&str]) -> Result<Roster, super::MemoryError> {
         roster_for(&*self.beneath, texts).await
     }
 
@@ -978,7 +978,7 @@ impl Mentioning {
             let text = match edited_stored(address, current, beside, edit, &known)? {
                 Ok(text) => text,
                 Err(handle) => {
-                    let candidates = roster::screened(&handle, &known);
+                    let candidates = roster::screened(&handle, &known, &known.offers);
                     return Ok(super::Guarded::Blocked {
                         attempted: handle,
                         candidates,
@@ -1163,7 +1163,7 @@ impl Mentioning {
     /// belongs to [`resolved`], which every caller of this also calls on the
     /// same text right after: one property, checked once, rather than a copy
     /// here that would only ever agree with it.
-    fn screen<T>(text: &[&str], known: &[Entity]) -> Option<super::Guarded<T>> {
+    fn screen<T>(text: &[&str], known: &Roster) -> Option<super::Guarded<T>> {
         Self::first_unresolved(text, known).map(|(attempted, candidates)| super::Guarded::Blocked {
             attempted,
             candidates,
@@ -1175,7 +1175,7 @@ impl Mentioning {
     fn screen_words<T>(
         content: &str,
         details: Option<&str>,
-        known: &[Entity],
+        known: &Roster,
     ) -> Option<super::Guarded<T>> {
         let texts = words_text(content, details);
         let texts: Vec<&str> = texts.iter().map(String::as_str).collect();
@@ -1190,7 +1190,7 @@ impl Mentioning {
     /// any OTHER absent handle on these two verbs (an unknown address, an
     /// unknown duplicate or survivor): [`super::MemoryError::UnknownEntity`],
     /// which the surface already renders as blocked-with-candidates.
-    fn screen_or_unknown(text: &[&str], known: &[Entity]) -> Option<super::MemoryError> {
+    fn screen_or_unknown(text: &[&str], known: &Roster) -> Option<super::MemoryError> {
         Self::first_unresolved(text, known).map(|(attempted, nearest)| {
             super::MemoryError::UnknownEntity {
                 attempted: attempted.to_string(),
@@ -1205,7 +1205,7 @@ impl Mentioning {
     /// the shape their own caller's return type can carry.
     fn first_unresolved(
         text: &[&str],
-        known: &[Entity],
+        known: &Roster,
     ) -> Option<(EntityId, Vec<super::guard::EntityMatch>)> {
         for part in text {
             for at in outside_code(part) {
@@ -1215,7 +1215,7 @@ impl Mentioning {
                 if known.iter().any(|e| e.id == handle) {
                     continue;
                 }
-                let candidates = roster::screened(&handle, known);
+                let candidates = roster::screened(&handle, known, &known.offers);
                 return Some((handle, candidates));
             }
         }
