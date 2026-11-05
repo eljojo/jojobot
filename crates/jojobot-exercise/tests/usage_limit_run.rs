@@ -354,6 +354,7 @@ fn assert_read_failure_is_kept(results: &Results, phase: &str) {
         .incomplete
         .as_ref()
         .expect("a failed read says the run did not finish");
+    assert_eq!(incomplete.named, "harness read");
     assert!(
         incomplete.phase.starts_with(phase),
         "the run names where it stopped: {}",
@@ -427,9 +428,13 @@ async fn a_failed_read_after_a_limit_is_named_beside_the_limit() {
         "the failed read is kept on the incomplete run: {:?}",
         incomplete.failed_read,
     );
+    assert_eq!(
+        incomplete.named, "usage limit",
+        "the limit stays the reason the run stopped"
+    );
     let rendered = results.rendered(None);
     assert!(
-        rendered.contains("usage limit") && rendered.contains("no_such_verb"),
-        "the verdict names both the limit and the read: {rendered}"
+        rendered.contains("no_such_verb"),
+        "the verdict names the read: {rendered}"
     );
 }

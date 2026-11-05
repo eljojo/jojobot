@@ -248,12 +248,14 @@ fn stops_the_run(hit_limit: Option<UsageLimit>, phase: &str) -> Option<Incomplet
     })
 }
 
+const HARNESS_READ: &str = "harness read";
+
 /// **The run stopped because a harness read failed.** A paid run must still
 /// return the transcript it kept, so the failure ends the run as incomplete
 /// and says which read failed.
 fn read_failed(phase: &str, failure: String) -> Incomplete {
     Incomplete {
-        named: "harness read",
+        named: HARNESS_READ,
         phase: phase.to_string(),
         reset: None,
         failed_read: Some(failure),
@@ -852,7 +854,7 @@ impl Results {
         if let Some(incomplete) = self
             .incomplete
             .as_ref()
-            .filter(|cut| cut.named != "harness read")
+            .filter(|cut| cut.named != HARNESS_READ)
         {
             let _ = writeln!(
                 out,
@@ -872,7 +874,7 @@ impl Results {
         if let Some(cut) = &self.incomplete
             && let Some(failure) = &cut.failed_read
         {
-            let stopped = if cut.named == "harness read" {
+            let stopped = if cut.named == HARNESS_READ {
                 format!(" in {} and the run stopped there", cut.phase)
             } else {
                 String::new()
