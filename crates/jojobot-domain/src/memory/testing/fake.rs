@@ -203,6 +203,7 @@ pub struct InMemoryMemory {
     /// **The attempts apps have spent**, by app and attempt id, with the digest
     /// of the body that spent it and what it landed. The real store keeps the
     /// same in `app_write`, written in the transaction of the write.
+    /// TEMPORARY(9.3.8): retires with the last fake write method that spends a request id.
     app_writes:
         Mutex<std::collections::BTreeMap<(String, String), (String, crate::app::AppReceipt)>>,
     /// **Whether an app's event lands and the fold behind it then fails to

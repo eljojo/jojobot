@@ -11,8 +11,10 @@ use crate::memory::EntityId;
 /// has no second name for a bot to be renamed to.
 #[derive(Debug, Default)]
 pub struct InMemoryRequests {
+    /// TEMPORARY(9.3.8): retires with the last fake write method that spends a request id.
     rows: Mutex<HashMap<(String, String), Stored>>,
     /// The parts of writes that commit in several, in the order written.
+    /// TEMPORARY(9.3.8): retires with the last fake write method that spends a request id.
     parts: Mutex<Vec<(String, String, PartRow)>>,
     /// Parts whose next commit fails, as a store that dies between two parts.
     refused: Mutex<std::collections::HashSet<String>>,
