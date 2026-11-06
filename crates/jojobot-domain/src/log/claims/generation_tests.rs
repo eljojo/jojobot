@@ -43,7 +43,15 @@ fn generations(state: &State, pending: &[ClaimEvent]) -> Vec<Generation> {
 fn made(object_id: &str, record_id: &str, number: u64) -> Generation {
     Generation {
         object: object(object_id),
+        handle: crate::memory::EntityId(
+            match object_id {
+                "k1" => "bot-request:alpha",
+                _ => "bot-request:beta",
+            }
+            .into(),
+        ),
         record: record(record_id),
+        live: true,
         number,
     }
 }
@@ -56,6 +64,29 @@ fn the_first_spec_written_makes_generation_one() {
         write("r1", "k1", "desired", 1, "running"),
     ];
     assert_eq!(generations(&state, &pending), vec![made("k1", "r1", 1)]);
+}
+
+/// **A request made in the batch that sets its spec is known by the handle the
+/// batch binds**, and not by the display name it is created under.
+#[test]
+fn a_request_made_in_the_same_batch_is_known_by_its_handle() {
+    let state = replay(&world());
+    let pending = [
+        ClaimEvent::ObjectCreated {
+            object: object("k5"),
+            body: body("bot-request", "Gamma, a request"),
+        },
+        ClaimEvent::AddressBound {
+            object: object("k5"),
+            address: "bot-request:gamma".into(),
+        },
+        created("r1", claim("f1", "k5", "a spec", 1)),
+        write("r1", "k5", "desired", 1, "running"),
+    ];
+    let numbers = generations(&state, &pending);
+    assert_eq!(numbers.len(), 1);
+    assert_eq!(numbers[0].handle.0, "bot-request:gamma");
+    assert!(numbers[0].live);
 }
 
 #[test]
@@ -144,7 +175,11 @@ fn taking_back_the_claim_that_holds_the_spec_makes_the_next_number() {
     events.extend(holding("r1", "f1", "k1", "running", "1"));
     let state = replay(&events);
     let pending = [archived("r1", "f1", "k1")];
-    assert_eq!(generations(&state, &pending), vec![made("k1", "r1", 2)]);
+    let withdrawn = Generation {
+        live: false,
+        ..made("k1", "r1", 2)
+    };
+    assert_eq!(generations(&state, &pending), vec![withdrawn]);
 }
 
 #[test]

@@ -409,25 +409,25 @@ impl Seam {
     /// applied, so the State still holds the spec as it was. A caller never sends
     /// the number.
     fn numbered(&self, mut claims: Vec<Event<ClaimEvent>>) -> Vec<Event<ClaimEvent>> {
-        use jojobot_domain::log::claims::{FieldValue, KeyId};
         let Some(envelope) = claims.first().cloned() else {
             return claims;
         };
         let held = self.lock();
         let payloads: Vec<ClaimEvent> = claims.iter().map(|event| event.payload.clone()).collect();
         let declared = held.claims.declared_types();
-        let key = KeyId(jojobot_domain::memory::bot_request::GENERATION.to_string());
-        for generation in held.claims.generations_after(&payloads, &declared) {
+        let day = envelope
+            .written_at
+            .unwrap_or_else(Timestamp::now)
+            .to_zoned(jiff::tz::TimeZone::UTC)
+            .date();
+        for payload in held.claims.generation_events(
+            &payloads,
+            &declared,
+            day,
+            jojobot_domain::log::claims::job::fresh_record,
+        ) {
             let mut event = envelope.clone();
-            event.payload = ClaimEvent::FieldWritten {
-                record: generation.record,
-                ordinal: held.claims.next_ordinal(&generation.object, &key),
-                subject: generation.object,
-                key: key.clone(),
-                class: jojobot_domain::memory::WriteClass::Sets,
-                write: FieldValue::Set(generation.number.to_string()),
-                targets: Vec::new(),
-            };
+            event.payload = payload;
             claims.push(event);
         }
         claims

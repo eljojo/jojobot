@@ -9,17 +9,26 @@
 
 use std::collections::BTreeMap;
 
-use super::{ClaimBody, ClaimEvent, FieldValue, State};
+use jiff::civil::Date;
+
+use super::{ClaimBody, ClaimEvent, FieldValue, KeyId, State};
 use crate::log::{ObjectId, RecordId};
 use crate::memory::types::DeclaredType;
-use crate::memory::{self, EntityId, FactId, KeyWrite, bot_request};
+use crate::memory::{
+    self, EntityId, FactId, FactStatus, KeyWrite, Provenance, Standing, WriteClass, bot_request,
+};
 
 /// **The generation one batch makes on one request.** `record` is the claim of
-/// the batch that touched the request last: the number is written under it.
+/// the batch that touched the request last. The number is written under it when
+/// that claim is live once the batch has landed (`live`); otherwise it is written
+/// under a live claim of its own, because the keys of a claim that was taken back
+/// leave the thing with it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Generation {
     pub object: ObjectId,
+    pub handle: EntityId,
     pub record: RecordId,
+    pub live: bool,
     pub number: u64,
 }
 
@@ -37,11 +46,14 @@ impl State {
     ) -> Vec<Generation> {
         let mut touched: Vec<(ObjectId, RecordId)> = Vec::new();
         let mut created: BTreeMap<&RecordId, &ClaimBody> = BTreeMap::new();
-        let mut named: BTreeMap<&ObjectId, &str> = BTreeMap::new();
+        // **The spelling a batch binds is the handle of a thing it makes**; the name
+        // it is created under is a display name and says nothing of the kind.
+        let mut bound: BTreeMap<&ObjectId, &str> = BTreeMap::new();
+        let mut revised: BTreeMap<&RecordId, &ClaimBody> = BTreeMap::new();
         for event in pending {
             match event {
-                ClaimEvent::ObjectCreated { object, body } => {
-                    named.insert(object, &body.name);
+                ClaimEvent::AddressBound { object, address } => {
+                    bound.insert(object, address);
                 }
                 ClaimEvent::RecordCreated { record, claim } => {
                     created.insert(record, claim);
@@ -50,6 +62,7 @@ impl State {
                     record, subject, ..
                 } => touch(&mut touched, self.survivor(subject), record),
                 ClaimEvent::RecordRevised { record, claim } => {
+                    revised.insert(record, claim);
                     touch(&mut touched, self.survivor(&claim.home), record)
                 }
                 _ => {}
@@ -76,7 +89,7 @@ impl State {
             .filter_map(|(object, record)| {
                 let handle = self
                     .handle_of(&object)
-                    .or_else(|| named.get(&object).map(|name| EntityId(name.to_string())))?;
+                    .or_else(|| bound.get(&object).map(|name| EntityId(name.to_string())))?;
                 if !bot_request::is_request(&handle) {
                     return None;
                 }
@@ -154,13 +167,95 @@ impl State {
                     folded(&left),
                     highest,
                 )
-                .map(|number| Generation {
-                    object,
-                    record,
-                    number: number.parse().expect("a generation is a number"),
+                .map(|number| {
+                    let status = revised
+                        .get(&record)
+                        .or_else(|| created.get(&record))
+                        .map(|claim| claim.status)
+                        .or_else(|| self.records.get(&record).map(|held| held.claim.status));
+                    Generation {
+                        object,
+                        handle: handle.clone(),
+                        record,
+                        live: status == Some(FactStatus::Active),
+                        number: number.parse().expect("a generation is a number"),
+                    }
                 })
             })
             .collect()
+    }
+}
+
+impl State {
+    /// **The events that write the generations `pending` makes**, ready to join
+    /// the batch. A number rides on the claim that touched the request when that
+    /// claim is live once the batch has landed. When the claim was taken back, the
+    /// number rides on a new live claim written beside it, whose record `fresh`
+    /// names and which is dated `recorded_at`.
+    pub fn generation_events(
+        &self,
+        pending: &[ClaimEvent],
+        declared: &[DeclaredType],
+        recorded_at: Date,
+        mut fresh: impl FnMut() -> RecordId,
+    ) -> Vec<ClaimEvent> {
+        let key = KeyId(bot_request::GENERATION.to_string());
+        let mut events = Vec::new();
+        for generation in self.generations_after(pending, declared) {
+            let record = match generation.live {
+                true => generation.record.clone(),
+                false => {
+                    let record = fresh();
+                    let held = pending
+                        .iter()
+                        .filter_map(|event| match event {
+                            ClaimEvent::RecordCreated { claim, .. }
+                                if self.survivor(&claim.home) == &generation.object =>
+                            {
+                                claim.label.strip_prefix('f')?.parse::<u64>().ok()
+                            }
+                            _ => None,
+                        })
+                        .max()
+                        .unwrap_or(0)
+                        .max(self.highest_claim_number(&generation.object));
+                    events.push(ClaimEvent::RecordCreated {
+                        record: record.clone(),
+                        claim: ClaimBody {
+                            label: format!("f{}", held + 1),
+                            home: generation.object.clone(),
+                            content: format!("Set generation on @{}.", generation.handle),
+                            details: None,
+                            provenance: Provenance::Inference,
+                            standing: Standing::default_for(Provenance::Inference),
+                            status: FactStatus::Active,
+                            recorded_at,
+                            happened_at: None,
+                            happened_through: None,
+                            stale_after: None,
+                            edge: None,
+                            derived_from: None,
+                            refs: Vec::new(),
+                            stands_for: Vec::new(),
+                            receipt: None,
+                            app: None,
+                            inserted_at: None,
+                        },
+                    });
+                    record
+                }
+            };
+            events.push(ClaimEvent::FieldWritten {
+                record,
+                ordinal: self.next_ordinal(&generation.object, &key),
+                subject: generation.object,
+                key: key.clone(),
+                class: WriteClass::Sets,
+                write: FieldValue::Set(generation.number.to_string()),
+                targets: Vec::new(),
+            });
+        }
+        events
     }
 }
 
