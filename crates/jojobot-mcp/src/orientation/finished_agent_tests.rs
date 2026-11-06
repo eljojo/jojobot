@@ -528,3 +528,53 @@ async fn p1_wrapped_sid_cannot_boot_a_new_run() {
         "{refused}"
     );
 }
+
+async fn wrapped_after_pickup() -> (Jojobot, String, String) {
+    let jojobot = handler().quiet_after(jiff::SignedDuration::ZERO);
+    make_bot(&jojobot, "gamma").await;
+    let first = boot_args(
+        &jojobot,
+        serde_json::json!({"bot":"gamma", "resume":"new", "claim":"dev-dispatch"}),
+    )
+    .await;
+    let first_key = sid_of(&first).expect("first host key");
+    let run = first["session"]["run"]
+        .as_str()
+        .expect("public run")
+        .to_string();
+    let picked_up = boot_args(&jojobot, serde_json::json!({"bot":"gamma", "resume":run})).await;
+    assert_eq!(picked_up["session"]["run"], run, "{picked_up}");
+    let wrapped = wrap(&jojobot, sid_of(&picked_up).expect("new host key")).await;
+    assert_eq!(wrapped["session"]["state"], "wrapped", "{wrapped}");
+    (jojobot, first_key, run)
+}
+
+#[tokio::test]
+async fn p1_previous_host_sid_gets_finished_words_after_wrap() {
+    let (jojobot, key, run) = wrapped_after_pickup().await;
+    let refused = jojobot
+        .caller(Some(&key))
+        .expect_err("earlier key is retired");
+    let text = json_of(&refused).to_string();
+    assert!(
+        text.contains("end the turn and do nothing")
+            && text.contains("document:build-runtime")
+            && text.contains(&run),
+        "{text}"
+    );
+}
+
+#[tokio::test]
+async fn p1_previous_host_sid_cannot_boot_after_wrap() {
+    let (jojobot, key, _) = wrapped_after_pickup().await;
+    let refused = boot_args(
+        &jojobot,
+        serde_json::json!({"bot":"gamma", "sid":key, "resume":"new", "claim":"dev-dispatch"}),
+    )
+    .await;
+    assert_eq!(refused["status"], "blocked", "{refused}");
+    assert!(
+        refused.to_string().contains("end the turn and do nothing"),
+        "{refused}"
+    );
+}
