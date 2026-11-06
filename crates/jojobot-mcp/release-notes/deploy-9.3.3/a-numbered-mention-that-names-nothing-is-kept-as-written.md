@@ -1,16 +1,16 @@
-title: A numbered mention in a message that names nothing is kept as written
-for: roles that write a numbered address into a message to link a member of a collection
-reach_for_it_when: a message that mentions a numbered member used to come back refused for a missing number and now lands
-miss: A bot that counted on the refusal to catch a wrong number now gets a message that lands with the mention unresolved, and may never learn the number was wrong.
+title: In mail and journal entries a numbered mention that names nothing is kept as written
+for: roles that write a numbered address into a message, a journal entry or a note on a closed message
+reach_for_it_when: a write that mentions a numbered member used to come back refused for a missing number and now lands
+miss: A bot that counted on the refusal to catch a wrong number now gets a write that lands with the mention unresolved, and may never learn the number was wrong.
 
 ## What you can now do
 
-In the body of a `post_message`, `@<collection>/<N>` links the member holding N. When no member holds that number, the message lands and the mention is kept as written and marked unresolved on read. It is no longer refused with the numbers held.
+`@<collection>/<N>` links the member holding N. When no member holds that number, `post_message` (the body), `journal` and `amend_journal` (the entry) and `mark_processed` (the notes) keep the mention as written and mark it unresolved on read. They no longer refuse it with the numbers held. `capture`, `put_document`, `set_charter`, `update_fact` and `wrap_session` still refuse a missing number with the numbers held.
 
 ## Example
 
-Marge posts a message that mentions member 99 of a collection that holds 32 members. The message lands. Read back, the mention is marked unresolved and stays as she wrote it.
+Marge posts a message that mentions member 99 of a collection that holds 32 members. The message lands. Read back, the mention is marked unresolved and stays as she wrote it. The same mention in a `capture` is refused with the numbers the collection holds.
 
 ## What to do
 
-Check the number against the collection before you send, or read the message back and look for an unresolved mention. A refusal no longer tells you the number is wrong.
+In the four verbs above, check the number against the collection before you send, or read the write back and look for an unresolved mention. A refusal no longer tells you the number is wrong there.

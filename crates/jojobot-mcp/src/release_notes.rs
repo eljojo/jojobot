@@ -63,10 +63,6 @@ pub(crate) const SHIPPED: &[(&str, &str)] = &[
         include_str!("../release-notes/deploy-9.3.3/a-bots-new-thing-sits-under-that-bot.md"),
     ),
     (
-        "a-claim-already-too-big-can-be-shortened",
-        include_str!("../release-notes/deploy-9.3.3/a-claim-already-too-big-can-be-shortened.md"),
-    ),
-    (
         "a-numbered-mention-that-names-nothing-is-kept-as-written",
         include_str!(
             "../release-notes/deploy-9.3.3/a-numbered-mention-that-names-nothing-is-kept-as-written.md"
@@ -83,10 +79,6 @@ pub(crate) const SHIPPED: &[(&str, &str)] = &[
         include_str!(
             "../release-notes/deploy-9.3.3/a-thing-you-already-hold-comes-back-as-its-handle.md"
         ),
-    ),
-    (
-        "a-thoughts-details-count-against-its-cap",
-        include_str!("../release-notes/deploy-9.3.3/a-thoughts-details-count-against-its-cap.md"),
     ),
     (
         "a-manager-asks-for-a-bot-with-a-request-record",
