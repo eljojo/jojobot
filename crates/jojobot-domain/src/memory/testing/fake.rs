@@ -1640,18 +1640,17 @@ impl InMemoryMemory {
             .filter(|(home, id, _)| home == &at.home && id == &at.local)
             .count()
             + 1;
-        writes.push((
-            at.home.clone(),
-            at.local.clone(),
-            // **The moment this write happened**, which the real store stamps
-            // too. A fake that left it empty would let every case about a
-            // chain of corrections pass on a build that records none.
-            ClaimWrite {
-                session,
-                bot,
-                ..ClaimWrite::of(fact, ordinal, Some(self.clock().now()))
-            },
-        ));
+        // **The moment this write happened**, which the real store stamps too. A
+        // fake that left it empty would let every case about a chain of
+        // corrections pass on a build that records none.
+        let write = ClaimWrite {
+            session,
+            bot,
+            ..ClaimWrite::of(fact, ordinal, Some(self.clock().now()))
+        };
+        writes.push((at.home.clone(), at.local.clone(), write.clone()));
+        drop(writes);
+        self.emit_claim_write(fact, &write);
     }
 
     /// **The bot and the session of the claim's FIRST write**: the bot recorded at
@@ -1746,6 +1745,9 @@ impl InMemoryMemory {
                 .get(key.trim())
                 .copied()
                 .unwrap_or(super::super::WriteClass::Own);
+            self.emit_key_write(
+                home, &at, &key, ordinal, class, &value, &links, moment, &origin,
+            );
             self.writes
                 .lock()
                 .expect("fake mutex poisoned")

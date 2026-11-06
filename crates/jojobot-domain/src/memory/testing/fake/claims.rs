@@ -6,14 +6,15 @@
 //! that call it are the slices of 9.3.3-d.
 
 use super::*;
+use crate::log::claims::emit::{self, Origin, Served};
+use crate::log::claims::import::record_id;
 use crate::log::claims::{ClaimEvent, State};
-use crate::log::{Event, ObjectId};
+use crate::log::{Event, ObjectId, RecordId};
+use crate::memory::write_origin::{WriteOrigin, written_by};
 
 impl InMemoryMemory {
     /// **Apply the events of one write to the claims State**, in the order they
     /// were made.
-    // No writer calls it until the entity and claim slices of 9.3.3-d land.
-    #[allow(dead_code)]
     pub(super) fn emit(&self, events: impl IntoIterator<Item = Event<ClaimEvent>>) {
         let mut state = self.claims.lock().expect("fake mutex poisoned");
         for event in events {
@@ -24,13 +25,112 @@ impl InMemoryMemory {
     /// **The permanent key a handle stands for**: the key the fake files the thing
     /// under, as the dolt store's badge is. A name that stands for none keeps its
     /// spelling, as the import's reader keeps it.
-    // No writer calls it until the entity and claim slices of 9.3.3-d land.
-    #[allow(dead_code)]
     pub(super) fn object_key(&self, id: &EntityId) -> ObjectId {
         ObjectId(
             self.storage_key(id)
                 .map_or_else(|| id.as_str().to_string(), |key| key.as_str().to_string()),
         )
+    }
+
+    /// **The record a claim is held in**, named by the row it is stored in: an
+    /// address names a claim by the home and id it is served under, and a merge
+    /// leaves a claim where it was written.
+    fn stored_record(&self, served: &FactAddress) -> RecordId {
+        let at = self.stored_address(served);
+        record_id(&self.object_key(&at.home), at.local.as_str())
+    }
+
+    /// **Add the event of one claim write to the State**: the first write of a
+    /// claim creates its record and every later one revises it. `fact` is the
+    /// claim as it is served; the record is named by the row it is stored in.
+    pub(super) fn emit_claim_write(&self, fact: &Fact, write: &ClaimWrite) {
+        let record = self.stored_record(&FactAddress::new(fact.home.clone(), fact.id.clone()));
+        let claim = emit::claim_body(
+            fact,
+            Served {
+                home: self.object_key(&fact.home),
+                label: fact.id.as_str().to_string(),
+                edge: fact
+                    .edge
+                    .as_ref()
+                    .map(|edge| (edge.shape.to_string(), self.object_key(&edge.object))),
+                derived_from: fact
+                    .derived_from
+                    .as_ref()
+                    .map(|from| self.stored_record(from)),
+                refs: fact
+                    .refs
+                    .iter()
+                    .map(|named| self.object_key(named))
+                    .collect(),
+                stands_for: fact
+                    .stands_for
+                    .iter()
+                    .map(|named| self.stored_record(named))
+                    .collect(),
+            },
+        );
+        let run_bot = write
+            .session
+            .as_deref()
+            .and_then(|run| self.run_bots.as_ref()?.bot_of_run(run));
+        let by = written_by(
+            Some(WriteOrigin {
+                bot: write.bot.clone(),
+                run: write.session.clone(),
+                run_bot,
+                app_stamp: fact.app_stamp.clone(),
+            }),
+            fact.app_stamp.as_ref(),
+        );
+        let origin = Origin {
+            actor: by.writer,
+            run: write.session.clone(),
+            written_at: write.written_at,
+        };
+        self.emit([emit::claim_write(
+            record,
+            write.ordinal as i64,
+            claim,
+            &origin,
+        )]);
+    }
+
+    /// **Add the event of one key write to the State.** `home` is the thing the
+    /// write belongs to as it is served, `at` the row the claim is stored in, and
+    /// `ordinal` the place the write holds among the thing's writes of the key.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn emit_key_write(
+        &self,
+        home: &EntityId,
+        at: &FactAddress,
+        key: &str,
+        ordinal: u64,
+        class: crate::memory::WriteClass,
+        value: &Option<String>,
+        links: &[String],
+        moment: jiff::Timestamp,
+        origin: &Option<WriteOrigin>,
+    ) {
+        let by = written_by(origin.clone(), None);
+        let origin = Origin {
+            actor: by.writer,
+            run: origin.as_ref().and_then(|held| held.run.clone()),
+            written_at: Some(moment),
+        };
+        self.emit([emit::key_write(
+            record_id(&self.object_key(&at.home), at.local.as_str()),
+            self.object_key(home),
+            key,
+            ordinal,
+            class,
+            value,
+            links
+                .iter()
+                .map(|named| self.object_key(&EntityId(named.clone())))
+                .collect(),
+            &origin,
+        )]);
     }
 
     /// **Read the claims State**, as the seam's `read_claims` lets a case read it.
@@ -43,6 +143,7 @@ impl InMemoryMemory {
 mod tests {
     use super::*;
     use crate::log::claims::{KindId, ObjectBody};
+    use crate::memory::Provenance;
 
     /// **Events applied to the fake are what its State answers.**
     #[test]
@@ -94,5 +195,68 @@ mod tests {
         assert_eq!(fake.object_key(&homer), ObjectId(key.as_str().to_string()));
         let unknown = EntityId("person:marge".into());
         assert_eq!(fake.object_key(&unknown), ObjectId("person:marge".into()));
+    }
+
+    /// **The claims State answers what the fake answers for the thing a claim
+    /// write touched**: values, the moment each key's value was taken in, and who
+    /// backs each key, after a capture and a rewrite that set and change keys.
+    #[tokio::test]
+    async fn a_claim_written_twice_is_held_by_the_state_as_the_fake_holds_it() {
+        let fake = InMemoryMemory::booted();
+        let homer = EntityId("person:homer".into());
+        fake.add_entity(NewEntity::new(homer.clone(), "Homer", "fixture"))
+            .await
+            .expect("add")
+            .written()
+            .expect("written");
+        let mut fact = NewFact::about(homer.clone(), "eats donuts", jiff::civil::date(2026, 9, 1));
+        fact.provenance = Provenance::Inference;
+        fact.fields = [("mood", "happy"), ("hair", "none")]
+            .iter()
+            .map(|(key, value)| (key.to_string(), value.to_string()))
+            .collect();
+        fact.sets = fact.fields.keys().cloned().collect();
+        let made = fake
+            .capture(fact)
+            .await
+            .expect("capture")
+            .written()
+            .expect("not blocked")
+            .address();
+        fake.update_fact(
+            &made,
+            FactPatch {
+                content: Some("eats donuts daily".into()),
+                fields: [("mood".to_string(), "grumpy".to_string())].into(),
+                sets: ["mood".to_string()].into(),
+                provenance: Some(Provenance::Inference),
+                ..Default::default()
+            },
+            &EntityId("bot:sigma".into()),
+        )
+        .await
+        .expect("the claim is rewritten")
+        .written()
+        .expect("not blocked");
+
+        let key = fake.object_key(&homer);
+        let declared = fake.declared_types().await.expect("declarations");
+        let (held, ages, backing) = fake.read_claims(|state| {
+            (
+                state.fields(&key, &declared),
+                state.held_since(&key, &declared),
+                state.backing(&key, &declared),
+            )
+        });
+        assert_eq!(held, fake.fields(&homer).await.expect("the fake's values"));
+        assert_eq!(held["mood"], "grumpy");
+        assert_eq!(
+            ages,
+            fake.field_ages(&homer).await.expect("the fake's ages").keys
+        );
+        assert_eq!(
+            backing,
+            fake.backing(&homer).await.expect("the fake's backing")
+        );
     }
 }
