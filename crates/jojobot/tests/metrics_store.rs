@@ -443,3 +443,27 @@ async fn metrics_store_failed_session_refresh_clears_the_previous_sample() {
         "{later_failed}"
     );
 }
+
+/// **Every reason a boot can skip a snapshot has a line on /metrics**, at zero when
+/// none was skipped, so a deploy whose boot replayed from zero is seen by a scraper
+/// as a number that moved and not as a line that appeared.
+#[tokio::test]
+async fn every_reason_a_boot_skips_a_snapshot_is_on_the_scrape() {
+    let text = scrape(
+        Arc::new(Metrics::new()),
+        Ports {
+            mailboxes: Arc::new(
+                jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner(),
+            ),
+            memory: Arc::new(jojobot_domain::memory::testing::InMemoryMemory::booted()),
+            sessions: Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),
+        },
+    )
+    .await;
+    for (reason, _) in jojobot_adapters::log_snapshot::skip_counts() {
+        assert!(
+            sample(&text, "jojobot_snapshot_skips", &[("reason", reason)]).is_some(),
+            "no line for the skip reason {reason}:\n{text}"
+        );
+    }
+}

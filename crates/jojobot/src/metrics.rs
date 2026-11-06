@@ -151,6 +151,11 @@ struct Shadowed {
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
+struct SnapshotSkip {
+    reason: &'static str,
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
 struct Read {
     read: &'static str,
 }
@@ -185,6 +190,7 @@ pub struct Metrics {
     sessions_live: Family<[(&'static str, &'static str); 0], Gauge>,
     mail: Family<BoxState, Gauge>,
     things: Family<Kind, Gauge>,
+    snapshot_skips: Family<SnapshotSkip, Gauge>,
     read_ok: Family<Read, Gauge>,
     shadow_comparisons: Family<Shadowed, Gauge>,
     shadow_disagreements: Family<Shadowed, Gauge>,
@@ -276,6 +282,12 @@ impl Metrics {
             "Things that are not archived or folded into another, by kind: a shipped kind by name, every other as other",
             things.clone(),
         );
+        let snapshot_skips = Family::<SnapshotSkip, Gauge>::default();
+        registry.register(
+            "jojobot_snapshot_skips",
+            "Boots of this process that did not use the snapshot the log held, by reason; a boot that skipped one replayed the log and was not a fast boot",
+            snapshot_skips.clone(),
+        );
         let read_ok = Family::<Read, Gauge>::default();
         registry.register(
             READ_OK,
@@ -316,6 +328,7 @@ impl Metrics {
             sessions_live,
             mail,
             things,
+            snapshot_skips,
             read_ok,
             shadow_comparisons,
             shadow_disagreements,
@@ -368,6 +381,12 @@ impl Metrics {
     async fn scrape(&self, ports: &Ports) -> String {
         let mut last_read = self.scraping.lock().await;
         self.uptime.set(self.started.elapsed().as_secs_f64());
+        // Read from the process, not the store: every scrape serves them.
+        for (reason, count) in jojobot_adapters::log_snapshot::skip_counts() {
+            self.snapshot_skips
+                .get_or_create(&SnapshotSkip { reason })
+                .set(i64::try_from(count).unwrap_or(i64::MAX));
+        }
         if last_read.is_none_or(|at| at.elapsed() >= self.refresh_every) {
             self.read_gauges(ports).await;
             *last_read = Some(Instant::now());
