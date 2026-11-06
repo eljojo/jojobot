@@ -97,6 +97,7 @@ pub(crate) fn session_fix_by(e: &SessionError) -> Option<FixBy> {
 /// and a refusal about stored damage must direct the repair at the run that is
 /// damaged, so an unreadable record is answered for `target`; every other kind
 /// is the caller's own refusal.
+// TEMPORARY(9.3.8): off the composer, recall.
 pub(crate) fn session_declined_for(
     e: SessionError,
     target: &jojobot_domain::session::SessionId,

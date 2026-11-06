@@ -379,6 +379,7 @@ impl Jojobot {
     /// part an earlier call wrote is not written again: its address is read back.
     /// Any other claim is the whole write, armed as the first of two parts when it
     /// ends what is owed.
+    // TEMPORARY(9.3.3): off the composer, capture.
     pub(super) async fn write_the_claim(
         &self,
         part: Option<&str>,
