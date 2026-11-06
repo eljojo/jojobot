@@ -3394,6 +3394,20 @@ impl jojobot_domain::session::Sessions for SummarizedSessions {
     ) -> Result<jojobot_domain::session::Session, jojobot_domain::session::SessionError> {
         unimplemented!("this double only answers all_sessions and write_summary")
     }
+    async fn set_agent(
+        &self,
+        _: &jojobot_domain::session::SessionId,
+        _: &str,
+    ) -> Result<jojobot_domain::session::Session, jojobot_domain::session::SessionError> {
+        unimplemented!("this double only answers all_sessions and write_summary")
+    }
+    async fn wrapped_by_agent(
+        &self,
+        _: &str,
+    ) -> Result<Option<jojobot_domain::session::Session>, jojobot_domain::session::SessionError>
+    {
+        unimplemented!("this double only answers all_sessions and write_summary")
+    }
     async fn set_stated_day(
         &self,
         _: &jojobot_domain::session::SessionId,
