@@ -82,9 +82,12 @@ def reap(state):
     raise Refused(f"the process group {pgid} of the dead run did not end")
 
 
-def end_group(pgid):
-    """Wait a few seconds for a group that was told to end, then kill what is left."""
-    for _ in range(100):
+GRACE = 5.0
+
+
+def end_group(pgid, deadline):
+    """Wait until `deadline` for a group that was told to end, then kill what is left."""
+    while time.monotonic() < deadline:
         try:
             os.killpg(pgid, 0)
         except ProcessLookupError:
@@ -171,9 +174,11 @@ def main(command):
     # The command runs in a session of its own, so a signal to this process (from
     # `timeout` or a terminal) never reaches it. Pass TERM down to its group, then
     # wait for the group to end before this process does.
-    told = []
+    told, told_at = [], []
 
     def forward(number, _frame):
+        if not told:
+            told_at.append(time.monotonic())
         told.append(number)
         try:
             os.killpg(child.pid, signal.SIGTERM)
@@ -182,9 +187,14 @@ def main(command):
 
     for number in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(number, forward)
-    code = child.wait()
+    # The wait is bounded once a signal is told: a leader that ignores TERM must not
+    # keep the guard, and the kill that follows the grace, from running.
+    while (code := child.poll()) is None:
+        if told and time.monotonic() >= told_at[0] + GRACE:
+            break
+        time.sleep(0.05)
     if told:
-        end_group(child.pid)
+        end_group(child.pid, told_at[0] + GRACE)
         # The build was cut short: keep the marker, as for any signal.
         return 128 + told[0]
     if code < 0:

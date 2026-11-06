@@ -411,16 +411,25 @@ fn is_running(pid: &str) -> bool {
 /// own, so without a forward its grandchildren keep running. The command starts a
 /// grandchild that sleeps. After the signal the guard has exited with the code of
 /// the signal, no process of the tree is left, and the marker stays so that the
-/// next run cleans the units the cut-short build touched.
+/// next run cleans the units the cut-short build touched. A tree that ignores
+/// TERM is killed after the grace, so the guard never waits for it without end.
 #[test]
 fn a_guard_ended_by_a_signal_ends_the_tree_of_its_command() {
-    for (name, number) in [("TERM", 15), ("INT", 2)] {
-        let root = scratch(&format!("tree-{name}"));
+    // The third case is a tree that ignores TERM: the guard has to kill it.
+    for (at, (name, number, prelude)) in [
+        ("TERM", 15, ""),
+        ("INT", 2, ""),
+        ("TERM", 15, "trap '' TERM; "),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let root = scratch(&format!("tree-{name}-{at}"));
         let own = root.join("own");
         unit(&own, "touched");
         let pidfile = root.join("sleeper.pid");
         let command = format!(
-            "(sleep 300 </dev/null >/dev/null 2>&1 & echo $! > {p}; wait) & wait",
+            "{prelude}(sleep 300 </dev/null >/dev/null 2>&1 & echo $! > {p}; wait) & wait",
             p = pidfile.display()
         );
         let mut run = guard_command(&root, &own, "own", &command);
