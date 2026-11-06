@@ -20,6 +20,9 @@ pub const ORDINARY: &[&str] = &[
     "work:beta-queue",
     "work:q-1001",
     "work:q-gate-binary-coverage",
+    // The card that owns the import a parity case waits on; it names a piece of
+    // work, and nobody.
+    "work:q-933-boot-passes-import",
     // A numbered series of queue cards under one queue topic, with a typo in
     // the letters of one; they name nobody.
     "topic:contract-docket",
