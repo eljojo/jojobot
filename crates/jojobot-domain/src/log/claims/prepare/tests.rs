@@ -1170,6 +1170,87 @@ fn a_handle_in_a_field_value_is_stored_as_the_id_and_follows_a_rename() {
     assert_eq!(served(&state).as_deref(), Some("person:delta"));
 }
 
+/// A world with one bot request and one plain thing.
+fn requests_world() -> State {
+    crate::memory::kinds::load_shipped();
+    let mut events = Vec::new();
+    for (id, kind, handle) in [
+        ("k1", "bot-request", "bot-request:alpha"),
+        ("k3", "thing", "thing:gamma"),
+    ] {
+        events.push(ClaimEvent::ObjectCreated {
+            object: object(id),
+            body: body(kind, handle),
+        });
+        events.push(ClaimEvent::AddressBound {
+            object: object(id),
+            address: handle.into(),
+        });
+    }
+    replay(&events)
+}
+
+fn generation_written(events: &[ClaimEvent]) -> Option<(crate::log::RecordId, String)> {
+    events.iter().find_map(|event| match event {
+        ClaimEvent::FieldWritten {
+            record,
+            key,
+            write: crate::log::claims::FieldValue::Set(value),
+            ..
+        } if key.0 == "generation" => Some((record.clone(), value.clone())),
+        _ => None,
+    })
+}
+
+/// **A capture that changes the spec of a bot request writes the generation in
+/// its own batch**, under the same record, and one that leaves the spec as it is
+/// writes none. The caller sends no number.
+#[test]
+fn a_capture_of_a_request_spec_writes_its_generation_with_it() {
+    let mut state = requests_world();
+    let spec = |value: &str| CaptureRequest {
+        fields: BTreeMap::from([("desired".to_string(), value.to_string())]),
+        sets: BTreeSet::from(["desired".to_string()]),
+        ..request("bot-request:alpha")
+    };
+    let first = prepare(&state, &[], &spec("running")).expect("the spec is admitted");
+    assert_eq!(
+        generation_written(&first),
+        Some((record("new"), "1".to_string()))
+    );
+    for event in &first {
+        apply(&mut state, event);
+    }
+    let resent = CaptureRequest {
+        record: record("resent"),
+        ..spec("running")
+    };
+    let again = prepare(&state, &[], &resent).expect("a resend is admitted");
+    assert_eq!(generation_written(&again), None, "a resend makes no number");
+    let changed = CaptureRequest {
+        record: record("changed"),
+        ..spec("stopped")
+    };
+    let next = prepare(&state, &[], &changed).expect("a change is admitted");
+    assert_eq!(
+        generation_written(&next),
+        Some((record("changed"), "2".to_string()))
+    );
+}
+
+/// A capture on a thing that is no request writes no generation, whatever it sets.
+#[test]
+fn a_capture_on_a_plain_thing_writes_no_generation() {
+    let state = requests_world();
+    let sent = CaptureRequest {
+        fields: BTreeMap::from([("desired".to_string(), "running".to_string())]),
+        sets: BTreeSet::from(["desired".to_string()]),
+        ..request("thing:gamma")
+    };
+    let events = prepare(&state, &[], &sent).expect("the capture is admitted");
+    assert_eq!(generation_written(&events), None);
+}
+
 #[test]
 fn padded_capture_key_keeps_its_targets_and_setting_class() {
     crate::memory::kinds::load_shipped();
@@ -1201,7 +1282,7 @@ fn padded_capture_key_keeps_its_targets_and_setting_class() {
     for event in &events {
         apply(&mut state, event);
     }
-    let held = state.fields(&object("alpha"), &declared);
+    let held = state.fields_served(&object("alpha"), &declared);
     assert_eq!(held[" owner "], "person:gamma");
     assert!(!held.contains_key("owner"));
     assert_eq!(
@@ -1250,7 +1331,7 @@ fn padded_capture_keys_keep_separate_streams_and_targets() {
     for event in &events {
         apply(&mut state, event);
     }
-    let held = state.fields(&object("alpha"), &declared);
+    let held = state.fields_served(&object("alpha"), &declared);
     assert_eq!(held[" owner "], "person:gamma");
     assert_eq!(held["owner"], "person:delta");
     assert_eq!(
