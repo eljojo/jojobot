@@ -23,6 +23,71 @@ thread_local! {
 }
 
 impl State {
+    /// **One thing as the guard and the measure read it**: the handle it answers
+    /// to now, its names and its parent as a handle. `None` for a thing folded
+    /// into another, which is served by its survivor, and for a thing with no
+    /// handle.
+    fn entity_of(&self, object: &ObjectId, body: &ObjectBody) -> Option<memory::Entity> {
+        if self.redirects.contains_key(object) {
+            return None;
+        }
+        let id = self.handle_of(object)?;
+        let kind = id.kind()?;
+        let folded_names = self
+            .folded_under
+            .get(object)
+            .into_iter()
+            .flatten()
+            .filter_map(|folded| self.objects.get(folded))
+            .map(|folded| folded.name.clone())
+            .collect();
+        Some(memory::Entity {
+            id,
+            merged_into: None,
+            kind,
+            name: body.name.clone(),
+            aliases: body.aliases.clone(),
+            folded_names,
+            source: body.source.clone(),
+            crm: body.metadata.get("crm").cloned(),
+            parent: body
+                .parent
+                .as_ref()
+                .and_then(|parent| self.handle_of(parent)),
+            boot: memory::Boot::from_token(body.boot.as_deref().unwrap_or_default()),
+            badge: body.metadata.get("badge").cloned(),
+            archived: body.archived.then(|| memory::Archived {
+                reason: body
+                    .metadata
+                    .get("archived_reason")
+                    .cloned()
+                    .unwrap_or_default(),
+                at: body
+                    .metadata
+                    .get("archived_at")
+                    .and_then(|at| at.parse().ok())
+                    .unwrap_or(Timestamp::UNIX_EPOCH),
+            }),
+        })
+    }
+
+    /// Every thing the State holds, as entities, in the order of their ids.
+    pub fn entities(&self) -> Vec<memory::Entity> {
+        self.objects
+            .iter()
+            .filter_map(|(object, body)| self.entity_of(object, body))
+            .collect()
+    }
+
+    /// The thing a handle names, when the handle is the one it answers to now.
+    pub fn entity(&self, handle: &EntityId) -> Option<memory::Entity> {
+        let object = self.resolve(&handle.0)?;
+        let found = self.entity_of(object, self.objects.get(object)?)?;
+        (found.id == *handle).then_some(found)
+    }
+}
+
+impl State {
     /// **Who backs the value each key of a thing holds**, as the store's
     /// `backing` answers it. A key whose writes are summed, and a key a later
     /// write cleared, are absent.

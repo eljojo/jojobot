@@ -808,3 +808,58 @@ fn a_chain_of_folds_reaches_the_last_survivor_in_either_order() {
         );
     }
 }
+
+/// **The State serves each thing the guard and the measure read as an entity**:
+/// the handle it answers to, its names, its parent as a handle. A thing folded
+/// into another is not served, and its name rides on the survivor.
+#[test]
+fn the_state_serves_each_thing_as_an_entity() {
+    memory::kinds::load_shipped();
+    let named = |handle: &str, name: &str, parent: Option<&str>| {
+        vec![
+            ClaimEvent::ObjectCreated {
+                object: object(handle),
+                body: ObjectBody {
+                    parent: parent.map(object),
+                    aliases: vec![format!("{name}-nickname")],
+                    ..body("thing", name)
+                },
+            },
+            ClaimEvent::AddressBound {
+                object: object(handle),
+                address: handle.to_string(),
+            },
+        ]
+    };
+    let state = replay(
+        &[
+            named("thing:alpha", "Alpha", None),
+            named("thing:beta", "Beta", Some("thing:alpha")),
+            named("thing:gamma", "Gamma", None),
+            vec![ClaimEvent::ObjectRedirected {
+                folded: object("thing:gamma"),
+                survivor: object("thing:alpha"),
+            }],
+        ]
+        .concat(),
+    );
+
+    let served = state.entities();
+    let handles: Vec<String> = served.iter().map(|e| e.id.to_string()).collect();
+    assert_eq!(handles, ["thing:alpha", "thing:beta"]);
+    let alpha = state
+        .entity(&memory::EntityId("thing:alpha".into()))
+        .unwrap();
+    assert_eq!(alpha.name, "Alpha");
+    assert_eq!(alpha.aliases, ["Alpha-nickname"]);
+    assert_eq!(alpha.folded_names, ["Gamma"]);
+    let beta = state
+        .entity(&memory::EntityId("thing:beta".into()))
+        .unwrap();
+    assert_eq!(beta.parent, Some(memory::EntityId("thing:alpha".into())));
+    assert!(
+        state
+            .entity(&memory::EntityId("thing:gamma".into()))
+            .is_none()
+    );
+}
