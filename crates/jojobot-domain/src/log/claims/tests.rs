@@ -264,7 +264,8 @@ fn a_clear_is_not_undone_by_an_older_record() {
         created("r1", claim("f1", "alpha", "old", 1)),
         created("r2", claim("f2", "alpha", "new", 2)),
         write("r1", "alpha", "mood", 1, "tense"),
-        clear("r2", "alpha", "mood", 2),
+        write("r2", "alpha", "mood", 2, "calm"),
+        clear("r2", "alpha", "mood", 3),
     ];
     assert_eq!(held(&replay(&events), "alpha"), map(&[]));
 }

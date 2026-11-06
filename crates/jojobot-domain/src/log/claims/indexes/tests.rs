@@ -462,7 +462,7 @@ fn a_container_holds_the_numbers_of_the_objects_under_it() {
                     holds("w1", "m1", "num", "1"),
                     vec![
                         created("w2", claim("fw2", "m1", "c", 2)),
-                        clear("w2", "m1", "num", 2),
+                        clear("w1", "m1", "num", 2),
                     ],
                 ]
                 .concat(),
@@ -478,7 +478,7 @@ fn a_container_holds_the_numbers_of_the_objects_under_it() {
                     holds("w1", "m1", "num", "1"),
                     vec![
                         created("w2", claim("fw2", "coll", "c", 2)),
-                        clear("w2", "coll", NUMBERS_BY, 2),
+                        clear("c", "coll", NUMBERS_BY, 2),
                     ],
                 ]
                 .concat(),
@@ -494,7 +494,7 @@ fn a_container_holds_the_numbers_of_the_objects_under_it() {
                     holds("w1", "m1", "num", "1"),
                     vec![
                         created("w2", claim("fw2", "coll", "c", 2)),
-                        clear("w2", "coll", NUMBERS_BY, 2),
+                        clear("c", "coll", NUMBERS_BY, 2),
                         created("w3", claim("fw3", "coll", "c", 3)),
                         write("w3", "coll", NUMBERS_BY, 3, "num"),
                     ],
