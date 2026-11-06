@@ -325,6 +325,49 @@ impl Jojobot {
         }
     }
 
+    /// **The newest write about anything this entity's served text is worked out
+    /// from**, which its own writes never count (rule 498: this is the one place
+    /// that says what a part derives from).
+    ///
+    /// A field that names another thing is served under that thing's handle; a
+    /// list reads the state of the work its entries link and where each entry was
+    /// carried; the held block reads the records that point at the thing. A source
+    /// that cannot be read adds nothing, as an unreadable version is no change.
+    /// A plan reads the day and a walk reads every claim that names the thing,
+    /// which no version follows, so [`collapse`] never withholds them.
+    async fn around(&self, handle: &str) -> Option<Timestamp> {
+        let id = EntityId(handle.to_string());
+        let mut sources: std::collections::BTreeSet<EntityId> = Default::default();
+        let fields = self.memory.fields(&id).await.ok()?;
+        for value in fields.values() {
+            sources.extend(jojobot_domain::memory::handles_in_value(value));
+        }
+        if let Ok(facts) = self.memory.referring_to(&id).await {
+            sources.extend(facts.into_iter().map(|fact| fact.home));
+        }
+        if id.kind() == Some(jojobot_domain::memory::EntityKind::LIST)
+            && let Ok(held) = self.memory.recall(&id).await
+        {
+            let setting = jojobot_domain::memory::entries::Setting::of(&fields);
+            sources.extend(jojobot_domain::memory::entries::counted_links(
+                &held, setting,
+            ));
+            for entry in &jojobot_domain::memory::entries::view(&held, setting).entries {
+                if let Ok(built) = self.memory.built_on(&entry.fact.address()).await {
+                    sources.extend(built.into_iter().map(|fact| fact.home));
+                }
+            }
+        }
+        sources.remove(&id);
+        let mut newest = None;
+        for source in sources {
+            if let Ok(ages) = self.memory.field_ages(&source).await {
+                newest = newest.max(ages.newest);
+            }
+        }
+        newest
+    }
+
     /// **How a held thing stands now**, or `None` when it cannot be read (a
     /// thing that is gone, a store that cannot answer): a version nobody can read
     /// is no change. A message stands as `messages` read it.
@@ -337,7 +380,10 @@ impl Jojobot {
                     .await
                     .inspect_err(|e| unread(what, e))
                     .ok()?;
-                Some(Version::Entity(ages.newest))
+                Some(Version::Entity {
+                    own: ages.newest,
+                    around: self.around(handle).await,
+                })
             }
             Held::Claim(address) => {
                 let chain = self
@@ -549,7 +595,7 @@ impl Jojobot {
     /// **What another session did to a held thing since it was served.**
     async fn what_changed(&self, what: &Held, was: &Version, now: &Version, me: &str) -> Changed {
         match (what, was, now) {
-            (Held::Entity(handle), Version::Entity(since), _) => {
+            (Held::Entity(handle), Version::Entity { own: since, .. }, _) => {
                 self.entity_changed(handle, *since, me).await
             }
             (Held::Claim(address), Version::Claim { writes, .. }, _) => {
@@ -771,7 +817,13 @@ mod tests {
         let CallToolResponse::Complete(result) = again else {
             panic!("the repeated graph read completes");
         };
-        assert_eq!(json_of(&result)[collapse::COLLAPSED]["count"], 2);
+        // A walk that found a neighbor reads every claim that names the thing,
+        // which no version follows, so a person carrying one is served whole.
+        assert!(
+            json_of(&result).get(collapse::COLLAPSED).is_none(),
+            "{}",
+            json_of(&result)
+        );
     }
 
     #[tokio::test]
@@ -903,7 +955,7 @@ mod tests {
             .version_of(&Held::Entity(handle.into()), &HeldMessages::default())
             .await
         {
-            Some(Version::Entity(newest)) => newest,
+            Some(Version::Entity { own, .. }) => own,
             other => panic!("an entity has an entity version: {other:?}"),
         }
     }
@@ -948,6 +1000,119 @@ mod tests {
         assert!(
             newest(&jojobot, "person:homer").await > before,
             "a write to the page moves the version"
+        );
+    }
+
+    /// How a held thing stands now, as the held pass reads it.
+    async fn version(jojobot: &Jojobot, handle: &str) -> Version {
+        jojobot
+            .version_of(&Held::Entity(handle.into()), &HeldMessages::default())
+            .await
+            .expect("a written thing has a version")
+    }
+
+    /// **A thing's version moves when the things its text is worked out from
+    /// move**, and holds when something it does not derive from does. One row per
+    /// way a read derives text: a field that names another thing follows that
+    /// thing's rename; a list's progress reads the work its entries link; the held
+    /// block reads the records that point at the thing.
+    #[tokio::test]
+    async fn a_things_version_moves_when_what_its_text_derives_from_moves() {
+        let jojobot = handler();
+        for handle in [
+            "thing:omega",
+            "thing:alpha",
+            "list:checklist",
+            "work:sigma",
+            "person:bart",
+            "person:lisa",
+        ] {
+            ensure(&jojobot, handle).await;
+        }
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                sets: Some([("ruled_by".to_string(), "thing:alpha".to_string())].into()),
+                ..capture_args("thing:omega", "is ruled by alpha")
+            },
+        )
+        .await;
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                shape: Some("about".into()),
+                object: Some("work:sigma".into()),
+                ..capture_args("list:checklist", "finish sigma")
+            },
+        )
+        .await;
+        capture_ok(&jojobot, capture_args("work:sigma", "has begun")).await;
+        let (omega, list) = (
+            version(&jojobot, "thing:omega").await,
+            version(&jojobot, "list:checklist").await,
+        );
+
+        capture_ok(&jojobot, capture_args("person:bart", "skates")).await;
+        assert_eq!(
+            version(&jojobot, "thing:omega").await,
+            omega,
+            "a write to a thing it does not name moves nothing"
+        );
+        assert_eq!(version(&jojobot, "list:checklist").await, list);
+
+        jojobot
+            .memory
+            .rename_entity(
+                &EntityId::person("thing:alpha"),
+                &EntityId::person("thing:beta"),
+                None,
+                jiff::civil::date(2026, 9, 1),
+                jojobot_domain::memory::Override::none(),
+                None,
+            )
+            .await
+            .expect("the rename lands");
+        assert_ne!(
+            version(&jojobot, "thing:omega").await,
+            omega,
+            "a field that names a renamed thing is served under its new handle"
+        );
+
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                sets: Some([("status".to_string(), "done".to_string())].into()),
+                ..capture_args("work:sigma", "is finished")
+            },
+        )
+        .await;
+        assert_ne!(
+            version(&jojobot, "list:checklist").await,
+            list,
+            "a list's progress reads the state of the work its entries link"
+        );
+
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                sets: Some([("looks_after".to_string(), "person:lisa".to_string())].into()),
+                ..capture_args("person:bart", "looks after lisa")
+            },
+        )
+        .await;
+        let lisa = version(&jojobot, "person:lisa").await;
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                sets: Some([("mood".to_string(), "proud".to_string())].into()),
+                ..capture_args("person:bart", "is proud")
+            },
+        )
+        .await;
+        assert_ne!(
+            version(&jojobot, "person:lisa").await,
+            lisa,
+            "the held block reads the records that point at the thing"
         );
     }
 

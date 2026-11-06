@@ -57,10 +57,16 @@ pub(crate) enum Held {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "room-harness", derive(serde::Serialize, serde::Deserialize))]
 pub(crate) enum Version {
-    /// The moment the store took in the newest write about the thing: its
-    /// fields, its records of any status and its own row. `None` for a thing
-    /// nobody has written to.
-    Entity(Option<jiff::Timestamp>),
+    /// `own` is the moment the store took in the newest write about the thing:
+    /// its fields, its records of any status and its own row. `None` for a thing
+    /// nobody has written to. `around` is the newest such moment of anything the
+    /// thing's served text is worked out from, which `own` never counts: a
+    /// renamed thing its field names, the work its list's entries link, the things
+    /// that point at it. `None` when it is worked out from nothing written.
+    Entity {
+        own: Option<jiff::Timestamp>,
+        around: Option<jiff::Timestamp>,
+    },
     /// How many times the claim was written, and its status.
     Claim { writes: usize, status: String },
     /// The state the message was in.

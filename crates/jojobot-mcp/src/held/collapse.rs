@@ -33,6 +33,15 @@ pub(crate) const COLLAPSED: &str = "held_collapsed";
 /// What a collapsed thing says in place of its body.
 const UNCHANGED: &str = "unchanged since served";
 
+/// **The parts no version of the thing can follow**: a thing that carries one
+/// is served whole every time. A plan reads what is due, overdue and ready from
+/// today's date, which no write moves. A walk (`connected`) reads every claim
+/// anywhere that names the thing, and the version reads no such claim. **A part
+/// that says nothing** (`null` is the placeholder of a plan not asked for, `[]` is
+/// a walk that was not asked for or found nothing) hides no text, so it does not
+/// count.
+const NEVER_WITHHELD: [&str; 2] = ["plan", "connected"];
+
 /// **The things this answer serves that the session held before it, at the same
 /// version.** `before` is what the session held when the call began; `served` is
 /// each thing the answer names, at the version it has now.
@@ -152,7 +161,17 @@ fn parts_of(fields: &Map<String, Value>, part: &mut impl FnMut(u64, &str, &Value
                         if BARE.contains(&key.as_str()) {
                             continue;
                         }
-                        let window = part_window(key, inner);
+                        // **The held block is named by the frame it was read under**: the
+                        // day it stands on (`as_of`) and the note that says which way the
+                        // call asked (a walk of its own, or a plain read). The same block
+                        // read under another frame says other things.
+                        let frame = (key == "held").then(|| {
+                            let text = |name: &str| {
+                                inner.get(name).and_then(Value::as_str).unwrap_or_default()
+                            };
+                            format!("{}|{}", text("as_of"), text("note"))
+                        });
+                        let window = frame.or_else(|| part_window(key, inner));
                         part(token(owner, key, window.as_deref()), key, inner);
                         // A read narrowed by `keys` serves some of the fields, so
                         // each field key is a part of its own (names, never values).
@@ -189,8 +208,9 @@ fn shape_of(fields: &Map<String, Value>) -> Shape {
 fn part_values(fields: &Map<String, Value>) -> crate::seen::PartValues {
     let mut out = crate::seen::PartValues::new();
     parts_of(fields, &mut |token, key, value| {
-        // Narrowed reads serve individual fields, not the whole fields map.
-        if key != "fields" {
+        // Narrowed reads serve individual fields, not the whole fields map. A part
+        // that says nothing hides no text.
+        if key != "fields" && says_something(value) {
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
             value.to_string().hash(&mut hasher);
             out.entry(token)
@@ -370,6 +390,10 @@ fn visit(
                 *count += 1;
                 return;
             }
+            // A thing carrying such a part is served whole, claims and all.
+            if thing_of(fields).is_some() && carries_a_part_no_version_follows(fields) {
+                return;
+            }
             for held in fields.values_mut() {
                 visit(held, unchanged, received, count);
             }
@@ -378,6 +402,23 @@ fn visit(
             .iter_mut()
             .for_each(|item| visit(item, unchanged, received, count)),
         _ => {}
+    }
+}
+
+/// Whether `fields` carries a part in [`NEVER_WITHHELD`], read.
+fn carries_a_part_no_version_follows(fields: &Map<String, Value>) -> bool {
+    NEVER_WITHHELD
+        .iter()
+        .any(|part| fields.get(*part).is_some_and(says_something))
+}
+
+/// Whether a part holds anything a reader could be handed.
+fn says_something(read: &Value) -> bool {
+    match read {
+        Value::Null => false,
+        Value::Array(items) => !items.is_empty(),
+        Value::Object(fields) => !fields.is_empty(),
+        _ => true,
     }
 }
 
@@ -390,6 +431,9 @@ fn stub_of(
 ) -> Option<Map<String, Value>> {
     let (what, key, name) = thing_of(fields)?;
     if !unchanged.contains(&what) {
+        return None;
+    }
+    if carries_a_part_no_version_follows(fields) {
         return None;
     }
     // A text the session never received is delivered, whatever the version says.
@@ -420,7 +464,10 @@ mod tests {
     }
 
     fn at(day: u64) -> Version {
-        Version::Entity(jiff::Timestamp::from_second(day as i64 * 86_400).ok())
+        Version::Entity {
+            own: jiff::Timestamp::from_second(day as i64 * 86_400).ok(),
+            around: None,
+        }
     }
 
     /// **The decision, one row per case.** A thing held and unchanged is not
@@ -487,6 +534,91 @@ mod tests {
             "{body}"
         );
         assert_eq!(body[COLLAPSED]["count"], 1, "{body}");
+    }
+
+    /// **A thing that carries a part no version can follow stays whole even when
+    /// nothing was written**: a plan reads the day, a walk reads every claim that
+    /// names the thing. The placeholder of a plan not asked for does not count.
+    #[test]
+    fn a_thing_carrying_a_part_no_version_follows_is_never_withheld() {
+        let rows = [
+            (
+                json!({"plan": {"due": [], "overdue": [], "ready": []}}),
+                false,
+            ),
+            (json!({"plan": null}), true),
+            (json!({"connected": []}), true),
+            (
+                json!({"connected": [{"id": "list:packing", "name": "Packing"}]}),
+                false,
+            ),
+            (json!({}), true),
+        ];
+        for (part, collapses) in rows {
+            let mut list = json!({"id": "list:errands", "name": "Errands"});
+            list.as_object_mut()
+                .expect("an object")
+                .extend(part.as_object().expect("an object").clone());
+            let mut body = json!({"objects": [list]});
+            let received = received_of(&body);
+            let count = collapse(&mut body, &[entity("list:errands")], &received);
+            assert_eq!(count, usize::from(collapses), "{body}");
+        }
+    }
+
+    /// **A held block read under another frame is another part**: the same
+    /// thing read on another day, or by a call that walks, has not been handed
+    /// what this answer says.
+    #[test]
+    fn a_held_block_read_under_another_frame_is_another_part() {
+        let held = |as_of: &str, note: &str| {
+            json!({"id": "work:phi", "name": "Phi",
+                   "held": {"as_of": as_of, "count": 0, "items": [], "note": note}})
+        };
+        let plain = held("2026-06-01", "nothing points at this");
+        let shapes = |what: &Value| {
+            let mut shape = Shape::new();
+            for (_, parts) in shapes_in(&json!({"objects": [what]})) {
+                shape.extend(parts);
+            }
+            shape
+        };
+        let had = shapes(&plain);
+        assert!(shapes(&plain).is_subset(&had), "the same frame is held");
+        assert!(
+            !shapes(&held("2026-06-02", "nothing points at this")).is_subset(&had),
+            "another day is another part"
+        );
+        assert!(
+            !shapes(&held("2026-06-01", "this call follows links of its own")).is_subset(&had),
+            "a walk is another part"
+        );
+    }
+
+    /// **A thing served whole for such a part keeps its claims whole**, held
+    /// unchanged or not: nothing inside it is withheld behind an address.
+    #[test]
+    fn a_thing_carrying_a_walk_keeps_its_claims_whole() {
+        let mut body = json!({"objects": [{
+            "id": "list:errands",
+            "name": "Errands",
+            "connected": [{"id": "list:packing", "name": "Packing"}],
+            "facts": [{
+                "address": "list:errands#f1",
+                "content": "buy milk",
+                "provenance": "testimony",
+            }],
+        }]});
+        let received = received_of(&body);
+        let unchanged = vec![
+            entity("list:errands"),
+            Held::Claim("list:errands#f1".into()),
+        ];
+        assert_eq!(collapse(&mut body, &unchanged, &received), 0);
+        assert_eq!(
+            body["objects"][0]["facts"][0]["content"], "buy milk",
+            "{body}"
+        );
     }
 
     /// **An entity holding a claim the session never saw stays whole**, and the
