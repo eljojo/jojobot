@@ -17,7 +17,7 @@ def main():
         return 0
     kept = json.loads(mark.read_text())
     print(
-        f"This session is finished: run {kept['run']} wrapped at {kept['wrapped_at']}. "
+        f"This session is finished: this agent called wrap_session at {kept['wrapped_at']}. "
         "End the turn and do nothing. Whoever needs the role must start a new "
         "agent from document:build-runtime.",
         file=sys.stderr,

@@ -1,4 +1,4 @@
-//! The configured Claude hooks mark a successful wrap and refuse later prompts.
+//! The configured Claude hooks mark a wrap call and refuse later prompts.
 //! Host witnesses still have to exercise Claude's prompt dispatch itself.
 
 use std::io::Write as _;
@@ -51,17 +51,13 @@ fn hook(name: &str, input: &Value, dir: &Path, agent: Option<&str>) -> Output {
     )
 }
 
-// The receipt's session.id/state and entry.at are emitted by wrap_session.rs;
-// the content/text envelope is its CallToolResult::success wire shape.
-fn wrapped() -> Value {
+// Claude 2.1.310 forwards MCP content to PostToolUse, without structuredContent.
+fn wrap_call() -> Value {
     json!({
         "hook_event_name": "PostToolUse",
         "tool_name": "mcp__jojobot__wrap_session",
         "tool_input": {"sid": "not-a-real-key", "story": "Done."},
-        "tool_response": {"content": [{"type": "text", "text": json!({
-            "session": {"id": "alpha", "state": "wrapped"},
-            "entry": {"at": "2026-01-01T12:00:00Z"}
-        }).to_string()}]}
+        "tool_response": [{"type": "text", "text": "{\"status\":\"blocked\"}"}]
     })
 }
 
@@ -91,20 +87,24 @@ fn finished_session_hooks_mark_then_refuse_only_later_prompts() {
     let dir = scratch();
     quiet(&hook(
         "mark-finished-session",
-        &wrapped(),
+        &wrap_call(),
         &dir,
         Some(AGENT),
     ));
     let kept: Value = serde_json::from_slice(&std::fs::read(marker(&dir)).unwrap()).unwrap();
-    assert_eq!(
-        kept,
-        json!({"run": "alpha", "wrapped_at": "2026-01-01T12:00:00Z"})
-    );
+    assert_eq!(kept["agent"], AGENT);
+    assert_eq!(kept.as_object().unwrap().len(), 2);
+    let at = kept["wrapped_at"].as_str().unwrap();
+    assert!(matches(
+        r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?\+00:00$",
+        at
+    ));
+    assert!(!kept.to_string().contains("not-a-real-key"));
     let prompt = json!({"hook_event_name": "UserPromptSubmit", "prompt": "Resume"});
     let out = hook("refuse-finished-session", &prompt, &dir, Some(AGENT));
     assert_eq!(out.status.code(), Some(2), "{out:?}");
     let reason = String::from_utf8(out.stderr).unwrap();
-    for value in ["alpha", "2026-01-01T12:00:00Z", "document:build-runtime"] {
+    for value in [at, "document:build-runtime"] {
         assert!(reason.contains(value), "{reason}");
     }
     assert!(reason.to_lowercase().contains("end the turn"), "{reason}");
@@ -121,39 +121,36 @@ fn finished_session_hooks_mark_then_refuse_only_later_prompts() {
 }
 
 #[test]
-fn finished_session_hooks_ignore_refused_live_and_unidentified_wraps() {
+fn finished_session_hooks_ignore_other_tools_and_report_unidentified_wraps() {
     let dir = scratch();
-    for response in [
-        json!({"content": [{"type": "text", "text": "{\"status\":\"blocked\"}"}]}),
-        json!({"structuredContent": {
-            "session": {"id": "alpha", "state": "active"}, "entry": {"at": "now"}
-        }}),
-        json!({"isError": true, "structuredContent": {
-            "session": {"id": "alpha", "state": "wrapped"}, "entry": {"at": "now"}
-        }}),
+    for tool in [
+        "mcp__jojobot__recall",
+        "Bash",
+        "mcp__jojobot__wrap_session_later",
     ] {
-        let mut event = wrapped();
-        event["tool_response"] = response;
+        let mut event = wrap_call();
+        event["tool_name"] = json!(tool);
         quiet(&hook("mark-finished-session", &event, &dir, Some(AGENT)));
         assert!(!marker(&dir).exists());
     }
-    quiet(&hook("mark-finished-session", &wrapped(), &dir, None));
+    let out = hook("mark-finished-session", &wrap_call(), &dir, None);
+    assert!(out.status.success(), "{out:?}");
+    assert!(out.stdout.is_empty());
+    assert!(
+        String::from_utf8(out.stderr)
+            .unwrap()
+            .contains("PASEO_AGENT_ID")
+    );
     quiet(&hook("refuse-finished-session", &json!({}), &dir, None));
     assert!(!marker(&dir).exists());
     std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]
-fn finished_session_hooks_accept_structured_receipts_and_default_state_home() {
+fn finished_session_hooks_accept_empty_content_and_default_state_home() {
     let dir = scratch();
-    let mut event = wrapped();
-    let receipt: Value = serde_json::from_str(
-        event["tool_response"]["content"][0]["text"]
-            .as_str()
-            .unwrap(),
-    )
-    .unwrap();
-    event["tool_response"] = json!({"content": [], "structuredContent": receipt});
+    let mut event = wrap_call();
+    event["tool_response"] = json!([]);
     let mut mark = Command::new("sh");
     mark.args([
         "-c",
@@ -194,7 +191,7 @@ fn finished_session_hooks_project_settings_route_the_journey() {
             .iter()
             .find(|group| matches(group["matcher"].as_str().unwrap(), tool))
             .expect("wrap matcher");
-        let mut event = wrapped();
+        let mut event = wrap_call();
         event["tool_name"] = json!(tool);
         let mut command = Command::new("sh");
         command
