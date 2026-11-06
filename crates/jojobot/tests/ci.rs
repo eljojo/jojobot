@@ -818,7 +818,13 @@ fn the_pull_request_builds_once_and_runs_the_three_bars_side_by_side() {
                 .filter(|line| line.trim_start().starts_with("needs:"))
                 .map(str::trim)
                 .collect::<Vec<_>>(),
-            ["needs: [static, build]"],
+            // The check job also waits for the store of production's size its boot
+            // measures restore; that job is no bar.
+            [if job == "check" {
+                "needs: [static, build, boot-store]"
+            } else {
+                "needs: [static, build]"
+            }],
             "{job} must wait for static and the build, never another bar:\n{block}"
         );
         assert!(
@@ -948,6 +954,7 @@ fn release_gate_dispatch_adds_two_independent_checks_only_when_requested() {
         [
             "  static:",
             "  build:",
+            "  boot-store:",
             "  check:",
             "  rooms:",
             "  year:",
