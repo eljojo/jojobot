@@ -235,11 +235,13 @@ fn a_scan_serves_marked_items_as_the_handles_things_answer_to_now() {
         ClaimEvent::AddressRetired {
             object: object("work:delta"),
             address: "work:delta".to_string(),
+            day: jiff::civil::date(2026, 4, 1),
         },
         bound("work:delta", "work:zeta"),
         ClaimEvent::AddressRetired {
             object: object("work:beta"),
             address: "work:beta".to_string(),
+            day: jiff::civil::date(2026, 4, 1),
         },
         ClaimEvent::ObjectsMerged {
             folded: object("work:beta"),
