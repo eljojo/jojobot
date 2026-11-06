@@ -16,6 +16,7 @@
 use jiff::Timestamp;
 use jojobot_domain::log::claims::import::import;
 use jojobot_domain::log::{BatchId, Position, SealedBatch};
+use jojobot_domain::memory::owned::Provisions;
 use sqlx::MySqlPool;
 
 use crate::claims_log::codec;
@@ -77,18 +78,21 @@ fn log_failed(error: jojobot_domain::log::LogError) -> ClaimsImportError {
 pub async fn import_claims_once(
     writer: &Writer,
     pool: &MySqlPool,
+    supplied: &Provisions,
     at: Timestamp,
 ) -> Result<Imported, ClaimsImportError> {
     let pool = sql::Pool::from(pool.clone());
     let owner = writer.clone();
+    let supplied = supplied.clone();
     writer
-        .run(async move { import_in_job(&owner, &pool, at).await })
+        .run(async move { import_in_job(&owner, &pool, supplied, at).await })
         .await
 }
 
 async fn import_in_job(
     writer: &Writer,
     pool: &sql::Pool,
+    supplied: Provisions,
     at: Timestamp,
 ) -> Result<Imported, ClaimsImportError> {
     let log = writer.shared_log(pool);
@@ -126,6 +130,7 @@ async fn import_in_job(
     }
 
     let read = DoltMemory::open((**pool).clone())
+        .knowing(supplied)
         .import_rows()
         .await
         .map_err(|e| ClaimsImportError::Store(e.to_string()))?;

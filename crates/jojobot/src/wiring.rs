@@ -604,7 +604,7 @@ pub async fn boot_store_observed(
         bare_memory.boot_reader(),
         supplied.clone(),
     ));
-    let resolved = open_provisioned_on(bare_memory, supplied, clock).await?;
+    let resolved = open_provisioned_on(bare_memory, supplied.clone(), clock).await?;
 
     // **A handle the build stopped supplying, or renamed, keeps the writes the
     // operator made while it was supplied** (rule 508). They are filed under the
@@ -1037,6 +1037,7 @@ pub async fn boot_store_observed(
         jojobot_adapters::claims_import::import_claims_once(
             &folded.writer(),
             store.pool(),
+            &supplied,
             clock.now(),
         ),
     )

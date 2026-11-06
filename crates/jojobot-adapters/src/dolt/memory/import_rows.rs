@@ -19,7 +19,7 @@ use jiff::Timestamp;
 use jojobot_domain::log::ObjectId;
 use jojobot_domain::log::claims::import::{
     EntityRow, EntityWriteRow, FactRow, FactWriteRow, FieldWriteRow, FormerHandleRow, MergeRow,
-    MetadataRow, Rows, TypeWriteRow, record_id,
+    MetadataRow, Rows, SuppliedRow, TypeWriteRow, record_id, supply_identity,
 };
 use jojobot_domain::log::claims::{ClaimBody, FieldValue, KeyId, ObjectSnapshot};
 use jojobot_domain::memory::types::{DeclaredType, Origin};
@@ -52,6 +52,10 @@ struct Keys {
     badges: HashSet<String>,
     /// Every handle some thing wore and left, with the badges that left it.
     former: HashMap<String, Vec<String>>,
+    /// Every handle the build supplies, with the supply identity its record has
+    /// in the log. A stored row at the same handle is found first and wins
+    /// (rule 508).
+    supplied: HashMap<String, String>,
 }
 
 impl Keys {
@@ -63,9 +67,11 @@ impl Keys {
             return Some(key.clone());
         }
         match self.former.get(stored).map(Vec::as_slice) {
-            Some([only]) => Some(only.clone()),
-            _ => None,
+            Some([only]) => return Some(only.clone()),
+            Some(_) => return None,
+            None => {}
         }
+        self.supplied.get(stored).cloned()
     }
 }
 
@@ -132,6 +138,11 @@ impl DoltMemory {
             by_id: HashMap::with_capacity(entity_rows.len()),
             badges: HashSet::new(),
             former: HashMap::new(),
+            supplied: self
+                .supplied
+                .records()
+                .map(|(entity, _)| (entity.id.to_string(), supply_identity(entity.id.as_str()).0))
+                .collect(),
         };
         for row in &entity_rows {
             let id = text(row, "id")?;
@@ -154,7 +165,19 @@ impl DoltMemory {
             keys,
             findings: Vec::new(),
         };
-        let mut rows = Rows::default();
+        let mut rows = Rows {
+            supplied: self
+                .supplied
+                .records()
+                .map(|(entity, _)| SuppliedRow {
+                    handle: entity.id.to_string(),
+                    kind: entity.kind.as_token().to_string(),
+                    name: entity.name.clone(),
+                    source: entity.source.clone(),
+                })
+                .collect(),
+            ..Rows::default()
+        };
 
         // ── entity, with its aliases ────────────────────────────────────────
         let alias_rows =

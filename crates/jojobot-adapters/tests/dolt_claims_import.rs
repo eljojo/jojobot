@@ -15,7 +15,10 @@ use jojobot_adapters::writer::Writer;
 use jojobot_domain::log::Event;
 use jojobot_domain::log::claims::import::import;
 use jojobot_domain::log::claims::{ClaimEvent, State};
-use jojobot_domain::memory::{EntityId, Memory, NewEntity, NewFact, Provenance};
+use jojobot_domain::memory::owned::{Provision, Provisions};
+use jojobot_domain::memory::{
+    Entity, EntityId, EntityKind, Memory, NewEntity, NewFact, Provenance,
+};
 
 async fn thing(memory: &DoltMemory, handle: &str, name: &str) -> EntityId {
     let id = EntityId(handle.to_string());
@@ -132,7 +135,7 @@ async fn claims_import_appends_what_the_rows_mean_once() {
     );
 
     let writer = Writer::default();
-    let first = import_claims_once(&writer, &pool, at())
+    let first = import_claims_once(&writer, &pool, &Provisions::default(), at())
         .await
         .expect("the import runs");
     let Imported::Done { events } = first else {
@@ -153,7 +156,7 @@ async fn claims_import_appends_what_the_rows_mean_once() {
         "the state answers a thing by its handle"
     );
 
-    let again = import_claims_once(&writer, &pool, at())
+    let again = import_claims_once(&writer, &pool, &Provisions::default(), at())
         .await
         .expect("the second call runs");
     assert_eq!(again, Imported::AlreadyDone);
@@ -180,7 +183,7 @@ async fn claims_import_refuses_a_row_the_reader_will_not_place() {
         .await
         .expect("a parent that names nothing");
 
-    let refused = import_claims_once(&Writer::default(), &pool, at())
+    let refused = import_claims_once(&Writer::default(), &pool, &Provisions::default(), at())
         .await
         .expect_err("the import refuses");
     let ClaimsImportError::Findings { count, rows } = &refused else {
@@ -220,7 +223,7 @@ async fn claims_import_reads_a_merge_with_no_event_as_a_redirect() {
         .await
         .expect("a store from before the merge-event table");
 
-    let imported = import_claims_once(&Writer::default(), &pool, at())
+    let imported = import_claims_once(&Writer::default(), &pool, &Provisions::default(), at())
         .await
         .expect("the import runs");
     assert!(matches!(imported, Imported::Done { .. }), "{imported:?}");
@@ -273,7 +276,7 @@ async fn claims_import_refuses_a_gap_in_the_merge_numbers() {
         .await
         .expect("a hand repair that cleared the folded entity's mark");
 
-    let refused = import_claims_once(&Writer::default(), &pool, at())
+    let refused = import_claims_once(&Writer::default(), &pool, &Provisions::default(), at())
         .await
         .expect_err("the import refuses");
     assert!(
@@ -281,6 +284,72 @@ async fn claims_import_refuses_a_gap_in_the_merge_numbers() {
         "{refused:?}"
     );
     assert!(logged(&pool).await.is_empty(), "nothing was appended");
+
+    server.stop().await;
+}
+
+/// A record the build supplies, as the boot hands it to the import.
+fn supplied_view(handle: &str) -> Provisions {
+    Provisions::new(vec![Provision::record(
+        Entity {
+            folded_names: Vec::new(),
+            id: EntityId(handle.to_string()),
+            kind: EntityKind::VIEW,
+            name: "The loops view".into(),
+            aliases: Vec::new(),
+            source: "jojobot".into(),
+            crm: None,
+            parent: None,
+            boot: Default::default(),
+            merged_into: None,
+            badge: None,
+            archived: None,
+        },
+        std::collections::BTreeMap::new(),
+    )])
+}
+
+/// **A claim filed under a handle the build supplies is placed at the record's
+/// supply identity.** The overlay's claim has no row to name, so the reader used
+/// to refuse it and the boot with it (rule 508: a supplied record never stops the
+/// server). The import creates the record under its supply identity, binds its
+/// handle, and files the claim there.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn claims_import_files_a_claim_under_a_supplied_record_at_its_supply_identity() {
+    let (_scratch, mut server, pool) = store("claims-import-supplied-home").await;
+    let supplied = supplied_view("view:loops");
+    let memory = DoltMemory::open(pool.clone()).knowing(supplied.clone());
+    let loops = EntityId("view:loops".to_string());
+    say(&memory, &loops, "the board is read on Mondays").await;
+
+    let imported = import_claims_once(&Writer::default(), &pool, &supplied, at())
+        .await
+        .expect("a claim under a supplied record does not stop the import");
+    assert!(matches!(imported, Imported::Done { .. }), "{imported:?}");
+    let held = logged(&pool).await;
+    let supply = jojobot_domain::log::claims::import::supply_identity("view:loops");
+    assert!(
+        held.iter().any(|event| matches!(
+            &event.payload,
+            ClaimEvent::ObjectCreated { object, .. } if *object == supply
+        )),
+        "the supplied record is created under its supply identity: {held:?}"
+    );
+    assert!(
+        held.iter().any(|event| matches!(
+            &event.payload,
+            ClaimEvent::AddressBound { object, address }
+                if *object == supply && address == "view:loops"
+        )),
+        "the supplied record answers to its handle: {held:?}"
+    );
+    assert!(
+        held.iter().any(|event| matches!(
+            &event.payload,
+            ClaimEvent::RecordCreated { record, .. } if record.0.starts_with("supplied/view:loops/")
+        )),
+        "the claim is filed under the supply identity, not under the handle: {held:?}"
+    );
 
     server.stop().await;
 }
