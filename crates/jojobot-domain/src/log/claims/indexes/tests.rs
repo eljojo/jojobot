@@ -760,6 +760,7 @@ fn retired(id: &str, address: &str) -> ClaimEvent {
     ClaimEvent::AddressRetired {
         object: object(id),
         address: address.into(),
+        day: jiff::civil::date(2026, 4, 1),
     }
 }
 

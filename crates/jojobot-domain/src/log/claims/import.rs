@@ -115,6 +115,8 @@ pub struct FormerHandleRow {
     pub former: String,
     pub object: ObjectId,
     pub ordinal: u32,
+    /// The day the handle stopped being current, as the row holds it.
+    pub day: jiff::civil::Date,
 }
 
 /// **One `fact_write` row**: the claim as that write left it, and what the
@@ -450,7 +452,11 @@ pub fn import(rows: &Rows) -> Result<Vec<Event<ClaimEvent>>, ImportError> {
         for retire in [false, true] {
             let (object, address) = (former.object.clone(), former.former.clone());
             events.push(plain(if retire {
-                ClaimEvent::AddressRetired { object, address }
+                ClaimEvent::AddressRetired {
+                    object,
+                    address,
+                    day: former.day,
+                }
             } else {
                 ClaimEvent::AddressBound { object, address }
             }));

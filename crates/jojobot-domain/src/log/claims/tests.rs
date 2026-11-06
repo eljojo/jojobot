@@ -181,6 +181,7 @@ fn each_kind_changes_what_it_says() {
         &ClaimEvent::AddressRetired {
             object: object("alpha"),
             address: "thing:alpha".into(),
+            day: day(3),
         },
     );
     assert_eq!(state.resolve("thing:alpha"), None);
@@ -218,6 +219,7 @@ fn retiring_a_spelling_the_object_does_not_hold_changes_nothing() {
         &ClaimEvent::AddressRetired {
             object: object("alpha"),
             address: "thing:delta".into(),
+            day: day(3),
         },
     );
     assert_eq!(state.resolve("thing:delta"), Some(&object("beta")));

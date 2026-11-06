@@ -174,10 +174,12 @@ pub enum ClaimEvent {
         object: ObjectId,
         address: String,
     },
-    /// A spelling no longer answers to the object.
+    /// A spelling no longer answers to the object. `day` is the day the spelling
+    /// stopped being current: the caller's own day, which no instant yields.
     AddressRetired {
         object: ObjectId,
         address: String,
+        day: Date,
     },
     /// The folded object's claims and writes now belong to the survivor, and
     /// its spellings answer to the survivor.
@@ -310,7 +312,9 @@ impl State {
             ClaimEvent::AddressBound { object, address } => {
                 self.addresses.insert(address.clone(), object.clone());
             }
-            ClaimEvent::AddressRetired { object, address } => {
+            ClaimEvent::AddressRetired {
+                object, address, ..
+            } => {
                 if self.addresses.get(address) == Some(object) {
                     self.addresses.remove(address);
                     self.retired_addresses

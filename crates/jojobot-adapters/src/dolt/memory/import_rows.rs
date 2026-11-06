@@ -128,7 +128,7 @@ impl DoltMemory {
         .await
         .map_err(store)?;
         let former_rows = sqlx::query(
-            "SELECT former_handle, badge, ordinal FROM entity_former_handle \
+            "SELECT former_handle, badge, ordinal, changed_at FROM entity_former_handle \
              ORDER BY former_handle, badge, ordinal",
         )
         .fetch_all(&mut **tx)
@@ -248,6 +248,11 @@ impl DoltMemory {
                 object: ObjectId(text(row, "badge")?),
                 ordinal: row.try_get::<i32, _>("ordinal").map_err(store)? as u32,
                 former,
+                day: text(row, "changed_at")?.parse().map_err(|_| {
+                    MemoryError::Store(
+                        "a former handle's changed-on day cannot be read as a date".to_string(),
+                    )
+                })?,
             });
         }
 

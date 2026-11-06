@@ -136,9 +136,22 @@ fn a_renamed_handle_keeps_its_former_spelling() {
             former: "person:homer".into(),
             object: object("k1"),
             ordinal: 1,
+            day: jiff::civil::date(2026, 3, 9),
         }],
         ..Rows::default()
     };
+    // The retirement carries the day the row holds, whatever the clock says.
+    let retired_day = imported(&rows)
+        .iter()
+        .find_map(|event| match &event.payload {
+            ClaimEvent::AddressRetired { day, .. } => Some(*day),
+            _ => None,
+        });
+    assert_eq!(
+        retired_day,
+        Some(jiff::civil::date(2026, 3, 9)),
+        "the retirement carries the row's own day"
+    );
     let state = state_of(&rows);
     assert_eq!(state.resolve("person:marge"), Some(&object("k1")));
     assert_eq!(state.resolve("person:homer"), None);
@@ -687,6 +700,7 @@ fn a_merged_pairs_former_handle_and_moved_claim_survive() {
         former: "person:bart".into(),
         object: object("k2"),
         ordinal: 1,
+        day: jiff::civil::date(2026, 3, 9),
     });
     let lineage = Some(record_id(&object("k1"), "f1"));
     rows.facts[1].head.derived_from = lineage.clone();
@@ -1196,11 +1210,13 @@ fn former_handles_given_in_descending_order_import_as_they_do_in_ascending_order
                 former: "person:nelson".into(),
                 object: object("k1"),
                 ordinal: 1,
+                day: jiff::civil::date(2026, 3, 9),
             },
             FormerHandleRow {
                 former: "person:milhouse".into(),
                 object: object("k1"),
                 ordinal: 2,
+                day: jiff::civil::date(2026, 3, 10),
             },
         ];
         if descending {

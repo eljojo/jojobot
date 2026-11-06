@@ -145,6 +145,7 @@ fn every_kind() -> Vec<ClaimEvent> {
         ClaimEvent::AddressRetired {
             object: object("k1"),
             address: "person:marge".into(),
+            day: date(2026, 3, 9),
         },
         ClaimEvent::ObjectsMerged {
             folded: object("k2"),
@@ -387,7 +388,8 @@ fn the_stored_payload_of_every_shape_is_pinned() {
         json!({"shape": "ObjectWriteObserved", "object": "k1", "filed_under": "person:homer",
                "ordinal": 4, "snapshot": null}),
         json!({"shape": "AddressBound", "object": "k1", "address": "person:homer"}),
-        json!({"shape": "AddressRetired", "object": "k1", "address": "person:marge"}),
+        json!({"shape": "AddressRetired", "object": "k1", "address": "person:marge",
+               "day": "2026-03-09"}),
         json!({"shape": "ObjectsMerged", "folded": "k2", "survivor": "k1",
                "records": [{"label": "f4", "record": "r1"}],
                "writes": [{"from_ordinal": 2, "key": "visits", "ordinal": 5, "record": "r1"}]}),

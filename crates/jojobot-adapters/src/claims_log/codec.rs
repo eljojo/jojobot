@@ -171,6 +171,7 @@ enum Payload {
     AddressRetired {
         object: ObjectId,
         address: String,
+        day: Date,
     },
     ObjectsMerged {
         folded: ObjectId,
@@ -432,9 +433,14 @@ fn payload_wire(event: &ClaimEvent) -> Payload {
             object: object.clone(),
             address: address.clone(),
         },
-        ClaimEvent::AddressRetired { object, address } => Payload::AddressRetired {
+        ClaimEvent::AddressRetired {
+            object,
+            address,
+            day,
+        } => Payload::AddressRetired {
             object: object.clone(),
             address: address.clone(),
+            day: *day,
         },
         ClaimEvent::ObjectsMerged {
             folded,
@@ -526,9 +532,15 @@ fn event_of(payload: Payload) -> Result<ClaimEvent, DecodeError> {
             snapshot: snapshot.map(snapshot_of),
         },
         Payload::AddressBound { object, address } => ClaimEvent::AddressBound { object, address },
-        Payload::AddressRetired { object, address } => {
-            ClaimEvent::AddressRetired { object, address }
-        }
+        Payload::AddressRetired {
+            object,
+            address,
+            day,
+        } => ClaimEvent::AddressRetired {
+            object,
+            address,
+            day,
+        },
         Payload::ObjectsMerged {
             folded,
             survivor,
