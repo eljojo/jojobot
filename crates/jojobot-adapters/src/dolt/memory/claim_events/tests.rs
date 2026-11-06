@@ -327,6 +327,30 @@ async fn a_merge_and_the_writes_after_it_are_held_by_the_state_as_the_store_hold
         })
         .await;
     }
+    // The merge names the bot that made it as its actor.
+    let merged_by: Vec<Option<jojobot_domain::actor::Actor>> = writer
+        .shared_log(&pool)
+        .read_from(Position(0), 100)
+        .await
+        .unwrap()
+        .iter()
+        .flat_map(|batch| batch.members().to_vec())
+        .filter_map(|bytes| crate::claims_log::codec::decode_own(&bytes).ok().flatten())
+        .filter(|event| {
+            matches!(
+                event.payload,
+                jojobot_domain::log::claims::ClaimEvent::ObjectsMerged { .. }
+            )
+        })
+        .map(|event| event.actor)
+        .collect();
+    assert_eq!(
+        merged_by,
+        vec![Some(jojobot_domain::actor::Actor::Bot(EntityId(
+            "bot:sigma".into()
+        )))],
+        "the merge event names its bot"
+    );
     let held = agrees(&memory, &writer, &pool, &homer).await;
     assert_eq!(
         held["mood"], "grumpy",

@@ -2115,10 +2115,13 @@ impl DoltMemory {
         let merged_at = self.clock.now().to_string();
         self.emit_merge(
             tx,
-            &folded_key,
-            &survivor_key,
-            &merged_at,
-            session,
+            claim_events::MergeMade {
+                folded: &folded_key,
+                survivor: &survivor_key,
+                at: &merged_at,
+                caller,
+                session,
+            },
             &address_map,
         )
         .await?;

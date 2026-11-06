@@ -42,6 +42,15 @@ impl ServedWrite for Placed {
     }
 }
 
+/// **Who was folded into whom, when, by which bot and in which run.**
+pub(super) struct MergeMade<'a> {
+    pub(super) folded: &'a EntityId,
+    pub(super) survivor: &'a EntityId,
+    pub(super) at: &'a str,
+    pub(super) caller: &'a EntityId,
+    pub(super) session: Option<&'a str>,
+}
+
 /// What the key writes of one claim write share.
 pub(super) struct Emitting {
     record: jojobot_domain::log::RecordId,
@@ -438,12 +447,16 @@ impl DoltMemory {
     pub(super) async fn emit_merge(
         &self,
         tx: &mut Transaction<'_, MySql>,
-        folded: &EntityId,
-        survivor: &EntityId,
-        at: &str,
-        session: Option<&str>,
+        made: MergeMade<'_>,
         address_map: &[(String, String)],
     ) -> Result<(), MemoryError> {
+        let MergeMade {
+            folded,
+            survivor,
+            at,
+            caller,
+            session,
+        } = made;
         let claims: std::collections::HashMap<&str, &str> = address_map
             .iter()
             .map(|(was, now)| (was.as_str(), now.as_str()))
@@ -490,8 +503,11 @@ impl DoltMemory {
                 });
             }
         }
+        // **The bot that made the fold is the event's actor**, filed under the id
+        // it is stored by, as every claim write names its bot.
+        let actor = Actor::Bot(self.stored_writer(tx, caller).await?);
         emit_one(
-            None,
+            Some(actor),
             session.map(str::to_string),
             parse_stamp(Some(at.to_string()), folded.as_str()),
             ClaimEvent::ObjectsMerged {
