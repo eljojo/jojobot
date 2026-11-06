@@ -27,6 +27,24 @@ use serde_json::{Map, Value, json};
 use super::{Held, Version, claim_address_of, served_in};
 use crate::seen::Shape;
 
+/// **The parts a read works out from its own question** (the record filter, the
+/// day an overdue question names, the keys, the status or the view that narrows
+/// it). No version sees the arguments of a call, so each is named by what the
+/// question made of it and the same thing read under another question is
+/// another part. The renderers in `memory/recall.rs` set these from an argument.
+const FROM_THE_QUESTION: [&str; 10] = [
+    "scoped_out",
+    "overdue_by_days",
+    "due_in_days",
+    "fields_left_out",
+    "facts_status",
+    "archived_left_out",
+    "active_left_out",
+    "review_marks_left_out",
+    "release_notes_record_left_out",
+    "fields_backing_left_out",
+];
+
 /// The key the count rides under, at the top of an answer that collapsed.
 pub(crate) const COLLAPSED: &str = "held_collapsed";
 
@@ -176,6 +194,9 @@ fn parts_of(fields: &Map<String, Value>, part: &mut impl FnMut(u64, &str, &Value
                             // absence of one: it is another part than a walk that
                             // found a neighbor.
                             "connected" => Some(says_something(inner).to_string()),
+                            question if FROM_THE_QUESTION.contains(&question) => {
+                                Some(inner.to_string())
+                            }
                             _ => None,
                         };
                         let window = frame.or_else(|| part_window(key, inner));
@@ -596,6 +617,71 @@ mod tests {
             !part_values(object).is_empty(),
             "the guard counts an empty walk as a value"
         );
+    }
+
+    /// **A part the read worked out from its own question is named by what that
+    /// question made of it**: the same thing served again under another record
+    /// filter, another day or another narrowing ships the part, and under the same
+    /// question it collapses. One row per part the renderers set from an argument.
+    #[test]
+    fn a_part_worked_out_from_the_question_is_named_by_it() {
+        let served = |part: &str, value: Value| {
+            let mut object = json!({"id": "rhythm:pay-rent-late", "name": "Pay rent late"});
+            object[part] = value;
+            json!({"objects": [object]})
+        };
+        let rows = [
+            (
+                "scoped_out",
+                json!("2 more records do not answer the filter"),
+                json!("5 more records do not answer the filter"),
+            ),
+            ("overdue_by_days", json!(3), json!(4)),
+            ("due_in_days", json!(3), json!(4)),
+            (
+                "fields_left_out",
+                json!("2 keys are left out"),
+                json!("3 keys are left out"),
+            ),
+            ("facts_status", json!("active"), json!("archived")),
+            (
+                "archived_left_out",
+                json!({"count": 1}),
+                json!({"count": 2}),
+            ),
+            ("active_left_out", json!({"count": 1}), json!({"count": 2})),
+            (
+                "review_marks_left_out",
+                json!({"count": 1}),
+                json!({"count": 2}),
+            ),
+            (
+                "release_notes_record_left_out",
+                json!({"count": 1}),
+                json!({"count": 2}),
+            ),
+            (
+                "fields_backing_left_out",
+                json!("1 key is not backed"),
+                json!("2 keys are not backed"),
+            ),
+        ];
+        for (part, asked, other) in rows {
+            let received = received_of(&served(part, asked.clone()));
+            let held = [entity("rhythm:pay-rent-late")];
+            let mut same = served(part, asked);
+            assert_eq!(
+                collapse(&mut same, &held, &received),
+                1,
+                "{part}: the same question"
+            );
+            let mut changed = served(part, other);
+            assert_eq!(
+                collapse(&mut changed, &held, &received),
+                0,
+                "{part}: another question"
+            );
+        }
     }
 
     /// **A held block read under another frame is another part**: the same
