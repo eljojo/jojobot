@@ -4383,7 +4383,7 @@ async fn a_stored_clear_by_a_claim_that_did_not_hold_the_key_is_imported_as_a_re
     sqlx::query(
         "INSERT INTO entity (id, kind, name, source, crm, parent, boot, prose, badge,
                              merged_into, archived_reason, archived_at)
-         VALUES ('person:upgrade-fixture-cleared', 'person', 'Cleared', 'test', NULL, NULL,
+         VALUES ('thing:upgrade-fixture-cleared', 'thing', 'Cleared', 'test', NULL, NULL,
                  'on-demand', '', 'clrthg', NULL, NULL, NULL)",
     )
     .execute(store.pool())

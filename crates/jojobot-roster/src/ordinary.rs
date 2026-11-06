@@ -550,7 +550,6 @@ pub const ORDINARY: &[&str] = &[
     "person:contract-nobody-such-handle",
     "person:contract-someone-else",
     "person:upgrade-fixture-person",
-    "person:upgrade-fixture-cleared",
     "person:contract-x",
     "person:contract-y",
     "person:zenit",
@@ -724,6 +723,7 @@ pub const ORDINARY: &[&str] = &[
     "thing:wrench", // made up: a tool that has to go back
     "thing:torque-wrench",
     "thing:upgrade-fixture-archived",
+    "thing:upgrade-fixture-cleared",
     "thing:upgrade-fixture-blue",
     "thing:upgrade-fixture-red",
     "thing:upgrade-fixture-namesake",
