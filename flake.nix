@@ -273,6 +273,7 @@
               "--skip=a_lost_link_table_is_rebuilt_at_the_next_boot_on_the_last_deployed_store"
               "--skip=a_store_holding_a_row_at_a_handle_the_build_supplies_boots_and_the_row_answers"
               "--skip=what_the_operator_wrote_on_a_handle_the_build_stopped_supplying_reads_back_as_a_thing"
+              "--skip=a_stored_clear_by_a_claim_that_did_not_hold_the_key_is_imported_as_a_removal"
               "--skip=everything_naming_a_handle_the_build_stopped_supplying_follows_the_row_the_boot_gave_it"
               "--skip=runs_in_moment_order::the_runs_of_the_last_deployed_store_read_in_moment_order_on_the_head"
             ];
