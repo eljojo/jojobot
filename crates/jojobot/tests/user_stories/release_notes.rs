@@ -557,7 +557,14 @@ async fn a_bot_told_deploy_nines_notes_is_sent_the_point_release_notes_alone() {
     story.the_store_changed_underneath().await;
 
     let later = story.restarted().await;
-    assert_eq!(box_as::counts_as(&later, "bot:delta").await, (1, 0, 0));
+    // **The owed notes may arrive in several numbered messages**, because a list
+    // that does not fit one message is split; the bot is sent all of them and
+    // nothing has been read or processed.
+    let (new, read, processed) = box_as::counts_as(&later, "bot:delta").await;
+    assert!(
+        new >= 1 && (read, processed) == (0, 0),
+        "delta is sent its notes in {new} message(s), none read or processed"
+    );
     assert_eq!(box_as::counts_as(&later, "bot:gamma").await, (0, 0, 0));
     let delivered = later
         .as_bot("bot:delta")
@@ -565,8 +572,36 @@ async fn a_bot_told_deploy_nines_notes_is_sent_the_point_release_notes_alone() {
         .call("read_mailbox", json!({}))
         .await
         .json();
-    let body = delivered["messages"][0]["body"].as_str().expect("a body");
-    let mut sent = ids_named(body);
+    // **A delivery stops at the answer ceiling**: a body that does not fit is
+    // flagged and a message that does not fit at all is named, so each message is
+    // counted from the answer and read whole by its id.
+    let mut ids: Vec<String> = delivered["messages"]
+        .as_array()
+        .expect("messages")
+        .iter()
+        .map(|message| message["id"].as_str().expect("an id").to_string())
+        .collect();
+    ids.extend(
+        delivered["not_shown"]["ids"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|id| id.as_str().expect("an id").to_string()),
+    );
+    assert_eq!(
+        ids.len(),
+        new,
+        "every message is accounted for: {delivered}"
+    );
+    let reader = later.as_bot("bot:delta").await;
+    let mut sent: Vec<String> = Vec::new();
+    for id in &ids {
+        let read = reader
+            .call("read_message", json!({"message_id": id}))
+            .await
+            .json();
+        sent.extend(ids_named(read["body"].as_str().expect("a body")));
+    }
     sent.sort();
     let mut owed: Vec<String> = shipped_note_ids()
         .into_iter()
