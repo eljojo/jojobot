@@ -656,6 +656,7 @@ impl State {
             .filter(|(subject, _)| subject == folded)
             .cloned()
             .collect();
+        let mut moved_writers: BTreeSet<RecordId> = BTreeSet::new();
         for (subject, key) in keys {
             let folded_key = (subject.clone(), key.clone());
             let survivor_key = (survivor.clone(), key.clone());
@@ -678,7 +679,9 @@ impl State {
                     write.ordinal = moved.ordinal;
                 }
             }
+            let mut writers: BTreeSet<RecordId> = BTreeSet::new();
             for mut write in stream {
+                writers.insert(write.record.clone());
                 if let Some(moved) = writes.iter().find(|moved| {
                     moved.record == write.record
                         && moved.key == key
@@ -690,7 +693,13 @@ impl State {
             }
             let highest = target.iter().map(|write| write.ordinal).max();
             self.indexes
-                .moved_stream(&folded_key, &survivor_key, highest);
+                .moved_stream(&folded_key, &survivor_key, highest, &writers);
+            moved_writers.extend(writers);
+        }
+        // Interleaving the writes can change which write of a key is a record's
+        // newest, and so what it names.
+        for record in &moved_writers {
+            self.refresh_naming(record);
         }
         self.index_after_merge(folded, survivor, records, numbered);
     }

@@ -61,6 +61,12 @@ pub(super) struct Indexes {
     /// The spellings each folded object wore itself when it was folded, none of
     /// them lent by what was folded into it before.
     folded_own: BTreeMap<ObjectId, BTreeSet<String>>,
+    /// The records whose newest write of some key names the object as a target,
+    /// by the object as it was written.
+    referred: BTreeMap<ObjectId, BTreeSet<RecordId>>,
+    /// The objects each record's newest writes name now: what `referred` holds
+    /// for the record, so a later write finds what to take back.
+    naming: BTreeMap<RecordId, BTreeSet<ObjectId>>,
     /// The objects whose parent is the key.
     children: BTreeMap<ObjectId, BTreeSet<ObjectId>>,
     /// The streams each claim wrote to: a revision changes what they fold to.
@@ -87,7 +93,15 @@ impl Indexes {
         folded: &(ObjectId, KeyId),
         survivor: &(ObjectId, KeyId),
         highest: Option<u64>,
+        writers: &BTreeSet<RecordId>,
     ) {
+        // The claims that wrote the stream wrote it under its new place.
+        for record in writers {
+            if let Some(streams) = self.written_by.get_mut(record) {
+                streams.remove(folded);
+                streams.insert(survivor.clone());
+            }
+        }
         self.top_ordinal.remove(folded);
         match highest {
             Some(top) => self.top_ordinal.insert(survivor.clone(), top),
@@ -480,6 +494,54 @@ impl State {
             self.issue_written(subject, key);
         }
         self.refresh_links(subject);
+        self.refresh_naming(record);
+    }
+
+    /// **Which objects the newest write of each key of a record names**, kept for
+    /// the question of who points at a thing. A key written empty names nobody.
+    pub(super) fn refresh_naming(&mut self, record: &RecordId) {
+        let mut now: BTreeSet<ObjectId> = BTreeSet::new();
+        for (subject, key) in self.streams_written_by(record) {
+            let newest = self
+                .streams
+                .get(&(subject, key))
+                .and_then(|stream| stream.iter().rev().find(|write| write.record == *record));
+            if let Some(write) = newest
+                && matches!(write.write, super::FieldValue::Set(_))
+            {
+                now.extend(write.targets.iter().cloned());
+            }
+        }
+        let before = self.indexes.naming.remove(record).unwrap_or_default();
+        for gone in before.difference(&now) {
+            if let Some(held) = self.indexes.referred.get_mut(gone) {
+                held.remove(record);
+                if held.is_empty() {
+                    self.indexes.referred.remove(gone);
+                }
+            }
+        }
+        for added in now.difference(&before) {
+            self.indexes
+                .referred
+                .entry(added.clone())
+                .or_default()
+                .insert(record.clone());
+        }
+        if !now.is_empty() {
+            self.indexes.naming.insert(record.clone(), now);
+        }
+    }
+
+    /// **The records whose newest write of a key names a thing**, found through
+    /// the thing and what was folded into it, and never by a scan of every record.
+    pub(super) fn records_naming(&self, object: &ObjectId) -> BTreeSet<&RecordId> {
+        let root = self.survivor(object);
+        std::iter::once(root)
+            .chain(self.folded_under.get(root).into_iter().flatten())
+            .filter_map(|held| self.indexes.referred.get(held))
+            .flatten()
+            .collect()
     }
 
     /// Before a merge changes anything: the claims it moves give up the number

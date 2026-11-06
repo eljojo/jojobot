@@ -111,6 +111,26 @@ impl State {
         rows
     }
 
+    /// **Which records point at a thing through a field**, whatever key they
+    /// used, of every status, holders in the order of their handles.
+    pub fn referring(&self, target: &EntityId) -> Vec<memory::Fact> {
+        let Some(object) = self.resolve(&target.0) else {
+            return Vec::new();
+        };
+        let mut facts: Vec<memory::Fact> = self
+            .records_naming(object)
+            .into_iter()
+            .filter_map(|record| self.fact(record))
+            .collect();
+        // The holders in the order of their handles, and a holder's claims in the
+        // order it serves them.
+        facts.sort_by(|a, b| {
+            memory::referring_holder_order(a.home.as_str(), b.home.as_str())
+                .then_with(|| a.id.as_str().cmp(b.id.as_str()))
+        });
+        facts
+    }
+
     /// The thing a handle names, when the handle is the one it answers to now.
     pub fn entity(&self, handle: &EntityId) -> Option<memory::Entity> {
         let object = self.resolve(&handle.0)?;
@@ -596,6 +616,8 @@ mod marker_tests;
 mod merge_events_tests;
 #[cfg(test)]
 mod own_handle_tests;
+#[cfg(test)]
+mod referring_tests;
 #[cfg(test)]
 mod scan_tests;
 #[cfg(test)]

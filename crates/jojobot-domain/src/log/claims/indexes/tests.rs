@@ -1461,6 +1461,32 @@ fn assert_indexes_equal_a_recomputation(state: &State, merges: u64, context: &st
             "{context}: handle of {name}"
         );
     }
+    // Who points at a thing: the records whose newest write of some key names the
+    // thing or anything folded into it, as a scan of every stream finds them.
+    for name in OBJECTS {
+        let root = survivor(name);
+        let want: BTreeSet<&crate::log::RecordId> = state
+            .records
+            .keys()
+            .filter(|record| {
+                state.streams.values().any(|stream| {
+                    stream
+                        .iter()
+                        .rev()
+                        .find(|write| &write.record == *record)
+                        .is_some_and(|write| {
+                            matches!(write.write, FieldValue::Set(_))
+                                && write.targets.iter().any(|t| state.survivor(t) == &root)
+                        })
+                })
+            })
+            .collect();
+        assert_eq!(
+            state.records_naming(&object(name)),
+            want,
+            "{context}: records naming {name}"
+        );
+    }
     // The homes: every claim homed on a thing, whatever label it holds.
     for name in OBJECTS {
         let want: BTreeSet<&crate::log::RecordId> = state
