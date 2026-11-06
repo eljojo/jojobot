@@ -347,3 +347,61 @@ fn canonical_handle_is_not_an_earlier_sorting_numbered_alias() {
         );
     }
 }
+
+/// A rename changes the survivor's own binding; the folded spelling keeps
+/// resolving through the redirect and never becomes its current handle.
+#[test]
+fn canonical_handle_follows_a_rename_after_a_merge() {
+    let mut state = replayed(vec![
+        made("work:delta"),
+        made("folded"),
+        bound("folded", "work:alpha"),
+        made("kept"),
+        bound("kept", "work:zeta"),
+        created("r1", claim("f1", "work:delta", "a", 3)),
+        write("r1", "work:delta", "owner", 1, &marked(&["folded", "kept"])),
+    ]);
+    assert_eq!(
+        state.fields_served(&object("work:delta"), &[])["owner"],
+        "work:alpha, work:zeta"
+    );
+    for event in [
+        ClaimEvent::ObjectsMerged {
+            folded: object("folded"),
+            survivor: object("kept"),
+            records: Vec::new(),
+            writes: Vec::new(),
+        },
+        ClaimEvent::AddressRetired {
+            object: object("kept"),
+            address: "work:zeta".into(),
+        },
+        bound("kept", "work:omega"),
+    ] {
+        state.apply(&stamped(None, None, event));
+    }
+    assert_eq!(state.resolve("work:alpha"), Some(&object("kept")));
+    assert_eq!(state.resolve("work:omega"), Some(&object("kept")));
+    assert_eq!(state.resolve("work:zeta"), None);
+    assert_eq!(
+        state.fields_served(&object("work:delta"), &[])["owner"],
+        "work:omega",
+        "the survivor's new handle, not the folded object's spelling"
+    );
+}
+
+/// Two current handles on one object are malformed events, rather than a
+/// lexical choice a read may silently make.
+#[test]
+#[should_panic(expected = "an object cannot hold two current handles")]
+fn canonical_handle_rejects_a_second_live_handle_binding() {
+    let mut state = replayed(vec![
+        made("kept"),
+        bound("kept", "work:zeta"),
+        bound("kept", "work:zeta"),
+        bound("kept", "work:alpha-queue/1"),
+    ]);
+    assert_eq!(state.resolve("work:zeta"), Some(&object("kept")));
+    assert_eq!(state.resolve("work:alpha-queue/1"), Some(&object("kept")));
+    state.apply(&stamped(None, None, bound("kept", "work:omega")));
+}

@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::super::tests::{
     apply, archived, body, claim, clear, created, key, object, record, replay, write,
@@ -933,7 +933,12 @@ const SPELLINGS: [&str; 4] = ["s0", "work:eta", "work:iota", "work:kappa"];
 
 /// The next event of a run, read off the state the earlier ones made so that a
 /// merge moves the claims and writes that are really there.
-fn next_event(dice: &mut Dice, state: &State, made: &mut usize) -> ClaimEvent {
+fn next_event(
+    dice: &mut Dice,
+    state: &State,
+    bindings: &BTreeMap<String, ObjectId>,
+    made: &mut usize,
+) -> ClaimEvent {
     *made += 1;
     let n = *made;
     let live: Vec<&str> = OBJECTS
@@ -971,6 +976,16 @@ fn next_event(dice: &mut Dice, state: &State, made: &mut usize) -> ClaimEvent {
             if dice.roll(3) == 0 {
                 retired(who, spelling)
             } else {
+                if spelling.contains(':')
+                    && let Some((old, _)) = bindings.iter().find(|(address, owner)| {
+                        **owner == object(who)
+                            && address.as_str() != spelling
+                            && address.contains(':')
+                            && !address.contains(['/', '#'])
+                    })
+                {
+                    return retired(who, old);
+                }
                 bound(who, spelling)
             }
         }
@@ -1313,9 +1328,18 @@ fn links_from_by_scan(state: &State, subject: &ObjectId) -> BTreeSet<ObjectId> {
     out
 }
 
-/// **Every index, recomputed from the final state alone**, compared with what
-/// the maps kept by `apply` answer.
-fn assert_indexes_equal_a_recomputation(state: &State, merges: u64, context: &str) {
+/// Indexes recomputed from the final records, with binding ownership checked
+/// against the events independently of the interpreter's address map.
+fn assert_indexes_equal_a_recomputation(
+    state: &State,
+    bindings: &BTreeMap<String, ObjectId>,
+    merges: u64,
+    context: &str,
+) {
+    assert_eq!(
+        &state.addresses, bindings,
+        "{context}: merges preserve the object each spelling was bound to"
+    );
     assert_eq!(state.highest_merge_number(), merges, "{context}: merges");
     // The streams a claim wrote: those that hold a write of it, as a scan of every
     // stream finds them. A merge moves a stream, and the claim wrote it where it
@@ -1466,36 +1490,20 @@ fn assert_indexes_equal_a_recomputation(state: &State, merges: u64, context: &st
             }
         }
     }
-    // The handle an object is served under: a `kind:slug` spelling bound to it or
-    // to anything folded into it, as a scan of every address finds them. The
-    // survivor's own handle wins when it wore one (`own_handle_of`, pinned by its
-    // own cases); otherwise it is the first of them in address order.
+    // Only the survivor's own handle is current. Folded spellings and numbered
+    // aliases resolve to it without becoming its handle.
     for name in OBJECTS {
-        let candidates: Vec<crate::memory::EntityId> = state
-            .addresses
+        let want = bindings
             .iter()
-            .filter(|(address, bound)| {
-                state.survivor(bound) == &survivor(name)
-                    && address.contains(':')
-                    && !address.contains('#')
+            .find(|(address, bound)| {
+                *bound == &survivor(name) && address.contains(':') && !address.contains(['/', '#'])
             })
-            .map(|(address, _)| crate::memory::EntityId(address.clone()))
-            .collect();
-        let got = state.handle_of(&object(name));
-        match state.own_handle_of(&survivor(name)) {
-            Some(own) => assert_eq!(got, Some(own), "{context}: handle of {name}"),
-            None => assert_eq!(
-                got,
-                candidates.first().cloned(),
-                "{context}: handle of {name}"
-            ),
-        }
-        if let Some(got) = got {
-            assert!(
-                candidates.contains(&got),
-                "{context}: handle of {name} is a spelling bound to it"
-            );
-        }
+            .map(|(address, _)| crate::memory::EntityId(address.clone()));
+        assert_eq!(
+            state.handle_of(&object(name)),
+            want,
+            "{context}: handle of {name}"
+        );
     }
     // Who points at a thing: the records whose newest write of some key names the
     // thing or anything folded into it, as a scan of every stream finds them.
@@ -1623,13 +1631,25 @@ fn the_indexes_equal_a_recomputation_after_any_run_of_events() {
     for seed in 0..60u64 {
         let mut dice = Dice(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
         let mut state = State::default();
+        let mut bindings = BTreeMap::new();
         let mut made = 0;
         let mut merges = 0;
         // Every number seen issued under a container, by the name it was asked
         // by: a number issued once is issued under its survivor for good.
         let mut issued_seen: BTreeSet<(&str, u64)> = BTreeSet::new();
         for step in 0..160 {
-            let event = next_event(&mut dice, &state, &mut made);
+            let event = next_event(&mut dice, &state, &bindings, &mut made);
+            match &event {
+                ClaimEvent::AddressBound { object, address } => {
+                    bindings.insert(address.clone(), object.clone());
+                }
+                ClaimEvent::AddressRetired { object, address }
+                    if bindings.get(address) == Some(object) =>
+                {
+                    bindings.remove(address);
+                }
+                _ => {}
+            }
             if matches!(event, ClaimEvent::ObjectsMerged { .. }) {
                 merges += 1;
             }
@@ -1649,6 +1669,7 @@ fn the_indexes_equal_a_recomputation_after_any_run_of_events() {
             }
             assert_indexes_equal_a_recomputation(
                 &state,
+                &bindings,
                 merges,
                 &format!("seed {seed} step {step} after {event:?}"),
             );
