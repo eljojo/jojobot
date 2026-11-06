@@ -52,13 +52,38 @@ async fn say(
     fields: &[(&str, &str)],
     day: i8,
 ) -> FactAddress {
+    claim(memory, about, what, fields, true, day).await
+}
+
+/// A claim whose keys are its own labels: they stay on the claim and the thing
+/// holds none of them.
+async fn labelled(
+    memory: &dyn Memory,
+    about: &EntityId,
+    what: &str,
+    fields: &[(&str, &str)],
+    day: i8,
+) -> FactAddress {
+    claim(memory, about, what, fields, false, day).await
+}
+
+async fn claim(
+    memory: &dyn Memory,
+    about: &EntityId,
+    what: &str,
+    fields: &[(&str, &str)],
+    sets_them: bool,
+    day: i8,
+) -> FactAddress {
     let mut fact = NewFact::about(about.clone(), what, date(2026, 9, day));
     fact.provenance = Provenance::Inference;
     fact.fields = fields
         .iter()
         .map(|(key, value)| (key.to_string(), value.to_string()))
         .collect();
-    fact.sets = fact.fields.keys().cloned().collect();
+    if sets_them {
+        fact.sets = fact.fields.keys().cloned().collect();
+    }
     memory
         .capture(fact)
         .await
@@ -112,6 +137,8 @@ async fn written(label: &str) -> Written {
     .await;
     // A key written twice: the second write holds the value.
     say(&memory, &homer, "is grumpy", &[("mood", "grumpy")], 3).await;
+    // A key that stays on its claim: the thing holds none of it.
+    labelled(&memory, &homer, "wears a hat", &[("hat", "blue")], 3).await;
     // A claim rewritten has two writes.
     let keeps = say(&memory, &marge, "keeps the house", &[("hair", "blue")], 1).await;
     memory
@@ -277,6 +304,14 @@ async fn the_state_gives_the_key_trails_the_store_gives() {
             stored,
             "{handle}: the writes of each key"
         );
+        if handle.as_str() == "person:homer" {
+            // The comparison above is not over two empty answers.
+            assert!(
+                !stored.record_writes.is_empty(),
+                "a key stays on its record"
+            );
+            assert!(!stored.kept_off.is_empty(), "a key is kept off the thing");
+        }
     }
     world.server.stop().await;
 }
