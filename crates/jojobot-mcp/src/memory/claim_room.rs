@@ -123,6 +123,30 @@ impl Jojobot {
             .await
     }
 
+    /// **The size of a claim about to be created, read from the claims State**:
+    /// the same arithmetic as [`Self::refuses_a_new_claim_too_big_to_read`] on
+    /// the thing as the State holds it. Pure: it reads the State it is given and
+    /// nothing else, so the writer's job can call it against the State the batch
+    /// is staged on. `None` for a thing the State does not hold.
+    // The verb's capture job calls it in the next commit of 9.3.3-d; until then only
+    // its parity case does.
+    #[allow(dead_code)]
+    pub(crate) fn measure_new_claim(
+        state: &jojobot_domain::log::claims::State,
+        new: &NewFact,
+        now: jiff::Timestamp,
+    ) -> Option<jojobot_domain::log::claims::ClaimSize> {
+        let (entity, folded, held) =
+            state.thing_as_read(&new.subject.0, &state.declared_types())?;
+        let fact = prospective_fact(new, held + 1, Some(widest_stamp(now)));
+        let measured = measure_record(&fact, &entity, folded, now, true);
+        Some(jojobot_domain::log::claims::ClaimSize {
+            size: measured.size,
+            room: measured.room,
+            row: measured.row_over,
+        })
+    }
+
     /// **A thing read once, so that many records can be asked whether they pass.**
     /// `None` when the thing or the store cannot be read: a thing this cannot
     /// measure is not known to be over, so every record passes it, as in

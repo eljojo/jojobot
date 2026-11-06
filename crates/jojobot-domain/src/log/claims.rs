@@ -524,6 +524,26 @@ impl State {
         }
     }
 
+    /// **A thing named by any spelling it answers to, as a measure reads it**:
+    /// the entity, its fields as a read serves them, and how many claims are
+    /// homed on it (any status). `None` for a name nothing holds.
+    pub fn thing_as_read(
+        &self,
+        name: &str,
+        declared: &[DeclaredType],
+    ) -> Option<(memory::Entity, BTreeMap<String, String>, usize)> {
+        let object = self.resolve(name)?;
+        let handle = self.handle_of(object)?;
+        let entity = self.entity(&handle)?;
+        let fields = self.fields_served(self.survivor(object), declared);
+        Some((entity, fields, self.records_homed_on(object).len()))
+    }
+
+    /// **The handle an object answers to now**, when it has one.
+    pub fn handle(&self, object: &ObjectId) -> Option<crate::memory::EntityId> {
+        self.handle_of(object)
+    }
+
     /// **The declaration of a kind in force now**: the newest one.
     pub fn declared(&self, kind: &ObjectId) -> Option<&DeclaredType> {
         self.declarations.get(kind).and_then(|held| held.last())

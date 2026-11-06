@@ -138,3 +138,74 @@ async fn a_claim_through_a_shorter_former_handle_meets_the_room_of_the_current_o
         "and through the former one: both spellings are one thing, served under the current handle"
     );
 }
+
+/// **The size of a claim read from the claims State is the size the store route
+/// reads**: the same record, the same thing, the same room.
+#[tokio::test]
+async fn a_claim_is_measured_from_the_state_as_the_store_measures_it() {
+    use jojobot_domain::log::claims::{ClaimEvent, KindId, ObjectBody, State};
+    use jojobot_domain::log::{Event, ObjectId};
+
+    let jojobot = handler();
+    ensure(&jojobot, "person:alpha").await;
+    let id = EntityId("person:alpha".into());
+    let entity = jojobot
+        .memory
+        .scan_entity(&id)
+        .await
+        .expect("the thing is read")
+        .expect("the thing exists")
+        .entity
+        .expect("the thing has a row");
+    let envelope = |payload| Event {
+        event_kind: String::new(),
+        meaning_version: 1,
+        actor: None,
+        run: None,
+        session_card: None,
+        request: None,
+        part: None,
+        occurred_at: None,
+        written_at: None,
+        imported_source_time: None,
+        payload,
+    };
+    let state = State::replay(&[
+        envelope(ClaimEvent::ObjectCreated {
+            object: ObjectId("k1".into()),
+            body: ObjectBody {
+                kind: KindId(entity.kind.as_token().to_string()),
+                parent: None,
+                name: entity.name.clone(),
+                source: entity.source.clone(),
+                aliases: entity.aliases.clone(),
+                boot: None,
+                metadata: Default::default(),
+                archived: false,
+                bound_to: None,
+            },
+        }),
+        envelope(ClaimEvent::AddressBound {
+            object: ObjectId("k1".into()),
+            address: id.0.clone(),
+        }),
+    ]);
+
+    let now = jojobot.clock().now();
+    for content in ["short", &"y".repeat(500)] {
+        let new = NewFact::about(id.clone(), content, jiff::civil::date(2026, 4, 19));
+        let room = jojobot
+            .room_for_records(&id)
+            .await
+            .expect("the thing is measurable");
+        let (size, room_for_one) = jojobot.record_size_and_room(&room, &new, 1);
+        let measured =
+            Jojobot::measure_new_claim(&state, &new, now).expect("the State holds the thing");
+        assert_eq!(
+            (measured.size, measured.room),
+            (size, room_for_one),
+            "the State measures {content:?} as the store route does"
+        );
+        assert_eq!(measured.row, None);
+    }
+}
