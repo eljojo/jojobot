@@ -173,30 +173,18 @@ async fn a_type_declaration_emits_only_when_it_differs_from_the_state() {
 
 /// **After a reclaim the claims State holds no declaration for the kind, as the
 /// rows hold none**, and a reclaim of a kind with nothing left to take changes
-/// nothing. The State's declaration is set by the domain's own event for a
-/// declaration, as the seam would have applied it.
+/// nothing. The State holds the declaration because declaring the kind put it
+/// there, so the case runs the whole flow a store runs.
 #[tokio::test]
 async fn a_reclaim_leaves_the_state_as_the_rows_hold_the_type() {
-    use crate::log::claims::type_change::type_declaration_events;
-    use crate::memory::types::{DeclaredType, Field, Origin, ValueType};
+    use crate::memory::types::{Field, Origin, ValueType};
 
     crate::memory::kinds::load_shipped();
     let fake = InMemoryMemory::seeded();
     let fields = vec![Field::new("witness", ValueType::Text)];
-    fake.declare_kind("pledge", Origin::Shipped, fields.clone())
+    fake.declare_kind("pledge", Origin::Shipped, fields)
         .await
         .expect("the kind is declared");
-    let declaration = DeclaredType {
-        origin: Origin::Shipped,
-        ..DeclaredType::new("pledge", fields)
-    };
-    {
-        let mut claims = fake.claims.lock().expect("fake mutex poisoned");
-        let at = fake.clock().now();
-        for event in type_declaration_events(None, &declaration, at, None) {
-            claims.apply(&event);
-        }
-    }
     let kind = ObjectId("pledge".into());
     assert!(
         fake.claims_state().declared(&kind).is_some(),
@@ -217,5 +205,52 @@ async fn a_reclaim_leaves_the_state_as_the_rows_hold_the_type() {
     assert!(
         fake.claims_state().declared(&kind).is_none(),
         "a reclaim with nothing left to take changes nothing"
+    );
+}
+
+/// **A kind's declaration reaches the claims State only when it differs from the
+/// one the State holds for the name**, as a type's does: the first declaration
+/// is one event, the same again adds none, and changed keys add one. The
+/// declaration is what the rows hold for the kind, normalized as the Dolt writer
+/// normalizes it.
+#[tokio::test]
+async fn a_kind_declaration_emits_only_when_it_differs_from_the_state() {
+    use crate::memory::types::{DeclaredType, Field, Origin, ValueType};
+
+    crate::memory::kinds::load_shipped();
+    let fake = InMemoryMemory::seeded();
+    let keys = |names: &[&str]| -> Vec<Field> {
+        names
+            .iter()
+            .map(|name| Field::new(name, ValueType::Text))
+            .collect()
+    };
+    let declared = |names: &[&str]| DeclaredType {
+        name: "pledge".to_string(),
+        fields: keys(names),
+        origin: Origin::Shipped,
+        must: None,
+    };
+    fake.declare_kind("pledge", Origin::Shipped, keys(&["witness"]))
+        .await
+        .expect("declared");
+    fake.declare_kind("pledge", Origin::Shipped, keys(&["witness"]))
+        .await
+        .expect("declared again");
+    fake.declare_kind("pledge", Origin::Shipped, keys(&["witness", "date"]))
+        .await
+        .expect("changed");
+
+    let held = fake
+        .claims_state()
+        .declarations_of(&ObjectId("pledge".into()))
+        .to_vec();
+    assert_eq!(
+        held,
+        vec![
+            declared(&["witness"]).normalized(),
+            declared(&["witness", "date"]).normalized()
+        ],
+        "one event for the first declaration, none for the repeat, one for the change"
     );
 }

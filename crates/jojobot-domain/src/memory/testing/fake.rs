@@ -5551,7 +5551,16 @@ impl Memory for InMemoryMemory {
         // wrote each key.
         crate::memory::validate_kind_declaration(token)?;
         let before = self.kind_state(token);
+        let declared = crate::memory::types::DeclaredType {
+            name: token.to_string(),
+            fields: fields.clone(),
+            origin,
+            must: None,
+        };
         self.declare_kind_rows(token, origin, fields)?;
+        // The declaration the rows hold for the kind, normalized as the real store
+        // normalizes it; the State drops a repeat of what it already holds.
+        self.emit_type_declaration(&declared.normalized(), None);
         Ok(self.kind_state(token) != before)
     }
 
