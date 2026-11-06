@@ -2746,8 +2746,8 @@ impl DoltMemory {
         let was_thought = was_thought && !another_bots;
         let becomes_thought = fact.status == FactStatus::Active
             && jojobot_domain::memory::authorship::is_thought_of(fact.edge.as_ref(), another_bots);
-        // TEMPORARY(9.3.3) this store's witness that it calls the domain's rule on
-        // an edit; the write path moves into the domain's pipeline there.
+        // TEMPORARY(9.3.4) this store's witness that it calls the domain's rule on
+        // an edit; the edit path moves into the domain's pipeline at 9.3.4.
         //
         // **The cap runs on a content or details change, or on newly becoming a
         // thought — never on an edit that leaves an existing thought's
