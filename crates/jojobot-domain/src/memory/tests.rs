@@ -1950,6 +1950,8 @@ async fn a_plain_text_handle_under_an_undeclared_key_is_served_as_written_in_the
 #[tokio::test]
 async fn fake_satisfies_the_role_claim_contract() {
     contract::run_all_role_claims(&InMemoryMemory::booted()).await;
+    let fake = InMemoryMemory::booted();
+    contract::a_renewal_writes_the_lease_to_its_heartbeat_home(&fake, &fake).await;
 }
 
 /// **A deadline on a claim about a person does not make the person owed**,

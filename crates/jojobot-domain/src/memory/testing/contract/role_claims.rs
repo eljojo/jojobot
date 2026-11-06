@@ -1508,6 +1508,72 @@ pub async fn a_renewal_is_a_write_on_the_thing<M: Memory>(store: &M) {
     );
 }
 
+/// **Where a store keeps a role's lease moment between claims**, read back for
+/// the one case that watches the heartbeat home.
+#[async_trait::async_trait]
+pub trait LeaseHeartbeat {
+    /// The moment the role's last renewal wrote, or `None` when none did.
+    async fn heartbeat_of(&self, role: &EntityId) -> Option<String>;
+}
+
+/// **A renewal keeps the lease moment in the heartbeat home, and a claim does
+/// not.** The claim appends its own write and leaves the home empty; the renewal
+/// that follows overwrites the moment in place and the home holds it. A second
+/// renewal replaces the first. Paired with the claim, so a store that wrote the
+/// home on every write would fail.
+pub async fn a_renewal_writes_the_lease_to_its_heartbeat_home<M: Memory, H: LeaseHeartbeat>(
+    store: &M,
+    home: &H,
+) {
+    let seat = a_seat(
+        store,
+        "bot:contract-role-heartbeat",
+        "role:contract-heartbeat",
+    )
+    .await;
+    let t0 = crate::session::testing::contract::epoch() + jiff::SignedDuration::from_secs(60);
+    let claimed = capture(
+        store,
+        computed(NewFact {
+            fields: role_fields("delta", t0),
+            ..NewFact::about(seat.role.clone(), "delta claims the role", date(2026, 7, 1))
+        }),
+    )
+    .await;
+    assert_eq!(
+        home.heartbeat_of(&seat.role).await,
+        None,
+        "a claim is a write of its own and leaves the heartbeat home empty"
+    );
+    for minutes in [5, 10] {
+        let moment = t0 + jiff::SignedDuration::from_mins(minutes);
+        let renewed = store
+            .update_fact(
+                &claimed.address(),
+                computed_patch(FactPatch {
+                    fields: role_fields("delta", moment),
+                    role_move: Some(crate::session::RoleMove {
+                        kind: crate::session::RoleMoveKind::Renew,
+                        role: seat.name.clone(),
+                        claimant: "delta".to_string(),
+                    }),
+                    ..FactPatch::default()
+                }),
+                &seat.bot,
+            )
+            .await;
+        assert!(
+            matches!(renewed, Ok(Guarded::Written(_))),
+            "the renewal must land: {renewed:?}"
+        );
+        assert_eq!(
+            home.heartbeat_of(&seat.role).await,
+            Some(moment.to_string()),
+            "the home holds the newest renewal"
+        );
+    }
+}
+
 pub async fn run_all_role_claims<M: Memory>(store: &M) {
     many_renewals_leave_the_lease_moment_at_one_write(store).await;
     a_renewal_restamps_the_lease_moment_it_overwrites(store).await;

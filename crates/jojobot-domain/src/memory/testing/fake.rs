@@ -239,6 +239,10 @@ pub struct InMemoryMemory {
     /// index evicting a document while hiding the seam the badge exists to
     /// open. **A polite fake is how a green suite ships a collapsed seam.**
     badges: Mutex<std::collections::HashMap<EntityId, String>>,
+    /// **Each role's lease moment as its renewal keeps it in the heartbeat
+    /// home**, replaced in place and never a claim write. The real store keeps one
+    /// row per role in `role_lease_heartbeat`.
+    lease_heartbeats: Mutex<std::collections::BTreeMap<EntityId, String>>,
     /// The type declarations, one per name. A `Vec` rather than a map because
     /// the real store keeps them as rows and the order they were declared in
     /// is part of what each one says.
@@ -2082,6 +2086,10 @@ impl InMemoryMemory {
             .max_by_key(|w| w.ordinal);
         match newest {
             Some(write) if write.value.is_some() => {
+                self.lease_heartbeats
+                    .lock()
+                    .expect("fake mutex poisoned")
+                    .insert(home.clone(), moment.to_string());
                 write.value = Some(moment.to_string());
                 // **Restamped with the value**, as the real store does: the age
                 // of a key is the age of the write holding it, and this write
@@ -5389,6 +5397,20 @@ impl Memory for InMemoryMemory {
             .expect("fake mutex poisoned")
             .retain(|t| t.name != token);
         Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl super::contract::LeaseHeartbeat for InMemoryMemory {
+    async fn heartbeat_of(&self, role: &EntityId) -> Option<String> {
+        // Filed under the role's key, the badge when it wears one, as the writes
+        // of the role are.
+        let key = self.storage_key(role).unwrap_or_else(|| role.clone());
+        self.lease_heartbeats
+            .lock()
+            .expect("fake mutex poisoned")
+            .get(&key)
+            .cloned()
     }
 }
 

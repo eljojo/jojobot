@@ -420,8 +420,35 @@ async fn dolt_satisfies_the_role_claim_contract() {
 
     let memory = DoltMemory::open(pool.clone());
     jojobot_domain::memory::testing::contract::run_all_role_claims(&memory).await;
+    jojobot_domain::memory::testing::contract::a_renewal_writes_the_lease_to_its_heartbeat_home(
+        &memory,
+        &Heartbeats(pool.clone()),
+    )
+    .await;
 
     store.stop().await;
+}
+
+/// A store and the pool its heartbeat home is read from, for the one contract
+/// case that watches the home.
+struct Heartbeats(sqlx::MySqlPool);
+
+#[async_trait::async_trait]
+impl jojobot_domain::memory::testing::contract::LeaseHeartbeat for Heartbeats {
+    async fn heartbeat_of(&self, role: &jojobot_domain::memory::EntityId) -> Option<String> {
+        // The home is filed under the role's key, the badge when it wears one.
+        let key: Option<String> =
+            sqlx::query_scalar("SELECT COALESCE(badge, id) FROM entity WHERE id = ?")
+                .bind(role.as_str())
+                .fetch_optional(&self.0)
+                .await
+                .expect("the role is readable");
+        sqlx::query_scalar("SELECT moment FROM role_lease_heartbeat WHERE role = ?")
+            .bind(key.unwrap_or_else(|| role.to_string()))
+            .fetch_optional(&self.0)
+            .await
+            .expect("the home is readable")
+    }
 }
 
 /// 🚨 **A value held by a write nobody stamped has no age, and the stores say

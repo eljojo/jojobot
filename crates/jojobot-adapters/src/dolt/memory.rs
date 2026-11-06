@@ -4321,6 +4321,19 @@ impl DoltMemory {
         .execute(&mut **tx)
         .await
         .map_err(store)?;
+        // **The renewal's home.** The moment is also kept where the log will read
+        // it at activation, one row per role, replaced in place and never an
+        // event (rule 743). The write above stays for every reader that folds the
+        // role's fields today.
+        sqlx::query(
+            "REPLACE INTO role_lease_heartbeat (role, moment, written_at) VALUES (?, ?, ?)",
+        )
+        .bind(role.as_str())
+        .bind(moment)
+        .bind(clock.now().to_string())
+        .execute(&mut **tx)
+        .await
+        .map_err(store)?;
         Ok(true)
     }
 

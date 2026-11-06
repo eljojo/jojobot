@@ -160,6 +160,7 @@ const ALL_VERSIONS: &[&str] = &[
     "0117_run_call_code_key_add",
     "0118_field_write_fact_write_ordinal",
     "0119_event_log",
+    "0120_role_lease_heartbeat",
 ];
 
 /// **The versions a start on a fresh store records and does not issue.** An
