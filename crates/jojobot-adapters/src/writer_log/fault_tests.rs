@@ -50,6 +50,7 @@ struct NativeGate {
     finished: Notify,
     early_read: AtomicBool,
     killed: AtomicBool,
+    waiting: Notify,
 }
 
 fn error_packet(message: &str) -> Vec<u8> {
@@ -125,6 +126,12 @@ async fn serve(
         let command = bytes[4];
         if command == 0x16 {
             kill_statement = text.starts_with("KILL CONNECTION");
+            if text == "SELECT GET_LOCK(?, ?)"
+                && plan.kills.load(Ordering::SeqCst) > 0
+                && let Some(native) = &plan.native
+            {
+                native.waiting.notify_one();
+            }
         }
         if command == 0x17 && kill_statement {
             kill_reply.store(true, Ordering::SeqCst);
@@ -431,6 +438,7 @@ async fn teaching_native_gate(release_before_receipt: bool) {
         finished: Notify::new(),
         early_read: AtomicBool::new(false),
         killed: AtomicBool::new(false),
+        waiting: Notify::new(),
     });
     let plan = Arc::new(Plan {
         native: Some(native.clone()),
@@ -486,6 +494,11 @@ async fn teaching_native_gate(release_before_receipt: bool) {
     })
     .await
     .expect("Dolt acknowledged recovery's KILL before the old command ended");
+    tokio::select! {
+        () = native.waiting.notified() => {},
+        answer = &mut caller => panic!("the receipt returned without waiting on the old connection: {answer:?}"),
+        () = tokio::time::sleep(std::time::Duration::from_secs(5)) => panic!("recovery never requested the native fence wait"),
+    }
     let old = native.old_id.load(Ordering::SeqCst);
     assert_ne!(old, 0);
     let owner: Option<u64> = sqlx::query_scalar("SELECT IS_USED_LOCK('alpha-ready')")
