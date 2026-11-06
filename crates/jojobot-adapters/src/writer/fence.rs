@@ -114,7 +114,11 @@ impl Session {
                 old_connection = old,
                 "recovery fence waits for the old connection"
             );
-            held = Some(1);
+            held = sqlx::query_scalar("SELECT GET_LOCK(?, ?)")
+                .bind(&self.lock)
+                .bind(WAIT_SECONDS)
+                .fetch_one(&mut fence)
+                .await?;
         }
         if held != Some(1) {
             return Err(sqlx::Error::PoolTimedOut);
