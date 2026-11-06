@@ -583,6 +583,32 @@ impl SessionRegistry {
             .shapes_by(name)
     }
 
+    #[cfg(any(test, feature = "testing"))]
+    pub(crate) fn note_values(
+        &self,
+        name: &str,
+        values: Vec<(crate::seen::Held, crate::seen::PartValues)>,
+    ) {
+        if values.is_empty() || !self.holds(name) {
+            return;
+        }
+        self.seen
+            .lock()
+            .expect("the seen ledger is poisoned")
+            .hold_values(name, values);
+    }
+
+    #[cfg(any(test, feature = "testing"))]
+    pub(crate) fn values_by(
+        &self,
+        name: &str,
+    ) -> std::collections::HashMap<crate::seen::Held, crate::seen::PartValues> {
+        self.seen
+            .lock()
+            .expect("the seen ledger is poisoned")
+            .values_by(name)
+    }
+
     /// Forget everything one run was shown and asked about.
     pub(crate) fn forget_shown(&self, name: &str) {
         self.seen

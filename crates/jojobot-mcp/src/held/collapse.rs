@@ -77,15 +77,15 @@ const BARE: [&str; 13] = [
 /// **The parts one served object carries, nested things and all.** A part is a
 /// key beyond [`BARE`] on a thing (prose, facts, details, history and the rest),
 /// named with the thing that carries it; a history is named by the key it reads
-/// too. The values are never compared: the version says whether a thing moved,
+/// too. Production never compares values: the version says whether a thing moved,
 /// and the parts say what of it the session was handed.
-fn shape_of(fields: &Map<String, Value>) -> Shape {
+fn parts_of(fields: &Map<String, Value>, part: &mut impl FnMut(u64, &str, &Value)) {
     fn token(owner: &str, key: &str, window: Option<&str>) -> u64 {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         (owner, key, window).hash(&mut hasher);
         hasher.finish()
     }
-    fn collect(value: &Value, owner: &str, out: &mut Shape) {
+    fn collect(value: &Value, owner: &str, part: &mut impl FnMut(u64, &str, &Value)) {
         match value {
             Value::Object(fields) => {
                 let named = thing_of(fields).map(|(_, _, name)| name);
@@ -128,27 +128,124 @@ fn shape_of(fields: &Map<String, Value>) -> Shape {
                                 opens
                             )
                         });
-                        out.insert(token(owner, key, window.as_deref()));
+                        part(token(owner, key, window.as_deref()), key, inner);
                         // A read narrowed by `keys` serves some of the fields, so
                         // each field key is a part of its own (names, never values).
                         if key == "fields"
                             && let Some(served) = inner.as_object()
                         {
-                            for field in served.keys() {
-                                out.insert(token(owner, &format!("fields.{field}"), None));
+                            for (field, value) in served {
+                                let key = format!("fields.{field}");
+                                part(token(owner, &key, None), &key, value);
                             }
                         }
                     }
                 }
-                fields.values().for_each(|inner| collect(inner, owner, out));
+                fields
+                    .values()
+                    .for_each(|inner| collect(inner, owner, part));
             }
-            Value::Array(items) => items.iter().for_each(|item| collect(item, owner, out)),
+            Value::Array(items) => items.iter().for_each(|item| collect(item, owner, part)),
             _ => {}
         }
     }
+    collect(&Value::Object(fields.clone()), "", part);
+}
+
+fn shape_of(fields: &Map<String, Value>) -> Shape {
     let mut out = Shape::new();
-    collect(&Value::Object(fields.clone()), "", &mut out);
+    parts_of(fields, &mut |token, _, _| {
+        out.insert(token);
+    });
     out
+}
+
+#[cfg(any(test, feature = "testing"))]
+fn part_values(fields: &Map<String, Value>) -> crate::seen::PartValues {
+    let mut out = crate::seen::PartValues::new();
+    parts_of(fields, &mut |token, key, value| {
+        // Narrowed reads serve individual fields, not the whole fields map.
+        if key != "fields" {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            value.to_string().hash(&mut hasher);
+            out.insert(token, (key.to_string(), hasher.finish()));
+        }
+    });
+    out
+}
+
+#[cfg(any(test, feature = "testing"))]
+pub(super) fn values_in(body: &Value) -> Vec<(Held, crate::seen::PartValues)> {
+    fn walk(value: &Value, out: &mut Vec<(Held, crate::seen::PartValues)>) {
+        match value {
+            Value::Object(fields) => {
+                if let Some((what, ..)) = thing_of(fields) {
+                    out.push((what, part_values(fields)));
+                }
+                fields.values().for_each(|inner| walk(inner, out));
+            }
+            Value::Array(items) => items.iter().for_each(|item| walk(item, out)),
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    walk(body, &mut out);
+    out
+}
+
+/// Test the very objects the production predicate would hide, before hiding them.
+#[cfg(any(test, feature = "testing"))]
+pub(super) fn assert_received(
+    body: &Value,
+    unchanged: &[Held],
+    shapes: &HashMap<Held, Shape>,
+    values: &HashMap<Held, crate::seen::PartValues>,
+    verb: &str,
+) {
+    match body {
+        Value::Object(fields) => {
+            if stub_of(fields, unchanged, shapes).is_some() {
+                let (what, _, name) = thing_of(fields).expect("a collapse names its thing");
+                for (token, (part, now)) in part_values(fields) {
+                    assert!(
+                        values
+                            .get(&what)
+                            .and_then(|had| had.get(&token))
+                            .is_some_and(|(_, was)| *was == now),
+                        "collapse withheld unseen text: thing={name}, part={part}, verb={verb}"
+                    );
+                }
+                return;
+            }
+            for inner in fields.values() {
+                assert_received(inner, unchanged, shapes, values, verb);
+            }
+        }
+        Value::Array(items) => items.iter().for_each(|inner| {
+            assert_received(inner, unchanged, shapes, values, verb);
+        }),
+        _ => {}
+    }
+}
+
+#[cfg(any(test, feature = "testing"))]
+pub(super) fn received_values(
+    unchanged: &[Held],
+    held: &HashMap<Held, crate::seen::PartValues>,
+    served: Vec<(Held, crate::seen::PartValues)>,
+) -> Vec<(Held, crate::seen::PartValues)> {
+    let mut out: HashMap<Held, crate::seen::PartValues> = HashMap::new();
+    for (what, values) in served {
+        let entry = out.entry(what.clone()).or_insert_with(|| {
+            if unchanged.contains(&what) {
+                held.get(&what).cloned().unwrap_or_default()
+            } else {
+                crate::seen::PartValues::new()
+            }
+        });
+        entry.extend(values);
+    }
+    out.into_iter().collect()
 }
 
 /// **The fingerprint of every entity and claim an answer names**, once for each

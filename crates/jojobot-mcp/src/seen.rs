@@ -98,10 +98,16 @@ struct Session {
     /// object it received. A version says the thing has not moved; this says
     /// whether a later answer carries text the session never received.
     shapes: HashMap<Held, Shape>,
+    #[cfg(any(test, feature = "testing"))]
+    values: HashMap<Held, PartValues>,
 }
 
 /// The fingerprints of the texts served of one object (see `held::collapse`).
 pub(crate) type Shape = std::collections::BTreeSet<u64>;
+
+/// Test-only values of received parts, keyed by the production part tokens.
+#[cfg(any(test, feature = "testing"))]
+pub(crate) type PartValues = std::collections::BTreeMap<u64, (String, u64)>;
 
 /// **The whole ledger.**
 #[derive(Debug, Default)]
@@ -181,6 +187,8 @@ impl Ledger {
         while session.held.len() > MAX_HELD_PER_SESSION {
             if let Some((evicted, _)) = session.held.pop_front() {
                 session.shapes.remove(&evicted);
+                #[cfg(any(test, feature = "testing"))]
+                session.values.remove(&evicted);
             }
         }
     }
@@ -207,6 +215,26 @@ impl Ledger {
             .unwrap_or_default()
     }
 
+    #[cfg(any(test, feature = "testing"))]
+    pub(crate) fn hold_values(&mut self, sid: &str, values: Vec<(Held, PartValues)>) {
+        let Some(session) = self.sessions.get_mut(sid) else {
+            return;
+        };
+        for (what, values) in values {
+            if session.held.iter().any(|(held, _)| *held == what) {
+                session.values.insert(what, values);
+            }
+        }
+    }
+
+    #[cfg(any(test, feature = "testing"))]
+    pub(crate) fn values_by(&self, sid: &str) -> HashMap<Held, PartValues> {
+        self.sessions
+            .get(sid)
+            .map(|session| session.values.clone())
+            .unwrap_or_default()
+    }
+
     /// What a session holds, oldest first. Nothing for a session the ledger does
     /// not know.
     pub(crate) fn held_by(&self, sid: &str) -> Vec<(Held, Version)> {
@@ -226,6 +254,8 @@ impl Ledger {
                 .held
                 .retain(|(held, _)| *held != Held::Entity(handle.to_string()));
             session.shapes.remove(&Held::Entity(handle.to_string()));
+            #[cfg(any(test, feature = "testing"))]
+            session.values.remove(&Held::Entity(handle.to_string()));
         }
     }
 

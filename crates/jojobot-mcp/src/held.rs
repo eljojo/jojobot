@@ -47,6 +47,9 @@ const RESHIP: &str = "jojobot/reship";
 /// The answer is one the held pass may collapse: its verb publishes `reship`.
 const COLLAPSIBLE: &str = "jojobot/collapsible";
 
+#[cfg(any(test, feature = "testing"))]
+const VERB: &str = "jojobot/collapse-verb";
+
 /// **The verbs whose answers may collapse**: those that publish `reship`, so a
 /// collapsed answer always has a call that returns it whole.
 const OFFERS_RESHIP: [&str; 3] = ["recall", "search", "list_entities"];
@@ -59,6 +62,8 @@ pub(crate) fn mark_call(answered: &mut CallToolResponse, verb: &str, reship: boo
         return;
     };
     let meta = &mut result.meta.get_or_insert_with(Default::default).0;
+    #[cfg(any(test, feature = "testing"))]
+    meta.insert(VERB.into(), verb.into());
     if reship {
         meta.insert(RESHIP.into(), Value::Bool(true));
     }
@@ -371,6 +376,13 @@ impl Jojobot {
         let CallToolResponse::Complete(result) = answered else {
             return;
         };
+        #[cfg(any(test, feature = "testing"))]
+        let verb = result
+            .meta
+            .as_mut()
+            .and_then(|meta| meta.0.remove(VERB))
+            .and_then(|value| value.as_str().map(str::to_string))
+            .unwrap_or_else(|| "unknown".into());
         let (search, results_only, reship, collapsible) = take_search(result);
         let Ok(Some(caller)) = self.caller(sid) else {
             return;
@@ -394,6 +406,8 @@ impl Jojobot {
         }
         let served = served_in(if search { &body["results"] } else { &body });
         let shapes_before_collapse = collapse::shapes_in(&body);
+        #[cfg(any(test, feature = "testing"))]
+        let values_before_collapse = collapse::values_in(&body);
         let scope = if search {
             self.search_news_scope(&body["results"], &served).await
         } else {
@@ -450,10 +464,14 @@ impl Jojobot {
         // **Decided before the answer is held in turn**: what the session held
         // before this call, at the version it stands at now, is not shipped again.
         let held_shapes = self.registry.shapes_by(&me);
+        #[cfg(any(test, feature = "testing"))]
+        let held_values = self.registry.values_by(&me);
         let collapsed = if results_only || reship || !collapsible {
             0
         } else {
             let unchanged = collapse::unchanged(&held_before, &served_now);
+            #[cfg(any(test, feature = "testing"))]
+            collapse::assert_received(&body, &unchanged, &held_shapes, &held_values, &verb);
             collapse::collapse(&mut body, &unchanged, &held_shapes)
         };
         let received = collapse::received(
@@ -470,9 +488,21 @@ impl Jojobot {
             .map(|(what, _)| (what.clone(), crate::seen::Shape::new()))
             .chain(received)
             .collect();
+        #[cfg(any(test, feature = "testing"))]
+        let values = moved
+            .iter()
+            .map(|(what, _)| (what.clone(), crate::seen::PartValues::new()))
+            .chain(collapse::received_values(
+                &collapse::unchanged(&held_before, &served_now),
+                &held_values,
+                values_before_collapse,
+            ))
+            .collect();
         moved.extend(served_now);
         self.registry.note_held(&me, moved);
         self.registry.note_shapes(&me, received);
+        #[cfg(any(test, feature = "testing"))]
+        self.registry.note_values(&me, values);
         let notices = notices_to_send(&told);
         if notices.is_empty() && collapsed == 0 {
             return;

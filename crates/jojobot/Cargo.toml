@@ -67,6 +67,7 @@ name = "ui"
 path = "tests/ui/main.rs"
 
 [dev-dependencies]
+jojobot-mcp = { workspace = true, features = ["testing"] }
 tower = { version = "0.5", features = ["util"] }
 # A case on the slow-call warning moves the clock instead of waiting a minute.
 tokio = { workspace = true, features = ["test-util"] }
