@@ -74,6 +74,63 @@ const BARE: [&str; 13] = [
     "status",
 ];
 
+/// A page is named by its rows and the record keys it serves, never their prose.
+/// Histories also name what they read, how many writes they show of how many,
+/// and each write's place. Journal wordings belong to their entry.
+fn part_window(key: &str, value: &Value) -> Option<String> {
+    fn rows(value: &Value) -> Value {
+        value
+            .as_array()
+            .map(|rows| {
+                rows.iter()
+                    .map(|row| {
+                        json!([
+                            row.get("address"),
+                            row.get("record"),
+                            row.get("nth"),
+                            row.get("position"),
+                            row.get("revision"),
+                            row.as_object()
+                                .map(|fields| fields.keys().collect::<Vec<_>>()),
+                        ])
+                    })
+                    .collect::<Vec<_>>()
+                    .into()
+            })
+            .unwrap_or(Value::Null)
+    }
+
+    let window = match key {
+        "entries" | "facts" | "ticks" => rows(value),
+        "history" | "record_history" | "entity_history" => json!([
+            value.get("key"),
+            value.get("record"),
+            value.get("entity"),
+            value.get("count"),
+            value.get("shown"),
+            rows(&value["writes"]),
+            rows(&value["versions"]),
+            value
+                .get("entries")
+                .and_then(Value::as_array)
+                .map(|entries| {
+                    entries
+                        .iter()
+                        .map(|entry| {
+                            json!([
+                                entry.get("entry"),
+                                entry.get("count"),
+                                rows(&entry["wordings"])
+                            ])
+                        })
+                        .collect::<Vec<_>>()
+                }),
+        ]),
+        _ => return None,
+    };
+    Some(window.to_string())
+}
+
 /// **The parts one served object carries, nested things and all.** A part is a
 /// key beyond [`BARE`] on a thing (prose, facts, details, history and the rest),
 /// named with the thing that carries it; a history is named by the key it reads
@@ -95,39 +152,7 @@ fn parts_of(fields: &Map<String, Value>, part: &mut impl FnMut(u64, &str, &Value
                         if BARE.contains(&key.as_str()) {
                             continue;
                         }
-                        // A history is named by what it reads (the key, or the claim
-                        // for a record history) and the window it shows: how many
-                        // writes it shows of how many, and the write that opens it.
-                        // The shape is the one the server serves: `key` or `record`,
-                        // `count`, `shown` and `writes`.
-                        let window = (key == "history" || key == "record_history").then(|| {
-                            let text = |name: &str| {
-                                inner.get(name).and_then(Value::as_str).unwrap_or_default()
-                            };
-                            let number = |name: &str| {
-                                inner.get(name).and_then(Value::as_u64).unwrap_or_default()
-                            };
-                            let opens = inner
-                                .get("writes")
-                                .and_then(Value::as_array)
-                                .and_then(|writes| writes.first())
-                                .map(|write| {
-                                    ["record", "nth", "position"]
-                                        .iter()
-                                        .find_map(|name| write.get(name))
-                                        .map(Value::to_string)
-                                        .unwrap_or_default()
-                                })
-                                .unwrap_or_default();
-                            format!(
-                                "{}{}:{}:{}:{}",
-                                text("key"),
-                                text("record"),
-                                number("count"),
-                                number("shown"),
-                                opens
-                            )
-                        });
+                        let window = part_window(key, inner);
                         part(token(owner, key, window.as_deref()), key, inner);
                         // A read narrowed by `keys` serves some of the fields, so
                         // each field key is a part of its own (names, never values).
