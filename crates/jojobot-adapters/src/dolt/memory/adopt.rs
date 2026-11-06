@@ -36,6 +36,30 @@ pub struct AdoptionReport {
     pub left: Vec<String>,
 }
 
+/// **The one test for "this handle is a retired supplied one"**: a handle with
+/// writes filed under its text, no row, no former handle wearing it, and listed as
+/// supplied by some build. The adoption below and the claims import's reader both
+/// call it, so the two cannot disagree about which handle is retired. Whether this
+/// build supplies the handle now is asked of the caller.
+pub(super) async fn retired_supplied_handles<'e, E>(executor: E) -> Result<Vec<String>, MemoryError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::MySql>,
+{
+    sqlx::query_scalar(
+        "SELECT DISTINCT entity FROM (
+             SELECT entity FROM fact UNION SELECT entity FROM field_write
+         ) AS written
+         WHERE entity LIKE '%:%'
+           AND entity NOT IN (SELECT id FROM entity)
+           AND entity NOT IN (SELECT former_handle FROM entity_former_handle)
+           AND entity IN (SELECT handle FROM supplied_handle)
+         ORDER BY entity",
+    )
+    .fetch_all(executor)
+    .await
+    .map_err(store)
+}
+
 impl DoltMemory {
     /// **Record the handles this build supplies as records, and the handles the
     /// build lists as supplied by an earlier build**, in `supplied_handle`. Every
@@ -58,6 +82,10 @@ impl DoltMemory {
         Ok(())
     }
 
+    /// TEMPORARY(9.3.3) S5, the fold from the State. W15: it goes, with W16, in
+    /// the change that moves the reads from the rows to the State, because until
+    /// then this row is what a retired supplied handle reads back from.
+    ///
     /// **Give a row to every handle that has writes filed under its text, no row,
     /// and no record the build supplies.** Idempotent: a second call finds none.
     ///
@@ -65,19 +93,7 @@ impl DoltMemory {
     /// draw probes what is committed, and a failure half way has still made
     /// progress.
     pub async fn adopt_handles_without_a_row(&self) -> Result<AdoptionReport, MemoryError> {
-        let keys: Vec<String> = sqlx::query_scalar(
-            "SELECT DISTINCT entity FROM (
-                 SELECT entity FROM fact UNION SELECT entity FROM field_write
-             ) AS written
-             WHERE entity LIKE '%:%'
-               AND entity NOT IN (SELECT id FROM entity)
-               AND entity NOT IN (SELECT former_handle FROM entity_former_handle)
-               AND entity IN (SELECT handle FROM supplied_handle)
-             ORDER BY entity",
-        )
-        .fetch_all(&self.pool)
-        .await
-        .map_err(store)?;
+        let keys = retired_supplied_handles(&self.pool).await?;
         let mut report = AdoptionReport::default();
         let mut seen: BTreeSet<String> = BTreeSet::new();
         for key in keys {

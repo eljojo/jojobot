@@ -517,6 +517,10 @@ impl DoltMemory {
     /// resolved as it stands.** That needs [`Self::knowing`]; a store not told
     /// reads such a pointer as naming nothing.
     ///
+    /// TEMPORARY(9.3.3) S5, the fold from the State. W16: it goes, with W15, in
+    /// the change that moves the reads from the rows to the State; until then it
+    /// finishes the adoption W15 begins.
+    ///
     /// Returns how many distinct stored values it rewrote.
     pub async fn resolve_stale_pointer_columns(&self) -> Result<usize, MemoryError> {
         let known: Vec<(String, String)> =

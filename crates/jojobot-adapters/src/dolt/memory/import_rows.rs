@@ -171,22 +171,10 @@ impl DoltMemory {
                 .push(text(row, "badge")?);
         }
         // **A handle the build stopped supplying, with writes filed under its text
-        // and no row**, by the one test the boot's adoption pass uses: listed as
-        // supplied by some build, no entity or former handle wears it, and no
-        // record is supplied at it now.
-        let retired: Vec<String> = sqlx::query_scalar(
-            "SELECT DISTINCT entity FROM (
-                 SELECT entity FROM fact UNION SELECT entity FROM field_write
-             ) AS written
-             WHERE entity LIKE '%:%'
-               AND entity NOT IN (SELECT id FROM entity)
-               AND entity NOT IN (SELECT former_handle FROM entity_former_handle)
-               AND entity IN (SELECT handle FROM supplied_handle)
-             ORDER BY entity",
-        )
-        .fetch_all(&mut **tx)
-        .await
-        .map_err(store)?;
+        // and no row**, by the one test the boot's adoption pass uses
+        // ([`super::adopt::retired_supplied_handles`]), less a record this build
+        // supplies now.
+        let retired = super::adopt::retired_supplied_handles(&mut **tx).await?;
         let mut adopted = Vec::new();
         for handle in retired {
             let id = EntityId(handle.clone());
