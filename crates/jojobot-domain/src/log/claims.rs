@@ -737,6 +737,7 @@ mod indexes;
 mod prepare;
 mod reads;
 mod rules;
+pub mod type_change;
 pub use indexes::Located;
 pub use prepare::{
     Admitted, BootFloor, CaptureRequest, ClaimSize, Door, Draft, Measures, Refusal, Route, prepare,

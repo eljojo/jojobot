@@ -10,9 +10,9 @@
 
 use jiff::{Timestamp, civil::Date};
 use jojobot_domain::log::ObjectId;
-use jojobot_domain::log::claims::ClaimEvent;
 use jojobot_domain::log::claims::entity_change::{EntityChange, entity_change_events};
-use jojobot_domain::log::claims::import::{EntityRow, live};
+use jojobot_domain::log::claims::import::EntityRow;
+use jojobot_domain::log::claims::type_change::type_declaration_events;
 use jojobot_domain::memory::types::DeclaredType;
 
 use super::import_rows::{maybe, text};
@@ -127,16 +127,14 @@ pub(super) fn emit_type_declared(
     let Some(held) = crate::writer::sql::read_claims(|state| state.declared(&kind).cloned()) else {
         return Ok(());
     };
-    if held.as_ref() == Some(declared) {
-        return Ok(());
-    }
-    let event = live(
-        ClaimEvent::TypeDeclared {
-            kind,
-            declaration: declared.clone(),
-        },
+    let events = type_declaration_events(
+        held.as_ref(),
+        declared,
         clock.now(),
         session.map(str::to_string),
     );
-    crate::writer::sql::emit(vec![event]).map_err(store)
+    if events.is_empty() {
+        return Ok(());
+    }
+    crate::writer::sql::emit(events).map_err(store)
 }
