@@ -469,14 +469,8 @@ async fn teaching_native_gate(release_before_receipt: bool) {
             }
         }
     });
-    let source = MySqlPoolOptions::new().connect_lazy_with(
-        (*store.connect_options())
-            .clone()
-            .port(port)
-            .statement_cache_capacity(0),
-    );
-    let writer = Writer::default();
-    let log = Arc::new(WriterLog::open(source, writer.clone()).await.unwrap());
+    let (log, writer) = Faulted::open(store.clone(), port).await.unwrap();
+    let log = Arc::new(log);
     let teachings = LoggedTeachings::open(log.clone(), &[])
         .await
         .unwrap()
@@ -723,8 +717,14 @@ async fn teaching_definite_native_rollback_keeps_the_published_rail() {
             }
         }
     });
-    let (log, writer) = Faulted::open(store.clone(), port).await.unwrap();
-    let log = Arc::new(log);
+    let source = MySqlPoolOptions::new().connect_lazy_with(
+        (*store.connect_options())
+            .clone()
+            .port(port)
+            .statement_cache_capacity(0),
+    );
+    let writer = Writer::default();
+    let log = Arc::new(WriterLog::open(source, writer.clone()).await.unwrap());
     let teachings = LoggedTeachings::open(log.clone(), &[])
         .await
         .unwrap()
