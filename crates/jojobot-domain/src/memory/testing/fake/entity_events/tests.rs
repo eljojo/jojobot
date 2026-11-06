@@ -58,7 +58,16 @@ async fn each_entity_writer_of_the_fake_leaves_its_change_in_the_claims_state() 
     fake.set_prose(&homer, "A line of prose.", None)
         .await
         .expect("the prose lands");
-    assert!(held(&fake, "person:homer").is_some());
+    assert_eq!(
+        held(&fake, "person:homer")
+            .expect("held")
+            .1
+            .metadata
+            .get("prose")
+            .map(String::as_str),
+        Some("A line of prose."),
+        "the prose write is in the State"
+    );
 
     let marge = handle("person:marge");
     fake.rename_entity(
