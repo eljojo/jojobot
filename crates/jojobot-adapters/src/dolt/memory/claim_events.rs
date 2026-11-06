@@ -7,13 +7,12 @@
 //! import would have made of the same row.
 
 use jiff::Timestamp;
-use jojobot_domain::log::claims::import::{EVENT_KIND, MEANING_VERSION, record_id};
-use jojobot_domain::log::claims::{
-    ClaimBody, ClaimEvent, FieldValue, KeyId, MovedRecord, MovedWrite,
-};
-use jojobot_domain::log::{Event, ObjectId, RunId};
+use jojobot_domain::log::claims::emit::{self, Origin, Served};
+use jojobot_domain::log::claims::import::record_id;
+use jojobot_domain::log::claims::{ClaimBody, ClaimEvent, MovedRecord, MovedWrite};
+use jojobot_domain::log::{Event, ObjectId};
 use jojobot_domain::memory::WriteClass;
-use jojobot_domain::memory::merge::{Side, interleave};
+use jojobot_domain::memory::merge::Side;
 use jojobot_domain::memory::write_origin::{WriteOrigin, written_by};
 
 use jojobot_domain::actor::Actor;
@@ -57,31 +56,13 @@ pub(super) struct Emitting {
     subject: ObjectId,
     /// The thing the key writes belong to now, when merges have placed them.
     merged: Option<String>,
-    run: Option<String>,
-    actor: Option<Actor>,
+    origin: Origin,
 }
 
 /// Add one event to the batch of the transaction now open. Outside a writer job
 /// there is no batch and the call fails, and nothing is kept.
-fn emit_one(
-    actor: Option<Actor>,
-    run: Option<String>,
-    written_at: Option<Timestamp>,
-    payload: ClaimEvent,
-) {
-    let _ = crate::writer::sql::emit(vec![Event {
-        event_kind: EVENT_KIND.into(),
-        meaning_version: MEANING_VERSION,
-        actor,
-        run: run.map(RunId),
-        session_card: None,
-        request: None,
-        part: None,
-        occurred_at: None,
-        written_at,
-        imported_source_time: None,
-        payload,
-    }]);
+fn emit_one(event: Event<ClaimEvent>) {
+    let _ = crate::writer::sql::emit(vec![event]);
 }
 
 impl DoltMemory {
@@ -148,26 +129,17 @@ impl DoltMemory {
         for named in &fact.stands_for {
             stands_for.push(Self::stored_record(tx, &named.home, named.local.as_str()).await?);
         }
-        Ok(ClaimBody {
-            label,
-            home,
-            content: fact.content.clone(),
-            details: fact.details.clone(),
-            provenance: fact.provenance,
-            standing: fact.standing,
-            status: fact.status,
-            recorded_at: fact.recorded_at,
-            happened_at: fact.happened_at,
-            happened_through: fact.happened_through,
-            stale_after: fact.stale_after,
-            edge,
-            derived_from,
-            refs,
-            stands_for,
-            receipt: fact.receipt.clone(),
-            app: fact.app_stamp.clone(),
-            inserted_at: fact.inserted_at,
-        })
+        Ok(emit::claim_body(
+            fact,
+            Served {
+                home,
+                label,
+                edge,
+                derived_from,
+                refs,
+                stands_for,
+            },
+        ))
     }
 
     /// **The moment, the run and the writer of one claim write**, read back from
@@ -177,7 +149,7 @@ impl DoltMemory {
         home: &EntityId,
         id: &FactId,
         ordinal: i64,
-    ) -> Result<(Option<Timestamp>, Option<String>, Option<Actor>), MemoryError> {
+    ) -> Result<Origin, MemoryError> {
         let row = sqlx::query(
             "SELECT w.written_at, w.session, w.bot, w.app_stamp,
                     (SELECT s.bot FROM session s WHERE s.id = w.session) AS run_bot
@@ -209,11 +181,11 @@ impl DoltMemory {
             }),
             app_stamp.as_ref(),
         );
-        Ok((
-            parse_stamp(maybe("written_at")?, home.as_str()),
+        Ok(Origin {
+            actor: by.writer,
             run,
-            by.writer,
-        ))
+            written_at: parse_stamp(maybe("written_at")?, home.as_str()),
+        })
     }
 
     /// **Add the event of one claim write to the open transaction's batch**: the
@@ -226,18 +198,12 @@ impl DoltMemory {
         ordinal: i64,
     ) -> Result<(), MemoryError> {
         let claim = Self::claim_body_of(tx, fact).await?;
-        let (written_at, run, actor) =
-            Self::claim_write_origin(tx, &fact.home, &fact.id, ordinal).await?;
+        let origin = Self::claim_write_origin(tx, &fact.home, &fact.id, ordinal).await?;
         let record = record_id(
             &Self::object_key(tx, fact.home.as_str()).await?,
             fact.id.as_str(),
         );
-        let payload = if ordinal == 1 {
-            ClaimEvent::RecordCreated { record, claim }
-        } else {
-            ClaimEvent::RecordRevised { record, claim }
-        };
-        emit_one(actor, run, written_at, payload);
+        emit_one(emit::claim_write(record, ordinal, claim, &origin));
         Ok(())
     }
 
@@ -250,7 +216,7 @@ impl DoltMemory {
         claim_write: i64,
     ) -> Result<Emitting, MemoryError> {
         let stored = Self::object_key(tx, entity.as_str()).await?;
-        let (_, run, actor) = Self::claim_write_origin(tx, entity, fact, claim_write).await?;
+        let origin = Self::claim_write_origin(tx, entity, fact, claim_write).await?;
         // **Writes of a merged thing are numbered among the survivor's**, and
         // belong to it.
         let survivor = Self::final_survivor(tx, entity.as_str()).await?;
@@ -264,8 +230,7 @@ impl DoltMemory {
             record: record_id(&stored, fact.as_str()),
             subject,
             merged: merged.then_some(survivor),
-            run,
-            actor,
+            origin,
         })
     }
 
@@ -293,23 +258,20 @@ impl DoltMemory {
                 targets.push(Self::object_key(tx, &target).await?);
             }
         }
-        emit_one(
-            emitting.actor.clone(),
-            emitting.run.clone(),
-            parse_stamp(Some(at.to_string()), emitting.subject.0.as_str()),
-            ClaimEvent::FieldWritten {
-                record: emitting.record.clone(),
-                subject: emitting.subject.clone(),
-                key: KeyId(key.to_string()),
-                ordinal: ordinal as u64,
-                class,
-                write: match value {
-                    Some(value) => FieldValue::Set(value.clone()),
-                    None => FieldValue::Clear,
-                },
-                targets,
-            },
-        );
+        let origin = Origin {
+            written_at: parse_stamp(Some(at.to_string()), emitting.subject.0.as_str()),
+            ..emitting.origin.clone()
+        };
+        emit_one(emit::key_write(
+            emitting.record.clone(),
+            emitting.subject.clone(),
+            key,
+            ordinal as u64,
+            class,
+            value,
+            targets,
+            &origin,
+        ));
         Ok(())
     }
 
@@ -467,55 +429,36 @@ impl DoltMemory {
                 label: now.clone(),
             });
         }
-        type Sides = (Vec<RawWrite>, Vec<RawWrite>);
-        let mut by_key: std::collections::BTreeMap<String, Sides> = Default::default();
-        for write in self.raw_writes_on(tx, folded).await? {
-            if claims.contains_key(write.fact.as_str()) {
-                by_key.entry(write.key.clone()).or_default().0.push(write);
-            }
-        }
-        for write in self.raw_writes_on(tx, survivor).await? {
-            by_key.entry(write.key.clone()).or_default().1.push(write);
-        }
+        let theirs = self.raw_writes_on(tx, folded).await?;
+        let ours = self.raw_writes_on(tx, survivor).await?;
         let mut writes = Vec::new();
-        for (key, (mut theirs, mut ours)) in by_key {
-            if theirs.is_empty() {
-                continue;
-            }
-            theirs.sort_by_key(|write| write.ordinal);
-            ours.sort_by_key(|write| write.ordinal);
-            for (place, (side, write)) in interleave(theirs, ours).into_iter().enumerate() {
-                let ordinal = place as i64 + 1;
-                if side == Side::Survivor && ordinal == write.ordinal {
-                    continue;
-                }
-                let home = if side == Side::Folded {
-                    folded
-                } else {
-                    survivor
-                };
-                writes.push(MovedWrite {
-                    record: Self::stored_record(tx, home, &write.fact).await?,
-                    key: KeyId(key.clone()),
-                    from_ordinal: write.ordinal as u64,
-                    ordinal: ordinal as u64,
-                });
-            }
+        for placed in emit::placements(theirs, ours, &claims) {
+            let home = if placed.side == Side::Folded {
+                folded
+            } else {
+                survivor
+            };
+            writes.push(MovedWrite {
+                record: Self::stored_record(tx, home, &placed.write.fact).await?,
+                key: jojobot_domain::log::claims::KeyId(placed.write.key.clone()),
+                from_ordinal: placed.write.ordinal as u64,
+                ordinal: placed.ordinal as u64,
+            });
         }
         // **The bot that made the fold is the event's actor**, filed under the id
         // it is stored by, as every claim write names its bot.
-        let actor = Actor::Bot(self.stored_writer(tx, caller).await?);
-        emit_one(
-            Some(actor),
-            session.map(str::to_string),
-            parse_stamp(Some(at.to_string()), folded.as_str()),
-            ClaimEvent::ObjectsMerged {
-                folded: Self::object_key(tx, folded.as_str()).await?,
-                survivor: Self::object_key(tx, survivor.as_str()).await?,
-                records,
-                writes,
-            },
-        );
+        let origin = Origin {
+            actor: Some(Actor::Bot(self.stored_writer(tx, caller).await?)),
+            run: session.map(str::to_string),
+            written_at: parse_stamp(Some(at.to_string()), folded.as_str()),
+        };
+        emit_one(emit::merge(
+            Self::object_key(tx, folded.as_str()).await?,
+            Self::object_key(tx, survivor.as_str()).await?,
+            records,
+            writes,
+            &origin,
+        ));
         Ok(())
     }
 }
