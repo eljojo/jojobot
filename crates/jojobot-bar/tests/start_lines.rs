@@ -100,12 +100,19 @@ fn the_startup_workflow_banner_precedes_checkout_and_its_plan_follows_checkout()
                 .enumerate()
                 .map(|(n, at)| &job[*at..starts.get(n + 1).copied().unwrap_or(job.len())])
                 .collect();
-            assert!(steps[0].contains("level:"), "{workflow}: {}", steps[0]);
+            // The runner cleanup is the first step of every job (it frees a full
+            // slot before anything is written); the banner is the second.
+            assert!(
+                steps[0].contains("JOJOBOT_PRE_JOB"),
+                "{workflow}: {}",
+                steps[0]
+            );
+            assert!(steps[1].contains("level:"), "{workflow}: {}", steps[1]);
             let checkout = steps
                 .iter()
                 .position(|s| s.contains("/checkout@"))
                 .expect("the checkout step");
-            assert!(checkout > 0, "{workflow}: checkout precedes the banner");
+            assert!(checkout > 1, "{workflow}: checkout precedes the banner");
             let static_gate = matches!(workflow, "branch" | "pull-request") && index == 0;
             assert!(
                 if static_gate {
