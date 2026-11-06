@@ -403,6 +403,17 @@ async fn p1_unwrapped_restore_and_wrap_code_correction_stay_available() {
         correction["session"]["run"], booted["session"]["run"],
         "{correction}"
     );
+    let fetched = boot_args(
+        &jojobot,
+        serde_json::json!({"sid":sid_of(&correction), "skill":"evidence"}),
+    )
+    .await;
+    assert!(
+        fetched["skill"]["body"]
+            .as_str()
+            .is_some_and(|body| !body.is_empty()),
+        "{fetched}"
+    );
 }
 
 async fn separate_agent(jojobot: &Jojobot) {
