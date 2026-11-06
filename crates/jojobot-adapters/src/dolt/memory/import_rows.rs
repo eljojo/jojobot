@@ -18,8 +18,9 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use jiff::Timestamp;
 use jojobot_domain::log::ObjectId;
 use jojobot_domain::log::claims::import::{
-    EntityRow, EntityWriteRow, FactRow, FactWriteRow, FieldWriteRow, FormerHandleRow, MergeRow,
-    MetadataRow, Rows, SuppliedRow, TypeWriteRow, record_id, supply_identity,
+    AdoptedRow, EntityRow, EntityWriteRow, FactRow, FactWriteRow, FieldWriteRow, FormerHandleRow,
+    MergeRow, MetadataRow, Rows, SuppliedRow, TypeWriteRow, adopted_identity, record_id,
+    supply_identity,
 };
 use jojobot_domain::log::claims::{ClaimBody, FieldValue, KeyId, ObjectSnapshot};
 use jojobot_domain::memory::types::{DeclaredType, Origin};
@@ -56,6 +57,10 @@ struct Keys {
     /// in the log. A stored row at the same handle is found first and wins
     /// (rule 508).
     supplied: HashMap<String, String>,
+    /// Every handle a build once supplied and none supplies now, that claims are
+    /// still filed under and no row or former handle wears, with the identity the
+    /// import gives it. Found last.
+    adopted: HashMap<String, String>,
 }
 
 impl Keys {
@@ -71,7 +76,10 @@ impl Keys {
             Some(_) => return None,
             None => {}
         }
-        self.supplied.get(stored).cloned()
+        self.supplied
+            .get(stored)
+            .or_else(|| self.adopted.get(stored))
+            .cloned()
     }
 }
 
@@ -143,6 +151,7 @@ impl DoltMemory {
                 .records()
                 .map(|(entity, _)| (entity.id.to_string(), supply_identity(entity.id.as_str()).0))
                 .collect(),
+            adopted: HashMap::new(),
         };
         for row in &entity_rows {
             let id = text(row, "id")?;
@@ -161,6 +170,36 @@ impl DoltMemory {
                 .or_default()
                 .push(text(row, "badge")?);
         }
+        // **A handle the build stopped supplying, with writes filed under its text
+        // and no row**, by the one test the boot's adoption pass uses: listed as
+        // supplied by some build, no entity or former handle wears it, and no
+        // record is supplied at it now.
+        let retired: Vec<String> = sqlx::query_scalar(
+            "SELECT DISTINCT entity FROM (
+                 SELECT entity FROM fact UNION SELECT entity FROM field_write
+             ) AS written
+             WHERE entity LIKE '%:%'
+               AND entity NOT IN (SELECT id FROM entity)
+               AND entity NOT IN (SELECT former_handle FROM entity_former_handle)
+               AND entity IN (SELECT handle FROM supplied_handle)
+             ORDER BY entity",
+        )
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(store)?;
+        let mut adopted = Vec::new();
+        for handle in retired {
+            let id = EntityId(handle.clone());
+            if self.supplied.record_for(&id).is_some()
+                || id.kind().is_none()
+                || id.slug().is_empty()
+            {
+                continue;
+            }
+            keys.adopted
+                .insert(handle.clone(), adopted_identity(&handle).0);
+            adopted.push(AdoptedRow { handle });
+        }
         let mut read = Read {
             keys,
             findings: Vec::new(),
@@ -176,6 +215,7 @@ impl DoltMemory {
                     source: entity.source.clone(),
                 })
                 .collect(),
+            adopted,
             ..Rows::default()
         };
 

@@ -660,3 +660,46 @@ async fn claims_import_carries_the_day_of_a_rename_on_the_retirement() {
 
     server.stop().await;
 }
+
+/// **A handle the build stopped supplying is adopted by the import, and the
+/// claims filed under it are placed on the adopted object.** The operator wrote
+/// on a record the build supplied; a later build stopped supplying it and nothing
+/// holds a row for it. The import adopts the handle once: the claim is filed
+/// under the adopted identity, which the handle resolves to.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn claims_import_adopts_a_handle_the_build_stopped_supplying() {
+    let (_scratch, mut server, pool) = store("claims-import-adopt").await;
+    let supplied = supplied_view("view:loops");
+    let memory = DoltMemory::open(pool.clone()).knowing(supplied.clone());
+    let loops = EntityId("view:loops".to_string());
+    say(&memory, &loops, "the board is read on Mondays").await;
+    // A boot lists what the build supplies, so a later build can tell it stopped.
+    memory
+        .record_supplied_handles(&[])
+        .await
+        .expect("the supplied handles are listed");
+
+    // The next build supplies nothing at that handle.
+    let imported = import_claims_once(&Writer::default(), &pool, &Provisions::default(), at())
+        .await
+        .expect("a retired supplied handle is adopted, not refused");
+    assert!(matches!(imported, Imported::Done { .. }), "{imported:?}");
+    let held = logged(&pool).await;
+    let adopted = jojobot_domain::log::claims::import::adopted_identity("view:loops");
+    assert!(
+        held.iter().any(|event| matches!(
+            &event.payload,
+            ClaimEvent::ObjectCreated { object, .. } if *object == adopted
+        )),
+        "the handle is adopted under its own identity: {held:?}"
+    );
+    let state = State::replay(held.iter());
+    assert_eq!(state.resolve("view:loops"), Some(&adopted));
+    assert_eq!(
+        state.active_records(&adopted).len(),
+        1,
+        "the claim sits on the adopted object"
+    );
+
+    server.stop().await;
+}

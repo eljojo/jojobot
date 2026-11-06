@@ -197,12 +197,29 @@ pub fn supply_identity(handle: &str) -> ObjectId {
     ObjectId(format!("supplied/{handle}"))
 }
 
+/// **A handle the build stopped supplying, with writes filed under its text and
+/// no row**, as the import is handed it. Nothing else of the record survived: its
+/// kind is the handle's, and its name the slug as written.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdoptedRow {
+    pub handle: String,
+}
+
+/// **The identity an adopted handle has in the log.** Deterministic from the
+/// handle, and spelled with a `/` so that no badge, no handle and no supply
+/// identity can take it.
+pub fn adopted_identity(handle: &str) -> ObjectId {
+    ObjectId(format!("adopted/{handle}"))
+}
+
 /// Every row family this mapping reads.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Rows {
     pub entities: Vec<EntityRow>,
     /// The records the build supplies.
     pub supplied: Vec<SuppliedRow>,
+    /// Handles the build stopped supplying that claims are still filed under.
+    pub adopted: Vec<AdoptedRow>,
     pub entity_writes: Vec<EntityWriteRow>,
     pub former_handles: Vec<FormerHandleRow>,
     pub facts: Vec<FactRow>,
@@ -439,6 +456,25 @@ pub fn import(rows: &Rows) -> Result<Vec<Event<ClaimEvent>>, ImportError> {
             },
         }));
     }
+    // **Each adopted handle is created once, under its own identity**, with the
+    // kind its text names and the slug as its name.
+    for row in &rows.adopted {
+        let (kind, name) = row.handle.split_once(':').unwrap_or(("", &row.handle));
+        events.push(plain(ClaimEvent::ObjectCreated {
+            object: adopted_identity(&row.handle),
+            body: ObjectBody {
+                kind: KindId(kind.to_string()),
+                parent: None,
+                name: name.to_string(),
+                source: "jojobot".to_string(),
+                aliases: Vec::new(),
+                boot: None,
+                metadata: BTreeMap::new(),
+                archived: false,
+                bound_to: None,
+            },
+        }));
+    }
     // **Every write of an entity's own row is an observation, in the order the
     // store reads them**: a write nobody stamped first, then by moment. Rows of
     // equal moment fall in the order of their thing's key and ordinal, so the same
@@ -499,6 +535,13 @@ pub fn import(rows: &Rows) -> Result<Vec<Event<ClaimEvent>>, ImportError> {
                 address: row.handle.clone(),
             }));
         }
+    }
+    // An adopted handle has no row and no supplied record, so nothing else wears it.
+    for row in &rows.adopted {
+        events.push(plain(ClaimEvent::AddressBound {
+            object: adopted_identity(&row.handle),
+            address: row.handle.clone(),
+        }));
     }
     let mut declared: Vec<&TypeWriteRow> = rows.type_writes.iter().collect();
     declared.sort_by_key(|row| (row.declaration.name.clone(), row.ordinal));

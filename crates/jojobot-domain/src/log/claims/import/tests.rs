@@ -1111,6 +1111,7 @@ fn no_stored_row_binds_an_object_to_an_app_so_an_import_leaves_every_object_unbo
         entities: _,
         entity_writes: _,
         supplied: _,
+        adopted: _,
         former_handles: _,
         facts: _,
         field_writes: _,
@@ -1717,4 +1718,29 @@ fn a_pointer_to_a_merged_claims_served_address_names_the_record_it_was_created_a
         state.record(&original).is_some(),
         "the record the citation names exists"
     );
+}
+
+fn adopted(handle: &str) -> AdoptedRow {
+    AdoptedRow {
+        handle: handle.into(),
+    }
+}
+
+/// **A handle the build stopped supplying is adopted once** (architect: the
+/// import adopts each retired supplied handle). The object is created under an
+/// identity of its own, its kind read from the handle and its name the slug, and
+/// the handle is bound to it. The identity is neither the supply identity nor a
+/// stored key.
+#[test]
+fn a_retired_supplied_handle_is_adopted_under_an_identity_of_its_own() {
+    let events = imported(&Rows {
+        adopted: vec![adopted("view:board")],
+        ..Default::default()
+    });
+    let identity = adopted_identity("view:board");
+    assert_ne!(identity, supply_identity("view:board"));
+    assert_eq!(created_objects(&events), vec![&identity]);
+    assert_eq!(bound_addresses(&events), vec![(&identity, "view:board")]);
+    let state = State::replay(&events);
+    assert_eq!(state.resolve("view:board"), Some(&identity));
 }
