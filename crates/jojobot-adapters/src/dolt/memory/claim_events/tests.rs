@@ -124,3 +124,89 @@ async fn a_claim_rewritten_is_one_record_revised_in_the_state() {
     writer.drain().await;
     server.stop().await;
 }
+
+/// **The keys a claim sets are the keys the State holds**: after a capture and
+/// a rewrite that set and take off keys, the State gives the values, the ages
+/// and the backing the store gives for the thing (the witness of rule
+/// 9.3.3-d (b)).
+#[tokio::test]
+async fn the_keys_a_claim_sets_are_held_by_the_state_as_the_store_holds_them() {
+    let (_scratch, mut server, memory, writer, pool) = world("claim-events-keys").await;
+    let homer = EntityId("person:homer".into());
+
+    let made = {
+        let (memory, homer) = (memory.clone(), homer.clone());
+        as_request(&writer, "alpha", async move {
+            let mut fact = NewFact::about(homer, "eats donuts", date(2026, 9, 1));
+            fact.provenance = Provenance::Inference;
+            fact.fields = [("mood", "happy"), ("hair", "none")]
+                .iter()
+                .map(|(key, value)| (key.to_string(), value.to_string()))
+                .collect();
+            fact.sets = fact.fields.keys().cloned().collect();
+            memory
+                .capture(fact)
+                .await
+                .expect("capture")
+                .written()
+                .expect("not blocked")
+                .address()
+        })
+        .await
+    };
+    {
+        let (memory, made) = (memory.clone(), made.clone());
+        as_request(&writer, "beta", async move {
+            memory
+                .update_fact(
+                    &made,
+                    FactPatch {
+                        fields: [("mood".to_string(), "grumpy".to_string())]
+                            .into_iter()
+                            .collect(),
+                        sets: ["mood".to_string()].into_iter().collect(),
+                        provenance: Some(Provenance::Inference),
+                        ..Default::default()
+                    },
+                    &EntityId("bot:sigma".into()),
+                )
+                .await
+                .expect("the claim is rewritten")
+                .written()
+                .expect("not blocked");
+        })
+        .await;
+    }
+
+    let key = ObjectId(
+        sqlx::query_scalar::<_, Option<String>>("SELECT badge FROM entity WHERE id = ?")
+            .bind(homer.as_str())
+            .fetch_one(&pool)
+            .await
+            .expect("the entity row")
+            .unwrap_or_else(|| homer.to_string()),
+    );
+    let declared = memory.declared_types().await.expect("declarations");
+    let seam = writer.seam().expect("the seam opened with the first begin");
+    let (held, ages, backing) = seam.read_claims(|state| {
+        (
+            state.fields(&key, &declared),
+            state.held_since(&key, &declared),
+            state.backing(&key, &declared),
+        )
+    });
+    let stored = memory.field_ages(&homer).await.expect("the store's ages");
+    assert_eq!(held["mood"], "grumpy", "the later write holds the key");
+    assert_eq!(held["hair"], "none");
+    assert_eq!(
+        ages, stored.keys,
+        "the moment each key's value was taken in"
+    );
+    assert_eq!(
+        backing,
+        memory.backing(&homer).await.expect("the store's backing"),
+        "who backs each key"
+    );
+    writer.drain().await;
+    server.stop().await;
+}

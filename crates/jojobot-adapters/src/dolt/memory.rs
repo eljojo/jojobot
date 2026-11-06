@@ -4474,6 +4474,11 @@ impl DoltMemory {
         // such a write and reads as reviewed only if it is not earlier than the
         // keys beside it.
         let moment = clock.now().to_string();
+        let emitting = if wrote.is_empty() {
+            None
+        } else {
+            Some(Self::emitting(tx, entity, fact, claim_write).await?)
+        };
         for (key, value) in wrote {
             let ordinal = ordinal::next(
                 tx,
@@ -4520,6 +4525,9 @@ impl DoltMemory {
                     .await
                     .map_err(store)?;
                 }
+            }
+            if let Some(emitting) = &emitting {
+                Self::emit_key_write(tx, emitting, &moment, &key, ordinal, class, &value).await?;
             }
         }
         Ok(())
