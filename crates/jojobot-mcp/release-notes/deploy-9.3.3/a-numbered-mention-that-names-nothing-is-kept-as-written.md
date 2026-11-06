@@ -9,7 +9,7 @@ miss: A bot that counted on the refusal to catch a wrong number now gets a write
 
 ## Example
 
-Marge posts a message that mentions member 99 of a collection that holds 32 members. The message lands. Read back, the mention is marked unresolved and stays as she wrote it. The same mention in a `capture` is refused with the numbers the collection holds.
+Marge posts a message that mentions member 99 of a collection that holds 32 members. The message lands. Read back, the mention is marked unresolved and stays as Marge wrote it. The same mention in a `capture` is refused with the numbers the collection holds.
 
 ## What to do
 

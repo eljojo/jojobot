@@ -10,7 +10,7 @@ A message its sender replaced before anyone read it is superseded, a final state
 
 ## Example
 
-Homer posts a page to Marge and replaces it with a corrected page before she reads. Her read delivers the corrected page only. Her counts show the first under `superseded`, and `read_message` on its id says it was replaced and by what.
+Homer posts a page to Marge and replaces it with a corrected page before Marge reads. Marge's read delivers the corrected page only. Marge's counts show the first under `superseded`, and `read_message` on its id says it was replaced and by what.
 
 ## What to do
 

@@ -10,7 +10,7 @@ In one session, `recall` and `search` serve an entity or a claim you were served
 
 ## Example
 
-Marge reads `person:homer` with `recall` and gets his fields. Later in the same session she asks again and he has not changed: the answer is the handle `person:homer` and nothing else. She sends the call again with `reship: true` and gets him whole.
+Marge reads `person:homer` with `recall` and gets the fields. Later in the same session Marge asks again and `person:homer` has not changed: the answer is the handle `person:homer` and nothing else. Marge sends the call again with `reship: true` and gets the whole entity.
 
 ## What to do
 
