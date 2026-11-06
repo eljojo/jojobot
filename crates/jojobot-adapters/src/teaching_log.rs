@@ -186,7 +186,7 @@ fn run(sid: &Sid) -> RunId {
 fn refused(error: LogError) -> TeachingError {
     match error {
         LogError::Indeterminate => TeachingError::Indeterminate,
-        LogError::Conflict => TeachingError::Conflict,
+        LogError::Conflict => TeachingError::Store("alpha".into()),
         other => TeachingError::Store(other.to_string()),
     }
 }
