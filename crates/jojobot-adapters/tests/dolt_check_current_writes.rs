@@ -130,11 +130,7 @@ async fn a_dangling_link_a_served_edit_replaced_is_history_and_one_left_is_damag
     assert_eq!(dangling(&pool).await.0, 2, "both rows are damage first");
 
     memory
-        .update_fact(
-            &corrected.address(),
-            correcting_to(&bot),
-            &EntityId("bot:sigma".into()),
-        )
+        .update_fact(&corrected.address(), correcting_to(&bot), &bot)
         .await
         .expect("edit")
         .written()
@@ -189,7 +185,7 @@ async fn a_clear_replaces_a_dangling_link_and_a_new_claim_does_not() {
                 clear_fields: vec!["line".into()],
                 ..Default::default()
             },
-            &EntityId("bot:sigma".into()),
+            &bot,
         )
         .await
         .expect("edit")
