@@ -86,6 +86,72 @@ async fn each_entity_writer_of_the_fake_leaves_its_change_in_the_claims_state() 
         held(&fake, "person:homer").is_none(),
         "the old spelling is retired"
     );
+    // **The prose is the thing's, so a rename keeps it** under the new handle, as
+    // the real store's row keeps its column, and so does a write made after.
+    let prose_of = |fake: &InMemoryMemory, spelling: &str| {
+        held(fake, spelling)
+            .expect("held")
+            .1
+            .metadata
+            .get("prose")
+            .cloned()
+    };
+    assert_eq!(
+        prose_of(&fake, "person:marge").as_deref(),
+        Some("A line of prose."),
+        "the rename dropped the prose from the State"
+    );
+    fake.update_entity(
+        &marge,
+        EntityPatch {
+            name: Some("Marge B".into()),
+            ..EntityPatch::default()
+        },
+    )
+    .await
+    .expect("the edit after the rename lands");
+    assert_eq!(
+        prose_of(&fake, "person:marge").as_deref(),
+        Some("A line of prose."),
+        "a write after the rename dropped the prose from the State"
+    );
+
+    // **Prose written under the new handle moves with the next rename**, and a
+    // write after that still finds it: the handle it was written under is neither
+    // the one the thing was made under nor the one it wears now.
+    fake.set_prose(&marge, "Another line.", None)
+        .await
+        .expect("the prose lands under the new handle");
+    let lisa = handle("person:lisa");
+    fake.rename_entity(
+        &marge,
+        &lisa,
+        None,
+        date(2026, 8, 3),
+        Override::none(),
+        None,
+    )
+    .await
+    .expect("the second rename lands");
+    assert_eq!(
+        prose_of(&fake, "person:lisa").as_deref(),
+        Some("Another line."),
+        "the second rename dropped the prose written after the first"
+    );
+    fake.update_entity(
+        &lisa,
+        EntityPatch {
+            name: Some("Lisa S".into()),
+            ..EntityPatch::default()
+        },
+    )
+    .await
+    .expect("the edit after the second rename lands");
+    assert_eq!(
+        prose_of(&fake, "person:lisa").as_deref(),
+        Some("Another line."),
+        "a write after the second rename dropped the prose"
+    );
 }
 
 /// **A creation or an edit whose claim is refused is taken back from the claims

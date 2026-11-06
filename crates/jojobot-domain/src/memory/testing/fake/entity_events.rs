@@ -11,6 +11,33 @@ use crate::log::claims::entity_change::{EntityChange, entity_change_events};
 use crate::log::claims::import::EntityRow;
 
 impl InMemoryMemory {
+    /// **The prose of `row`**, which the fake keeps under the handle the thing was
+    /// written under and never re-keys on a rename, as the real store keeps it in
+    /// a column of the row. The handle the row wears now answers first, then the
+    /// one it is being renamed from (its former-handle entry is written after the
+    /// event), then the handles it has left, newest first.
+    ///
+    /// The former handles are read before the prose is, so no two locks are held
+    /// at once.
+    fn prose_of(&self, row: &Entity, renamed_from: Option<&EntityId>) -> String {
+        let badge = row.badge.as_deref();
+        let former: Vec<EntityId> = self
+            .former_handles
+            .lock()
+            .expect("fake mutex poisoned")
+            .iter()
+            .filter(|held| Some(held.badge.as_str()) == badge)
+            .map(|held| held.former.clone())
+            .rev()
+            .collect();
+        let prose = self.prose.lock().expect("fake mutex poisoned");
+        std::iter::once(row.id.clone())
+            .chain(renamed_from.cloned())
+            .chain(former)
+            .find_map(|handle| prose.get(&handle).cloned())
+            .unwrap_or_default()
+    }
+
     /// **Emit the claims events of a change to `row`**, the entity as the fake
     /// stores it (its parent already the key it wears). The decode to the
     /// domain's row is storage, as the Dolt adapter's is; the choice of events
@@ -21,13 +48,11 @@ impl InMemoryMemory {
         change: EntityChange<'_>,
         session: Option<&str>,
     ) {
-        let prose = self
-            .prose
-            .lock()
-            .expect("fake mutex poisoned")
-            .get(&row.id)
-            .cloned()
-            .unwrap_or_default();
+        let renamed_from = match &change {
+            EntityChange::Renamed { from, .. } => Some(EntityId((*from).to_string())),
+            _ => None,
+        };
+        let prose = self.prose_of(row, renamed_from.as_ref());
         let decoded = EntityRow {
             key: ObjectId(row.badge.clone().unwrap_or_else(|| row.id.to_string())),
             handle: row.id.to_string(),
