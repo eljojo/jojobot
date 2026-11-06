@@ -406,6 +406,60 @@ fn lines_under<'a>(yaml: &'a str, header: &str, indent: usize) -> Vec<&'a str> {
     found
 }
 
+/// A full runner slot must be cleared before checkout or any build can fail.
+#[test]
+fn every_job_runs_the_runner_pre_job_first() {
+    let mut workflows = 0;
+    for entry in std::fs::read_dir(root().join(".forgejo/workflows")).unwrap() {
+        let path = entry.unwrap().path();
+        if !matches!(
+            path.extension().and_then(|e| e.to_str()),
+            Some("yml" | "yaml")
+        ) {
+            continue;
+        }
+        workflows += 1;
+        let yaml = std::fs::read_to_string(&path).unwrap();
+        let jobs = lines_under(&yaml, "jobs:", 0).join("\n");
+        let names: Vec<_> = jobs
+            .lines()
+            .filter(|line| line.starts_with("  ") && !line.starts_with("   "))
+            .map(str::trim)
+            .collect();
+        assert!(!names.is_empty(), "{} has no jobs", path.display());
+        for job in names {
+            let block = lines_under(&jobs, job, 2).join("\n");
+            let steps = lines_under(&block, "steps:", 4);
+            assert!(!steps.is_empty(), "{} {job} has no steps", path.display());
+            let first: Vec<_> = steps
+                .iter()
+                .take(1)
+                .chain(
+                    steps
+                        .iter()
+                        .skip(1)
+                        .take_while(|line| !line.starts_with("      - ")),
+                )
+                .map(|line| line.trim())
+                .collect();
+            assert!(first[0].starts_with("- name:"), "{job}: {first:?}");
+            assert_eq!(
+                first.get(1..),
+                Some(
+                    [
+                        "run: |",
+                        r#"[ -z "${JOJOBOT_PRE_JOB:-}" ] || "$JOJOBOT_PRE_JOB""#
+                    ]
+                    .as_slice()
+                ),
+                "{} {job} must run the unconditional runner cleanup first: {first:?}",
+                path.display(),
+            );
+        }
+    }
+    assert!(workflows > 0, "no workflows were checked");
+}
+
 /// **A pull request to a deploy branch gets the pull-request bar.**
 ///
 /// A carry into a `deploy-*` branch is landed by a pull request, and a trigger
