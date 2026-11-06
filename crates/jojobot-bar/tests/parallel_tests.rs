@@ -131,6 +131,7 @@ fn run_bar_after(args: &[&str], env: &[(&str, &str)], before: impl FnOnce(&Path)
             .env("BAR_HISTORY_DIR", dir.join("history"))
             // The caller's own limit must not decide what a case measures.
             .env_remove("BAR_JOBS")
+            .env_remove("BAR_SLOT_CORES")
             .env_remove("JOJOBOT_ROOM_TIMING")
             .envs(env.iter().copied()),
     )
