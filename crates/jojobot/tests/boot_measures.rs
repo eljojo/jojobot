@@ -3,7 +3,7 @@
 //! spawns the real binary over a store it prepared, times process start to the
 //! first answer of `/healthz`, reads the peak resident memory of the server and its store, and
 //! prints one line. The release promises a boot under [`BOOT_BOUND`] and a process
-//! under [`MEMORY_BOUND_KIB`] (`MemoryMax=1G`); a case fails with the measured
+//! under [`memory_bound_kib`] (the `memoryMax` of the NixOS module); a case fails with the measured
 //! number when it is over.
 //!
 //! The store is the one the last deployed build recorded (`UPGRADE_FIXTURE_DIR`,
@@ -32,8 +32,55 @@ use jojobot_domain::teaching::events::{RunId, TeachingEvent};
 
 /// The release's boot promise.
 const BOOT_BOUND: Duration = Duration::from_secs(20);
-/// `MemoryMax=1G`.
-const MEMORY_BOUND_KIB: u64 = 1024 * 1024;
+
+/// **The memory the unit may use**, read from the NixOS module's `memoryMax`
+/// default, which the unit's `MemoryMax` takes, so the bound is the one the
+/// deployment sets and not a copy of it. It covers the server and the Dolt store it
+/// starts, so the cases compare it with their sum.
+fn memory_bound_kib() -> u64 {
+    let module =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../nix/modules/jojobot.nix");
+    let text = std::fs::read_to_string(&module)
+        .unwrap_or_else(|e| panic!("reading {}: {e}", module.display()));
+    let option = text
+        .split("memoryMax = mkOption {")
+        .nth(1)
+        .expect("the module declares the memoryMax option");
+    let value = option
+        .split("default = \"")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .expect("the memoryMax option has a default");
+    systemd_size_kib(value)
+}
+
+/// A systemd size (`4G`, `512M`, `1048576K`, bytes when bare) in kB.
+fn systemd_size_kib(size: &str) -> u64 {
+    let digits = size.trim_end_matches(|c: char| c.is_ascii_alphabetic());
+    let number: u64 = digits
+        .parse()
+        .unwrap_or_else(|_| panic!("{size:?} is not a systemd size"));
+    match &size[digits.len()..] {
+        "" => number / 1024,
+        "K" => number,
+        "M" => number * 1024,
+        "G" => number * 1024 * 1024,
+        "T" => number * 1024 * 1024 * 1024,
+        other => panic!("{size:?}: the unit {other:?} is not one the bound reads"),
+    }
+}
+
+#[test]
+fn the_memory_bound_is_read_from_the_module_and_sizes_are_read_with_their_unit() {
+    assert_eq!(systemd_size_kib("4G"), 4 * 1024 * 1024);
+    assert_eq!(systemd_size_kib("512M"), 512 * 1024);
+    assert_eq!(systemd_size_kib("1048576K"), 1024 * 1024);
+    assert_eq!(systemd_size_kib("2097152"), 2048);
+    assert!(
+        memory_bound_kib() >= 1024 * 1024,
+        "the module bounds the unit below a gigabyte"
+    );
+}
 /// Teaching events in the log's tail, in batches of [`PER_BATCH`].
 const EVENTS: u64 = 20_000;
 const PER_BATCH: u64 = 500;
@@ -166,7 +213,7 @@ impl Running {
     }
 
     /// **Peak resident memory of the server and the store it started**, from the
-    /// kernel's own account, as `(server, store)`. `MemoryMax=1G` covers the
+    /// kernel's own account, as `(server, store)`. The unit's `MemoryMax` covers the
     /// service's whole cgroup, so the bound is on their sum. The store is every
     /// descendant of the server's pid.
     fn peaks_kib(&self) -> (u64, u64) {
@@ -1050,23 +1097,37 @@ fn measured(case: &str, size: &Size, run: &mut Running) -> Duration {
         .filter(|line| line.contains("elapsed_ms") || line.contains("event log boot"))
         .map(String::as_str)
         .collect();
+    // **Who owns the bytes**: the server's process and the store it started.
+    let share = |part: u64| part * 100 / peak.max(1);
+    let (owner, owned) = if server >= store {
+        ("the server", server)
+    } else {
+        ("the store", store)
+    };
     record(&format!(
         "boot-measure {case}: things={} messages={} log_events={} \
-         start_to_first_answer_ms={} peak_rss_kib={peak} (server {server} + store {store})\n  {}",
+         start_to_first_answer_ms={} peak_rss_kib={peak} (server {server} + store {store}); \
+         {owner} owns {} per cent of the peak, {owned} kB (server {} per cent, store {} per cent) \
+         against a bound of {} kB\n  {}",
         size.things,
         size.messages,
         size.events,
         took.as_millis(),
+        share(owned),
+        share(server),
+        share(store),
+        memory_bound_kib(),
         steps.join("\n  ")
     ));
     assert!(
         took < BOOT_BOUND,
         "{case}: the first answer took {took:?}, over {BOOT_BOUND:?}"
     );
+    let bound = memory_bound_kib();
     assert!(
-        peak < MEMORY_BOUND_KIB,
+        peak < bound,
         "{case}: peak memory was {peak} kB (server {server} + store {store}), over \
-         {MEMORY_BOUND_KIB} kB (MemoryMax=1G)"
+         {bound} kB (the module's memoryMax)"
     );
     took
 }
