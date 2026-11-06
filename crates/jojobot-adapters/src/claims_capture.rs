@@ -168,7 +168,12 @@ pub(crate) async fn admit_fact(
         seam,
         Box::new(move |state, declared| {
             let door = door(state, declared, fact)?;
-            Ok(CaptureRequest::of_fact(fact, record, Route::Verb, door))
+            // The engine's own records carry keys a verb is refused.
+            let route = match door.actor {
+                jojobot_domain::actor::Actor::System(_) => Route::Engine,
+                _ => Route::Verb,
+            };
+            Ok(CaptureRequest::of_fact(fact, record, route, door))
         }),
         Box::new(move |state, request| measure(state, fact, request)),
         boot_floor,

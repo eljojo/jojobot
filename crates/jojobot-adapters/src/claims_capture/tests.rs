@@ -375,10 +375,14 @@ async fn a_measure_sees_the_state_the_earlier_write_left() {
 }
 
 fn job() -> CaptureJob {
+    job_as(Actor::Operator)
+}
+
+fn job_as(actor: Actor) -> CaptureJob {
     CaptureJob {
-        door: Arc::new(|_, _, _| {
+        door: Arc::new(move |_, _, _| {
             Ok(Door {
-                actor: Actor::Operator,
+                actor: actor.clone(),
                 owned_keys: BTreeSet::new(),
                 owner_revoked: false,
                 measures: Measures::default(),
@@ -478,6 +482,47 @@ fn starred(subject: &str) -> NewFact {
 /// **A star that makes the boot too heavy is refused, and nothing is written.**
 /// The boot render is handed to the job as a callback, and the job asks it for
 /// a write that stars a rule: without that, the refusal would drop silently.
+/// **The engine's own record is admitted for the engine and refused for a verb.**
+/// A key jojobot writes itself is the engine's to write: the release-notes ledger
+/// is one, and the job of the engine's writes names the system as the actor.
+#[tokio::test]
+async fn a_key_jojobot_writes_is_admitted_for_the_engine_and_refused_for_a_verb() {
+    let (_scratch, mut server, store, _pool, writer) = world("capture-job-engine").await;
+    let memory = Arc::new(crate::dolt::memory::DoltMemory::open(store.clone()));
+    let record = || {
+        let mut fact = NewFact::about(
+            EntityId("person:homer".into()),
+            "a record of the engine",
+            date(2026, 4, 19),
+        );
+        fact.fields = BTreeMap::from([("engine_record".to_string(), "restore".to_string())]);
+        fact
+    };
+    let as_a_verb = {
+        let (memory, fact) = (Arc::clone(&memory), record());
+        within(job(), writer.run(async move { memory.capture(fact).await })).await
+    };
+    assert!(
+        !matches!(as_a_verb, Ok(Guarded::Written(_))),
+        "a verb does not write the engine's key: {as_a_verb:?}"
+    );
+    let as_the_engine = {
+        let (memory, fact) = (Arc::clone(&memory), record());
+        let engine = job_as(Actor::System("jojobot".into()));
+        within(
+            engine,
+            writer.run(async move { memory.capture(fact).await }),
+        )
+        .await
+    };
+    assert!(
+        matches!(as_the_engine, Ok(Guarded::Written(_))),
+        "the engine writes its own key: {as_the_engine:?}"
+    );
+    writer.drain().await;
+    server.stop().await;
+}
+
 /// **A capture that changes the spec of a bot request is numbered once, by the
 /// writer, in the batch of the act.** The store is asked with a job, and the log
 /// holds one write of the generation for each spec the request had.
