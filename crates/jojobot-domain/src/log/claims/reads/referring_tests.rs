@@ -119,3 +119,35 @@ fn the_records_pointing_at_a_thing_are_the_records_whose_newest_write_names_it()
     }]));
     assert_eq!(holders(&merged, "person:alpha").len(), 2);
 }
+
+/// **A holder a merge left unmapped has no served address**, and the survivor's
+/// own claim under the same label is a different claim: it is not pointing at
+/// the thing, and the unmapped one is not served in its place.
+#[test]
+fn an_unmapped_holder_is_not_served_at_the_address_of_the_survivors_own_claim() {
+    let state = state_of(
+        made("k1", "person:alpha")
+            .into_iter()
+            .chain(made("k2", "person:beta"))
+            .chain(made("k3", "person:gamma"))
+            .chain([
+                claim_on("k1", "k1/f1"),
+                claim_on("k3", "k3/f1"),
+                writes(
+                    "k3/f1",
+                    "k3",
+                    "friend",
+                    1,
+                    FieldValue::Set("@#k2".into()),
+                    &["k2"],
+                ),
+                ClaimEvent::ObjectsMerged {
+                    folded: object("k3"),
+                    survivor: object("k1"),
+                    records: Vec::new(),
+                    writes: Vec::new(),
+                },
+            ]),
+    );
+    assert!(holders(&state, "person:beta").is_empty());
+}

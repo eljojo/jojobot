@@ -138,6 +138,7 @@ impl State {
         let mut facts: Vec<memory::Fact> = self
             .records_built_on(&located.record)
             .into_iter()
+            .filter(|record| self.has_served_address(record))
             .filter_map(|record| self.fact(record))
             .collect();
         facts.sort_by(|a, b| {
@@ -155,6 +156,7 @@ impl State {
         let mut facts: Vec<memory::Fact> = self
             .records_naming(object)
             .into_iter()
+            .filter(|record| self.has_served_address(record))
             .filter_map(|record| self.fact(record))
             .collect();
         // The holders in the order of their handles, and a holder's claims in the
@@ -281,6 +283,16 @@ impl State {
             })
             .collect();
         Some(memory::list::serve_values(composed))
+    }
+
+    /// **Whether a claim has an ordinary served address.** A claim a merge left
+    /// on the folded object has none: its old label can be another claim's label
+    /// under the survivor, so a read that serves it there names the wrong claim.
+    /// It stays in the scan's unmapped list.
+    fn has_served_address(&self, record: &RecordId) -> bool {
+        self.records
+            .get(record)
+            .is_some_and(|held| self.survivor(&held.claim.home) == &held.claim.home)
     }
 
     /// **A claim as a read serves it**: the handle it is homed on, the handles

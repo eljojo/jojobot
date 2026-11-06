@@ -74,7 +74,7 @@ fn the_claims_built_on_a_claim_are_the_claims_that_name_it_as_their_source() {
 
     // The source's claim moves to the survivor under a new label, and what was
     // built on it is found at the new address.
-    let moved = state_of(base.chain([ClaimEvent::ObjectsMerged {
+    let moved = state_of(base.clone().chain([ClaimEvent::ObjectsMerged {
         folded: object("k2"),
         survivor: object("k1"),
         records: vec![MovedRecord {
@@ -83,8 +83,28 @@ fn the_claims_built_on_a_claim_are_the_claims_that_name_it_as_their_source() {
         }],
         writes: Vec::new(),
     }]));
+    // k2/f2 stays on the folded object: it has no served address, and the
+    // survivor's own f2 is a different claim.
+    assert!(standing_on(&moved, "person:alpha", "f7").is_empty());
+
+    // Once the claim built on it moves too, it is found at its new address.
+    let both = state_of(base.chain([ClaimEvent::ObjectsMerged {
+        folded: object("k2"),
+        survivor: object("k1"),
+        records: vec![
+            MovedRecord {
+                record: record("k2/f1"),
+                label: "f7".into(),
+            },
+            MovedRecord {
+                record: record("k2/f2"),
+                label: "f8".into(),
+            },
+        ],
+        writes: Vec::new(),
+    }]));
     assert_eq!(
-        standing_on(&moved, "person:alpha", "f7"),
-        vec![("person:alpha".to_string(), "f2".to_string())]
+        standing_on(&both, "person:alpha", "f7"),
+        vec![("person:alpha".to_string(), "f8".to_string())]
     );
 }
