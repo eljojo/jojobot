@@ -549,21 +549,6 @@ pub fn prepare(
             key,
         });
     }
-    // **A write that changes the spec of a bot request raises its generation in
-    // the same batch.** The number is worked out from the State and the events
-    // above, before anything is applied; a caller never sends it.
-    for generation in state.generations_after(&events, declared) {
-        let key = KeyId(memory::bot_request::GENERATION.to_string());
-        events.push(ClaimEvent::FieldWritten {
-            record: generation.record,
-            ordinal: state.next_ordinal(&generation.object, &key),
-            subject: generation.object,
-            class: WriteClass::Sets,
-            write: FieldValue::Set(generation.number.to_string()),
-            targets: Vec::new(),
-            key,
-        });
-    }
     Ok(events)
 }
 
