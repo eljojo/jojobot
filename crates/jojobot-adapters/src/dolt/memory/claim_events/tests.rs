@@ -542,3 +542,68 @@ async fn a_claim_citing_a_merged_claim_names_the_record_it_is_stored_in() {
     writer.drain().await;
     server.stop().await;
 }
+
+/// **A clear in the State is the clear in the store**: sent to a claim that does
+/// not hold the key it withdraws that claim's write and the thing keeps its
+/// value; sent to the claim that holds the key it takes the key off the thing,
+/// and the older claim's value does not return. After each, the State gives the
+/// store's values, ages and backing.
+#[tokio::test]
+async fn a_clear_is_held_by_the_state_as_the_store_holds_it() {
+    let (_scratch, mut server, memory, writer, pool) = world("claim-events-clear").await;
+    let homer = EntityId("person:homer".into());
+
+    let said = |what: &'static str, mood: &'static str| {
+        let (memory, homer) = (memory.clone(), homer.clone());
+        async move {
+            let mut fact = NewFact::about(homer, what, date(2026, 9, 1));
+            fact.provenance = Provenance::Inference;
+            fact.fields = [("mood".to_string(), mood.to_string())].into();
+            fact.sets = fact.fields.keys().cloned().collect();
+            memory
+                .capture(fact)
+                .await
+                .expect("capture")
+                .written()
+                .expect("not blocked")
+                .address()
+        }
+    };
+    let clear = |at: jojobot_domain::memory::FactAddress| {
+        let memory = memory.clone();
+        async move {
+            memory
+                .update_fact(
+                    &at,
+                    FactPatch {
+                        clear_fields: vec!["mood".to_string()],
+                        provenance: Some(Provenance::Inference),
+                        ..Default::default()
+                    },
+                    &EntityId("bot:sigma".into()),
+                )
+                .await
+                .expect("the clear lands")
+                .written()
+                .expect("not blocked");
+        }
+    };
+    let older = as_request(&writer, "alpha", said("felt content", "content")).await;
+    let newer = as_request(&writer, "beta", said("felt queasy", "queasy")).await;
+
+    as_request(&writer, "gamma", clear(older)).await;
+    let held = agrees(&memory, &writer, &pool, &homer).await;
+    assert_eq!(
+        held["mood"], "queasy",
+        "the clear on the older claim leaves the value"
+    );
+
+    as_request(&writer, "delta", clear(newer)).await;
+    let held = agrees(&memory, &writer, &pool, &homer).await;
+    assert!(
+        !held.contains_key("mood"),
+        "the clear on the holder takes the key off, and nothing older returns: {held:?}"
+    );
+    writer.drain().await;
+    server.stop().await;
+}
