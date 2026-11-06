@@ -14,7 +14,7 @@
 //! the next start).
 
 use jiff::Timestamp;
-use jojobot_domain::log::claims::import::{import, unexplained_merge_numbers};
+use jojobot_domain::log::claims::import::{import, import_completed, unexplained_merge_numbers};
 use jojobot_domain::log::{BatchId, Position, SealedBatch};
 use jojobot_domain::memory::owned::Provisions;
 use sqlx::MySqlPool;
@@ -156,13 +156,12 @@ async fn import_in_job(
     let events = import(&read.rows).map_err(|e| ClaimsImportError::Unmappable(e.to_string()))?;
     let empty_merge_numbers = unexplained_merge_numbers(&read.rows)
         .map_err(|e| ClaimsImportError::Unmappable(e.to_string()))?;
-    if events.is_empty() {
-        return Ok(Imported::Done {
-            events: 0,
-            empty_merge_numbers: Vec::new(),
-            skipped_homes: read.skipped_homes,
-        });
-    }
+    // **The last member says the import ran to its end**, and it is the only member
+    // when the store held nothing to map, so a log that holds a completed import is
+    // told from one that holds none by this event.
+    let mapped = events.len();
+    let mut events = events;
+    events.push(import_completed(mapped));
     let members: Vec<Vec<u8>> = events.iter().map(codec::encode).collect();
 
     let mut tx = pool
@@ -187,7 +186,7 @@ async fn import_in_job(
         Ok(()) => {
             staged.committed();
             Ok(Imported::Done {
-                events: events.len(),
+                events: mapped,
                 empty_merge_numbers,
                 skipped_homes: read.skipped_homes,
             })

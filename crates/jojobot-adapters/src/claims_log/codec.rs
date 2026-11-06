@@ -128,7 +128,7 @@ type ValueWire = Option<String>;
 /// **Every shape this family stores**, as `Payload` names them. Kept beside the
 /// enum so a new shape is added in both places, and checked against the events and
 /// the pinned literals in the tests.
-pub const SHAPES: [&str; 14] = [
+pub const SHAPES: [&str; 15] = [
     "ObjectCreated",
     "ObjectRevised",
     "ObjectBaselined",
@@ -138,6 +138,7 @@ pub const SHAPES: [&str; 14] = [
     "ObjectsMerged",
     "ObjectRedirected",
     "MergeNumbersLeftEmpty",
+    "ImportCompleted",
     "RecordCreated",
     "RecordRevised",
     "FieldWritten",
@@ -188,6 +189,9 @@ enum Payload {
     MergeNumbersLeftEmpty {
         count: u64,
     },
+    ImportCompleted {
+        events: u64,
+    },
     RecordCreated {
         record: RecordId,
         claim: ClaimBodyWire,
@@ -232,6 +236,7 @@ impl Payload {
             Payload::ObjectsMerged { .. } => "ObjectsMerged",
             Payload::ObjectRedirected { .. } => "ObjectRedirected",
             Payload::MergeNumbersLeftEmpty { .. } => "MergeNumbersLeftEmpty",
+            Payload::ImportCompleted { .. } => "ImportCompleted",
             Payload::RecordCreated { .. } => "RecordCreated",
             Payload::RecordRevised { .. } => "RecordRevised",
             Payload::FieldWritten { .. } => "FieldWritten",
@@ -485,6 +490,7 @@ fn payload_wire(event: &ClaimEvent) -> Payload {
         ClaimEvent::MergeNumbersLeftEmpty { count } => {
             Payload::MergeNumbersLeftEmpty { count: *count }
         }
+        ClaimEvent::ImportCompleted { events } => Payload::ImportCompleted { events: *events },
         ClaimEvent::ObjectRedirected { folded, survivor } => Payload::ObjectRedirected {
             folded: folded.clone(),
             survivor: survivor.clone(),
@@ -604,6 +610,7 @@ fn event_of(payload: Payload) -> Result<ClaimEvent, DecodeError> {
             ClaimEvent::ObjectRedirected { folded, survivor }
         }
         Payload::MergeNumbersLeftEmpty { count } => ClaimEvent::MergeNumbersLeftEmpty { count },
+        Payload::ImportCompleted { events } => ClaimEvent::ImportCompleted { events },
         Payload::RecordCreated { record, claim } => ClaimEvent::RecordCreated {
             record,
             claim: claim_of(claim),

@@ -202,6 +202,13 @@ pub enum ClaimEvent {
         folded: ObjectId,
         survivor: ObjectId,
     },
+    /// **The import ran to its end.** The last member of the import's batch, and
+    /// the only member of it when the store held nothing to map, so a log that
+    /// holds this event holds a completed import. `events` is how many events the
+    /// mapping made before it. It changes no state.
+    ImportCompleted {
+        events: u64,
+    },
     /// **Merge numbers the store never used**: a gap in the stored numbers that no
     /// merge row and no merge mark explains. The numbers are never reissued, so
     /// the highest merge number counts them.
@@ -354,6 +361,7 @@ impl State {
                 self.merge(folded, survivor, &[], &[], false)
             }
             ClaimEvent::MergeNumbersLeftEmpty { count } => self.leave_merge_numbers_empty(*count),
+            ClaimEvent::ImportCompleted { .. } => {}
             ClaimEvent::RecordCreated { record, claim } => {
                 let before = self.records.get(record).map(|held| held.claim.clone());
                 self.records.insert(

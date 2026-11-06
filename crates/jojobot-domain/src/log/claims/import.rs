@@ -222,6 +222,13 @@ fn supplied_body(row: &SuppliedRow) -> ObjectBody {
     }
 }
 
+/// **The event that ends an import**, after the `mapped` events the mapping made.
+pub fn import_completed(mapped: usize) -> Event<ClaimEvent> {
+    plain(ClaimEvent::ImportCompleted {
+        events: mapped as u64,
+    })
+}
+
 /// **The events a later boot appends so the log holds the build's supply list.**
 /// The import made the supply identity of every record the build supplied at its
 /// boot; a later build can supply more. Each record the log holds no object for is

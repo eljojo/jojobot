@@ -94,8 +94,13 @@ async fn expected(pool: &sqlx::MySqlPool) -> Vec<Event<ClaimEvent>> {
         .import_rows()
         .await
         .expect("the rows read");
-    import(&read.rows)
-        .expect("the rows map")
+    let mut events = import(&read.rows).expect("the rows map");
+    // The import ends with the event that says it ran to its end.
+    let mapped = events.len();
+    events.push(jojobot_domain::log::claims::import::import_completed(
+        mapped,
+    ));
+    events
         .iter()
         .map(|event| codec::decode(&codec::encode(event)).expect("an event reads back"))
         .collect()
@@ -144,7 +149,11 @@ async fn claims_import_appends_what_the_rows_mean_once() {
     assert!(events > 0);
 
     let held = logged(&pool).await;
-    assert_eq!(held.len(), events, "the log holds what the call reports");
+    assert_eq!(
+        held.len(),
+        events + 1,
+        "the log holds what the call reports and the event that ends the import"
+    );
     assert_eq!(
         held,
         expected(&pool).await,
@@ -162,7 +171,7 @@ async fn claims_import_appends_what_the_rows_mean_once() {
     assert_eq!(again, Imported::AlreadyDone);
     assert_eq!(
         logged(&pool).await.len(),
-        events,
+        events + 1,
         "a second call appends nothing"
     );
 
@@ -813,6 +822,48 @@ async fn claims_reconcile_appends_the_new_record_and_then_nothing() {
             "view:board"
         ))
     );
+
+    server.stop().await;
+}
+
+/// **An import over an empty store still appends one member**, the event that says
+/// it ran to its end, in a batch whose id begins `claims-import:`. A log that holds
+/// that event is told from one that holds none, so a writer can refuse to emit
+/// before the import is done. A second call finds the log holding it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn claims_import_over_an_empty_store_appends_the_event_that_ends_it() {
+    let (_scratch, mut server, pool) = store("claims-import-empty").await;
+    let imported = import_claims_once(&Writer::default(), &pool, &Provisions::default(), at())
+        .await
+        .expect("an empty store imports");
+    let Imported::Done { events, .. } = imported else {
+        panic!("the import ran: {imported:?}");
+    };
+    assert_eq!(events, 0, "nothing to map");
+    let held = logged(&pool).await;
+    assert_eq!(held.len(), 1, "one member: {held:?}");
+    assert!(
+        matches!(held[0].payload, ClaimEvent::ImportCompleted { events: 0 }),
+        "{held:?}"
+    );
+    let payloads: Vec<Vec<u8>> = sqlx::query_scalar(
+        "SELECT payload FROM event_log WHERE first_position IS NOT NULL ORDER BY first_position",
+    )
+    .fetch_all(&pool)
+    .await
+    .expect("the batches read");
+    assert!(
+        payloads
+            .iter()
+            .all(|payload| String::from_utf8_lossy(payload).contains("claims-import:")),
+        "the batch id begins claims-import:"
+    );
+    assert!(matches!(
+        import_claims_once(&Writer::default(), &pool, &Provisions::default(), at())
+            .await
+            .expect("a second call"),
+        Imported::AlreadyDone
+    ));
 
     server.stop().await;
 }
