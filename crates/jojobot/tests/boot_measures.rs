@@ -411,19 +411,25 @@ async fn grow(port: u16) {
         }
     };
 
-    let booted = call(
-        "start_here",
+    // **The recorded store may hold a run of this bot**, and a boot then offers
+    // resume-or-new and hands back no sid until it is answered.
+    let mut sid = None;
+    let mut answered = String::new();
+    for arguments in [
         serde_json::json!({ "bot": "assistant", "brief": true }),
-    )
-    .await;
-    let booted = booted["content"][0]["text"]
-        .as_str()
-        .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())
-        .expect("start_here answers with json");
-    let sid = booted["session"]["sid"]
-        .as_str()
-        .expect("the default identity boots")
-        .to_string();
+        serde_json::json!({ "bot": "assistant", "brief": true, "resume": "new" }),
+    ] {
+        let booted = call("start_here", arguments).await;
+        let text = booted["content"][0]["text"].as_str().unwrap_or_default();
+        answered = text.chars().take(2_000).collect();
+        sid = serde_json::from_str::<serde_json::Value>(text)
+            .ok()
+            .and_then(|json| json["session"]["sid"].as_str().map(str::to_string));
+        if sid.is_some() {
+            break;
+        }
+    }
+    let sid = sid.unwrap_or_else(|| panic!("the default identity boots; it answered: {answered}"));
 
     for n in 0..PRODUCTION_THINGS {
         let handle = format!("load-{n}");
