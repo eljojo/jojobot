@@ -20,10 +20,7 @@ impl Jojobot {
             if let Some(retired) = self.registry.retired(key)
                 && retired.by == sid::RetiredBy::Wrapped
             {
-                return Ok(Some(crate::caller::finished_session_declined(
-                    retired.name.as_str(),
-                    retired.at,
-                )));
+                return Ok(Some(crate::caller::retired_key_declined(&retired)));
             }
             if let Some(handle) = self.registry.lookup_key(key)
                 && let Some(id) = handle.card

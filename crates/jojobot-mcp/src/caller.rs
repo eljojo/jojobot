@@ -155,7 +155,7 @@ pub(crate) fn finished_session_declined(run: &str, at: jiff::Timestamp) -> CallT
 /// **The refusal for a key that stopped opening its run**, in the words of what
 /// ended it. It names the run by its public name and says when, and never
 /// repeats the key.
-fn retired_key_declined(retired: &sid::Retired) -> CallToolResult {
+pub(crate) fn retired_key_declined(retired: &sid::Retired) -> CallToolResult {
     let run = retired.name.as_str();
     let at = retired.at;
     let refusal = match retired.by {
