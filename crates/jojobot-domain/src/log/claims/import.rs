@@ -210,9 +210,9 @@ pub struct Rows {
     pub metadata: Vec<MetadataRow>,
 }
 
-/// **The identity a claim is filed under in the log**: its home and local id.
-/// A merge that gave a claim a new local id gives it a new identity here, as
-/// the store does.
+/// **The identity a claim is filed under in the log**: the home and the local id
+/// it was created under. A merge moves no row, so it keeps this identity and
+/// only changes the label the claim is served under.
 pub fn record_id(home: &ObjectId, local: &str) -> RecordId {
     RecordId(format!("{}/{}", home.0, local))
 }
@@ -492,8 +492,12 @@ pub fn import(rows: &Rows) -> Result<Vec<Event<ClaimEvent>>, ImportError> {
             },
         ));
     }
+    // **The merges are walked once**, for the records they move and for the
+    // addresses they serve claims at.
+    let moves = merge_moves(rows);
+    let served = served_addresses(&moves);
     for fact in &rows.facts {
-        events.extend(claim_events(fact));
+        events.extend(claim_events(fact, &served));
     }
     let placed = placed_by_merges(rows);
     let facts: HashMap<(&ObjectId, &str), &FactRow> = rows
@@ -571,39 +575,7 @@ pub fn import(rows: &Rows) -> Result<Vec<Event<ClaimEvent>>, ImportError> {
             }
         }));
     }
-    let mut steps: Vec<&MergeRow> = rows.merges.iter().collect();
-    steps.sort_by_key(|step| step.no);
-    // **The record each (home, label) names is the one the claim was created
-    // as.** A merge moves no row: the claim stays under the key it was made on
-    // with the local id it had, and each merge gives it a label under its
-    // survivor. Walked in merge order, a claim moved twice is still the record it
-    // was created as.
-    let mut created: HashMap<(ObjectId, String), RecordId> = rows
-        .facts
-        .iter()
-        .map(|fact| {
-            (
-                (fact.home.clone(), fact.local.clone()),
-                record_id(&fact.home, &fact.local),
-            )
-        })
-        .collect();
-    for step in steps {
-        let records: Vec<MovedRecord> = step
-            .claims
-            .iter()
-            .map(|(old, new)| {
-                let record = created
-                    .get(&(step.folded.clone(), old.clone()))
-                    .cloned()
-                    .unwrap_or_else(|| record_id(&step.folded, old));
-                created.insert((step.survivor.clone(), new.clone()), record.clone());
-                MovedRecord {
-                    record,
-                    label: new.clone(),
-                }
-            })
-            .collect();
+    for (step, records) in moves {
         events.push(envelope(
             None,
             step.session.clone(),
@@ -620,15 +592,84 @@ pub fn import(rows: &Rows) -> Result<Vec<Event<ClaimEvent>>, ImportError> {
     Ok(events)
 }
 
+/// **The records each merge moves, in merge order.** A merge moves no row: the
+/// claim stays under the key it was made on with the local id it had, and each
+/// merge gives it a label under its survivor. The record a (home, label) names is
+/// the one the claim was created as, so a claim moved twice is still the record
+/// it was created as.
+fn merge_moves(rows: &Rows) -> Vec<(&MergeRow, Vec<MovedRecord>)> {
+    let mut steps: Vec<&MergeRow> = rows.merges.iter().collect();
+    steps.sort_by_key(|step| step.no);
+    let mut created: HashMap<(ObjectId, String), RecordId> = rows
+        .facts
+        .iter()
+        .map(|fact| {
+            (
+                (fact.home.clone(), fact.local.clone()),
+                record_id(&fact.home, &fact.local),
+            )
+        })
+        .collect();
+    steps
+        .into_iter()
+        .map(|step| {
+            let records = step
+                .claims
+                .iter()
+                .map(|(old, new)| {
+                    let record = created
+                        .get(&(step.folded.clone(), old.clone()))
+                        .cloned()
+                        .unwrap_or_else(|| record_id(&step.folded, old));
+                    created.insert((step.survivor.clone(), new.clone()), record.clone());
+                    MovedRecord {
+                        record,
+                        label: new.clone(),
+                    }
+                })
+                .collect();
+            (step, records)
+        })
+        .collect()
+}
+
+/// **Every address a merge has served a claim at, with the record the claim was
+/// created as.** The store validates a later claim's pointer against the address
+/// the merge serves (the survivor and the new label) and stores that address.
+fn served_addresses(moves: &[(&MergeRow, Vec<MovedRecord>)]) -> HashMap<RecordId, RecordId> {
+    let mut served = HashMap::new();
+    for (step, records) in moves {
+        for moved in records {
+            served.insert(
+                record_id(&step.survivor, &moved.label),
+                moved.record.clone(),
+            );
+        }
+    }
+    served
+}
+
+/// A claim whose pointers name the record each cited claim was created as,
+/// whatever address the store kept them under.
+fn pointing_at_created(mut claim: ClaimBody, served: &HashMap<RecordId, RecordId>) -> ClaimBody {
+    let created = |pointer: RecordId| served.get(&pointer).cloned().unwrap_or(pointer);
+    claim.derived_from = claim.derived_from.take().map(created);
+    claim.stands_for = claim.stands_for.drain(..).map(created).collect();
+    claim
+}
+
 /// One event for each write of a claim, each in the envelope of its own write.
-fn claim_events(fact: &FactRow) -> Vec<Event<ClaimEvent>> {
+fn claim_events(fact: &FactRow, served: &HashMap<RecordId, RecordId>) -> Vec<Event<ClaimEvent>> {
     let record = record_id(&fact.home, &fact.local);
     let mut writes: Vec<&FactWriteRow> = fact.writes.iter().collect();
     writes.sort_by_key(|write| write.ordinal);
     let mut out = Vec::new();
     for (at, write) in writes.iter().enumerate() {
         let by = write_origin::written_by(Some(origin_of(write)), write.claim.app.as_ref());
-        let (record, claim) = (record.clone(), write.claim.clone());
+        let (record, claim) = (
+            record.clone(),
+            pointing_at_created(write.claim.clone(), served),
+        );
         out.push(envelope(
             by.writer,
             by.run,
@@ -643,11 +684,11 @@ fn claim_events(fact: &FactRow) -> Vec<Event<ClaimEvent>> {
     match writes.last() {
         None => out.push(plain(ClaimEvent::RecordCreated {
             record,
-            claim: fact.head.clone(),
+            claim: pointing_at_created(fact.head.clone(), served),
         })),
         Some(last) if last.claim != fact.head => out.push(plain(ClaimEvent::RecordRevised {
             record,
-            claim: fact.head.clone(),
+            claim: pointing_at_created(fact.head.clone(), served),
         })),
         Some(_) => {}
     }

@@ -1672,3 +1672,35 @@ fn a_claim_moved_twice_keeps_naming_the_record_it_was_created_under() {
         ]
     );
 }
+
+/// **A citation of a merged claim's served address names the record the claim was
+/// created as.** The store validates a later claim's `derived_from` against the
+/// address the merge now serves (survivor, new label), and stores that address.
+/// The record behind it is the one created under the folded key, so a pointer
+/// kept as the served address names a record nothing created.
+#[test]
+fn a_pointer_to_a_merged_claims_served_address_names_the_record_it_was_created_as() {
+    let mut rows = merged_pair_as_the_store_leaves_it();
+    let served = record_id(&object("k1"), "f9");
+    let mut citing = write_of(1, "cites the saxophone", None, 4);
+    citing.claim.home = object("k1");
+    citing.claim.label = "f2".into();
+    citing.claim.derived_from = Some(served.clone());
+    citing.claim.stands_for = vec![served.clone()];
+    let mut citing_fact = fact("k1", "f2", vec![citing]);
+    citing_fact.head.derived_from = Some(served.clone());
+    citing_fact.head.stands_for = vec![served];
+    rows.facts.push(citing_fact);
+
+    let state = state_of(&rows);
+    let made = state
+        .record(&record_id(&object("k1"), "f2"))
+        .expect("the citing claim is created");
+    let original = record_id(&object("k2"), "f1");
+    assert_eq!(made.claim.derived_from, Some(original.clone()));
+    assert_eq!(made.claim.stands_for, vec![original.clone()]);
+    assert!(
+        state.record(&original).is_some(),
+        "the record the citation names exists"
+    );
+}

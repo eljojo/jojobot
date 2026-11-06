@@ -1028,10 +1028,8 @@ pub async fn boot_store_observed(
     }
 
     // **Today's claims, fields and identities enter the event log once**, after
-    // every pass that rewrites that data and before anything serves. A start that
-    // skipped it would serve a state with no claims, so an error fails the boot
-    // loudly; the next start tries again, and a log that already holds a claims
-    // event is never imported into twice.
+    // every pass that rewrites that data and before anything serves. A log that
+    // already holds a claims event is never imported into twice.
     match timed(
         "claims-import",
         jojobot_adapters::claims_import::import_claims_once(
@@ -1049,7 +1047,16 @@ pub async fn boot_store_observed(
         Ok(jojobot_adapters::claims_import::Imported::AlreadyDone) => {
             tracing::info!("claims import: already done")
         }
-        Err(why) => return Err(anyhow::anyhow!("the claims import failed: {why}")),
+        // **Best-effort, like every pass after the store answers**: a read that
+        // fails over a healthy store must not crash-loop the boot, and nothing
+        // reads the claims in the log yet. Nothing was appended, so the next start
+        // imports again. It is an error line, so the upgrade gate, which fails on
+        // any error line at boot, still catches it.
+        Err(why) => tracing::error!(
+            error = %why,
+            "THE CLAIMS IMPORT FAILED — nothing was appended to the log; the next start tries \
+             again."
+        ),
     }
 
     Ok(Booted {
