@@ -142,9 +142,10 @@ fn maybe(row: &sqlx::mysql::MySqlRow, column: &str) -> Result<Option<String>, Me
 /// **The records a build supplies, as the import is handed them.**
 pub fn supplied_rows(supplied: &jojobot_domain::memory::owned::Provisions) -> Vec<SuppliedRow> {
     supplied
-        .records()
-        .map(|(entity, _)| SuppliedRow {
+        .records_with_first_handles()
+        .map(|(entity, first)| SuppliedRow {
             handle: entity.id.to_string(),
+            first_handle: first.to_string(),
             kind: entity.kind.as_token().to_string(),
             name: entity.name.clone(),
             source: entity.source.clone(),
@@ -185,8 +186,8 @@ impl DoltMemory {
             former: HashMap::new(),
             supplied: self
                 .supplied
-                .records()
-                .map(|(entity, _)| (entity.id.to_string(), supply_identity(entity.id.as_str()).0))
+                .records_with_first_handles()
+                .map(|(entity, first)| (entity.id.to_string(), supply_identity(first).0))
                 .collect(),
             adopted: HashMap::new(),
         };

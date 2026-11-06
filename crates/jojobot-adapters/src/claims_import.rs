@@ -89,6 +89,7 @@ pub async fn import_claims_once(
     supplied: &Provisions,
     at: Timestamp,
 ) -> Result<Imported, ClaimsImportError> {
+    refuse_two_records_with_one_first_handle(supplied)?;
     let pool = sql::Pool::from(pool.clone());
     let owner = writer.clone();
     let supplied = supplied.clone();
@@ -212,6 +213,7 @@ pub async fn reconcile_supply_list_once(
     supplied: &Provisions,
     at: Timestamp,
 ) -> Result<usize, ClaimsImportError> {
+    refuse_two_records_with_one_first_handle(supplied)?;
     let pool = sql::Pool::from(pool.clone());
     let owner = writer.clone();
     let supplied = crate::dolt::memory::import_rows::supplied_rows(supplied);
@@ -257,6 +259,7 @@ async fn reconcile_in_job(
     let events = jojobot_domain::log::claims::import::reconcile_supply_list(
         &jojobot_domain::log::claims::State::replay(held.iter()),
         &supplied,
+        at.to_zoned(jiff::tz::TimeZone::UTC).date(),
     );
     if events.is_empty() {
         return Ok(0);
@@ -289,5 +292,19 @@ async fn reconcile_in_job(
             staged.unknown();
             Err(sql::store_error::<ClaimsImportError>(error))
         }
+    }
+}
+
+/// **Two records cannot hold one identity.** An identity derives from the handle a
+/// record was first supplied under, so two records naming the same first handle
+/// are refused before anything is read or written.
+fn refuse_two_records_with_one_first_handle(
+    supplied: &Provisions,
+) -> Result<(), ClaimsImportError> {
+    match supplied.duplicate_first_handle() {
+        Some(first) => Err(ClaimsImportError::Unmappable(format!(
+            "two supplied records were first supplied under {first:?}"
+        ))),
+        None => Ok(()),
     }
 }

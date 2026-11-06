@@ -1513,6 +1513,7 @@ fn a_folded_things_writes_arrive_in_one_order_with_the_survivors() {
 fn supplied(handle: &str) -> SuppliedRow {
     SuppliedRow {
         handle: handle.into(),
+        first_handle: handle.into(),
         kind: "view".into(),
         name: "Loops".into(),
         source: "jojobot".into(),
@@ -1800,17 +1801,17 @@ fn a_new_supplied_record_is_created_and_bound_and_an_unchanged_list_appends_noth
         ..Default::default()
     });
     assert!(
-        reconcile_supply_list(&State::replay(&held), &first).is_empty(),
+        reconcile_supply_list(&State::replay(&held), &first, day()).is_empty(),
         "the list the import saw appends nothing"
     );
     let later = vec![supplied("view:loops"), supplied("view:board")];
-    let added = reconcile_supply_list(&State::replay(&held), &later);
+    let added = reconcile_supply_list(&State::replay(&held), &later, day());
     let board = supply_identity("view:board");
     assert_eq!(created_objects(&added), vec![&board]);
     assert_eq!(bound_addresses(&added), vec![(&board, "view:board")]);
     held.extend(added);
     assert!(
-        reconcile_supply_list(&State::replay(&held), &later).is_empty(),
+        reconcile_supply_list(&State::replay(&held), &later, day()).is_empty(),
         "an unchanged list appends nothing the second time"
     );
 }
@@ -1823,11 +1824,49 @@ fn a_stored_row_at_a_newly_supplied_handle_keeps_the_binding_on_a_later_boot() {
         entities: vec![entity("k1", "view:board")],
         ..Default::default()
     });
-    let added = reconcile_supply_list(&State::replay(&held), &[supplied("view:board")]);
+    let added = reconcile_supply_list(&State::replay(&held), &[supplied("view:board")], day());
     let board = supply_identity("view:board");
     assert_eq!(created_objects(&added), vec![&board]);
     assert!(
         bound_addresses(&added).is_empty(),
         "the stored row holds the binding: {added:?}"
+    );
+}
+
+fn day() -> jiff::civil::Date {
+    jiff::civil::date(2026, 11, 6)
+}
+
+/// **A renamed record keeps its identity, and its address moves.** The record was
+/// first supplied as `view:loops` and a later build calls it `view:board`. The
+/// log holds one object for it: the old address is retired with the day and the
+/// new one is bound to the same identity.
+#[test]
+fn a_renamed_supplied_record_keeps_its_identity_and_moves_its_address() {
+    let mut held = imported(&Rows {
+        supplied: vec![supplied("view:loops")],
+        ..Default::default()
+    });
+    let mut renamed = supplied("view:board");
+    renamed.first_handle = "view:loops".into();
+    let moved = reconcile_supply_list(&State::replay(&held), &[renamed.clone()], day());
+    let identity = supply_identity("view:loops");
+    assert!(
+        created_objects(&moved).is_empty(),
+        "no second object: {moved:?}"
+    );
+    assert!(moved.iter().any(|event| matches!(
+        &event.payload,
+        ClaimEvent::AddressRetired { object, address, day: on }
+            if *object == identity && address == "view:loops" && *on == day()
+    )));
+    assert_eq!(bound_addresses(&moved), vec![(&identity, "view:board")]);
+    held.extend(moved);
+    let state = State::replay(&held);
+    assert_eq!(state.resolve("view:board"), Some(&identity));
+    assert_eq!(state.resolve("view:loops"), None);
+    assert!(
+        reconcile_supply_list(&state, &[renamed], day()).is_empty(),
+        "the renamed list appends nothing the second time"
     );
 }

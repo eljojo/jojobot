@@ -535,6 +535,15 @@ impl State {
         at
     }
 
+    /// **The spellings an object answers to now**, in order.
+    pub fn addresses_of(&self, object: &ObjectId) -> Vec<String> {
+        self.addresses
+            .iter()
+            .filter(|(_, held)| *held == object)
+            .map(|(address, _)| address.clone())
+            .collect()
+    }
+
     pub fn object(&self, object: &ObjectId) -> Option<&ObjectBody> {
         self.objects.get(self.survivor(object))
     }

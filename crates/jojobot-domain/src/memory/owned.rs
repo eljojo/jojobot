@@ -96,6 +96,10 @@ pub enum Supplies {
     Record {
         entity: Box<Entity>,
         fields: BTreeMap<String, String>,
+        /// **The handle the record was first supplied under**, when a later build
+        /// renamed it. The record's identity in the log derives from it, so a
+        /// rename keeps the identity. `None` means the record's own handle.
+        first_handle: Option<String>,
     },
     /// **A default for one key on a row the store already holds.** Sits
     /// under what the operator wrote, exactly as [`Prose`](Self::Prose)
@@ -144,8 +148,19 @@ impl Provision {
             supplies: Supplies::Record {
                 entity: Box::new(entity),
                 fields,
+                first_handle: None,
             },
         }
+    }
+
+    /// **Say which handle this record was first supplied under**, for a record a
+    /// later build renamed. The log keeps one identity for it: the old address is
+    /// retired and the new one bound. A record never renamed names nothing here.
+    pub fn first_supplied_as(mut self, handle: impl Into<String>) -> Self {
+        if let Supplies::Record { first_handle, .. } = &mut self.supplies {
+            *first_handle = Some(handle.into());
+        }
+        self
     }
 
     /// **A default for one key on an entity the store already holds a row
@@ -181,10 +196,35 @@ impl Provisions {
         })
     }
 
+    /// **Every whole record this build supplies, with the handle it was first
+    /// supplied under**: its own handle unless a later build renamed it.
+    pub fn records_with_first_handles(&self) -> impl Iterator<Item = (&Entity, &str)> {
+        self.0.iter().filter_map(|p| match &p.supplies {
+            Supplies::Record {
+                entity,
+                first_handle,
+                ..
+            } => Some((
+                entity.as_ref(),
+                first_handle.as_deref().unwrap_or(entity.id.as_str()),
+            )),
+            Supplies::Prose(_) | Supplies::Field { .. } => None,
+        })
+    }
+
+    /// **A first handle two records share**, if any: two records cannot hold one
+    /// identity.
+    pub fn duplicate_first_handle(&self) -> Option<String> {
+        let mut seen = std::collections::BTreeSet::new();
+        self.records_with_first_handles()
+            .map(|(_, first)| first.to_string())
+            .find(|first| !seen.insert(first.clone()))
+    }
+
     /// Every whole record this build supplies.
     pub fn records(&self) -> impl Iterator<Item = (&Entity, &BTreeMap<String, String>)> {
         self.0.iter().filter_map(|p| match &p.supplies {
-            Supplies::Record { entity, fields } => Some((entity.as_ref(), fields)),
+            Supplies::Record { entity, fields, .. } => Some((entity.as_ref(), fields)),
             Supplies::Prose(_) | Supplies::Field { .. } => None,
         })
     }

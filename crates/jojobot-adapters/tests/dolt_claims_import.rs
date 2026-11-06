@@ -928,3 +928,62 @@ async fn claims_import_refuses_a_claim_filed_under_a_handle_two_things_once_wore
 
     server.stop().await;
 }
+
+/// **A renamed record keeps its identity through a real store, and two records
+/// cannot share a first handle.** The first build supplies `view:loops`; a later
+/// one supplies the same record as `view:board`, naming its first handle. One
+/// reconcile moves the address on the same identity. Two records naming one first
+/// handle are refused before anything is written.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn claims_reconcile_moves_a_renamed_record_and_refuses_two_with_one_first_handle() {
+    use jojobot_adapters::claims_import::reconcile_supply_list_once;
+    let (_scratch, mut server, pool) = store("claims-reconcile-rename").await;
+    import_claims_once(
+        &Writer::default(),
+        &pool,
+        &supplied_views(&["view:loops"]),
+        at(),
+    )
+    .await
+    .expect("the import runs");
+
+    let renamed = Provisions::new(
+        supplied_views(&["view:board"])
+            .records()
+            .map(|(entity, fields)| {
+                Provision::record(entity.clone(), fields.clone()).first_supplied_as("view:loops")
+            })
+            .collect(),
+    );
+    reconcile_supply_list_once(&Writer::default(), &pool, &renamed, at())
+        .await
+        .expect("the rename reconciles");
+    let state = State::replay(logged(&pool).await.iter());
+    let identity = jojobot_domain::log::claims::import::supply_identity("view:loops");
+    assert_eq!(state.resolve("view:board"), Some(&identity));
+    assert_eq!(state.resolve("view:loops"), None);
+
+    let twice = Provisions::new(
+        ["view:board", "view:upgrade-fixture-view"]
+            .iter()
+            .flat_map(|handle| {
+                supplied_views(&[handle])
+                    .records()
+                    .map(|(entity, fields)| {
+                        Provision::record(entity.clone(), fields.clone())
+                            .first_supplied_as("view:loops")
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect(),
+    );
+    let refused = reconcile_supply_list_once(&Writer::default(), &pool, &twice, at())
+        .await
+        .expect_err("two records with one first handle are refused");
+    assert!(
+        matches!(&refused, ClaimsImportError::Unmappable(why) if why.contains("first supplied under")),
+        "{refused:?}"
+    );
+
+    server.stop().await;
+}

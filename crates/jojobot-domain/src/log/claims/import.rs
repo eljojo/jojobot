@@ -184,6 +184,9 @@ pub struct MergeRow {
 pub struct SuppliedRow {
     /// The handle it answers at.
     pub handle: String,
+    /// **The handle it was first supplied under**, which its identity derives
+    /// from: the same as `handle` unless a later build renamed the record.
+    pub first_handle: String,
     pub kind: String,
     pub name: String,
     pub source: String,
@@ -236,15 +239,31 @@ pub fn import_completed(mapped: usize) -> Event<ClaimEvent> {
 /// row wears the handle, that row holds the binding** (rule 508) and the supplied
 /// object stays unbound. A list the log already holds gives no event, so an
 /// unchanged list appends nothing.
-pub fn reconcile_supply_list(state: &State, supplied: &[SuppliedRow]) -> Vec<Event<ClaimEvent>> {
+pub fn reconcile_supply_list(
+    state: &State,
+    supplied: &[SuppliedRow],
+    day: jiff::civil::Date,
+) -> Vec<Event<ClaimEvent>> {
     let mut events = Vec::new();
     for row in supplied {
-        let identity = supply_identity(&row.handle);
+        let identity = supply_identity(&row.first_handle);
         if state.object(&identity).is_none() {
             events.push(plain(ClaimEvent::ObjectCreated {
                 object: identity.clone(),
                 body: supplied_body(row),
             }));
+        }
+        // **A renamed record keeps its identity**: the address it answered at is
+        // retired, with the day, and the new one is bound. A handle a stored row
+        // wears stays that row's.
+        for held in state.addresses_of(&identity) {
+            if held != row.handle {
+                events.push(plain(ClaimEvent::AddressRetired {
+                    object: identity.clone(),
+                    address: held,
+                    day,
+                }));
+            }
         }
         if state.resolve(&row.handle).is_none() {
             events.push(plain(ClaimEvent::AddressBound {
@@ -492,7 +511,7 @@ pub fn import(rows: &Rows) -> Result<Vec<Event<ClaimEvent>>, ImportError> {
     // from the build's own list.
     for row in &rows.supplied {
         events.push(plain(ClaimEvent::ObjectCreated {
-            object: supply_identity(&row.handle),
+            object: supply_identity(&row.first_handle),
             body: supplied_body(row),
         }));
     }
@@ -571,7 +590,7 @@ pub fn import(rows: &Rows) -> Result<Vec<Event<ClaimEvent>>, ImportError> {
             .any(|entity| entity.handle == row.handle)
         {
             events.push(plain(ClaimEvent::AddressBound {
-                object: supply_identity(&row.handle),
+                object: supply_identity(&row.first_handle),
                 address: row.handle.clone(),
             }));
         }
