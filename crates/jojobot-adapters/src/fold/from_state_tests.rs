@@ -333,6 +333,19 @@ async fn a_document_read_from_the_state_is_the_document_the_store_reads() {
             "listing\n  state:  {held_listing:#?}\n  stored: {stored_listing:#?}"
         ));
     }
+    for entity in stored_listing.iter().filter(|e| e.merged_into.is_none()) {
+        let stored_referring = memory
+            .referring_to(&entity.id)
+            .await
+            .expect("who points here");
+        let held_referring = state.referring(&entity.id);
+        if held_referring != stored_referring {
+            differences.push(format!(
+                "referring to {}\n  state:  {held_referring:#?}\n  stored: {stored_referring:#?}",
+                entity.id
+            ));
+        }
+    }
     assert!(differences.is_empty(), "{}", differences.join("\n"));
     server.stop().await;
 }
