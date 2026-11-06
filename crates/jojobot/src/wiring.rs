@@ -1044,10 +1044,21 @@ pub async fn boot_store_observed(
         Ok(jojobot_adapters::claims_import::Imported::Done {
             events,
             empty_merge_numbers,
+            skipped_homes,
         }) => {
             tracing::info!(events, "imported today's claims into the event log");
             // **Named once, at info**: the numbers stay empty and are never
             // reissued, and they do not stop the boot.
+            // **Each home the import skipped, with its claim count**: its rows were
+            // removed by hand, they stay in the old tables, and the storage check
+            // keeps naming them.
+            for (home, claims) in &skipped_homes {
+                tracing::info!(
+                    home = %home,
+                    claims,
+                    "the import skipped the claims of a handle nothing holds; they stay in the old tables"
+                );
+            }
             if !empty_merge_numbers.is_empty() {
                 tracing::info!(
                     numbers = ?empty_merge_numbers,

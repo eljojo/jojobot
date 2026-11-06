@@ -42,6 +42,10 @@ pub struct Finding {
 pub struct ImportRead {
     pub rows: Rows,
     pub findings: Vec<Finding>,
+    /// **Homes whose claims the import skipped**, each with its claim count: a name
+    /// that is no row, no former handle, no supplied record and no retired supplied
+    /// handle, so the rows were removed by hand. They stay in the old tables.
+    pub skipped_homes: Vec<(String, usize)>,
 }
 
 /// **Which key a stored name stands for.** A name is a badge, an entity's id, or
@@ -87,6 +91,8 @@ impl Keys {
 struct Read {
     keys: Keys,
     findings: Vec<Finding>,
+    /// Homes whose claims are skipped, with their claim counts.
+    skipped: BTreeMap<String, usize>,
 }
 
 impl Read {
@@ -191,6 +197,7 @@ impl DoltMemory {
         let mut read = Read {
             keys,
             findings: Vec::new(),
+            skipped: BTreeMap::new(),
         };
         let mut rows = Rows {
             supplied: self
@@ -297,6 +304,9 @@ impl DoltMemory {
         for row in &metadata {
             let local = text(row, "fact_id")?;
             let stored = text(row, "fact_home")?;
+            if read.skipped.contains_key(&stored) {
+                continue;
+            }
             rows.metadata.push(MetadataRow {
                 home: read.key("fact_event_metadata", &local, "fact_home", &stored),
                 local,
@@ -307,6 +317,7 @@ impl DoltMemory {
         Ok(ImportRead {
             rows,
             findings: read.findings,
+            skipped_homes: read.skipped.into_iter().collect(),
         })
     }
 }
@@ -477,6 +488,16 @@ impl DoltMemory {
         .await
         .map_err(store)?;
 
+        // **A claim whose home is none of the keys this store holds is skipped, not
+        // refused**: the rows were removed by hand, so adopting them would invent a
+        // thing and refusing would stop the import altogether. They stay in the old
+        // tables, and the import names each home with its claim count.
+        for row in &head_rows {
+            let stored = text(row, "entity")?;
+            if read.keys.of(&stored).is_none() {
+                *read.skipped.entry(stored).or_default() += 1;
+            }
+        }
         // The references and the mark a claim holds NOW sit in two tables of their
         // own, which the store's reads take a claim's head from. A write made before
         // its columns existed holds NULL there and nothing is backfilled, so the head
@@ -517,6 +538,9 @@ impl DoltMemory {
         let mut writes: BTreeMap<(String, String), Vec<(FactWriteRow, Cells)>> = BTreeMap::new();
         for row in &write_rows {
             let (stored, local) = (text(row, "entity")?, text(row, "id")?);
+            if read.skipped.contains_key(&stored) {
+                continue;
+            }
             let at = format!(
                 "{stored}/{local}#{}",
                 row.try_get::<i64, _>("ordinal").map_err(store)?
@@ -563,6 +587,9 @@ impl DoltMemory {
         }
         for row in &head_rows {
             let (stored, local) = (text(row, "entity")?, text(row, "id")?);
+            if read.skipped.contains_key(&stored) {
+                continue;
+            }
             let held = writes
                 .remove(&(stored.clone(), local.clone()))
                 .unwrap_or_default();
@@ -707,6 +734,10 @@ impl DoltMemory {
         .map_err(store)?;
         for row in &writes {
             let (stored, key) = (text(row, "entity")?, text(row, "key")?);
+            if read.skipped.contains_key(&stored) {
+                targets.retain(|(entity, _, _), _| entity != &stored);
+                continue;
+            }
             let ordinal = row.try_get::<i64, _>("ordinal").map_err(store)?;
             let at = format!("{stored}/{key}#{ordinal}");
             let pointed = targets

@@ -37,6 +37,9 @@ pub enum Imported {
     Done {
         events: usize,
         empty_merge_numbers: Vec<i64>,
+        /// Homes whose claims were skipped, each with its claim count. The rows
+        /// stay in the old tables, and the boot names them.
+        skipped_homes: Vec<(String, usize)>,
     },
     /// The log already held a claims event. Nothing was read or written.
     AlreadyDone,
@@ -157,6 +160,7 @@ async fn import_in_job(
         return Ok(Imported::Done {
             events: 0,
             empty_merge_numbers: Vec::new(),
+            skipped_homes: read.skipped_homes,
         });
     }
     let members: Vec<Vec<u8>> = events.iter().map(codec::encode).collect();
@@ -185,6 +189,7 @@ async fn import_in_job(
             Ok(Imported::Done {
                 events: events.len(),
                 empty_merge_numbers,
+                skipped_homes: read.skipped_homes,
             })
         }
         Err(error) => {
