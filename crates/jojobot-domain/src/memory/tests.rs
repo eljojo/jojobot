@@ -1952,6 +1952,12 @@ async fn fake_satisfies_the_role_claim_contract() {
     contract::run_all_role_claims(&InMemoryMemory::booted()).await;
     let fake = InMemoryMemory::booted();
     contract::a_renewal_writes_the_lease_to_its_heartbeat_home(&fake, &fake).await;
+    let turns = InMemoryMemory::booted();
+    contract::the_heartbeat_home_follows_a_noted_renewal_a_release_and_a_new_claim(&turns, &turns)
+        .await;
+    let refused = InMemoryMemory::booted();
+    contract::a_refused_write_to_the_lease_leaves_the_heartbeat_home_as_it_was(&refused, &refused)
+        .await;
 }
 
 /// **A deadline on a claim about a person does not make the person owed**,

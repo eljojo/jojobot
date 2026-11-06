@@ -1574,6 +1574,274 @@ pub async fn a_renewal_writes_the_lease_to_its_heartbeat_home<M: Memory, H: Leas
     }
 }
 
+/// **The heartbeat home is true after every kind of write to the lease.** A
+/// renewal that carries a note keeps its moment there as a plain one does; a
+/// release empties the home, so the next claimant never meets the last one's
+/// moment; and a claim by that claimant leaves it empty until they renew.
+pub async fn the_heartbeat_home_follows_a_noted_renewal_a_release_and_a_new_claim<
+    M: Memory,
+    H: LeaseHeartbeat,
+>(
+    store: &M,
+    home: &H,
+) {
+    let seat = a_seat(
+        store,
+        "bot:contract-role-lease-turns",
+        "role:contract-lease-turns",
+    )
+    .await;
+    let t0 = crate::session::testing::contract::epoch() + jiff::SignedDuration::from_secs(60);
+    let claimed = capture(
+        store,
+        computed(NewFact {
+            fields: role_fields("delta", t0),
+            ..NewFact::about(seat.role.clone(), "delta claims the role", date(2026, 7, 1))
+        }),
+    )
+    .await;
+    let move_of = |kind| {
+        Some(crate::session::RoleMove {
+            kind,
+            role: seat.name.clone(),
+            claimant: "delta".to_string(),
+        })
+    };
+
+    // A plain renewal first, so the noted one that follows has a moment to replace.
+    let plain_at = t0 + jiff::SignedDuration::from_mins(2);
+    let plain = store
+        .update_fact(
+            &claimed.address(),
+            computed_patch(FactPatch {
+                fields: role_fields("delta", plain_at),
+                role_move: move_of(crate::session::RoleMoveKind::Renew),
+                ..FactPatch::default()
+            }),
+            &seat.bot,
+        )
+        .await;
+    assert!(
+        matches!(plain, Ok(Guarded::Written(_))),
+        "the plain renewal must land: {plain:?}"
+    );
+    assert_eq!(
+        home.heartbeat_of(&seat.role).await,
+        Some(plain_at.to_string())
+    );
+
+    // A renewal that carries a note.
+    let noted_at = t0 + jiff::SignedDuration::from_mins(5);
+    let noted = store
+        .update_fact(
+            &claimed.address(),
+            computed_patch(FactPatch {
+                fields: role_fields("delta", noted_at),
+                details: Some("renewed with a note".to_string()),
+                role_move: move_of(crate::session::RoleMoveKind::Renew),
+                ..FactPatch::default()
+            }),
+            &seat.bot,
+        )
+        .await;
+    assert!(
+        matches!(noted, Ok(Guarded::Written(_))),
+        "the renewal with a note must land: {noted:?}"
+    );
+    assert_eq!(
+        home.heartbeat_of(&seat.role).await,
+        Some(noted_at.to_string()),
+        "a renewal that carries a note leaves its moment in the home"
+    );
+
+    // A claim by patch over a lapsed lease, while the home still holds the last
+    // claimant's moment: the claim empties it.
+    let lapsed_at = t0 + jiff::SignedDuration::from_mins(120);
+    let claim = store
+        .update_fact(
+            &claimed.address(),
+            computed_patch(FactPatch {
+                fields: role_fields("echo", lapsed_at),
+                ..FactPatch::default()
+            }),
+            &seat.bot,
+        )
+        .await;
+    assert!(
+        matches!(claim, Ok(Guarded::Written(_))),
+        "a claim over a lapsed lease must land: {claim:?}"
+    );
+    assert_eq!(
+        home.heartbeat_of(&seat.role).await,
+        None,
+        "a claim empties the home, so the last claimant's moment is gone"
+    );
+
+    // The new claimant renews, so the home is populated again before the release.
+    let echo = |kind| {
+        Some(crate::session::RoleMove {
+            kind,
+            role: seat.name.clone(),
+            claimant: "echo".to_string(),
+        })
+    };
+    let echo_at = lapsed_at + jiff::SignedDuration::from_mins(5);
+    let renewed = store
+        .update_fact(
+            &claimed.address(),
+            computed_patch(FactPatch {
+                fields: role_fields("echo", echo_at),
+                role_move: echo(crate::session::RoleMoveKind::Renew),
+                ..FactPatch::default()
+            }),
+            &seat.bot,
+        )
+        .await;
+    assert!(
+        matches!(renewed, Ok(Guarded::Written(_))),
+        "the new claimant's renewal must land: {renewed:?}"
+    );
+    assert_eq!(
+        home.heartbeat_of(&seat.role).await,
+        Some(echo_at.to_string())
+    );
+
+    // The release empties a populated home.
+    let released = store
+        .update_fact(
+            &claimed.address(),
+            computed_patch(FactPatch {
+                fields: [(
+                    crate::session::ROLE_CLAIMED_AT.to_string(),
+                    jiff::Timestamp::UNIX_EPOCH.to_string(),
+                )]
+                .into_iter()
+                .collect(),
+                clear_fields: vec![crate::session::ROLE_HOLDER.to_string()],
+                role_move: echo(crate::session::RoleMoveKind::Release),
+                ..FactPatch::default()
+            }),
+            &seat.bot,
+        )
+        .await;
+    assert!(
+        matches!(released, Ok(Guarded::Written(_))),
+        "the release must land: {released:?}"
+    );
+    assert_eq!(
+        home.heartbeat_of(&seat.role).await,
+        None,
+        "a release empties the home"
+    );
+}
+
+/// **A write to the lease that is refused leaves the heartbeat home as it was.**
+/// A renewal and a release are each sent with a source that names nothing, which
+/// the store refuses after the role's own checks; the home holds the moment it
+/// held before. Without this a store that changed the home first would move it
+/// on a write that never landed.
+pub async fn a_refused_write_to_the_lease_leaves_the_heartbeat_home_as_it_was<
+    M: Memory,
+    H: LeaseHeartbeat,
+>(
+    store: &M,
+    home: &H,
+) {
+    let seat = a_seat(
+        store,
+        "bot:contract-role-lease-refused",
+        "role:contract-lease-refused",
+    )
+    .await;
+    let t0 = crate::session::testing::contract::epoch() + jiff::SignedDuration::from_secs(60);
+    let claimed = capture(
+        store,
+        computed(NewFact {
+            fields: role_fields("delta", t0),
+            ..NewFact::about(seat.role.clone(), "delta claims the role", date(2026, 7, 1))
+        }),
+    )
+    .await;
+    let move_of = |kind| {
+        Some(crate::session::RoleMove {
+            kind,
+            role: seat.name.clone(),
+            claimant: "delta".to_string(),
+        })
+    };
+    let kept_at = t0 + jiff::SignedDuration::from_mins(5);
+    store
+        .update_fact(
+            &claimed.address(),
+            computed_patch(FactPatch {
+                fields: role_fields("delta", kept_at),
+                role_move: move_of(crate::session::RoleMoveKind::Renew),
+                ..FactPatch::default()
+            }),
+            &seat.bot,
+        )
+        .await
+        .expect("the renewal lands");
+    assert_eq!(
+        home.heartbeat_of(&seat.role).await,
+        Some(kept_at.to_string())
+    );
+
+    let nothing = FactAddress::new(
+        EntityId("thing:contract-order-no-subject".to_string()),
+        FactId("f1".to_string()),
+    );
+    let refused_renewal = store
+        .update_fact(
+            &claimed.address(),
+            computed_patch(FactPatch {
+                fields: role_fields("delta", t0 + jiff::SignedDuration::from_mins(10)),
+                derived_from: Some(nothing.clone()),
+                role_move: move_of(crate::session::RoleMoveKind::Renew),
+                ..FactPatch::default()
+            }),
+            &seat.bot,
+        )
+        .await;
+    assert!(
+        refused_renewal.is_err(),
+        "a renewal naming a source that is nothing is refused: {refused_renewal:?}"
+    );
+    assert_eq!(
+        home.heartbeat_of(&seat.role).await,
+        Some(kept_at.to_string()),
+        "a refused renewal leaves the home as it was"
+    );
+
+    let refused_release = store
+        .update_fact(
+            &claimed.address(),
+            computed_patch(FactPatch {
+                fields: [(
+                    crate::session::ROLE_CLAIMED_AT.to_string(),
+                    jiff::Timestamp::UNIX_EPOCH.to_string(),
+                )]
+                .into_iter()
+                .collect(),
+                clear_fields: vec![crate::session::ROLE_HOLDER.to_string()],
+                derived_from: Some(nothing),
+                role_move: move_of(crate::session::RoleMoveKind::Release),
+                ..FactPatch::default()
+            }),
+            &seat.bot,
+        )
+        .await;
+    assert!(
+        refused_release.is_err(),
+        "a release naming a source that is nothing is refused: {refused_release:?}"
+    );
+    assert_eq!(
+        home.heartbeat_of(&seat.role).await,
+        Some(kept_at.to_string()),
+        "a refused release leaves the home as it was"
+    );
+}
+
 pub async fn run_all_role_claims<M: Memory>(store: &M) {
     many_renewals_leave_the_lease_moment_at_one_write(store).await;
     a_renewal_restamps_the_lease_moment_it_overwrites(store).await;

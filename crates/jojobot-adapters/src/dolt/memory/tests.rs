@@ -425,6 +425,16 @@ async fn dolt_satisfies_the_role_claim_contract() {
         &Heartbeats(pool.clone()),
     )
     .await;
+    jojobot_domain::memory::testing::contract::the_heartbeat_home_follows_a_noted_renewal_a_release_and_a_new_claim(
+        &memory,
+        &Heartbeats(pool.clone()),
+    )
+    .await;
+    jojobot_domain::memory::testing::contract::a_refused_write_to_the_lease_leaves_the_heartbeat_home_as_it_was(
+        &memory,
+        &Heartbeats(pool.clone()),
+    )
+    .await;
 
     store.stop().await;
 }

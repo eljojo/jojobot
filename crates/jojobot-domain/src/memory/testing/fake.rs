@@ -2076,6 +2076,9 @@ impl InMemoryMemory {
     /// `false` when the role has no live moment to overwrite (a role whose object
     /// holds no moment yet, whose first renewal is an append): the caller
     /// then writes as it always did.
+    ///
+    /// TEMPORARY(9.3.3): this overwrite stays beside the heartbeat home until the
+    /// last reader of the `claimed_at` write has left; then it goes.
     fn overwrite_lease_moment(&self, home: &EntityId, moment: &str) -> bool {
         let now = self.clock().now();
         self.edits.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -2098,6 +2101,27 @@ impl InMemoryMemory {
                 true
             }
             _ => false,
+        }
+    }
+
+    /// **What a write of a role's `claimed_at` does to the heartbeat home.** A
+    /// renewal, plain or carrying other keys, keeps its moment there. A claim and a
+    /// release write the field and clear the home, so the row never holds a
+    /// previous claimant's moment.
+    fn note_lease_write(
+        &self,
+        home: &EntityId,
+        kind: Option<crate::session::RoleMoveKind>,
+        moment: &str,
+    ) {
+        let mut hearts = self.lease_heartbeats.lock().expect("fake mutex poisoned");
+        match kind {
+            Some(crate::session::RoleMoveKind::Renew) => {
+                hearts.insert(home.clone(), moment.to_string());
+            }
+            _ => {
+                hearts.remove(home);
+            }
         }
     }
 
@@ -3293,12 +3317,13 @@ impl Memory for InMemoryMemory {
         // gates, against the state this same lock already holds**, in both
         // shapes. Only a write whose subject is a role object reads anything:
         // every other write costs nothing here.
-        if let Some((role, state)) = self.role_state_for(&subject_entity, &facts)
-            && let Some(refused) =
-                super::super::refuses_role_write(&role, None, &fact.fields, &state)
+        let role_of_capture = self.role_state_for(&subject_entity, &facts);
+        if let Some((role, state)) = &role_of_capture
+            && let Some(refused) = super::super::refuses_role_write(role, None, &fact.fields, state)
         {
             return Err(refused);
         }
+        let claimed_at = fact.fields.get(crate::session::ROLE_CLAIMED_AT).cloned();
         // **A ceiling's cardinality is enforced here, atomically with the
         // write it gates** — the same rule and the same reasons the real
         // store's copy carries. **Structural, never a kind question**: a
@@ -3585,6 +3610,13 @@ impl Memory for InMemoryMemory {
         // keeps it, so a claim nobody has corrected answers with one write.
         self.append_claim_write(&stored, fact.session.clone(), fact.written_by_bot.clone());
         self.append_writes(&stored.home, &stored.id, wrote, &classes);
+        // A capture on a role object that writes the moment is a claim. The home
+        // is told once the write has landed: a refused write leaves it as it was.
+        if role_of_capture.is_some()
+            && let Some(moment) = &claimed_at
+        {
+            self.note_lease_write(&stored.home, None, moment);
+        }
         // **Stored under the storage key; served under the handle.** The row
         // just pushed keeps the badge, exactly as every other row does; the
         // caller that just wrote it reads back the handle it wrote with,
@@ -4559,6 +4591,18 @@ impl Memory for InMemoryMemory {
         // reference-typed item, same as a capture's does.
         let lowered_writes = self.lower_writes(super::super::writes_of(&patch, &carried));
         self.append_writes(&home, &id, lowered_writes, &classes);
+        // The renewal that carries more than the lease, a release and a claim by
+        // patch each write the moment as an ordinary write and tell the home,
+        // once the write has landed: a refused write leaves the home as it was.
+        if role_state.is_some()
+            && let Some(moment) = patch.fields.get(crate::session::ROLE_CLAIMED_AT)
+        {
+            self.note_lease_write(
+                &home,
+                patch.role_move.as_ref().map(|moved| moved.kind),
+                moment,
+            );
+        }
         let facts = self.facts_view();
         let stored = facts
             .iter()

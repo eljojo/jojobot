@@ -2453,6 +2453,20 @@ impl DoltMemory {
                 ..fact
             }));
         }
+        // The renewal that carries more than the lease, a release and a claim by
+        // patch each write the moment as an ordinary write and tell the home.
+        if role_state.is_some()
+            && let Some(moment) = patch.fields.get(jojobot_domain::session::ROLE_CLAIMED_AT)
+        {
+            Self::note_lease_write(
+                tx,
+                &key,
+                patch.role_move.as_ref().map(|moved| moved.kind),
+                moment,
+                &self.clock,
+            )
+            .await?;
+        }
         // What the ADDRESSED RECORD carries right now — read off before the
         // patch rewrites it, because that is what decides which of the patch's
         // clears is a write and which names a key this record never had.
@@ -3110,11 +3124,18 @@ impl DoltMemory {
         // gates, against the state this same transaction reads**, in both
         // shapes. Only a write whose subject is a role object reads anything:
         // every other write costs nothing here.
-        if let Some((role, state)) = self.role_state_of(tx, &subject_handle, &home).await?
+        let role_of_capture = self.role_state_of(tx, &subject_handle, &home).await?;
+        if let Some((role, state)) = &role_of_capture
             && let Some(refused) =
-                jojobot_domain::memory::refuses_role_write(&role, None, &fact.fields, &state)
+                jojobot_domain::memory::refuses_role_write(role, None, &fact.fields, state)
         {
             return Err(refused);
+        }
+        // A capture on a role object that writes the moment is a claim.
+        if role_of_capture.is_some()
+            && let Some(moment) = fact.fields.get(jojobot_domain::session::ROLE_CLAIMED_AT)
+        {
+            Self::note_lease_write(tx, &home, None, moment, &self.clock).await?;
         }
         // **A ceiling's cardinality is enforced here, atomically with the
         // write it gates** — never as a separate call, because a drop with
@@ -4287,6 +4308,9 @@ impl DoltMemory {
     /// `false` when the role has no live moment to overwrite (a role whose object
     /// holds no moment yet, whose first renewal is an append): the caller
     /// then writes as it always did.
+    ///
+    /// TEMPORARY(9.3.3): this overwrite stays beside the heartbeat home until the
+    /// last reader of the `claimed_at` write has left; then it goes.
     async fn overwrite_lease_moment(
         tx: &mut Transaction<'_, MySql>,
         role: &EntityId,
@@ -4325,6 +4349,18 @@ impl DoltMemory {
         // it at activation, one row per role, replaced in place and never an
         // event (rule 743). The write above stays for every reader that folds the
         // role's fields today.
+        Self::set_lease_heartbeat(tx, role, moment, clock).await?;
+        Ok(true)
+    }
+
+    /// **Keep a renewal's moment in the heartbeat home**, one row per role,
+    /// replaced in place.
+    async fn set_lease_heartbeat(
+        tx: &mut Transaction<'_, MySql>,
+        role: &EntityId,
+        moment: &str,
+        clock: &Clock,
+    ) -> Result<(), MemoryError> {
         sqlx::query(
             "REPLACE INTO role_lease_heartbeat (role, moment, written_at) VALUES (?, ?, ?)",
         )
@@ -4334,7 +4370,33 @@ impl DoltMemory {
         .execute(&mut **tx)
         .await
         .map_err(store)?;
-        Ok(true)
+        Ok(())
+    }
+
+    /// **What a write of a role's `claimed_at` does to the heartbeat home.** A
+    /// renewal that carries more than the lease keeps its moment there. A claim and
+    /// a release write the field and clear the home, so the row never holds a
+    /// previous claimant's moment.
+    async fn note_lease_write(
+        tx: &mut Transaction<'_, MySql>,
+        role: &EntityId,
+        kind: Option<jojobot_domain::session::RoleMoveKind>,
+        moment: &str,
+        clock: &Clock,
+    ) -> Result<(), MemoryError> {
+        match kind {
+            Some(jojobot_domain::session::RoleMoveKind::Renew) => {
+                Self::set_lease_heartbeat(tx, role, moment, clock).await
+            }
+            _ => {
+                sqlx::query("DELETE FROM role_lease_heartbeat WHERE role = ?")
+                    .bind(role.as_str())
+                    .execute(&mut **tx)
+                    .await
+                    .map_err(store)?;
+                Ok(())
+            }
+        }
     }
 
     /// **Append what a write said about a record's keys**, each row taking the
