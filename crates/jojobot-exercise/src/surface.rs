@@ -179,10 +179,18 @@ impl Surface {
             .send()
             .await
             .context("reaching the room's compiled harness route")?;
-        let status = response.status();
-        anyhow::ensure!(status.is_success(), "room harness {status}");
-        response.json().await.context("the harness answers JSON")
+        harness_answer(response).await
     }
+}
+
+/// **The answer of the harness, or its refusal with the body it was refused with.**
+async fn harness_answer(response: reqwest::Response) -> Result<Value> {
+    let status = response.status();
+    if !status.is_success() {
+        let body = response.text().await.unwrap_or_default();
+        anyhow::bail!("room harness {status}: {body}");
+    }
+    response.json().await.context("the harness answers JSON")
 }
 
 /// What a failed harness read panics with. `run::go` catches a panic that starts
@@ -609,6 +617,39 @@ fn house_bot_slug(handle: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **A refused harness call says why in its error.** The harness answers 400
+    /// with the refusal as its body; an error that kept the status alone left a
+    /// whole room's worth of failures with one cause nobody could read.
+    #[tokio::test]
+    async fn a_refused_harness_call_carries_the_body_it_was_refused_with() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let body = r#"{"refused":"zebra-needle is not an entity"}"#;
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut read = [0u8; 1024];
+            let _ = stream.read(&mut read).await;
+            let answer = format!(
+                "HTTP/1.1 400 Bad Request\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream.write_all(answer.as_bytes()).await.unwrap();
+        });
+        let response = reqwest::Client::new()
+            .post(format!("http://{address}/_room_harness"))
+            .json(&json!({"operation": "seed"}))
+            .send()
+            .await
+            .unwrap();
+        let error = harness_answer(response)
+            .await
+            .expect_err("a 400 is an error");
+        let words = error.to_string();
+        assert!(words.contains("400"), "{words}");
+        assert!(words.contains("zebra-needle"), "{words}");
+    }
 
     #[test]
     fn a_failed_harness_observation_cannot_grade_an_empty_room() {
