@@ -135,6 +135,7 @@ async fn prepare_answers_as_the_fake_store_does_for_add_entity_and_capture() {
     // What the runs covered: a property that never meets a verdict says
     // nothing about it.
     let mut met: BTreeMap<String, usize> = BTreeMap::new();
+    let mut served_facts = 0usize;
     for seed in 0..40u64 {
         let mut dice = Dice(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
         let fake = InMemoryMemory::seeded();
@@ -208,6 +209,24 @@ async fn prepare_answers_as_the_fake_store_does_for_add_entity_and_capture() {
                 for event in &events {
                     apply(&mut state, event);
                 }
+                // The fact the State serves for the record equals the fact the
+                // fake store returned for the same capture, but for the moment
+                // each stamped.
+                if let Ok(Guarded::Written(theirs)) = &got {
+                    let served = state.fact(&RecordId(record.clone())).map(|mut fact| {
+                        fact.inserted_at = None;
+                        fact
+                    });
+                    let mut theirs = theirs.clone();
+                    theirs.inserted_at = None;
+                    if served.as_ref() != Some(&theirs) {
+                        divergences.push(format!(
+                            "seed {seed} step {step}: the State serves {served:?}, the fake returned {theirs:?}"
+                        ));
+                        break;
+                    }
+                    served_facts += 1;
+                }
             }
         }
     }
@@ -217,6 +236,7 @@ async fn prepare_answers_as_the_fake_store_does_for_add_entity_and_capture() {
             "no run met the verdict {verdict}: {met:?}"
         );
     }
+    assert!(served_facts > 0, "no run compared a served fact");
     assert!(
         divergences.is_empty(),
         "{} runs diverged:\n{}",

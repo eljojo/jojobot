@@ -160,31 +160,146 @@ impl State {
     ) -> BTreeMap<String, String> {
         let mut fields = self.fields(subject, declared);
         for (key, value) in fields.clone() {
-            let items: Vec<&str> = value.split(',').map(str::trim).collect();
-            if !items
-                .iter()
-                .any(|item| memory::stored_handle_id(item).is_some())
-            {
-                continue;
+            if let Some(served) = self.serve_handles(&value) {
+                fields.insert(key, served);
             }
-            let composed = items
-                .into_iter()
-                .map(|item| {
-                    // A mark naming a thing with no handle is served as the id it
-                    // names, mark off, as the store serves it.
-                    let handle = memory::stored_handle_id(item).map(|id| {
-                        self.handle_of(&ObjectId(id.to_string()))
-                            .unwrap_or_else(|| EntityId(id.to_string()))
-                    });
-                    let text = handle
-                        .as_ref()
-                        .map_or_else(|| item.to_string(), |handle| handle.to_string());
-                    (handle, text)
-                })
-                .collect();
-            fields.insert(key, memory::list::serve_values(composed));
         }
         fields
+    }
+
+    /// **A value with the marks of stored handles composed to the handles**, or
+    /// `None` when it wears none. The one composition a thing's fields and a
+    /// record's own fields are served through.
+    fn serve_handles(&self, value: &str) -> Option<String> {
+        let items: Vec<&str> = value.split(',').map(str::trim).collect();
+        if !items
+            .iter()
+            .any(|item| memory::stored_handle_id(item).is_some())
+        {
+            return None;
+        }
+        let composed = items
+            .into_iter()
+            .map(|item| {
+                // A mark naming a thing with no handle is served as the id it
+                // names, mark off, as the store serves it.
+                let handle = memory::stored_handle_id(item).map(|id| {
+                    self.handle_of(&ObjectId(id.to_string()))
+                        .unwrap_or_else(|| EntityId(id.to_string()))
+                });
+                let text = handle
+                    .as_ref()
+                    .map_or_else(|| item.to_string(), |handle| handle.to_string());
+                (handle, text)
+            })
+            .collect();
+        Some(memory::list::serve_values(composed))
+    }
+
+    /// **A claim as a read serves it**: the handle it is homed on, the handles
+    /// its edge, refs and sources point at, the fields this record wrote with
+    /// the marks composed to handles, the bags those keys were written under, and
+    /// whether a bot other than the thing's own first wrote it. `None` for a
+    /// record the State does not hold. The one projection of a claim: a capture
+    /// returns it after its batch is applied.
+    ///
+    /// **`written_by_another` reads the actor on the claim's first write.** A
+    /// write whose bot only a run names, through the sessions, reads `false`
+    /// here, which is "not known to be another bot's".
+    pub fn fact(&self, record: &RecordId) -> Option<memory::Fact> {
+        let held = self.records.get(record)?;
+        let claim = &held.claim;
+        let home = self.handle_of(&claim.home)?;
+        let handle = |object: &ObjectId| {
+            self.handle_of(object)
+                .unwrap_or_else(|| EntityId(object.0.clone()))
+        };
+        let address = |source: &RecordId| {
+            let held = self.records.get(source)?;
+            Some(FactAddress::new(
+                self.handle_of(&held.claim.home)?,
+                FactId(held.claim.label.clone()),
+            ))
+        };
+        let mut fields = BTreeMap::new();
+        let mut sets = std::collections::BTreeSet::new();
+        let mut reaching = std::collections::BTreeSet::new();
+        let mut field_links = BTreeMap::new();
+        for (object, key) in self.streams_written_by(record) {
+            let Some(write) = self
+                .streams
+                .get(&(object, key.clone()))
+                .and_then(|stream| stream.iter().rev().find(|write| &write.record == record))
+            else {
+                continue;
+            };
+            if memory::reaches_the_thing(write.class) {
+                reaching.insert(key.0.clone());
+            }
+            if write.class == WriteClass::Sets {
+                sets.insert(key.0.clone());
+            }
+            if let FieldValue::Set(value) = &write.write {
+                fields.insert(
+                    key.0.clone(),
+                    self.serve_handles(value).unwrap_or_else(|| value.clone()),
+                );
+            }
+            if !write.targets.is_empty() {
+                field_links.insert(
+                    key.0.clone(),
+                    self.survivors_of(&write.targets)
+                        .iter()
+                        .map(handle)
+                        .collect(),
+                );
+            }
+        }
+        let edge = claim.edge.as_ref().and_then(|(shape, object)| {
+            Some(memory::Edge {
+                shape: memory::EdgeShape::from_token(shape)?,
+                object: handle(object),
+            })
+        });
+        let written_by_another = edge
+            .as_ref()
+            .is_some_and(|edge| edge.shape == memory::EdgeShape::Connection)
+            && match &held.first_writer {
+                Some(crate::actor::Actor::Bot(bot)) => {
+                    memory::authorship::another_bots_claim(&home, Some(bot), |bot| {
+                        self.resolve(&bot.0).is_some_and(|object| {
+                            self.survivor(object) == self.survivor(&claim.home)
+                        })
+                    })
+                }
+                _ => false,
+            };
+        Some(memory::Fact {
+            id: FactId(claim.label.clone()),
+            home: home.clone(),
+            subject: home,
+            content: claim.content.clone(),
+            details: claim.details.clone(),
+            provenance: claim.provenance,
+            standing: claim.standing,
+            status: claim.status,
+            recorded_at: claim.recorded_at,
+            happened_at: claim.happened_at,
+            happened_through: claim.happened_through,
+            inserted_at: claim.inserted_at,
+            stale_after: claim.stale_after,
+            receipt: claim.receipt.clone(),
+            app_stamp: claim.app.clone(),
+            written_by_another,
+            edge,
+            fields,
+            refs: claim.refs.iter().map(handle).collect(),
+            derived_from: claim.derived_from.as_ref().and_then(address),
+            stands_for: claim.stands_for.iter().filter_map(address).collect(),
+            sets,
+            reaching,
+            field_links,
+        })
     }
 
     /// **A thing as its scan serves it**, from that thing's own objects, claims
