@@ -428,3 +428,71 @@ async fn claims_import_keeps_a_folded_things_claim_under_the_survivor() {
 
     server.stop().await;
 }
+
+/// **A claim that cites a folded thing's claim points at a record that exists.**
+/// The store accepts the citation under the address the merge serves, the
+/// survivor and the new label, and keeps it so. The record behind that address
+/// was created under the folded key, so the import must name the record the
+/// citation was created as, or the replayed state holds a pointer to nothing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn claims_import_points_a_citation_at_the_record_a_merged_claim_was_created_as() {
+    let (_scratch, mut server, pool) = store("claims-import-merged-citation").await;
+    let memory = DoltMemory::open(pool.clone());
+    let bart = thing(&memory, "person:bart", "Bart").await;
+    let lisa = thing(&memory, "person:lisa", "Lisa").await;
+    let me = thing(&memory, "bot:sigma", "Sigma").await;
+    say(&memory, &bart, "skates").await;
+    say(&memory, &lisa, "plays the saxophone").await;
+    memory
+        .merge(
+            &lisa,
+            &bart,
+            Some("filed twice"),
+            date(2026, 9, 3),
+            &me,
+            Some("run-a"),
+        )
+        .await
+        .expect("the fold lands");
+    // The folded claim is served under the survivor, after the survivor's own.
+    let mut citing = NewFact::about(bart.clone(), "borrowed the saxophone", date(2026, 9, 4));
+    citing.provenance = Provenance::Testimony;
+    citing.derived_from = Some(jojobot_domain::memory::FactAddress::new(
+        bart.clone(),
+        jojobot_domain::memory::FactId("f2".to_string()),
+    ));
+    memory
+        .capture(citing)
+        .await
+        .expect("capture")
+        .written()
+        .expect("the store accepts a citation at the address the merge serves");
+
+    let read = memory.import_rows().await.expect("the reader reads");
+    assert!(read.findings.is_empty(), "{:?}", read.findings);
+    let state = State::replay(import(&read.rows).expect("the rows map").iter());
+    let survivor = read
+        .rows
+        .entities
+        .iter()
+        .find(|row| row.handle == "person:bart")
+        .expect("the survivor is listed")
+        .key
+        .clone();
+    let cited = state
+        .active_records(&survivor)
+        .into_iter()
+        .filter_map(|record| state.record(record))
+        .find(|record| record.claim.content == "borrowed the saxophone")
+        .expect("the citing claim is served from the survivor")
+        .claim
+        .derived_from
+        .clone()
+        .expect("the citation is kept");
+    assert!(
+        state.record(&cited).is_some(),
+        "the citation names a record nothing created: {cited:?}"
+    );
+
+    server.stop().await;
+}
