@@ -256,6 +256,12 @@ pub enum ClaimEvent {
         kind: ObjectId,
         declaration: DeclaredType,
     },
+    /// **The store no longer holds a declaration for the kind.** The state drops
+    /// every declaration it held for it, so a read of the kind answers as the
+    /// store's rows do.
+    TypeWithdrawn {
+        kind: ObjectId,
+    },
 }
 
 /// What the state holds of one claim.
@@ -510,6 +516,9 @@ impl State {
                     .entry(kind.clone())
                     .or_default()
                     .push(declaration.clone());
+            }
+            ClaimEvent::TypeWithdrawn { kind } => {
+                self.declarations.remove(kind);
             }
         }
     }

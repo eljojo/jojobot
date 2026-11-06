@@ -128,7 +128,7 @@ type ValueWire = Option<String>;
 /// **Every shape this family stores**, as `Payload` names them. Kept beside the
 /// enum so a new shape is added in both places, and checked against the events and
 /// the pinned literals in the tests.
-pub const SHAPES: [&str; 15] = [
+pub const SHAPES: [&str; 16] = [
     "ObjectCreated",
     "ObjectRevised",
     "ObjectBaselined",
@@ -144,6 +144,7 @@ pub const SHAPES: [&str; 15] = [
     "FieldWritten",
     "FieldRemoved",
     "TypeDeclared",
+    "TypeWithdrawn",
 ];
 
 #[derive(Serialize, Deserialize)]
@@ -221,6 +222,9 @@ enum Payload {
         kind: ObjectId,
         declaration: DeclaredTypeWire,
     },
+    TypeWithdrawn {
+        kind: ObjectId,
+    },
 }
 
 impl Payload {
@@ -242,6 +246,7 @@ impl Payload {
             Payload::FieldWritten { .. } => "FieldWritten",
             Payload::FieldRemoved { .. } => "FieldRemoved",
             Payload::TypeDeclared { .. } => "TypeDeclared",
+            Payload::TypeWithdrawn { .. } => "TypeWithdrawn",
         };
         format!("{FAMILY}{name}")
     }
@@ -543,6 +548,7 @@ fn payload_wire(event: &ClaimEvent) -> Payload {
             kind: kind.clone(),
             declaration: declaration_wire(declaration),
         },
+        ClaimEvent::TypeWithdrawn { kind } => Payload::TypeWithdrawn { kind: kind.clone() },
     }
 }
 
@@ -658,6 +664,7 @@ fn event_of(payload: Payload) -> Result<ClaimEvent, DecodeError> {
             kind,
             declaration: declaration_of(declaration)?,
         },
+        Payload::TypeWithdrawn { kind } => ClaimEvent::TypeWithdrawn { kind },
     })
 }
 

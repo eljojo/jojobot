@@ -707,3 +707,26 @@ fn a_redeclared_type_keeps_its_history_and_the_newest_is_in_force() {
     assert!(state.declared(&object("toy")).is_none());
     assert!(state.declarations_of(&object("toy")).is_empty());
 }
+
+/// A withdrawn declaration leaves the kind with none, and only that kind; a kind
+/// declared again afterwards is held again.
+#[test]
+fn a_withdrawn_declaration_leaves_the_kind_with_none() {
+    let mut state = State::default();
+    let (pet, toy) = (object("pet"), object("toy"));
+    for kind in [&pet, &toy] {
+        state.apply(&envelope(ClaimEvent::TypeDeclared {
+            kind: kind.clone(),
+            declaration: declaration(&kind.0, None),
+        }));
+    }
+    state.apply(&envelope(ClaimEvent::TypeWithdrawn { kind: pet.clone() }));
+    assert!(state.declared(&pet).is_none());
+    assert!(state.declarations_of(&pet).is_empty());
+    assert!(state.declared(&toy).is_some(), "another kind is untouched");
+    state.apply(&envelope(ClaimEvent::TypeDeclared {
+        kind: pet.clone(),
+        declaration: declaration("pet", Some("again")),
+    }));
+    assert_eq!(state.declarations_of(&pet).len(), 1);
+}

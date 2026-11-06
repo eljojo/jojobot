@@ -205,6 +205,7 @@ fn every_kind() -> Vec<ClaimEvent> {
             kind: object("k5"),
             declaration: declaration(),
         },
+        ClaimEvent::TypeWithdrawn { kind: object("k5") },
     ]
 }
 
@@ -263,7 +264,7 @@ fn each_kind_names_itself_once() {
         .collect();
     names.sort();
     names.dedup();
-    assert_eq!(names.len(), 15, "{names:?}");
+    assert_eq!(names.len(), 16, "{names:?}");
 }
 
 /// **Another family's event is that family's to read**, and a claims kind this
@@ -336,6 +337,7 @@ fn the_stored_spelling_is_pinned() {
             "ClaimsFieldWritten",
             "ClaimsFieldRemoved",
             "ClaimsTypeDeclared",
+            "ClaimsTypeWithdrawn",
         ]
     );
     let written = encode(&enveloped(ClaimEvent::FieldWritten {
@@ -425,6 +427,7 @@ fn the_stored_payload_of_every_shape_is_pinned() {
                  "one_of": ["a", "b"], "points_at": "person|bot", "required": false},
             ],
             "must": "a tally counts", "name": "tally", "origin": "declared"}}),
+        json!({"shape": "TypeWithdrawn", "kind": "k5"}),
     ];
     let stored: Vec<serde_json::Value> = every_kind()
         .into_iter()
@@ -444,7 +447,7 @@ fn the_stored_payload_of_every_shape_is_pinned() {
     };
     let listed: std::collections::BTreeSet<String> =
         SHAPES.iter().map(|shape| shape.to_string()).collect();
-    assert_eq!(listed.len(), 15);
+    assert_eq!(listed.len(), 16);
     assert_eq!(shapes_of(&stored), listed, "an event of every shape stored");
     assert_eq!(
         shapes_of(&pinned),
