@@ -79,8 +79,9 @@ in doubt, it doesn't cross.
 - **EM (`em`)** — decides which line takes which card and when, dispatches,
   reads the reports, accepts and carries (decision log 358, 451).
 - **Implementer (a dev line: `dev`, `dev7`, `dev-sol`, …)** — boots in this
-  repo as the bot its start line names, builds ONE scoped card test-first,
-  reports, and is disposed. If that's you: your task is in **your own bot's
+  repo as the bot its start line names, builds a scoped card test-first and
+  reports it; its charter says whether it takes the next card or winds down.
+  If that's you: your task is in **your own bot's
   mailbox** (`read_mailbox`). When done, `mark_processed(message, notes)` and
   post your report where the dispatch says: delivery to the **`em`** box, a
   scope question to the **`pm`** box. A failure is also a report — failure is
@@ -92,7 +93,7 @@ in doubt, it doesn't cross.
   needs a decision mid-card, ask it as one crisp question.
 - Merging advances `main` only. **Deploy and push are the user's verbs** —
   never deploy; never push unless asked. The one exception: a dev line pushes
-  its own branches to Forgejo (see "A dev line manages its own git" below).
+  its own branches to Forgejo (see "A dev line's git" below).
 
 ### Booting a session in this repo
 
@@ -279,15 +280,11 @@ A session here starts at jojobot, not at these files. The whole protocol:
 - **A safe rebase needs no one's permission.** Rebasing unpushed commits onto
   the main line, and joining them by fast-forward, is routine work. Never make
   a merge commit. Push and deploy stay the operator's.
-- **A dev line manages its own git, and pushes its own branches to Forgejo.**
-  This is the operator's standing grant, so a line asks nobody first. In its
-  own checkout and on its own branches (`devN-work` and any `devN-*` branch it
-  made), a line uses any git verb: rebase onto main, create, switch, reset and
-  delete its own branches. It pushes those branches with
-  `git push forgejo <branch>`, and a `--force-with-lease` after its own rebase
-  is included. Not covered: `main`, another line's branch or checkout, any
-  remote other than `forgejo`, and a merge commit. `main` moves only by the
-  engineering manager's carry.
+- **A dev line's git is a standing grant, held in one place:** section 6 of
+  the line procedure (the line-procedure document in jojobot), so a line asks
+  nobody first for a verb it lists and tickets the EM for any other. `main`
+  moves only by the engineering manager's carry, and a merge commit is never
+  made.
 - **A commit message uses Simplified Technical English**, like every other text
   this project writes. Short sentences. Active voice. One word has one meaning.
   No metaphor.
