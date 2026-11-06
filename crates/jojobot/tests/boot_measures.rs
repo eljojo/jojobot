@@ -1374,7 +1374,7 @@ async fn prepare(state: &Scratch, plan: Plan, events: u64) -> Size {
         .expect("the log opens");
     // **The binary's first boot and stop left a snapshot of the restored log**,
     // so the case starts from none unless it takes one.
-    sqlx::query("DELETE FROM event_log WHERE slot = 'snapshot'")
+    sqlx::query("DELETE FROM event_log WHERE slot LIKE 'snapshot%'")
         .execute(&pool)
         .await
         .expect("the snapshot slot is cleared");
