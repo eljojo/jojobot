@@ -14,8 +14,6 @@
 /// convenient.** A handle of that kind that names somebody belongs on
 /// [`crate::ROSTER`], where the bar shows it, or nowhere.
 pub const ORDINARY: &[&str] = &[
-    // The developer runtime guide named by tooling refusals, not a life document.
-    "document:build-runtime",
     // A numbered queue of work items, filed under a queue named for a greek
     // letter. They name nobody.
     "work:alpha-queue",

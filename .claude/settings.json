@@ -1,26 +1,5 @@
 {
   "hooks": {
-    "PostToolUse": [
-      {
-        "matcher": "^mcp__.*jojobot.*__wrap_session$",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/mark-finished-session\""
-          }
-        ]
-      }
-    ],
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/refuse-finished-session\""
-          }
-        ]
-      }
-    ],
     "PreToolUse": [
       {
         "matcher": "Bash",
