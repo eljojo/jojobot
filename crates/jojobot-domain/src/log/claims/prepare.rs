@@ -224,6 +224,30 @@ pub enum Refusal {
 /// write per key.
 pub type Admitted = Vec<ClaimEvent>;
 
+/// **A field value as it is stored**: every handle in it is written as the
+/// permanent id of the thing it names, behind the mark, so a read serves the
+/// handle the thing wears then and the value follows a rename or a reuse of the
+/// handle. A declared reference key also takes the badge of a thing. Words that
+/// name nothing are kept as written.
+fn marked_value(state: &State, value: &str, reference: bool) -> String {
+    if !reference && memory::handles_in_value(value).is_empty() {
+        return value.to_string();
+    }
+    value
+        .split(',')
+        .map(|item| {
+            let item = item.trim();
+            let names_a_thing =
+                memory::validate_subject(&memory::EntityId(item.to_string())).is_ok() || reference;
+            match state.resolve(item) {
+                Some(object) if names_a_thing => memory::marked_stored_handle(&object.0),
+                _ => item.to_string(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 /// Decide one capture over the state. `declared` is what the types declare: the
 /// state does not hold it.
 pub fn prepare(
@@ -516,7 +540,11 @@ pub fn prepare(
                 .get(key.0.trim())
                 .copied()
                 .unwrap_or(WriteClass::Own),
-            write: FieldValue::Set(value.clone()),
+            write: FieldValue::Set(marked_value(
+                state,
+                value,
+                reference_keys.contains(key.0.as_str()),
+            )),
             targets: targets.get(&key.0).cloned().unwrap_or_default(),
             key,
         });

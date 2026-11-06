@@ -1107,6 +1107,69 @@ fn a_field_value_names_a_thing_where_the_link_decision_says() {
     )));
 }
 
+/// **A handle in a field value is stored as the id of the thing it names**, so
+/// the value is served as the handle the thing wears when it is read: after a
+/// rename the value names the new handle.
+#[test]
+fn a_handle_in_a_field_value_is_stored_as_the_id_and_follows_a_rename() {
+    crate::memory::kinds::load_shipped();
+    let mut state = replay(&thing("person:homer"));
+    for event in [
+        ClaimEvent::ObjectCreated {
+            object: object("k9"),
+            body: body("person", "person:gamma"),
+        },
+        ClaimEvent::AddressBound {
+            object: object("k9"),
+            address: "person:gamma".into(),
+        },
+    ] {
+        apply(&mut state, &event);
+    }
+    let sent = CaptureRequest {
+        fields: BTreeMap::from([("owner".to_string(), "person:gamma".to_string())]),
+        ..request("person:homer")
+    };
+    let events = prepare(&state, &[], &sent).expect("a held handle is admitted");
+    let stored = events
+        .iter()
+        .find_map(|event| match event {
+            ClaimEvent::FieldWritten { write, .. } => Some(write.clone()),
+            _ => None,
+        })
+        .expect("the field is written");
+    assert_eq!(
+        stored,
+        crate::log::claims::FieldValue::Set(crate::memory::marked_stored_handle("k9"))
+    );
+    for event in &events {
+        apply(&mut state, event);
+    }
+    let served = |state: &State| {
+        state
+            .fact(&record("new"))
+            .expect("the State holds the fact")
+            .fields
+            .get("owner")
+            .cloned()
+    };
+    assert_eq!(served(&state).as_deref(), Some("person:gamma"));
+    for event in [
+        ClaimEvent::AddressRetired {
+            object: object("k9"),
+            address: "person:gamma".into(),
+            day: day(4),
+        },
+        ClaimEvent::AddressBound {
+            object: object("k9"),
+            address: "person:delta".into(),
+        },
+    ] {
+        apply(&mut state, &event);
+    }
+    assert_eq!(served(&state).as_deref(), Some("person:delta"));
+}
+
 #[test]
 fn padded_capture_key_keeps_its_targets_and_setting_class() {
     crate::memory::kinds::load_shipped();
