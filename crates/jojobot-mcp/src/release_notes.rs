@@ -506,7 +506,23 @@ pub async fn send_unsent_notes(
 }
 
 /// [`send_unsent_notes`] over the notes it is given, so a case can ship others.
+///
+/// **The ledger it keeps for each bot is jojobot's own capture**, decided by the
+/// store with the job of the engine's writes.
 pub(crate) async fn send_from(
+    source: &[(&str, &str)],
+    memory: &Arc<dyn Memory>,
+    mailboxes: &Arc<dyn Mailboxes>,
+    clock: &Clock,
+) {
+    jojobot_domain::log::claims::job::within(
+        crate::memory::capture_job::engine_capture_job(clock),
+        send_each(source, memory, mailboxes, clock),
+    )
+    .await;
+}
+
+async fn send_each(
     source: &[(&str, &str)],
     memory: &Arc<dyn Memory>,
     mailboxes: &Arc<dyn Mailboxes>,
