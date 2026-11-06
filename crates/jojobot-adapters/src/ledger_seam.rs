@@ -43,6 +43,9 @@ mod emission_tests;
 mod generation_tests;
 
 #[cfg(test)]
+mod import_tests;
+
+#[cfg(test)]
 mod kind_set_tests;
 
 #[cfg(test)]
@@ -51,6 +54,11 @@ mod two_families_tests;
 /// The generation the import gives every retained row. The old tables hold one
 /// row per id, so they never held two attempts under one key.
 const IMPORTED_GENERATION: u64 = 1;
+
+/// **The batch id prefix of the claims import.** A log that holds a batch with
+/// this prefix holds a completed import; until it does, no claims event is staged
+/// (see [`Seam::stage_with`]).
+pub(crate) const CLAIMS_IMPORT_PREFIX: &str = "claims-import:";
 
 struct Held {
     state: State,
@@ -75,6 +83,10 @@ struct Held {
     /// The log holds a ledger event. The state cannot say, because it evicts, and
     /// the import runs only into a log that holds none.
     seen: bool,
+    /// **The log holds a completed claims import**: a batch whose id has the
+    /// [`CLAIMS_IMPORT_PREFIX`]. A claims event staged before it would make the
+    /// import skip the history it covers, so none is staged until this is set.
+    claims_import: bool,
 }
 
 impl Held {
@@ -114,6 +126,8 @@ pub(crate) struct Pending {
     events: Vec<LedgerEvent>,
     /// The claims events of the batch, as the log stores them.
     claims: Vec<Event<ClaimEvent>>,
+    /// The batch is the claims import: its commit sets `claims_import`.
+    imported: bool,
     last: Position,
 }
 
@@ -132,6 +146,9 @@ impl Pending {
         // (see `stage_with`), so a batch with claims is applied only to a state
         // that is current; a ledger-only batch leaves a state that is behind as
         // it was.
+        if self.imported {
+            held.claims_import = true;
+        }
         if held.claims_unreadable.is_none() {
             for claim in &self.claims {
                 held.claims.apply(claim);
@@ -177,6 +194,7 @@ impl Seam {
                 claims_unreadable: None,
                 behind: false,
                 seen: false,
+                claims_import: false,
             }),
         });
         seam.catch_up().await?;
@@ -201,6 +219,9 @@ impl Seam {
             }
             let mut held = self.lock();
             for batch in batches {
+                if is_claims_import(&batch) {
+                    held.claims_import = true;
+                }
                 // A member of the ledger family is applied to the ledgers, and a
                 // ledger member that cannot be read fails the seam. A member of the
                 // claims family is gathered for the claims state, and one that
@@ -303,12 +324,40 @@ impl Seam {
     /// The claims events are read back through their codec before anything is
     /// staged, so an event the log could not read again is refused here, before
     /// the transaction commits, and never after it.
+    ///
+    /// **A claims event is refused while the log holds no completed claims
+    /// import** (see [`CLAIMS_IMPORT_PREFIX`]); a write of the ledgers alone goes on.
     pub(crate) async fn stage_with(
         self: &Arc<Self>,
         tx: &mut Transaction<'_, MySql>,
         events: Vec<LedgerEvent>,
         claims: Vec<Event<ClaimEvent>>,
         at: Timestamp,
+    ) -> Result<Pending, LedgerError> {
+        self.stage_batch(tx, events, claims, at, false).await
+    }
+
+    /// **Stage the claims import as one batch in `tx`**, under the id the seam
+    /// reads as a completed import once it commits. The one way a claims event
+    /// reaches a log that holds none.
+    // The claims import of card e calls this; until it lands only the seam's cases do.
+    #[allow(dead_code)]
+    pub(crate) async fn stage_import(
+        self: &Arc<Self>,
+        tx: &mut Transaction<'_, MySql>,
+        claims: Vec<Event<ClaimEvent>>,
+        at: Timestamp,
+    ) -> Result<Pending, LedgerError> {
+        self.stage_batch(tx, Vec::new(), claims, at, true).await
+    }
+
+    async fn stage_batch(
+        self: &Arc<Self>,
+        tx: &mut Transaction<'_, MySql>,
+        events: Vec<LedgerEvent>,
+        claims: Vec<Event<ClaimEvent>>,
+        at: Timestamp,
+        import: bool,
     ) -> Result<Pending, LedgerError> {
         if self.lock().behind {
             self.catch_up().await?;
@@ -325,6 +374,11 @@ impl Seam {
         // not need it and goes on.
         if !claims.is_empty() {
             self.settle_claims().await?;
+            if !import && !self.lock().claims_import {
+                return Err(LedgerError::Refused(
+                    "the log holds no completed claims import, so no claims event is staged".into(),
+                ));
+            }
         }
         let claims = self.numbered(claims, at);
         let claims: Vec<Event<ClaimEvent>> = claims
@@ -335,7 +389,7 @@ impl Seam {
             })
             .collect::<Result<_, _>>()?;
         let head = self.log.head_in(tx).await.map_err(refused)?;
-        let batch = Self::seal(head, &events, &claims, at)?;
+        let batch = Self::seal(head, &events, &claims, at, import)?;
         let staged = self
             .log
             .stage(tx, Position(head), &batch)
@@ -346,6 +400,7 @@ impl Seam {
             staged,
             events,
             claims,
+            imported: import,
             last: batch.range().last,
         })
     }
@@ -359,7 +414,7 @@ impl Seam {
         events: Vec<LedgerEvent>,
         at: Timestamp,
     ) -> Result<Pending, LedgerError> {
-        let batch = Self::seal(after.0, &events, &[], at)?;
+        let batch = Self::seal(after.0, &events, &[], at, false)?;
         let staged = self
             .log
             .stage_after(tx, after, &batch)
@@ -370,6 +425,7 @@ impl Seam {
             staged,
             events,
             claims: Vec::new(),
+            imported: false,
             last: batch.range().last,
         })
     }
@@ -379,6 +435,7 @@ impl Seam {
         events: &[LedgerEvent],
         claims: &[Event<ClaimEvent>],
         at: Timestamp,
+        import: bool,
     ) -> Result<SealedBatch, LedgerError> {
         let members: Vec<Vec<u8>> = events
             .iter()
@@ -394,7 +451,10 @@ impl Seam {
                 .join("\n")
         ));
         SealedBatch::seal(
-            BatchId(format!("ledger:{identity}")),
+            BatchId(match import {
+                true => format!("{CLAIMS_IMPORT_PREFIX}{identity}"),
+                false => format!("ledger:{identity}"),
+            }),
             Position(head),
             at,
             REPRESENTATION_VERSION,
@@ -504,6 +564,9 @@ impl Seam {
             }
             let mut held = self.lock();
             for batch in &batches {
+                if is_claims_import(batch) {
+                    held.claims_import = true;
+                }
                 let mut claims = Vec::new();
                 for member in batch.members() {
                     // Only the claims family's members: the ledgers have read these
@@ -539,6 +602,10 @@ impl Seam {
     ) -> T {
         read(&self.lock().claims)
     }
+}
+
+fn is_claims_import(batch: &SealedBatch) -> bool {
+    batch.header().batch_id.0.starts_with(CLAIMS_IMPORT_PREFIX)
 }
 
 /// Every retained row of the three old tables, as the events that import them.
