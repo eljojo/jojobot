@@ -160,10 +160,28 @@ impl State {
                 trails
             },
             entity_versions: self
-                .entity_versions(object)
+                .observed_chain(object)
                 .into_iter()
+                .map(|(thing, write)| EntityVersion {
+                    ordinal: 0,
+                    thing: served(self, thing),
+                    written_at: write.source_time,
+                    session: None,
+                    snapshot: write
+                        .snapshot
+                        .as_ref()
+                        .map(|snapshot| observed_snapshot(self, snapshot)),
+                })
+                .chain(
+                    self.entity_versions(object)
+                        .into_iter()
+                        .map(|version| entity_version(self, 0, version)),
+                )
                 .enumerate()
-                .map(|(at, version)| entity_version(self, at + 1, version))
+                .map(|(at, version)| EntityVersion {
+                    ordinal: at + 1,
+                    ..version
+                })
                 .collect(),
         })
     }

@@ -16,7 +16,6 @@ use crate::memory::{
     self, EntityId, FactAddress, FactId, FieldBacking, FieldWrite, KeyTrails, RecordFieldWrite,
     WriteClass, types::DeclaredType,
 };
-pub use document::DocumentParts;
 
 // **How many streams the reads have looked at on this thread**, so a case can
 // say a read costs the streams of its own thing and not the size of the State.
@@ -522,6 +521,7 @@ impl State {
 }
 
 mod document;
+pub use document::DocumentParts;
 #[cfg(test)]
 mod histories_tests;
 #[cfg(test)]

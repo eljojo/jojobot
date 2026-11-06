@@ -814,6 +814,7 @@ mod indexes;
 pub mod job;
 mod prepare;
 mod reads;
+pub use reads::DocumentParts;
 mod rules;
 pub mod type_change;
 pub use indexes::Located;
