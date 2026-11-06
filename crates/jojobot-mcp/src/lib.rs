@@ -567,7 +567,7 @@ pub(crate) fn instructions() -> String {
 }
 
 pub(crate) const INSTRUCTIONS: &str = "jojobot — a personal-assistant server.\
-                 \n\n**MEMORY.** **Entities** use typed handles, `kind:slug`. **Facts** are dated claims \
+                 \n\n**MEMORY.** **Entities** have typed handles, `kind:slug`, the name each is addressed by. **Facts** are dated claims \
                  with an **address** (`kind:slug#local-id`) and a **provenance** \
                  saying who backs it; an inferred claim is a hypothesis \
                  until the operator confirms it. **Keep durable things in jojobot.** \
@@ -586,8 +586,7 @@ pub(crate) const INSTRUCTIONS: &str = "jojobot — a personal-assistant server.\
                  `how_to_proceed`: use the candidate, or re-call with the \
                  `override_token` that refusal carries. Branch on `status`; a plain \
                  error is a malformed call. 3. Close completed mail with `mark_processed` \
-                 or a reply using `in_reply_to`; that closes the message it answers \
-                 in your box. Progress reports omit `in_reply_to`.\
+                 or replies using `in_reply_to` (your box only). Progress reports omit `in_reply_to`.\
                  \n\nWrites return receipts. Elision names what is missing and how to read it. `start_here` has \
                  the vocabulary.";
 
