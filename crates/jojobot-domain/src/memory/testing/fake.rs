@@ -8,6 +8,7 @@ use crate::memory::claim_walk::{
 };
 use crate::memory::forward_field_value;
 
+mod claims;
 mod classes;
 mod fold_reads;
 mod link_rule;
@@ -143,6 +144,9 @@ pub struct InMemoryMemory {
     /// session table. `None` is a store that cannot tell, and then no claim reads as
     /// another bot's ([`Fact::written_by_another`]).
     run_bots: Option<std::sync::Arc<dyn crate::session::RunBots>>,
+    /// **The claims State the fake's writes apply their events to**, so it
+    /// answers what the fake answers for a thing a write touched.
+    claims: Mutex<crate::log::claims::State>,
     entities: Mutex<Vec<Entity>>,
     /// **How many times the whole listing has been asked for**, through
     /// [`Memory::list_entities`]. The real store builds every entity's row on
