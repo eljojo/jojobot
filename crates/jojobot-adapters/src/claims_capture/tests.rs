@@ -3,6 +3,7 @@
 //! measure is taken on the State the job finds, not on one before it.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use jiff::Timestamp;
@@ -11,12 +12,12 @@ use jojobot_domain::actor::Actor;
 use jojobot_domain::clock::Clock;
 use jojobot_domain::log::claims::job::{CaptureJob, within};
 use jojobot_domain::log::claims::{
-    CaptureRequest, ClaimEvent, ClaimSize, Declined, Door, Draft, KindId, Measures, ObjectBody,
-    Route,
+    BootFloor, CaptureRequest, ClaimEvent, ClaimSize, Declined, Door, Draft, KindId, Measures,
+    ObjectBody, Route,
 };
 use jojobot_domain::log::{Event, ObjectId, Position, RecordId};
 use jojobot_domain::memory::{
-    EntityId, FactStatus, Guarded, Memory, NewFact, Provenance, Standing,
+    EntityId, FactStatus, Guarded, Memory, MemoryError, NewFact, Provenance, Standing,
 };
 
 use super::{Admission, admit};
@@ -68,6 +69,24 @@ fn seeded() -> Vec<Event<ClaimEvent>> {
         envelope(ClaimEvent::AddressBound {
             object: homer(),
             address: "person:homer".into(),
+        }),
+        envelope(ClaimEvent::ObjectCreated {
+            object: ObjectId("k2".into()),
+            body: ObjectBody {
+                kind: KindId("bot".into()),
+                parent: None,
+                name: "bot:alpha".into(),
+                source: "operator".into(),
+                aliases: Vec::new(),
+                boot: None,
+                metadata: Default::default(),
+                archived: false,
+                bound_to: None,
+            },
+        }),
+        envelope(ClaimEvent::AddressBound {
+            object: ObjectId("k2".into()),
+            address: "bot:alpha".into(),
         }),
     ]
 }
@@ -172,6 +191,7 @@ async fn capture_once(
                         .push(state.record(&RecordId("r1".into())).is_some());
                     fits()
                 }),
+                None,
                 at(),
             )
             .await
@@ -196,7 +216,7 @@ async fn an_admitted_capture_is_sealed_and_the_state_answers_it() {
 
     let batches = writer
         .shared_log(&store)
-        .read_from(Position(2), 10)
+        .read_from(Position(4), 10)
         .await
         .unwrap();
     assert_eq!(batches.len(), 1, "one batch for the one transaction");
@@ -224,7 +244,7 @@ async fn a_refused_capture_leaves_nothing() {
     assert!(
         writer
             .shared_log(&store)
-            .read_from(Position(2), 10)
+            .read_from(Position(4), 10)
             .await
             .unwrap()
             .is_empty(),
@@ -269,6 +289,19 @@ fn job() -> CaptureJob {
             })
         }),
         measure: Arc::new(|_, _| fits()),
+        boot_floor: Arc::new(|_| Box::pin(async { None })),
+    }
+}
+
+/// A job whose boot render answers `floor`, counting how often it is asked.
+fn job_with_boot(floor: Option<BootFloor>, asked: Arc<AtomicUsize>) -> CaptureJob {
+    CaptureJob {
+        boot_floor: Arc::new(move |_| {
+            asked.fetch_add(1, Ordering::SeqCst);
+            let floor = floor.clone();
+            Box::pin(async move { floor })
+        }),
+        ..job()
     }
 }
 
@@ -332,4 +365,80 @@ fn fact_record(seam: &Arc<crate::ledger_seam::Seam>, label: &str) -> String {
             .map(|held| held.record.0)
             .expect("the record is held")
     })
+}
+
+fn starred(subject: &str) -> NewFact {
+    NewFact {
+        fields: [("starred".to_string(), "true".to_string())].into(),
+        sets: ["starred".to_string()].into(),
+        ..NewFact::about(EntityId(subject.into()), "a rule", date(2026, 4, 19))
+    }
+}
+
+/// **A star that makes the boot too heavy is refused, and nothing is written.**
+/// The boot render is handed to the job as a callback, and the job asks it for
+/// a write that stars a rule: without that, the refusal would drop silently.
+#[tokio::test]
+async fn a_star_that_makes_the_boot_too_heavy_is_refused_and_writes_nothing() {
+    let (_scratch, mut server, store, _pool, writer) = world("capture-job-boot-heavy").await;
+    let memory = Arc::new(crate::dolt::memory::DoltMemory::open(store.clone()));
+    let asked = Arc::new(AtomicUsize::new(0));
+    let heavy = BootFloor {
+        after: jojobot_domain::text::BOOT_ANSWER.budget + 1,
+        before: 0,
+        parts: Vec::new(),
+        stamp_margin: 0,
+    };
+    let refused = {
+        let memory = Arc::clone(&memory);
+        within(
+            job_with_boot(Some(heavy), Arc::clone(&asked)),
+            writer.run(async move { memory.capture(starred("bot:alpha")).await }),
+        )
+        .await
+    };
+    assert!(
+        matches!(refused, Err(MemoryError::BootTooHeavy { .. })),
+        "an over-budget star is refused: {refused:?}"
+    );
+    assert_eq!(asked.load(Ordering::SeqCst), 1);
+    assert!(
+        writer
+            .shared_log(&store)
+            .read_from(Position(4), 10)
+            .await
+            .unwrap()
+            .is_empty(),
+        "the refused star wrote nothing"
+    );
+    writer.drain().await;
+    server.stop().await;
+}
+
+/// **The boot is asked only of a write that could grow it**, and a boot that
+/// cannot be read passes.
+#[tokio::test]
+async fn the_boot_is_asked_only_of_a_write_that_could_grow_it() {
+    let (_scratch, mut server, store, _pool, writer) = world("capture-job-boot-asked").await;
+    let memory = Arc::new(crate::dolt::memory::DoltMemory::open(store.clone()));
+    let asked = Arc::new(AtomicUsize::new(0));
+    let capture = |fact: NewFact| {
+        let memory = Arc::clone(&memory);
+        let job = job_with_boot(None, Arc::clone(&asked));
+        within(job, writer.run(async move { memory.capture(fact).await }))
+    };
+    let plain = NewFact::about(EntityId("bot:alpha".into()), "a note", date(2026, 4, 19));
+    assert!(matches!(capture(plain).await, Ok(Guarded::Written(_))));
+    assert_eq!(
+        asked.load(Ordering::SeqCst),
+        0,
+        "a plain write is not asked"
+    );
+    assert!(
+        matches!(capture(starred("bot:alpha")).await, Ok(Guarded::Written(_))),
+        "a boot that cannot be read passes"
+    );
+    assert_eq!(asked.load(Ordering::SeqCst), 1, "a star is asked");
+    writer.drain().await;
+    server.stop().await;
 }

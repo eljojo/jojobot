@@ -8,6 +8,14 @@ use crate::log::RecordId;
 use crate::memory::{NewFact, Standing};
 
 impl CaptureRequest {
+    /// **Whether this write could make a bot's boot heavier than it can be**: it
+    /// stars a rule or sets a seat count. Only such a write is asked for the
+    /// boot floor ([`Measures::boot_floor`](super::Measures)).
+    pub fn could_grow_the_boot_floor(&self) -> bool {
+        self.fields.get("starred").is_some_and(|v| v == "true")
+            || self.fields.contains_key(crate::memory::RULE_SEATS)
+    }
+
     /// The request for `fact`, written under `record` through `route`, with the
     /// door the server resolved. Every name is the spelling the caller typed;
     /// [`prepare`](super::prepare) resolves it.

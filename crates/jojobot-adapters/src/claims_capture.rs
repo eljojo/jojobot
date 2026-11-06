@@ -59,22 +59,36 @@ pub(crate) async fn admit(
     seam: &Arc<Seam>,
     build: Build<'_>,
     measure: Measure<'_>,
+    boot_floor: Option<Arc<job::BootFloorMeasure>>,
     at: Timestamp,
 ) -> Result<Result<Admission, Declined>, MemoryError> {
     seam.settle().await.map_err(store)?;
     seam.settle_claims().await.map_err(store)?;
-    let decided = seam.read_claims(|state| {
+    let mut request = seam.read_claims(|state| {
         let declared = state.declared_types();
         let mut request = build(state, &declared)?;
         request.door.measures = measure(state, &request);
-        Ok::<_, MemoryError>(match prepare(state, &declared, &request) {
-            Ok(admitted) => Ok((request, admitted)),
+        Ok::<_, MemoryError>(request)
+    })?;
+    // **The boot is rendered only for a write that could make it heavier.** The
+    // one writer lets no write land between this render and the decision below, so
+    // the render sees what the State holds. A boot that cannot be read passes.
+    // TEMPORARY(9.3.7): the boot renders from the State then, and this goes.
+    if request.could_grow_the_boot_floor()
+        && let Some(boot_floor) = &boot_floor
+    {
+        request.door.measures.boot_floor = boot_floor(&request).await;
+    }
+    let decided = seam.read_claims(|state| {
+        let declared = state.declared_types();
+        match prepare(state, &declared, &request) {
+            Ok(admitted) => Ok(admitted),
             // **Answered from the State that refused**, before it can move.
             Err(refusal) => Err(refusal.declined(state)),
-        })
-    })?;
-    let (request, admitted) = match decided {
-        Ok(decided) => decided,
+        }
+    });
+    let admitted = match decided {
+        Ok(admitted) => admitted,
         Err(refusal) => return Ok(Err(refusal)),
     };
     let events: Vec<Event<ClaimEvent>> = admitted
@@ -113,6 +127,7 @@ pub(crate) async fn admit_fact(
 ) -> Result<Result<Admission, Declined>, MemoryError> {
     let record = job::fresh_record();
     let (door, measure) = (Arc::clone(&job.door), Arc::clone(&job.measure));
+    let boot_floor = Some(Arc::clone(&job.boot_floor));
     admit(
         seam,
         Box::new(move |state, declared| {
@@ -120,6 +135,7 @@ pub(crate) async fn admit_fact(
             Ok(CaptureRequest::of_fact(fact, record, Route::Verb, door))
         }),
         Box::new(move |state, request| measure(state, request)),
+        boot_floor,
         at,
     )
     .await

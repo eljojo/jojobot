@@ -12,7 +12,7 @@
 use std::future::Future;
 use std::sync::Arc;
 
-use super::{CaptureRequest, Door, Measures, State};
+use super::{BootFloor, CaptureRequest, Door, Measures, State};
 use crate::memory::{MemoryError, NewFact, types::DeclaredType};
 
 /// Fills the door for `fact` from the held State and the declarations in force.
@@ -22,11 +22,22 @@ pub type FillDoor =
 /// Renders the sizes of the request as an answer would carry them.
 pub type Measure = dyn Fn(&State, &CaptureRequest) -> Measures + Send + Sync;
 
-/// The two functions of one capture call.
+/// **What a bot's boot weighs with and without the claim**, rendered by today's
+/// boot render, which reads the box through the port. Called only for a write that
+/// stars a rule or sets a seat count ([`CaptureRequest::could_grow_the_boot_floor`]).
+/// It reaches no write. `None` is a boot that could not be read, and passes.
+///
+/// TEMPORARY(9.3.7): it retires when the boot renders from the State.
+pub type BootFloorMeasure = dyn Fn(&CaptureRequest) -> std::pin::Pin<Box<dyn Future<Output = Option<BootFloor>> + Send>>
+    + Send
+    + Sync;
+
+/// The functions of one capture call.
 #[derive(Clone)]
 pub struct CaptureJob {
     pub door: Arc<FillDoor>,
     pub measure: Arc<Measure>,
+    pub boot_floor: Arc<BootFloorMeasure>,
 }
 
 tokio::task_local! {
@@ -72,6 +83,7 @@ mod tests {
         CaptureJob {
             door: Arc::new(|_, _, _| Err(MemoryError::Store("no door in this case".into()))),
             measure: Arc::new(|_, _| Measures::default()),
+            boot_floor: Arc::new(|_| Box::pin(async { None })),
         }
     }
 
