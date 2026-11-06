@@ -352,6 +352,101 @@ fn landing_gate_checks_every_red_job_before_accepting_known_tests() {
     }
 }
 
+fn landing_summary(names: Vec<String>, timed_out: Vec<String>) -> String {
+    let known: String = names
+        .iter()
+        .map(|name| {
+            format!(
+                "[[known_red]]\ntest = \"{name}\"\ncard = 1\nowner = \"dev\"\nsince = \"2026-10-07\"\n"
+            )
+        })
+        .collect();
+    let verdict = jojobot_bar::TestVerdict {
+        compiled: true,
+        suites: 2,
+        passed: 1,
+        failed: names.len(),
+        failed_names: names,
+        timed_out,
+        ..Default::default()
+    };
+    let mut summary = jojobot_bar::Summary::new();
+    summary.test_phase(
+        false,
+        &verdict,
+        &jojobot_bar::KnownReds::parse(&known).unwrap(),
+    );
+    summary.log("target/bar/check.log", 1);
+    summary.render()
+}
+
+#[test]
+fn landing_gate_refuses_a_rendered_timeout_beside_a_known_test() {
+    for timeout in [false, true] {
+        let timed_out = if timeout {
+            jojobot_bar::deadline::named(
+                "bar: TIMED OUT: lib-alpha was still running after 60s and was killed",
+            )
+        } else {
+            Vec::new()
+        };
+        let log = landing_summary(vec!["tests::known".into()], timed_out);
+        assert_eq!(log.contains("  TIMED OUT:"), timeout, "{log}");
+        let standing = stand(Forge {
+            runs: vec![(trunk_gate(101, "failure"), log)],
+            ..Default::default()
+        });
+        let (code, output) = landing_with(&standing, json!({"known_reds": "tests::known"}));
+        assert_eq!(code, i32::from(timeout), "timeout={timeout}: {output}");
+    }
+}
+
+#[test]
+fn landing_gate_refuses_a_rendered_failure_list_cut_short() {
+    let allowed: Vec<String> = (0..10).map(|n| format!("tests::known_{n}")).collect();
+    for omitted in [false, true] {
+        let mut names = allowed.clone();
+        if omitted {
+            names.push("tests::not_allowed_by_release".into());
+        }
+        let log = landing_summary(names, Vec::new());
+        assert_eq!(log.contains("...and 1 more (see log)"), omitted, "{log}");
+        assert!(!log.contains("  FAILED: tests::not_allowed_by_release"));
+        let standing = stand(Forge {
+            runs: vec![(trunk_gate(101, "failure"), log)],
+            ..Default::default()
+        });
+        let (code, output) = landing_with(&standing, json!({"known_reds": allowed.join(",")}));
+        assert_eq!(code, i32::from(omitted), "omitted={omitted}: {output}");
+    }
+}
+
+#[test]
+fn landing_gate_uses_the_last_finished_verdict_across_different_shas() {
+    for newest in ["running", "success", "failure"] {
+        for older in ["success", "failure"] {
+            let mut tip = trunk_gate(102, newest);
+            tip["commit_sha"] = json!(GREEN_SHA);
+            let standing = stand(Forge {
+                runs: vec![
+                    (tip, String::new()),
+                    (trunk_gate(101, older), String::new()),
+                ],
+                ..Default::default()
+            });
+            let (status, sha) = if newest == "running" {
+                (older, RED_SHA)
+            } else {
+                (newest, GREEN_SHA)
+            };
+            let (code, output) = landing(&standing);
+            assert_eq!(code, i32::from(status == "failure"), "{output}");
+            assert!(output.contains(sha), "{output}");
+            assert_eq!(standing.asked_for("head_sha="), 0);
+        }
+    }
+}
+
 fn tool() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/wait-run")
 }
