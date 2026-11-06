@@ -582,8 +582,8 @@ pub fn lease_verdict(
 pub enum RoleMoveKind {
     /// Keeps the holder's lease fresh: writes the holder and a new moment.
     Renew,
-    /// Gives the role up: clears the holder and writes a moment that reads as
-    /// stale.
+    /// Gives the role up: clears the holder and its agent, and writes a moment
+    /// that reads as stale.
     Release,
 }
 
@@ -945,6 +945,10 @@ pub struct Session {
     /// caller's key is matched by and it is never served: no read returns it.
     #[serde(default)]
     pub key_hash: Option<String>,
+    /// The runtime agent most recently hosting this run. Earlier hosts remain
+    /// in its metadata history so a wrap finishes every host's context.
+    #[serde(default)]
+    pub agent: Option<String>,
     /// The bot this is one run of.
     pub bot: EntityId,
     /// What it is working on now — current truth, rewritten in place.
@@ -1759,6 +1763,15 @@ pub trait Sessions: Send + Sync {
         timezone: Option<&str>,
     ) -> Result<Session, SessionError>;
 
+    /// Record the runtime agent hosting this run, retaining earlier hosts in
+    /// the run's own history. Refused when the run takes no writes.
+    async fn set_agent(&self, id: &SessionId, agent: &str) -> Result<Session, SessionError>;
+
+    /// A wrapped run this agent ever hosted, including an earlier host kept
+    /// in the run's metadata history. Looks up the agent through an index,
+    /// rather than reading every run. The most recent wrap wins.
+    async fn wrapped_by_agent(&self, agent: &str) -> Result<Option<Session>, SessionError>;
+
     /// **Record the day a resume most recently set this run to**, replacing
     /// whatever it carried — [`Session::stated_day`], persisted exactly the
     /// way [`set_timezone`](Sessions::set_timezone) already persists the
@@ -2255,6 +2268,7 @@ mod projection_tests {
         let _booted = crate::memory::testing::InMemoryMemory::booted();
         let bot = EntityId("bot:gamma".into());
         let session = Session {
+            agent: None,
             key_hash: None,
             id: SessionId("contract-gamma-run".into()),
             sid: None,
@@ -2716,6 +2730,7 @@ mod tests {
             closing: false,
         };
         let session = Session {
+            agent: None,
             key_hash: None,
             timezone: None,
             started_on: None,
@@ -3012,6 +3027,7 @@ mod tests {
         let start = Timestamp::from_second(1_780_000_000).expect("a fixed instant");
         let day = |text: &str| text.parse::<Date>().expect("a date");
         let run = |on: Date| Session {
+            agent: None,
             key_hash: None,
             timezone: None,
             started_on: Some(on),
@@ -3074,6 +3090,7 @@ mod tests {
     fn staleness_is_measured_from_the_last_beat_or_the_start() {
         let start = Timestamp::from_second(1_780_000_000).expect("a fixed instant");
         let bare = Session {
+            agent: None,
             key_hash: None,
             timezone: None,
             started_on: None,
@@ -3203,6 +3220,7 @@ mod tests {
     fn only_a_recently_abandoned_run_is_offered_back() {
         let start = Timestamp::from_second(1_780_000_000).expect("a fixed instant");
         let run = Session {
+            agent: None,
             key_hash: None,
             timezone: None,
             started_on: None,
@@ -3266,6 +3284,7 @@ mod tests {
     fn a_window_lapses_two_hours_after_the_wrap_and_not_a_second_before() {
         let wrapped = Timestamp::from_second(1_780_000_000).expect("a fixed instant");
         let run = Session {
+            agent: None,
             key_hash: None,
             timezone: None,
             started_on: None,

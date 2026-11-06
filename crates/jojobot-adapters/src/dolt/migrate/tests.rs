@@ -161,6 +161,8 @@ const ALL_VERSIONS: &[&str] = &[
     "0118_field_write_fact_write_ordinal",
     "0119_event_log",
     "0120_role_lease_heartbeat",
+    "0121_session_agent",
+    "0122_session_agent_history_index",
 ];
 
 /// **The versions a start on a fresh store records and does not issue.** An

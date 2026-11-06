@@ -35,21 +35,35 @@ impl RoleWrite<'_> {
         };
         let mut fields =
             std::collections::BTreeMap::from([(ROLE_CLAIMED_AT.to_string(), moment.to_string())]);
-        let clear_fields = if kind == Some(RoleMoveKind::Release) {
-            vec![ROLE_HOLDER.to_string()]
-        } else {
-            fields.insert(ROLE_HOLDER.to_string(), claimant.to_string());
-            Vec::new()
+        fields.insert(
+            ROLE_HOLDER.to_string(),
+            if kind == Some(RoleMoveKind::Release) {
+                ""
+            } else {
+                claimant
+            }
+            .to_string(),
+        );
+        let agent = match self {
+            Self::Claim { agent, .. } => Some(agent.unwrap_or_default()),
+            Self::Release { .. } => Some(""),
+            Self::Renew { .. } => None,
         };
+        if let Some(agent) = agent {
+            // A blank wins over a legacy agent written on a different claim.
+            fields.insert(ROLE_AGENT.to_string(), agent.to_string());
+        }
         FactPatch {
             derived: fields.keys().cloned().collect(),
             fields,
-            clear_fields,
             role_move: kind.map(|kind| RoleMove {
                 kind,
                 role: role.to_string(),
                 claimant: claimant.to_string(),
             }),
+            // A plain renewal names no session: a session on the patch makes
+            // it an ordinary edit, rather than an overwritten heartbeat with
+            // nothing appended (see is_a_plain_renewal).
             session: (kind != Some(RoleMoveKind::Renew)).then(|| claimant.to_string()),
             ..FactPatch::default()
         }

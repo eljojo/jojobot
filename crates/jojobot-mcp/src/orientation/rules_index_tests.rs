@@ -330,6 +330,7 @@ async fn the_off_the_tree_warning_rides_every_named_boot_ahead_of_the_charter() 
     let call =
         |compacted: Option<bool>, resume: Option<String>, sid: Option<String>, offer_code| {
             jojobot.start_here(Parameters(OrientArgs {
+                agent: None,
                 request_id: None,
                 compacted,
                 claim: None,

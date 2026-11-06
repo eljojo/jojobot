@@ -15,19 +15,10 @@ use jiff::Timestamp;
 use jiff::civil::Date;
 use jojobot_domain::memory::{EntityId, EntityKind, FactPatch, Guarded, MemoryError, NewFact};
 use jojobot_domain::session::role_keys::{ensure_role_object, role_claim_content};
-use jojobot_domain::session::{ROLE_CLAIMED_AT, ROLE_HOLDER, RoleMove, RoleMoveKind, role_state};
+pub(crate) use jojobot_domain::session::role_write::RoleWrite;
+use jojobot_domain::session::{ROLE_CLAIMED_AT, ROLE_HOLDER, role_state};
 
 use crate::Jojobot;
-
-/// **What a write to a role's keys is.**
-pub(crate) enum RoleWrite<'a> {
-    /// The boot door takes the role, or takes it again.
-    Claim { claimant: &'a str, now: Timestamp },
-    /// A write the holder made keeps its lease fresh.
-    Renew { claimant: &'a str, at: Timestamp },
-    /// The holder gives the role up at wrap.
-    Release { claimant: &'a str },
-}
 
 impl Jojobot {
     /// **Write a role's keys, creating the role object and its claim record the
@@ -35,7 +26,7 @@ impl Jojobot {
     ///
     /// A claim sets the holder and the moment, and the store refuses it while
     /// another session's lease is fresh. A renewal or a release carries a
-    /// [`RoleMove`], and the store applies it only while its own sid holds the
+    /// [`jojobot_domain::session::RoleMove`], and the store applies it only while its own sid holds the
     /// role, so one that arrives after the holder gave the role up changes
     /// nothing. **A role object with no claim record yet** gets one made empty
     /// and the move is applied to it, so the compare-and-write of a renewal or a
@@ -67,59 +58,14 @@ impl Jojobot {
             | RoleWrite::Renew { claimant, .. }
             | RoleWrite::Release { claimant } => Some((*claimant).to_string()),
         };
-        // **A plain renewal names no session on the patch**, because it is the
-        // one patch a store answers by overwriting the lease moment and
-        // appending nothing, and a patch that carries a session is an ordinary
-        // edit (see `is_a_plain_renewal`). With no write there is no session to
-        // record.
-        let patch_session = match &write {
-            RoleWrite::Renew { .. } => None,
-            _ => session.clone(),
-        };
-        let (fields, role_move, clear): (
-            std::collections::BTreeMap<String, String>,
-            Option<RoleMove>,
-            Vec<String>,
-        ) = match &write {
-            RoleWrite::Claim { claimant, now } => (
-                [
-                    (ROLE_HOLDER.to_string(), claimant.to_string()),
-                    (ROLE_CLAIMED_AT.to_string(), now.to_string()),
-                ]
-                .into_iter()
-                .collect(),
-                None,
-                Vec::new(),
-            ),
-            RoleWrite::Renew { claimant, at } => (
-                [
-                    (ROLE_HOLDER.to_string(), claimant.to_string()),
-                    (ROLE_CLAIMED_AT.to_string(), at.to_string()),
-                ]
-                .into_iter()
-                .collect(),
-                Some(RoleMove {
-                    kind: RoleMoveKind::Renew,
-                    role: role.to_string(),
-                    claimant: claimant.to_string(),
-                }),
-                Vec::new(),
-            ),
-            RoleWrite::Release { claimant } => (
-                [(
-                    ROLE_CLAIMED_AT.to_string(),
-                    Timestamp::UNIX_EPOCH.to_string(),
-                )]
-                .into_iter()
-                .collect(),
-                Some(RoleMove {
-                    kind: RoleMoveKind::Release,
-                    role: role.to_string(),
-                    claimant: claimant.to_string(),
-                }),
-                vec![ROLE_HOLDER.to_string()],
-            ),
-        };
+        let FactPatch {
+            fields,
+            derived,
+            role_move,
+            clear_fields: clear,
+            session: patch_session,
+            ..
+        } = write.patch(role);
         let written = match (record, role_move) {
             // The record exists: the write patches it in place, so a claim
             // never multiplies records.
@@ -128,7 +74,7 @@ impl Jojobot {
                 .update_fact(
                     &address,
                     FactPatch {
-                        derived: fields.keys().cloned().collect(),
+                        derived,
                         fields,
                         clear_fields: clear,
                         role_move,
@@ -144,7 +90,7 @@ impl Jojobot {
             (None, None) => {
                 let mut fact = NewFact::about(object.clone(), role_claim_content(role), today);
                 // A lease is jojobot's own arithmetic on the role, so every key of it reaches.
-                fact.derived = fields.keys().cloned().collect();
+                fact.derived = derived;
                 fact.fields = fields;
                 fact.session = session.clone();
                 self.memory.capture(fact).await.map(|_| ())
@@ -169,7 +115,7 @@ impl Jojobot {
                     .update_fact(
                         &fact.address(),
                         FactPatch {
-                            derived: fields.keys().cloned().collect(),
+                            derived,
                             fields,
                             clear_fields: clear,
                             role_move: Some(role_move),
@@ -470,6 +416,7 @@ mod tests {
 
     fn boot(bot: &str, claim: Option<&str>) -> OrientArgs {
         OrientArgs {
+            agent: None,
             request_id: None,
             compacted: None,
             claim: claim.map(str::to_string),

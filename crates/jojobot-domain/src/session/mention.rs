@@ -168,6 +168,14 @@ impl Mentioning {
 
 #[async_trait::async_trait]
 impl Sessions for Mentioning {
+    async fn wrapped_by_agent(&self, agent: &str) -> Result<Option<Session>, SessionError> {
+        let mut run = self.inner.wrapped_by_agent(agent).await?;
+        if let Some(run) = &mut run {
+            Self::render_session(run, &self.known().await?);
+        }
+        Ok(run)
+    }
+
     async fn sessions_of(&self, bot: &EntityId) -> Result<Vec<Session>, SessionError> {
         let known = self.known().await?;
         let former = self.former().await?;
@@ -423,6 +431,12 @@ impl Sessions for Mentioning {
         timezone: Option<&str>,
     ) -> Result<Session, SessionError> {
         let mut session = self.inner.set_timezone(id, timezone).await?;
+        self.render(&mut session).await?;
+        Ok(session)
+    }
+
+    async fn set_agent(&self, id: &SessionId, agent: &str) -> Result<Session, SessionError> {
+        let mut session = self.inner.set_agent(id, agent).await?;
         self.render(&mut session).await?;
         Ok(session)
     }

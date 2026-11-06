@@ -383,6 +383,7 @@ pub(super) fn floor_len(
 /// learns a new one.
 pub(crate) struct OrientRequest<'a> {
     pub(crate) bot: Option<&'a EntityId>,
+    pub(crate) agent: Option<&'a str>,
     pub(crate) brief: bool,
     pub(crate) resume: Option<&'a str>,
     /// The IANA zone this run resolves days in, validated at the door.
@@ -427,6 +428,7 @@ impl Jojobot {
     pub(crate) async fn orient(&self, req: OrientRequest<'_>) -> Result<CallToolResult, McpError> {
         let OrientRequest {
             bot,
+            agent,
             brief,
             resume,
             timezone,
@@ -640,6 +642,9 @@ impl Jojobot {
                 Err(refused) => return Ok(refused),
             },
         };
+        if let Some(refused) = self.record_boot_agent(&mut session, agent).await? {
+            return Ok(refused);
+        }
         // **The lease's own half: decided only once this call's sid is
         // known.** A role named without a resulting handle (the resume-or-new
         // choice came back instead) decides nothing — there is no claimant
@@ -692,7 +697,7 @@ impl Jojobot {
                     );
                 }
                 let outcome = self
-                    .decide_role_claim(bot, role, &run, now, today_or_clock, word)
+                    .decide_role_claim(bot, role, (&run, agent), now, today_or_clock, word)
                     .await;
                 // **A GRANTED claim has done something, so its session record
                 // is written now, through the same lazy path any first write
@@ -1159,11 +1164,12 @@ impl Jojobot {
         &self,
         bot: &EntityId,
         role: &str,
-        claimant: &str,
+        binding: (&str, Option<&str>),
         now: jiff::Timestamp,
         today: jiff::civil::Date,
         operator: Option<&crate::session::challenge::Verified>,
     ) -> serde_json::Value {
+        let (claimant, agent) = binding;
         // **Ownership is decided before anything is written**, so a claim from
         // the wrong bot leaves no role object and no key behind.
         match self.owner_of_role(bot, role).await {
@@ -1227,7 +1233,11 @@ impl Jojobot {
             .write_role_keys(
                 bot,
                 role,
-                crate::session::role_write::RoleWrite::Claim { claimant, now },
+                crate::session::role_write::RoleWrite::Claim {
+                    claimant,
+                    now,
+                    agent,
+                },
                 today,
             )
             .await;
@@ -1272,7 +1282,11 @@ impl Jojobot {
                         .write_role_keys(
                             bot,
                             role,
-                            crate::session::role_write::RoleWrite::Claim { claimant, now },
+                            crate::session::role_write::RoleWrite::Claim {
+                                claimant,
+                                now,
+                                agent,
+                            },
                             today,
                         )
                         .await;
@@ -1400,6 +1414,7 @@ mod tests {
         let booted = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    agent: None,
                     request_id: None,
                     compacted: None,
                     claim: Some("dev-dispatch".into()),
@@ -1449,6 +1464,7 @@ mod tests {
         let booted = json_of(
             &blind
                 .start_here(Parameters(OrientArgs {
+                    agent: None,
                     request_id: None,
                     compacted: None,
                     claim: Some("dev-dispatch".into()),
@@ -1492,6 +1508,7 @@ mod tests {
         let booted = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    agent: None,
                     request_id: None,
                     compacted: None,
                     claim: Some(role.into()),
@@ -1609,6 +1626,7 @@ mod tests {
         let booted = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    agent: None,
                     request_id: None,
                     compacted: None,
                     claim: None,
@@ -1733,6 +1751,7 @@ mod tests {
         let booted = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    agent: None,
                     request_id: None,
                     compacted: None,
                     claim: None,
@@ -1832,6 +1851,7 @@ mod tests {
         let booted = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    agent: None,
                     request_id: None,
                     compacted: None,
                     claim: None,
@@ -1918,6 +1938,7 @@ mod tests {
         let booted = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    agent: None,
                     request_id: None,
                     compacted: None,
                     claim: None,
@@ -2048,6 +2069,7 @@ mod tests {
 
         let result = jojobot
             .start_here(Parameters(OrientArgs {
+                agent: None,
                 request_id: None,
                 compacted: None,
                 claim: None,
@@ -2113,6 +2135,7 @@ mod tests {
         let booted = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    agent: None,
                     request_id: None,
                     compacted: None,
                     claim: None,
@@ -2173,6 +2196,7 @@ mod tests {
         let booted = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    agent: None,
                     request_id: None,
                     compacted: None,
                     claim: None,
@@ -2227,6 +2251,7 @@ mod tests {
             let booted = json_of(
                 &jojobot
                     .start_here(Parameters(OrientArgs {
+                        agent: None,
                         request_id: None,
                         compacted: None,
                         claim: None,
@@ -2337,6 +2362,7 @@ mod tests {
         let booted = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    agent: None,
                     request_id: None,
                     compacted: None,
                     claim: None,
@@ -2957,6 +2983,7 @@ mod tests {
         let anonymous = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    agent: None,
                     request_id: None,
                     compacted: None,
                     claim: None,
@@ -3035,6 +3062,7 @@ mod tests {
         let anonymous = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    agent: None,
                     request_id: None,
                     compacted: None,
                     claim: None,
@@ -3110,6 +3138,7 @@ mod tests {
         let anonymous = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    agent: None,
                     request_id: None,
                     compacted: None,
                     claim: None,
@@ -3178,6 +3207,7 @@ mod tests {
         let booted = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    agent: None,
                     request_id: None,
                     compacted: None,
                     claim: None,
@@ -3377,6 +3407,7 @@ mod tests {
         json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    agent: None,
                     request_id: None,
                     compacted: None,
                     claim: None,
@@ -3423,6 +3454,7 @@ mod tests {
         let anonymous = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    agent: None,
                     request_id: None,
                     compacted: None,
                     claim: None,
@@ -3536,6 +3568,7 @@ mod tests {
         let anonymous = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    agent: None,
                     request_id: None,
                     compacted: None,
                     claim: None,
@@ -3706,6 +3739,7 @@ mod skills_are_indexed_not_shipped {
         let anonymous = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    agent: None,
                     request_id: None,
                     compacted: None,
                     claim: None,
@@ -3730,6 +3764,7 @@ mod skills_are_indexed_not_shipped {
         let fetched = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    agent: None,
                     request_id: None,
                     compacted: None,
                     claim: None,
@@ -3765,6 +3800,7 @@ mod skills_are_indexed_not_shipped {
         let booted = json_of(
             &handler()
                 .start_here(Parameters(OrientArgs {
+                    agent: None,
                     request_id: None,
                     compacted: None,
                     claim: None,
@@ -3830,6 +3866,7 @@ mod skills_are_indexed_not_shipped {
         let body = json_of(
             &handler()
                 .start_here(Parameters(OrientArgs {
+                    agent: None,
                     request_id: None,
                     compacted: None,
                     claim: None,
@@ -3877,6 +3914,7 @@ mod skills_are_indexed_not_shipped {
         let body = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    agent: None,
                     request_id: None,
                     compacted: None,
                     claim: None,
@@ -3926,6 +3964,7 @@ mod skills_are_indexed_not_shipped {
         let body = json_of(
             &handler()
                 .start_here(Parameters(OrientArgs {
+                    agent: None,
                     request_id: None,
                     compacted: None,
                     claim: None,

@@ -1113,6 +1113,7 @@ mod tests {
         let body = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    agent: None,
                     request_id: None,
                     compacted: None,
                     claim: None,
@@ -2014,6 +2015,7 @@ mod tests {
         let body = blocked(
             &restarted
                 .start_here(Parameters(OrientArgs {
+                    agent: None,
                     request_id: None,
                     compacted: None,
                     claim: None,
@@ -2056,6 +2058,7 @@ mod tests {
         let mistyped = blocked(
             &restarted
                 .start_here(Parameters(OrientArgs {
+                    agent: None,
                     request_id: None,
                     compacted: None,
                     claim: None,
@@ -2095,6 +2098,7 @@ mod tests {
         let body = blocked(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    agent: None,
                     request_id: None,
                     compacted: None,
                     claim: None,
@@ -2360,6 +2364,7 @@ mod tests {
         let refused = blocked(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    agent: None,
                     request_id: None,
                     compacted: None,
                     claim: None,
@@ -2496,6 +2501,7 @@ mod tests {
         let claimed = json_of(
             &first
                 .start_here(Parameters(OrientArgs {
+                    agent: None,
                     request_id: None,
                     compacted: None,
                     claim: Some("dev-dispatch".into()),
@@ -2543,6 +2549,7 @@ mod tests {
         let first = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    agent: None,
                     request_id: None,
                     compacted: None,
                     claim: Some("dev-dispatch".into()),
@@ -2570,6 +2577,7 @@ mod tests {
         let second = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    agent: None,
                     request_id: None,
                     compacted: None,
                     claim: Some("dev-dispatch".into()),
@@ -2717,6 +2725,7 @@ mod tests {
         let opened = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    agent: None,
                     request_id: None,
                     compacted: None,
                     claim: Some("dev-dispatch".into()),
@@ -3270,6 +3279,7 @@ mod tests {
                 .expect("begin ok");
 
             let booting = jojobot.start_here(Parameters(OrientArgs {
+                agent: None,
                 request_id: None,
                 compacted: None,
                 claim: None,
@@ -3359,6 +3369,7 @@ mod tests {
             let sid = booted(&jojobot, "gamma").await;
 
             let booting = jojobot.start_here(Parameters(OrientArgs {
+                agent: None,
                 request_id: None,
                 compacted: None,
                 claim: None,
@@ -4504,6 +4515,7 @@ mod tests {
         json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    agent: None,
                     request_id: None,
                     compacted: None,
                     claim: Some("dev-dispatch".into()),
@@ -4761,6 +4773,7 @@ mod tests {
         let compacted = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    agent: None,
                     request_id: None,
                     compacted: Some(true),
                     claim: None,
@@ -4803,6 +4816,7 @@ mod tests {
         let compacted = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    agent: None,
                     request_id: None,
                     compacted: Some(true),
                     claim: None,
@@ -4855,6 +4869,7 @@ mod tests {
         let compacted = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    agent: None,
                     request_id: None,
                     compacted: Some(true),
                     claim: None,

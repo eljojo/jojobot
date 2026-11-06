@@ -197,6 +197,7 @@ async fn ask_for_code(jojobot: &crate::Jojobot) -> serde_json::Value {
     json_of(
         &jojobot
             .start_here(Parameters(OrientArgs {
+                agent: None,
                 request_id: None,
                 compacted: None,
                 claim: None,

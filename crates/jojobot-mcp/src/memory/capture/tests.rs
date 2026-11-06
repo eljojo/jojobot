@@ -2567,6 +2567,7 @@ async fn a_run_that_stated_its_day_writes_under_it() {
     let booted = json_of(
         &jojobot
             .start_here(Parameters(OrientArgs {
+                agent: None,
                 request_id: None,
                 compacted: None,
                 claim: None,
@@ -2611,6 +2612,7 @@ async fn a_run_that_stated_its_day_writes_under_it() {
     let elsewhere = json_of(
         &jojobot
             .start_here(Parameters(OrientArgs {
+                agent: None,
                 request_id: None,
                 compacted: None,
                 claim: None,
@@ -2670,6 +2672,7 @@ async fn the_receipt_names_a_recorded_at_that_differs_from_the_runs_day() {
     let booted = json_of(
         &jojobot
             .start_here(Parameters(OrientArgs {
+                agent: None,
                 request_id: None,
                 compacted: None,
                 claim: None,

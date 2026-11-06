@@ -690,6 +690,7 @@ async fn the_history_of_a_key_names_the_writer_and_the_run() {
     let acting = sid_of(&json_of(
         &jojobot
             .start_here(Parameters(OrientArgs {
+                agent: None,
                 request_id: None,
                 compacted: None,
                 claim: None,

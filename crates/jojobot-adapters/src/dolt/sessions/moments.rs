@@ -26,7 +26,7 @@ pub(super) fn entry_moments(
 /// **The columns of a run's own row that the full read parses.** The cheap
 /// summary reads the same list and parses it with the same decoder, so a field
 /// the full read learns to parse is judged by the summary too.
-pub(super) const RUN_COLUMNS: &str = "id, sid, key_hash, bot, focus, started_at, state, timezone, \
+pub(super) const RUN_COLUMNS: &str = "id, sid, key_hash, agent, bot, focus, started_at, state, timezone, \
     started_on, served_chars, stated_day, wrap_window, charter_told_at, retired_key_hash, \
     retired_at, retired_by, taken_at, displaced_by";
 

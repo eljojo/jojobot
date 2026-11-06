@@ -21,7 +21,7 @@
 //! reason [`super::Folded`] gives.
 
 use crate::writer::owned;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -32,7 +32,8 @@ use jiff::civil::Date;
 use jojobot_domain::clock::Clock;
 use jojobot_domain::memory::EntityId;
 use jojobot_domain::session::history::{
-    Change, SessionChange, SessionHistories, Wording, WriteStamp, next_change, next_wording,
+    Change, ChangeKind, SessionChange, SessionHistories, Wording, WriteStamp, next_change,
+    next_wording,
 };
 use jojobot_domain::session::{
     CharterChange, EntryId, JournalEntry, NewEntry, NewSession, RunTotals, Session, SessionError,
@@ -54,6 +55,8 @@ struct Image {
     charter_changes: Option<BTreeMap<EntityId, CharterChange>>,
     /// Every change of every run that has any, oldest first.
     changes: BTreeMap<SessionId, Vec<SessionChange>>,
+    /// An index of the latest and historical agents in these same run records.
+    agent_runs: BTreeMap<String, BTreeSet<SessionId>>,
     /// Every wording of every entry that has any, oldest first.
     wordings: BTreeMap<(SessionId, EntryId), Vec<Wording>>,
     /// How many calls each key has been counted under.
@@ -74,8 +77,30 @@ impl Image {
         served: Vec<ServedDay>,
     ) -> Self {
         runs.sort_by(order);
+        let mut agent_runs: BTreeMap<String, BTreeSet<SessionId>> = BTreeMap::new();
+        for run in &runs {
+            if let Some(agent) = &run.agent {
+                agent_runs
+                    .entry(agent.clone())
+                    .or_default()
+                    .insert(run.id.clone());
+            }
+        }
+        for (id, changes) in &histories.changes {
+            for change in changes {
+                if change.changed == Some(ChangeKind::Agent)
+                    && let Some(agent) = &change.value
+                {
+                    agent_runs
+                        .entry(agent.clone())
+                        .or_default()
+                        .insert(id.clone());
+                }
+            }
+        }
         let mut image = Image {
             runs,
+            agent_runs,
             at: BTreeMap::new(),
             charter_changes,
             changes: histories.changes.into_iter().collect(),
@@ -131,6 +156,12 @@ impl Image {
         // The records are held oldest first, so the newest is the highest.
         let made = next_change(held.last().map(|c| c.ordinal), change, at);
         held.push(made);
+        if let Change::Agent(agent) = change {
+            self.agent_runs
+                .entry(agent.to_string())
+                .or_default()
+                .insert(id.clone());
+        }
     }
 
     /// **Append the wording an entry was just written with**, made by
@@ -356,6 +387,24 @@ impl FoldedSessions {
 
 #[async_trait]
 impl Sessions for FoldedSessions {
+    async fn wrapped_by_agent(&self, agent: &str) -> Result<Option<Session>, SessionError> {
+        self.readable()?;
+        match self.held(|image| {
+            image
+                .agent_runs
+                .get(agent)
+                .into_iter()
+                .flatten()
+                .filter_map(|id| image.run(id))
+                .filter(|run| run.state == SessionState::Wrapped)
+                .max_by_key(|run| (run.wrapped_at(), &run.id))
+                .cloned()
+        }) {
+            Some(run) => Ok(run),
+            None => self.inner.wrapped_by_agent(agent).await,
+        }
+    }
+
     async fn sessions_of(&self, bot: &EntityId) -> Result<Vec<Session>, SessionError> {
         self.readable()?;
         match self.held(|image| {
@@ -673,6 +722,24 @@ impl Sessions for FoldedSessions {
             let run = self.inner.set_timezone(id, timezone).await?;
             self.put("set_timezone", run, |image, run| {
                 image.record(id, Change::Timezone(run.timezone.as_deref()), at);
+            })
+            .await
+        })
+        .await
+    }
+
+    async fn set_agent(&self, id: &SessionId, agent: &str) -> Result<Session, SessionError> {
+        owned!(
+            self,
+            this,
+            [id = id.clone(), agent = agent.to_string()],
+            this.set_agent(&id, &agent).await
+        );
+        self.scoped(async {
+            let (_held, at) = self.moment();
+            let run = self.inner.set_agent(id, agent).await?;
+            self.put("set_agent", run, |image, _| {
+                image.record(id, Change::Agent(agent), at);
             })
             .await
         })

@@ -3244,6 +3244,7 @@ pub(super) fn run(
 ) -> jojobot_domain::session::Session {
     use jojobot_domain::session::{EntryId, JournalEntry, Session, SessionId, SessionState};
     Session {
+        agent: None,
         key_hash: None,
         started_on: None,
         timezone: None,
@@ -3947,6 +3948,7 @@ fn a_session_ingest_that_changes_nothing_writes_nothing() {
 fn run_of(id: &str, bot: &str, beats: &[(&str, &str)]) -> jojobot_domain::session::Session {
     use jojobot_domain::session::{EntryId, JournalEntry, Session, SessionId, SessionState};
     Session {
+        agent: None,
         key_hash: None,
         started_on: None,
         timezone: None,

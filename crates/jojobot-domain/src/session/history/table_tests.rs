@@ -20,6 +20,7 @@ fn each_kind_of_change_is_on_one_side_of_the_index() {
         (ChangeKind::AmendBeat, true),
         (ChangeKind::Focus, true),
         (ChangeKind::Timezone, false),
+        (ChangeKind::Agent, false),
         (ChangeKind::StatedDay, false),
         (ChangeKind::WrapWindow, false),
         (ChangeKind::State, false),

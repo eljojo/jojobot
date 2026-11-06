@@ -17,6 +17,7 @@ pub(crate) fn dropped_by_a_fetch(args: &OrientArgs, what: &str) -> Vec<&'static 
     [
         ("resume", args.resume.is_some()),
         ("claim", args.claim.is_some()),
+        ("agent", args.agent.is_some()),
         ("ask_for_code", args.ask_for_code.is_some()),
         ("challenge", args.challenge.is_some()),
         ("code", args.code.is_some()),
@@ -145,6 +146,7 @@ mod tests {
         set: impl FnOnce(&mut OrientArgs),
     ) -> serde_json::Value {
         let mut args = OrientArgs {
+            agent: None,
             request_id: None,
             compacted: None,
             claim: None,

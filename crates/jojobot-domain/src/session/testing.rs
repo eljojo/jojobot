@@ -32,11 +32,14 @@ mod faults;
 #[derive(Default)]
 pub struct InMemorySessions {
     sessions: Mutex<Vec<Session>>,
+    session_at: Mutex<std::collections::BTreeMap<SessionId, usize>>,
     unreadable_run: Mutex<Option<SessionId>>,
     next_id: Mutex<u64>,
     charter_changes: Mutex<std::collections::BTreeMap<EntityId, CharterChange>>,
     /// Every change of every run, in the order they were made.
     changes: Mutex<Vec<(SessionId, SessionChange)>>,
+    /// An index of the agents recorded in each run's metadata history.
+    agent_runs: Mutex<std::collections::BTreeMap<String, std::collections::BTreeSet<SessionId>>>,
     /// Every wording of every entry, in the order they were made.
     wordings: Mutex<Vec<(SessionId, EntryId, Wording)>>,
     /// The seconds the last record was stamped at. **The fake stamps by counting,
@@ -179,6 +182,14 @@ impl InMemorySessions {
             at,
         );
         changes.push((id.clone(), made));
+        if let Change::Agent(agent) = change {
+            self.agent_runs
+                .lock()
+                .expect("agent index lock")
+                .entry(agent.to_string())
+                .or_default()
+                .insert(id.clone());
+        }
     }
 
     /// Keep one wording of an entry, made by [`next_wording`].
@@ -254,6 +265,24 @@ impl super::RunBots for InMemorySessions {
 
 #[async_trait::async_trait]
 impl Sessions for InMemorySessions {
+    async fn wrapped_by_agent(&self, agent: &str) -> Result<Option<Session>, SessionError> {
+        let ids = self
+            .agent_runs
+            .lock()
+            .expect("agent index lock")
+            .get(agent)
+            .cloned()
+            .unwrap_or_default();
+        let sessions = self.sessions.lock().expect("session lock");
+        let at = self.session_at.lock().expect("session index lock");
+        Ok(ids
+            .iter()
+            .filter_map(|id| at.get(id).map(|place| &sessions[*place]))
+            .filter(|run| run.state == SessionState::Wrapped)
+            .max_by_key(|run| (run.wrapped_at(), &run.id))
+            .cloned())
+    }
+
     async fn sessions_of(&self, bot: &EntityId) -> Result<Vec<Session>, SessionError> {
         let mut found: Vec<Session> = self
             .sessions
@@ -399,6 +428,7 @@ impl Sessions for InMemorySessions {
         };
         let session = Session {
             id,
+            agent: None,
             sid: Some(new.sid),
             key_hash: new.key_hash,
             bot: new.bot,
@@ -414,10 +444,14 @@ impl Sessions for InMemorySessions {
             charter_told_at: None,
             key_trail: Default::default(),
         };
-        self.sessions
-            .lock()
-            .expect("session lock")
-            .push(session.clone());
+        {
+            let mut sessions = self.sessions.lock().expect("session lock");
+            self.session_at
+                .lock()
+                .expect("session index lock")
+                .insert(session.id.clone(), sessions.len());
+            sessions.push(session.clone());
+        }
         self.record(&session.id, Change::Begin(&session.focus));
         Ok(session)
     }
@@ -530,6 +564,15 @@ impl Sessions for InMemorySessions {
             .filter(|z| !z.is_empty())
             .map(str::to_string);
         self.record(id, Change::Timezone(sessions[at].timezone.as_deref()));
+        Ok(sessions[at].clone())
+    }
+
+    async fn set_agent(&self, id: &SessionId, agent: &str) -> Result<Session, SessionError> {
+        validate_session_id(id)?;
+        let mut sessions = self.sessions.lock().expect("session lock");
+        let at = Self::writable(&mut sessions, id)?;
+        sessions[at].agent = Some(agent.to_string());
+        self.record(id, Change::Agent(agent));
         Ok(sessions[at].clone())
     }
 

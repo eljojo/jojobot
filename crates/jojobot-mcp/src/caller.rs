@@ -140,30 +140,38 @@ fn collect_secret_tokens_in(value: &serde_json::Value, found: &mut Vec<String>) 
     }
 }
 
+/// The same finished-session instruction for a wrapped key or runtime agent.
+pub(crate) fn finished_session_declined(run: &str, at: jiff::Timestamp) -> CallToolResult {
+    handle_declined(
+        "",
+        format!(
+            "{NOTHING_RAN}. Run {run} wrapped at {at}. This session is finished; \
+         end the turn and do nothing. Whoever needs the role must start a new \
+         agent from @document:build-runtime."
+        ),
+    )
+}
+
 /// **The refusal for a key that stopped opening its run**, in the words of what
 /// ended it. It names the run by its public name and says when, and never
 /// repeats the key.
 fn retired_key_declined(retired: &sid::Retired) -> CallToolResult {
     let run = retired.name.as_str();
     let at = retired.at;
-    let how = match retired.by {
-        sid::RetiredBy::Resumed => format!(
-            "Run {run} was resumed at {at} as {}, and its key was replaced. Boot again with \
+    let refusal = match retired.by {
+        sid::RetiredBy::Resumed => handle_declined(
+            "",
+            format!(
+                "{NOTHING_RAN}. Run {run} was resumed at {at} as {}, and its key was replaced. Boot again with \
              start_here to begin a run of your own.",
-            retired.bot
+                retired.bot
+            ),
         ),
-        sid::RetiredBy::Wrapped => format!(
-            "Run {run} wrapped at {at}, which ended its key. If you hold the wrap_code its wrap \
-             handed back, call start_here with your bot name and resume set to that code; \
-             otherwise boot again with start_here."
-        ),
+        sid::RetiredBy::Wrapped => finished_session_declined(run, at),
     };
     // **Marked so `finish` lists what is in flight**: the bot is known, and the
     // refusal says nothing a bare `start_here` with that bot would not.
-    crate::orientation::in_flight::mark_ended_key(
-        handle_declined("", format!("{NOTHING_RAN}. {how}")),
-        "retired",
-    )
+    crate::orientation::in_flight::mark_ended_key(refusal, "retired")
 }
 
 impl Jojobot {

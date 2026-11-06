@@ -489,6 +489,7 @@ mod tests {
         let claimed = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    agent: None,
                     request_id: None,
                     compacted: None,
                     claim: Some("dev-dispatch".into()),
@@ -516,6 +517,7 @@ mod tests {
         let other = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    agent: None,
                     request_id: None,
                     compacted: None,
                     claim: Some("reviewer-dispatch".into()),
@@ -553,6 +555,7 @@ mod tests {
         let fresh = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    agent: None,
                     request_id: None,
                     compacted: None,
                     claim: Some("dev-dispatch".into()),
@@ -582,6 +585,7 @@ mod tests {
         let rival_on_other = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    agent: None,
                     request_id: None,
                     compacted: None,
                     claim: Some("reviewer-dispatch".into()),
@@ -619,6 +623,7 @@ mod tests {
         let jojobot = handler();
         make_bot(&jojobot, "gamma").await;
         let boot = |claim: &str| OrientArgs {
+            agent: None,
             request_id: None,
             compacted: None,
             claim: Some(claim.into()),
@@ -2629,6 +2634,7 @@ mod tests {
         let booted = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
+                    agent: None,
                     request_id: None,
                     compacted: None,
                     claim: Some(role.into()),

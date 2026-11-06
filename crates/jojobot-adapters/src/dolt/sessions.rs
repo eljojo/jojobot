@@ -774,6 +774,7 @@ fn session_from(
     let id: String = row.try_get("id").map_err(store)?;
     Ok(Session {
         sid: readable_sid(sid, &id),
+        agent: row.try_get::<Option<String>, _>("agent").map_err(store)?,
         key_hash: row
             .try_get::<Option<String>, _>("key_hash")
             .map_err(store)?,
@@ -869,6 +870,36 @@ fn stamp(at: Timestamp) -> String {
 
 #[async_trait]
 impl Sessions for DoltSessions {
+    async fn wrapped_by_agent(&self, agent: &str) -> Result<Option<Session>, SessionError> {
+        let mut tx = self.pool.begin().await.map_err(store)?;
+        // Each side is driven by its agent index; only matching wrapped runs
+        // pay for a card and its chronology.
+        let ids: Vec<(String,)> = sqlx::query_as(
+            "SELECT s.id FROM session s JOIN (
+                SELECT id FROM session WHERE agent = ?
+                UNION
+                SELECT session AS id FROM session_write WHERE changed = 'agent' AND value = ?
+             ) hosted ON s.id = hosted.id WHERE s.state = 'wrapped'",
+        )
+        .bind(agent)
+        .bind(agent)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(store)?;
+        let mut wrapped: Option<Session> = None;
+        for (id,) in ids {
+            let run = self.read_in(&mut tx, &SessionId(id)).await?;
+            if wrapped
+                .as_ref()
+                .is_none_or(|held| (run.wrapped_at(), &run.id) > (held.wrapped_at(), &held.id))
+            {
+                wrapped = Some(run);
+            }
+        }
+        crate::writer::sql::commit(tx).await.map_err(store)?;
+        Ok(wrapped)
+    }
+
     async fn sessions_of(&self, bot: &EntityId) -> Result<Vec<Session>, SessionError> {
         let rows: Vec<(String, String)> =
             sqlx::query_as("SELECT id, started_at FROM session WHERE bot = ?")
@@ -1400,6 +1431,22 @@ impl Sessions for DoltSessions {
             Change::Timezone(timezone.map(str::trim).filter(|z| !z.is_empty())),
         )
         .await?;
+        let session = self.read_in(&mut tx, id).await?;
+        crate::writer::sql::commit(tx).await.map_err(store)?;
+        Ok(session)
+    }
+
+    async fn set_agent(&self, id: &SessionId, agent: &str) -> Result<Session, SessionError> {
+        validate_session_id(id)?;
+        let mut tx = self.pool.begin().await.map_err(store)?;
+        self.writable(&mut tx, id).await?;
+        sqlx::query("UPDATE session SET agent = ? WHERE id = ?")
+            .bind(agent)
+            .bind(id.as_str())
+            .execute(&mut *tx)
+            .await
+            .map_err(store)?;
+        self.keep_change(&mut tx, id, Change::Agent(agent)).await?;
         let session = self.read_in(&mut tx, id).await?;
         crate::writer::sql::commit(tx).await.map_err(store)?;
         Ok(session)

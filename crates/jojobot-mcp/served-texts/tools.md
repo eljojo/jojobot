@@ -4179,6 +4179,7 @@ A boot writes the sweep, a missing box's repair, a key note and, when asked, a c
 
 ```text
 {"/inputSchema/$schema":"https://json-schema.org/draft/2020-12/schema"}
+{"/inputSchema/properties/agent":{"default":null,"type":["string","null"]}}
 {"/inputSchema/properties/ask_for_code":{"default":null,"type":["boolean","null"]}}
 {"/inputSchema/properties/bot":{"default":null,"type":["string","null"]}}
 {"/inputSchema/properties/brief":{"default":null,"type":["boolean","null"]}}
@@ -4196,6 +4197,15 @@ A boot writes the sweep, a missing box's repair, a key note and, when asked, a c
 {"/inputSchema/properties/today":{"default":null,"type":["string","null"]}}
 {"/inputSchema/type":"object"}
 {"/name":"start_here"}
+```
+
+#### `start_here` — argument `/inputSchema.agent`
+
+```text
+Your runtime agent ID (`PASEO_AGENT_ID`). A boot records it on the
+resulting run, and a claim writes it beside the holder and claim moment.
+A claim that supplies none leaves no agent on the role. An agent that
+hosted a wrapped run is finished and cannot boot another run.
 ```
 
 #### `start_here` — argument `/inputSchema.ask_for_code`
@@ -4380,9 +4390,8 @@ valid one, `"opening"` included.
 The session id you are already carrying, if you have one — the same
 `sid` that rides every other call you make. Leave it off when you have
 none: this door is where one comes from, so a first boot has nothing to
-pass. **Outside `compacted`, a handle is never turned away here**, whatever
-became of it: the
-answer says whether the one you carried still addresses your session, so
+pass. A key ended by a wrap is refused: that session is finished.
+Other keys are answered by whether they still address your session, so
 a session that came back to a server it does not recognise learns that
 in the same call it re-orients with.
 ```
@@ -4404,7 +4413,7 @@ no run.
 
 **A booted session may send `skill` beside its own `bot` and its live
 `sid`.** Any other boot argument beside a fetch (`resume`, `claim`,
-`timezone`, `today`, `brief`, `request_id`, `ask_for_code`, `challenge`,
+`agent`, `timezone`, `today`, `brief`, `request_id`, `ask_for_code`, `challenge`,
 `code`, `offer_code`) refuses the whole call and names it, because a
 fetch touches no run and would drop it. A `bot` with no live `sid` of
 that bot is refused too.

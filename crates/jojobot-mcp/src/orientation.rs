@@ -13,6 +13,7 @@ use rmcp::{
 
 use crate::*;
 
+mod agent_binding;
 pub mod attach;
 mod carried_role;
 pub mod charter;

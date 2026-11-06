@@ -13,6 +13,14 @@ use std::collections::BTreeMap;
 
 #[async_trait]
 impl Sessions for Observed<dyn Sessions> {
+    async fn wrapped_by_agent(&self, agent: &str) -> Result<Option<Session>, SessionError> {
+        self.result(
+            Operation::Sessions(SessionOperation::WrappedByAgent),
+            self.inner.wrapped_by_agent(agent),
+        )
+        .await
+    }
+
     async fn sessions_of(&self, bot: &EntityId) -> Result<Vec<Session>, SessionError> {
         self.result(
             Operation::Sessions(SessionOperation::SessionsOf),
@@ -156,6 +164,13 @@ impl Sessions for Observed<dyn Sessions> {
         self.result(
             Operation::Sessions(SessionOperation::SetTimezone),
             self.inner.set_timezone(id, timezone),
+        )
+        .await
+    }
+    async fn set_agent(&self, id: &SessionId, agent: &str) -> Result<Session, SessionError> {
+        self.result(
+            Operation::Sessions(SessionOperation::SetAgent),
+            self.inner.set_agent(id, agent),
         )
         .await
     }

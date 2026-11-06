@@ -1101,6 +1101,7 @@ mod tests {
 
     fn card(name: &str, key_hash: Option<&str>) -> Session {
         Session {
+            agent: None,
             id: SessionId(name.to_string()),
             sid: Some(Sid(name.to_string())),
             key_hash: key_hash.map(str::to_string),

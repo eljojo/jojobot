@@ -20,6 +20,7 @@ async fn boot_new(jojobot: &Jojobot, bot: &str, role: Option<&str>) -> serde_jso
     json_of(
         &jojobot
             .start_here(Parameters(OrientArgs {
+                agent: None,
                 request_id: None,
                 compacted: None,
                 claim: role.map(Into::into),
@@ -77,6 +78,7 @@ async fn claiming_at_the_operators_word(
     json_of(
         &jojobot
             .start_here(Parameters(OrientArgs {
+                agent: None,
                 request_id: None,
                 compacted: None,
                 claim: Some(role.into()),
@@ -233,6 +235,7 @@ async fn claiming_more(jojobot: &Jojobot, bot: &str, sid: &str, role: &str) -> s
     json_of(
         &jojobot
             .start_here(Parameters(OrientArgs {
+                agent: None,
                 request_id: None,
                 compacted: None,
                 claim: Some(role.into()),

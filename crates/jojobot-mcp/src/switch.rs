@@ -248,6 +248,7 @@ async fn the_role_keys_a_claim_writes_reach_the_role_object() {
     let booted = json_of(
         &jojobot
             .start_here(Parameters(crate::orientation::start_here::OrientArgs {
+                agent: None,
                 request_id: None,
                 compacted: None,
                 claim: Some("gamma".into()),

@@ -385,6 +385,7 @@ async fn defrags_queue_over_an_unlistable_store_says_it_is_not_known() {
 async fn a_boot_over_unreadable_fields_names_the_seats_and_the_role_it_assumed() {
     use crate::orientation::OrientArgs;
     let boot = || OrientArgs {
+        agent: None,
         request_id: None,
         compacted: None,
         claim: None,
@@ -530,6 +531,7 @@ async fn a_boot_naming_a_bot_nobody_created_logs_no_failed_read() {
         }
     }
     let boot = |bot: &str| OrientArgs {
+        agent: None,
         request_id: None,
         compacted: None,
         claim: None,

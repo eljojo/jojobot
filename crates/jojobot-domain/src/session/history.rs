@@ -57,6 +57,8 @@ pub enum ChangeKind {
     Focus,
     /// The zone was set or cleared. A cleared zone has no value.
     Timezone,
+    /// The runtime agent hosting the run was recorded.
+    Agent,
     /// The day the run states was set or cleared. A cleared day has no value.
     StatedDay,
     /// The wrap window was opened, offered or cleared. Its value is `offered` or
@@ -76,13 +78,14 @@ pub enum ChangeKind {
 
 impl ChangeKind {
     /// Every kind, in the order the run can first meet them.
-    pub const ALL: [ChangeKind; 12] = [
+    pub const ALL: [ChangeKind; 13] = [
         ChangeKind::Begin,
         ChangeKind::Entry,
         ChangeKind::AmendLast,
         ChangeKind::AmendBeat,
         ChangeKind::Focus,
         ChangeKind::Timezone,
+        ChangeKind::Agent,
         ChangeKind::StatedDay,
         ChangeKind::WrapWindow,
         ChangeKind::State,
@@ -100,6 +103,7 @@ impl ChangeKind {
             ChangeKind::AmendBeat => "amend_beat",
             ChangeKind::Focus => "focus",
             ChangeKind::Timezone => "timezone",
+            ChangeKind::Agent => "agent",
             ChangeKind::StatedDay => "stated_day",
             ChangeKind::WrapWindow => "wrap_window",
             ChangeKind::State => "state",
@@ -123,6 +127,7 @@ impl ChangeKind {
             ChangeKind::Begin | ChangeKind::Focus => "focus",
             ChangeKind::Entry | ChangeKind::AmendLast | ChangeKind::AmendBeat => JOURNAL,
             ChangeKind::Timezone => "timezone",
+            ChangeKind::Agent => "agent",
             ChangeKind::StatedDay => "stated_day",
             ChangeKind::WrapWindow => "wrap_window",
             ChangeKind::State => "state",
@@ -245,6 +250,8 @@ pub enum Change<'a> {
     Focus(&'a str),
     /// The zone was set to this, or cleared.
     Timezone(Option<&'a str>),
+    /// The runtime agent hosting this run.
+    Agent(&'a str),
     /// The stated day was set to this, or cleared.
     StatedDay(Option<Date>),
     /// The wrap window was set to this, or cleared.
@@ -269,6 +276,7 @@ impl Change<'_> {
             Change::AmendBeat(_) => ChangeKind::AmendBeat,
             Change::Focus(_) => ChangeKind::Focus,
             Change::Timezone(_) => ChangeKind::Timezone,
+            Change::Agent(_) => ChangeKind::Agent,
             Change::StatedDay(_) => ChangeKind::StatedDay,
             Change::WrapWindow(_) => ChangeKind::WrapWindow,
             Change::State(_) => ChangeKind::State,
@@ -286,6 +294,7 @@ impl Change<'_> {
                 Some(id.to_string())
             }
             Change::Timezone(zone) => zone.map(str::to_string),
+            Change::Agent(agent) => Some((*agent).to_string()),
             Change::StatedDay(day) => day.map(|day| day.to_string()),
             Change::WrapWindow(window) => window.map(|window| match window {
                 WrapWindow::Offered(_) => "offered".to_string(),
@@ -550,6 +559,7 @@ mod tests {
                 "journal",
                 "focus",
                 "timezone",
+                "agent",
                 "stated_day",
                 "wrap_window",
                 "state",

@@ -215,6 +215,7 @@ pub(super) fn a_run(bot: &str, id: &str, focus: &str, text: &str) -> DocScan {
     shipped_kinds();
     use crate::session::{EntryId, JournalEntry, Session, SessionId, SessionState};
     crate::session::projected(&Session {
+        agent: None,
         key_hash: None,
         id: SessionId(id.into()),
         sid: None,

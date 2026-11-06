@@ -42,6 +42,7 @@ async fn the_wrap_description_names_the_keys_of_the_roles_block_it_serves() {
     let booted = json_of(
         &blind
             .start_here(Parameters(OrientArgs {
+                agent: None,
                 request_id: None,
                 compacted: None,
                 claim: Some("dev-dispatch".into()),

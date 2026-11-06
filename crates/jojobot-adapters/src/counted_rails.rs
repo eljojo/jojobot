@@ -173,6 +173,13 @@ impl CountedSessions {
 
 #[async_trait]
 impl Sessions for CountedSessions {
+    async fn wrapped_by_agent(&self, agent: &str) -> Result<Option<Session>, SessionError> {
+        self.calls.hit("wrapped_by_agent", Kind::Read);
+        self.calls.hang_if_armed("wrapped_by_agent").await;
+        self.calls.outage().map_err(SessionError::Store)?;
+        self.inner.wrapped_by_agent(agent).await
+    }
+
     async fn sessions_of(&self, bot: &EntityId) -> Result<Vec<Session>, SessionError> {
         self.calls.hit("sessions_of", Kind::Read);
         self.inner.sessions_of(bot).await
@@ -284,6 +291,12 @@ impl Sessions for CountedSessions {
         self.calls.hit("set_timezone", Kind::Write);
         let landed = self.inner.set_timezone(id, timezone).await;
         self.calls.hang_if_armed("set_timezone").await;
+        landed
+    }
+    async fn set_agent(&self, id: &SessionId, agent: &str) -> Result<Session, SessionError> {
+        self.calls.hit("set_agent", Kind::Write);
+        let landed = self.inner.set_agent(id, agent).await;
+        self.calls.hang_if_armed("set_agent").await;
         landed
     }
     async fn set_stated_day(
