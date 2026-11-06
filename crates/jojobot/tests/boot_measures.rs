@@ -834,9 +834,11 @@ async fn grow(port: u16) {
     while let Some(done) = shards.join_next().await {
         done.expect("a grow client finished");
     }
-    // **Sessions**, one at a time: a boot of the default identity answers a
-    // resume-or-new offer while it holds a run, and `new` starts another. The
-    // first answer without a sid ends the loop, and the count is recorded.
+    // **Sessions**, one at a time: `new` starts a run of the default identity and
+    // a wrap ends it with its story, as a real session does, so the next one
+    // starts. The first run left alone allowed seven; the cause of the stop is
+    // unknown, so the first answer without a sid ends the loop and its words go to
+    // the measure log.
     let mut sessions = 0;
     for _ in 0..PRODUCTION_SESSIONS {
         let booted = call(
@@ -846,12 +848,22 @@ async fn grow(port: u16) {
         )
         .await;
         let text = booted["content"][0]["text"].as_str().unwrap_or_default();
-        let started_one = serde_json::from_str::<serde_json::Value>(text)
+        let started_sid = serde_json::from_str::<serde_json::Value>(text)
             .ok()
-            .is_some_and(|json| json["session"]["sid"].is_string());
-        if !started_one {
+            .and_then(|json| json["session"]["sid"].as_str().map(str::to_string));
+        let Some(started_sid) = started_sid else {
+            record(&format!(
+                "grow: sessions stopped after {sessions}; start_here answered: {}",
+                text.chars().take(1_500).collect::<String>()
+            ));
             break;
-        }
+        };
+        call(
+            &peer,
+            "wrap_session",
+            serde_json::json!({ "sid": started_sid, "story": "A load session: started to give the store a run, and wrapped at once." }),
+        )
+        .await;
         sessions += 1;
     }
     record(&format!(
