@@ -138,7 +138,7 @@ async fn claims_import_appends_what_the_rows_mean_once() {
     let first = import_claims_once(&writer, &pool, &Provisions::default(), at())
         .await
         .expect("the import runs");
-    let Imported::Done { events } = first else {
+    let Imported::Done { events, .. } = first else {
         panic!("the first call imports: {first:?}");
     };
     assert!(events > 0);
@@ -246,15 +246,14 @@ async fn claims_import_reads_a_merge_with_no_event_as_a_redirect() {
     server.stop().await;
 }
 
-/// **A gap in the merge numbers stops the import with nothing appended.** Numbers
-/// run 1, 2, 3. A merge whose rows are gone but whose folded entity still carries
-/// its mark is no gap (the mark holds its number: the redirect case above). A gap
-/// needs the rows gone AND the mark cleared, which only a hand repair does; the
-/// mapping then refuses, and the import fails the call rather than number the
-/// merges itself. Failing loud is the choice: a start that skipped the import
-/// would serve a state that has no merges.
+/// **A gap in the merge numbers is kept as the store holds it** (rule 677). A
+/// merge whose rows are gone but whose folded entity still carries its mark is no
+/// gap (the redirect case above). A gap needs the rows gone AND the mark cleared,
+/// which a hand repair does, and a deployed store holds one. The import keeps the
+/// stored numbers: the replayed State's highest merge number is the store's
+/// highest, and the import names the empty number.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn claims_import_refuses_a_gap_in_the_merge_numbers() {
+async fn claims_import_keeps_a_gap_in_the_merge_numbers() {
     let (_scratch, mut server, pool) = store("claims-import-gap").await;
     let memory = DoltMemory::open(pool.clone());
     let homer = thing(&memory, "person:homer", "Homer").await;
@@ -275,15 +274,28 @@ async fn claims_import_refuses_a_gap_in_the_merge_numbers() {
         .execute(&pool)
         .await
         .expect("a hand repair that cleared the folded entity's mark");
-
-    let refused = import_claims_once(&Writer::default(), &pool, &Provisions::default(), at())
+    let highest: i64 = sqlx::query_scalar("SELECT MAX(merge_no) FROM merge_event")
+        .fetch_one(&pool)
         .await
-        .expect_err("the import refuses");
-    assert!(
-        matches!(&refused, ClaimsImportError::Unmappable(why) if why.contains("without a gap")),
-        "{refused:?}"
+        .expect("the store's highest merge number");
+
+    let imported = import_claims_once(&Writer::default(), &pool, &Provisions::default(), at())
+        .await
+        .expect("a gap does not stop the import");
+    let Imported::Done {
+        empty_merge_numbers,
+        ..
+    } = imported
+    else {
+        panic!("the import ran: {imported:?}");
+    };
+    assert_eq!(empty_merge_numbers, vec![1], "the empty number is named");
+    let events: Vec<Event<ClaimEvent>> = logged(&pool).await;
+    assert_eq!(
+        State::replay(events.iter()).highest_merge_number(),
+        highest as u64,
+        "the State keeps the store's highest merge number"
     );
-    assert!(logged(&pool).await.is_empty(), "nothing was appended");
 
     server.stop().await;
 }

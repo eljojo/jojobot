@@ -128,7 +128,7 @@ type ValueWire = Option<String>;
 /// **Every shape this family stores**, as `Payload` names them. Kept beside the
 /// enum so a new shape is added in both places, and checked against the events and
 /// the pinned literals in the tests.
-pub const SHAPES: [&str; 12] = [
+pub const SHAPES: [&str; 13] = [
     "ObjectCreated",
     "ObjectRevised",
     "ObjectBaselined",
@@ -137,6 +137,7 @@ pub const SHAPES: [&str; 12] = [
     "AddressRetired",
     "ObjectsMerged",
     "ObjectRedirected",
+    "MergeNumbersLeftEmpty",
     "RecordCreated",
     "RecordRevised",
     "FieldWritten",
@@ -183,6 +184,9 @@ enum Payload {
         folded: ObjectId,
         survivor: ObjectId,
     },
+    MergeNumbersLeftEmpty {
+        count: u64,
+    },
     RecordCreated {
         record: RecordId,
         claim: ClaimBodyWire,
@@ -218,6 +222,7 @@ impl Payload {
             Payload::AddressRetired { .. } => "AddressRetired",
             Payload::ObjectsMerged { .. } => "ObjectsMerged",
             Payload::ObjectRedirected { .. } => "ObjectRedirected",
+            Payload::MergeNumbersLeftEmpty { .. } => "MergeNumbersLeftEmpty",
             Payload::RecordCreated { .. } => "RecordCreated",
             Payload::RecordRevised { .. } => "RecordRevised",
             Payload::FieldWritten { .. } => "FieldWritten",
@@ -467,6 +472,9 @@ fn payload_wire(event: &ClaimEvent) -> Payload {
                 })
                 .collect(),
         },
+        ClaimEvent::MergeNumbersLeftEmpty { count } => {
+            Payload::MergeNumbersLeftEmpty { count: *count }
+        }
         ClaimEvent::ObjectRedirected { folded, survivor } => Payload::ObjectRedirected {
             folded: folded.clone(),
             survivor: survivor.clone(),
@@ -569,6 +577,7 @@ fn event_of(payload: Payload) -> Result<ClaimEvent, DecodeError> {
         Payload::ObjectRedirected { folded, survivor } => {
             ClaimEvent::ObjectRedirected { folded, survivor }
         }
+        Payload::MergeNumbersLeftEmpty { count } => ClaimEvent::MergeNumbersLeftEmpty { count },
         Payload::RecordCreated { record, claim } => ClaimEvent::RecordCreated {
             record,
             claim: claim_of(claim),

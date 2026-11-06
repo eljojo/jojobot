@@ -14,7 +14,7 @@
 //! the next start).
 
 use jiff::Timestamp;
-use jojobot_domain::log::claims::import::import;
+use jojobot_domain::log::claims::import::{import, unexplained_merge_numbers};
 use jojobot_domain::log::{BatchId, Position, SealedBatch};
 use jojobot_domain::memory::owned::Provisions;
 use sqlx::MySqlPool;
@@ -31,8 +31,13 @@ const REPRESENTATION_VERSION: u32 = 1;
 /// What one call did.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Imported {
-    /// The log held no claims event, and now holds this many.
-    Done { events: usize },
+    /// The log held no claims event, and now holds this many. `empty_merge_numbers`
+    /// are the merge numbers no row holds and no mark explains: they stay empty,
+    /// are never reissued, and the boot names them.
+    Done {
+        events: usize,
+        empty_merge_numbers: Vec<i64>,
+    },
     /// The log already held a claims event. Nothing was read or written.
     AlreadyDone,
 }
@@ -146,8 +151,13 @@ async fn import_in_job(
         });
     }
     let events = import(&read.rows).map_err(|e| ClaimsImportError::Unmappable(e.to_string()))?;
+    let empty_merge_numbers = unexplained_merge_numbers(&read.rows)
+        .map_err(|e| ClaimsImportError::Unmappable(e.to_string()))?;
     if events.is_empty() {
-        return Ok(Imported::Done { events: 0 });
+        return Ok(Imported::Done {
+            events: 0,
+            empty_merge_numbers: Vec::new(),
+        });
     }
     let members: Vec<Vec<u8>> = events.iter().map(codec::encode).collect();
 
@@ -174,6 +184,7 @@ async fn import_in_job(
             staged.committed();
             Ok(Imported::Done {
                 events: events.len(),
+                empty_merge_numbers,
             })
         }
         Err(error) => {

@@ -135,6 +135,11 @@ impl State {
             .unwrap_or(0)
     }
 
+    /// Numbers the store left empty count as used: they are never reissued.
+    pub(super) fn leave_merge_numbers_empty(&mut self, count: u64) {
+        self.indexes.merges += count;
+    }
+
     /// **The number of the latest merge**: merges are numbered from one in the
     /// order they were applied, so this is how many have been.
     pub fn highest_merge_number(&self) -> u64 {

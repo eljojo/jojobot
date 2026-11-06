@@ -539,12 +539,11 @@ fn the_rows_the_upgrade_gate_keeps_import_with_the_number_of_the_deleted_row() {
         ..Rows::default()
     };
     assert_eq!(
-        import(&unmarked),
-        Err(ImportError::MergeNumberGap {
-            expected: 1,
-            found: 2
-        })
+        State::replay(&imported(&unmarked)).highest_merge_number(),
+        2,
+        "a hole no mark explains still counts"
     );
+    assert_eq!(unexplained_merge_numbers(&unmarked), Ok(vec![1]));
 }
 
 /// A folded write of a claim the merge did not map is left out, as the claim is.
@@ -644,11 +643,12 @@ fn an_event_kind_or_a_metadata_row_is_refused_by_name() {
     );
 }
 
-/// Today's store numbers a merge one above the highest, and the state counts
-/// merges, so numbers with a gap would make the count lower than the highest
-/// stored number. A gap, a repeat or a first number past one is refused by name.
+/// **The stored merge numbers are kept as they are, gap and all** (rule 677). A
+/// number no row holds and no mark accounts for stays empty, is never reissued,
+/// and counts: the highest merge number of the State is the store's highest. A
+/// number held twice, or out of order, refuses by name.
 #[test]
-fn merges_numbered_with_a_gap_are_refused_by_name() {
+fn merge_numbers_with_a_gap_are_kept_and_a_repeat_is_refused_by_name() {
     let merge = |no: i64, folded: &str, survivor: &str| MergeRow {
         no,
         folded: object(folded),
@@ -667,28 +667,25 @@ fn merges_numbered_with_a_gap_are_refused_by_name() {
         ..Rows::default()
     };
     assert_eq!(
-        import(&rows([1, 3])),
-        Err(ImportError::MergeNumberGap {
-            expected: 2,
-            found: 3
-        })
-    );
-    assert_eq!(
         import(&rows([1, 1])),
         Err(ImportError::MergeNumberGap {
             expected: 2,
             found: 1
         })
     );
-    assert_eq!(
-        import(&rows([2, 3])),
-        Err(ImportError::MergeNumberGap {
-            expected: 1,
-            found: 2
-        })
-    );
-    let events = imported(&rows([1, 2]));
-    assert_eq!(State::replay(&events).highest_merge_number(), 2);
+    for (numbers, empty) in [([1, 3], vec![2]), ([2, 4], vec![1, 3]), ([1, 2], vec![])] {
+        let held = rows(numbers);
+        assert_eq!(
+            State::replay(&imported(&held)).highest_merge_number(),
+            numbers[1] as u64,
+            "{numbers:?}: the State's highest is the store's highest"
+        );
+        assert_eq!(
+            unexplained_merge_numbers(&held),
+            Ok(empty),
+            "{numbers:?}: the empty numbers are named"
+        );
+    }
 }
 
 /// The folded side's former handle still resolves to the survivor, and a moved

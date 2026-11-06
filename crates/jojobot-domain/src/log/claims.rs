@@ -198,6 +198,12 @@ pub enum ClaimEvent {
         folded: ObjectId,
         survivor: ObjectId,
     },
+    /// **Merge numbers the store never used**: a gap in the stored numbers that no
+    /// merge row and no merge mark explains. The numbers are never reissued, so
+    /// the highest merge number counts them.
+    MergeNumbersLeftEmpty {
+        count: u64,
+    },
     RecordCreated {
         record: RecordId,
         claim: ClaimBody,
@@ -330,6 +336,7 @@ impl State {
             ClaimEvent::ObjectRedirected { folded, survivor } => {
                 self.merge(folded, survivor, &[], &[], false)
             }
+            ClaimEvent::MergeNumbersLeftEmpty { count } => self.leave_merge_numbers_empty(*count),
             ClaimEvent::RecordCreated { record, claim } => {
                 let before = self.records.get(record).map(|held| held.claim.clone());
                 self.records.insert(

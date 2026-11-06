@@ -348,6 +348,42 @@ fn placed_by_merges(rows: &Rows) -> HashMap<usize, (ObjectId, u64, String)> {
     out
 }
 
+/// **The merge numbers the rows hold**: the folded things that have a merge row,
+/// the things marked merged with no row, and every number below the highest that
+/// no row holds. **The stored numbers are kept as they are, gap and all.** A
+/// number held twice, or out of order, cannot be told apart from a damaged
+/// store, so it is refused by name.
+fn merge_numbers(
+    rows: &Rows,
+) -> Result<(std::collections::HashSet<&ObjectId>, usize, Vec<i64>), ImportError> {
+    let with_event: std::collections::HashSet<&ObjectId> =
+        rows.merges.iter().map(|step| &step.folded).collect();
+    let marked_without_row = rows
+        .entities
+        .iter()
+        .filter(|row| row.merged_into.is_some() && !with_event.contains(&row.key))
+        .count();
+    let mut numbers: Vec<i64> = rows.merges.iter().map(|step| step.no).collect();
+    numbers.sort_unstable();
+    let (mut expected, mut holes) = (1_i64, Vec::new());
+    for found in numbers {
+        if found < expected {
+            return Err(ImportError::MergeNumberGap { expected, found });
+        }
+        holes.extend(expected..found);
+        expected = found + 1;
+    }
+    Ok((with_event, marked_without_row, holes))
+}
+
+/// **The merge numbers no row holds and no marked thing accounts for.** The boot
+/// names them once; they are never reissued.
+pub fn unexplained_merge_numbers(rows: &Rows) -> Result<Vec<i64>, ImportError> {
+    let (_, marked, holes) = merge_numbers(rows)?;
+    let explained = marked.min(holes.len());
+    Ok(holes[explained..].to_vec())
+}
+
 /// **The events that make the state today's rows serve.** Objects first, then
 /// the claims, then the key writes, then the redirects of the merges.
 pub fn import(rows: &Rows) -> Result<Vec<Event<ClaimEvent>>, ImportError> {
@@ -364,32 +400,11 @@ pub fn import(rows: &Rows) -> Result<Vec<Event<ClaimEvent>>, ImportError> {
             key: row.key.clone(),
         });
     }
-    // The state counts merges and today's store numbers one above the highest,
-    // so the count equals the highest only when every number up to it is held. **A
-    // number a merge made before `merge_event` existed once held may be missing**:
-    // a thing marked merged with no row is there to hold it, one thing to a
-    // number. A hole no such thing accounts for is refused.
-    let with_event: std::collections::HashSet<&ObjectId> =
-        rows.merges.iter().map(|step| &step.folded).collect();
-    let marked_without_row = rows
-        .entities
-        .iter()
-        .filter(|row| row.merged_into.is_some() && !with_event.contains(&row.key))
-        .count();
-    let mut numbers: Vec<i64> = rows.merges.iter().map(|step| step.no).collect();
-    numbers.sort_unstable();
-    let (mut expected, mut holes) = (1_i64, 0_usize);
-    for found in numbers {
-        if found < expected {
-            return Err(ImportError::MergeNumberGap { expected, found });
-        }
-        let missing = (found - expected) as usize;
-        if holes + missing > marked_without_row {
-            return Err(ImportError::MergeNumberGap { expected, found });
-        }
-        holes += missing;
-        expected = found + 1;
-    }
+    let (with_event, marked_without_row, hole_numbers) = merge_numbers(rows)?;
+    let holes = hole_numbers.len();
+    // **A number nothing explains stays empty** (rule 677: the stored numbers
+    // are the record). The count the State keeps is then the highest number.
+    let empty = holes.saturating_sub(marked_without_row);
     let mut events = Vec::new();
     for row in &rows.entities {
         events.push(envelope(
@@ -579,6 +594,11 @@ pub fn import(rows: &Rows) -> Result<Vec<Event<ClaimEvent>>, ImportError> {
                 folded: row.key.clone(),
                 survivor: survivor.clone(),
             }
+        }));
+    }
+    if empty > 0 {
+        events.push(plain(ClaimEvent::MergeNumbersLeftEmpty {
+            count: empty as u64,
         }));
     }
     for (step, records) in moves {

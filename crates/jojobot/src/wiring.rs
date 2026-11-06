@@ -1041,8 +1041,19 @@ pub async fn boot_store_observed(
     )
     .await
     {
-        Ok(jojobot_adapters::claims_import::Imported::Done { events }) => {
-            tracing::info!(events, "imported today's claims into the event log")
+        Ok(jojobot_adapters::claims_import::Imported::Done {
+            events,
+            empty_merge_numbers,
+        }) => {
+            tracing::info!(events, "imported today's claims into the event log");
+            // **Named once, at info**: the numbers stay empty and are never
+            // reissued, and they do not stop the boot.
+            if !empty_merge_numbers.is_empty() {
+                tracing::info!(
+                    numbers = ?empty_merge_numbers,
+                    "the store holds no merge under these numbers; they stay empty and are not reissued"
+                );
+            }
         }
         Ok(jojobot_adapters::claims_import::Imported::AlreadyDone) => {
             tracing::info!("claims import: already done")
