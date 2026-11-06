@@ -11,6 +11,14 @@ impl CaptureRequest {
     /// **Whether this write could make a bot's boot heavier than it can be**: it
     /// stars a rule or sets a seat count. Only such a write is asked for the
     /// boot floor ([`Measures::boot_floor`](super::Measures)).
+    /// **Whether this write could be a thought**: it draws a `connection` edge.
+    /// Only such a write is asked which bot each run belongs to.
+    pub fn could_be_a_thought(&self) -> bool {
+        self.edge
+            .as_ref()
+            .is_some_and(|(shape, _)| *shape == crate::memory::EdgeShape::Connection)
+    }
+
     pub fn could_grow_the_boot_floor(&self) -> bool {
         self.fields.get("starred").is_some_and(|v| v == "true")
             || self.fields.contains_key(crate::memory::RULE_SEATS)

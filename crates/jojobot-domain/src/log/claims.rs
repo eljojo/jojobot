@@ -539,6 +539,19 @@ impl State {
         Some((entity, fields, self.records_homed_on(object).len()))
     }
 
+    /// **The runs that first wrote the claims homed on a thing**, by any spelling
+    /// it answers to. A claim's bot is told through its run, so the door asks
+    /// which bot each of these belongs to.
+    pub fn first_runs_on(&self, name: &str) -> BTreeSet<RunId> {
+        let Some(object) = self.resolve(name) else {
+            return BTreeSet::new();
+        };
+        self.records_homed_on(object)
+            .into_iter()
+            .filter_map(|id| self.records.get(id)?.first_run.clone())
+            .collect()
+    }
+
     /// **The handle an object answers to now**, when it has one.
     pub fn handle(&self, object: &ObjectId) -> Option<crate::memory::EntityId> {
         self.handle_of(object)

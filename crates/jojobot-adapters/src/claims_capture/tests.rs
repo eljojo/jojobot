@@ -12,10 +12,10 @@ use jojobot_domain::actor::Actor;
 use jojobot_domain::clock::Clock;
 use jojobot_domain::log::claims::job::{CaptureJob, within};
 use jojobot_domain::log::claims::{
-    BootFloor, CaptureRequest, ClaimEvent, ClaimSize, Declined, Door, Draft, KindId, Measures,
-    ObjectBody, Route,
+    BootFloor, CaptureRequest, ClaimBody, ClaimEvent, ClaimSize, Declined, Door, Draft, KindId,
+    Measures, ObjectBody, Route,
 };
-use jojobot_domain::log::{Event, ObjectId, Position, RecordId};
+use jojobot_domain::log::{Event, ObjectId, Position, RecordId, RunId};
 use jojobot_domain::memory::{
     EntityId, FactStatus, Guarded, Memory, MemoryError, NewFact, Provenance, Standing,
 };
@@ -88,6 +88,33 @@ fn seeded() -> Vec<Event<ClaimEvent>> {
             object: ObjectId("k2".into()),
             address: "bot:alpha".into(),
         }),
+        // A claim on the bot that a run first wrote: the door asks whose run it is.
+        Event {
+            run: Some(RunId("run-x".into())),
+            ..envelope(ClaimEvent::RecordCreated {
+                record: RecordId("seed-record".into()),
+                claim: ClaimBody {
+                    label: "f1".into(),
+                    home: ObjectId("k2".into()),
+                    content: "an earlier thought".into(),
+                    details: None,
+                    provenance: Provenance::Testimony,
+                    standing: Standing::Settled,
+                    status: FactStatus::Active,
+                    recorded_at: date(2026, 4, 1),
+                    happened_at: None,
+                    happened_through: None,
+                    stale_after: None,
+                    edge: None,
+                    derived_from: None,
+                    refs: Vec::new(),
+                    stands_for: Vec::new(),
+                    receipt: None,
+                    app: None,
+                    inserted_at: None,
+                },
+            })
+        },
     ]
 }
 
@@ -192,6 +219,7 @@ async fn capture_once(
                     fits()
                 }),
                 None,
+                None,
                 at(),
             )
             .await
@@ -216,7 +244,7 @@ async fn an_admitted_capture_is_sealed_and_the_state_answers_it() {
 
     let batches = writer
         .shared_log(&store)
-        .read_from(Position(4), 10)
+        .read_from(Position(5), 10)
         .await
         .unwrap();
     assert_eq!(batches.len(), 1, "one batch for the one transaction");
@@ -244,7 +272,7 @@ async fn a_refused_capture_leaves_nothing() {
     assert!(
         writer
             .shared_log(&store)
-            .read_from(Position(4), 10)
+            .read_from(Position(5), 10)
             .await
             .unwrap()
             .is_empty(),
@@ -290,6 +318,7 @@ fn job() -> CaptureJob {
         }),
         measure: Arc::new(|_, _| fits()),
         boot_floor: Arc::new(|_| Box::pin(async { None })),
+        run_bots: Arc::new(|_| Box::pin(async { BTreeMap::new() })),
     }
 }
 
@@ -405,7 +434,7 @@ async fn a_star_that_makes_the_boot_too_heavy_is_refused_and_writes_nothing() {
     assert!(
         writer
             .shared_log(&store)
-            .read_from(Position(4), 10)
+            .read_from(Position(5), 10)
             .await
             .unwrap()
             .is_empty(),
@@ -439,6 +468,54 @@ async fn the_boot_is_asked_only_of_a_write_that_could_grow_it() {
         "a boot that cannot be read passes"
     );
     assert_eq!(asked.load(Ordering::SeqCst), 1, "a star is asked");
+    writer.drain().await;
+    server.stop().await;
+}
+
+/// **Which bot a run belongs to is asked of a write that could be a thought**,
+/// with the runs that first wrote the claims on its subject; a write that draws
+/// no `connection` edge asks nothing.
+#[tokio::test]
+async fn the_runs_of_a_subject_are_asked_of_a_write_that_could_be_a_thought() {
+    let (_scratch, mut server, store, _pool, writer) = world("capture-job-run-bots").await;
+    let memory = Arc::new(crate::dolt::memory::DoltMemory::open(store.clone()));
+    let asked: Arc<Mutex<Vec<Vec<RunId>>>> = Arc::default();
+    let job = {
+        let asked = Arc::clone(&asked);
+        CaptureJob {
+            run_bots: Arc::new(move |runs| {
+                asked.lock().unwrap().push(runs);
+                Box::pin(async { BTreeMap::new() })
+            }),
+            ..job()
+        }
+    };
+    let capture = |fact: NewFact| {
+        let memory = Arc::clone(&memory);
+        within(
+            job.clone(),
+            writer.run(async move { memory.capture(fact).await }),
+        )
+    };
+    let plain = NewFact::about(EntityId("bot:alpha".into()), "a note", date(2026, 4, 19));
+    assert!(matches!(capture(plain).await, Ok(Guarded::Written(_))));
+    assert!(
+        asked.lock().unwrap().is_empty(),
+        "a plain write asks nothing"
+    );
+    let thought = NewFact {
+        edge: Some(jojobot_domain::memory::Edge {
+            shape: jojobot_domain::memory::EdgeShape::Connection,
+            object: EntityId("person:homer".into()),
+        }),
+        ..NewFact::about(EntityId("bot:alpha".into()), "a thought", date(2026, 4, 19))
+    };
+    assert!(matches!(capture(thought).await, Ok(Guarded::Written(_))));
+    assert_eq!(
+        *asked.lock().unwrap(),
+        [vec![RunId("run-x".into())]],
+        "the run that first wrote a claim on the subject is asked about"
+    );
     writer.drain().await;
     server.stop().await;
 }

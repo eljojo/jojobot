@@ -60,6 +60,7 @@ pub(crate) async fn admit(
     build: Build<'_>,
     measure: Measure<'_>,
     boot_floor: Option<Arc<job::BootFloorMeasure>>,
+    run_bots: Option<Arc<job::RunBotsMeasure>>,
     at: Timestamp,
 ) -> Result<Result<Admission, Declined>, MemoryError> {
     seam.settle().await.map_err(store)?;
@@ -78,6 +79,18 @@ pub(crate) async fn admit(
         && let Some(boot_floor) = &boot_floor
     {
         request.door.measures.boot_floor = boot_floor(&request).await;
+    }
+    // **Which bot each run belongs to is asked only of a write that could be a
+    // thought**, for the runs that first wrote the claims on its subject and the
+    // run it is written in. TEMPORARY(9.3.7): sessions reach the log then.
+    if request.could_be_a_thought()
+        && let Some(run_bots) = &run_bots
+    {
+        let mut runs = seam.read_claims(|state| state.first_runs_on(&request.subject));
+        runs.extend(request.door.run.clone());
+        if !runs.is_empty() {
+            request.door.runs = run_bots(runs.into_iter().collect()).await;
+        }
     }
     let decided = seam.read_claims(|state| {
         let declared = state.declared_types();
@@ -128,6 +141,7 @@ pub(crate) async fn admit_fact(
     let record = job::fresh_record();
     let (door, measure) = (Arc::clone(&job.door), Arc::clone(&job.measure));
     let boot_floor = Some(Arc::clone(&job.boot_floor));
+    let run_bots = Some(Arc::clone(&job.run_bots));
     admit(
         seam,
         Box::new(move |state, declared| {
@@ -136,6 +150,7 @@ pub(crate) async fn admit_fact(
         }),
         Box::new(move |state, request| measure(state, request)),
         boot_floor,
+        run_bots,
         at,
     )
     .await

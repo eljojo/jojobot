@@ -32,12 +32,30 @@ pub type BootFloorMeasure = dyn Fn(&CaptureRequest) -> std::pin::Pin<Box<dyn Fut
     + Send
     + Sync;
 
+/// **Which bot each run belongs to**, from the sessions the process holds. Called
+/// with the runs that first wrote the claims on the subject and the run the
+/// request is written in, only for a write that could be a thought
+/// ([`CaptureRequest::could_be_a_thought`]). It reaches no write.
+///
+/// TEMPORARY(9.3.7): sessions reach the log then, and the door reads the image.
+pub type RunBotsMeasure = dyn Fn(
+        Vec<crate::log::RunId>,
+    ) -> std::pin::Pin<
+        Box<
+            dyn Future<
+                    Output = std::collections::BTreeMap<crate::log::RunId, crate::memory::EntityId>,
+                > + Send,
+        >,
+    > + Send
+    + Sync;
+
 /// The functions of one capture call.
 #[derive(Clone)]
 pub struct CaptureJob {
     pub door: Arc<FillDoor>,
     pub measure: Arc<Measure>,
     pub boot_floor: Arc<BootFloorMeasure>,
+    pub run_bots: Arc<RunBotsMeasure>,
 }
 
 tokio::task_local! {
@@ -84,6 +102,7 @@ mod tests {
             door: Arc::new(|_, _, _| Err(MemoryError::Store("no door in this case".into()))),
             measure: Arc::new(|_, _| Measures::default()),
             boot_floor: Arc::new(|_| Box::pin(async { None })),
+            run_bots: Arc::new(|_| Box::pin(async { Default::default() })),
         }
     }
 
