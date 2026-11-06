@@ -575,7 +575,7 @@ def main():
         results["DONE"] = done_says(card_falsify, commit, done_key)
     if re.fullmatch(r"(?i)none\W*", header.get("RETIRES", "")):
         results["RETIRES"] = (False, "none needs its reason")
-    if re.search(r"^net lines by area since \S+", text, re.M) and re.search(r"total; source plus tests", text):
+    if re.search(r"^[ \t]*net lines by area since \S+", text, re.M) and re.search(r"total; source plus tests", text):
         header["NET"] = "table"
         results["NET"] = (True, "the report holds the net table")
 

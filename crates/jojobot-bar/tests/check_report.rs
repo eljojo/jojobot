@@ -1055,6 +1055,35 @@ fn a_legacy_card_passes_with_a_note_and_a_current_one_does_not() {
     );
 }
 
+/// The bar's indentation leaves the table valid; a missing table still fails.
+#[test]
+fn the_net_table_accepts_the_bar_indentation() {
+    let repo = repository();
+    let api = stand(green(&repo));
+    let head = header(&repo);
+    // The block emitted by make static for a test-only deletion.
+    let printed = "  net lines by area since cddfa64ece:   source    tests     text  area
+           0      -21        0  crates/jojobot-domain/log
+           0      -21        0  total; source plus tests -21
+";
+    let unindented = printed
+        .lines()
+        .map(|line| line.strip_prefix("  ").unwrap())
+        .collect::<Vec<_>>()
+        .join("\n");
+    for (table, expected) in [(unindented.as_str(), 0), ("", 1), (printed, 0)] {
+        let text = report(&with(&head, "RUN", "698")).replace(NET_TABLE, table);
+        let (code, out, err) = check(&repo, &api, &text);
+        assert_eq!(code, expected, "table {table:?}: {out}\n{err}");
+        if expected == 0 {
+            assert!(out.contains("pass NET:"), "{out}");
+        } else {
+            assert_eq!(failures(&out).len(), 1, "{out}");
+            assert!(failures(&out)[0].starts_with("FAIL NET:"), "{out}");
+        }
+    }
+}
+
 /// **A report with no net table fails NET, and a RETIRES of `none` with no reason
 /// fails RETIRES.**
 #[test]
