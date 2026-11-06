@@ -1996,10 +1996,13 @@ mod tests {
             assert_eq!(body["status"], "blocked", "{verb} must be blocked: {body}");
             assert_eq!(body["wrote"], false);
             let how = body["how_to_proceed"].as_str().expect("advice");
-            // The wrap took the key away: the refusal names the run it was
-            // and the route back, which is the wrap code.
+            // The wrap took the key away: this run ends its turn, and the
+            // next holder starts a new agent from the runtime procedure.
             assert!(
-                how.contains(name.as_str()) && how.contains("wrap_code"),
+                how.contains(name.as_str())
+                    && how.contains("end the turn")
+                    && how.contains("@document:build-runtime")
+                    && !how.contains("wrap_code"),
                 "{verb} has to say why: {how}"
             );
             assert!(
@@ -2091,8 +2094,12 @@ mod tests {
             assert_eq!(body["status"], "blocked", "{verb} must be blocked: {body}");
             assert_eq!(body["wrote"], false, "{verb}: {body}");
             let how = body["how_to_proceed"].as_str().expect("advice");
+            // A different write surface cannot reopen the finished run.
             assert!(
-                how.contains(name.as_str()) && how.contains("wrap_code"),
+                how.contains(name.as_str())
+                    && how.contains("end the turn")
+                    && how.contains("@document:build-runtime")
+                    && !how.contains("wrap_code"),
                 "{verb} has to say why: {how}"
             );
         };
