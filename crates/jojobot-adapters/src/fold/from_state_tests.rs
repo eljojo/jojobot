@@ -319,6 +319,13 @@ async fn a_document_read_from_the_state_is_the_document_the_store_reads() {
             format!("{:?}", stored.fields),
         );
     }
+    let stored_merges = memory.merge_events(None).await.expect("the merges");
+    let held_merges = state.merge_events(None);
+    if held_merges != stored_merges {
+        differences.push(format!(
+            "merge events\n  state:  {held_merges:?}\n  stored: {stored_merges:?}"
+        ));
+    }
     assert!(differences.is_empty(), "{}", differences.join("\n"));
     server.stop().await;
 }
