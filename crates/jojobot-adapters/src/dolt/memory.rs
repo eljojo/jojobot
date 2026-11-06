@@ -4648,7 +4648,9 @@ impl DoltMemory {
             .await
             .map_err(store)?;
         }
-        Self::append_fact_write(tx, fact, clock, session, bot).await
+        let ordinal = Self::append_fact_write(tx, fact, clock, session, bot).await?;
+        Self::emit_claim_write(tx, fact, ordinal).await?;
+        Ok(ordinal)
     }
 
     /// **Keep this write of the claim, beside the row it just rewrote.**
@@ -8216,6 +8218,7 @@ mod adopt;
 mod ages;
 mod assembly;
 mod boot_reads;
+mod claim_events;
 mod entity_events;
 #[cfg(test)]
 mod entity_events_tests;
