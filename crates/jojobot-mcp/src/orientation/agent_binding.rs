@@ -27,18 +27,15 @@ impl Jojobot {
             }
             if let Some(handle) = self.registry.lookup_key(key)
                 && let Some(id) = handle.card
+                // As in standing, an unreadable live card supplies no new
+                // state. A probe must not turn a recoverable boot into an error.
+                && let Ok(run) = self.sessions.read_session(&id).await
+                && run.state == jojobot_domain::session::SessionState::Wrapped
             {
-                let run = self
-                    .sessions
-                    .read_session(&id)
-                    .await
-                    .map_err(session_error)?;
-                if run.state == jojobot_domain::session::SessionState::Wrapped {
-                    return Ok(Some(crate::caller::finished_session_declined(
-                        handle.name.as_str(),
-                        run.wrapped_at(),
-                    )));
-                }
+                return Ok(Some(crate::caller::finished_session_declined(
+                    handle.name.as_str(),
+                    run.wrapped_at(),
+                )));
             }
         }
         if let Some(agent) = args

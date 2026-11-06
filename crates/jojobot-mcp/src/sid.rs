@@ -823,12 +823,20 @@ impl SessionRegistry {
     /// **What is known of a key that no longer opens its run**, if it ever did
     /// in this process.
     pub fn retired(&self, key: &str) -> Option<Retired> {
-        self.held
-            .read()
-            .expect("the registry is poisoned")
-            .retired
-            .get(&hash_key(key))
-            .cloned()
+        let held = self.held.read().expect("the registry is poisoned");
+        let mut retired = held.retired.get(&hash_key(key))?.clone();
+        // A later wrap finishes earlier hosts too. The old pick-up reason
+        // must not keep teaching them to boot again after the run wraps.
+        if let Some(wrapped) = held
+            .by_name
+            .get(retired.name.as_str())
+            .and_then(|run| run.last_retired.as_ref())
+            .filter(|reason| reason.by == RetiredBy::Wrapped)
+        {
+            retired.by = wrapped.by;
+            retired.at = wrapped.at;
+        }
+        Some(retired)
     }
 
     /// **Take one run off the board into the registry**, unless the registry

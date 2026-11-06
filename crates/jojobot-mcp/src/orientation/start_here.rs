@@ -279,8 +279,8 @@ impl Jojobot {
         Parameters(args): Parameters<OrientArgs>,
     ) -> Result<CallToolResult, McpError> {
         let bot = named_bot(args.bot.as_deref())?;
-        // Finished hosts are refused before standing can close an expired
-        // wrap window, or any boot path can repair, sweep or claim.
+        // Finished hosts are refused before any boot path can repair, sweep,
+        // claim or close an expired wrap window.
         if let Some(refused) = self.finished_boot_refusal(&args).await? {
             return Ok(refused);
         }
