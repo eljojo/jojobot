@@ -677,6 +677,143 @@ mod tests {
         }
     }
 
+    /// Paging changes the received piece even when the owner has not moved.
+    /// These are the blocks emitted by recall's list and history renderers and
+    /// wire::narrow_record; their prose is not part of a window's identity.
+    #[test]
+    fn each_piece_has_its_own_part_token() {
+        fn token_of(key: &str, value: &Value) -> u64 {
+            let mut object = json!({"id": "person:homer", "name": "Homer"});
+            object[key] = value.clone();
+            let mut tokens = Vec::new();
+            parts_of(object.as_object().unwrap(), &mut |token, part, _| {
+                if part == key {
+                    tokens.push(token);
+                }
+            });
+            assert_eq!(tokens.len(), 1, "one named part: {object}");
+            tokens[0]
+        }
+
+        let table = [
+            (
+                "entries offset",
+                "entries",
+                json!([{"address": "list:packing#f2", "text": "pack", "state": "open"}]),
+                json!([{"address": "list:packing#f3", "text": "pack", "state": "open"}]),
+                false,
+            ),
+            (
+                "entries limit",
+                "entries",
+                json!([{"address": "list:packing#f2", "text": "pack", "state": "open"}]),
+                json!([{"address": "list:packing#f2", "text": "pack", "state": "open"},
+                       {"address": "list:packing#f3", "text": "pack", "state": "open"}]),
+                false,
+            ),
+            (
+                "entries past the end",
+                "entries",
+                json!([{"address": "list:packing#f2", "text": "pack", "state": "open"}]),
+                json!([]),
+                false,
+            ),
+            (
+                "ticks offset",
+                "ticks",
+                json!([{"address": "list:packing#f4", "entry": "list:packing#f2", "act": "done", "note": "packed"}]),
+                json!([{"address": "list:packing#f5", "entry": "list:packing#f2", "act": "undo", "note": "unpacked"}]),
+                false,
+            ),
+            (
+                "record keys",
+                "facts",
+                json!([{"address": "topic:beta#f1", "content": "opened", "provenance": "testimony"}]),
+                json!([{"address": "topic:beta#f1", "content": "opened", "details": "reasons"}]),
+                false,
+            ),
+            (
+                "facts offset",
+                "facts",
+                json!([{"address": "topic:beta#f1", "content": "opened", "provenance": "testimony"}]),
+                json!([{"address": "topic:beta#f2", "content": "closed", "provenance": "testimony"}]),
+                false,
+            ),
+            (
+                "history key",
+                "history",
+                json!({"key": "mood", "count": 1, "shown": 1, "writes": [{"record": "person:homer#f1", "value": "calm"}]}),
+                json!({"key": "colour", "count": 1, "shown": 1, "writes": [{"record": "person:homer#f1", "value": "yellow"}]}),
+                false,
+            ),
+            (
+                "history most",
+                "history",
+                json!({"key": "mood", "count": 2, "shown": 1, "writes": [{"record": "person:homer#f1", "value": "calm"}]}),
+                json!({"key": "mood", "count": 2, "shown": 2, "writes": [{"record": "person:homer#f1", "value": "calm"}, {"record": "person:homer#f2", "value": "calm"}]}),
+                false,
+            ),
+            (
+                "record history window",
+                "record_history",
+                json!({"record": "person:homer#f1", "count": 2, "shown": 1, "writes": [{"nth": 1, "content": "calm"}]}),
+                json!({"record": "person:homer#f1", "count": 2, "shown": 1, "writes": [{"nth": 2, "content": "calm"}]}),
+                false,
+            ),
+            (
+                "record history details",
+                "record_history",
+                json!({"record": "person:homer#f1", "count": 1, "shown": 1, "writes": [{"nth": 1, "content": "calm"}]}),
+                json!({"record": "person:homer#f1", "count": 1, "shown": 1, "writes": [{"nth": 1, "content": "calm", "details": "reasons"}]}),
+                false,
+            ),
+            (
+                "entity history window",
+                "entity_history",
+                json!({"entity": "person:homer", "count": 2, "shown": 1, "versions": [{"nth": 1, "name": "Homer"}]}),
+                json!({"entity": "person:homer", "count": 2, "shown": 1, "versions": [{"nth": 2, "name": "Homer"}]}),
+                false,
+            ),
+            (
+                "session field offset",
+                "history",
+                json!({"key": "focus", "count": 2, "shown": 1, "writes": [{"position": 1, "value": "reading"}]}),
+                json!({"key": "focus", "count": 2, "shown": 1, "writes": [{"position": 2, "value": "reading"}]}),
+                false,
+            ),
+            (
+                "journal wording offset",
+                "history",
+                json!({"key": "journal", "count": 2, "shown": 1, "entries": [{"entry": "m1", "count": 2, "wordings": [{"revision": 1, "text": "read"}]}]}),
+                json!({"key": "journal", "count": 2, "shown": 1, "entries": [{"entry": "m1", "count": 2, "wordings": [{"revision": 2, "text": "read"}]}]}),
+                false,
+            ),
+            (
+                "same identifiers and keys, different prose",
+                "entries",
+                json!([{"address": "list:packing#f2", "text": "pack", "state": "open"}]),
+                json!([{"address": "list:packing#f2", "text": "unpack", "state": "done"}]),
+                true,
+            ),
+            (
+                "unpaged prose",
+                "prose",
+                json!("read"),
+                json!("write"),
+                true,
+            ),
+        ];
+        let mut wrong = Vec::new();
+        for (row, key, first, next, same) in table {
+            let token = token_of(key, &first);
+            assert_eq!(token, token_of(key, &first), "same piece: {row}");
+            if (token == token_of(key, &next)) != same {
+                wrong.push(row);
+            }
+        }
+        assert!(wrong.is_empty(), "wrong piece tokens: {wrong:?}");
+    }
+
     /// **Received parts are kept while a thing has not moved and start again when
     /// it has.**
     #[test]
