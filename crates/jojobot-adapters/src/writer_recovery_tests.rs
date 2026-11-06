@@ -12,53 +12,78 @@ use jojobot_domain::teaching::testing::InMemoryTeachings;
 use jojobot_domain::teaching::{TeachingError, Teachings};
 use tokio::sync::Notify;
 
-use crate::fold::teachings::FoldedTeachings;
+use crate::teaching_log::{LoggedTeachings, Mark};
+use jojobot_domain::log::testing::InMemoryLog;
+use jojobot_domain::log::{
+    Append, LogError, LogStore, Position, SealedBatch, ValidatedSnapshot, Validity,
+};
+use std::sync::atomic::AtomicBool;
 
 #[derive(Default)]
 struct AfterCommit {
     store: InMemoryTeachings,
+    log: InMemoryLog,
+    armed: AtomicBool,
     committed: Notify,
     release: Notify,
     reads: AtomicUsize,
 }
 
 #[async_trait]
-impl Teachings for AfterCommit {
-    async fn first_contact(
-        &self,
-        sid: &Sid,
-        domain: &str,
-        at: Timestamp,
-    ) -> Result<bool, TeachingError> {
-        let first = self.store.first_contact(sid, domain, at).await?;
-        if let Some(reservation) = request::take() {
-            reservation.spent_with("the teaching landed".into());
+impl LogStore for AfterCommit {
+    async fn validity(&self) -> Result<Validity, LogError> {
+        self.log.validity().await
+    }
+    async fn append(&self, head: Position, batch: &SealedBatch) -> Result<Append, LogError> {
+        let appended = self.log.append(head, batch).await?;
+        if self.armed.load(Ordering::SeqCst) {
+            if let Some(reservation) = request::take() {
+                reservation.spent_with("the teaching landed".into());
+            }
+            self.committed.notify_one();
+            self.release.notified().await;
         }
-        self.committed.notify_one();
-        self.release.notified().await;
-        Ok(first)
+        Ok(appended)
     }
-
-    async fn forget(&self, sid: &Sid) -> Result<(), TeachingError> {
-        self.store.forget(sid).await
-    }
-
-    async fn has_contact(&self, sid: &Sid, domain: &str) -> Result<bool, TeachingError> {
+    async fn read_from(
+        &self,
+        position: Position,
+        bound: usize,
+    ) -> Result<Vec<SealedBatch>, LogError> {
         self.reads.fetch_add(1, Ordering::SeqCst);
-        self.store.has_contact(sid, domain).await
+        self.log.read_from(position, bound).await
     }
+    async fn load_snapshot(&self) -> Result<Option<ValidatedSnapshot>, LogError> {
+        self.log.load_snapshot().await
+    }
+    async fn store_snapshot(&self, snapshot: &ValidatedSnapshot) -> Result<(), LogError> {
+        self.log.store_snapshot(snapshot).await
+    }
+}
 
-    async fn taught(&self) -> Result<Option<Vec<(Sid, String)>>, TeachingError> {
-        self.reads.fetch_add(1, Ordering::SeqCst);
-        self.store.taught().await
-    }
+async fn after_commit_ledger(store: Arc<AfterCommit>) -> LoggedTeachings {
+    let marks: Vec<_> = store
+        .store
+        .taught()
+        .await
+        .unwrap()
+        .unwrap()
+        .into_iter()
+        .map(|(sid, domain)| Mark {
+            sid,
+            domain,
+            taught_at: Timestamp::UNIX_EPOCH,
+        })
+        .collect();
+    let ledger = LoggedTeachings::open(store.clone(), &marks).await.unwrap();
+    store.armed.store(true, Ordering::SeqCst);
+    ledger
 }
 
 #[tokio::test]
 async fn writer_recovery_a_cancelled_caller_cannot_cut_publication_after_commit() {
     let store = Arc::new(AfterCommit::default());
-    let folded = Arc::new(FoldedTeachings::new(store.clone()));
-    folded.rebuild().await.expect("load ledger");
+    let folded = Arc::new(after_commit_ledger(store.clone()).await);
     store.reads.store(0, Ordering::SeqCst);
     let sid = Sid("alphaq".into());
     let control = Sid("betaqq".into());
@@ -104,8 +129,8 @@ async fn writer_recovery_a_cancelled_caller_cannot_cut_publication_after_commit(
     );
     assert_eq!(
         store.reads.load(Ordering::SeqCst),
-        0,
-        "cancellation discarded the held ledger"
+        2,
+        "only the contact and its following write fence read the tail"
     );
     let recorded = scope
         .recorded("teaching")
@@ -125,8 +150,7 @@ async fn writer_recovery_a_known_teaching_read_passes_a_pending_write() {
         .first_contact(&control, "claims", Timestamp::UNIX_EPOCH)
         .await
         .expect("seed control");
-    let folded = Arc::new(FoldedTeachings::new(store.clone()));
-    folded.rebuild().await.expect("load ledger");
+    let folded = Arc::new(after_commit_ledger(store.clone()).await);
     store.reads.store(0, Ordering::SeqCst);
     let caller = {
         let folded = folded.clone();
@@ -149,7 +173,7 @@ async fn writer_recovery_a_known_teaching_read_passes_a_pending_write() {
     .await;
     assert_eq!(
         store.reads.load(Ordering::SeqCst),
-        0,
+        1,
         "a known contact reread the ledger"
     );
     store.release.notify_one();
@@ -347,7 +371,9 @@ async fn writer_recovery_a_known_mailbox_read_passes_a_pending_write() {
     );
     let reloads = writer.submitted_jobs();
     let store = Arc::new(AfterCommit::default());
-    let teachings = FoldedTeachings::new(store.clone()).with_writer(writer.clone());
+    let teachings = after_commit_ledger(store.clone())
+        .await
+        .with_writer(writer.clone());
     let caller = tokio::spawn(async move {
         teachings
             .first_contact(&Sid("alphaq".into()), "claims", Timestamp::UNIX_EPOCH)
@@ -385,7 +411,9 @@ where
     jojobot_domain::memory::kinds::load_shipped();
     let owner = crate::writer::Writer::default();
     let store = Arc::new(AfterCommit::default());
-    let teachings = FoldedTeachings::new(store.clone()).with_writer(owner.clone());
+    let teachings = after_commit_ledger(store.clone())
+        .await
+        .with_writer(owner.clone());
     let first = tokio::spawn(async move {
         teachings
             .first_contact(&Sid("alphaq".into()), "claims", Timestamp::UNIX_EPOCH)
@@ -523,16 +551,6 @@ async fn writer_recovery_rebuild_sessions_uses_the_process_writer() {
         )
         .with_writer(writer);
         sessions.rebuild().await.expect("session reload");
-    })
-    .await;
-}
-
-#[tokio::test]
-async fn writer_recovery_rebuild_teachings_uses_the_process_writer() {
-    behind_teaching(|writer| async move {
-        let teachings =
-            FoldedTeachings::new(Arc::new(InMemoryTeachings::new())).with_writer(writer);
-        teachings.rebuild().await.expect("teaching reload");
     })
     .await;
 }

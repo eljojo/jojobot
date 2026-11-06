@@ -243,3 +243,65 @@ async fn feature_registry_reaches_assembly_and_reads_the_legacy_environment() {
         "a present instance with no flag uses the legacy value"
     );
 }
+
+/// The default boot serves teaching from the log and leaves the legacy rows unchanged.
+#[tokio::test]
+async fn a_default_boot_leaves_legacy_teaching_rows_unchanged() {
+    use jojobot_adapters::dolt::Dolt;
+    use jojobot_adapters::testing::{Scratch, free_port, migrated_database};
+    use jojobot_domain::session::Sid;
+    use jojobot_domain::teaching::Teachings;
+
+    let scratch = Scratch::new("default-shadow-rows");
+    let mut server = Dolt::start(&scratch.0, free_port()).await.unwrap();
+    let pool = migrated_database(&server, "alpha").await.unwrap();
+    let at = |second: i64| jiff::Timestamp::from_second(1_700_000_000 + second).unwrap();
+
+    let (folded, _) = logged(Arc::new(InMemoryMemory::booted()), None).await;
+    let folded = folded.unwrap();
+    let ledger = jojobot_adapters::teaching_log::serving(&pool, folded.writer())
+        .await
+        .expect("the ledger opens");
+    assert!(
+        ledger
+            .first_contact(&Sid("homer".into()), "claims", at(1))
+            .await
+            .unwrap()
+    );
+    assert!(
+        !ledger
+            .first_contact(&Sid("homer".into()), "claims", at(2))
+            .await
+            .unwrap()
+    );
+    assert!(
+        ledger
+            .first_contact(&Sid("marge".into()), "mail", at(3))
+            .await
+            .unwrap()
+    );
+    ledger.forget(&Sid("marge".into())).await.unwrap();
+
+    let rows: Vec<(String, String)> = jojobot_adapters::teaching_log::import_marks(&pool)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|mark| (mark.sid.0, mark.domain))
+        .collect();
+    assert!(rows.is_empty(), "the log wrote legacy rows: {rows:?}");
+    assert!(folded.shadow_counts().is_empty());
+    assert!(
+        ledger
+            .has_contact(&Sid("homer".into()), "claims")
+            .await
+            .unwrap()
+    );
+    assert!(
+        !ledger
+            .has_contact(&Sid("marge".into()), "mail")
+            .await
+            .unwrap()
+    );
+    drop(ledger);
+    server.stop().await;
+}

@@ -1,22 +1,17 @@
 //! An in-memory [`Teachings`], and the contract every backend must satisfy.
 
-use std::collections::HashSet;
 use std::sync::Mutex;
 
 use jiff::Timestamp;
 
+use super::events::{RunId, State};
 use super::{TeachingError, Teachings};
 use crate::session::Sid;
 
-/// TEMPORARY(9.3.3) the fake's own teaching rules. The interpreter of
-/// `teaching::events` replaces them, and they go at 9.3.3.
-///
-/// A fake store, backed by a set rather than a table. Existence in the set is
-/// exactly what a row's existence is in the real store — there is no second
-/// mechanism here to keep honest.
+/// The teaching event interpreter, held in memory for contract cases.
 #[derive(Debug, Default)]
 pub struct InMemoryTeachings {
-    contacted: Mutex<HashSet<(String, String)>>,
+    contacted: Mutex<State>,
 }
 
 impl InMemoryTeachings {
@@ -32,37 +27,38 @@ impl Teachings for InMemoryTeachings {
         &self,
         sid: &Sid,
         domain: &str,
-        _at: Timestamp,
+        at: Timestamp,
     ) -> Result<bool, TeachingError> {
-        // The store's column is this wide and refuses a wider domain; a double
-        // that took any width would pass a key the store drops.
-        if domain.chars().count() > crate::teaching::DOMAIN_WIDTH {
-            return Err(TeachingError::Refused(
-                "a domain wider than its column".into(),
-            ));
-        }
         let mut contacted = self.contacted.lock().expect("the ledger is poisoned");
-        Ok(contacted.insert((sid.as_str().to_string(), domain.to_string())))
+        let prepared = contacted
+            .first_contact(&RunId(sid.as_str().to_string()), domain, at)
+            .map_err(|refusal| TeachingError::Refused(refusal.to_string()))?;
+        for event in prepared.events {
+            contacted.apply(&event);
+        }
+        Ok(prepared.answer)
     }
 
     async fn has_contact(&self, sid: &Sid, domain: &str) -> Result<bool, TeachingError> {
         let contacted = self.contacted.lock().expect("the ledger is poisoned");
-        Ok(contacted.contains(&(sid.as_str().to_string(), domain.to_string())))
+        Ok(contacted.has_contact(&RunId(sid.as_str().to_string()), domain))
     }
 
     async fn forget(&self, sid: &Sid) -> Result<(), TeachingError> {
         let mut contacted = self.contacted.lock().expect("the ledger is poisoned");
-        contacted.retain(|(held, _)| held != sid.as_str());
+        let prepared = contacted.forget(&RunId(sid.as_str().to_string()));
+        for event in prepared.events {
+            contacted.apply(&event);
+        }
         Ok(())
     }
 
     async fn taught(&self) -> Result<Option<Vec<(Sid, String)>>, TeachingError> {
         let contacted = self.contacted.lock().expect("the ledger is poisoned");
-        let mut all: Vec<(Sid, String)> = contacted
-            .iter()
-            .map(|(sid, domain)| (Sid(sid.clone()), domain.clone()))
+        let all: Vec<(Sid, String)> = contacted
+            .taught()
+            .map(|(sid, domain)| (Sid(sid.0.clone()), domain.clone()))
             .collect();
-        all.sort();
         Ok(Some(all))
     }
 }

@@ -32,14 +32,12 @@ use jojobot_domain::session::{
     CharterChange, NewEntry, NewSession, SessionId, SessionState, Sessions, Sid, WrapWindow,
 };
 use jojobot_domain::teaching::Teachings;
-use jojobot_domain::teaching::testing::InMemoryTeachings;
 
 use crate::counted::Counted;
-use crate::counted_rails::{CountedMailboxes, CountedSessions, CountedTeachings};
+use crate::counted_rails::{CountedMailboxes, CountedSessions};
 use crate::fold::Folded;
 use crate::fold::mail::FoldedMailboxes;
 use crate::fold::sessions::FoldedSessions;
-use crate::fold::teachings::FoldedTeachings;
 use crate::fold_battery::Probe;
 use crate::fold_rails_battery::{MailRails, SessionRails};
 
@@ -739,79 +737,117 @@ async fn every_mail_write_dropped(store: Arc<dyn Mailboxes>, writer: crate::writ
 
 // ── teachings ────────────────────────────────────────────────────────────────
 
-/// **Both write verbs of the teaching ledger, dropped after the store
-/// committed.** A contact that committed and was dropped must not be offered as
-/// a first one again, and a forget that committed must not leave the pair
-/// held.
-#[tokio::test]
-async fn a_teaching_write_dropped_after_the_store_committed_leaves_the_ledger_correct() {
-    every_teaching_write_dropped(Arc::new(InMemoryTeachings::new())).await;
+struct AfterTeachingAppend {
+    log: Arc<dyn jojobot_domain::log::LogStore>,
+    armed: std::sync::atomic::AtomicBool,
+    committed: tokio::sync::Notify,
+    release: tokio::sync::Notify,
+    reads: std::sync::atomic::AtomicUsize,
 }
 
-/// The teaching table over any store.
-async fn every_teaching_write_dropped(store: Arc<dyn Teachings>) {
-    let counted = Arc::new(CountedTeachings::new(store.clone()));
-    let folded = FoldedTeachings::new(counted.clone());
-    folded.rebuild().await.expect("the ledger loads");
+#[async_trait::async_trait]
+impl jojobot_domain::log::LogStore for AfterTeachingAppend {
+    async fn validity(
+        &self,
+    ) -> Result<jojobot_domain::log::Validity, jojobot_domain::log::LogError> {
+        self.log.validity().await
+    }
+    async fn append(
+        &self,
+        head: jojobot_domain::log::Position,
+        batch: &jojobot_domain::log::SealedBatch,
+    ) -> Result<jojobot_domain::log::Append, jojobot_domain::log::LogError> {
+        let answer = self.log.append(head, batch).await?;
+        if self.armed.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            assert!(matches!(answer, jojobot_domain::log::Append::Committed(_)));
+            self.committed.notify_one();
+            self.release.notified().await;
+        }
+        Ok(answer)
+    }
+    async fn read_from(
+        &self,
+        position: jojobot_domain::log::Position,
+        bound: usize,
+    ) -> Result<Vec<jojobot_domain::log::SealedBatch>, jojobot_domain::log::LogError> {
+        self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.log.read_from(position, bound).await
+    }
+    async fn load_snapshot(
+        &self,
+    ) -> Result<Option<jojobot_domain::log::ValidatedSnapshot>, jojobot_domain::log::LogError> {
+        self.log.load_snapshot().await
+    }
+    async fn store_snapshot(
+        &self,
+        snapshot: &jojobot_domain::log::ValidatedSnapshot,
+    ) -> Result<(), jojobot_domain::log::LogError> {
+        self.log.store_snapshot(snapshot).await
+    }
+}
+
+/// Contact and clear both finish publication after the caller stops waiting.
+#[tokio::test]
+async fn a_teaching_write_dropped_after_the_store_committed_leaves_the_ledger_correct() {
+    every_teaching_write_dropped(
+        Arc::new(jojobot_domain::log::testing::InMemoryLog::default()),
+        crate::writer::Writer::default(),
+    )
+    .await;
+}
+
+async fn every_teaching_write_dropped(
+    log: Arc<dyn jojobot_domain::log::LogStore>,
+    writer: crate::writer::Writer,
+) {
+    use crate::teaching_log::LoggedTeachings;
+    use std::sync::atomic::Ordering;
+    let store = Arc::new(AfterTeachingAppend {
+        log: log.clone(),
+        armed: false.into(),
+        committed: Default::default(),
+        release: Default::default(),
+        reads: 0.into(),
+    });
+    let folded = LoggedTeachings::open(store.clone(), &[])
+        .await
+        .unwrap()
+        .with_writer(writer.clone());
     let sid = Sid("s001".into());
     let other = Sid("s002".into());
-
-    counted.calls.hang_after_next("first_contact");
+    store.armed.store(true, Ordering::SeqCst);
     let cancelled = dropped_once_hung(
-        counted.calls.hung(),
+        store.committed.notified(),
         folded.first_contact(&sid, "claims", at(1)),
     )
     .await;
     assert!(cancelled, "first_contact: the call is cancelled");
-    counted.calls.release_hung();
-    folded.wait_for_writes().await;
+    store.release.notify_one();
+    writer.drain().await;
+    let replay = LoggedTeachings::open(log.clone(), &[]).await.unwrap();
     assert_eq!(
-        store.taught().await.expect("the store answers"),
-        Some(vec![(sid.clone(), "claims".to_string())]),
-        "first_contact: the call did not commit in the store"
+        replay.taught().await.unwrap(),
+        Some(vec![(sid.clone(), "claims".to_string())])
     );
-    // The owner has published before this repeat. A lost caller must not make a
-    // known contact read the ledger again.
-    counted.calls.reset();
-    assert!(
-        !folded
-            .first_contact(&sid, "claims", at(2))
-            .await
-            .expect("answers"),
-        "first_contact: the store holds the pair, so the next contact is not a first one"
-    );
+    store.reads.store(0, Ordering::SeqCst);
+    assert!(!folded.first_contact(&sid, "claims", at(2)).await.unwrap());
     assert_eq!(
-        counted.calls.reads(),
+        store.reads.load(Ordering::SeqCst),
         0,
-        "first_contact: the owned writer kept the ledger, so the repeat needs no read: {:?}",
-        counted.calls.seen()
+        "a known contact read the log again"
     );
-
-    folded.rebuild().await.expect("the ledger is full");
-    assert!(
-        folded
-            .first_contact(&other, "claims", at(3))
-            .await
-            .expect("answers"),
-        "a second session is a first contact"
-    );
-    counted.calls.hang_after_next("forget");
-    let cancelled = dropped_once_hung(counted.calls.hung(), folded.forget(&sid)).await;
+    assert!(folded.first_contact(&other, "claims", at(3)).await.unwrap());
+    store.armed.store(true, Ordering::SeqCst);
+    let cancelled = dropped_once_hung(store.committed.notified(), folded.forget(&sid)).await;
     assert!(cancelled, "forget: the call is cancelled");
-    counted.calls.release_hung();
-    folded.wait_for_writes().await;
+    store.release.notify_one();
+    writer.drain().await;
+    let replay = LoggedTeachings::open(log, &[]).await.unwrap();
     assert_eq!(
-        store.taught().await.expect("the store answers"),
-        Some(vec![(other.clone(), "claims".to_string())]),
-        "forget: the call did not commit in the store"
+        replay.taught().await.unwrap(),
+        Some(vec![(other, "claims".to_string())])
     );
-    assert!(
-        folded
-            .first_contact(&sid, "claims", at(4))
-            .await
-            .expect("answers"),
-        "forget: the store forgot the session, so its next contact is a first one"
-    );
+    assert!(folded.first_contact(&sid, "claims", at(4)).await.unwrap());
 }
 
 // ── over the real store ──────────────────────────────────────────────────────
@@ -828,7 +864,6 @@ mod over_the_real_store {
     use crate::dolt::mailboxes::DoltMailboxes;
     use crate::dolt::memory::DoltMemory;
     use crate::dolt::sessions::DoltSessions;
-    use crate::dolt::teaching::DoltTeachings;
     use crate::dolt::tests::free_port;
     use crate::dolt::{Dolt, migrate};
     use crate::testing::Scratch;
@@ -915,7 +950,11 @@ mod over_the_real_store {
             .await
             .expect("the store comes up");
         let pool = database(&server, "dropped_teachings").await;
-        every_teaching_write_dropped(Arc::new(DoltTeachings::open(pool))).await;
+        let writer = crate::writer::Writer::default();
+        let log = crate::writer_log::WriterLog::open(pool, writer.clone())
+            .await
+            .unwrap();
+        every_teaching_write_dropped(Arc::new(log), writer).await;
         server.stop().await;
     }
 }
