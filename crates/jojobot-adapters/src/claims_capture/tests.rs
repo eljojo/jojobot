@@ -299,6 +299,36 @@ async fn an_admitted_capture_is_served_with_the_moment_it_was_inserted() {
     server.stop().await;
 }
 
+/// **A seam opened over the log serves the moment a claim was inserted**, the one
+/// the admitting job stamped: it is read back from the log, not remembered.
+#[tokio::test]
+async fn a_reopened_seam_serves_the_moment_a_claim_was_inserted() {
+    let (_scratch, mut server, _store, pool, writer) = world("capture-job-inserted-replay").await;
+    let saw = Arc::new(Mutex::new(Vec::new()));
+    capture_once(&writer, &pool, "person:homer", "r1", saw)
+        .await
+        .expect("the capture is admitted");
+    writer.drain().await;
+
+    let reopened = Writer::default();
+    let seam = {
+        let (opener, pool) = (reopened.clone(), pool.clone());
+        reopened
+            .run(async move { opener.ensure_seam(&pool).await })
+            .await
+            .expect("the seam opens")
+    };
+    let inserted = seam.read_claims(|state| {
+        state
+            .fact(&RecordId("r1".into()))
+            .expect("the replayed State holds the fact")
+            .inserted_at
+    });
+    assert_eq!(inserted, Some(at()));
+    reopened.drain().await;
+    server.stop().await;
+}
+
 /// **A refused capture leaves nothing**: no event in the log, no record held.
 #[tokio::test]
 async fn a_refused_capture_leaves_nothing() {
@@ -448,6 +478,92 @@ fn starred(subject: &str) -> NewFact {
 /// **A star that makes the boot too heavy is refused, and nothing is written.**
 /// The boot render is handed to the job as a callback, and the job asks it for
 /// a write that stars a rule: without that, the refusal would drop silently.
+/// **A capture that changes the spec of a bot request is numbered once, by the
+/// writer, in the batch of the act.** The store is asked with a job, and the log
+/// holds one write of the generation for each spec the request had.
+#[tokio::test]
+async fn a_capture_of_a_request_spec_through_the_port_is_numbered_once() {
+    let (_scratch, mut server, store, pool, writer) = world("capture-job-generation").await;
+    {
+        let (opener, pool) = (writer.clone(), pool.clone());
+        writer
+            .run(async move {
+                let seam = opener.ensure_seam(&pool).await.unwrap();
+                let mut tx = pool.writer().begin().await.unwrap();
+                let request = vec![
+                    envelope(ClaimEvent::ObjectCreated {
+                        object: ObjectId("k9".into()),
+                        body: ObjectBody {
+                            kind: KindId("bot-request".into()),
+                            parent: None,
+                            name: "bot-request:alpha".into(),
+                            source: "operator".into(),
+                            aliases: Vec::new(),
+                            boot: None,
+                            metadata: Default::default(),
+                            archived: false,
+                            bound_to: None,
+                        },
+                    }),
+                    envelope(ClaimEvent::AddressBound {
+                        object: ObjectId("k9".into()),
+                        address: "bot-request:alpha".into(),
+                    }),
+                ];
+                let pending = seam
+                    .stage_with(&mut tx, Vec::new(), request, at())
+                    .await
+                    .unwrap();
+                sql::commit(tx).await.unwrap();
+                pending.committed();
+            })
+            .await;
+    }
+    let memory = Arc::new(crate::dolt::memory::DoltMemory::open(store.clone()));
+    for desired in ["running", "stopped", "stopped"] {
+        let memory = Arc::clone(&memory);
+        let mut fact = NewFact::about(
+            EntityId("bot-request:alpha".into()),
+            "a spec",
+            date(2026, 4, 19),
+        );
+        fact.fields = BTreeMap::from([("desired".to_string(), desired.to_string())]);
+        fact.sets = BTreeSet::from(["desired".to_string()]);
+        let written = within(job(), writer.run(async move { memory.capture(fact).await })).await;
+        assert!(
+            matches!(written, Ok(Guarded::Written(_))),
+            "the capture is admitted: {written:?}"
+        );
+    }
+    let seam = writer.seam().expect("the seam is open");
+    let held = seam.read_claims(|state| state.fields(&ObjectId("k9".into()), &[]));
+    assert_eq!(held.get("generation").map(String::as_str), Some("2"));
+    let numbers: Vec<String> = writer
+        .shared_log(&store)
+        .read_from(Position(0), 100)
+        .await
+        .unwrap()
+        .iter()
+        .flat_map(|batch| batch.members().to_vec())
+        .filter_map(|member| crate::claims_log::codec::decode_own(&member).ok().flatten())
+        .filter_map(|event| match event.payload {
+            ClaimEvent::FieldWritten {
+                key,
+                write: jojobot_domain::log::claims::FieldValue::Set(value),
+                ..
+            } if key.0 == "generation" => Some(value),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        numbers,
+        ["1", "2"],
+        "one number for each spec, none for the resend"
+    );
+    writer.drain().await;
+    server.stop().await;
+}
+
 #[tokio::test]
 async fn a_star_that_makes_the_boot_too_heavy_is_refused_and_writes_nothing() {
     let (_scratch, mut server, store, _pool, writer) = world("capture-job-boot-heavy").await;
