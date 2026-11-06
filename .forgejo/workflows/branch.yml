@@ -186,18 +186,33 @@ jobs:
       - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
+      # The report job's own plan: a run it skips the expensive steps of skips
+      # this job's too, because nothing downloads the store then.
+      - name: Job plan
+        id: plan
+        run: |
+          trunk=$(nix develop -c cargo run -q --locked -p jojobot-bar -- trunk) || trunk=
+          [ -z "$trunk" ] || export BAR_SELECT_BASE="$trunk"
+          [ -z "$trunk" ] || echo "BAR_SELECT_BASE=$trunk" >> "$GITHUB_ENV"
+          mkdir -p target/bar
+          nix develop -c cargo run -q --locked -p jojobot-bar -- plan report 2>target/bar/plan.log || { cat target/bar/plan.log >&2; exit 1; }
+        env:
+          BAR_PUSH_BASE: ${{ forgejo.event.before }}
       - name: Last deployed store
+        if: ${{ steps.plan.outputs.fast != 'true' }}
         run: scripts/stop-with-siblings nix develop -c python3 scripts/prepare-upgrade-fixture
         env:
           UPGRADE_FIXTURE_DIR: target/upgrade-fixture
           TOKEN: ${{ forgejo.token }}
       - name: Grown store
+        if: ${{ steps.plan.outputs.fast != 'true' }}
         run: scripts/stop-with-siblings nix develop -c python3 scripts/prepare-boot-store
         env:
           UPGRADE_FIXTURE_DIR: target/upgrade-fixture
           BOOT_STORE_DIR: target/boot-store
           TOKEN: ${{ forgejo.token }}
-      - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5
+      - if: ${{ steps.plan.outputs.fast != 'true' }}
+        uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5
         with:
           name: boot-store
           path: target/boot-store
