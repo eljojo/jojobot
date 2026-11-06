@@ -128,9 +128,6 @@ impl Jojobot {
     /// the thing as the State holds it. Pure: it reads the State it is given and
     /// nothing else, so the writer's job can call it against the State the batch
     /// is staged on. `None` for a thing the State does not hold.
-    // The verb's capture job calls it in the next commit of 9.3.3-d; until then only
-    // its parity case does.
-    #[allow(dead_code)]
     pub(crate) fn measure_new_claim(
         state: &jojobot_domain::log::claims::State,
         new: &NewFact,

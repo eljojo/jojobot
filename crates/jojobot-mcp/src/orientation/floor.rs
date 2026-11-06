@@ -589,6 +589,76 @@ impl Jojobot {
             .await
     }
 
+    /// **What a bot's boot weighs with a capture and without it**, for the
+    /// capture job to hand to `prepare`, which decides. Only a write that stars a
+    /// rule or names a seat count on a bot has one. A boot that cannot be read has
+    /// none, and is named on the answer through `reads`.
+    ///
+    /// Reads the box and writes nothing. TEMPORARY(9.3.7): it retires when the
+    /// boot renders from the State.
+    pub(crate) async fn boot_floor_measure_for_capture(
+        &self,
+        new: &NewFact,
+        reads: &ReadsLeft,
+    ) -> Option<jojobot_domain::log::claims::BootFloor> {
+        if new.subject.kind() != Some(EntityKind::BOT) {
+            return None;
+        }
+        let starred = new.fields.get("starred").is_some_and(|v| v == "true");
+        let seats = new.fields.get(RULE_SEATS);
+        if !starred && seats.is_none() {
+            return None;
+        }
+        let current = self.held_for_the_floor(&new.subject, reads).await?;
+        let seats_now = self.seats_read(&new.subject, reads).await?;
+        // A seat count that is no number is `prepare`'s refusal; here it is the
+        // count the bot holds now.
+        let seats_after = seat_count_written(seats.map(String::as_str))
+            .ok()
+            .flatten()
+            .unwrap_or(seats_now);
+        let mut would_be = current.clone();
+        would_be.push(prospective_fact(
+            new,
+            would_be.len() + 1,
+            Some(widest_stamp(self.clock().now())),
+        ));
+        let Some(after) = self
+            .boot_floor_if(
+                &new.subject,
+                &rules_in_force(&would_be),
+                seats_after,
+                None,
+                None,
+                None,
+            )
+            .await
+        else {
+            Self::floor_unmeasured(&new.subject, reads);
+            return None;
+        };
+        let Some(before) = self
+            .boot_floor_if(
+                &new.subject,
+                &rules_in_force(&current),
+                seats_now,
+                None,
+                None,
+                None,
+            )
+            .await
+        else {
+            Self::floor_unmeasured(&new.subject, reads);
+            return None;
+        };
+        Some(jojobot_domain::log::claims::BootFloor {
+            after: after.total,
+            before: before.total,
+            parts: after.parts,
+            stamp_margin: if starred { stamp_margin() } else { 0 },
+        })
+    }
+
     /// **The same check for a bot being created**, run before the creation
     /// lands, on every creation of a bot. `first` is the first claim the call
     /// writes, or a bare one when it writes none. `creating` is the bot as it will

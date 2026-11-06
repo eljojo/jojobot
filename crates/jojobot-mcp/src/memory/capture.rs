@@ -538,7 +538,7 @@ pub(crate) struct Captured {
     fold_behind: Option<jojobot_domain::memory::search::Behind>,
     before: Result<Option<jojobot_domain::memory::search::DocScan>, ()>,
     unread: super::instance_unread::InstanceUnread,
-    reads: super::reads_left::ReadsLeft,
+    reads: std::sync::Arc<super::reads_left::ReadsLeft>,
     checked_in: bool,
     due_on_set: bool,
     due_on_computed: attention::DueMove,
@@ -1155,7 +1155,7 @@ impl Jojobot {
         // **What this write could not work out for want of the instance record**,
         // named on the receipt.
         let unread = super::instance_unread::InstanceUnread::default();
-        let reads = super::reads_left::ReadsLeft::default();
+        let reads = std::sync::Arc::new(super::reads_left::ReadsLeft::default());
         // **What the call sent to lift a `must` refusal**, taken before the
         // arguments are moved into the claim.
         let slot = super::declined::TokenSlot::from(&args);
@@ -1720,11 +1720,17 @@ impl Jojobot {
         // **A capture that finishes a thing is two parts**: the claim, and the
         // taking off of the stored due moment from the record that carries it.
         // The claim keeps that plan in its note, so a resend finishes it.
-        let write = self.write_the_claim(
-            mode.part.as_deref(),
-            clears_due_on && !checked_in,
-            new,
-            (override_token.as_deref(), override_reason.as_deref()),
+        // **The store decides the claim over the claims State it holds**, with the
+        // door, the sizes, the boot and the runs this call hands its job.
+        let job = self.capture_job(&new, actor, std::sync::Arc::clone(&reads));
+        let write = jojobot_domain::log::claims::job::within(
+            job,
+            self.write_the_claim(
+                mode.part.as_deref(),
+                clears_due_on && !checked_in,
+                new,
+                (override_token.as_deref(), override_reason.as_deref()),
+            ),
         );
         let writing = match &schedule {
             Some(schedule) => {
