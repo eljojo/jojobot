@@ -203,6 +203,20 @@ async fn no_legacy_teaching_read_is_made_after_boot() {
         offending.is_empty(),
         "legacy reads after boot: {offending:?}"
     );
+    let legacy_writes: Vec<_> = statements
+        .iter()
+        .filter(|statement| {
+            let lower = statement.to_ascii_lowercase();
+            lower.contains("session_teaching")
+                && (lower.contains("insert")
+                    || lower.contains("delete")
+                    || lower.contains("update"))
+        })
+        .collect();
+    assert!(
+        legacy_writes.is_empty(),
+        "legacy writes after boot: {legacy_writes:?}"
+    );
     let counts = &report.counts()[0];
     assert!(counts.reads > 0, "the shadow compared nothing");
     assert_eq!(counts.disagreements, 0);
