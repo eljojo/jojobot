@@ -12,7 +12,6 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use super::tests::{at, sid};
 use super::*;
 use crate::dolt::Dolt;
-use crate::dolt::teaching::DoltTeachings;
 use crate::testing::{Scratch, free_port, migrated_database};
 use crate::writer_log::WriterLog;
 
@@ -147,7 +146,7 @@ async fn no_legacy_teaching_read_is_made_after_boot() {
             .await
             .unwrap(),
     );
-    let marks = DoltTeachings::open(through).marks().await.unwrap();
+    let marks = super::import_marks(&through).await.unwrap();
     let teachings = LoggedTeachings::open(log.clone(), &marks)
         .await
         .unwrap()

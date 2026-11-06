@@ -88,7 +88,7 @@ const STORE_CALLS: &[(&str, &str)] = &[
 async fn observed_calls() -> String {
     use jojobot_adapters::dolt::{
         mailboxes::DoltMailboxes, memory::DoltMemory, requests::DoltRequests,
-        sessions::DoltSessions, teaching::DoltTeachings,
+        sessions::DoltSessions,
     };
     use jojobot_adapters::observe::Observation;
     use jojobot_domain::memory::MemoryError;
@@ -183,9 +183,13 @@ async fn observed_calls() -> String {
             .await
             .is_err()
     );
+    let failed_teachings = jojobot_adapters::counted_rails::CountedTeachings::new(Arc::new(
+        jojobot_domain::teaching::testing::InMemoryTeachings::new(),
+    ));
+    failed_teachings.calls.set_unreachable(true);
     assert!(
         observation
-            .teachings(Arc::new(DoltTeachings::open(pool.clone())))
+            .teachings(Arc::new(failed_teachings))
             .has_contact(&sid, "quartzite")
             .await
             .is_err()

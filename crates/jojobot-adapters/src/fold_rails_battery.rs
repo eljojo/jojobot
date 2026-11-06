@@ -1,7 +1,6 @@
-//! **The differential battery for the in-memory image of sessions, mail and
-//! teachings** (decision log 292, 435).
+//! **The differential battery for the in-memory image of sessions and mail** (decision log 292, 435).
 //!
-//! Every read the three ports answer is asked twice: of the image, and of the
+//! Every read the two ports answer is asked twice: of the image, and of the
 //! store the image wraps. The two answers must be the same bytes. Beside each
 //! answer from the image, a counting port says how many calls reached the store
 //! while it was given, and the reads named in `switched` must have made none. A
@@ -26,10 +25,9 @@ use jojobot_domain::session::{
     CharterChange, EntryId, NewEntry, NewSession, SessionId, SessionState, Sessions, Sid,
     WrapWindow,
 };
-use jojobot_domain::teaching::Teachings;
 use jojobot_domain::usage::{CallKey, CallOutcome};
 
-use crate::counted_rails::{Calls, CountedMailboxes, CountedSessions, CountedTeachings};
+use crate::counted_rails::{Calls, CountedMailboxes, CountedSessions};
 
 /// One read, asked of both, compared as bytes, with the calls it made counted.
 async fn check<T, A, B>(
@@ -988,99 +986,4 @@ pub async fn walk_every_kind_of_mail_write(p: &MailRails<'_>) {
 /// The boxes a board holds, for a case that wants to name them.
 pub fn names_of(boxes: &[Mailbox]) -> Vec<String> {
     boxes.iter().map(|b| b.name.as_str().to_string()).collect()
-}
-
-// ── teachings ────────────────────────────────────────────────────────────────
-
-/// What one run of the teaching battery is asked of.
-pub struct TeachRails<'a> {
-    /// The image under test, which wraps `counted`, which wraps the store.
-    pub folded: &'a dyn Teachings,
-    pub counted: &'a CountedTeachings,
-    /// A second ledger that receives every call the first does, with nothing
-    /// above it: what the store answers.
-    pub twin: &'a dyn Teachings,
-    pub switched: &'a [&'a str],
-}
-
-/// **Every kind of write on the ledger, each answered as the store answers.**
-/// A first contact asks the ledger and writes it in one call, so the oracle is a
-/// twin ledger given the same calls: the answers must agree, and the ledgers
-/// must hold the same pairs after each.
-pub async fn walk_every_kind_of_teaching(p: &TeachRails<'_>) {
-    let calls = &p.counted.calls;
-    let sid = |s: &str| Sid(s.into());
-    let steps: &[(&str, &str)] = &[
-        ("h0m3", "claims"),
-        ("h0m3", "claims"),
-        ("h0m3", "search"),
-        ("b4rt", "claims"),
-        ("h0m3", "claims"),
-        ("b4rt", "claims"),
-    ];
-    for (n, (who, domain)) in steps.iter().enumerate() {
-        calls.reset();
-        let from_image = p
-            .folded
-            .first_contact(&sid(who), domain, at(n as i64))
-            .await
-            .expect("first_contact");
-        let made = calls.reads() + calls.writes();
-        let from_store = p
-            .twin
-            .first_contact(&sid(who), domain, at(n as i64))
-            .await
-            .expect("first_contact on the twin");
-        assert_eq!(
-            from_image, from_store,
-            "step {n}: first_contact({who}, {domain}) answered differently from the image"
-        );
-        if p.switched.contains(&"first_contact") && !from_image {
-            assert_eq!(
-                made,
-                0,
-                "step {n}: a contact the ledger already holds reached the store: {:?}",
-                calls.seen()
-            );
-        }
-        if from_image {
-            assert_eq!(
-                calls.writes(),
-                1,
-                "step {n}: a first contact is written once"
-            );
-        }
-        assert_eq!(
-            p.folded.taught().await.expect("taught"),
-            p.twin.taught().await.expect("taught on the twin"),
-            "step {n}: the ledgers differ"
-        );
-    }
-    p.folded.forget(&sid("h0m3")).await.expect("forget");
-    p.twin
-        .forget(&sid("h0m3"))
-        .await
-        .expect("forget on the twin");
-    assert_eq!(
-        p.folded.taught().await.expect("taught"),
-        p.twin.taught().await.expect("taught on the twin"),
-        "after a forget the ledgers differ"
-    );
-    for (n, (who, domain)) in steps.iter().take(2).enumerate() {
-        calls.reset();
-        let from_image = p
-            .folded
-            .first_contact(&sid(who), domain, at(100 + n as i64))
-            .await
-            .expect("first_contact");
-        let from_store = p
-            .twin
-            .first_contact(&sid(who), domain, at(100 + n as i64))
-            .await
-            .expect("first_contact on the twin");
-        assert_eq!(
-            from_image, from_store,
-            "after a forget: first_contact({who}, {domain}) answered differently"
-        );
-    }
 }

@@ -33,7 +33,6 @@ mod image;
 pub mod mail;
 pub mod sessions;
 pub mod shadow;
-pub mod teachings;
 mod uncertain;
 
 use crate::writer::owned;

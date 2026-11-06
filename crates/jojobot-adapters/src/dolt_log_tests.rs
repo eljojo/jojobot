@@ -401,8 +401,7 @@ async fn an_unreadable_taught_at_names_its_run_and_domain() {
     .execute(&pool)
     .await
     .unwrap();
-    let said = crate::dolt::teaching::DoltTeachings::open(pool.clone())
-        .marks()
+    let said = crate::teaching_log::import_marks(&pool)
         .await
         .expect_err("a time that does not parse stops the import")
         .to_string();

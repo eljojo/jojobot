@@ -18,11 +18,13 @@ use jojobot_adapters::dolt::mailboxes::DoltMailboxes;
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::dolt::sessions::DoltSessions;
-use jojobot_adapters::dolt::teaching::DoltTeachings;
 use jojobot_adapters::fold::Folded;
 use jojobot_adapters::provisioned::Provisioned;
 use jojobot_adapters::search::{IndexedMemory, Retrieval};
+use jojobot_adapters::teaching_log::LoggedTeachings;
 use jojobot_adapters::testing::{Scratch, free_port, migrated_database, start_unhurried};
+use jojobot_adapters::writer::Writer;
+use jojobot_adapters::writer_log::WriterLog;
 use jojobot_domain::mailbox::testing::contract as mailboxes;
 use jojobot_domain::mailbox::{
     MailboxError, MailboxName, Mailboxes, NewMessage, OwnerIndex, OwnerLookup,
@@ -38,7 +40,6 @@ use jojobot_domain::memory::{
 use jojobot_domain::session::testing::contract as sessions;
 use jojobot_domain::session::{NewEntry, NewSession, SessionError, SessionState, Sessions, Sid};
 use jojobot_domain::teaching::testing::contract as teachings;
-use jojobot_domain::teaching::{TeachingError, Teachings};
 
 /// **The two steps a boot takes after the schema**, in the order it takes them:
 /// write the kinds this build ships, then parse handles against what the store
@@ -1398,56 +1399,6 @@ async fn a_refused_mailbox_write_is_not_reported_as_an_unreachable_store() {
     let gone = mailboxes_store.list_mailboxes().await;
     assert!(
         matches!(gone, Err(MailboxError::Store(_))),
-        "a store that cannot be reached did not read as one: {gone:?}"
-    );
-}
-
-/// 🚨 **The teaching rail tells a write the store refused from a store that
-/// cannot be reached.** (Neither reaches a caller: a teaching that could not be
-/// recorded is logged and the verb it rides on still succeeds. The adapter
-/// still has to say which it was, and the log is what carries it.) Two sessions
-/// are taught the same domain against a unique index on the domain, and then the
-/// store is gone.
-#[tokio::test]
-async fn a_refused_teaching_write_is_not_reported_as_an_unreachable_store() {
-    let scratch = Scratch::new("teaching-refused-write");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "teaching_refused_write")
-        .await
-        .expect("a database of its own");
-    migrate::run(&pool).await.expect("the schema");
-    let pool = gives_up_within(&pool, std::time::Duration::from_secs(5)).await;
-    let teaching_store = DoltTeachings::open(pool.clone());
-    sqlx::query("ALTER TABLE session_teaching ADD UNIQUE INDEX one_domain (domain)")
-        .execute(&pool)
-        .await
-        .expect("the store takes a unique index");
-
-    teaching_store
-        .first_contact(&Sid("rft1".into()), "same-domain", mailboxes::epoch())
-        .await
-        .expect("the first session is taught");
-    let refused = teaching_store
-        .first_contact(&Sid("rft2".into()), "same-domain", mailboxes::epoch())
-        .await;
-    match &refused {
-        Err(TeachingError::Store(said)) => {
-            panic!("a write the store refused came back as the words for an outage: {said:?}")
-        }
-        other => assert!(
-            matches!(other, Err(TeachingError::Refused(_))),
-            "a write the store refused came back as something else: {other:?}"
-        ),
-    }
-
-    store.stop().await;
-    let gone = teaching_store
-        .first_contact(&Sid("rft3".into()), "another-domain", mailboxes::epoch())
-        .await;
-    assert!(
-        matches!(gone, Err(TeachingError::Store(_))),
         "a store that cannot be reached did not read as one: {gone:?}"
     );
 }
@@ -3378,7 +3329,14 @@ async fn dolt_satisfies_the_teaching_contract() {
             .await
             .expect("a database of this case's own");
         migrate::run(&pool).await.expect("the schema");
-        prepared.push(DoltTeachings::open(pool));
+        let log = WriterLog::open(pool, Writer::default())
+            .await
+            .expect("the writer log opens");
+        prepared.push(
+            LoggedTeachings::open(Arc::new(log), &[])
+                .await
+                .expect("the teaching log opens"),
+        );
     }
 
     let handed = AtomicUsize::new(0);
@@ -3394,93 +3352,6 @@ async fn dolt_satisfies_the_teaching_contract() {
         async move { store }
     })
     .await;
-
-    store.stop().await;
-}
-
-/// TEMPORARY(9.3.3) kept witness: Teaching race.
-/// 🚨 **A conflict is not a store failure, and the caller must be told
-/// which one happened — the teaching rail's own copy of the memory rail's
-/// case.** A batch of concurrent first-contact writes for one session, on
-/// the SAME domain and each with its own moment — so every racer proposes
-/// the identical (sid, domain) primary key with a genuinely different
-/// `taught_at`, giving Dolt's merge something to actually reconcile.
-/// Two racers proposing the identical row (same key, same values) merge
-/// cleanly with nothing to catch — proven empirically before this landed —
-/// so the case needs divergent payloads, not merely concurrent callers.
-/// The rejected commits come back with SQLSTATE `40001`, which must read
-/// back as [`TeachingError::Conflict`], never [`TeachingError::Store`].
-///
-/// **Against the real store on purpose** — see the memory rail's own case
-/// for why an in-memory double cannot exercise this branch. (This never
-/// reaches a caller — `first_contact`'s own MCP wiring swallows every
-/// `TeachingError` alike, by design, so a teaching failure never fails the
-/// verb it rides on. The distinction still matters at the adapter, which is
-/// what this proves.)
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_teaching_write_that_conflicts_with_another_is_told_apart_from_a_failed_store() {
-    // **The racers overlap by construction, not by luck.** A conflict needs two
-    // transactions that have both written before either commits. With a small
-    // pool, and connections opened as each racer asks for one, a racer could
-    // finish its whole transaction before the next had a connection, and a
-    // loaded machine made that happen. So every racer has a connection of its own,
-    // opened before any of them starts, and a barrier releases them together.
-    const RACERS: usize = 16;
-    let scratch = Scratch::new("teaching-conflict-not-a-failure");
-    let port = free_port();
-    let mut store = start_unhurried(&scratch.0, port)
-        .await
-        .expect("the store comes up");
-    store
-        .database("teaching_conflict_not_a_failure")
-        .await
-        .expect("a database of its own");
-    let pool = sqlx::mysql::MySqlPoolOptions::new()
-        .max_connections(RACERS as u32)
-        .connect(&format!(
-            "mysql://root@127.0.0.1:{port}/teaching_conflict_not_a_failure"
-        ))
-        .await
-        .expect("a pool onto that database");
-    migrate::run(&pool).await.expect("the schema");
-    let mut opened = Vec::new();
-    for _ in 0..RACERS {
-        opened.push(pool.acquire().await.expect("a connection for a racer"));
-    }
-    drop(opened);
-    let teaching_store = DoltTeachings::open(pool);
-
-    let sid = Sid("tchr".into());
-    let together = Arc::new(tokio::sync::Barrier::new(RACERS));
-    let mut handles = Vec::new();
-    for i in 0..RACERS as u64 {
-        let racer = teaching_store.clone();
-        let sid = sid.clone();
-        let together = together.clone();
-        let at = mailboxes::epoch() + jiff::Span::new().seconds(i as i64);
-        handles.push(tokio::spawn(async move {
-            together.wait().await;
-            racer.first_contact(&sid, "same-domain", at).await
-        }));
-    }
-    let mut landed = 0;
-    let mut conflicted = 0;
-    for handle in handles {
-        match handle.await.expect("a racer task must not panic") {
-            Ok(_) => landed += 1,
-            Err(TeachingError::Conflict) => conflicted += 1,
-            Err(other) => panic!(
-                "a racer failed with something other than Conflict, which is the one shape \
-                 this proves must not happen: {other:?}"
-            ),
-        }
-    }
-    assert!(landed >= 1, "at least one racer must land");
-    assert!(
-        conflicted >= 1,
-        "this case is supposed to exercise the real conflict, and without one there is \
-         nothing here for TeachingError::Conflict to be proven against"
-    );
 
     store.stop().await;
 }

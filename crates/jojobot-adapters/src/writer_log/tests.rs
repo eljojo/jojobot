@@ -528,10 +528,7 @@ async fn the_marks_come_back_with_their_times() {
     log.append_with_rows(Position(0), &next, vec![recorded_row("homer")])
         .await
         .unwrap();
-    let marks = crate::dolt::teaching::DoltTeachings::open(pool.clone())
-        .marks()
-        .await
-        .unwrap();
+    let marks = crate::teaching_log::import_marks(&pool).await.unwrap();
     assert_eq!(
         marks,
         [crate::teaching_log::Mark {

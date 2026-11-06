@@ -1,4 +1,4 @@
-//! **The in-memory image of sessions, mail and teachings held to the real
+//! **The in-memory image of sessions and mail held to the real
 //! store** (decision log 292, 435).
 //!
 //! The same walks the fakes run in `fold_rails_image_tests`, over a real Dolt
@@ -9,19 +9,16 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use jojobot_adapters::counted_rails::{CountedMailboxes, CountedSessions, CountedTeachings};
+use jojobot_adapters::counted_rails::{CountedMailboxes, CountedSessions};
 use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::mailboxes::DoltMailboxes;
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::dolt::sessions::DoltSessions;
-use jojobot_adapters::dolt::teaching::DoltTeachings;
 use jojobot_adapters::fold::mail::FoldedMailboxes;
 use jojobot_adapters::fold::sessions::FoldedSessions;
-use jojobot_adapters::fold::teachings::FoldedTeachings;
 use jojobot_adapters::fold_rails_battery::{
-    MailRails, SessionRails, TeachRails, walk_every_kind_of_mail_write,
-    walk_every_kind_of_session_write, walk_every_kind_of_teaching,
+    MailRails, SessionRails, walk_every_kind_of_mail_write, walk_every_kind_of_session_write,
 };
 use jojobot_adapters::testing::{free_port, migrated_database};
 use jojobot_domain::clock::Clock;
@@ -58,9 +55,6 @@ const SWITCHED_MAIL: &[&str] = &[
     "read_mailbox",
     "message_history",
 ];
-
-/// The teaching calls the image serves.
-const SWITCHED_TEACHINGS: &[&str] = &["first_contact"];
 
 use jojobot_adapters::testing::Scratch;
 
@@ -132,29 +126,6 @@ async fn the_mail_image_answers_as_the_real_store_does_after_every_kind_of_write
         switched: SWITCHED_MAIL,
     };
     walk_every_kind_of_mail_write(&rails).await;
-    server.stop().await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn the_teaching_image_answers_as_the_real_store_does_after_every_kind_of_write() {
-    let scratch = Scratch::new("teachings");
-    let mut server = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = database(&server, "teachings").await;
-    let twin_pool = database(&server, "teachings_twin").await;
-    let store = Arc::new(DoltTeachings::open(pool));
-    let counted = Arc::new(CountedTeachings::new(store));
-    let folded = FoldedTeachings::new(counted.clone());
-    folded.rebuild().await.expect("the ledger loads");
-    let twin = DoltTeachings::open(twin_pool);
-    let rails = TeachRails {
-        folded: &folded,
-        counted: &counted,
-        twin: &twin,
-        switched: SWITCHED_TEACHINGS,
-    };
-    walk_every_kind_of_teaching(&rails).await;
     server.stop().await;
 }
 

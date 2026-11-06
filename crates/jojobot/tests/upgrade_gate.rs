@@ -108,7 +108,6 @@ async fn the_restored_log_holds_a_batch(pool: &sqlx::MySqlPool) -> bool {
 async fn seed_the_teaching_marks_through_the_log(
     pool: &sqlx::MySqlPool,
 ) -> jojobot_adapters::teaching_log::LoggedTeachings {
-    use jojobot_adapters::dolt::teaching::DoltTeachings;
     use jojobot_adapters::teaching_log::LoggedTeachings;
     use jojobot_adapters::{writer::Writer, writer_log::WriterLog};
     use jojobot_domain::teaching::Teachings;
@@ -117,8 +116,7 @@ async fn seed_the_teaching_marks_through_the_log(
             .await
             .expect("the event log opens"),
     );
-    let rows = DoltTeachings::open(pool.clone())
-        .marks()
+    let rows = jojobot_adapters::teaching_log::import_marks(pool)
         .await
         .expect("the teaching rows read back");
     let ledger = LoggedTeachings::open(log, &rows)
@@ -1366,7 +1364,6 @@ async fn the_logged_marks(pool: &sqlx::MySqlPool) -> Vec<jojobot_adapters::teach
 /// This needs no recording, so it is the local witness of the ageing step.
 #[tokio::test]
 async fn ageing_a_store_moves_its_teaching_log_with_its_rows() {
-    use jojobot_adapters::dolt::teaching::DoltTeachings;
     use jojobot_adapters::teaching_log::codec;
     use jojobot_adapters::{writer::Writer, writer_log::WriterLog};
     use jojobot_domain::log::{LogStore, Position};
@@ -1430,8 +1427,7 @@ async fn ageing_a_store_moves_its_teaching_log_with_its_rows() {
         cleared,
         "ageing preserves the clear payload"
     );
-    let rows = DoltTeachings::open(pool.clone())
-        .marks()
+    let rows = jojobot_adapters::teaching_log::import_marks(&pool)
         .await
         .expect("the teaching rows read back");
     let logged = the_logged_marks(&pool).await;
@@ -1467,10 +1463,8 @@ async fn assert_the_teaching_marks_equal_the_rows(
     store_port: u16,
     git_ref: &str,
 ) {
-    use jojobot_adapters::dolt::teaching::DoltTeachings;
     let mut store = open_the_store(state_dir, store_port).await;
-    let rows = DoltTeachings::open(store.pool().clone())
-        .marks()
+    let rows = jojobot_adapters::teaching_log::import_marks(store.pool())
         .await
         .expect("the teaching rows read back");
     let imported = the_logged_marks(store.pool()).await;

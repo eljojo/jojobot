@@ -1,4 +1,4 @@
-//! **The in-memory image of sessions, mail and teachings (decision log 292),
+//! **The in-memory image of sessions and mail (decision log 292),
 //! held to the store it mirrors.**
 //!
 //! The walks in [`crate::fold_rails_battery`] write every kind of write through
@@ -11,15 +11,12 @@ use std::sync::Arc;
 use jojobot_domain::clock::Clock;
 use jojobot_domain::mailbox::testing::InMemoryMailboxes;
 use jojobot_domain::session::testing::InMemorySessions;
-use jojobot_domain::teaching::testing::InMemoryTeachings;
 
-use crate::counted_rails::{CountedMailboxes, CountedSessions, CountedTeachings};
+use crate::counted_rails::{CountedMailboxes, CountedSessions};
 use crate::fold::mail::FoldedMailboxes;
 use crate::fold::sessions::FoldedSessions;
-use crate::fold::teachings::FoldedTeachings;
 use crate::fold_rails_battery::{
-    MailRails, SessionRails, TeachRails, walk_every_kind_of_mail_write,
-    walk_every_kind_of_session_write, walk_every_kind_of_teaching,
+    MailRails, SessionRails, walk_every_kind_of_mail_write, walk_every_kind_of_session_write,
 };
 
 /// The session reads served from memory once the image has loaded. Each read is
@@ -53,9 +50,6 @@ const SWITCHED_MAIL: &[&str] = &[
     "message_history",
 ];
 
-/// The teaching calls served from memory once the ledger has loaded.
-const SWITCHED_TEACHINGS: &[&str] = &["first_contact"];
-
 async fn session_walk(switched: &[&str]) {
     session_walk_over(Arc::new(InMemorySessions::new()), switched).await;
 }
@@ -87,21 +81,6 @@ async fn mail_walk(switched: &[&str]) {
     walk_every_kind_of_mail_write(&rails).await;
 }
 
-async fn teaching_walk(switched: &[&str]) {
-    let store = Arc::new(InMemoryTeachings::new());
-    let counted = Arc::new(CountedTeachings::new(store.clone()));
-    let folded = FoldedTeachings::new(counted.clone());
-    folded.rebuild().await.expect("the ledger loads");
-    let twin = InMemoryTeachings::new();
-    let rails = TeachRails {
-        folded: &folded,
-        counted: &counted,
-        twin: &twin,
-        switched,
-    };
-    walk_every_kind_of_teaching(&rails).await;
-}
-
 /// **The instrument first.** With nothing switched the walk compares an image
 /// that forwards every read with the store, so it can only pass; a failure here
 /// is the battery disagreeing with itself and says nothing about the image.
@@ -113,11 +92,6 @@ async fn the_session_battery_agrees_with_an_image_that_serves_nothing_from_memor
 #[tokio::test]
 async fn the_mail_battery_agrees_with_an_image_that_serves_nothing_from_memory() {
     mail_walk(&[]).await;
-}
-
-#[tokio::test]
-async fn the_teaching_battery_agrees_with_an_image_that_serves_nothing_from_memory() {
-    teaching_walk(&[]).await;
 }
 
 /// **A store that keeps no list of its charter changes still has its runs in
@@ -145,11 +119,6 @@ async fn switched_session_reads_answer_from_memory_exactly_as_the_store_does() {
 #[tokio::test]
 async fn switched_mail_reads_answer_from_memory_exactly_as_the_store_does() {
     mail_walk(SWITCHED_MAIL).await;
-}
-
-#[tokio::test]
-async fn switched_teaching_calls_answer_from_memory_exactly_as_the_store_does() {
-    teaching_walk(SWITCHED_TEACHINGS).await;
 }
 
 /// **An event the image appends itself is numbered from one, in order, and says
@@ -444,46 +413,6 @@ async fn a_mail_image_that_failed_to_fill_is_filled_again_by_the_next_write() {
     assert_eq!(read.body, "written after the store came back");
 }
 
-#[tokio::test]
-async fn a_teaching_ledger_that_failed_to_fill_is_filled_again_by_the_next_write() {
-    use jojobot_domain::session::Sid;
-    use jojobot_domain::teaching::Teachings;
-    let store = Arc::new(InMemoryTeachings::new());
-    let counted = Arc::new(CountedTeachings::new(store.clone()));
-    let folded = FoldedTeachings::new(counted.clone());
-    counted.calls.set_unreachable(true);
-    folded
-        .rebuild()
-        .await
-        .expect_err("the store cannot be reached");
-    counted.calls.set_unreachable(false);
-
-    let sid = Sid("s001".into());
-    let at = jiff::Timestamp::UNIX_EPOCH;
-    assert!(
-        folded
-            .first_contact(&sid, "claims", at)
-            .await
-            .expect("the write lands"),
-        "the first contact is a first contact"
-    );
-
-    counted.calls.reset();
-    assert!(
-        !folded
-            .first_contact(&sid, "claims", at)
-            .await
-            .expect("the ledger answers"),
-        "the second contact is not"
-    );
-    assert_eq!(
-        (counted.calls.reads(), counted.calls.writes()),
-        (0, 0),
-        "the repeat reached the store: {:?}",
-        counted.calls.seen()
-    );
-}
-
 /// **A write whose future is dropped after the store committed leaves the next
 /// read correct.** The runs image: an entry was appended in the store and the
 /// caller left before the image followed it.
@@ -589,50 +518,5 @@ async fn a_dropped_post_leaves_the_next_read_of_the_board_correct() {
         in_image.len(),
         in_store.len(),
         "the image misses a committed post"
-    );
-}
-
-/// The teaching ledger: the store forgot a session and the caller left, so the
-/// ledger must not go on saying the session was told.
-#[tokio::test]
-async fn a_dropped_forget_leaves_the_next_first_contact_correct() {
-    use jojobot_domain::session::Sid;
-    use jojobot_domain::teaching::Teachings;
-    let store = Arc::new(InMemoryTeachings::new());
-    let counted = Arc::new(CountedTeachings::new(store.clone()));
-    let folded = FoldedTeachings::new(counted.clone());
-    folded.rebuild().await.expect("the ledger loads");
-    let sid = Sid("s001".into());
-    let at = jiff::Timestamp::UNIX_EPOCH;
-    assert!(
-        folded
-            .first_contact(&sid, "claims", at)
-            .await
-            .expect("lands")
-    );
-    assert!(
-        !folded
-            .first_contact(&sid, "claims", at)
-            .await
-            .expect("held"),
-        "the ledger holds the pair before the forget"
-    );
-
-    counted.calls.hang_after_next("forget");
-    let waited = crate::fold_dropped_tests::cancelled_after_commit(
-        counted.calls.hung(),
-        folded.forget(&sid),
-    )
-    .await;
-    assert!(waited.is_err(), "the forget is cancelled: {waited:?}");
-    counted.calls.release_hung();
-    folded.wait_for_writes().await;
-
-    assert!(
-        folded
-            .first_contact(&sid, "claims", at)
-            .await
-            .expect("answers"),
-        "the store forgot the session, so its next contact is a first one again"
     );
 }
