@@ -1126,6 +1126,7 @@ fn no_stored_row_binds_an_object_to_an_app_so_an_import_leaves_every_object_unbo
     let Rows {
         entities: _,
         entity_writes: _,
+        supplied: _,
         former_handles: _,
         facts: _,
         field_writes: _,
@@ -1477,4 +1478,75 @@ fn a_folded_things_writes_arrive_in_one_order_with_the_survivors() {
     let state = State::replay(&imported(&rows));
     assert_eq!(state.observed_writes(&object("k2")).len(), 3);
     assert_eq!(state.observed_writes(&object("k1")).len(), 1);
+}
+
+fn supplied(handle: &str) -> SuppliedRow {
+    SuppliedRow {
+        handle: handle.into(),
+        kind: "view".into(),
+        name: "Loops".into(),
+        source: "jojobot".into(),
+    }
+}
+
+fn created_objects(events: &[Event<ClaimEvent>]) -> Vec<&ObjectId> {
+    events
+        .iter()
+        .filter_map(|event| match &event.payload {
+            ClaimEvent::ObjectCreated { object, .. } => Some(object),
+            _ => None,
+        })
+        .collect()
+}
+
+fn bound_addresses(events: &[Event<ClaimEvent>]) -> Vec<(&ObjectId, &str)> {
+    events
+        .iter()
+        .filter_map(|event| match &event.payload {
+            ClaimEvent::AddressBound { object, address } => Some((object, address.as_str())),
+            _ => None,
+        })
+        .collect()
+}
+
+/// **A supplied record is created under its own identity and answers to its
+/// handle.** The key is the supply identity, not the handle and not a stored key.
+#[test]
+fn a_supplied_record_is_created_under_its_supply_identity_and_bound_to_its_handle() {
+    let events = imported(&Rows {
+        supplied: vec![supplied("view:loops")],
+        ..Default::default()
+    });
+    let supply = supply_identity("view:loops");
+    assert_eq!(created_objects(&events), vec![&supply]);
+    assert_eq!(bound_addresses(&events), vec![(&supply, "view:loops")]);
+}
+
+/// **A stored row at a supplied handle holds the binding** (rule 508). The
+/// supplied object is still created, and stays unbound.
+#[test]
+fn a_stored_row_at_a_supplied_handle_keeps_the_binding() {
+    let events = imported(&Rows {
+        entities: vec![entity("k1", "view:loops")],
+        supplied: vec![supplied("view:loops")],
+        ..Default::default()
+    });
+    let supply = supply_identity("view:loops");
+    assert_eq!(created_objects(&events), vec![&supply]);
+    assert!(
+        bound_addresses(&events)
+            .iter()
+            .all(|(object, _)| **object != supply),
+        "the supplied object was bound to a handle a stored row wears: {events:?}"
+    );
+}
+
+/// **The supply identity is the same every time and no stored key can take it**:
+/// a badge holds no `/`, and neither does a handle.
+#[test]
+fn the_supply_identity_is_stable_and_cannot_be_a_stored_key() {
+    assert_eq!(supply_identity("view:loops"), supply_identity("view:loops"));
+    assert_ne!(supply_identity("view:loops"), supply_identity("view:board"));
+    assert!(supply_identity("view:loops").0.contains('/'));
+    assert_ne!(supply_identity("view:loops").0, "view:loops");
 }

@@ -174,10 +174,33 @@ pub struct MergeRow {
     pub claims: Vec<(String, String)>,
 }
 
+/// **A record the build supplies**, as the import is handed it. It is no row of
+/// the store: the build owns it, and its fields and prose still answer from the
+/// build's own list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SuppliedRow {
+    /// The handle it answers at.
+    pub handle: String,
+    pub kind: String,
+    pub name: String,
+    pub source: String,
+}
+
+/// **The identity a supplied record has in the log.** Deterministic from its
+/// handle, so the same handle gives the same key on every boot and every retry.
+/// It carries a `/`, which no badge and no handle can hold, so no stored key can
+/// take it. A handle is an address and may be renamed by a later build; this key
+/// does not move with it.
+pub fn supply_identity(handle: &str) -> ObjectId {
+    ObjectId(format!("supplied/{handle}"))
+}
+
 /// Every row family this mapping reads.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Rows {
     pub entities: Vec<EntityRow>,
+    /// The records the build supplies.
+    pub supplied: Vec<SuppliedRow>,
     pub entity_writes: Vec<EntityWriteRow>,
     pub former_handles: Vec<FormerHandleRow>,
     pub facts: Vec<FactRow>,
@@ -376,6 +399,38 @@ pub fn import(rows: &Rows) -> Result<Vec<Event<ClaimEvent>>, ImportError> {
                 body: object_body(row),
             },
         ));
+    }
+    // **Each record the build supplies is created under its own identity** and
+    // answers to its handle, except where a stored row wears that handle: the
+    // stored row holds the binding (rule 508) and the supplied object stays
+    // unbound. Only its identity moves here; its fields and prose still answer
+    // from the build's own list.
+    for row in &rows.supplied {
+        let object = supply_identity(&row.handle);
+        events.push(plain(ClaimEvent::ObjectCreated {
+            object: object.clone(),
+            body: ObjectBody {
+                kind: KindId(row.kind.clone()),
+                parent: None,
+                name: row.name.clone(),
+                source: row.source.clone(),
+                aliases: Vec::new(),
+                boot: None,
+                metadata: BTreeMap::new(),
+                archived: false,
+                bound_to: None,
+            },
+        }));
+        if !rows
+            .entities
+            .iter()
+            .any(|entity| entity.handle == row.handle)
+        {
+            events.push(plain(ClaimEvent::AddressBound {
+                object,
+                address: row.handle.clone(),
+            }));
+        }
     }
     // **Every write of an entity's own row is an observation, in the order the
     // store reads them**: a write nobody stamped first, then by moment. Rows of
