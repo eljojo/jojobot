@@ -514,6 +514,82 @@ fn ledger_events_ignore_a_receipt_for_an_evicted_generation() {
     assert_eq!(state, before);
 }
 
+/// A replacement allocated by the live selector must not take an evicted
+/// attempt's receipt. The unrelated request stays held and still takes its own.
+#[test]
+fn ledger_events_keep_an_evicted_attempts_receipt_off_a_reused_id() {
+    let old = Commit {
+        expires_at: at(0) + super::super::KEPT_FOR,
+        ..commit(1)
+    };
+    let key = old.request.key.clone();
+    let after = old.expires_at + jiff::SignedDuration::from_secs(1);
+    let unrelated = Commit {
+        written_at: after,
+        expires_at: after + super::super::KEPT_FOR,
+        ..commit_of("beta", 0)
+    };
+    let mut state = State::default();
+    state.apply(&LedgerEvent::RequestCommitted(old)).unwrap();
+    state
+        .apply(&LedgerEvent::RequestCommitted(unrelated.clone()))
+        .unwrap();
+    assert!(state.request(&key).is_none(), "the old attempt was evicted");
+
+    let mut replacement = Commit {
+        landed: "replacement-result".into(),
+        written_at: after,
+        expires_at: after + super::super::KEPT_FOR,
+        ..commit(1)
+    };
+    replacement.request.digest = "replacement-digest".into();
+    replacement.request.key.generation = state.generation_for(&key.actor, &key.id, after);
+    state
+        .apply(&LedgerEvent::RequestCommitted(replacement.clone()))
+        .unwrap();
+    assert_eq!(state.lookup(&key.actor, &key.id, after), Some(&replacement));
+
+    state
+        .apply(&LedgerEvent::RequestReceiptRecorded {
+            key: unrelated.request.key.clone(),
+            receipt: "beta-receipt".into(),
+        })
+        .unwrap();
+    let unrelated_before = state.request(&unrelated.request.key).cloned();
+    assert_eq!(
+        unrelated_before
+            .as_ref()
+            .unwrap()
+            .committed
+            .as_ref()
+            .unwrap()
+            .receipt
+            .as_deref(),
+        Some("beta-receipt"),
+        "a still-kept attempt takes its own receipt"
+    );
+    state
+        .apply(&LedgerEvent::RequestReceiptRecorded {
+            key,
+            receipt: "late-old-receipt".into(),
+        })
+        .unwrap();
+    assert_eq!(
+        state.request(&unrelated.request.key),
+        unrelated_before.as_ref(),
+        "another id is unchanged by the old receipt"
+    );
+    assert_eq!(
+        state.lookup(
+            &replacement.request.key.actor,
+            &replacement.request.key.id,
+            after
+        ),
+        Some(&replacement),
+        "the evicted attempt's receipt attached to the replacement"
+    );
+}
+
 /// **An id is kept for 72 hours and no longer, to the second.** At the last
 /// instant of the window the id is still spent and a write under it joins its
 /// generation; one second later it is unspent, and a write under it starts the
