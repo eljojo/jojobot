@@ -607,3 +607,56 @@ async fn a_clear_is_held_by_the_state_as_the_store_holds_it() {
     writer.drain().await;
     server.stop().await;
 }
+
+/// **A retraction in the State is the retraction in the store**: a retracted
+/// claim's writes stop counting, so the key it held leaves the thing, and the
+/// State gives the store's values, ages and backing.
+#[tokio::test]
+async fn a_retraction_is_held_by_the_state_as_the_store_holds_it() {
+    let (_scratch, mut server, memory, writer, pool) = world("claim-events-retract").await;
+    let homer = EntityId("person:homer".into());
+
+    let made = {
+        let (memory, homer) = (memory.clone(), homer.clone());
+        as_request(&writer, "alpha", async move {
+            let mut fact = NewFact::about(homer, "felt giddy", date(2026, 9, 1));
+            fact.provenance = Provenance::Inference;
+            fact.fields = [("mood".to_string(), "giddy".to_string())].into();
+            fact.sets = fact.fields.keys().cloned().collect();
+            memory
+                .capture(fact)
+                .await
+                .expect("capture")
+                .written()
+                .expect("not blocked")
+                .address()
+        })
+        .await
+    };
+    let held = agrees(&memory, &writer, &pool, &homer).await;
+    assert_eq!(held["mood"], "giddy");
+
+    {
+        let memory = memory.clone();
+        as_request(&writer, "beta", async move {
+            memory
+                .retract(
+                    &made,
+                    Some("a mistake"),
+                    date(2026, 9, 5),
+                    &EntityId("bot:sigma".into()),
+                    None,
+                )
+                .await
+                .expect("the claim is retracted");
+        })
+        .await;
+    }
+    let held = agrees(&memory, &writer, &pool, &homer).await;
+    assert!(
+        !held.contains_key("mood"),
+        "the retracted claim's write stopped counting: {held:?}"
+    );
+    writer.drain().await;
+    server.stop().await;
+}
