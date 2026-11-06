@@ -152,9 +152,16 @@ pub fn same_value(held: Option<&str>, written: &str) -> bool {
 /// clear, a value that is no number and a request that never held one count as
 /// 0.
 pub fn highest_generation_ever(writes: &[super::FieldWrite]) -> u64 {
-    writes
-        .iter()
-        .filter_map(|write| write.value.as_deref()?.trim().parse::<u64>().ok())
+    highest_number(writes.iter().map(|write| write.value.as_deref()))
+}
+
+/// **The highest number among the values written under [`GENERATION`]**, 0 when
+/// none is a number. The one reading of the history that
+/// [`highest_generation_ever`] and the State's own history both use.
+pub fn highest_number<'a>(values: impl IntoIterator<Item = Option<&'a str>>) -> u64 {
+    values
+        .into_iter()
+        .filter_map(|value| value?.trim().parse::<u64>().ok())
         .max()
         .unwrap_or(0)
 }

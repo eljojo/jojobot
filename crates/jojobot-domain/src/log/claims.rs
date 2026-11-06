@@ -805,6 +805,7 @@ impl State {
 
 pub mod emit;
 pub mod entity_change;
+mod generation;
 pub mod import;
 mod indexes;
 pub mod job;
@@ -821,3 +822,6 @@ pub use rules::{HeldRecord, StarredRule};
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod generation_tests;
