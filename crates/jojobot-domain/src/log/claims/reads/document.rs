@@ -1,0 +1,170 @@
+//! **A thing's value parts, put into the shapes the port serves.** Each is b2's
+//! read of the State; only the shape differs. Pure: the State is all it reads.
+
+use std::collections::{BTreeMap, HashMap};
+
+use super::{ObjectBody, ObjectVersion, Revision, State};
+use crate::log::claims::ObjectSnapshot;
+use crate::log::{ObjectId, RecordId};
+use crate::memory::{
+    ClaimWrite, Edge, EdgeShape, EntityId, EntitySnapshot, EntityVersion, FactAddress, FactId,
+    FieldAges, FieldBacking, KeyTrails, types::DeclaredType,
+};
+
+/// The value parts of one thing's document.
+pub struct DocumentParts {
+    pub fields: BTreeMap<String, String>,
+    pub version: u64,
+    pub ages: FieldAges,
+    pub histories: HashMap<FactId, Vec<ClaimWrite>>,
+    pub backing: BTreeMap<String, FieldBacking>,
+    pub trails: KeyTrails,
+    pub entity_versions: Vec<EntityVersion>,
+}
+
+/// The handle an object answers to now, or the id itself when it has none.
+fn served(state: &State, object: &ObjectId) -> EntityId {
+    state
+        .handle_of(object)
+        .unwrap_or_else(|| EntityId(object.0.clone()))
+}
+
+/// **The address a claim is served at now**: the handle of its home and its label.
+fn address_of(state: &State, record: &RecordId) -> Option<FactAddress> {
+    let claim = &state.claim_history(record).last()?.claim;
+    Some(FactAddress::new(
+        served(state, &claim.home),
+        FactId(claim.label.clone()),
+    ))
+}
+
+fn claim_write(state: &State, ordinal: usize, write: &Revision) -> ClaimWrite {
+    let claim = &write.claim;
+    ClaimWrite {
+        ordinal,
+        written_at: write.written_at,
+        session: None,
+        bot: None,
+        content: claim.content.clone(),
+        details: claim.details.clone(),
+        provenance: claim.provenance,
+        standing: claim.standing,
+        status: claim.status,
+        recorded_at: claim.recorded_at,
+        happened_at: claim.happened_at,
+        happened_through: claim.happened_through,
+        edge: claim.edge.as_ref().and_then(|(shape, object)| {
+            EdgeShape::from_token(shape).map(|shape| Edge {
+                shape,
+                object: served(state, object),
+            })
+        }),
+        derived_from: claim
+            .derived_from
+            .as_ref()
+            .and_then(|record| address_of(state, record)),
+        stale_after: claim.stale_after,
+        receipt: claim.receipt.clone(),
+        app_stamp: claim.app.clone(),
+        refs: Some(claim.refs.iter().map(|o| served(state, o)).collect()),
+        stands_for: Some(
+            claim
+                .stands_for
+                .iter()
+                .filter_map(|record| address_of(state, record))
+                .collect(),
+        ),
+    }
+}
+
+fn snapshot(state: &State, body: &ObjectBody) -> EntitySnapshot {
+    EntitySnapshot {
+        kind: body.kind.0.clone(),
+        name: body.name.clone(),
+        source: body.source.clone(),
+        crm: body.metadata.get("crm").cloned(),
+        parent: body.parent.as_ref().map(|parent| served(state, parent)),
+        boot: body.boot.clone().unwrap_or_default(),
+        archived_reason: body.metadata.get("archived_reason").cloned(),
+        archived_at: body.metadata.get("archived_at").cloned(),
+        merged_into: None,
+        aliases: body.aliases.clone(),
+        prose: body.metadata.get("prose").cloned().unwrap_or_default(),
+    }
+}
+
+fn observed_snapshot(state: &State, snapshot: &ObjectSnapshot) -> EntitySnapshot {
+    EntitySnapshot {
+        kind: snapshot.kind.clone(),
+        name: snapshot.name.clone(),
+        source: snapshot.source.clone(),
+        crm: snapshot.crm.clone(),
+        parent: snapshot.parent.as_ref().map(|parent| served(state, parent)),
+        boot: snapshot.boot.clone(),
+        archived_reason: snapshot.archived_reason.clone(),
+        archived_at: snapshot.archived_at.clone(),
+        merged_into: snapshot
+            .merged_into
+            .as_ref()
+            .map(|survivor| served(state, survivor)),
+        aliases: snapshot.aliases.clone(),
+        prose: snapshot.prose.clone(),
+    }
+}
+
+fn entity_version(state: &State, ordinal: usize, version: &ObjectVersion) -> EntityVersion {
+    EntityVersion {
+        ordinal,
+        thing: served(state, &version.thing),
+        written_at: version.written_at,
+        session: None,
+        snapshot: Some(snapshot(state, &version.body)),
+    }
+}
+
+impl State {
+    /// **The value parts of the thing stored under `object`**, in the shapes the
+    /// port serves, from the State alone. `None` when the State holds no such
+    /// thing. The `session` and `bot` of a write are not in the State and are left
+    /// empty.
+    pub fn document_parts(
+        &self,
+        object: &ObjectId,
+        declared: &[DeclaredType],
+    ) -> Option<DocumentParts> {
+        let thing = self.scan(object, declared)?;
+        let mut histories = HashMap::new();
+        for (record, held) in &thing.claims {
+            let chain = self
+                .claim_history(record)
+                .iter()
+                .enumerate()
+                .map(|(at, write)| claim_write(self, at + 1, write))
+                .collect();
+            histories.insert(FactId(held.claim.label.clone()), chain);
+        }
+        Some(DocumentParts {
+            fields: thing.fields.clone(),
+            version: self.write_marker(object),
+            ages: FieldAges {
+                newest: self.newest_change(object),
+                keys: self.held_since(object, declared).into_iter().collect(),
+            },
+            histories,
+            backing: self.backing(object, declared),
+            trails: {
+                let mut trails = self.key_trails(object);
+                for write in trails.history.values_mut().flatten() {
+                    write.fact.home = served(self, &ObjectId(write.fact.home.0.clone()));
+                }
+                trails
+            },
+            entity_versions: self
+                .entity_versions(object)
+                .into_iter()
+                .enumerate()
+                .map(|(at, version)| entity_version(self, at + 1, version))
+                .collect(),
+        })
+    }
+}

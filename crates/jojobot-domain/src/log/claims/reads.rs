@@ -8,12 +8,15 @@ use std::collections::BTreeMap;
 
 use jiff::Timestamp;
 
-use super::{FieldValue, KeyId, ObjectBody, ObjectVersion, Record, Revision, State, Write};
+use super::{
+    FieldValue, KeyId, ObjectBody, ObjectVersion, ObservedWrite, Record, Revision, State, Write,
+};
 use crate::log::{ObjectId, RecordId};
 use crate::memory::{
     self, EntityId, FactAddress, FactId, FieldBacking, FieldWrite, KeyTrails, RecordFieldWrite,
     WriteClass, types::DeclaredType,
 };
+pub use document::DocumentParts;
 
 // **How many streams the reads have looked at on this thread**, so a case can
 // say a read costs the streams of its own thing and not the size of the State.
@@ -342,7 +345,8 @@ impl State {
             .into_iter()
             .map(|record| self.claim_history(record).len())
             .sum();
-        (claim_writes + self.entity_versions(subject).len()) as u64
+        (claim_writes + self.entity_versions(subject).len() + self.observed_chain(subject).len())
+            as u64
     }
 
     /// **The newest moment any write on a thing was taken in**: its own row, and
@@ -366,7 +370,12 @@ impl State {
         let own = self
             .entity_versions(subject)
             .into_iter()
-            .filter_map(|version| version.written_at);
+            .filter_map(|version| version.written_at)
+            .chain(
+                self.observed_chain(subject)
+                    .into_iter()
+                    .filter_map(|(_, write)| write.source_time),
+            );
         let fields = streams
             .iter()
             .flat_map(|(key, stream)| stream.iter().map(move |write| (key, write)))
@@ -381,6 +390,31 @@ impl State {
             .filter_map(|record| self.records.get(record))
             .flat_map(|held| held.history.iter().filter_map(|write| write.written_at));
         own.chain(fields).chain(claimed).max()
+    }
+
+    /// **Every write of a thing's own row that an import observed**, and of every
+    /// thing folded into it, each with the object it was written under. Found from
+    /// the thing and what was folded into it alone.
+    pub(super) fn observed_chain<'a>(
+        &'a self,
+        subject: &ObjectId,
+    ) -> Vec<(&'a ObjectId, &'a ObservedWrite)> {
+        let root = self.survivor(subject).clone();
+        let mut objects: Vec<&'a ObjectId> = Vec::new();
+        if let Some((held, _)) = self.observed.get_key_value(&root) {
+            objects.push(held);
+        }
+        objects.extend(self.folded_under.get(&root).into_iter().flatten());
+        objects
+            .into_iter()
+            .flat_map(|object| {
+                self.observed
+                    .get(object)
+                    .into_iter()
+                    .flatten()
+                    .map(move |write| (object, write))
+            })
+            .collect()
     }
 
     /// **Every write of a thing's own row, and of every thing folded into it**,
@@ -487,6 +521,7 @@ impl State {
     }
 }
 
+mod document;
 #[cfg(test)]
 mod histories_tests;
 #[cfg(test)]

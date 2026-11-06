@@ -1433,6 +1433,8 @@ impl Memory for Folded {
 #[cfg(test)]
 mod counting_scan;
 #[cfg(test)]
+mod from_state_tests;
+#[cfg(test)]
 mod landed_tests;
 #[cfg(test)]
 mod stalled_read;
