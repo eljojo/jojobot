@@ -135,6 +135,32 @@ async fn a_new_keeper_starts_from_the_stored_snapshot() {
     assert_eq!(restarted.flush(head, at(2)).await.unwrap(), None);
 }
 
+/// **A snapshot of another build covers nothing for this build.** The log hands
+/// back the newest foreign snapshot when this build has none, so the keeper must
+/// not count its position: it would publish nothing and every restart would
+/// replay the log. The envelope is a valid one of another projection version.
+#[tokio::test]
+async fn a_foreign_snapshot_does_not_suppress_this_builds_own() {
+    let log = InMemoryLog::default();
+    let head = append(&log, "alpha", 2).await;
+    keeper(&log, SMALL).await.flush(head, at(1)).await.unwrap();
+    let mut foreign = log.load_snapshot().await.unwrap().expect("published");
+    foreign.projection_version = foreign.projection_version.wrapping_add(1);
+    log.store_snapshot(&foreign).await.unwrap();
+
+    let restarted = keeper(&log, SMALL).await;
+    assert_eq!(restarted.covered(), Position(0));
+    assert_eq!(restarted.flush(head, at(2)).await.unwrap(), Some(head));
+    assert_eq!(
+        log.load_snapshot()
+            .await
+            .unwrap()
+            .unwrap()
+            .projection_version,
+        crate::log_snapshot::PROJECTION_FINGERPRINT
+    );
+}
+
 /// **The serving loop takes a due snapshot on a tick, before it is stopped.** The
 /// head holds as many events as the cadence names, so the tick takes it; a loop
 /// that only flushed at its stop would never publish while the watcher waits.

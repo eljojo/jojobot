@@ -50,9 +50,14 @@ pub struct SnapshotKeeper {
 impl SnapshotKeeper {
     /// Start from the newest snapshot the log holds, if any.
     pub async fn open(log: Arc<dyn LogStore>, cadence: Cadence) -> Result<Self, LogError> {
+        // A snapshot of another build is returned when this build has none; it
+        // covers nothing here, or this build would never publish its own.
         let covered = log
             .load_snapshot()
             .await?
+            .filter(|snapshot| {
+                snapshot.projection_version == crate::log_snapshot::PROJECTION_FINGERPRINT
+            })
             .map_or(Position(0), |snapshot| snapshot.covered_position);
         Ok(Self {
             log,
