@@ -167,8 +167,41 @@ jobs:
         env:
           JOJOBOT_METRICS_OUTCOME: ${{ job.status }}
 
-  report:
+  # The store of production's size the boot measures restore. A runner host that
+  # has not grown it yet grows it (about twenty minutes: the entities, a share of
+  # the claims and the sessions through the tools, the rest copied in SQL); every
+  # later run on that host only copies it. The result travels to the report job as
+  # an artifact, because the cache is one host's and the report job may land on
+  # another. See scripts/prepare-boot-store.
+  boot-store:
     needs: static
+    # It runs when the report job does, which needs it.
+    if: ${{ forgejo.event_name != 'workflow_dispatch' || forgejo.event.inputs.job == '' || forgejo.event.inputs.job == 'report' }}
+    runs-on: nix
+    timeout-minutes: 60
+    steps:
+      - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - name: Last deployed store
+        run: scripts/stop-with-siblings nix develop -c python3 scripts/prepare-upgrade-fixture
+        env:
+          UPGRADE_FIXTURE_DIR: target/upgrade-fixture
+          TOKEN: ${{ forgejo.token }}
+      - name: Grown store
+        run: scripts/stop-with-siblings nix develop -c python3 scripts/prepare-boot-store
+        env:
+          UPGRADE_FIXTURE_DIR: target/upgrade-fixture
+          BOOT_STORE_DIR: target/boot-store
+          TOKEN: ${{ forgejo.token }}
+      - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5
+        with:
+          name: boot-store
+          path: target/boot-store
+          retention-days: 1
+
+  report:
+    needs: [static, boot-store]
     # A push runs it, and so does a dispatch that names no job or names this one.
     if: ${{ forgejo.event_name != 'workflow_dispatch' || forgejo.event.inputs.job == '' || forgejo.event.inputs.job == 'report' }}
     # A host executor: see pull-request.yml for what the runner sees.
@@ -226,16 +259,14 @@ jobs:
         env:
           UPGRADE_FIXTURE_DIR: target/upgrade-fixture
           TOKEN: ${{ forgejo.token }}
-      # The store of production's size the boot measures restore. Growing it takes
-      # about half an hour, so it is grown once per grower and kept outside git
-      # (scripts/prepare-boot-store); a run that finds it only copies it.
+      # The store of production's size the boot measures restore, made by the
+      # boot-store job.
       - name: Grown store
         if: ${{ steps.plan.outputs.fast != 'true' }}
-        run: scripts/stop-with-siblings nix develop -c python3 scripts/prepare-boot-store
-        env:
-          UPGRADE_FIXTURE_DIR: target/upgrade-fixture
-          BOOT_STORE_DIR: target/boot-store
-          TOKEN: ${{ forgejo.token }}
+        uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
+        with:
+          name: boot-store
+          path: target/boot-store
       - run: scripts/stop-with-siblings nix develop -c make report
         env:
           UPGRADE_FIXTURE_DIR: target/upgrade-fixture

@@ -147,20 +147,6 @@ jobs:
           name: upgrade-fixture
           path: target/upgrade-fixture
           retention-days: 1
-      # The store of production's size the boot measures restore, grown once per
-      # grower and kept outside git (scripts/prepare-boot-store).
-      - name: Grown store
-        if: ${{ steps.plan.outputs.fast != 'true' }}
-        run: nix develop -c python3 scripts/prepare-boot-store
-        env:
-          UPGRADE_FIXTURE_DIR: target/upgrade-fixture
-          BOOT_STORE_DIR: target/boot-store
-      - if: ${{ steps.plan.outputs.fast != 'true' }}
-        uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5
-        with:
-          name: boot-store
-          path: target/boot-store
-          retention-days: 1
       - if: ${{ steps.plan.outputs.fast != 'true' }}
         run: nix develop -c make bundle CI_ROOT=${{ env.CI_ROOT }}
       # The bundle is kept a day: a re-run of one job below needs it.
@@ -188,8 +174,36 @@ jobs:
         env:
           JOJOBOT_METRICS_OUTCOME: ${{ job.status }}
 
+  # The store of production's size the boot measures restore. A runner host that
+  # has not grown it yet grows it (about twenty minutes: the entities, a share of
+  # the claims and the sessions through the tools, the rest copied in SQL); every
+  # later run on that host only copies it. The result travels to `check` as an
+  # artifact, because the cache is one host's. See scripts/prepare-boot-store.
+  boot-store:
+    needs: static
+    runs-on: nix-x86_64
+    timeout-minutes: 60
+    steps:
+      - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - name: Last deployed store
+        run: nix develop -c python3 scripts/prepare-upgrade-fixture
+        env:
+          UPGRADE_FIXTURE_DIR: target/upgrade-fixture
+      - name: Grown store
+        run: nix develop -c python3 scripts/prepare-boot-store
+        env:
+          UPGRADE_FIXTURE_DIR: target/upgrade-fixture
+          BOOT_STORE_DIR: target/boot-store
+      - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5
+        with:
+          name: boot-store
+          path: target/boot-store
+          retention-days: 1
+
   check:
-    needs: [static, build]
+    needs: [static, build, boot-store]
     if: ${{ always() }}
     runs-on: nix-x86_64
     steps:
@@ -201,6 +215,7 @@ jobs:
           echo "level: boundary; workflow jobs: $BAR_WORKFLOW_JOBS; left to boundary: none"
           test '${{ needs.static.result }}' = success || { echo 'static prerequisite did not succeed'; exit 1; }
           test '${{ needs.build.result }}' = success || { echo 'build prerequisite did not succeed'; exit 1; }
+          test '${{ needs.boot-store.result }}' = success || { echo 'boot-store prerequisite did not succeed'; exit 1; }
       # The whole history, not the default depth of one commit. The fixture
       # roster test reads the commit messages since a fixed boundary and fails
       # when it cannot read the range, so a one-commit checkout is red on every

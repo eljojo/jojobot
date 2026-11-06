@@ -37,14 +37,26 @@ const MEMORY_BOUND_KIB: u64 = 1024 * 1024;
 /// Teaching events in the log's tail, in batches of [`PER_BATCH`].
 const EVENTS: u64 = 20_000;
 const PER_BATCH: u64 = 500;
-/// The instance's size the release is measured at: its entity count today, and
-/// the floor of its message count until the instance's own is read.
-const PRODUCTION_THINGS: i64 = 3_144;
-const PRODUCTION_MESSAGES: i64 = 11_852;
-/// Facts written under each grown thing. **A stand-in until the live instance's
-/// own count is known**: the number of facts per thing there is read from the
-/// instance and replaces this.
-const FACTS_PER_THING: i64 = 3;
+/// **The live instance's size, read from its store** (read only, 2026-11-06): the
+/// release is measured at these. Entities, claims, fact writes, field writes,
+/// messages, sessions (runs), and the call counters the server keeps.
+const PRODUCTION_THINGS: i64 = 3_208;
+const PRODUCTION_CLAIMS: i64 = 25_955;
+const PRODUCTION_FACT_WRITES: i64 = 45_294;
+const PRODUCTION_FIELD_WRITES: i64 = 108_942;
+const PRODUCTION_MESSAGES: i64 = 24_134;
+const PRODUCTION_SESSIONS: i64 = 1_560;
+const PRODUCTION_RUN_CALLS: i64 = 94_905;
+const PRODUCTION_TOOL_CALLS: i64 = 116_258;
+/// **What the server writes through its tools**: every entity, one claim under
+/// each with [`SETS_PER_CLAIM`] keys, [`TOOL_MESSAGES`] messages and the sessions.
+/// Writing the instance's whole count that way takes more than an hour, so
+/// [`scale_to_production`] reaches the counts above by copying rows the server
+/// wrote. A copy shares its parent's shape: the row counts and the bytes are
+/// production's, the variety of content is not. Copied messages stay in the state
+/// they were posted in (new), where production's are nearly all processed.
+const SETS_PER_CLAIM: usize = 4;
+const TOOL_MESSAGES: i64 = 1_000;
 /// Connections that write the grown store at once.
 const GROW_CLIENTS: i64 = 8;
 /// A tail under the snapshot cadence of 10,000 events, for the case that needs the
@@ -397,6 +409,11 @@ async fn record_the_grown_store() {
         "the recorder writes to an absolute directory"
     );
     let grown = restore_into("jojobot-measure-recorder", "UPGRADE_FIXTURE_DIR", true).await;
+    let mut store = Dolt::start(&grown.0.join("db"), free_port())
+        .await
+        .expect("the store comes up with no binary over it");
+    let counts = scale_to_production(store.pool()).await;
+    store.stop().await;
     let database = grown.0.join("db").join("jojobot");
     assert!(
         database.join(".dolt").is_dir(),
@@ -420,24 +437,219 @@ async fn record_the_grown_store() {
     std::fs::create_dir_all(&out).expect("the output directory");
     std::fs::copy(database.join("doltdump.sql"), out.join("doltdump.sql"))
         .expect("the dump is copied");
-    std::fs::write(
-        out.join("grown.txt"),
-        format!(
-            "things={PRODUCTION_THINGS} messages={PRODUCTION_MESSAGES} facts_per_thing={FACTS_PER_THING}\n"
-        ),
-    )
-    .expect("the record of what was grown");
+    std::fs::write(out.join("grown.txt"), format!("{counts}\n"))
+        .expect("the record of what was grown");
 }
 
-/// **Bring the store to production's size through the server's own front door.**
-/// The recorded store holds a few dozen things and a handful of messages; the
-/// fold fill and the search index cost what the instance holds, so a boot
-/// measured over that store says little. Each thing is written by `add_entity`
-/// and given [`FACTS_PER_THING`] facts by `capture`, and each message by
-/// `post_message`, so every table gets the rows the server really writes. This
-/// takes about half an hour, which is why only the recorder runs it and CI caches
-/// the result. Nothing here is committed (rule 661), and [`prepare`] refuses a
-/// store smaller than [`PRODUCTION_THINGS`] and [`PRODUCTION_MESSAGES`].
+/// Copy the rows of `table` that `filter` selects, once, with the columns in
+/// `replace` computed instead of copied. The column list is read from the store,
+/// so a column a later migration adds is copied too.
+async fn copy_rows(pool: &sqlx::MySqlPool, table: &str, replace: &[(&str, String)], filter: &str) {
+    use sqlx::Row;
+    let columns: Vec<String> =
+        sqlx::query(sqlx::AssertSqlSafe(format!("SHOW COLUMNS FROM {table}")))
+            .fetch_all(pool)
+            .await
+            .expect("the columns read")
+            .iter()
+            .map(|row| row.get::<String, _>("Field"))
+            .collect();
+    let names = columns
+        .iter()
+        .map(|column| format!("`{column}`"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let values = columns
+        .iter()
+        .map(|column| {
+            replace.iter().find(|(name, _)| name == column).map_or_else(
+                || format!("`{column}`"),
+                |(_, expression)| expression.clone(),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let statement =
+        format!("INSERT INTO {table} ({names}) SELECT {values} FROM {table} WHERE {filter}");
+    sqlx::query(sqlx::AssertSqlSafe(statement.clone()))
+        .execute(pool)
+        .await
+        .unwrap_or_else(|e| panic!("copying rows failed on:\n{statement}\n{e}"));
+}
+
+async fn count_of(pool: &sqlx::MySqlPool, what: &str) -> i64 {
+    sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(format!(
+        "SELECT CAST({what} AS SIGNED)"
+    )))
+    .fetch_one(pool)
+    .await
+    .unwrap_or_else(|e| panic!("counting {what} failed: {e}"))
+}
+
+/// **Bring the tool-written store to the live instance's counts** by copying rows
+/// the server wrote (see [`SETS_PER_CLAIM`]). The copies are whole: a copied claim
+/// brings its writes and its field writes, a longer history brings later ordinals
+/// of the same claim, and the counters are scaled. Returns what the store holds.
+async fn scale_to_production(pool: &sqlx::MySqlPool) -> String {
+    // The things and claims this recorder wrote; a copy gets a suffix no id has.
+    let mine = "entity LIKE '%load-%'";
+    let original = |column: &str| format!("{mine} AND {column} REGEXP '^f[0-9]+$'");
+
+    // **Messages**: copied whole, with their events, in the ordinal order the
+    // original gave, after the last one.
+    let length = count_of(pool, "(SELECT MAX(CHAR_LENGTH(id)) FROM message)").await;
+    let held = count_of(
+        pool,
+        &format!("(SELECT COUNT(*) FROM message WHERE CHAR_LENGTH(id) = {length})"),
+    )
+    .await;
+    let message_rounds =
+        (PRODUCTION_MESSAGES - count_of(pool, "(SELECT COUNT(*) FROM message)").await + held - 1)
+            / held;
+    for round in 1..=message_rounds {
+        let by = round * 1_000_000;
+        copy_rows(
+            pool,
+            "message_event",
+            &[("message_id", format!("CONCAT(`message_id`, 'c{round}')"))],
+            &format!("CHAR_LENGTH(message_id) = {length}"),
+        )
+        .await;
+        copy_rows(
+            pool,
+            "message",
+            &[
+                ("id", format!("CONCAT(`id`, 'c{round}')")),
+                ("ordinal", format!("`ordinal` + {by}")),
+            ],
+            &format!("CHAR_LENGTH(id) = {length}"),
+        )
+        .await;
+    }
+
+    // **Claims**: each copy brings its fact, its writes and its field writes, and
+    // the field writes take the next ordinal of their key.
+    let claims = count_of(
+        pool,
+        &format!("(SELECT COUNT(*) FROM fact WHERE {})", original("id")),
+    )
+    .await;
+    let claim_rounds = (PRODUCTION_CLAIMS + claims / 2) / claims - 1;
+    for round in 1..=claim_rounds {
+        copy_rows(
+            pool,
+            "fact",
+            &[("id", format!("CONCAT(`id`, 'x{round}')"))],
+            &original("id"),
+        )
+        .await;
+        copy_rows(
+            pool,
+            "fact_write",
+            &[("fact_id", format!("CONCAT(`fact_id`, 'x{round}')"))],
+            &original("fact_id"),
+        )
+        .await;
+        copy_rows(
+            pool,
+            "field_write",
+            &[
+                ("fact_id", format!("CONCAT(`fact_id`, 'x{round}')")),
+                ("ordinal", format!("`ordinal` + {round}")),
+            ],
+            &original("fact_id"),
+        )
+        .await;
+    }
+
+    // **Longer histories**: later writes of the same claims, until the writes
+    // number what the instance holds.
+    let writes = count_of(pool, "(SELECT COUNT(*) FROM fact_write)").await;
+    let originals = count_of(
+        pool,
+        &format!(
+            "(SELECT COUNT(*) FROM fact_write WHERE {})",
+            original("fact_id")
+        ),
+    )
+    .await;
+    let history_rounds = ((PRODUCTION_FACT_WRITES - writes + originals - 1) / originals).max(0);
+    for round in 1..=history_rounds {
+        copy_rows(
+            pool,
+            "fact_write",
+            &[("ordinal", format!("`ordinal` + {round}"))],
+            &original("fact_id"),
+        )
+        .await;
+    }
+
+    // **Counters** are scaled, not copied: what they hold is a sum.
+    for (table, target) in [
+        ("tool_call_count", PRODUCTION_TOOL_CALLS),
+        ("run_call_count", PRODUCTION_RUN_CALLS),
+    ] {
+        let sum = count_of(
+            pool,
+            &format!("(SELECT COALESCE(SUM(calls), 0) FROM {table})"),
+        )
+        .await
+        .max(1);
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "UPDATE {table} SET calls = calls * {}",
+            (target + sum - 1) / sum
+        )))
+        .execute(pool)
+        .await
+        .unwrap_or_else(|e| panic!("scaling {table} failed: {e}"));
+    }
+
+    let held = |table: &str| format!("(SELECT COUNT(*) FROM {table})");
+    let (things, messages, claims, fact_writes, field_writes, sessions) = (
+        count_of(pool, &held("entity")).await,
+        count_of(pool, &held("message")).await,
+        count_of(pool, &held("fact")).await,
+        count_of(pool, &held("fact_write")).await,
+        count_of(pool, &held("field_write")).await,
+        count_of(pool, &held("session")).await,
+    );
+    let tool_calls = count_of(
+        pool,
+        "(SELECT COALESCE(SUM(calls), 0) FROM tool_call_count)",
+    )
+    .await;
+    let run_calls = count_of(pool, "(SELECT COALESCE(SUM(calls), 0) FROM run_call_count)").await;
+    // A tenth under the instance's count is a store that was not scaled.
+    for (what, have, want) in [
+        ("entities", things, PRODUCTION_THINGS),
+        ("messages", messages, PRODUCTION_MESSAGES),
+        ("claims", claims, PRODUCTION_CLAIMS),
+        ("fact writes", fact_writes, PRODUCTION_FACT_WRITES),
+        ("field writes", field_writes, PRODUCTION_FIELD_WRITES),
+        ("tool calls", tool_calls, PRODUCTION_TOOL_CALLS),
+        ("run calls", run_calls, PRODUCTION_RUN_CALLS),
+    ] {
+        assert!(
+            have * 10 >= want * 9,
+            "{what}: the store holds {have}, the instance {want}"
+        );
+    }
+    format!(
+        "entities={things} claims={claims} fact_writes={fact_writes} field_writes={field_writes} messages={messages} sessions={sessions} tool_calls={tool_calls} run_calls={run_calls}"
+    )
+}
+
+/// **Write the rows of the grown store through the server's own front door.** The
+/// recorded store holds a few dozen things and a handful of messages; the fold
+/// fill and the search index cost what the instance holds, so a boot measured
+/// over that store says little. Each thing is written by `add_entity` and given
+/// one claim with [`SETS_PER_CLAIM`] keys by `capture`; [`TOOL_MESSAGES`] messages
+/// are posted by `post_message` and the sessions started by `start_here`, so
+/// every table gets rows the server really writes. [`scale_to_production`] then
+/// copies them up to the instance's counts. Only the recorder runs this, and CI
+/// caches the result. Nothing here is committed (rule 661), and [`prepare`]
+/// refuses a store smaller than [`PRODUCTION_THINGS`] and
+/// [`PRODUCTION_MESSAGES`].
 async fn grow(port: u16) {
     use rmcp::ServiceExt;
     use rmcp::model::{CallToolRequestParams, ClientCapabilities, ClientInfo, Implementation};
@@ -543,22 +755,27 @@ async fn grow(port: u16) {
                     }),
                 )
                 .await;
-                for fact in 0..FACTS_PER_THING {
-                    writing(
-                        &peer,
-                        "capture",
-                        serde_json::json!({
-                            "subject": format!("thing:{handle}"),
-                            "content": format!(
-                                "Load {word} holds item {fact} on shelf {} of aisle {}",
-                                n % 97,
-                                n % 31
-                            ),
-                            "provenance": "testimony", "recorded_at": "2026-07-01", "sid": sid,
-                        }),
-                    )
-                    .await;
-                }
+                let sets: serde_json::Map<String, serde_json::Value> = (0..SETS_PER_CLAIM)
+                    .map(|key| {
+                        (
+                            format!("load_key_{key}"),
+                            format!("value {key} of {word}").into(),
+                        )
+                    })
+                    .collect();
+                writing(
+                    &peer,
+                    "capture",
+                    serde_json::json!({
+                        "subject": format!("thing:{handle}"),
+                        "content": format!(
+                            "Load {word} sits on shelf {} of aisle {}", n % 97, n % 31
+                        ),
+                        "sets": sets,
+                        "provenance": "testimony", "recorded_at": "2026-07-01", "sid": sid,
+                    }),
+                )
+                .await;
                 if shard == 0 && n % 400 == 0 {
                     record(&format!(
                         "grow: things at {n} after {} s",
@@ -566,7 +783,7 @@ async fn grow(port: u16) {
                     ));
                 }
             }
-            for n in (shard..PRODUCTION_MESSAGES).step_by(GROW_CLIENTS as usize) {
+            for n in (shard..TOOL_MESSAGES).step_by(GROW_CLIENTS as usize) {
                 writing(
                     &peer,
                     "post_message",
@@ -592,8 +809,28 @@ async fn grow(port: u16) {
     while let Some(done) = shards.join_next().await {
         done.expect("a grow client finished");
     }
+    // **Sessions**, one at a time: a boot of the default identity answers a
+    // resume-or-new offer while it holds a run, and `new` starts another. The
+    // first answer without a sid ends the loop, and the count is recorded.
+    let mut sessions = 0;
+    for _ in 0..PRODUCTION_SESSIONS {
+        let booted = call(
+            &peer,
+            "start_here",
+            serde_json::json!({ "bot": "assistant", "brief": true, "resume": "new" }),
+        )
+        .await;
+        let text = booted["content"][0]["text"].as_str().unwrap_or_default();
+        let started_one = serde_json::from_str::<serde_json::Value>(text)
+            .ok()
+            .is_some_and(|json| json["session"]["sid"].is_string());
+        if !started_one {
+            break;
+        }
+        sessions += 1;
+    }
     record(&format!(
-        "grow: {PRODUCTION_THINGS} things and {PRODUCTION_MESSAGES} messages written by {GROW_CLIENTS} clients in {} s",
+        "grow: {PRODUCTION_THINGS} things, {TOOL_MESSAGES} messages and {sessions} sessions written by {GROW_CLIENTS} clients in {} s",
         started.elapsed().as_secs()
     ));
     client.cancel().await.expect("the client closes");
