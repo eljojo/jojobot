@@ -407,3 +407,138 @@ async fn a_merge_and_the_writes_after_it_are_held_by_the_state_as_the_store_hold
     writer.drain().await;
     server.stop().await;
 }
+
+/// **A claim that cites a merged-in claim by the id the merge gave it names the
+/// record that claim is stored in**: the State holds the record under its stored
+/// identity, so a pointer to the served id would name a record that is not there.
+#[tokio::test]
+async fn a_claim_citing_a_merged_claim_names_the_record_it_is_stored_in() {
+    let (_scratch, mut server, memory, writer, pool) = world("claim-events-pointer").await;
+    let homer = EntityId("person:homer".into());
+    let marge = EntityId("person:marge".into());
+    memory
+        .add_entity(NewEntity::new(marge.clone(), "Marge", "fixture"))
+        .await
+        .expect("add")
+        .written()
+        .expect("written");
+
+    let source = {
+        let (memory, marge) = (memory.clone(), marge.clone());
+        as_request(&writer, "alpha", async move {
+            let mut fact = NewFact::about(marge, "keeps the house", date(2026, 9, 1));
+            fact.provenance = Provenance::Inference;
+            memory
+                .capture(fact)
+                .await
+                .expect("capture")
+                .written()
+                .expect("not blocked")
+                .address()
+        })
+        .await
+    };
+    {
+        let (memory, marge, homer) = (memory.clone(), marge.clone(), homer.clone());
+        as_request(&writer, "beta", async move {
+            memory
+                .merge(
+                    &marge,
+                    &homer,
+                    Some("filed twice"),
+                    date(2026, 9, 3),
+                    &EntityId("bot:sigma".into()),
+                    Some("run-a"),
+                )
+                .await
+                .expect("the fold lands");
+        })
+        .await;
+    }
+    // The claim now wears an id on Homer; a new claim cites it by that id.
+    let served = memory
+        .merge_events(None)
+        .await
+        .expect("the merge events")
+        .into_iter()
+        .flat_map(|event| event.claims)
+        .find(|(was, _)| *was == source.local)
+        .map(|(_, now)| now)
+        .expect("the merge mapped the claim");
+    let served = jojobot_domain::memory::FactAddress::new(homer.clone(), served);
+    let citing = {
+        let (memory, homer, served) = (memory.clone(), homer.clone(), served.clone());
+        as_request(&writer, "gamma", async move {
+            let mut fact = NewFact::about(homer, "is reminded of the house", date(2026, 9, 4));
+            fact.provenance = Provenance::Inference;
+            fact.derived_from = Some(served);
+            memory
+                .capture(fact)
+                .await
+                .expect("capture")
+                .written()
+                .expect("not blocked")
+                .address()
+        })
+        .await
+    };
+    {
+        let (memory, citing, served) = (memory.clone(), citing.clone(), served.clone());
+        as_request(&writer, "delta", async move {
+            memory
+                .update_fact(
+                    &citing,
+                    FactPatch {
+                        stands_for: Some(vec![served]),
+                        provenance: Some(Provenance::Inference),
+                        ..Default::default()
+                    },
+                    &EntityId("bot:sigma".into()),
+                )
+                .await
+                .expect("the mark is set")
+                .written()
+                .expect("not blocked");
+        })
+        .await;
+    }
+
+    let key_of = |thing: EntityId| {
+        let pool = pool.clone();
+        async move {
+            ObjectId(
+                sqlx::query_scalar::<_, Option<String>>("SELECT badge FROM entity WHERE id = ?")
+                    .bind(thing.as_str())
+                    .fetch_one(&pool)
+                    .await
+                    .expect("the entity row")
+                    .unwrap_or_else(|| thing.to_string()),
+            )
+        }
+    };
+    let (homer_key, marge_key) = (key_of(homer).await, key_of(marge).await);
+    let stored = record_id(&marge_key, source.local.as_str());
+    let seam = writer.seam().expect("the seam opened with the first begin");
+    let (derived, stands, source_held) = seam.read_claims(|state| {
+        let citing = state
+            .record(&record_id(&homer_key, citing.local.as_str()))
+            .expect("the citing claim is held");
+        (
+            citing.claim.derived_from.clone(),
+            citing.claim.stands_for.clone(),
+            state.record(&stored).is_some(),
+        )
+    });
+    assert!(
+        source_held,
+        "the State holds the source under its stored record"
+    );
+    assert_eq!(
+        derived,
+        Some(stored.clone()),
+        "derived_from names the stored record"
+    );
+    assert_eq!(stands, vec![stored], "stands_for names the stored record");
+    writer.drain().await;
+    server.stop().await;
+}

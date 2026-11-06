@@ -137,10 +137,7 @@ impl DoltMemory {
             None => None,
         };
         let derived_from = match &fact.derived_from {
-            Some(from) => Some(record_id(
-                &Self::object_key(tx, from.home.as_str()).await?,
-                from.local.as_str(),
-            )),
+            Some(from) => Some(Self::stored_record(tx, &from.home, from.local.as_str()).await?),
             None => None,
         };
         let mut refs = Vec::with_capacity(fact.refs.len());
@@ -149,10 +146,7 @@ impl DoltMemory {
         }
         let mut stands_for = Vec::with_capacity(fact.stands_for.len());
         for named in &fact.stands_for {
-            stands_for.push(record_id(
-                &Self::object_key(tx, named.home.as_str()).await?,
-                named.local.as_str(),
-            ));
+            stands_for.push(Self::stored_record(tx, &named.home, named.local.as_str()).await?);
         }
         Ok(ClaimBody {
             label,
@@ -425,15 +419,20 @@ impl DoltMemory {
         Ok(at)
     }
 
-    /// The record a claim is held in, named by the row it is stored in.
+    /// **The record a claim is held in, named by the row it is stored in.** An
+    /// address names a claim by the home and id it is served under, and a merge
+    /// leaves a claim in the row it was written to, so the address is walked back
+    /// along the merge events to the row that holds the claim's writes. Every
+    /// pointer an event holds to a claim names it through this one function.
     async fn stored_record(
-        &self,
         tx: &mut Transaction<'_, MySql>,
         home: &EntityId,
         local: &str,
     ) -> Result<jojobot_domain::log::RecordId, MemoryError> {
         let served = FactAddress::new(home.clone(), FactId(local.to_string()));
-        let at = self.stored_address_of(tx, &served).await?.unwrap_or(served);
+        let at = Self::written_at_or_before(tx, &served)
+            .await?
+            .unwrap_or(served);
         Ok(record_id(
             &Self::object_key(tx, at.home.as_str()).await?,
             at.local.as_str(),
@@ -464,7 +463,7 @@ impl DoltMemory {
         let mut records = Vec::with_capacity(address_map.len());
         for (was, now) in address_map {
             records.push(MovedRecord {
-                record: self.stored_record(tx, folded, was).await?,
+                record: Self::stored_record(tx, folded, was).await?,
                 label: now.clone(),
             });
         }
@@ -496,7 +495,7 @@ impl DoltMemory {
                     survivor
                 };
                 writes.push(MovedWrite {
-                    record: self.stored_record(tx, home, &write.fact).await?,
+                    record: Self::stored_record(tx, home, &write.fact).await?,
                     key: KeyId(key.clone()),
                     from_ordinal: write.ordinal as u64,
                     ordinal: ordinal as u64,
