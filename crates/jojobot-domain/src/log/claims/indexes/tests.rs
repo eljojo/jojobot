@@ -814,8 +814,8 @@ fn an_address_names_a_claim_and_its_home() {
             events: vec![
                 bound("alpha", "thing:gamma"),
                 created("r1", claim("f1", "alpha", "c", 1)),
-                bound("alpha", "thing:epsilon"),
                 retired("alpha", "thing:gamma"),
+                bound("alpha", "thing:epsilon"),
             ],
             ask: vec![
                 ("thing:gamma#f1", at("r1", "alpha")),
@@ -1643,9 +1643,9 @@ fn the_indexes_equal_a_recomputation_after_any_run_of_events() {
                 ClaimEvent::AddressBound { object, address } => {
                     bindings.insert(address.clone(), object.clone());
                 }
-                ClaimEvent::AddressRetired { object, address }
-                    if bindings.get(address) == Some(object) =>
-                {
+                ClaimEvent::AddressRetired {
+                    object, address, ..
+                } if bindings.get(address) == Some(object) => {
                     bindings.remove(address);
                 }
                 _ => {}

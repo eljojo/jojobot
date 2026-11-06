@@ -375,6 +375,7 @@ fn canonical_handle_follows_a_rename_after_a_merge() {
         ClaimEvent::AddressRetired {
             object: object("kept"),
             address: "work:zeta".into(),
+            day: jiff::civil::date(2026, 4, 1),
         },
         bound("kept", "work:omega"),
     ] {

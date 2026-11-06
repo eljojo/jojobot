@@ -660,12 +660,6 @@ impl State {
             .entry(survivor.clone())
             .or_default()
             .extend(under);
-        for address in self.addresses.values_mut() {
-            if address == folded {
-                *address = survivor.clone();
-            }
-        }
-        self.move_spellings(folded, survivor);
         let mut relabelled = Vec::new();
         for moved in records {
             if let Some(held) = self.records.get_mut(&moved.record) {

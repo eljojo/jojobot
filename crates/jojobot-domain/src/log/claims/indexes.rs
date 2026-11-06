@@ -34,8 +34,8 @@ pub struct Located {
 /// A numbered member: the container, the key it numbers by, and the number.
 type Seat = (ObjectId, String, u64);
 
-/// **The maps [`State::apply`] keeps.** Every key is an object that is not
-/// folded into another: a merge moves what a folded object held to its survivor.
+/// **The maps [`State::apply`] keeps.** A merge moves the folded object's
+/// projections to its survivor; spellings retain the object that bound them.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(super) struct Indexes {
     /// The highest ordinal written in each stream.
@@ -58,9 +58,6 @@ pub(super) struct Indexes {
     /// The spellings bound to each object now, the reverse of the map of
     /// addresses.
     spellings: BTreeMap<ObjectId, BTreeSet<String>>,
-    /// The spellings each folded object wore itself when it was folded, none of
-    /// them lent by what was folded into it before.
-    folded_own: BTreeMap<ObjectId, BTreeSet<String>>,
     /// The records whose newest write of some key names the object as a target,
     /// by the object as it was written.
     referred: BTreeMap<ObjectId, BTreeSet<RecordId>>,
@@ -118,6 +115,10 @@ pub(super) fn claim_number(label: &str) -> Option<u64> {
     whole_number(label.strip_prefix('f')?)
 }
 
+fn handle_shaped(address: &str) -> bool {
+    address.contains(':') && !address.contains(['/', '#'])
+}
+
 impl State {
     /// **The objects that stand**: none folded into another.
     pub(super) fn standing_objects(&self) -> impl Iterator<Item = &ObjectId> {
@@ -153,62 +154,35 @@ impl State {
             .unwrap_or_default()
     }
 
-    /// **The handle an object is served under now**: the one the survivor wore
-    /// itself, else a spelling of the form `kind:slug` bound to it or to anything
-    /// folded into it. The one choice every read makes, so a survivor is never
-    /// served under the handle of a thing folded into it.
+    /// **The survivor's own current handle.** Numbered aliases and spellings
+    /// of folded objects resolve to it without becoming its handle.
     pub(super) fn handle_of(&self, object: &ObjectId) -> Option<crate::memory::EntityId> {
-        let survivor = self.survivor(object);
-        if let Some(own) = self.own_handle_of(survivor) {
-            return Some(own);
-        }
-        // The spellings bound to the object and to everything folded into it,
-        // the first in address order: no scan of every address.
-        std::iter::once(survivor)
-            .chain(self.folded_under.get(survivor).into_iter().flatten())
-            .filter_map(|held| self.indexes.spellings.get(held))
-            .flatten()
-            .filter(|address| address.contains(':') && !address.contains('#'))
-            .min()
-            .map(|address| crate::memory::EntityId(address.clone()))
+        self.own_handle_of(self.survivor(object))
     }
 
     /// **The handle an object wore itself**, folded or not.
     ///
-    /// A folded thing's spellings move to its survivor, so its own are the ones
-    /// kept when it was folded; a standing thing's own are those it holds now.
-    /// Neither counts what was folded into it.
+    /// Spellings retain their original owner, so this reads the same binding
+    /// before and after a merge without following the redirect.
     pub(super) fn own_handle_of(&self, object: &ObjectId) -> Option<crate::memory::EntityId> {
-        let own: BTreeSet<&String> = if self.redirects.contains_key(object) {
-            self.indexes.folded_own.get(object)?.iter().collect()
-        } else {
-            let lent: BTreeSet<&String> = self
-                .folded_under
-                .get(object)
-                .into_iter()
-                .flatten()
-                .filter_map(|folded| self.indexes.folded_own.get(folded))
-                .flatten()
-                .collect();
-            self.indexes
-                .spellings
-                .get(object)?
-                .iter()
-                .filter(|address| !lent.contains(address))
-                .collect()
-        };
-        own.into_iter()
-            .filter(|address| address.contains(':') && !address.contains('#'))
-            .min()
+        self.indexes
+            .spellings
+            .get(object)?
+            .iter()
+            .find(|address| handle_shaped(address))
             .map(|address| crate::memory::EntityId(address.clone()))
     }
 
     pub(super) fn bind_spelling(&mut self, object: &ObjectId, address: &str) {
-        self.indexes
-            .spellings
-            .entry(object.clone())
-            .or_default()
-            .insert(address.to_string());
+        let spellings = self.indexes.spellings.entry(object.clone()).or_default();
+        assert!(
+            !handle_shaped(address)
+                || spellings
+                    .iter()
+                    .all(|held| held == address || !handle_shaped(held)),
+            "an object cannot hold two current handles"
+        );
+        spellings.insert(address.to_string());
     }
 
     pub(super) fn unbind_spelling(&mut self, object: &ObjectId, address: &str) {
@@ -217,41 +191,6 @@ impl State {
             if held.is_empty() {
                 self.indexes.spellings.remove(object);
             }
-        }
-    }
-
-    /// A merge re-points every spelling of the folded object at the survivor.
-    pub(super) fn move_spellings(&mut self, folded: &ObjectId, survivor: &ObjectId) {
-        if let Some(held) = self.indexes.spellings.remove(folded) {
-            // What the folded object wore itself: its spellings less those it was
-            // lent by what was folded into it earlier.
-            let lent: BTreeSet<&String> = self
-                .indexes
-                .folded_own
-                .iter()
-                .filter(|(earlier, _)| {
-                    let mut at = *earlier;
-                    while let Some(next) = self.redirects.get(at) {
-                        if next == folded {
-                            return true;
-                        }
-                        at = next;
-                    }
-                    false
-                })
-                .flat_map(|(_, own)| own.iter())
-                .collect();
-            let own: BTreeSet<String> = held
-                .iter()
-                .filter(|address| !lent.contains(address))
-                .cloned()
-                .collect();
-            self.indexes.folded_own.insert(folded.clone(), own);
-            self.indexes
-                .spellings
-                .entry(survivor.clone())
-                .or_default()
-                .extend(held);
         }
     }
 
