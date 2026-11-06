@@ -1740,3 +1740,45 @@ async fn an_orderly_stop_publishes_a_snapshot_the_next_boot_loads() {
     assert_eq!(second.boot_field("head"), covered, "{}", second.log_boot());
     let _ = second.stopped();
 }
+
+/// **A deploy that changes the shape of the State restarts from the snapshot the
+/// new build pre-built.** The store holds the recorded rows and a tail of log
+/// events and no snapshot, as the last deployed build leaves it. The new binary's
+/// snapshot-only mode runs against the store while it is up, the store stops with
+/// the old process, and the new binary boots: it loads the pre-built snapshot,
+/// replays nothing, and answers inside the bound. The time is the one the deploy's
+/// outage is made of.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_deploy_boots_from_the_snapshot_its_pre_build_wrote() {
+    let state = restored_store("jojobot-measure-deploy").await;
+    let size = prepare(&state, Plan::None, EVENTS).await;
+
+    let port = free_port();
+    let mut store = Dolt::start(&state.0.join("db"), port)
+        .await
+        .expect("the old process's store is up");
+    let out = tokio::task::spawn_blocking(move || {
+        Command::new(env!("CARGO_BIN_EXE_jojobot"))
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").expect("a PATH"))
+            .env("JOJOBOT_STORE_PORT", port.to_string())
+            .arg("snapshot-only")
+            .output()
+            .expect("the binary runs")
+    })
+    .await
+    .expect("the task ends");
+    assert!(out.status.success(), "the pre-build failed: {out:?}");
+    store.stop().await;
+
+    let copy = copy_of(&state, "jojobot-measure-deploy-again");
+    let mut run = spawn(state);
+    measured_twice("deploy", &size, &mut run, copy);
+    let line = run.log_boot();
+    assert!(
+        line.contains("from_snapshot=true"),
+        "the restart did not start from the pre-built snapshot: {line}"
+    );
+    assert_eq!(run.boot_field("tail_batches"), 0, "{line}");
+    let _ = run.stopped();
+}
