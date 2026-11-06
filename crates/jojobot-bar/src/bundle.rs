@@ -136,8 +136,10 @@ pub fn exes_for_job<'a>(job: &[String], exes: &'a [Exe]) -> Vec<&'a Exe> {
             .filter(|exe| exe.describes.starts_with("unittests ") && !is_lib(exe))
             .collect(),
         ["--test", name] => {
-            let wanted = format!("tests/{name}.rs");
-            exes.iter().filter(|exe| exe.describes == wanted).collect()
+            let wanted = [format!("tests/{name}.rs"), format!("tests/{name}/main.rs")];
+            exes.iter()
+                .filter(|exe| wanted.contains(&exe.describes))
+                .collect()
         }
         _ => Vec::new(),
     }
