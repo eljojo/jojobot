@@ -980,13 +980,17 @@ fn next_event(dice: &mut Dice, state: &State, made: &mut usize) -> ClaimEvent {
             } else {
                 format!("f{n}")
             };
-            created(&format!("r{n}"), claim(&label, dice.pick(&OBJECTS), "c", 1))
+            let mut made = claim(&label, dice.pick(&OBJECTS), "c", 1);
+            if !existing.is_empty() && dice.roll(3) == 0 {
+                made.derived_from = Some(dice.pick(&existing).clone());
+            }
+            created(&format!("r{n}"), made)
         }
         5 if !existing.is_empty() => {
             let record_id = dice.pick(&existing).clone();
             let held = &state.records[&record_id].claim;
             let mut revised = held.clone();
-            match dice.roll(3) {
+            match dice.roll(4) {
                 0 => {
                     revised.status = if held.status == FactStatus::Active {
                         FactStatus::Archived
@@ -995,6 +999,12 @@ fn next_event(dice: &mut Dice, state: &State, made: &mut usize) -> ClaimEvent {
                     }
                 }
                 1 => revised.label = format!("f{n}"),
+                2 => {
+                    revised.derived_from = match held.derived_from {
+                        Some(_) => None,
+                        None => Some(dice.pick(&existing).clone()),
+                    }
+                }
                 _ => revised.home = object(dice.pick(&OBJECTS)),
             }
             ClaimEvent::RecordRevised {
@@ -1485,6 +1495,21 @@ fn assert_indexes_equal_a_recomputation(state: &State, merges: u64, context: &st
             state.records_naming(&object(name)),
             want,
             "{context}: records naming {name}"
+        );
+    }
+    // The claims worked out from a claim: every claim naming it as its source, as
+    // a scan of every claim finds them.
+    for source in state.records.keys() {
+        let want: BTreeSet<&crate::log::RecordId> = state
+            .records
+            .iter()
+            .filter(|(_, held)| held.claim.derived_from.as_ref() == Some(source))
+            .map(|(record, _)| record)
+            .collect();
+        assert_eq!(
+            state.records_built_on(source),
+            want,
+            "{context}: claims built on {source:?}"
         );
     }
     // The homes: every claim homed on a thing, whatever label it holds.

@@ -67,6 +67,9 @@ pub(super) struct Indexes {
     /// The objects each record's newest writes name now: what `referred` holds
     /// for the record, so a later write finds what to take back.
     naming: BTreeMap<RecordId, BTreeSet<ObjectId>>,
+    /// The claims worked out from each claim, by the source's identity. A merge
+    /// never changes an identity, so a source that moved is found as before.
+    built_on: BTreeMap<RecordId, BTreeSet<RecordId>>,
     /// The objects whose parent is the key.
     children: BTreeMap<ObjectId, BTreeSet<ObjectId>>,
     /// The streams each claim wrote to: a revision changes what they fold to.
@@ -429,6 +432,13 @@ impl State {
     }
 
     fn index_claim(&mut self, record: &RecordId, claim: &ClaimBody) {
+        if let Some(source) = &claim.derived_from {
+            self.indexes
+                .built_on
+                .entry(source.clone())
+                .or_default()
+                .insert(record.clone());
+        }
         let home = self.survivor(&claim.home).clone();
         if let Some(number) = claim_number(&claim.label) {
             *self
@@ -450,6 +460,14 @@ impl State {
     }
 
     fn unindex_claim(&mut self, record: &RecordId, claim: &ClaimBody) {
+        if let Some(source) = &claim.derived_from
+            && let Some(held) = self.indexes.built_on.get_mut(source)
+        {
+            held.remove(record);
+            if held.is_empty() {
+                self.indexes.built_on.remove(source);
+            }
+        }
         let home = self.survivor(&claim.home).clone();
         if let Some(number) = claim_number(&claim.label)
             && let Some(held) = self.indexes.claim_numbers.get_mut(&home)
@@ -531,6 +549,16 @@ impl State {
         if !now.is_empty() {
             self.indexes.naming.insert(record.clone(), now);
         }
+    }
+
+    /// **The claims worked out from a claim**, by its identity.
+    pub(super) fn records_built_on(&self, source: &RecordId) -> BTreeSet<&RecordId> {
+        self.indexes
+            .built_on
+            .get(source)
+            .into_iter()
+            .flatten()
+            .collect()
     }
 
     /// **The records whose newest write of a key names a thing**, found through

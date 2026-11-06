@@ -111,6 +111,23 @@ impl State {
         rows
     }
 
+    /// **Which claims were worked out from this one**, of every status, in the
+    /// order of their addresses.
+    pub fn built_on(&self, source: &FactAddress) -> Vec<memory::Fact> {
+        let Some(located) = self.claim_at(&format!("{}#{}", source.home.0, source.local.0)) else {
+            return Vec::new();
+        };
+        let mut facts: Vec<memory::Fact> = self
+            .records_built_on(&located.record)
+            .into_iter()
+            .filter_map(|record| self.fact(record))
+            .collect();
+        facts.sort_by(|a, b| {
+            (a.home.as_str(), a.id.as_str()).cmp(&(b.home.as_str(), b.id.as_str()))
+        });
+        facts
+    }
+
     /// **Which records point at a thing through a field**, whatever key they
     /// used, of every status, holders in the order of their handles.
     pub fn referring(&self, target: &EntityId) -> Vec<memory::Fact> {
@@ -608,6 +625,8 @@ impl State {
 mod document;
 mod served;
 pub use document::DocumentParts;
+#[cfg(test)]
+mod built_on_tests;
 #[cfg(test)]
 mod histories_tests;
 #[cfg(test)]
