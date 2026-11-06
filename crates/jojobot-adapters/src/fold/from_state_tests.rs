@@ -201,6 +201,66 @@ async fn a_document_read_from_the_state_is_the_document_the_store_reads() {
                 ));
             }
         };
+        let scanned = state
+            .document_scan(&ObjectId(stored.scan.doc_id.clone()), &declared)
+            .unwrap_or_else(|| panic!("{handle}: the State serves a scan"));
+        let theirs = &stored.scan;
+        differ(
+            "scan entity",
+            scanned.entity == theirs.entity,
+            format!("{:?}", scanned.entity),
+            format!("{:?}", theirs.entity),
+        );
+        differ(
+            "scan facts",
+            scanned.facts == theirs.facts,
+            format!("{:#?}", scanned.facts),
+            format!("{:#?}", theirs.facts),
+        );
+        differ(
+            "scan unmapped",
+            scanned.unmapped == theirs.unmapped,
+            format!("{:?}", scanned.unmapped),
+            format!("{:?}", theirs.unmapped),
+        );
+        differ(
+            "scan the rest",
+            (
+                &scanned.doc_id,
+                &scanned.title,
+                &scanned.prose,
+                &scanned.fields,
+                &scanned.field_links,
+                &scanned.owner,
+            ) == (
+                &theirs.doc_id,
+                &theirs.title,
+                &theirs.prose,
+                &theirs.fields,
+                &theirs.field_links,
+                &theirs.owner,
+            ),
+            format!(
+                "{:?}",
+                (
+                    &scanned.doc_id,
+                    &scanned.title,
+                    &scanned.prose,
+                    &scanned.fields,
+                    &scanned.field_links
+                )
+            ),
+            format!(
+                "{:?}",
+                (
+                    &theirs.doc_id,
+                    &theirs.title,
+                    &theirs.prose,
+                    &theirs.fields,
+                    &theirs.field_links
+                )
+            ),
+        );
         differ(
             "fields",
             held.fields == stored.fields,
