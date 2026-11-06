@@ -24,6 +24,7 @@ use jiff::civil::Date;
 
 mod candidates;
 mod chart;
+mod declined;
 mod kind;
 mod limits;
 mod numbering;
@@ -41,6 +42,7 @@ use crate::memory::{
     self, Edge, EdgeShape, EntityId, FactStatus, MemoryError, Provenance, Standing, WriteClass,
     receipt::Receipt, types::DeclaredType,
 };
+pub use declined::Declined;
 pub use limits::{BootFloor, ClaimSize, Measures};
 
 /// **Which door the request came through.** The verb is the caller-facing
@@ -204,6 +206,8 @@ pub enum Refusal {
         key: String,
         number: u64,
         holder: ObjectId,
+        /// The number the next member takes.
+        next: u64,
     },
     /// Nobody holds the number now, and a claim that held it was taken back.
     /// A number issued once is never issued again.
@@ -211,6 +215,8 @@ pub enum Refusal {
         container: ObjectId,
         key: String,
         number: u64,
+        /// The number the next member takes.
+        next: u64,
     },
 }
 

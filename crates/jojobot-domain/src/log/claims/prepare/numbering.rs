@@ -123,22 +123,24 @@ pub(super) fn refuses(
             key,
             number,
             holder,
-            ..
+            next,
         } => Refusal::NumberHeld {
             container: container_of(&collection),
             key,
             number,
             holder: container_of(&holder),
+            next,
         },
         MemoryError::NumberRetired {
             collection,
             key,
             number,
-            ..
+            next,
         } => Refusal::NumberRetired {
             container: container_of(&collection),
             key,
             number,
+            next,
         },
         other => Refusal::Numbering(other),
     })

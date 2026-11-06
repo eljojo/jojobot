@@ -4,7 +4,9 @@ use super::super::tests::{
     apply, archived, body, claim, created, day, object, record, replay, under, write,
 };
 use super::super::{ClaimBody, ClaimEvent, ObjectBody, State};
-use super::{BootFloor, CaptureRequest, ClaimSize, Door, Draft, Measures, Refusal, Route, prepare};
+use super::{
+    BootFloor, CaptureRequest, ClaimSize, Declined, Door, Draft, Measures, Refusal, Route, prepare,
+};
 use crate::actor::Actor;
 use crate::app::AppId;
 use crate::memory::numbered::NUMBERS_BY;
@@ -324,6 +326,7 @@ fn a_member_cannot_take_a_number_another_member_holds() {
             key: "num".into(),
             number,
             holder: object(holder),
+            next: 3,
         })
     };
     assert_eq!(
@@ -376,6 +379,7 @@ fn a_member_cannot_take_a_number_a_taken_back_claim_held() {
         container: object("coll"),
         key: "num".into(),
         number: 4,
+        next: 5,
     });
     assert_eq!(
         prepare(&state, &declared, &numbering("m3", "4")),
@@ -428,6 +432,7 @@ fn a_number_stays_retired_after_its_container_is_merged() {
             container: object("coll"),
             key: "num".into(),
             number: 5,
+            next: 6,
         })
     );
 }
@@ -2281,6 +2286,58 @@ fn a_stored_thoughts_first_run_identifies_its_writer() {
         prepare(&state, &[], &sent),
         Err(Refusal::RoomFull { live: 2, capacity: 2, room, .. }) if room.len() == 2
     ));
+    // The answer names the room as the facts the State serves.
+    let Err(refusal) = prepare(&state, &[], &sent) else {
+        panic!("a full room refuses");
+    };
+    let Declined::Refused(MemoryError::RoomFull { room, .. }) = refusal.declined(&state) else {
+        panic!("a full room is answered as a full room");
+    };
+    assert_eq!(
+        room.len(),
+        2,
+        "each thought of the room is served as a fact"
+    );
+}
+
+/// **A refusal is answered once, from the State that refused**: a missing name
+/// is a block, a malformed write is its words, and a number held names the
+/// number the next member takes.
+#[test]
+fn a_refusal_is_answered_from_the_state_that_refused() {
+    let (state, declared) = world();
+    assert_eq!(
+        prepare(&state, &declared, &request("nobody"))
+            .unwrap_err()
+            .declined(&state),
+        Declined::Blocked {
+            attempted: crate::memory::EntityId("nobody".into()),
+            candidates: Vec::new(),
+        }
+    );
+    let malformed = CaptureRequest {
+        sets: BTreeSet::from(["absent".to_string()]),
+        ..request("alpha")
+    };
+    assert!(matches!(
+        prepare(&state, &declared, &malformed)
+            .unwrap_err()
+            .declined(&state),
+        Declined::Refused(MemoryError::InvalidFact(_))
+    ));
+    let (state, declared) = numbered_world();
+    assert_eq!(
+        prepare(&state, &declared, &numbering("m3", "1"))
+            .unwrap_err()
+            .declined(&state),
+        Declined::Refused(MemoryError::NumberTaken {
+            collection: "coll".into(),
+            key: "num".into(),
+            number: 1,
+            holder: "m1".into(),
+            next: 3,
+        })
+    );
 }
 
 /// **A name nothing holds is refused with the names it resembles**, read from
