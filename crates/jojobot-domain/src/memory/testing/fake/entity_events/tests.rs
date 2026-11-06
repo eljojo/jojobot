@@ -170,3 +170,52 @@ async fn a_type_declaration_emits_only_when_it_differs_from_the_state() {
         "one event for the first declaration, none for the repeat, one for the change"
     );
 }
+
+/// **After a reclaim the claims State holds no declaration for the kind, as the
+/// rows hold none**, and a reclaim of a kind with nothing left to take changes
+/// nothing. The State's declaration is set by the domain's own event for a
+/// declaration, as the seam would have applied it.
+#[tokio::test]
+async fn a_reclaim_leaves_the_state_as_the_rows_hold_the_type() {
+    use crate::log::claims::type_change::type_declaration_events;
+    use crate::memory::types::{DeclaredType, Field, Origin, ValueType};
+
+    crate::memory::kinds::load_shipped();
+    let fake = InMemoryMemory::seeded();
+    let fields = vec![Field::new("witness", ValueType::Text)];
+    fake.declare_kind("pledge", Origin::Shipped, fields.clone())
+        .await
+        .expect("the kind is declared");
+    let declaration = DeclaredType {
+        origin: Origin::Shipped,
+        ..DeclaredType::new("pledge", fields)
+    };
+    {
+        let mut claims = fake.claims.lock().expect("fake mutex poisoned");
+        let at = fake.clock().now();
+        for event in type_declaration_events(None, &declaration, at, None) {
+            claims.apply(&event);
+        }
+    }
+    let kind = ObjectId("pledge".into());
+    assert!(
+        fake.claims_state().declared(&kind).is_some(),
+        "the State holds the declaration before the reclaim"
+    );
+
+    fake.reclaim_kind("pledge")
+        .await
+        .expect("the reclaim lands");
+    assert!(
+        fake.claims_state().declared(&kind).is_none(),
+        "the rows hold no declaration after a reclaim, so the State holds none"
+    );
+
+    fake.reclaim_kind("pledge")
+        .await
+        .expect("a second reclaim lands");
+    assert!(
+        fake.claims_state().declared(&kind).is_none(),
+        "a reclaim with nothing left to take changes nothing"
+    );
+}

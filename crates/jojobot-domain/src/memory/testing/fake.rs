@@ -5588,6 +5588,7 @@ impl Memory for InMemoryMemory {
             .lock()
             .expect("fake mutex poisoned")
             .retain(|t| t.name != token);
+        self.emit_type_withdrawal(token);
         Ok(())
     }
 }

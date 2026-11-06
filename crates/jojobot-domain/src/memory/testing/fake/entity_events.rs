@@ -83,6 +83,24 @@ impl InMemoryMemory {
         }
     }
 
+    /// **Emit the claims event of reclaiming `kind`**, whose rows now hold no
+    /// declaration. The choice is the domain's (`type_withdrawal_events`): one
+    /// withdrawal when the State holds a declaration for the kind, and none when
+    /// it holds nothing. The fake applies what comes back, as the seam does.
+    pub(super) fn emit_type_withdrawal(&self, kind: &str) {
+        let kind = ObjectId(kind.to_string());
+        let mut claims = self.claims.lock().expect("fake mutex poisoned");
+        let events = crate::log::claims::type_change::type_withdrawal_events(
+            &kind,
+            claims.declared(&kind),
+            self.clock().now(),
+            None,
+        );
+        for event in &events {
+            claims.apply(event);
+        }
+    }
+
     /// The claims State as the entity writers have left it.
     pub fn claims_state(&self) -> crate::log::claims::State {
         self.claims.lock().expect("fake mutex poisoned").clone()
