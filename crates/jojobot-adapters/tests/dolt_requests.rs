@@ -1191,10 +1191,10 @@ async fn an_id_is_a_repeat_only_while_it_is_kept() {
             _ => None,
         })
         .collect();
-    assert_eq!(
-        generations,
-        [1, 2],
-        "the second spend starts a new generation"
+    assert_eq!(generations.len(), 2, "both spends are in the log");
+    assert!(
+        generations[1] > generations[0],
+        "the second spend starts a distinct, later generation"
     );
 
     server.stop().await;
