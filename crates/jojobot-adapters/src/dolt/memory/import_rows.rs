@@ -67,23 +67,36 @@ struct Keys {
     adopted: HashMap<String, String>,
 }
 
+/// **Where a stored name lands.** A name no key answers to is absent: the rows that
+/// held it were removed by hand. A name that answers to more than one thing is not
+/// absent, and nothing may guess which: it is ambiguous.
+enum Placed {
+    Key(String),
+    Ambiguous,
+    Absent,
+}
+
 impl Keys {
-    fn of(&self, stored: &str) -> Option<String> {
+    fn placed(&self, stored: &str) -> Placed {
         if self.badges.contains(stored) {
-            return Some(stored.to_string());
+            return Placed::Key(stored.to_string());
         }
         if let Some(key) = self.by_id.get(stored) {
-            return Some(key.clone());
+            return Placed::Key(key.clone());
         }
         match self.former.get(stored).map(Vec::as_slice) {
-            Some([only]) => return Some(only.clone()),
-            Some(_) => return None,
+            Some([only]) => return Placed::Key(only.clone()),
+            Some(_) => return Placed::Ambiguous,
             None => {}
         }
-        self.supplied
+        match self
+            .supplied
             .get(stored)
             .or_else(|| self.adopted.get(stored))
-            .cloned()
+        {
+            Some(key) => Placed::Key(key.clone()),
+            None => Placed::Absent,
+        }
     }
 }
 
@@ -99,17 +112,22 @@ impl Read {
     /// **The key a stored name stands for**, or its stored spelling with a
     /// finding when it stands for none.
     fn key(&mut self, table: &'static str, row: &str, column: &str, stored: &str) -> ObjectId {
-        match self.keys.of(stored) {
-            Some(key) => ObjectId(key),
-            None => {
-                self.findings.push(Finding {
-                    table,
-                    row: row.to_string(),
-                    what: format!("{column} names {stored:?}, which is no key this store holds"),
-                });
-                ObjectId(stored.to_string())
+        let what = match self.keys.placed(stored) {
+            Placed::Key(key) => return ObjectId(key),
+            Placed::Ambiguous => format!(
+                "{column} names {stored:?}, which more than one thing once wore; \
+                 the import will not guess which"
+            ),
+            Placed::Absent => {
+                format!("{column} names {stored:?}, which is no key this store holds")
             }
-        }
+        };
+        self.findings.push(Finding {
+            table,
+            row: row.to_string(),
+            what,
+        });
+        ObjectId(stored.to_string())
     }
 }
 
@@ -498,7 +516,8 @@ impl DoltMemory {
         // tables, and the import names each home with its claim count.
         for row in &head_rows {
             let stored = text(row, "entity")?;
-            if read.keys.of(&stored).is_none() {
+            // Only an absent home is skipped; an ambiguous one is refused by name.
+            if matches!(read.keys.placed(&stored), Placed::Absent) {
                 *read.skipped.entry(stored).or_default() += 1;
             }
         }

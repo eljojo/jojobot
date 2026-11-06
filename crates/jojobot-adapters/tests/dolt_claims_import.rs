@@ -867,3 +867,64 @@ async fn claims_import_over_an_empty_store_appends_the_event_that_ends_it() {
 
     server.stop().await;
 }
+
+/// **Only an absent home is skipped; a handle two things once wore is refused by
+/// name.** A claim filed under the text of a handle that more than one thing wore
+/// has a home, and nothing may guess which: skipping it would drop a thing's data
+/// as though its rows had been removed. The import names the ambiguity and appends
+/// nothing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn claims_import_refuses_a_claim_filed_under_a_handle_two_things_once_wore() {
+    let (_scratch, mut server, pool) = store("claims-import-ambiguous-home").await;
+    let memory = DoltMemory::open(pool.clone());
+    thing(&memory, "person:homer", "Homer").await;
+    thing(&memory, "person:marge", "Marge").await;
+    let badges: Vec<String> =
+        sqlx::query_scalar("SELECT badge FROM entity WHERE badge IS NOT NULL ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .expect("the badges read");
+    for (ordinal, badge) in badges.iter().take(2).enumerate() {
+        sqlx::query(
+            "INSERT INTO entity_former_handle (former_handle, badge, changed_at, ordinal)
+             VALUES ('person:milhouse', ?, '2026-10-01', ?)",
+        )
+        .bind(badge)
+        .bind(ordinal as i64 + 1)
+        .execute(&pool)
+        .await
+        .expect("a former handle two things wore");
+    }
+    for statement in [
+        "INSERT INTO fact (entity, id, content, details, provenance, standing, status,
+                           recorded_at, edge_shape, edge_object, event_kind, derived_from,
+                           derived_from_id, inserted_at, stale_after, happened_at,
+                           happened_through)
+         VALUES ('person:milhouse', 'f1', 'filed under the old text', NULL, 'testimony',
+                 'settled', 'active', '2026-10-08', NULL, NULL, NULL, NULL, NULL,
+                 '2026-10-08T14:02:10Z', NULL, NULL, NULL)",
+        "INSERT INTO fact_write (entity, fact_id, ordinal, content, details, provenance,
+                                standing, status, recorded_at, edge_shape, edge_object,
+                                derived_from, derived_from_id, inserted_at, stale_after,
+                                written_at, happened_at, happened_through, session)
+         VALUES ('person:milhouse', 'f1', 1, 'filed under the old text', NULL, 'testimony',
+                 'settled', 'active', '2026-10-08', NULL, NULL, NULL, NULL,
+                 '2026-10-08T14:02:10Z', NULL, '2026-10-08T14:02:10Z', NULL, NULL, NULL)",
+    ] {
+        sqlx::query(statement)
+            .execute(&pool)
+            .await
+            .expect("the claim lands");
+    }
+
+    let refused = import_claims_once(&Writer::default(), &pool, &Provisions::default(), at())
+        .await
+        .expect_err("an ambiguous home is refused, not skipped");
+    let ClaimsImportError::Findings { rows, .. } = &refused else {
+        panic!("the ambiguity is named: {refused:?}");
+    };
+    assert!(rows.contains("more than one thing"), "{rows}");
+    assert!(logged(&pool).await.is_empty(), "nothing was appended");
+
+    server.stop().await;
+}
