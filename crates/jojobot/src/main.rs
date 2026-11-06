@@ -22,8 +22,24 @@ const CUT_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
 /// drain, before the store stops.
 const TASK_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+/// **The stack of each worker thread.** Tokio's 2 MiB default is too little for a
+/// debug build: the frames of the boot and of the writer's first jobs nest deep,
+/// and the binary with a metrics address aborted with a stack overflow before it
+/// printed that it served. The larger stack changes nothing a release build does.
+const WORKER_STACK: usize = 8 * 1024 * 1024;
+
+/// What `#[tokio::main]` builds (a multi-thread runtime with every driver), with the
+/// worker stack above.
+fn main() -> anyhow::Result<()> {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_stack_size(WORKER_STACK)
+        .build()
+        .context("building the runtime")?
+        .block_on(run())
+}
+
+async fn run() -> anyhow::Result<()> {
     // **`jojobot app-token`** prints a fresh app token and its hash and touches
     // no store and no configuration.
     if std::env::args().nth(1).as_deref() == Some("app-token") {

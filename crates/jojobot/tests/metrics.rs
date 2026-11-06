@@ -446,3 +446,20 @@ async fn with_no_metrics_address_the_binary_binds_no_metrics_listener() {
     let _ = child.start_kill();
     let _ = child.wait().await;
 }
+
+/// **The binary with a metrics address boots to its serving line.** The metrics
+/// wrappers sit under every port, so the frames of the boot and of the first jobs
+/// of the writer are deeper than without them; a worker thread with too small a
+/// stack aborts the process there, before it prints that it serves.
+#[tokio::test]
+async fn with_a_metrics_address_the_binary_reaches_its_serving_line() {
+    let served = running("jojobot-metrics-boots", Some(free_port())).await;
+    assert!(
+        served
+            .printed
+            .iter()
+            .any(|line| line.contains("serving http://")),
+        "the binary printed its serving line: {:?}",
+        served.printed
+    );
+}
