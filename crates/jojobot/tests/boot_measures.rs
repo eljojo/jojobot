@@ -376,8 +376,9 @@ async fn restored_store(name: &str) -> Scratch {
 /// The recorded store holds a few dozen things and a handful of messages; the
 /// fold fill and the search index cost what the instance holds, so a boot
 /// measured over that store says little. Each thing is written by `add_entity`
-/// and given one fact by `capture`, each message by `post_message`, so every
-/// table gets the rows the server really writes. Nothing here is committed
+/// and each message by `post_message`, so those tables get the rows the server
+/// really writes. A fact per thing would add 3,144 writes, which the bar's 1200 s
+/// limit on this binary does not leave room for. Nothing here is committed
 /// (rule 661): the rows are made per run, and [`prepare`] refuses a store
 /// smaller than [`PRODUCTION_THINGS`] and [`PRODUCTION_MESSAGES`].
 async fn grow(port: u16) {
@@ -485,18 +486,12 @@ async fn grow(port: u16) {
                     }),
                 )
                 .await;
-                writing(
-                    &peer,
-                    "capture",
-                    serde_json::json!({
-                        "subject": format!("thing:{handle}"),
-                        "content": format!(
-                            "Load {word} sits on shelf {} of aisle {}", n % 97, n % 31
-                        ),
-                        "provenance": "testimony", "recorded_at": "2026-07-01", "sid": sid,
-                    }),
-                )
-                .await;
+                if shard == 0 && n % 400 == 0 {
+                    record(&format!(
+                        "grow: things at {n} after {} s",
+                        started.elapsed().as_secs()
+                    ));
+                }
             }
             for n in (shard..PRODUCTION_MESSAGES).step_by(GROW_CLIENTS as usize) {
                 writing(
@@ -512,6 +507,12 @@ async fn grow(port: u16) {
                     }),
                 )
                 .await;
+                if shard == 0 && n % 1600 == 0 {
+                    record(&format!(
+                        "grow: messages at {n} after {} s",
+                        started.elapsed().as_secs()
+                    ));
+                }
             }
         });
     }
