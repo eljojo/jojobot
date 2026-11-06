@@ -75,6 +75,10 @@ pub struct TestVerdict {
     pub failures: std::collections::BTreeMap<String, String>,
     /// **The binaries killed at their deadline**, one verdict line each.
     pub timed_out: Vec<String>,
+    /// **The suites that started and printed no `test result:` line**: a binary a
+    /// signal ended, which cannot name itself as failed. A summary built from the
+    /// counts alone shows nothing of one that crashed beside a failing test.
+    pub crashed: Vec<String>,
 }
 
 impl TestVerdict {
@@ -577,6 +581,13 @@ impl Summary {
             "test: FAILED — {} suites, {} passed, {} failed",
             verdict.suites, verdict.passed, verdict.failed
         ));
+        // **A crash beside a failure is named before the failures**, so a reader
+        // of the block, and the gate that reads it, cannot take the counted
+        // failures for all of the red.
+        for name in &verdict.crashed {
+            self.lines
+                .push(format!("  CRASHED: {name} (printed no test result)"));
+        }
         const SHOWN: usize = 10;
         // **A known red that says more than it expects is new**, and is listed
         // with the ones that were never known.
@@ -1136,6 +1147,36 @@ mod tests {
         assert!(
             rendered.contains("crashed or was killed"),
             "the reader needs to know this was not a counted failure: {rendered}"
+        );
+    }
+
+    /// **A suite that crashed beside a test that failed is named in the summary.**
+    /// The failing test is counted and listed; the corpse prints no result line,
+    /// so a summary built from the counts alone shows the one failure and nothing
+    /// of the crash. The text is two real captures one after the other, as
+    /// `--no-fail-fast` prints a run with a failure in one binary and a kill in
+    /// another.
+    #[test]
+    fn a_crashed_suite_beside_a_failed_test_is_named_in_the_summary() {
+        let failing = include_str!("../tests/fixtures/one-failing-test.txt");
+        let killed = include_str!("../tests/fixtures/verdict-killed-binary.txt");
+        let render = |text: &str| {
+            let mut summary = Summary::new();
+            summary.test_phase(false, &summarize_test_output(text), &KnownReds::default());
+            summary.render()
+        };
+        let mixed = render(&format!("{failing}\n{killed}"));
+        assert!(mixed.contains("  CRASHED: user_stories"), "{mixed}");
+        assert!(
+            mixed.contains(
+                "  FAILED: attention::tests::a_rhythm_is_overdue_from_the_day_it_falls_due"
+            ),
+            "{mixed}"
+        );
+        let alone = render(failing);
+        assert!(
+            !alone.contains("CRASHED"),
+            "the control names no crash: {alone}"
         );
     }
 

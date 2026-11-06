@@ -89,7 +89,8 @@ def only_known_reds(run, known):
         names = set()
         for line in block:
             # A named subset cannot excuse failures the summary did not enumerate.
-            if line.startswith("  TIMED OUT:") or re.match(r"^  \.\.\.and \d+ more \(see log\)$", line):
+            # A suite that crashed is red the summary names apart from the counted failures.
+            if line.startswith(("  TIMED OUT:", "  CRASHED:")) or re.match(r"^  \.\.\.and \d+ more \(see log\)$", line):
                 return False
             phase = re.match(r"^(\S+): FAILED\b", line)
             if phase and phase[1] != "test":

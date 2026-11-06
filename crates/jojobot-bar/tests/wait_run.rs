@@ -572,6 +572,44 @@ fn landing_gate_only_excuses_exact_known_tests_and_no_other_red_phase() {
     }
 }
 
+/// **A known test beside a suite that crashed is refused, with the log the bar
+/// itself writes.** The failing test is on the release's known list, so the run
+/// with only that failure passes; the same failure with a second binary killed
+/// and printing no result is red outside the list. The log is the real renderer's
+/// output for two real captures, not a block written to look like one.
+#[test]
+fn landing_gate_refuses_a_known_test_beside_a_crashed_suite() {
+    let failing = include_str!("fixtures/one-failing-test.txt");
+    let killed = include_str!("fixtures/verdict-killed-binary.txt");
+    let rendered = |text: &str| {
+        let mut summary = jojobot_bar::Summary::new();
+        summary.test_phase(
+            false,
+            &jojobot_bar::summarize_test_output(text),
+            &jojobot_bar::KnownReds::default(),
+        );
+        // The bar's main ends the block with the path of its log, which the gate
+        // reads as the end of the block.
+        format!("{}log: target/bar/check.log\n", summary.render())
+    };
+    let known = "attention::tests::a_rhythm_is_overdue_from_the_day_it_falls_due";
+    for (text, code, what) in [
+        (failing.to_string(), 0, "only the known failure"),
+        (
+            format!("{failing}\n{killed}"),
+            1,
+            "the known failure and a crashed suite",
+        ),
+    ] {
+        let standing = stand(Forge {
+            runs: vec![(trunk_gate(101, "failure"), rendered(&text))],
+            ..Default::default()
+        });
+        let (actual, output) = landing_with(&standing, json!({"known_reds": known}));
+        assert_eq!(actual, code, "{what}: {output}");
+    }
+}
+
 #[test]
 fn landing_gate_checks_every_red_job_before_accepting_known_tests() {
     let log = "verdict: RED\ntest: FAILED\n  FAILED: tests::known\nlog: target/bar/check.log\n";

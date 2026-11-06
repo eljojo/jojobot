@@ -320,6 +320,9 @@ impl Parsed<'_> {
     pub(crate) fn test_verdict(&self) -> crate::TestVerdict {
         let mut verdict = crate::TestVerdict::default();
         for record in &self.records {
+            if record.results == 0 && record.name != "(unnamed)" {
+                verdict.crashed.push(record.name.clone());
+            }
             verdict.suites += record.results;
             verdict.passed += record.passed;
             verdict.failed += record.failed;
