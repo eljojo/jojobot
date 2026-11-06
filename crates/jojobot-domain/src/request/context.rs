@@ -8,6 +8,8 @@ pub struct Context {
     current: Option<Arc<Scope>>,
     armed: bool,
     part: Option<Armed>,
+    /// The capture job of the call, when it carries one.
+    capture: Option<crate::log::claims::job::CaptureJob>,
 }
 
 impl Context {
@@ -17,11 +19,13 @@ impl Context {
             current: CURRENT.try_with(Arc::clone).ok(),
             armed: ARMED.try_with(|()| ()).is_ok(),
             part: PART.try_with(Clone::clone).ok(),
+            capture: crate::log::claims::job::current(),
         }
     }
 
     /// Run under the claim and part that accompanied this write.
     pub async fn run<F: Future>(self, work: F) -> F::Output {
+        let work = crate::log::claims::job::carried(self.capture, work);
         let work = async {
             if self.armed {
                 ARMED.scope((), work).await

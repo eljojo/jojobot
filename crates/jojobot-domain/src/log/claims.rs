@@ -774,6 +774,7 @@ pub mod emit;
 pub mod entity_change;
 pub mod import;
 mod indexes;
+pub mod job;
 mod prepare;
 mod reads;
 mod rules;
