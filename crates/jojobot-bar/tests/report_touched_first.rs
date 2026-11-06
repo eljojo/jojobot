@@ -344,10 +344,10 @@ fn ci_crate_selection_takes_the_base_the_branch_is_cut_from() {
     );
     assert_eq!(
         workflow.matches("jojobot-bar -- trunk)").count(),
-        3,
+        4,
         "each job that plans takes its base from `bar trunk`"
     );
-    for job in ["own-crates", "report", "rooms"] {
+    for job in ["own-crates", "boot-store", "report", "rooms"] {
         let marker = format!("\n  {job}:\n");
         let body = workflow
             .split_once(marker.as_str())
