@@ -1,9 +1,6 @@
 //! The instance's boot-time feature registry. `feature_shadow` names the projection
 //! families that are computed two ways and compared without changing the served
-//! answer. The teaching ledger is always one of them unless the flag says `off`:
-//! the log serves it, and the shadow is what keeps the legacy rows current and
-//! compared, so a return to the old path stays possible until 9.3.3 cuts it. The
-//! teaching pilot (`q-thin-4-teaching-pilot`) retires the flag.
+//! answer.
 //! Values are read before the fold exists.
 
 use jojobot_adapters::fold::Folded;
@@ -12,22 +9,6 @@ use std::sync::Arc;
 
 const KEY: &str = "feature_shadow";
 const LEGACY_ENV: &str = "JOJOBOT_SHADOW";
-/// The family that is shadowed whenever the flag does not say `off`.
-const TEACHINGS: &str = "teachings";
-
-/// The families a value names, with the teaching ledger added when it is absent.
-fn with_teachings(value: &str) -> String {
-    let mut families: Vec<&str> = value
-        .split(',')
-        .map(str::trim)
-        .filter(|family| !family.is_empty())
-        .collect();
-    if !families.contains(&TEACHINGS) {
-        families.push(TEACHINGS);
-    }
-    families.join(",")
-}
-
 pub(crate) async fn at_boot(memory: Arc<dyn Memory>) -> anyhow::Result<Folded> {
     let legacy = std::env::var(LEGACY_ENV).ok();
     load(memory, legacy.as_deref()).await
@@ -58,24 +39,14 @@ async fn load(memory: Arc<dyn Memory>, legacy: Option<&str>) -> anyhow::Result<F
         .map(|value| (value.as_str(), INSTANCE_RECORD))
         .or_else(|| legacy.map(|value| (value, LEGACY_ENV)))
         .unwrap_or(("", "default"));
-    let spec = if value.trim() == "off" {
-        tracing::warn!(
-            key = KEY,
-            source,
-            "the teaching shadow is off: the legacy teaching rows are no longer kept and \
-             compared, so they go stale and a return to the old path is not possible"
-        );
-        String::new()
-    } else {
-        with_teachings(value)
-    };
-    let folded = match Folded::new(memory.clone()).shadowing(&spec) {
+    let spec = if value.trim() == "off" { "" } else { value };
+    let folded = match Folded::new(memory.clone()).shadowing(spec) {
         Ok(folded) => folded,
         Err(error) => {
             tracing::warn!(key = KEY, source, %error, "invalid shadow family; starting with the default shadow");
             Folded::new(memory)
-                .shadowing(TEACHINGS)
-                .expect("the teaching ledger is a family")
+                .shadowing("")
+                .expect("no shadow families")
         }
     };
     let state = folded

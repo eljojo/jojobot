@@ -103,9 +103,8 @@ async fn the_restored_log_holds_a_batch(pool: &sqlx::MySqlPool) -> bool {
     batches > 0
 }
 
-/// **Each mark through the teaching ledger's own record path, with the shadow
-/// on**, so its legacy row lands with its event in one commit, as the recorded
-/// build writes it. The ledger opens over the rows the recording holds.
+/// Seed the legacy rows explicitly beside the log, as the recorded release
+/// wrote them. The current ledger no longer keeps that retired representation.
 async fn seed_the_teaching_marks_through_the_log(
     pool: &sqlx::MySqlPool,
 ) -> jojobot_adapters::teaching_log::LoggedTeachings {
@@ -122,10 +121,7 @@ async fn seed_the_teaching_marks_through_the_log(
         .marks()
         .await
         .expect("the teaching rows read back");
-    let shadow = std::sync::Arc::new(
-        jojobot_adapters::fold::shadow::Shadow::named("teachings").expect("the teaching shadow"),
-    );
-    let ledger = LoggedTeachings::open_shadowed(log, &rows, shadow)
+    let ledger = LoggedTeachings::open(log, &rows)
         .await
         .expect("the teaching ledger opens over the recording");
     for (sid, taught_at) in TEACHING_MARKS {
@@ -138,6 +134,14 @@ async fn seed_the_teaching_marks_through_the_log(
             .await
             .expect("the teaching mark lands through the log");
         assert!(landed, "the recording already holds a mark for {sid}");
+        sqlx::query(
+            "INSERT INTO session_teaching (sid, domain, taught_at) VALUES (?, 'claims', ?)",
+        )
+        .bind(sid)
+        .bind(taught_at)
+        .execute(pool)
+        .await
+        .expect("seed the retired rows");
     }
     ledger
 }
@@ -1380,6 +1384,10 @@ async fn ageing_a_store_moves_its_teaching_log_with_its_rows() {
             .forget(&jojobot_domain::session::Sid("alpha".into()))
             .await
             .expect("the first run is cleared through the log");
+        sqlx::query("DELETE FROM session_teaching WHERE sid = 'alpha'")
+            .execute(&pool)
+            .await
+            .expect("clear the retired fixture row");
     }
     let before = {
         let log = WriterLog::open(pool.clone(), Writer::default())

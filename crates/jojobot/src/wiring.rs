@@ -893,10 +893,9 @@ pub async fn boot_store_observed(
     // one-writer lock, so a second process cannot start beside this one. The old
     // rows seed the first boot's import and, with the teachings shadow on, are
     // kept current and compared.
-    let logged_teachings =
-        jojobot_adapters::teaching_log::serving(store.pool(), folded.shadow(), folded.writer())
-            .await
-            .map_err(|e| anyhow::anyhow!("TEACHING LEDGER UNAVAILABLE — {e}"))?;
+    let logged_teachings = jojobot_adapters::teaching_log::serving(store.pool(), folded.writer())
+        .await
+        .map_err(|e| anyhow::anyhow!("TEACHING LEDGER UNAVAILABLE — {e}"))?;
     let teachings: Arc<dyn Teachings> = observation.teachings(Arc::new(logged_teachings));
 
     // **Wrapped in the same decorators the story harness shares** — see this

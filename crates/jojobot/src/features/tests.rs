@@ -65,17 +65,12 @@ async fn logged(memory: Arc<dyn Memory>, legacy: Option<&str>) -> (anyhow::Resul
 #[tokio::test]
 async fn feature_registry_selects_instance_before_legacy_before_default_and_logs_its_source() {
     for (instance, legacy, expected, source) in [
-        (None, None, "teachings", "default"),
-        (
-            None,
-            Some("referring_to"),
-            "referring_to,teachings",
-            "JOJOBOT_SHADOW",
-        ),
+        (None, None, "off", "default"),
+        (None, Some("referring_to"), "referring_to", "JOJOBOT_SHADOW"),
         (
             Some("referring_to"),
             Some("missing_family"),
-            "referring_to,teachings",
+            "referring_to",
             "topic:instance",
         ),
         (Some("off"), Some("referring_to"), "off", "topic:instance"),
@@ -124,7 +119,7 @@ async fn feature_registry_ignores_unknown_keys_and_disables_unknown_families() {
     ])
     .await;
     let (folded, log) = logged(memory, None).await;
-    assert_eq!(folded.unwrap().shadow_counts().len(), 2);
+    assert_eq!(folded.unwrap().shadow_counts().len(), 1);
     assert!(
         log.lines().any(|line| line.contains("WARN")
             && line.contains("key=\"feature_future\"")
@@ -144,7 +139,7 @@ async fn feature_registry_ignores_unknown_keys_and_disables_unknown_families() {
             .iter()
             .map(|c| c.family.name())
             .collect();
-        assert_eq!(families, ["teachings"], "the default shadow stays on");
+        assert!(families.is_empty(), "invalid families leave the shadow off");
         let warning = log
             .lines()
             .find(|line| line.contains("WARN"))
@@ -157,10 +152,7 @@ async fn feature_registry_ignores_unknown_keys_and_disables_unknown_families() {
         for token in ["missing_family", "key=\"feature_shadow\"", source] {
             assert!(warning.contains(token), "{token}: {log}");
         }
-        assert!(
-            log.lines().any(|line| line.contains("state=teachings")),
-            "{log}"
-        );
+        assert!(log.lines().any(|line| line.contains("state=off")), "{log}");
     }
 }
 
@@ -175,11 +167,10 @@ async fn feature_registry_skips_missing_fields_and_logs_read_failures_with_shado
         let counted = Arc::new(jojobot_adapters::counted::Counted::new(memory));
         counted.fail_fields_of(Some("topic:instance"));
         let (folded, log) = logged(counted.clone(), Some("referring_to")).await;
-        // No record: the legacy value and the teaching ledger. A record that cannot
-        // be read: the default alone.
+        // No record uses the legacy value; an unreadable record leaves the shadow off.
         assert_eq!(
             folded.unwrap().shadow_counts().len(),
-            if exists { 1 } else { 2 },
+            if exists { 0 } else { 1 },
             "{log}"
         );
         assert_eq!(
@@ -196,7 +187,7 @@ async fn feature_registry_skips_missing_fields_and_logs_read_failures_with_shado
         }
         counted.set_unreachable(true);
         let (folded, log) = logged(counted, Some("referring_to")).await;
-        assert_eq!(folded.unwrap().shadow_counts().len(), 1, "{log}");
+        assert_eq!(folded.unwrap().shadow_counts().len(), 0, "{log}");
         assert!(
             log.lines()
                 .any(|line| line.contains("WARN") && line.contains("source=\"topic:instance\"")),
@@ -224,7 +215,7 @@ async fn feature_registry_reaches_assembly_and_reads_the_legacy_environment() {
         );
         return;
     }
-    for (setting, expected) in [(None, 2), (Some("off"), 0), (Some("referring_to"), 2)] {
+    for (setting, expected) in [(None, 1), (Some("off"), 0), (Some("referring_to"), 1)] {
         let memory = if let Some(value) = setting {
             held(&[("feature_shadow", value)]).await
         } else {
@@ -238,7 +229,7 @@ async fn feature_registry_reaches_assembly_and_reads_the_legacy_environment() {
         assert!(
             counts
                 .iter()
-                .all(|c| matches!(c.family.name(), "referring_to" | "teachings"))
+                .all(|c| matches!(c.family.name(), "referring_to"))
         );
     }
     let (folded, _) = crate::wiring::assemble_memory_with(held(&[]).await, None)
@@ -248,73 +239,7 @@ async fn feature_registry_reaches_assembly_and_reads_the_legacy_environment() {
     let families: Vec<_> = counts.iter().map(|count| count.family.name()).collect();
     assert_eq!(
         families,
-        ["referring_to", "teachings"],
-        "a present instance with no flag uses the legacy value, beside the teaching ledger"
+        ["referring_to"],
+        "a present instance with no flag uses the legacy value"
     );
-}
-
-/// **A boot with no instance record keeps the legacy teaching rows and compares
-/// them** (the PM's ruling on the default). The registry is read with no instance
-/// record and no legacy environment, the ledger is made by the function the boot
-/// calls, and then a contact, a repeat contact, a second run's contact and a clear
-/// go through the port. The legacy table follows each write, and the shadow
-/// compared each contact and found no disagreement. The registry cases above
-/// assert family names; this one asserts what the family does.
-#[tokio::test]
-async fn a_default_boot_keeps_and_compares_the_legacy_teaching_rows() {
-    use jojobot_adapters::dolt::Dolt;
-    use jojobot_adapters::dolt::teaching::DoltTeachings;
-    use jojobot_adapters::testing::{Scratch, free_port, migrated_database};
-    use jojobot_domain::session::Sid;
-    use jojobot_domain::teaching::Teachings;
-
-    let scratch = Scratch::new("default-shadow-rows");
-    let mut server = Dolt::start(&scratch.0, free_port()).await.unwrap();
-    let pool = migrated_database(&server, "alpha").await.unwrap();
-    let at = |second: i64| jiff::Timestamp::from_second(1_700_000_000 + second).unwrap();
-
-    let (folded, _) = logged(Arc::new(InMemoryMemory::booted()), None).await;
-    let folded = folded.unwrap();
-    let ledger = jojobot_adapters::teaching_log::serving(&pool, folded.shadow(), folded.writer())
-        .await
-        .expect("the ledger opens");
-    assert!(
-        ledger
-            .first_contact(&Sid("homer".into()), "claims", at(1))
-            .await
-            .unwrap()
-    );
-    assert!(
-        !ledger
-            .first_contact(&Sid("homer".into()), "claims", at(2))
-            .await
-            .unwrap()
-    );
-    assert!(
-        ledger
-            .first_contact(&Sid("marge".into()), "mail", at(3))
-            .await
-            .unwrap()
-    );
-    ledger.forget(&Sid("marge".into())).await.unwrap();
-
-    let rows: Vec<(String, String)> = DoltTeachings::open(pool.clone())
-        .marks()
-        .await
-        .unwrap()
-        .into_iter()
-        .map(|mark| (mark.sid.0, mark.domain))
-        .collect();
-    assert_eq!(
-        rows,
-        [("homer".to_string(), "claims".to_string())],
-        "the legacy rows follow the log's writes"
-    );
-    let counts = folded.shadow_counts();
-    assert_eq!(counts.len(), 1);
-    assert_eq!(counts[0].family.name(), "teachings");
-    assert_eq!(counts[0].reads, 3, "each contact was compared");
-    assert_eq!(counts[0].disagreements, 0);
-    drop(ledger);
-    server.stop().await;
 }

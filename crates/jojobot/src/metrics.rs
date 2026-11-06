@@ -642,8 +642,8 @@ mod tests {
     #[tokio::test]
     async fn a_shadows_counts_are_on_the_scrape() {
         let shadow = Arc::new(
-            jojobot_adapters::fold::shadow::Shadow::named("teachings")
-                .expect("teachings is a family"),
+            jojobot_adapters::fold::shadow::Shadow::named("referring_to")
+                .expect("referring_to is a family"),
         );
         let metrics = Metrics::new().refreshing_every(Duration::ZERO);
         metrics.watch_shadow(shadow.clone());
@@ -656,7 +656,7 @@ mod tests {
         };
         let value = |text: &str, name: &str| -> Option<String> {
             text.lines()
-                .find(|line| line.starts_with(&format!("{name}{{family=\"teachings\"}}")))
+                .find(|line| line.starts_with(&format!("{name}{{family=\"referring_to\"}}")))
                 .and_then(|line| line.rsplit(' ').next())
                 .map(str::to_string)
         };
@@ -673,7 +673,11 @@ mod tests {
             "{before}"
         );
 
-        shadow.compared_teaching("homer", "claims", true, true);
+        shadow.compared_referring_to(
+            &jojobot_domain::memory::EntityId("person:homer".into()),
+            &[],
+            &[],
+        );
         let agreed = metrics.scrape(&ports).await;
         assert_eq!(
             value(&agreed, "jojobot_shadow_comparisons").as_deref(),
@@ -686,7 +690,30 @@ mod tests {
             "{agreed}"
         );
 
-        shadow.compared_teaching("marge", "mail", true, false);
+        let subject = jojobot_domain::memory::EntityId("person:marge".into());
+        ports
+            .memory
+            .add_entity(jojobot_domain::memory::NewEntity::new(
+                subject.clone(),
+                "Marge",
+                "fixture",
+            ))
+            .await
+            .unwrap()
+            .written()
+            .unwrap();
+        let fact = ports
+            .memory
+            .capture(jojobot_domain::memory::NewFact::about(
+                subject.clone(),
+                "alpha",
+                jiff::civil::date(2026, 1, 1),
+            ))
+            .await
+            .unwrap()
+            .written()
+            .unwrap();
+        shadow.compared_referring_to(&subject, &[], &[fact]);
         let differed = metrics.scrape(&ports).await;
         assert_eq!(
             value(&differed, "jojobot_shadow_comparisons").as_deref(),

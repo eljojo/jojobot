@@ -1,7 +1,7 @@
 //! **No read of the old teaching rows after boot.** A recording proxy sits in
 //! front of a real Dolt. The ledger boots through it, then a contact, a repeat
 //! contact, a check, a clear and a recovery after a lost acknowledgement are
-//! made with the shadow on. Any statement that reads `session_teaching` fails
+//! made through the log. Any statement that reads or writes `session_teaching` fails
 //! the case.
 
 use std::sync::{Arc, Mutex};
@@ -148,8 +148,7 @@ async fn no_legacy_teaching_read_is_made_after_boot() {
             .unwrap(),
     );
     let marks = DoltTeachings::open(through).marks().await.unwrap();
-    let report = Arc::new(crate::fold::shadow::Shadow::named("teachings").unwrap());
-    let teachings = LoggedTeachings::open_shadowed(log.clone(), &marks, report.clone())
+    let teachings = LoggedTeachings::open(log.clone(), &marks)
         .await
         .unwrap()
         .with_writer(writer);
@@ -217,105 +216,7 @@ async fn no_legacy_teaching_read_is_made_after_boot() {
         legacy_writes.is_empty(),
         "legacy writes after boot: {legacy_writes:?}"
     );
-    let counts = &report.counts()[0];
-    assert!(counts.reads > 0, "the shadow compared nothing");
-    assert_eq!(counts.disagreements, 0);
     drop(teachings);
-    drop(log);
-    server.stop().await;
-}
-
-/// **A rollback to the old path and a roll forward, on a real store.** The ledger
-/// runs and is dropped, the old path writes one mark and clears one run in the
-/// same database, and the next boot opens a log that is not empty. The log is
-/// brought to the rows, a first contact on a pair the rows hold answers false
-/// instead of failing on the primary key, and a run the old path cleared is
-/// taught again.
-#[tokio::test]
-async fn a_rollback_and_roll_forward_on_a_real_store_reconciles_and_writes() {
-    let scratch = Scratch::new("teaching-roll-forward");
-    let mut server = Dolt::start(&scratch.0, free_port()).await.unwrap();
-    let pool = migrated_database(&server, "alpha").await.unwrap();
-    let report = Arc::new(crate::fold::shadow::Shadow::named("teachings").unwrap());
-
-    let log = Arc::new(
-        WriterLog::open(pool.clone(), crate::writer::Writer::default())
-            .await
-            .unwrap(),
-    );
-    let marks = DoltTeachings::open(pool.clone()).marks().await.unwrap();
-    let running = LoggedTeachings::open_shadowed(log.clone(), &marks, report.clone())
-        .await
-        .unwrap();
-    for (run, at_second) in [("marge", 1), ("bart", 2)] {
-        assert!(
-            running
-                .first_contact(&sid(run), "claims", at(at_second))
-                .await
-                .unwrap()
-        );
-    }
-    drop(running);
-    drop(log);
-
-    // The old path, with the log away: it writes and clears rows only.
-    let old = DoltTeachings::open(pool.clone());
-    assert!(
-        old.first_contact(&sid("homer"), "mail", at(5))
-            .await
-            .unwrap()
-    );
-    old.forget(&sid("marge")).await.unwrap();
-
-    let log = Arc::new(
-        WriterLog::open(pool.clone(), crate::writer::Writer::default())
-            .await
-            .unwrap(),
-    );
-    let marks = old.marks().await.unwrap();
-    let again = LoggedTeachings::open_shadowed(log.clone(), &marks, report.clone())
-        .await
-        .unwrap();
-    assert_eq!(
-        again.taught().await.unwrap().unwrap(),
-        vec![
-            (sid("bart"), "claims".to_string()),
-            (sid("homer"), "mail".to_string())
-        ],
-        "the log holds what the rows hold"
-    );
-    assert!(
-        !again
-            .first_contact(&sid("homer"), "mail", at(6))
-            .await
-            .expect("a pair the rows hold is not a second insert"),
-    );
-    assert!(
-        again
-            .first_contact(&sid("marge"), "claims", at(7))
-            .await
-            .expect("a run the old path cleared is taught again"),
-    );
-    let rows: Vec<(String, String)> = old
-        .marks()
-        .await
-        .unwrap()
-        .into_iter()
-        .map(|mark| (mark.sid.0, mark.domain))
-        .collect();
-    assert_eq!(
-        rows,
-        [
-            ("bart".to_string(), "claims".to_string()),
-            ("homer".to_string(), "mail".to_string()),
-            ("marge".to_string(), "claims".to_string()),
-        ],
-        "the rows follow the log again"
-    );
-    let counts = &report.counts()[0];
-    assert!(counts.reads > 0, "the shadow compared nothing");
-    assert_eq!(counts.disagreements, 0);
-    drop(again);
     drop(log);
     server.stop().await;
 }

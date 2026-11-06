@@ -21,21 +21,16 @@ use tokio::sync::Mutex;
 
 use crate::writer::Writer;
 
-use crate::dolt::teaching::RowChange;
-use crate::fold::teachings::{held_after_contact, held_after_forget};
 use crate::writer_log::WriterLog;
 
 pub mod codec;
 
 /// **The teaching ledger a boot serves.** It is served from the event log. The
 /// writer's connection holds the one-writer lock, so a second process cannot
-/// start beside this one. The old rows seed the first boot's import; and when the
-/// shadow names the teaching family they are also kept current and compared,
-/// which is the default (see the feature registry). One function for the boot and
+/// start beside this one. The old rows seed the first boot's import. One function for the boot and
 /// for the case that boots it with no instance record.
 pub async fn serving(
     pool: &sqlx::MySqlPool,
-    shadow: Arc<crate::fold::shadow::Shadow>,
     writer: Writer,
 ) -> Result<LoggedTeachings, TeachingError> {
     let log = Arc::new(
@@ -43,14 +38,8 @@ pub async fn serving(
             .await
             .map_err(|e| TeachingError::Store(format!("the event log is unavailable: {e}")))?,
     );
-    let marks = crate::dolt::teaching::DoltTeachings::open(pool.clone())
-        .marks()
-        .await?;
-    let ledger = if shadow.watches(crate::fold::shadow::Family::Teachings) {
-        LoggedTeachings::open_shadowed(log, &marks, shadow).await?
-    } else {
-        LoggedTeachings::open(log, &marks).await?
-    };
+    let marks = import_marks(pool).await?;
+    let ledger = LoggedTeachings::open(log, &marks).await?;
     Ok(ledger.with_writer(writer))
 }
 
@@ -78,79 +67,29 @@ pub struct Mark {
     pub taught_at: Timestamp,
 }
 
+/// TEMPORARY(9.3.10) the one-way import of pre-log teaching marks, retained
+/// until the explicit upgrade support boundary. A time that cannot be read
+/// stops the import rather than inventing one.
+pub async fn import_marks(pool: &sqlx::MySqlPool) -> Result<Vec<Mark>, TeachingError> {
+    let rows: Vec<(String, String, String)> =
+        sqlx::query_as("SELECT sid, domain, taught_at FROM session_teaching ORDER BY sid, domain")
+            .fetch_all(pool)
+            .await
+            .map_err(|error| TeachingError::Store(error.to_string()))?;
+    rows.into_iter().map(|(sid, domain, taught_at)| {
+        let taught_at = taught_at.parse().map_err(|e| TeachingError::Store(format!(
+            "the stored teaching time of run {sid:?} for domain {domain:?} is unreadable, so the teaching rows cannot be imported: {e}"
+        )))?;
+        Ok(Mark { sid: Sid(sid), domain, taught_at })
+    }).collect()
+}
+
 struct Held {
     state: State,
     head: Position,
-    shadow: Option<Shadow>,
     /// The runs of a batch whose append outcome is unknown. Their reads refuse
     /// until a tail read the log resolves; every other run serves the held state.
     uncertain: BTreeSet<RunId>,
-}
-
-/// A log that commits changes of the legacy rows with its batches.
-#[async_trait::async_trait]
-pub trait RowsLog: LogStore {
-    async fn append_with_rows(
-        &self,
-        head: Position,
-        batch: &SealedBatch,
-        rows: Vec<RowChange>,
-    ) -> Result<Append, LogError>;
-}
-
-#[async_trait::async_trait]
-impl RowsLog for WriterLog {
-    async fn append_with_rows(
-        &self,
-        head: Position,
-        batch: &SealedBatch,
-        rows: Vec<RowChange>,
-    ) -> Result<Append, LogError> {
-        WriterLog::append_with_rows(self, head, batch, rows).await
-    }
-}
-
-/// The old path beside the log: its held set, run through the old transition
-/// code, and the legacy rows its statements keep current in the batch's own
-/// transaction.
-struct Shadow {
-    log: Arc<dyn RowsLog>,
-    legacy: BTreeSet<(Sid, String)>,
-    report: Arc<crate::fold::shadow::Shadow>,
-}
-
-impl Shadow {
-    fn compare(&self, sid: &Sid, domain: &str, log_holds: bool) {
-        let old_holds = self.legacy.contains(&(sid.clone(), domain.to_string()));
-        self.report
-            .compared_teaching(sid.as_str(), domain, log_holds, old_holds);
-    }
-
-    fn change(event: &TeachingEvent) -> RowChange {
-        match event {
-            TeachingEvent::Recorded {
-                run,
-                domain,
-                taught_at,
-            } => RowChange::Record {
-                sid: run.0.clone(),
-                domain: domain.clone(),
-                taught_at: *taught_at,
-            },
-            TeachingEvent::Cleared { run } => RowChange::Forget { sid: run.0.clone() },
-        }
-    }
-
-    fn follow(&mut self, event: &TeachingEvent) {
-        match event {
-            TeachingEvent::Recorded { run, domain, .. } => {
-                held_after_contact(&mut self.legacy, (Sid(run.0.clone()), domain.clone()))
-            }
-            TeachingEvent::Cleared { run } => {
-                held_after_forget(&mut self.legacy, &Sid(run.0.clone()))
-            }
-        }
-    }
 }
 
 /// The teaching ledger, answered from the log.
@@ -163,9 +102,6 @@ pub struct LoggedTeachings {
     /// without the held mutex, which covers log I/O. A pair here is answered
     /// before the writer queue; see [`LoggedTeachings::publish`].
     known: Arc<std::sync::RwLock<Known>>,
-    /// The shadow's report, so a contact answered from `known` is compared with
-    /// the old path as every other contact is.
-    report: Option<Arc<crate::fold::shadow::Shadow>>,
 }
 
 /// Publishing uncertainty beside the pairs keeps an unknown new run from
@@ -174,8 +110,6 @@ pub struct LoggedTeachings {
 struct Known {
     /// The log's pairs for runs whose reads are certain.
     log: BTreeSet<(String, String)>,
-    /// The old path's pairs, when a shadow runs.
-    legacy: BTreeSet<(String, String)>,
     uncertain: BTreeSet<RunId>,
 }
 
@@ -205,40 +139,7 @@ impl LoggedTeachings {
             held: Arc::new(Mutex::new(Held {
                 state: State::default(),
                 head: Position::default(),
-                shadow: None,
                 uncertain: BTreeSet::new(),
-            })),
-            known: Arc::default(),
-            report: None,
-        };
-        this.fill(marks).await?;
-        Ok(this)
-    }
-
-    /// **Open with the old path as a shadow.** Every batch carries the legacy
-    /// row statements, and `marks` seed the old held set. The counts say how
-    /// often the two answered and how often they differed, on `report`.
-    pub async fn open_shadowed<L: RowsLog + 'static>(
-        log: Arc<L>,
-        marks: &[Mark],
-        report: Arc<crate::fold::shadow::Shadow>,
-    ) -> Result<Self, TeachingError> {
-        let this = Self {
-            writer: Writer::default(),
-            log: log.clone(),
-            report: Some(report.clone()),
-            held: Arc::new(Mutex::new(Held {
-                state: State::default(),
-                head: Position::default(),
-                uncertain: BTreeSet::new(),
-                shadow: Some(Shadow {
-                    log,
-                    legacy: marks
-                        .iter()
-                        .map(|m| (m.sid.clone(), m.domain.clone()))
-                        .collect(),
-                    report,
-                }),
             })),
             known: Arc::default(),
         };
@@ -279,86 +180,15 @@ impl LoggedTeachings {
                         taught_at: mark.taught_at,
                     })
                     .collect();
-                this.commit(&mut held, events, at, false).await?;
-            } else if held.head != Position::default() && held.shadow.is_some() {
-                this.reconcile(&mut held, marks).await?;
+                this.commit(&mut held, events, at).await?;
             }
         }
         Ok(())
     }
 
-    /// **Make the log hold what the rows hold, for a shadowed boot over a log that
-    /// is not empty.** A rollback to the old path writes and clears rows the log
-    /// never sees, and the roll forward opens the log as it was. A run whose log
-    /// marks are not all in the rows is cleared and recorded again from the rows;
-    /// a mark only the rows hold is recorded with its own time. Without this a
-    /// first contact on such a pair builds an insert the table refuses, on every
-    /// attempt. Runs only with the shadow on: with it off the rows are stale by
-    /// design. Nothing is appended when the two agree.
-    async fn reconcile(&self, held: &mut Held, marks: &[Mark]) -> Result<(), TeachingError> {
-        use std::collections::{BTreeMap, BTreeSet};
-        let mut rows: BTreeMap<&str, BTreeMap<&str, Timestamp>> = BTreeMap::new();
-        for mark in marks {
-            rows.entry(mark.sid.as_str())
-                .or_default()
-                .insert(mark.domain.as_str(), mark.taught_at);
-        }
-        let mut logged: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
-        for (run, domain) in held.state.taught() {
-            logged.entry(run.0.as_str()).or_default().insert(domain);
-        }
-        let runs: BTreeSet<&str> = rows.keys().chain(logged.keys()).copied().collect();
-        let mut events = Vec::new();
-        for name in runs {
-            let row = rows.get(name);
-            let in_log = logged.get(name);
-            let log_has_extra = in_log.is_some_and(|domains| {
-                domains
-                    .iter()
-                    .any(|domain| !row.is_some_and(|r| r.contains_key(domain)))
-            });
-            if log_has_extra {
-                events.push(TeachingEvent::Cleared {
-                    run: RunId(name.to_string()),
-                });
-            }
-            for (domain, taught_at) in row.into_iter().flatten() {
-                if log_has_extra || !in_log.is_some_and(|domains| domains.contains(domain)) {
-                    events.push(TeachingEvent::Recorded {
-                        run: RunId(name.to_string()),
-                        domain: domain.to_string(),
-                        taught_at: *taught_at,
-                    });
-                }
-            }
-        }
-        if events.is_empty() {
-            return Ok(());
-        }
-        let at = events
-            .iter()
-            .filter_map(|event| match event {
-                TeachingEvent::Recorded { taught_at, .. } => Some(*taught_at),
-                TeachingEvent::Cleared { .. } => None,
-            })
-            .max()
-            .or_else(|| held.state.history().last().map(|(_, _, at)| *at))
-            .unwrap_or_default();
-        tracing::warn!(
-            events = events.len(),
-            "teaching: the old rows and the log disagree at boot (the old path ran in between); \
-             the log now follows the rows"
-        );
-        self.commit(held, events, at, false).await
-    }
-
     /// Apply every committed batch after the held head. A tail whose commit is
     /// unresolved is an error, so a write never prepares on a stale head.
-    ///
-    /// After boot, `moves_old` also moves the shadow's old held set: a commit
-    /// whose answer was lost landed its legacy rows with the batch, so the old
-    /// set follows what the log holds. At boot the old set comes from the rows.
-    async fn catch_up(&self, held: &mut Held, moves_old: bool) -> Result<(), TeachingError> {
+    async fn catch_up(&self, held: &mut Held) -> Result<(), TeachingError> {
         loop {
             let batches = self
                 .log
@@ -377,9 +207,6 @@ impl LoggedTeachings {
                         continue;
                     };
                     held.state.apply(&event);
-                    if let Some(shadow) = held.shadow.as_mut().filter(|_| moves_old) {
-                        shadow.follow(&event);
-                    }
                 }
                 held.head = batch.range().last;
             }
@@ -397,18 +224,11 @@ impl LoggedTeachings {
             .filter(|(run, _)| !held.uncertain.contains(run))
             .map(|(run, domain)| (run.0.clone(), domain.clone()))
             .collect();
-        let legacy = held
-            .shadow
-            .iter()
-            .flat_map(|shadow| shadow.legacy.iter())
-            .map(|(sid, domain)| (sid.as_str().to_string(), domain.clone()))
-            .collect();
         *self
             .known
             .write()
             .expect("the known pairs are not poisoned") = Known {
             log,
-            legacy,
             uncertain: held.uncertain.clone(),
         };
     }
@@ -419,7 +239,6 @@ impl LoggedTeachings {
         held: &mut Held,
         events: Vec<TeachingEvent>,
         at: Timestamp,
-        with_rows: bool,
     ) -> Result<(), TeachingError> {
         let members: Vec<Vec<u8>> = events.iter().map(codec::encode).collect();
         let identity = jojobot_domain::request::digest_of(&format!(
@@ -439,14 +258,7 @@ impl LoggedTeachings {
             members,
         )
         .map_err(refused)?;
-        // The import's rows already exist, so only a live write carries them.
-        let appended = match held.shadow.as_ref().filter(|_| with_rows) {
-            Some(shadow) => {
-                let rows = events.iter().map(Shadow::change).collect();
-                shadow.log.append_with_rows(held.head, &batch, rows).await
-            }
-            None => self.log.append(held.head, &batch).await,
-        };
+        let appended = self.log.append(held.head, &batch).await;
         let appended = match appended {
             Err(LogError::Indeterminate) => Ok(Append::Indeterminate),
             other => other,
@@ -455,9 +267,6 @@ impl LoggedTeachings {
             Append::Committed(range) => {
                 for event in &events {
                     held.state.apply(event);
-                    if let Some(shadow) = held.shadow.as_mut() {
-                        shadow.follow(event);
-                    }
                 }
                 held.head = range.last;
                 self.publish(held);
@@ -487,7 +296,7 @@ impl LoggedTeachings {
     /// retries; the wait is bounded so the writer's queue is not held for good.
     async fn recover(&self, held: &mut Held) {
         for attempt in 0..RECOVERY_ATTEMPTS {
-            if self.catch_up(held, true).await.is_ok() {
+            if self.catch_up(held).await.is_ok() {
                 return;
             }
             tokio::time::sleep(RECOVERY_BACKOFF * 2u32.pow(attempt)).await;
@@ -509,14 +318,6 @@ impl Teachings for LoggedTeachings {
         {
             let known = self.known.read().expect("the known pairs are not poisoned");
             if known.log.contains(&pair) {
-                if let Some(report) = &self.report {
-                    report.compared_teaching(
-                        sid.as_str(),
-                        domain,
-                        true,
-                        known.legacy.contains(&pair),
-                    );
-                }
                 return Ok(false);
             }
         }
@@ -561,23 +362,20 @@ impl Teachings for LoggedTeachings {
 impl LoggedTeachings {
     async fn contact(&self, sid: &Sid, domain: &str, at: Timestamp) -> Result<bool, TeachingError> {
         let mut held = self.held.lock().await;
-        self.catch_up(&mut held, true).await?;
+        self.catch_up(&mut held).await?;
         let prepared = held
             .state
             .first_contact(&run(sid), domain, at)
             .map_err(|refusal| TeachingError::Refused(refusal.to_string()))?;
-        if let Some(shadow) = held.shadow.as_ref() {
-            shadow.compare(sid, domain, !prepared.answer);
-        }
         if !prepared.events.is_empty() {
-            self.commit(&mut held, prepared.events, at, true).await?;
+            self.commit(&mut held, prepared.events, at).await?;
         }
         Ok(prepared.answer)
     }
 
     async fn clear(&self, sid: &Sid) -> Result<(), TeachingError> {
         let mut held = self.held.lock().await;
-        self.catch_up(&mut held, true).await?;
+        self.catch_up(&mut held).await?;
         let prepared = held.state.forget(&run(sid));
         if !prepared.events.is_empty() {
             // A clear has no source time of its own; the newest mark's time
@@ -588,7 +386,7 @@ impl LoggedTeachings {
                 .last()
                 .map(|(_, _, at)| *at)
                 .unwrap_or_default();
-            self.commit(&mut held, prepared.events, at, true).await?;
+            self.commit(&mut held, prepared.events, at).await?;
         }
         Ok(())
     }
