@@ -27,6 +27,7 @@ mod chart;
 mod kind;
 mod limits;
 mod numbering;
+mod request;
 
 use super::{
     ClaimBody, ClaimEvent, FieldValue, HeldRecord, KeyId, ObjectId, RecordId, RunId, StarredRule,

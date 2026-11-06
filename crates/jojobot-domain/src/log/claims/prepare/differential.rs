@@ -15,13 +15,11 @@ use jiff::civil::date;
 
 use super::super::tests::{apply, body, object};
 use super::super::{ClaimEvent, ObjectBody, State};
-use super::{CaptureRequest, ClaimSize, Door, Draft, Measures, Refusal, Route, prepare};
+use super::{CaptureRequest, ClaimSize, Door, Measures, Refusal, Route, prepare};
 use crate::actor::Actor;
 use crate::log::RecordId;
 use crate::memory::testing::InMemoryMemory;
-use crate::memory::{
-    Edge, EdgeShape, EntityId, Guarded, Memory, MemoryError, NewEntity, NewFact, Standing,
-};
+use crate::memory::{Edge, EdgeShape, EntityId, Guarded, Memory, MemoryError, NewEntity, NewFact};
 
 /// A small deterministic generator: the property needs repeatable runs.
 struct Dice(u64);
@@ -90,10 +88,11 @@ fn prepared_verdict(answer: &Result<Vec<ClaimEvent>, Refusal>) -> Verdict {
 }
 
 fn request_of(fact: &NewFact, record: &str) -> CaptureRequest {
-    CaptureRequest {
-        record: RecordId(record.to_string()),
-        route: Route::Verb,
-        door: Door {
+    CaptureRequest::of_fact(
+        fact,
+        RecordId(record.to_string()),
+        Route::Verb,
+        Door {
             actor: Actor::Operator,
             owned_keys: BTreeSet::new(),
             owner_revoked: false,
@@ -109,34 +108,7 @@ fn request_of(fact: &NewFact, record: &str) -> CaptureRequest {
             run: None,
             aged_before: None,
         },
-        subject: fact.subject.0.clone(),
-        draft: Draft {
-            content: fact.content.clone(),
-            details: fact.details.clone(),
-            provenance: fact.provenance,
-            standing: fact
-                .standing
-                .unwrap_or_else(|| Standing::default_for(fact.provenance)),
-            status: fact.status,
-            recorded_at: fact.recorded_at,
-            happened_at: fact.happened_at,
-            happened_through: fact.happened_through,
-            stale_after: fact.stale_after,
-            receipt: None,
-            app: None,
-        },
-        edge: fact
-            .edge
-            .as_ref()
-            .map(|edge| (edge.shape, edge.object.0.clone())),
-        refs: Vec::new(),
-        fields: fact.fields.clone(),
-        sets: fact.sets.clone(),
-        derived: BTreeSet::new(),
-        derived_from: None,
-        borrow: false,
-        drop: None,
-    }
+    )
 }
 
 /// The two events that make an object, as the log states them.
