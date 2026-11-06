@@ -1069,16 +1069,19 @@ pub async fn boot_store_observed(
         Ok(jojobot_adapters::claims_import::Imported::AlreadyDone) => {
             tracing::info!("claims import: already done")
         }
-        // **Best-effort, like every pass after the store answers**: a read that
-        // fails over a healthy store must not crash-loop the boot, and nothing
-        // reads the claims in the log yet. Nothing was appended, so the next start
-        // imports again. It is an error line, so the upgrade gate, which fails on
-        // any error line at boot, still catches it.
-        Err(why) => tracing::error!(
-            error = %why,
-            "THE CLAIMS IMPORT FAILED — nothing was appended to the log; the next start tries \
-             again."
-        ),
+        // **A failed import stops the boot, whatever the error** (the import runs
+        // once and completes before the server answers and before any writer
+        // emits). A store that failed transiently heals on the restart, because
+        // nothing was appended and the import runs again; a data failure needs a
+        // fix and is loud. A boot that went on would serve a state with no history.
+        Err(why) => {
+            tracing::error!(
+                error = %why,
+                "THE CLAIMS IMPORT FAILED — nothing was appended to the log; the boot stops \
+                 and the next start tries again."
+            );
+            anyhow::bail!("the claims import failed: {why}");
+        }
     }
 
     Ok(Booted {
