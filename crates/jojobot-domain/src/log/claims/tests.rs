@@ -367,6 +367,46 @@ fn a_merge_moves_everything_and_keeps_the_decided_interleave() {
     assert_eq!(held(&state, "beta"), map(&[("mood", "steady")]));
 }
 
+/// **A merge renumbers the survivor's own writes of a key when the interleave
+/// puts a folded write among them**: the store numbers a key's writes from one
+/// without a gap, so a folded write placed before the survivor's newest takes
+/// that place, and the newest moves on.
+#[test]
+fn a_merge_renumbers_the_survivors_writes_it_places_a_folded_write_before() {
+    let events = [
+        created("r1", claim("f1", "alpha", "alpha says", 1)),
+        created("r2", claim("f1", "beta", "beta says", 2)),
+        created("r3", claim("f2", "alpha", "alpha again", 3)),
+        write("r1", "alpha", "mood", 1, "tense"),
+        write("r3", "alpha", "mood", 2, "steady"),
+        write("r2", "beta", "mood", 1, "calm"),
+        ClaimEvent::ObjectsMerged {
+            folded: object("beta"),
+            survivor: object("alpha"),
+            records: vec![MovedRecord {
+                record: record("r2"),
+                label: "f3".into(),
+            }],
+            writes: vec![
+                MovedWrite {
+                    record: record("r2"),
+                    key: key("mood"),
+                    from_ordinal: 1,
+                    ordinal: 2,
+                },
+                MovedWrite {
+                    record: record("r3"),
+                    key: key("mood"),
+                    from_ordinal: 2,
+                    ordinal: 3,
+                },
+            ],
+        },
+    ];
+    let state = replay(&events);
+    assert_eq!(held(&state, "alpha"), map(&[("mood", "steady")]));
+}
+
 /// **A merge that would close a loop of redirects changes nothing**: a self-merge
 /// and a merge of an object into one that already folded into it both leave
 /// every read answering, and the first merge still stands.

@@ -137,7 +137,8 @@ pub struct MovedRecord {
 
 /// **A write a merge moved**, and the place it takes in the survivor's stream
 /// of the key. The interleave is decided when the merge is written; the
-/// interpreter never re-sorts by position in the log.
+/// interpreter never re-sorts by position in the log. A write of the survivor's
+/// own that the interleave moves on is named too, by the place it held.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MovedWrite {
     pub record: RecordId,
@@ -586,6 +587,18 @@ impl State {
                 .streams
                 .entry((survivor.clone(), key.clone()))
                 .or_default();
+            // **The survivor's own writes take their new places first**: the
+            // store numbers the interleaved key from one, so a folded write
+            // placed among them moves the later ones on.
+            for write in target.iter_mut() {
+                if let Some(moved) = writes.iter().find(|moved| {
+                    moved.record == write.record
+                        && moved.key == key
+                        && moved.from_ordinal == write.ordinal
+                }) {
+                    write.ordinal = moved.ordinal;
+                }
+            }
             for mut write in stream {
                 if let Some(moved) = writes.iter().find(|moved| {
                     moved.record == write.record
