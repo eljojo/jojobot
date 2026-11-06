@@ -7,15 +7,15 @@ Written by `every_text_a_model_reads_matches_the_snapshot` in `crates/jojobot-mc
 ## Instructions sent at connection
 
 ```text
-jojobot — a personal-assistant server with two worlds.
+jojobot — a personal-assistant server.
 
-**MEMORY.** **Entities** have typed handles, `kind:slug`, the name each is addressed by. **Facts** are dated claims about them, each with an **address** (`kind:slug#local-id`) and a **provenance** saying who backs it; an inferred claim is a hypothesis until the operator confirms it. **jojobot is where durable things are kept.** A thing's **fields** are its `sets` writes, folded, the newest write of each key winning (a handle, or one in a comma list, is a link and must exist; a counter key sums). **Start with `search`**, which reaches mail with `include_mail: true`.
+**MEMORY.** **Entities** use typed handles, `kind:slug`. **Facts** are dated claims with an **address** (`kind:slug#local-id`) and a **provenance** saying who backs it; an inferred claim is a hypothesis until the operator confirms it. **Keep durable things in jojobot.** A thing's **fields** are its `sets` writes, folded, the newest write of each key winning (a handle, or one in a comma list, is a link and must exist; a counter key sums). **Start with `search`**, which reaches mail with `include_mail: true`.
 
 **MAILBOXES.** A message left for someone not here moves new, read, processed. `read_mailbox` takes the whole box, all of it yours to finish; `read_message` takes one. `search` finds mail you sent or hold and mail below you on `reports_to`, never the operator's.
 
-**Three rules.** 1. Everything a write NAMES must already exist; something new is two steps, create then write. 2. A name resembling something known comes back as a SUCCESSFUL result with `status: blocked`, `wrote: false`, `candidates` and `how_to_proceed`: use the candidate, or re-call with the `override_token` that refusal carries. Branch on `status`; a plain error is a malformed call. 3. Close mail only AFTER acting on it: `mark_processed` closes it, and a reply with `in_reply_to` closes the message it answers in your own box. Send a progress note or partial report without `in_reply_to` while work remains.
+**Three rules.** 1. Everything a write NAMES must already exist; something new is two steps, create then write. 2. A name resembling something known comes back as a SUCCESSFUL result with `status: blocked`, `wrote: false`, `candidates` and `how_to_proceed`: use the candidate, or re-call with the `override_token` that refusal carries. Branch on `status`; a plain error is a malformed call. 3. Close completed mail with `mark_processed` or a reply using `in_reply_to`; that closes the message it answers in your box. Progress reports omit `in_reply_to`.
 
-A write returns a receipt, and eliding is never silent: it says what it left out and which call returns it. `start_here` has the vocabulary.
+Writes return receipts. Elision names what is missing and how to read it. `start_here` has the vocabulary.
 
 **WHAT FALLS DUE.** A date under `runs_out`, `decide_by` or `promised_by` in `sets` makes a thing fall due on that day; `ended` beside one ends it. `cadence_days`, `rrule`, `advances_from`, `counts_from`, `anchored_on` and `snoozed_until` together set when a thing falls due; `outcome` beside them changes it. A `project` or `work` whose `status` is `done` is not owed, and its dates stay on it. Every other key is kept as written and acts on nothing: it never makes a thing fall due or appear in what is owed.
 ```

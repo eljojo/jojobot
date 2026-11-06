@@ -566,13 +566,12 @@ pub(crate) fn instructions() -> String {
     format!("{INSTRUCTIONS}\n\n**WHAT FALLS DUE.** {falls_due}")
 }
 
-pub(crate) const INSTRUCTIONS: &str = "jojobot — a personal-assistant server with two worlds.\
-                 \n\n**MEMORY.** **Entities** have typed handles, `kind:slug`, the name \
-                 each is addressed by. **Facts** are dated claims about them, each \
+pub(crate) const INSTRUCTIONS: &str = "jojobot — a personal-assistant server.\
+                 \n\n**MEMORY.** **Entities** use typed handles, `kind:slug`. **Facts** are dated claims \
                  with an **address** (`kind:slug#local-id`) and a **provenance** \
                  saying who backs it; an inferred claim is a hypothesis \
-                 until the operator confirms it. **jojobot is where durable things are \
-                 kept.** A thing's **fields** are its `sets` writes, folded, the \
+                 until the operator confirms it. **Keep durable things in jojobot.** \
+                 A thing's **fields** are its `sets` writes, folded, the \
                  newest write of each key winning (a handle, or one in a comma \
                  list, is a link and must exist; a counter key sums). **Start \
                  with `search`**, which reaches mail with `include_mail: true`.\
@@ -586,12 +585,10 @@ pub(crate) const INSTRUCTIONS: &str = "jojobot — a personal-assistant server w
                  with `status: blocked`, `wrote: false`, `candidates` and \
                  `how_to_proceed`: use the candidate, or re-call with the \
                  `override_token` that refusal carries. Branch on `status`; a plain \
-                 error is a malformed call. 3. Close mail only AFTER acting on it: \
-                 `mark_processed` closes it, and a reply with `in_reply_to` closes \
-                 the message it answers in your own box. Send a progress note or \
-                 partial report without `in_reply_to` while work remains.\
-                 \n\nA write returns a receipt, and eliding is never silent: it says \
-                 what it left out and which call returns it. `start_here` has \
+                 error is a malformed call. 3. Close completed mail with `mark_processed` \
+                 or a reply using `in_reply_to`; that closes the message it answers \
+                 in your box. Progress reports omit `in_reply_to`.\
+                 \n\nWrites return receipts. Elision names what is missing and how to read it. `start_here` has \
                  the vocabulary.";
 
 #[tool_handler]
