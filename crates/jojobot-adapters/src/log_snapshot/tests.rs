@@ -373,3 +373,124 @@ async fn snapshot_boot_restores_both_families_from_the_real_store() {
     writer.drain().await;
     server.stop().await;
 }
+
+/// What `restored` says of the snapshot the log holds now: none when it is used.
+async fn reason_of(log: &InMemoryLog) -> Option<Skip> {
+    let validity = log.validity().await.unwrap();
+    restored(log, &validity).await.unwrap().err()
+}
+
+/// **One defect, one named reason.** The control is a good snapshot and a good
+/// validity; each row breaks exactly one thing, and the function that decides says
+/// which. A row that is not a defect (an erasure after the snapshot's last
+/// position) names nothing.
+#[tokio::test]
+async fn each_defect_of_a_snapshot_has_its_own_named_reason() {
+    let log = InMemoryLog::default();
+    prefix(&log, "homer").await;
+    take_snapshot(&log, jiff::Timestamp::UNIX_EPOCH)
+        .await
+        .unwrap();
+    let good = log.load_snapshot().await.unwrap().unwrap();
+    let validity = log.validity().await.unwrap();
+    assert_eq!(refusal(&good, &validity), None, "the control is usable");
+
+    type Break = fn(&mut ValidatedSnapshot, &mut Validity);
+    //   (the row, what it breaks, the reason named)
+    let table: [(&str, Break, Option<Skip>); 8] = [
+        (
+            "format",
+            |snapshot, _| snapshot.snapshot_format_version += 1,
+            Some(Skip::Format),
+        ),
+        (
+            "fingerprint",
+            |snapshot, _| snapshot.projection_version ^= 1,
+            Some(Skip::Fingerprint),
+        ),
+        (
+            "identity",
+            |snapshot, _| snapshot.log_identity.push('x'),
+            Some(Skip::Identity),
+        ),
+        (
+            "epoch",
+            |_, validity| validity.representation_epoch += 1,
+            Some(Skip::Epoch),
+        ),
+        (
+            "erasure over the snapshot",
+            |_, validity| {
+                validity.erasure_epoch += 1;
+                validity.earliest_affected_position = Some(Position(0));
+            },
+            Some(Skip::Erasure),
+        ),
+        (
+            "erasure after the snapshot",
+            |snapshot, validity| {
+                validity.erasure_epoch += 1;
+                validity.earliest_affected_position =
+                    Some(Position(snapshot.covered_position.0 + 1));
+            },
+            None,
+        ),
+        (
+            "length",
+            |snapshot, _| snapshot.serialized_length += 1,
+            Some(Skip::Length),
+        ),
+        (
+            "checksum",
+            |snapshot, _| snapshot.blob[0] ^= 1,
+            Some(Skip::Checksum),
+        ),
+    ];
+    for (row, broken, reason) in table {
+        let (mut snapshot, mut validity) = (good.clone(), validity.clone());
+        broken(&mut snapshot, &mut validity);
+        assert_eq!(refusal(&snapshot, &validity), reason, "{row}");
+    }
+
+    // The three reasons that need the log: none held, a snapshot not tied to a
+    // batch, and a blob that is not this build's State.
+    log.replace_snapshot(None);
+    assert_eq!(reason_of(&log).await, Some(Skip::NoneHeld));
+    let mut untied = good.clone();
+    untied.batch_checksum[0] ^= 1;
+    log.replace_snapshot(Some(untied));
+    assert_eq!(reason_of(&log).await, Some(Skip::Boundary));
+    let mut unreadable = good.clone();
+    unreadable.blob = b"not a state".to_vec();
+    unreadable.serialized_length = unreadable.blob.len() as u64;
+    unreadable.checksum = Sha256::digest(&unreadable.blob).into();
+    log.replace_snapshot(Some(unreadable));
+    assert_eq!(reason_of(&log).await, Some(Skip::Unreadable));
+}
+
+/// **A boot that skips a snapshot counts the skip under its reason.** The count is
+/// the one /metrics serves, so a deploy that replays from zero is seen.
+#[tokio::test]
+async fn a_boot_that_skips_a_snapshot_counts_it_by_reason() {
+    let count = |name: &str| {
+        skip_counts()
+            .into_iter()
+            .find(|(each, _)| *each == name)
+            .map(|(_, count)| count)
+            .expect("every reason has a count")
+    };
+    let log = InMemoryLog::default();
+    prefix(&log, "homer").await;
+    take_snapshot(&log, jiff::Timestamp::UNIX_EPOCH)
+        .await
+        .unwrap();
+    let mut stale = log.load_snapshot().await.unwrap().unwrap();
+    stale.projection_version ^= 1;
+    log.replace_snapshot(Some(stale));
+    let before = count("fingerprint");
+    boot(&log).await.unwrap();
+    assert!(
+        count("fingerprint") > before,
+        "a fingerprint skip is counted"
+    );
+}
