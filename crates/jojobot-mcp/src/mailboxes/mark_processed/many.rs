@@ -17,6 +17,7 @@ impl Jojobot {
     /// box or in a person's refuses the call, names that id, and leaves every
     /// message as it was. A message already processed is left alone and counted,
     /// which is what makes a resend of the same call safe.
+    // TEMPORARY(9.3.6): off the composer, mark_processed.
     pub(super) async fn close_many(
         &self,
         args: &MarkProcessedArgs,

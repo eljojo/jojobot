@@ -4,6 +4,7 @@
 /// record the answer calls `session`, so a caller sees its own run reflected
 /// back and has nothing to work out. The name is what a resume offer lists;
 /// the key is what every call takes, and is never written anywhere.
+// TEMPORARY(9.3.7): off the composer, journal/amend_journal.
 pub(crate) fn session_id_teaching(name: &str, session: &str) -> String {
     format!(
         "Your run is called {name}, and the `session` {session} in this answer is its stored \

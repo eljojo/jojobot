@@ -4,6 +4,7 @@
 
 /// A store failure. `detail` is logged, never returned; the sentence is
 /// the same for every failure, because the caller's next move never changes.
+// TEMPORARY(9.3.8): off the composer, shared memory/mail/session errors.
 pub(crate) fn store_failed(verb: &str, detail: &str) -> String {
     tracing::error!(verb, detail, "store failure reached the boundary");
     format!(
@@ -19,6 +20,7 @@ pub(crate) fn store_failed(verb: &str, detail: &str) -> String {
 /// account stays in the log. The sentence says what `store_failed`'s does not:
 /// sending the same call again meets the same refusal, so the call has to change
 /// (`fix_by: change`).
+// TEMPORARY(9.3.8): off the composer, shared memory/mail/session errors.
 pub(crate) fn refused(verb: &str, rule: &str) -> String {
     tracing::error!(verb, rule, "a refused write reached the boundary");
     format!(
@@ -36,6 +38,7 @@ pub(crate) fn refused(verb: &str, rule: &str) -> String {
 /// broken and a retry is the right next move rather than an escalation —
 /// because telling a caller to "tell the operator" about the commonest,
 /// self-healing case would send it looking for a person over nothing.
+// TEMPORARY(9.3.8): off the composer, shared memory/mail/session errors.
 pub(crate) fn conflict(verb: &str, detail: &str) -> String {
     tracing::warn!(
         verb,
@@ -56,6 +59,7 @@ pub(crate) fn conflict(verb: &str, detail: &str) -> String {
 /// person who repairs it. The store is reachable and answered, so sending the
 /// call again meets the same damage, and no change to the call helps; the
 /// sentence says what `store_failed`'s must not, that a retry is the wrong move.
+// TEMPORARY(9.3.8): off the composer, shared memory/mail/session errors.
 pub(crate) fn damaged(verb: &str, what: &str) -> String {
     tracing::error!(verb, what, "stored damage reached the boundary");
     format!(
@@ -67,6 +71,7 @@ pub(crate) fn damaged(verb: &str, what: &str) -> String {
 }
 
 /// A record jojobot cannot read, told the same way: logged, not returned.
+// TEMPORARY(9.3.8): off the composer, shared memory/mail/session errors.
 pub(crate) fn unreadable(what: &str, detail: &str) -> String {
     tracing::error!(what, detail, "unreadable record reached the boundary");
     format!(

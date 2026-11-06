@@ -16,6 +16,7 @@ use jojobot_domain::memory::{FactAddress, FactId, document, entries};
 pub(super) struct DroppedKeys(std::collections::BTreeSet<String>);
 
 impl DroppedKeys {
+    // TEMPORARY(9.3.4): off the composer, capture/add_entity/update_entity/update_fact.
     pub(super) fn note(&self, body: &mut serde_json::Value) {
         if !self.0.is_empty() {
             body["dropped_keys"] = serde_json::json!(self.0);

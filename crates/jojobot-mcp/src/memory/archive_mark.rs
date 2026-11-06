@@ -111,6 +111,7 @@ impl Jojobot {
     /// **The answer for a call under a `request_id` whose archive landed and whose
     /// mark did not**: the call is not finished, and the same call sent again
     /// makes the mark once.
+    // TEMPORARY(9.3.4): off the composer, update_fact archive by defrag.
     pub(crate) fn mark_still_owed(&self, why: &str, cause: &Stopped) -> CallToolResult {
         crate::caller::handle_declined(
             "update_fact",
@@ -125,6 +126,7 @@ impl Jojobot {
 }
 
 /// **What the receipt says about the mark.**
+// TEMPORARY(9.3.4): off the composer, update_fact archive by defrag.
 pub(crate) fn note_the_mark(body: &mut serde_json::Value, marked: &Marked) {
     match marked {
         Marked::Made => body["reviewed"] = true.into(),

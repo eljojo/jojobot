@@ -124,6 +124,7 @@ impl Jojobot {
                        `request_id` makes a resend of a put finish the sections that did not \
                        land."
     )]
+    // TEMPORARY(9.3.4): off the composer, put_document.
     pub(crate) async fn put_document(
         &self,
         Parameters(args): Parameters<PutDocumentArgs>,
@@ -613,6 +614,7 @@ impl Jojobot {
 ///
 /// `at` is the section's place, counted from 1, and the number of sections in
 /// the put; `sizes` is the piece as a record reads it and the room for one.
+// TEMPORARY(9.3.4): off the composer, put_document.
 fn section_too_big(
     document: &str,
     at: (usize, usize),
@@ -654,6 +656,7 @@ fn section_too_big(
 ///
 /// A store that failed answers as an error whose stock words say nothing was
 /// written, which is false here, so those words are replaced.
+// TEMPORARY(9.3.4): off the composer, put_document.
 fn stopped_midway(
     refused: Result<CallToolResult, McpError>,
     landed: &[FactAddress],

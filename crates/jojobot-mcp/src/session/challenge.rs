@@ -154,6 +154,7 @@ impl Jojobot {
     /// **Ask for a code for `bot`.** The code goes into the operator's box and
     /// nowhere else; the answer names the challenge and carries no code. The
     /// call starts no session.
+    // TEMPORARY(9.3.7): off the composer, start_here.
     pub(crate) async fn ask_for_code(
         &self,
         bot: &EntityId,
@@ -313,6 +314,7 @@ impl Jojobot {
     }
 
     /// The refusal for a store that could not be read while a code was asked for.
+    // TEMPORARY(9.3.7): off the composer, start_here.
     fn ask_failed(&self, bot: &EntityId, e: &MemoryError) -> CallToolResult {
         tracing::warn!(error = %loggable(e), %bot, "a code could not be asked for");
         handle_declined(
@@ -330,6 +332,7 @@ impl Jojobot {
     ///
     /// The caller holds [`Jojobot::redeem_lock`] across this and the spending, so
     /// two boots presenting one code cannot both pass.
+    // TEMPORARY(9.3.7): off the composer, start_here.
     pub(crate) async fn verify_code(
         &self,
         bot: &EntityId,
@@ -511,6 +514,7 @@ impl Jojobot {
     /// **What a named boot says about trust**: the gate word, and the voucher it
     /// was given when it presented a code. A store that could not be read says
     /// so rather than naming a gate it did not read.
+    // TEMPORARY(9.3.7): off the composer, start_here.
     pub(crate) async fn trust_of_a_boot(
         &self,
         redeemed: Option<serde_json::Value>,

@@ -592,6 +592,7 @@ impl Jojobot {
     /// made the write; a move the session made itself is taken in silently.
     /// Search defers unrelated things without advancing their held versions.
     /// Whatever this answer serves is then held at the version it has now.
+    // TEMPORARY(9.3.8): off the composer, all completed tool answers.
     pub(crate) async fn add_held_changed(
         &self,
         answered: &mut CallToolResponse,

@@ -351,6 +351,7 @@ fn read_all(source: &[(&str, &str)]) -> Vec<Note> {
 /// **The message for these notes** to one bot: what it is and who it is from, each
 /// note, the line naming the bot's manager when it has one, and the line that
 /// names the notes, which is what a later start reads.
+// TEMPORARY(9.3.6): off the composer, system release-notice mail.
 fn message_body(notes: &[&Note], manager: Option<&str>) -> String {
     let mut body = String::from(
         "This message comes from jojobot itself, not from a bot. It says what changed in the \

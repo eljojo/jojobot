@@ -634,6 +634,7 @@ impl Jojobot {
     /// **The read happens before the write and never instead of it.** A
     /// schedule this cannot read is a refusal, so a half-configured rhythm
     /// never takes a check-in that would look applied and move nothing.
+    // TEMPORARY(9.3.3): off the composer, capture check-in.
     async fn check_in(
         &self,
         subject: &EntityId,
@@ -1143,6 +1144,7 @@ impl Jojobot {
     ///
     /// The write's future is about 100 KB. It lives on the heap, so no caller
     /// holds it on a worker's stack.
+    // TEMPORARY(9.3.3): off the composer, capture.
     pub(crate) async fn capture_write(
         &self,
         by: Attribution<'_>,
@@ -1858,6 +1860,7 @@ impl Jojobot {
 impl Jojobot {
     /// **The end of a capture whose claim an earlier call wrote**: its saved
     /// schedule or due clear is finished, and the receipt names the same claim.
+    // TEMPORARY(9.3.3): off the composer, capture resumed.
     async fn capture_finished(
         &self,
         args: &CaptureArgs,
@@ -1975,6 +1978,7 @@ impl Jojobot {
     /// `exists` is false on a creation: a subject that does not exist yet has no
     /// chart above it and no former handle, so it is judged on the manager the
     /// write names alone.
+    // TEMPORARY(9.3.4): off the composer, capture/add_entity/update_entity/update_fact.
     pub(crate) async fn refuses_an_unlicensed_key(
         &self,
         verb: &'static str,

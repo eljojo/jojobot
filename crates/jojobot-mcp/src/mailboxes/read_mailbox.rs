@@ -75,6 +75,7 @@ enum NoBox {
 }
 
 /// The refusal a read gets when there is no box behind its handle.
+// TEMPORARY(9.3.6): off the composer, read_mailbox/read_message/mark_processed.
 fn no_box_for(attempted: &str, why: NoBox) -> CallToolResult {
     // **Which word the refusal wears is decided by why there is no box.**
     // Damage is a person's. A world that cannot be reached has no word yet: it
@@ -254,6 +255,7 @@ impl Jojobot {
                        refused and writes nothing. An \
                        empty delivery names what it looked through, as searched."
     )]
+    // TEMPORARY(9.3.6): off the composer, read_mailbox.
     pub(crate) async fn read_mailbox(
         &self,
         Parameters(args): Parameters<ReadMailboxArgs>,

@@ -140,6 +140,7 @@ impl Jojobot {
                        nothing comes back blocked with the nearest handles — it never creates. Aliases or `sets` that would grow the thing, or its claim, past what one answer \
                        can read back whole are refused with nothing written. The receipt's `changed` lists changes."
     )]
+    // TEMPORARY(9.3.4): off the composer, update_entity.
     pub(crate) async fn update_entity(
         &self,
         Parameters(mut args): Parameters<UpdateEntityArgs>,
@@ -600,6 +601,7 @@ impl Jojobot {
     /// **The end of an edit whose claim an earlier call wrote**: the stored due
     /// moment is taken off the finished thing, as the plan in the claim's note
     /// says, and the receipt is built from the thing and the claim as they stand.
+    // TEMPORARY(9.3.4): off the composer, update_entity resumed.
     async fn finish_the_entity_edit(
         &self,
         args: &UpdateEntityArgs,
@@ -670,6 +672,7 @@ impl Jojobot {
     /// `request_id` each mark is one
     /// part of the write: a call cut partway is finished by the same call again,
     /// and no thing is marked twice under that id.
+    // TEMPORARY(9.3.4): off the composer, update_entity reviewed batch.
     async fn mark_reviewed_in_bulk(
         &self,
         args: UpdateEntityArgs,

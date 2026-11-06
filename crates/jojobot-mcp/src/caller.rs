@@ -63,6 +63,7 @@ impl Caller {
 
 /// A session verb reached on a connection that never booted. Not an error: the
 /// caller did nothing malformed, they just have no identity yet.
+// TEMPORARY(9.3.8): off the composer, tools requiring identified caller.
 pub(crate) fn session_unbound() -> CallToolResult {
     let how_to_proceed: WayForward = format!(
         "{NOTHING_RAN}. This call carried no `sid`, and jojobot will not guess which session is \
@@ -86,6 +87,7 @@ pub(crate) fn session_unbound() -> CallToolResult {
 /// caller branches on `status` here exactly as everywhere else — and `wrote:
 /// false` says the thing that matters most: a boot jojobot refused started no
 /// session, so nothing on the board moved.
+// TEMPORARY(9.3.8): off the composer, caller/session/request/write clients.
 pub(crate) fn handle_declined(
     attempted: &str,
     how_to_proceed: impl Into<WayForward>,
@@ -186,6 +188,7 @@ impl Jojobot {
     /// The refusal names the run by its public name. It is a guard against
     /// accidents: it stops a key from being stored in a place others read, and
     /// it does not make a secret out of a value that was already shown.
+    // TEMPORARY(9.3.8): off the composer, tool dispatch.
     pub(crate) async fn refuse_a_live_secret(
         &self,
         arguments: Option<&serde_json::Map<String, serde_json::Value>>,
@@ -294,6 +297,7 @@ impl Jojobot {
 
     /// **Who is calling.** `None` is an anonymous caller, which is a legitimate
     /// thing to be: a reader, or a poster who has not booted.
+    // TEMPORARY(9.3.8): off the composer, sid-bearing tools.
     pub(crate) fn caller(&self, sid: Option<&str>) -> Result<Option<Caller>, CallToolResult> {
         let Some(raw) = sid.map(str::trim).filter(|s| !s.is_empty()) else {
             return Ok(None);
@@ -449,6 +453,7 @@ impl Jojobot {
     /// has nothing to check — and a store read that fails refuses the write
     /// with `retry`, because a wrapped run whose window the clock ended would
     /// otherwise take it.
+    // TEMPORARY(9.3.7): off the composer, write-auth clients.
     async fn write_refused_if_wrapped(&self, caller: &Caller) -> Option<CallToolResult> {
         let card = caller.card.as_ref()?;
         // **A wrapped run whose wrap window is open takes writes**, exactly as
@@ -541,6 +546,7 @@ impl Jojobot {
     /// what you sent, and a handle that arrived upcased, truncated or quoted
     /// still addresses a live session once the string is fixed. Answering that
     /// one `gone` abandons a run the caller could have walked back into.
+    // TEMPORARY(9.3.7): off the composer, start_here/ping.
     pub(crate) async fn standing(&self, sid: Option<&str>) -> serde_json::Value {
         let Some(raw) = sid.map(str::trim).filter(|s| !s.is_empty()) else {
             return serde_json::Value::Null;
@@ -587,6 +593,7 @@ impl Jojobot {
     /// answer to an offer ships none: the offering call did, at the moment of
     /// the offer, and an answer that carries no live offer code has no moment
     /// at all. A run never handed the charter is not stamped as if it had been.
+    // TEMPORARY(9.3.7): off the composer, start_here.
     pub(crate) fn mint_or_say_why(
         &self,
         bot: &EntityId,

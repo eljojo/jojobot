@@ -145,6 +145,7 @@ pub(crate) fn ways_down(subject: &str) -> String {
 /// The ceiling is a property of the answer, so the answer says so: any entity
 /// grows every bot's snapshot, and no write that cannot be refused should be
 /// refused for it. The sizes are the refusals' own.
+// TEMPORARY(9.3.7): off the composer, start_here.
 pub(crate) fn over_the_ceiling(
     bot: &EntityId,
     total: usize,

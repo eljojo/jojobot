@@ -12,6 +12,7 @@ use crate::*;
 /// **The refusal of a write over a run the store cannot read**: `person`. The
 /// store answered and what it holds does not parse, so the same call meets the
 /// same damage. The field is named; the damaged cell is not.
+// TEMPORARY(9.3.8): off the composer, session-write guards.
 pub(crate) fn run_unreadable(card: &SessionId, why: &str) -> CallToolResult {
     tracing::warn!(run = %card, why, "a run could not be read to judge a write");
     let mut body = serde_json::json!({
@@ -31,6 +32,7 @@ pub(crate) fn run_unreadable(card: &SessionId, why: &str) -> CallToolResult {
 /// damage in any run is a refusal for a person, naming the field and the run the
 /// list read stopped at; any other failure is the outage the door has always
 /// answered, carrying `note`. A damaged run is never a store that was not reached.
+// TEMPORARY(9.3.7): off the composer, start_here.
 pub(crate) fn board_unread(
     e: &SessionError,
     bot: &EntityId,
@@ -57,6 +59,7 @@ pub(crate) fn board_unread(
 }
 
 /// The refusal of a write whose run's window could not be judged: `retry`.
+// TEMPORARY(9.3.7): off the composer, session-write guards.
 pub(crate) fn window_unjudged(card: &SessionId, what: &str) -> CallToolResult {
     let mut body = serde_json::json!({
         "status": "blocked", "refusal_code": "WindowUnjudged",

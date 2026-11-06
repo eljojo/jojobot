@@ -554,6 +554,7 @@ pub(crate) const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// **What the server tells a client at connection**: the written instructions,
 /// then the keys that make a thing fall due, built from the shipped carriers.
+// TEMPORARY(9.3.5): off the composer, initialize.
 pub(crate) fn instructions() -> String {
     let carriers = jojobot_domain::attention::shipped();
     let carriers: Vec<&dyn jojobot_domain::attention::Carrier> =
@@ -746,6 +747,7 @@ impl ServerHandler for Jojobot {
     /// **Raise the cap when the SDK serves the newer revision, never before.**
     /// What the current cap requires of a served answer is pinned by
     /// `the_newest_revision_is_served_whole_and_not_merely_agreed`.
+    // TEMPORARY(9.3.5): off the composer, initialize.
     fn initialize(
         &self,
         request: InitializeRequestParams,

@@ -22,6 +22,7 @@ impl Jojobot {
     /// **The plan block for a list that covers `from` to `to`**, read now. A read
     /// that fails is the store's failure, never a list that leaves its plan out
     /// without a word: the plan was asked for (rule 130).
+    // TEMPORARY(9.3.8): off the composer, recall.
     pub(crate) async fn plan_of_period(
         &self,
         covers: &str,

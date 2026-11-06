@@ -138,6 +138,7 @@ impl Jojobot {
     /// registry remembers the bot) and a live key whose run closed. A key
     /// jojobot never held names no bot, so it carries no mark and is left
     /// exactly as the verb wrote it.
+    // TEMPORARY(9.3.7): off the composer, all ended-key tool refusals.
     pub(crate) async fn add_in_flight(&self, answered: &mut CallToolResponse, sid: Option<&str>) {
         let CallToolResponse::Complete(result) = answered else {
             return;

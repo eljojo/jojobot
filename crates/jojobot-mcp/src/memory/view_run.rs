@@ -597,6 +597,7 @@ pub async fn keep_ready(
 /// page shows it: the view, every key that would narrow it, and what else
 /// narrows the call. One function, so the page cannot word it differently
 /// (rule 498). A key written `$name` narrows only when its input is sent.
+// TEMPORARY(9.3.8): off the composer, recall.
 pub fn narrows_nothing_words(view: &str) -> String {
     let refused = MemoryError::ViewNarrowsNothing {
         view: view.to_string(),

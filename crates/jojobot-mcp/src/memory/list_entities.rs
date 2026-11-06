@@ -60,6 +60,7 @@ impl Jojobot {
                        still answers, and says where it went. An empty answer carries `searched`: \
                        one line naming what it looked through and what it left out."
     )]
+    // TEMPORARY(9.3.8): off the composer, list_entities.
     pub(crate) async fn list_entities(
         &self,
         Parameters(args): Parameters<ListEntitiesArgs>,

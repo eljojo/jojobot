@@ -105,6 +105,7 @@ impl TokenSlot {
 impl Jojobot {
     /// TEMPORARY(9.3.5) the card-number lookup. A numbered-card guess stays a miss;
     /// its held number supplies candidates. The one resolver of 9.3.5 owns it.
+    // TEMPORARY(9.3.8): off the composer, recall.
     pub(crate) async fn recall_declined(
         &self,
         mut error: MemoryError,
@@ -305,6 +306,7 @@ fn names_itself(attempted: &EntityId, candidates: &[EntityMatch]) -> bool {
 /// feature read like a broken server: clients that retry on error retry it, and
 /// clients that unwrap on error handle it exactly wrong. `status` and `wrote`
 /// are what stop it reading as a completed write.
+// TEMPORARY(9.3.8): off the composer, memory tool guards.
 pub(crate) fn blocked_result(
     attempted: &EntityId,
     candidates: &[EntityMatch],
@@ -486,6 +488,7 @@ pub(crate) fn blocked_result(
 
 /// The blocked envelope itself, once — so every gate's advice arrives in one
 /// shape and a client branches on `status`, never on which gate fired.
+// TEMPORARY(9.3.8): off the composer, memory tool guards.
 pub(crate) fn blocked_body(
     code: &'static str,
     attempted: &EntityId,
@@ -629,6 +632,7 @@ pub(crate) fn memory_fix_by(e: &MemoryError) -> Option<FixBy> {
 
 /// The answer for a refusal: the arms below build the body and the word comes
 /// from [`memory_fix_by`], stamped here once for every one of them.
+// TEMPORARY(9.3.8): off the composer, memory tools.
 pub(crate) fn memory_declined(
     verb: &'static str,
     e: MemoryError,
@@ -2230,6 +2234,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
 
 /// Map a domain [`MemoryError`] to an MCP error, splitting client mistakes
 /// (invalid params) from server-side failures.
+// TEMPORARY(9.3.8): off the composer, memory-store boundary paths.
 pub(crate) fn memory_error(e: MemoryError) -> McpError {
     let code = memory_refusal_code(&e);
     let word = memory_fix_by(&e);

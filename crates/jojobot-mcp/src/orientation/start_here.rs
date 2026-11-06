@@ -274,6 +274,7 @@ impl Jojobot {
                        it. A boot writes the sweep, a missing box's repair, a key note and, \
                        when asked, a claim, a pick-up, a code's spend or wrong try or a wrap window."
     )]
+    // TEMPORARY(9.3.7): off the composer, start_here.
     pub(crate) async fn start_here(
         &self,
         Parameters(args): Parameters<OrientArgs>,

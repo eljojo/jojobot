@@ -41,6 +41,7 @@ impl TokenSaving {
         }
     }
 
+    // TEMPORARY(9.3.8): off the composer, search/add_entity/capture/update_fact/update_entity.
     pub(crate) fn explain(&self, body: &mut serde_json::Value) {
         if !self.readable {
             body["token_saving"] = serde_json::json!({

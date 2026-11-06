@@ -59,6 +59,7 @@ impl Jojobot {
     /// **Nothing to say means nothing added.** A block that appeared on every
     /// answer carrying zeroes is a block a reader learns to skip, and the one
     /// time it matters is the time it gets skipped.
+    // TEMPORARY(9.3.7): off the composer, all completed tool answers.
     pub(crate) async fn add_status_bar(&self, answered: &mut CallToolResponse, sid: Option<&str>) {
         let mut bar = serde_json::Map::new();
         // **One read of the board serves both facts about the caller's box.**

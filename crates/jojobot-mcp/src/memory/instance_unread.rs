@@ -37,6 +37,7 @@ impl InstanceUnread {
 
     /// **Put the block on the receipt** when the write left anything unworked,
     /// and nothing when it did not.
+    // TEMPORARY(9.3.4): off the composer, capture/add_entity/update_entity/update_fact.
     pub(crate) fn note(&self, body: &mut serde_json::Value) {
         let left = self.0.lock().expect("never poisoned");
         if left.is_empty() {

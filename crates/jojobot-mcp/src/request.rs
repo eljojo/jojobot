@@ -143,6 +143,7 @@ impl Drop for Flight {
 
 impl Jojobot {
     /// **Look at the id of a call, and decide what the dispatch does.**
+    // TEMPORARY(9.3.8): off the composer, tools with request_id.
     pub(crate) async fn begin_request(
         &self,
         call: &CallToolRequestParams,
@@ -400,6 +401,7 @@ fn without_resume_marks(result: &mut CallToolResult) {
 /// The answer is marked as a repeat and names the parts that were already
 /// written, so a caller reads that this call finished the write rather than
 /// made it. Returns whether any part was skipped.
+// TEMPORARY(9.3.7): off the composer, partially committed writes.
 pub(crate) fn note_resumed(body: &mut Value) -> bool {
     let skipped = jojobot_domain::request::skipped();
     if skipped.is_empty() {
@@ -464,6 +466,7 @@ fn write_canonical(value: &Value, out: &mut String) {
 /// When the receipt was not kept (the process stopped between the commit and the
 /// store of the receipt), the answer says that the write landed and gives what
 /// the write returned.
+// TEMPORARY(9.3.8): off the composer, tools repeating request_id.
 fn replay(stored: &Stored, verb: &str, digest: &str) -> CallToolResult {
     let kept = stored
         .receipt

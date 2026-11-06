@@ -22,6 +22,7 @@ use jojobot_domain::memory::seats::unfiled_rules;
 /// that session. **The door itself mints nothing** — creation is an intentional
 /// act, and it happens through the verb that is for it, from a session that can
 /// answer for it.
+// TEMPORARY(9.3.7): off the composer, start_here.
 pub(crate) fn booting_unknown(
     attempted: &EntityId,
     candidates: &[EntityMatch],
@@ -371,6 +372,7 @@ impl Jojobot {
     /// its first call, so an answer that told the caller it already held the
     /// text was asserting something the engine never checked. The note says
     /// what is absent and how to get it, which is true for every reader.
+    // TEMPORARY(9.3.7): off the composer, start_here.
     pub(crate) async fn identity(
         &self,
         index: &[Entity],
@@ -513,6 +515,7 @@ impl Jojobot {
     /// the box block, what the rules left at home and, for defrag, its queue.
     /// The boot hands in the box block it may repair; a write hands in the same
     /// block read without repairing it.
+    // TEMPORARY(9.3.7): off the composer, start_here.
     pub(crate) async fn identity_block(&self, parts: IdentityParts<'_>) -> serde_json::Value {
         let IdentityParts {
             entity,
@@ -659,6 +662,7 @@ impl Jojobot {
         self.box_block(entity, Repair::No).await
     }
 
+    // TEMPORARY(9.3.7): off the composer, start_here.
     async fn box_block(
         &self,
         entity: &Entity,
@@ -789,6 +793,7 @@ impl Jojobot {
     /// owner is the right one to repoint is not derivable the way "the box
     /// under MY one former handle" is — and this declines to guess, leaving
     /// the caller to fall through to the ordinary heal.
+    // TEMPORARY(9.3.7): off the composer, start_here.
     async fn box_under_a_former_handle(
         &self,
         entity: &Entity,
@@ -861,6 +866,7 @@ impl Jojobot {
     /// **One attempt, never a loop.** If the repair does not land, that is said
     /// too, and the boot still returns whole: the charter and the rules are in
     /// the other world entirely and are what a session most needs.
+    // TEMPORARY(9.3.7): off the composer, start_here.
     pub(crate) async fn heal_missing_box(&self, bot: &EntityId) -> serde_json::Value {
         /// The repair did not land and the box is genuinely not there. Damage,
         /// and it takes a person — so it says so, and says what still works.

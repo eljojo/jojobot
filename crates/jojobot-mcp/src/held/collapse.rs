@@ -382,6 +382,7 @@ pub(super) fn received(
 
 /// **Replace each unchanged thing in `body` with its handle or address**, and say
 /// so once at the top. Returns how many were replaced.
+// TEMPORARY(9.3.8): off the composer, recall/search/list_entities.
 pub(super) fn collapse(
     body: &mut Value,
     unchanged: &[Held],

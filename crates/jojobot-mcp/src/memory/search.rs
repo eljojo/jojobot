@@ -156,6 +156,7 @@ impl MailExcluded {
 /// is simply not in it, and an answer that comes back without mail hits and
 /// without a word reads as "no message says that". That is a different claim
 /// from "jojobot has read no messages", and it is the one a caller acts on.
+// TEMPORARY(9.3.8): off the composer, search.
 fn mail_coverage(query: &SearchQuery, coverage: Coverage) -> serde_json::Value {
     let excluded = |note: &str| serde_json::json!({ "searched": false, "note": note });
     // **Whose mail a search over mail never reaches.** A person's box is kept
@@ -205,6 +206,7 @@ fn mail_coverage(query: &SearchQuery, coverage: Coverage) -> serde_json::Value {
 /// not re-read afterwards. The write landed either way. What a caller loses is
 /// the guarantee that this answer reflects it, and the way back is `recall`,
 /// which is complete.
+// TEMPORARY(9.3.8): off the composer, search.
 fn memory_coverage(coverage: Coverage) -> serde_json::Value {
     match coverage {
         Coverage::Unread => serde_json::json!({
@@ -244,6 +246,7 @@ fn memory_coverage(coverage: Coverage) -> serde_json::Value {
 /// boot scan, so a read that fails leaves the last good index standing and
 /// the answer would otherwise look complete. Without this, "no session says
 /// that" and "jojobot could not look" are the same silence.
+// TEMPORARY(9.3.8): off the composer, search.
 fn session_coverage(coverage: Coverage) -> serde_json::Value {
     match coverage {
         Coverage::Unread => serde_json::json!({
@@ -363,6 +366,7 @@ impl Jojobot {
             .map(crate::held::search_answer)
     }
 
+    // TEMPORARY(9.3.8): off the composer, search.
     async fn search_inner(&self, args: SearchArgs) -> Result<CallToolResult, McpError> {
         // Resolved before the query is built — see [`Jojobot::attributable`].
         // This verb publishes a `sid` and says it is what tells jojobot who is
@@ -910,6 +914,7 @@ const SHARES_A_WORD_SHOWN: usize = 5;
 ///
 /// **It follows the question that was asked.** A search that already matched the
 /// earlier wordings is not sent back to ask again.
+// TEMPORARY(9.3.8): off the composer, search.
 pub(crate) fn corpus_note(include_history: bool) -> serde_json::Value {
     let note = if include_history {
         "this search matched the earlier wordings of a claim as well as its current one, \
@@ -1014,6 +1019,7 @@ pub(crate) fn prepared_query(
     })
 }
 
+// TEMPORARY(9.3.8): off the composer, search.
 pub(crate) fn matching_note(query: &search::SearchQuery, with_note: bool) -> serde_json::Value {
     let exact = query
         .terms()

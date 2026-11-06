@@ -347,6 +347,7 @@ pub(crate) enum Marks {
 /// `record_keys` left out are joined into `records_narrowed` the same way. `Marks::Take` also takes the marks off,
 /// once the answer is finished; `Marks::Keep` leaves them for a later pass, so a
 /// ceiling that cuts objects is counted after it, on what it kept.
+// TEMPORARY(9.3.8): off the composer, recall/search.
 pub(crate) fn say_details_left_out(body: &mut serde_json::Value, marks: Marks) {
     fn visit(
         object: &mut serde_json::Value,
@@ -704,6 +705,7 @@ pub(crate) fn entity_json(entity: &Entity) -> serde_json::Value {
 ///
 /// **Eliding is never silent**: the aliases become null, a marker and their count
 /// replace them, and `how_to_read` names the read that returns them.
+// TEMPORARY(9.3.4): off the composer, add_entity/update_entity/rename_entity/archive_entity.
 pub(crate) fn elide_aliases_past_the_ceiling(body: &mut serde_json::Value) {
     let served = body.to_string().chars().count() + crate::answer::STATUS_BAR_ROOM;
     if served <= jojobot_domain::text::ANSWER_CEILING {

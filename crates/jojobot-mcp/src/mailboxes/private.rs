@@ -115,6 +115,7 @@ impl Jojobot {
 /// **The refusal for a message in a person's box.** It names the message the
 /// caller gave and nothing about it: not the box, not the sender, not the
 /// subject, not whether it exists as mail.
+// TEMPORARY(9.3.6): off the composer, read_message/mark_processed.
 pub(crate) fn private_box(id: &MessageId) -> CallToolResult {
     let how_to_proceed: WayForward = format!(
         "Nothing was delivered and nothing moved. Message '{id}' is not one any bot reads. \
@@ -135,6 +136,7 @@ pub(crate) fn private_box(id: &MessageId) -> CallToolResult {
 /// **The refusal for a message whose box the board did not list.** The box was
 /// renamed while the call ran, so nothing could say whether a person owns it.
 /// It names the message the caller gave and nothing about it.
+// TEMPORARY(9.3.6): off the composer, read_message/mark_processed.
 pub(crate) fn box_moved(id: &MessageId) -> CallToolResult {
     let how_to_proceed = WayForward::retry(format!(
         "Nothing was delivered and nothing moved. The box that message '{id}' sits in changed \
@@ -156,6 +158,7 @@ impl Jojobot {
     /// ordinary bot's box that anyone booting it can read. The answer is the
     /// no-operator one: nothing is written and the way to name an operator is
     /// in it. A handle the record does not name is not this check's business.
+    // TEMPORARY(9.3.6): off the composer, operator-dependent mail tools.
     pub(crate) async fn refuses_a_non_person_operator(
         &self,
         addressee: &EntityId,
@@ -187,6 +190,7 @@ impl Jojobot {
     /// first post or code request for the operator. A refusal as the answer when the addressee is
     /// a person who is not the operator, when nobody is, or when the box cannot
     /// be found or opened.
+    // TEMPORARY(9.3.6): off the composer, operator-dependent mail tools.
     pub(crate) async fn operators_box(
         &self,
         addressee: &EntityId,

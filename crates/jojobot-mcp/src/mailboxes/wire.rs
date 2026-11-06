@@ -77,6 +77,7 @@ impl Jojobot {
 
 /// **The owner named does not exist.** Reported with what Memory's own screen
 /// found, so a typo comes back with the handle it probably meant.
+// TEMPORARY(9.3.6): off the composer, mailbox-owner validation.
 pub(crate) fn unknown_owner(attempted: &EntityId, candidates: &[EntityMatch]) -> CallToolResult {
     let nearest: Vec<&str> = candidates.iter().map(|c| c.handle.as_str()).collect();
     let how = if nearest.is_empty() {
@@ -515,6 +516,7 @@ pub(crate) fn split_leftovers(delivery: Delivery, new_only: bool) -> (Delivery, 
 /// call that returns them. Added only when there are some, by the one function
 /// both `read_mailbox` and `post_message` use, so the two cannot describe the same
 /// mail differently.
+// TEMPORARY(9.3.6): off the composer, read_mailbox/post_message.
 pub(crate) fn note_leftovers(rendered: &mut serde_json::Value, leftovers: &[Delivered]) {
     if leftovers.is_empty() {
         return;
@@ -548,6 +550,7 @@ const LEFTOVER_IDS_SHOWN: usize = 5;
 /// names every id. `read_mailbox` is the call that lists them, and its output is
 /// what [`note_leftovers`] writes. Superseded mail is final and is not named.
 /// Added only when there is something to count.
+// TEMPORARY(9.3.6): off the composer, post_message.
 pub(crate) fn note_unshipped_mail_as_counts(
     rendered: &mut serde_json::Value,
     leftovers: &[Delivered],
@@ -578,6 +581,7 @@ pub(crate) fn drop_the_envelope_of_an_empty_delivery(rendered: &mut serde_json::
 /// is mail a read delivered and nobody finished: a bot that lost what it was
 /// handed sees counts and nothing that tells it the bodies can be read again.
 /// One sentence, because the boot carries it whole.
+// TEMPORARY(9.3.7): off the composer, start_here/read_mailbox.
 pub(crate) fn note_owed_read(body: &mut serde_json::Value) {
     let owed = body["counts"]["read"].as_u64().unwrap_or(0);
     if owed == 0 {
@@ -605,6 +609,7 @@ pub(crate) fn note_owed_read(body: &mut serde_json::Value) {
 /// ceiling with.
 ///
 /// Silent when everything fits: the answer is untouched and carries neither key.
+// TEMPORARY(9.3.6): off the composer, read_mailbox/post_message.
 pub(crate) fn fit_delivery(rendered: &mut serde_json::Value, delivery: &Delivery, beside: usize) {
     use jojobot_domain::text::ANSWER_CEILING;
     let Some(messages) = rendered

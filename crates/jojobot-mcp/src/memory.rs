@@ -415,6 +415,7 @@ impl Jojobot {
     /// `?`; the inner `Err` is a blocked body — a successful result the caller
     /// acts on. A single error type here would have let each call site pick,
     /// and both of them picked the blocked one for an outage.
+    // TEMPORARY(9.3.8): off the composer, recall/search.
     pub(crate) async fn declared(
         &self,
         wanted: &str,

@@ -58,6 +58,7 @@ impl Jojobot {
                        and `entries_omitted` say how much is not here, and nothing was \
                        dropped). `closing_focus` holds the focus, unless the story repeats it. The receipt's `changed` lists changes, or is `nothing` or `not_read`. Pass your `sid`."
     )]
+    // TEMPORARY(9.3.7): off the composer, wrap_session.
     pub(crate) async fn wrap_session(
         &self,
         Parameters(args): Parameters<WrapSessionArgs>,

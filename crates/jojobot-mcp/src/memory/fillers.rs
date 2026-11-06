@@ -32,6 +32,7 @@ impl Jojobot {
     /// record number**, or none when the write does not move the number or the
     /// caller may move it. `sent` is what the CALLER sent and `cleared` the keys
     /// it asked to take off.
+    // TEMPORARY(9.3.5): off the composer, capture/add_entity/update_entity/update_fact/merge_entities.
     pub(crate) async fn refuses_a_filler_widening(
         &self,
         verb: &'static str,

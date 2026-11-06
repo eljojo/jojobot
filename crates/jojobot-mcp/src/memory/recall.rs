@@ -1501,6 +1501,7 @@ impl Jojobot {
     ///
     /// **The caller's own arguments win.** A view says what to ask; a caller
     /// that also named a kind meant that kind.
+    // TEMPORARY(9.3.8): off the composer, recall view.
     async fn asked_by_name(
         &self,
         named: &str,
@@ -2747,6 +2748,7 @@ impl Jojobot {
                        mid-record: `limit` sizes pages; not_shown names the next offset. Empty answers \
                        name what they searched."
     )]
+    // TEMPORARY(9.3.8): off the composer, recall.
     pub(crate) async fn recall(
         &self,
         Parameters(args): Parameters<RecallArgs>,
@@ -4865,6 +4867,7 @@ impl Jojobot {
     /// here reads a second way, and none of the writes behind the newest ride
     /// along. An address that names nothing is named in its own place in the
     /// list and the others are served.
+    // TEMPORARY(9.3.8): off the composer, recall.
     async fn recall_records(
         &self,
         args: &RecallArgs,

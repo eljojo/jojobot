@@ -248,6 +248,7 @@ pub(crate) fn fix_by_of(error: &McpError) -> Option<FixBy> {
 
 /// SDK parameter failures are error results, not protocol errors. Keep their
 /// content intact and give accounting the same bounded reason the client reads.
+// TEMPORARY(9.3.8): off the composer, all tool dispatch.
 pub(crate) fn normalize_refusal(
     result: Result<CallToolResponse, McpError>,
 ) -> Result<CallToolResponse, McpError> {
@@ -377,6 +378,7 @@ impl From<&str> for WayForward {
 /// is the other call to make. [`session_unbound`] is the precedent — the shape
 /// has always carried a candidate-free refusal, so this fits it rather than
 /// stretching it into something that reads like a near miss.
+// TEMPORARY(9.3.8): off the composer, all tools with incompatible arguments.
 pub(crate) fn misused(how_to_proceed: impl Into<WayForward>) -> CallToolResult {
     let how_to_proceed = how_to_proceed.into();
     let mut body = serde_json::json!({
@@ -423,6 +425,7 @@ pub(crate) fn elide_prose(body: &mut serde_json::Value, key: &str, prose: &str, 
 /// line names the population searched, what the read left out and why, and the
 /// call that widens it. A verb adds it only when it returns nothing, so an
 /// answer that holds something carries no extra bytes.
+// TEMPORARY(9.3.8): off the composer, recall/search/list_entities/list_sent/read_mailbox.
 pub(crate) fn population_line(looked_through: &str, left_out: &[String], widen: &str) -> String {
     let left_out = if left_out.is_empty() {
         "nothing".to_string()
@@ -655,6 +658,7 @@ impl Jojobot {
         }
     }
 
+    // TEMPORARY(9.3.8): off the composer, successful write answers.
     async fn receipt_notes_once(&self, answered: &mut CallToolResponse, sid: Option<&str>) {
         let CallToolResponse::Complete(result) = answered else {
             return;
@@ -760,6 +764,7 @@ pub(crate) const STATUS_BAR_ROOM: usize = 200;
 /// (`search`, `list_sent`, `recall`) names what it left out in this one shape,
 /// so a caller who has seen one has seen them all: repeat the same call with
 /// the `offset` named. `what` is the plural noun for the items.
+// TEMPORARY(9.3.8): off the composer, recall/search/list_sent/list_runs.
 pub(crate) fn not_shown(count: usize, offset: usize, what: &str) -> serde_json::Value {
     serde_json::json!({
         "count": count,
@@ -871,6 +876,7 @@ impl Difference {
 /// on the write that needed it. The key is absent rather than empty for the
 /// same reason a reader must never infer withheld from missing — here there is
 /// nothing withheld to tell them about.
+// TEMPORARY(9.3.6): off the composer, memory writes/mark_processed.
 pub(crate) fn note_delta(body: &mut serde_json::Value, differences: Vec<Difference>) {
     if differences.is_empty() {
         return;
@@ -921,6 +927,7 @@ const TEXT_EDIT_SHOWN_BYTES: usize = 240;
 /// The words are cut at [`TEXT_EDIT_SHOWN_BYTES`] on a character boundary, and a
 /// cut is marked with `removed_cut` (or `inserted_cut`) and the full length
 /// beside it. A cut that marked nothing would read as the whole.
+// TEMPORARY(9.3.4): off the composer, update_fact/update_entity.
 pub(crate) fn note_text_edit(
     body: &mut serde_json::Value,
     edited: &jojobot_domain::memory::text_edit::TextEdited,
@@ -955,6 +962,7 @@ pub(crate) fn note_text_edit(
 /// from. A different question from [`note_delta`]: that one is about what
 /// the STORE kept versus what was sent; this is about the caller's own
 /// argument versus the frame their run is already working in.
+// TEMPORARY(9.3.4): off the composer, capture/update_fact.
 pub(crate) fn note_recorded_at_mismatch(
     body: &mut serde_json::Value,
     run_day: jiff::civil::Date,
@@ -979,6 +987,7 @@ pub(crate) fn note_recorded_at_mismatch(
 /// what the coincidence means. Silent when nothing echoes, which is every
 /// ordinary call: most fields have no shipped default to echo, and most
 /// callers are not sending one back.
+// TEMPORARY(9.3.4): off the composer, capture/update_fact.
 pub(crate) fn note_echoes_defaults(body: &mut serde_json::Value, keys: &[String]) {
     if keys.is_empty() {
         return;
@@ -1045,6 +1054,7 @@ pub(crate) fn note_reach(body: &mut serde_json::Value, reached: Vec<String>, sta
 /// The key's name sorts before every other key of a receipt, so the sentence is
 /// the first thing in the text a reader gets: paid runs read the lists of keys
 /// that stayed 465 to 790 characters in and kept going. One sentence per key.
+// TEMPORARY(9.3.4): off the composer, capture/update_fact.
 pub(crate) fn note_keys_stayed_off_the_thing(
     body: &mut serde_json::Value,
     thing: &jojobot_domain::memory::EntityId,
@@ -1075,6 +1085,7 @@ pub(crate) fn note_keys_stayed_off_the_thing(
 /// that took the due moment off says nothing either**: that move also covers a
 /// schedule that cannot be read, and a thing whose schedule cannot be read is
 /// owed, so "nothing is owed" would be false there.
+// TEMPORARY(9.3.4): off the composer, capture/update_fact/update_entity.
 pub(crate) fn falls_due_sentence(
     thing: &jojobot_domain::memory::EntityId,
     moved: jojobot_domain::attention::DueMove,
@@ -1115,6 +1126,7 @@ pub(crate) fn note_hint(body: &mut serde_json::Value, hint: String) {
 /// **Never [`Behind::Unscanned`].** [`jojobot_domain::memory::MemoryError::FoldBehind`]
 /// is raised only after a write already landed, which is the write-path
 /// route into [`Behind::Stale`] alone — that type's own doc names it.
+// TEMPORARY(9.3.5): off the composer, memory writes.
 pub(crate) fn note_fold_behind(body: &mut serde_json::Value, behind: Behind) {
     let Some(fields) = body.as_object_mut() else {
         return;
@@ -1141,6 +1153,7 @@ pub(crate) fn note_fold_behind(body: &mut serde_json::Value, behind: Behind) {
 /// its own.** A call that states its own day answers in that frame and needs
 /// no note — this is for the caller who sent nothing and would otherwise
 /// have no way to tell "the run already has a day" from "nothing has a day."
+// TEMPORARY(9.3.7): off the composer, start_here.
 pub(crate) fn note_resumed_day(
     body: &mut serde_json::Value,
     started_on: Option<jiff::civil::Date>,
@@ -1197,6 +1210,7 @@ pub(crate) fn note_teaching(body: &mut serde_json::Value, content: &str) {
 /// the way `note_teaching` does: `answers_type` and `fits_type` can name two
 /// different displaced types in the same call, and a single key either could
 /// overwrite would silently drop one.
+// TEMPORARY(9.3.8): off the composer, recall/search.
 pub(crate) fn note_type_displaced(
     body: &mut serde_json::Value,
     name: &str,

@@ -268,6 +268,7 @@ pub(crate) const FIELD_SHADOWS_ARGUMENT_DOMAIN: &str = "field-shadows-argument";
 /// key and verb rather than a generic warning — a caller who sees their own
 /// word reflected back trusts the answer; one told about "a field" has to
 /// work out which one meant them.
+// TEMPORARY(9.3.4): off the composer, capture/update_fact.
 pub(crate) fn field_shadows_argument_teaching(key: &str, verb: &str) -> String {
     format!(
         "The field \"{key}\" is stored as ordinary data — jojobot never reads a claim's fields \
@@ -397,6 +398,7 @@ pub(crate) fn where_example(objects: &[serde_json::Value]) -> Option<(String, St
 /// **The sentence for [`where_on_a_broad_read_domain`]**, naming the kind the session just
 /// read, how many it got back and an example from their own keys, so it is a line about
 /// this answer and not about a language.
+// TEMPORARY(9.3.8): off the composer, recall.
 pub(crate) fn where_on_a_broad_read_teaching(
     kind: &str,
     count: usize,
@@ -511,6 +513,7 @@ impl Jojobot {
     /// asked.** The note says no record answers the type, which an answer left
     /// empty by a second narrowing cannot say, so such a read neither teaches
     /// nor spends the row — a later plain empty read still teaches.
+    // TEMPORARY(9.3.8): off the composer, recall/search.
     pub(crate) async fn note_empty_answers_type(
         &self,
         body: &mut serde_json::Value,
@@ -530,6 +533,7 @@ impl Jojobot {
     /// session that sets `depends_on`.** Gated on the write setting the key on a
     /// project's work, never on the verb: a write that sets other keys spends
     /// nothing, and the four verbs that take `sets` share one ledger row.
+    // TEMPORARY(9.3.4): off the composer, add_entity/capture/update_fact/update_entity.
     pub(crate) async fn note_depends_on_read(
         &self,
         fact: &Fact,
@@ -558,6 +562,7 @@ impl Jojobot {
     /// so it is never made twice whatever the session does next. The act is
     /// never refused or delayed by this; a ledger that cannot answer offers
     /// nothing.
+    // TEMPORARY(9.3.4): off the composer, add_entity/capture.
     pub(crate) async fn offer_skills_for(
         &self,
         act: crate::orientation::skills::Act,

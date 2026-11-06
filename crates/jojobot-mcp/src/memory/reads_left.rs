@@ -38,6 +38,7 @@ impl ReadsLeft {
     }
 
     /// **The block the answer carries**, or nothing when nothing was left.
+    // TEMPORARY(9.3.8): off the composer, memory tools/start_here.
     pub(crate) fn block(&self) -> Option<serde_json::Value> {
         let left = self.0.lock().expect("never poisoned");
         (!left.is_empty()).then(|| {

@@ -233,6 +233,7 @@ impl Jojobot {
                        earlier rename moved it is told what it is called now. The receipt's \
                        `changed` lists changes, or is `nothing` or `not_read`."
     )]
+    // TEMPORARY(9.3.4): off the composer, rename_entity.
     pub(crate) async fn rename_entity(
         &self,
         Parameters(args): Parameters<RenameEntityArgs>,
@@ -454,6 +455,7 @@ impl Jojobot {
     /// handle, or an error when this call is finishing a rename an earlier call
     /// wrote and so cannot say what it changed.
     #[allow(clippy::too_many_arguments)]
+    // TEMPORARY(9.3.4): off the composer, rename_entity.
     async fn renamed(
         &self,
         args: &RenameEntityArgs,

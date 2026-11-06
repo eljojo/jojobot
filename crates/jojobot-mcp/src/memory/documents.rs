@@ -136,6 +136,7 @@ fn continues_none(new: &NewFact) -> bool {
 
 /// **A write's outcome as the fact it landed**, or the answer the caller gives
 /// for it. A fold that could not refresh after a landed write still landed.
+// TEMPORARY(9.3.4): off the composer, put_document.
 fn landed_fact(
     outcome: Result<Guarded<Fact>, MemoryError>,
     fold_behind: &mut Option<jojobot_domain::memory::search::Behind>,
@@ -411,6 +412,7 @@ impl Jojobot {
     /// **The instant a caller's `as_of` names.** A day means the end of that
     /// day, in the zone the asking run works in, else the instance's: the
     /// document as it stood when that day was over. An instant is taken as given.
+    // TEMPORARY(9.3.8): off the composer, read_document/put_document.
     pub(crate) async fn moment_of(
         &self,
         asked: &str,
@@ -452,6 +454,7 @@ impl Jojobot {
     /// that rests on a write with no moment is refused naming it. A store that
     /// stops partway leaves what landed, and a second call finishes: it works out
     /// what is left from what is stored.
+    // TEMPORARY(9.3.4): off the composer, put_document restore_to.
     pub(crate) async fn restore_document(
         &self,
         subject: &EntityId,
@@ -771,6 +774,7 @@ impl Jojobot {
     /// moves with the chunks that carry it on, and lands behind the target's own
     /// chunks, so a section is never cut in two by a move. A chunk is not moved
     /// on its own: the section it carries on is.
+    // TEMPORARY(9.3.4): off the composer, update_fact.
     pub(crate) async fn plan_move(
         &self,
         address: &FactAddress,
@@ -943,6 +947,7 @@ fn seams_after_a_move(
 /// A refusal that is an answer gains the keys; one that is an error gains them
 /// in its data, and its stock words, which say nothing was written, are replaced
 /// by `words` because here they would be false.
+// TEMPORARY(9.3.4): off the composer, put_document/update_fact.
 pub(crate) fn stopped_with(
     refused: Result<CallToolResult, McpError>,
     carried: serde_json::Value,

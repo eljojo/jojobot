@@ -13,6 +13,7 @@ use crate::LeftOut;
 
 /// Why the owed pass left things out, by reason and kind, and the call that
 /// lists them. `None` when nothing was left out.
+// TEMPORARY(9.3.8): off the composer, recall.
 pub fn overdue_excluded_because(
     because: &BTreeMap<LeftOut, BTreeMap<String, usize>>,
 ) -> Option<serde_json::Value> {
@@ -39,6 +40,7 @@ pub fn overdue_excluded_because(
 
 /// The line beside a readiness list: what ready means, and the argument that
 /// narrows it.
+// TEMPORARY(9.3.8): off the composer, recall.
 pub fn ready_note(ask: Ask) -> &'static str {
     match ask {
         Ask::Ready => {
@@ -56,6 +58,7 @@ pub fn ready_note(ask: Ask) -> &'static str {
 
 /// How many pieces of work the readiness question left out, and the call that
 /// says why. `None` when nothing was left out.
+// TEMPORARY(9.3.8): off the composer, recall.
 pub fn ready_left_out(left: usize, ask: Option<Ask>) -> Option<serde_json::Value> {
     (left > 0).then(|| {
         serde_json::json!({

@@ -16,6 +16,7 @@ pub(crate) use codes::{MAILBOXES_REFUSAL_CODES, mailbox_refusal_code};
 ///
 /// Mail above or beside the caller stays unreadable, even in the archive.
 /// Posting asks its owner without reading it or taking delivery.
+// TEMPORARY(9.3.6): off the composer, mail tools.
 pub(crate) fn not_yours(id: &MessageId, theirs: &MailboxName, above: bool) -> CallToolResult {
     let relation = if above {
         "above you on the chart"
@@ -50,6 +51,7 @@ pub(crate) enum BlockedBox {
 /// suspects you meant. A successful result carrying a structured payload, not a
 /// protocol error — the same shape the Memory verbs use, so one client-side
 /// branch handles both contexts.
+// TEMPORARY(9.3.6): off the composer, mail tools.
 pub(crate) fn mailbox_blocked(
     attempted: &MailboxName,
     candidates: &[MailboxMatch],
@@ -122,6 +124,7 @@ pub(crate) fn mailbox_blocked_body(
 /// **The reason comes from the validator rather than from a copy of it here.**
 /// A subject can be refused for more than one fault, and a refusal that named
 /// one of them would be a catalogue that goes stale the day another is added.
+// TEMPORARY(9.3.6): off the composer, mail tools.
 pub(crate) fn subject_declined(attempted: &str, said: &MailboxError) -> CallToolResult {
     mailbox_blocked_body(
         "SubjectDeclined",
@@ -151,6 +154,7 @@ pub(crate) fn subject_declined(attempted: &str, said: &MailboxError) -> CallTool
 /// what is malformed does not go in it. The detail is logged instead; see
 /// [`crate::boundary`]. What an agent needs is that retrying will not help
 /// and that the message is unhandled.
+// TEMPORARY(9.3.6): off the composer, mail tools.
 pub(crate) fn mailbox_quarantined(attempted: &str, reason: &str) -> CallToolResult {
     let how_to_proceed: WayForward = format!(
         "{NOTHING_RAN}, and retrying will not help — this is not a missing message. \
@@ -173,6 +177,7 @@ pub(crate) fn mailbox_quarantined(attempted: &str, reason: &str) -> CallToolResu
 /// **Told apart from [`mailbox_quarantined`] in every word.** Damage says a
 /// person has to repair it; this says who decided and why, and never says
 /// "repair" at all — there is nothing broken here.
+// TEMPORARY(9.3.6): off the composer, mail tools.
 pub(crate) fn mailbox_quarantined_on_purpose(
     attempted: &str,
     by: &str,
@@ -200,6 +205,7 @@ pub(crate) fn mailbox_quarantined_on_purpose(
 /// `mark_processed`, retiring or quarantining, and the two answers read alike
 /// on purpose: a bot's reach over mail it did not receive is one rule, not
 /// two.
+// TEMPORARY(9.3.6): off the composer, mail tools.
 pub(crate) fn mailbox_not_your_message(attempted: &str, mailbox: &str, by: &str) -> CallToolResult {
     let how_to_proceed: WayForward = format!(
         "Nothing was written. Message '{attempted}' is in '{mailbox}', not '{by}' — a message is \
@@ -221,6 +227,7 @@ pub(crate) fn mailbox_not_your_message(attempted: &str, mailbox: &str, by: &str)
 /// quarantined card that names something jojobot cannot read. Different answers
 /// — one is repairable by a better id, the other only by a person on the board
 /// — in one shape.
+// TEMPORARY(9.3.6): off the composer, mail tools.
 pub(crate) fn mailbox_declined(e: MailboxError) -> Result<CallToolResult, McpError> {
     let code = mailbox_refusal_code(&e);
     let word = mailbox_fix_by(&e);
@@ -358,6 +365,7 @@ fn mailbox_malformed(attempted: &str, said: &MailboxError) -> CallToolResult {
 
 /// Map a domain [`MailboxError`] to an MCP error, splitting client mistakes from
 /// server-side failures — the same split [`memory_error`] makes.
+// TEMPORARY(9.3.6): off the composer, mail tools.
 pub(crate) fn mailbox_error(e: MailboxError) -> McpError {
     let code = mailbox_refusal_code(&e);
     let word = mailbox_fix_by(&e);

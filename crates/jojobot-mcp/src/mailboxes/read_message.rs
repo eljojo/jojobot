@@ -60,6 +60,7 @@ impl Jojobot {
                        it carries `written_by_other_run`, naming that run and whether it has \
                        since ended."
     )]
+    // TEMPORARY(9.3.6): off the composer, read_message.
     pub(crate) async fn read_message(
         &self,
         Parameters(args): Parameters<ReadMessageArgs>,

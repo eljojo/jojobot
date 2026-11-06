@@ -80,6 +80,7 @@ impl Jojobot {
                        direction, a second call: recall that bot with follow, relation \
                        reports_to, direction in."
     )]
+    // TEMPORARY(9.3.7): off the composer, set_charter.
     pub(crate) async fn set_charter(
         &self,
         Parameters(args): Parameters<SetCharterArgs>,

@@ -41,6 +41,7 @@ fn projected_due_fields(
 ///
 /// Empty when there are no carriers: a sentence about no keys would teach
 /// nothing, and a caller that asks for one must not publish a stub.
+// TEMPORARY(9.3.5): off the composer, capture/update_fact metadata.
 pub(crate) fn what_makes_a_thing_fall_due(carriers: &[&dyn attention::Carrier]) -> String {
     fn named(keys: &[String], last: &str) -> String {
         let quoted: Vec<String> = keys.iter().map(|key| format!("`{key}`")).collect();
@@ -139,6 +140,7 @@ pub(crate) fn what_makes_a_thing_fall_due(carriers: &[&dyn attention::Carrier]) 
 /// the shipped `record-labels` type, so a seventh is named with no edit.
 ///
 /// Empty when there are none: a sentence about no keys would teach nothing.
+// TEMPORARY(9.3.5): off the composer, capture/update_fact metadata.
 pub(crate) fn what_describes_its_claim(keys: &[String]) -> String {
     let quoted: Vec<String> = keys.iter().map(|key| format!("`{key}`")).collect();
     let Some((tail, rest)) = quoted.split_last() else {
@@ -345,6 +347,7 @@ impl Jojobot {
             .await
     }
 
+    // TEMPORARY(9.3.4): off the composer, capture/update_fact/update_entity.
     async fn end_what_is_owed_by(
         &self,
         verb: &str,
@@ -474,6 +477,7 @@ impl Jojobot {
     /// already in the setting bag, or one a call did not send, is never hinted. A
     /// key the store let reach (a record from before own fields stayed) is not
     /// hinted either: it reached.
+    // TEMPORARY(9.3.4): off the composer, capture/update_fact.
     pub(crate) async fn note_reach_and_hint(
         &self,
         body: &mut serde_json::Value,
@@ -543,6 +547,7 @@ impl Jojobot {
     /// refused, and this tells the writer so while the keys can still be added.
     /// The keys are the ones the refusal reads (`graph::Narrowing`). Nothing is
     /// said about any other kind, nor when the store cannot answer.
+    // TEMPORARY(9.3.4): off the composer, add_entity/capture/update_fact/update_entity.
     pub(crate) async fn note_view_narrows_nothing(
         &self,
         body: &mut serde_json::Value,
@@ -588,6 +593,7 @@ impl Jojobot {
     /// does not hold now.** A key the record shared with an earlier one goes back
     /// to that record's value and has not left; a key the record alone set is
     /// gone; a key that stayed on the record was never on the thing.
+    // TEMPORARY(9.3.4): off the composer, update_fact/retract.
     pub(crate) async fn note_what_left(
         &self,
         body: &mut serde_json::Value,
@@ -707,6 +713,7 @@ impl Jojobot {
     /// moment is a leftover of a write the deployed code once allowed, and the
     /// advice would loop. A write of it is refused either way. A store that
     /// cannot be read answers as before, with the refusal.
+    // TEMPORARY(9.3.4): off the composer, add_entity/capture/update_fact/update_entity.
     pub(crate) async fn refuses_a_hand_written_due_moment(
         &self,
         subject: &EntityId,

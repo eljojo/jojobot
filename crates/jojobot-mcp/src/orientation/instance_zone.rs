@@ -186,6 +186,7 @@ impl Jojobot {
     /// is no entity yet and which two writes make one. A record that is absent
     /// and a key that is absent say the same thing. A store that cannot be read
     /// says that, and never tells the caller to name an operator.
+    // TEMPORARY(9.3.7): off the composer, start_here.
     pub(crate) async fn operator_answer(&self) -> serde_json::Value {
         match self.instance_operator().await {
             Ok(Some(held)) if held.kind() != Some(EntityKind::PERSON) => {
@@ -229,6 +230,7 @@ impl ZoneFrom {
 /// is kept to those two words because the anonymous boot is near its ceiling;
 /// the essay says where the operator writes a zone. A value on the record that
 /// is no zone is named, because nothing else would tell the operator it failed.
+// TEMPORARY(9.3.7): off the composer, start_here.
 pub(crate) fn zone_answer(
     zone: Option<&str>,
     from: ZoneFrom,

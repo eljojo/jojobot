@@ -86,6 +86,7 @@ impl Jojobot {
                        ROLE, this beat renews it, under the same rule as any other write — the lease is \
                        not journal's alone to keep fresh. The receipt's `changed` lists changes, or is `nothing` or `not_read`."
     )]
+    // TEMPORARY(9.3.7): off the composer, journal.
     pub(crate) async fn journal(
         &self,
         Parameters(args): Parameters<JournalArgs>,
@@ -724,6 +725,7 @@ pub(crate) enum RoleRelease {
 
 /// **The one place a release's outcome becomes an answer**: one line per role
 /// the run held, or nothing when it held none.
+// TEMPORARY(9.3.7): off the composer, wrap_session.
 pub(crate) fn roles_json(released: &[RoleRelease]) -> Option<serde_json::Value> {
     if released.is_empty() {
         return None;

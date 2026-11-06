@@ -297,6 +297,7 @@ pub fn stale_in(objects: &[Object], stale: &BTreeSet<EntityId>) -> BTreeSet<Enti
 }
 
 /// **The one sentence an answer carries when it hid a stored `working_on`.**
+// TEMPORARY(9.3.8): off the composer, recall.
 pub(crate) fn hidden_note(bots: &BTreeSet<EntityId>) -> String {
     format!(
         "working_on of {} is not shown: the session that wrote it is no longer live, so what \

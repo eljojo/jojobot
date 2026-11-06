@@ -132,6 +132,7 @@ impl Jojobot {
     /// enough: a claim with details holds hundreds of words, and nearly every
     /// one is rare in some kind of a small store. The write has landed either
     /// way, and a read that fails adds nothing.
+    // TEMPORARY(9.3.4): off the composer, capture/update_fact.
     pub(crate) async fn note_possible_subject(
         &self,
         fact: &Fact,

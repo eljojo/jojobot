@@ -5,6 +5,7 @@ use super::*;
 /// flagged it, and none of these was flagged, they are simply what there is.
 /// A similarity screen would be worse still, since it answers a wild guess with
 /// nothing, which reads as "there are no views".
+// TEMPORARY(9.3.8): off the composer, recall.
 pub(super) fn no_such_view(handle: &EntityId, known: &[Entity]) -> CallToolResult {
     let names = known
         .iter()

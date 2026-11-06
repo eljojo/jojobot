@@ -132,6 +132,7 @@ pub(crate) async fn update_fact_lifting(
 /// (the token and the reason it takes); any other refusal is answered as it
 /// always was. Only a verb that can build a [`TokenSlot`] reaches this, so no
 /// verb promises an override it does not take.
+// TEMPORARY(9.3.4): off the composer, capture/update_fact.
 pub(crate) fn declined_or_lifted(
     verb: &'static str,
     refused: MemoryError,

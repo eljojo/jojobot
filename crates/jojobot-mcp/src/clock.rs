@@ -27,6 +27,7 @@ impl Jojobot {
     /// what the day changes rather than only naming it: a reader who learns the
     /// day but not that the stamps moved with it would take the record's own
     /// moments as real.
+    // TEMPORARY(9.3.7): off the composer, start_here/ping.
     pub(crate) fn stated_clock(&self) -> Option<serde_json::Value> {
         let day = self.clock.stated()?;
         Some(serde_json::json!({

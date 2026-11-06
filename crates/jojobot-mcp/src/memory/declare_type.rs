@@ -242,6 +242,7 @@ impl Jojobot {
                        what is there without asking again. The receipt's `changed` \
                        lists changes in the type, or is `nothing` or `not_read`."
     )]
+    // TEMPORARY(9.3.5): off the composer, declare_type.
     pub(crate) async fn declare_type(
         &self,
         Parameters(mut args): Parameters<DeclareTypeArgs>,

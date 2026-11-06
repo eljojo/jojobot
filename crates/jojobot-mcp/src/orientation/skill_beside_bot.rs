@@ -44,6 +44,7 @@ pub(crate) fn dropped_by_a_fetch(args: &OrientArgs, what: &str) -> Vec<&'static 
 /// **The refusal for a fetch that carries boot arguments**, naming each one.
 /// The whole call is refused, because serving the body would leave the caller
 /// believing the rest had happened.
+// TEMPORARY(9.3.7): off the composer, start_here.
 pub(crate) fn dropped_by_a_fetch_refusal(args: &OrientArgs, what: &str) -> Option<CallToolResult> {
     let dropped = dropped_by_a_fetch(args, what);
     if dropped.is_empty() {
@@ -75,6 +76,7 @@ pub(crate) fn compaction_beside_a_fetch(what: &str) -> String {
 }
 
 /// **The refusal for a section asked for beside a bot**, live run or not.
+// TEMPORARY(9.3.7): off the composer, start_here.
 pub(crate) fn section_beside_bot_refusal() -> CallToolResult {
     misused(
         "reading a section and booting an identity are two calls: a fetch starts no \
@@ -94,6 +96,7 @@ impl Jojobot {
     /// refusal, a run that stopped without wrapping is named, and the rest
     /// (no key, another bot's run) get the two-calls refusal. `carried` is
     /// [`Jojobot::standing`] of the same key.
+    // TEMPORARY(9.3.7): off the composer, start_here.
     pub(crate) fn skill_beside_bot_refusal(
         &self,
         bot: &EntityId,

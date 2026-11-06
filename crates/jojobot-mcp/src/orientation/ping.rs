@@ -32,6 +32,7 @@ impl Jojobot {
                        still addresses your session — the other half of the same question, and \
                        a handle is never turned away here. No side effects."
     )]
+    // TEMPORARY(9.3.7): off the composer, ping.
     pub(crate) async fn ping(
         &self,
         Parameters(args): Parameters<PingArgs>,

@@ -209,6 +209,7 @@ pub struct ViewRequest {
 }
 
 /// Parse the optional day once for the prepared question and its callers.
+// TEMPORARY(9.3.8): off the composer, MCP date-consuming verbs.
 pub fn parse_date(raw: Option<&str>) -> Result<Option<jiff::civil::Date>, String> {
     let Some(named) = raw.map(str::trim).filter(|day| !day.is_empty()) else {
         return Ok(None);

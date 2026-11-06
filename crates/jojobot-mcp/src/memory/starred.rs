@@ -37,6 +37,7 @@ impl Jojobot {
     /// the rules this session unstarred are not reachable from it.** Only for a
     /// bot's own record that stands for nothing, once the session has unstarred
     /// three or more rules of that bot.
+    // TEMPORARY(9.3.4): off the composer, capture/update_fact.
     pub(crate) fn note_unstars_without_a_summary(
         &self,
         fact: &Fact,

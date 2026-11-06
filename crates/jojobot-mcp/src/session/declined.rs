@@ -11,6 +11,7 @@ pub(crate) use codes::{SESSION_REFUSAL_CODES, session_refusal_code};
 
 /// An amend on a session that has not begun. Refused rather than turned into a
 /// first entry.
+// TEMPORARY(9.3.7): off the composer, amend_journal.
 pub(crate) fn session_nothing_to_amend() -> CallToolResult {
     // True of both ways to get here: a bot with no session at all has
     // nothing written yet; a bot whose last session was wrapped or swept
@@ -45,6 +46,7 @@ pub(crate) fn session_nothing_to_amend() -> CallToolResult {
 /// something the caller ever sent or received as an address, so naming it
 /// would leave a caller unable to tell that the run a status check just
 /// called `wrapped` is the same one this refusal is about.
+// TEMPORARY(9.3.8): off the composer, journal/amend_journal/wrap_session/recall.
 pub(crate) fn session_declined(e: SessionError, sid: &str) -> Result<CallToolResult, McpError> {
     let code = session_refusal_code(&e);
     let word = session_fix_by(&e);
@@ -246,6 +248,7 @@ fn session_declined_arms(e: SessionError, sid: &str) -> Result<CallToolResult, M
 
 /// Map a [`SessionError`] to an MCP error, splitting client mistakes from
 /// server-side failures — the same split the other two contexts make.
+// TEMPORARY(9.3.8): off the composer, session-store call paths.
 pub(crate) fn session_error(e: SessionError) -> McpError {
     let code = session_refusal_code(&e);
     let word = session_fix_by(&e);

@@ -34,6 +34,7 @@ pub struct ConfirmedArg {
 /// The domain receipt a call's `receipt` argument names. **Exactly one of
 /// `check` and `confirmed`**: neither is no receipt, and both would be two
 /// receipts under one name.
+// TEMPORARY(9.3.4): off the composer, capture/update_fact.
 pub(crate) fn parse_receipt(arg: &ReceiptArg) -> Result<Receipt, McpError> {
     match (&arg.check, &arg.confirmed) {
         (Some(check), None) => Ok(Receipt::Check(check.clone())),

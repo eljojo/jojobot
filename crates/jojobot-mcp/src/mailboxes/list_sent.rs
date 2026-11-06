@@ -91,6 +91,7 @@ impl Jojobot {
                        mid-message, and counts what it left out under not_shown with the \
                        `offset` that reads the next page."
     )]
+    // TEMPORARY(9.3.6): off the composer, list_sent.
     pub(crate) async fn list_sent(
         &self,
         Parameters(args): Parameters<ListSentArgs>,

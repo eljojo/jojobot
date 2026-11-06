@@ -356,6 +356,7 @@ impl Jojobot {
     ///
     /// A verb this server does not serve is not this check's business and
     /// passes through to the router, which owns that answer.
+    // TEMPORARY(9.3.8): off the composer, all served tools.
     pub(crate) fn unimplemented_arguments(
         &self,
         request: &CallToolRequestParams,
@@ -441,6 +442,7 @@ impl Jojobot {
     /// gate above does: blocked, nothing written, what is missing and what the
     /// verb takes. It runs after that gate, so an argument the verb does not
     /// have is named first.
+    // TEMPORARY(9.3.8): off the composer, all served tools.
     pub(crate) fn missing_arguments(
         &self,
         request: &CallToolRequestParams,

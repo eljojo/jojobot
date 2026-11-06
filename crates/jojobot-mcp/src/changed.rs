@@ -522,6 +522,7 @@ fn claim_changes(before: &Fact, after: &Fact, changes: &mut Vec<Change>) {
 /// **Put the block on a receipt.** The list, or `nothing`, or `not_read` with a
 /// line saying why; a list past [`CHANGES_SHOWN`] is cut and says how many it
 /// left out.
+// TEMPORARY(9.3.7): off the composer, write receipts.
 pub(crate) fn note_changed(body: &mut serde_json::Value, changed: Changed) {
     let Some(fields) = body.as_object_mut() else {
         return;

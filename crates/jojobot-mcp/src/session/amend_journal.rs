@@ -43,6 +43,7 @@ impl Jojobot {
                        wrote the text; a resume through start_here returns the newest entries. The \
                        receipt's `changed` lists changes, or is `nothing` or `not_read`."
     )]
+    // TEMPORARY(9.3.7): off the composer, amend_journal.
     pub(crate) async fn amend_journal(
         &self,
         Parameters(args): Parameters<AmendJournalArgs>,

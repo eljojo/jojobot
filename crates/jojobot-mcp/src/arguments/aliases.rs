@@ -46,6 +46,7 @@ pub(crate) fn teaching(verb: &str, canonical: &str) -> String {
 }
 
 impl Jojobot {
+    // TEMPORARY(9.3.8): off the composer, read_message/mark_processed/recall/read_document/add_entity/set_charter.
     pub(crate) async fn teach_argument_names(
         &self,
         names: &[Name],

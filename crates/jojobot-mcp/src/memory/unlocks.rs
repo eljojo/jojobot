@@ -187,6 +187,7 @@ impl Jojobot {
     /// step repeats until it is taken, because the loop is still unable to
     /// answer. A read that fails adds nothing, silently: this is
     /// bookkeeping riding on somebody else's write and must never fail it.
+    // TEMPORARY(9.3.4): off the composer, capture/add_entity/update_fact.
     pub(crate) async fn note_unlocks(
         &self,
         subject: &EntityId,

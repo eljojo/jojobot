@@ -234,6 +234,7 @@ impl Jojobot {
     ///
     /// **A read that fails refuses**, because a check that could not be made is
     /// not a licence.
+    // TEMPORARY(9.3.5): off the composer, archive_entity/merge_entities/rename_entity.
     pub(crate) async fn refuse_a_stranger_the_role_object(
         &self,
         by: &EntityId,

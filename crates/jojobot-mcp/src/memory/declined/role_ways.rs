@@ -1,6 +1,7 @@
 /// **What to do about a role somebody else holds** — said once, for the
 /// refusal a write gets and for the `refused` outcome of a claim at the boot
 /// door, so the two cannot come to say different things.
+// TEMPORARY(9.3.8): off the composer, start_here/memory role conflicts.
 pub(crate) fn role_taken_way_forward(
     role: &str,
     holder: &str,
@@ -19,6 +20,7 @@ pub(crate) fn role_taken_way_forward(
 /// **What to do about a role that belongs to another bot.** The refusal a claim
 /// at the boot door gets when the role is carried by, or sits under, a bot
 /// other than the one booting.
+// TEMPORARY(9.3.7): off the composer, start_here.
 pub(crate) fn role_owned_way_forward(role: &str, owner: &str) -> String {
     let slug = owner.split_once(':').map_or(owner, |(_, slug)| slug);
     format!(
@@ -31,6 +33,7 @@ pub(crate) fn role_owned_way_forward(role: &str, owner: &str) -> String {
 /// the boot door gets when the object `role:<role>` stands archived: the way
 /// forward is to restore the object, which only the bot it belongs to or a bot
 /// heading the chart may do, and then claim again.
+// TEMPORARY(9.3.7): off the composer, start_here.
 pub(crate) fn role_archived_way_forward(
     role: &str,
     object: &str,

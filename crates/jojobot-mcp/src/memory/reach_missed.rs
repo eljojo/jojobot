@@ -20,6 +20,7 @@ impl Jojobot {
     /// so a key jojobot computed (a check-in's outcome and dates, the review
     /// stamp, a due moment) is never reported as a landing. A read that fails adds
     /// nothing: the write has landed either way.
+    // TEMPORARY(9.3.4): off the composer, capture/update_fact.
     pub(crate) async fn note_keys_missed_a_named_thing(
         &self,
         body: &mut serde_json::Value,

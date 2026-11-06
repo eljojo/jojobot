@@ -97,6 +97,7 @@ impl Stopped {
     /// A store failure is told as `retry` with `resend`. A refusal is told as
     /// `change`, with the refusal's words, because the same call under the same id
     /// is refused the same way. Anything else is a person's.
+    // TEMPORARY(9.3.7): off the composer, partial committed writes.
     pub(crate) fn unfinished(&self, landed: &str, resend: &str) -> WayForward {
         match self {
             Stopped::Store => WayForward::retry(format!("{landed} {resend}")),

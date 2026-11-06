@@ -52,6 +52,7 @@ impl Jojobot {
                        used. A document that does not exist is a blocked result with \
                        candidates."
     )]
+    // TEMPORARY(9.3.8): off the composer, read_document.
     pub(crate) async fn read_document(
         &self,
         Parameters(args): Parameters<ReadDocumentArgs>,

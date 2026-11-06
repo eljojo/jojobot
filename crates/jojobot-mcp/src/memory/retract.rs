@@ -101,6 +101,7 @@ impl Jojobot {
                        jojobot holds. An address that names no claim is refused with the \
                        addresses that do exist. The receipt's `changed` lists changes, or is `nothing` or `not_read`."
     )]
+    // TEMPORARY(9.3.4): off the composer, retract.
     pub(crate) async fn retract(
         &self,
         Parameters(args): Parameters<RetractArgs>,

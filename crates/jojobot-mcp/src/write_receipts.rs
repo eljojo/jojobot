@@ -29,6 +29,7 @@ pub(crate) fn saving() -> bool {
 
 /// Apply receipt mode before accounting and notices; lean leaves notices pending.
 /// An unreadable setting keeps normal mode and says why.
+// TEMPORARY(9.3.4): off the composer, add_entity/capture/update_fact/update_entity.
 pub(crate) fn compact(answered: &mut CallToolResponse) -> bool {
     if !TOKEN_SAVING.try_with(Option::is_some).unwrap_or(false) {
         return false;
@@ -104,6 +105,7 @@ impl Call {
         })
     }
 
+    // TEMPORARY(9.3.4): off the composer, add_entity/capture/update_fact/update_entity.
     pub(crate) fn finish(&self, answered: &mut CallToolResponse) {
         let CallToolResponse::Complete(result) = answered else {
             return;

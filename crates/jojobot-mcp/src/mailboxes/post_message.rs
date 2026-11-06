@@ -163,6 +163,7 @@ impl Jojobot {
     /// handle is an address. A name nobody answers to is no bot, and booting it
     /// opens nothing, so it is told the roster, the add_entity that makes a bot
     /// with its box, and the operator.
+    // TEMPORARY(9.3.6): off the composer, post_message/list_sent.
     pub(crate) async fn no_such_addressee(
         &self,
         addressee: &EntityId,
@@ -451,6 +452,7 @@ impl Jojobot {
                        blocked with nothing written. The receipt's `changed` lists \
                        what moved."
     )]
+    // TEMPORARY(9.3.6): off the composer, post_message.
     pub(crate) async fn post_message(
         &self,
         Parameters(args): Parameters<PostMessageArgs>,
@@ -584,6 +586,7 @@ impl Jojobot {
     /// message and the sender's own mail, taken in the same call. A call that
     /// finds the message already posted under its id comes here too, with the
     /// message as the earlier call posted it.
+    // TEMPORARY(9.3.6): off the composer, post_message.
     async fn posted(
         &self,
         sid: &str,

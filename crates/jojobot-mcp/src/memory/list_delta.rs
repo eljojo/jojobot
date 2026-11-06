@@ -33,6 +33,7 @@ impl Jojobot {
     ///
     /// Refused, with nothing written: a key declared no list, a key named in
     /// `sets` as well (two answers), and a thing that does not exist.
+    // TEMPORARY(9.3.4): off the composer, capture/update_fact.
     pub(crate) async fn resolve_list_deltas(
         &self,
         thing: &EntityId,

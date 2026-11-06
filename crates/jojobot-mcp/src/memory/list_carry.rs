@@ -57,6 +57,7 @@ impl Jojobot {
     /// **The carry sentence a tick receipt delivers, or none.** The plan must read
     /// open first and the session's one teaching is spent after that, never
     /// before: a tick that leaves nothing open must not use it up.
+    // TEMPORARY(9.3.3): off the composer, capture.
     pub(crate) async fn carry_teaching_after_ticks(
         &self,
         list: &EntityId,

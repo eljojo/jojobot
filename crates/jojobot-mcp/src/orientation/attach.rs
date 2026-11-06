@@ -42,6 +42,7 @@ impl Jojobot {
     /// A session store that is down degrades exactly as the mailbox world does:
     /// the boot still lands, and the block says jojobot does not know rather
     /// than guessing.
+    // TEMPORARY(9.3.7): off the composer, start_here.
     pub(crate) async fn attach(
         &self,
         bot: &EntityId,
@@ -523,6 +524,7 @@ impl Jojobot {
     /// run still `wrapped`. It starts no run, abandons no run, takes no role
     /// and renews no lease. A code with no window behind it, or one whose run
     /// a newer run has since followed, is refused with the way to a fresh run.
+    // TEMPORARY(9.3.7): off the composer, start_here.
     async fn resume_by_wrap_code(
         &self,
         bot: &EntityId,
@@ -700,6 +702,7 @@ impl Jojobot {
     /// into a nearby name, which would be jojobot guessing which session
     /// somebody meant. **Nothing the caller sent is repeated in a refusal**:
     /// the run is named by what the registry holds.
+    // TEMPORARY(9.3.7): off the composer, start_here.
     pub(crate) async fn resumable(
         &self,
         bot: &EntityId,
@@ -849,6 +852,7 @@ impl Jojobot {
     /// the resume. By now the run's vouchers are void and its key is new, so a
     /// refusal here says what landed: the run is still stopped, and the same
     /// resume goes through once the store answers.
+    // TEMPORARY(9.3.7): off the composer, start_here.
     async fn reopen_for_resume(
         &self,
         name: &sid::Sid,
@@ -900,6 +904,7 @@ impl Jojobot {
     /// with `by`, so the sitting that holds it is told why. If the card cannot
     /// be written nothing changes and the call is refused: a key the store does
     /// not hold would be brought back by the next restart.
+    // TEMPORARY(9.3.7): off the composer, start_here.
     pub(crate) async fn rekey(
         &self,
         name: &sid::Sid,

@@ -391,6 +391,7 @@ impl Noticed {
     /// shown and how long ago, the words the two share, the verb that folds one
     /// into the other, and what the archive verb would leave behind. It asks;
     /// nothing was refused.
+    // TEMPORARY(9.3.4): off the composer, add_entity.
     pub(crate) fn question(&self, created: &str) -> String {
         format!(
             "This session was shown {} ({}) {} ago, and {created} shares the words {} with it. \

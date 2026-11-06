@@ -33,6 +33,7 @@ pub fn frame_of_fields(fields: &std::collections::BTreeMap<String, String>) -> j
 /// count, and the sentence says what it holds, its kind, and where a person is
 /// written. The entity exists, so it never says there is none. The boot and a
 /// post to that handle both carry this one sentence, so they cannot disagree.
+// TEMPORARY(9.3.7): off the composer, start_here/post_message.
 pub fn operator_is_not_a_person(held: &EntityId) -> String {
     let kind = held.kind().map_or("unknown kind", |kind| kind.as_token());
     format!(
@@ -46,6 +47,7 @@ pub fn operator_is_not_a_person(held: &EntityId) -> String {
 /// exactly one, so several is damage and not a choice: no caller picks one of them,
 /// and a person has to repair it. The verbs' refusal and the operator's page both
 /// say this sentence, so they cannot tell a caller different things (rule 498).
+// TEMPORARY(9.3.6): off the composer, operator-dependent MCP routes.
 pub fn operator_owns_several_boxes(names: &[String]) -> String {
     format!(
         "The operator owns more than one mailbox ({}), and one person has exactly one. This is \

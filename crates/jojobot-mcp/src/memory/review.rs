@@ -29,6 +29,7 @@ impl Jojobot {
     /// archive gave. `sent` and
     /// `cleared` are what the CALLER sent,
     /// taken before jojobot adds its own copy.
+    // TEMPORARY(9.3.4): off the composer, capture/add_entity/update_entity/update_fact.
     pub(crate) fn refuses_a_hand_written_review_stamp(
         &self,
         subject: &EntityId,
@@ -72,6 +73,7 @@ impl Jojobot {
     /// own boot. The question is the domain's one, and the order is the queue's,
     /// so the boot and `recall` with `unreviewed` cannot disagree. A page, and the
     /// call that reads the rest.
+    // TEMPORARY(9.3.7): off the composer, start_here.
     pub(crate) async fn review_queue_block(&self) -> Option<serde_json::Value> {
         /// How many of the queue the boot names.
         const PAGE: usize = 10;

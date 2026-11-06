@@ -41,6 +41,7 @@ impl Jojobot {
             .map(|prepared| (prepared.question, prepared.only_keys)))
     }
 
+    // TEMPORARY(9.3.8): off the composer, recall.
     pub(super) async fn prepare_recall_question(
         &self,
         args: RecallArgs,

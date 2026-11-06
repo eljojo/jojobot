@@ -100,6 +100,7 @@ impl Jojobot {
                        one answer. The receipt's \
                        `changed` lists changes, or is `nothing` or `not_read`."
     )]
+    // TEMPORARY(9.3.5): off the composer, merge_entities.
     pub(crate) async fn merge_entities(
         &self,
         Parameters(args): Parameters<MergeArgs>,

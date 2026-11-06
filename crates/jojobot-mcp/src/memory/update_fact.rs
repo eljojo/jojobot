@@ -442,6 +442,7 @@ impl Jojobot {
     /// **A rewrite also names the keys its claim must still back**, because the
     /// revision counts the claim's own writes only, and the store checks them with
     /// the revision. See [`RewriteGuard`].
+    // TEMPORARY(9.3.4): off the composer, update_fact/update_entity delegated settings.
     pub(super) async fn update_fact_checking_revision(
         &self,
         args: UpdateFactArgs,
@@ -1793,6 +1794,7 @@ impl Jojobot {
     /// its own under a `request_id`. A store that stops partway says which moved:
     /// the same call again plans from what is stored, or, with an id, finishes
     /// the plan the first call chose. `Err` is the answer the call ends with.
+    // TEMPORARY(9.3.4): off the composer, update_fact document move.
     async fn move_the_chunks(
         &self,
         rest: &[(FactAddress, &'static str, String)],
@@ -1857,6 +1859,7 @@ impl Jojobot {
     /// **The end of an edit whose claim an earlier call wrote**: the stored due
     /// moment is taken off the finished thing, as the plan in the claim's note
     /// says, and the receipt is built from the claim as it was written.
+    // TEMPORARY(9.3.4): off the composer, update_fact resumed.
     async fn finish_the_edit(
         &self,
         args: &UpdateFactArgs,
@@ -1928,6 +1931,7 @@ impl Jojobot {
 
     /// **The end of a move whose section an earlier call wrote**: the chunks that
     /// did not move follow it, in the places the plan in the note chose.
+    // TEMPORARY(9.3.4): off the composer, update_fact resumed move.
     async fn finish_move(
         &self,
         args: &UpdateFactArgs,

@@ -232,6 +232,7 @@ impl Finish {
 /// and how to finish. It is a refusal of the item that failed, built as every
 /// refusal is, and it says `wrote: true` because items did land. One builder for
 /// both paths, so they agree field for field on `wrote` and `landed`.
+// TEMPORARY(9.3.3): off the composer, capture entries/ticks.
 fn half_landed(
     failed: usize,
     count: usize,
@@ -461,6 +462,7 @@ impl Jojobot {
     }
 
     /// **Add many entries to a list, or tick many, in one call.**
+    // TEMPORARY(9.3.3): off the composer, capture entries/ticks.
     pub(super) async fn capture_batch(
         &self,
         args: CaptureArgs,

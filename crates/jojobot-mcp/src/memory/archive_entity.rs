@@ -73,6 +73,7 @@ impl Jojobot {
                        nothing comes back blocked with the nearest handles. The receipt's \
                        `changed` lists changes, or is `nothing` or `not_read`."
     )]
+    // TEMPORARY(9.3.4): off the composer, archive_entity.
     pub(crate) async fn archive_entity(
         &self,
         Parameters(args): Parameters<ArchiveEntityArgs>,
@@ -140,6 +141,7 @@ impl Jojobot {
     /// worked out by the restorer rather than said by the operator, that names
     /// both acts. It is written after the restore, so a failure to write it is
     /// said in the answer rather than undoing a restore that landed.
+    // TEMPORARY(9.3.4): off the composer, archive_entity restore.
     async fn restore(
         &self,
         handle: &EntityId,

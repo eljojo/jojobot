@@ -20,6 +20,7 @@ impl Jojobot {
     /// somebody else's write, and it must never be the reason that write fails
     /// or reads as one. A failed read of the instance record is named in
     /// `unread`, so the missing note never reads as a word the instance maps.
+    // TEMPORARY(9.3.4): off the composer, capture/add_entity/update_entity/update_fact.
     pub(crate) async fn note_status_word(
         &self,
         fact: &Fact,

@@ -25,6 +25,7 @@ pub(crate) struct MessageAudit {
 }
 
 impl Jojobot {
+    // TEMPORARY(9.3.6): off the composer, post_message.
     pub(crate) async fn message_recipient(
         &self,
         args: &MessageWrite,
@@ -94,6 +95,7 @@ impl Jojobot {
         Ok(Ok(destination))
     }
 
+    // TEMPORARY(9.3.6): off the composer, post_message.
     pub(crate) async fn post_message_write(
         &self,
         actor: &Actor,

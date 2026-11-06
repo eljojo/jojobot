@@ -435,6 +435,7 @@ impl Jojobot {
                        be read back whole in one answer is refused and nothing is made: send \
                        fewer or shorter aliases, or move the long text onto a claim. A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing, and a bot whose box did not open is finished by the same call."
     )]
+    // TEMPORARY(9.3.4): off the composer, add_entity.
     pub(crate) async fn add_entity(
         &self,
         Parameters(args): Parameters<AddEntityArgs>,

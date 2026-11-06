@@ -425,6 +425,7 @@ impl Jojobot {
     /// the point.** Naming a bot adds the identity half to an answer that is
     /// otherwise the same text and the same snapshot; it does not open a second
     /// way in.
+    // TEMPORARY(9.3.7): off the composer, start_here.
     pub(crate) async fn orient(&self, req: OrientRequest<'_>) -> Result<CallToolResult, McpError> {
         let OrientRequest {
             bot,
@@ -1160,6 +1161,7 @@ impl Jojobot {
         }
     }
 
+    // TEMPORARY(9.3.7): off the composer, start_here.
     async fn decide_role_claim(
         &self,
         bot: &EntityId,
@@ -1360,6 +1362,7 @@ impl Jojobot {
 
 /// **A claim the store could not decide**, with the word a storage failure
 /// wears: `retry`.
+// TEMPORARY(9.3.7): off the composer, start_here.
 fn unavailable_claim(role: &str, note: &str) -> serde_json::Value {
     let mut outcome = serde_json::json!({
         "role": role,

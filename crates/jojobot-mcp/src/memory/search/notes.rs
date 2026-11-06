@@ -11,6 +11,7 @@ impl Jojobot {
         self.first_contact(&key, Some(caller)).await
     }
 
+    // TEMPORARY(9.3.8): off the composer, search.
     pub(super) async fn teach_search_notes(
         &self,
         body: &mut serde_json::Value,

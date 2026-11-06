@@ -34,6 +34,7 @@ impl Added {
 }
 
 impl Jojobot {
+    // TEMPORARY(9.3.4): off the composer, add_entity.
     pub(crate) async fn add_entity_write(
         &self,
         by: Attribution<'_>,

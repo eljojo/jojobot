@@ -34,6 +34,7 @@ pub(crate) type ParsedEdge = Result<Result<Option<Edge>, CallToolResult>, McpErr
 /// caller their own kind does not exist. **And a process that seeded nothing
 /// says so**, because a caller told "kind must be one of person, …, got
 /// 'person'" has been handed a contradiction and no way forward (rule 68).
+// TEMPORARY(9.3.8): off the composer, add_entity/recall/search/list_entities.
 pub(crate) fn parse_kind(raw: &str) -> Result<EntityKind, McpError> {
     let token = kinds::KindToken::parse(raw)
         .map_err(|why| McpError::invalid_params(format!("kind '{raw}': {why}"), None))?;
@@ -44,6 +45,7 @@ pub(crate) fn parse_kind(raw: &str) -> Result<EntityKind, McpError> {
 /// Build an entity id from a `kind` argument and a handle that may be a bare
 /// slug or a fully qualified id. A qualified handle that disagrees with `kind`
 /// is a client error rather than a silent winner.
+// TEMPORARY(9.3.4): off the composer, add_entity.
 pub(crate) fn entity_id(kind: &str, handle: &str) -> Result<EntityId, McpError> {
     let kind = parse_kind(kind)?;
     match handle.trim().split_once(':') {
@@ -72,6 +74,7 @@ pub(crate) fn named_bot(name: Option<&str>) -> Result<Option<EntityId>, McpError
 /// door, so a bare slug is read with the bot kind on it — and a handle of
 /// another kind is a client error rather than a silent winner: booting a person
 /// as an identity would hand somebody's page back as a charter.
+// TEMPORARY(9.3.7): off the composer, start_here/set_charter.
 pub(crate) fn bot_id(name: &str) -> Result<EntityId, McpError> {
     let name = name.trim();
     match name.split_once(':') {
@@ -89,6 +92,7 @@ pub(crate) fn bot_id(name: &str) -> Result<EntityId, McpError> {
 
 /// Parse an edge-shape token; the closed set is named in the error. Strict about
 /// case and spelling: the input grammar stays lowercase.
+// TEMPORARY(9.3.4): off the composer, capture/update_fact.
 pub(crate) fn parse_shape(raw: &str) -> Result<EdgeShape, McpError> {
     EdgeShape::from_token(raw).ok_or_else(|| {
         let shapes: Vec<&str> = EdgeShape::ALL.iter().map(|s| s.as_token()).collect();
@@ -102,6 +106,7 @@ pub(crate) fn parse_shape(raw: &str) -> Result<EdgeShape, McpError> {
 /// **Parse the word a FILTER names a shape by**: either the token a caller
 /// writes or a schema.org name an older read served. Unknown words are refused
 /// with the writable vocabulary.
+// TEMPORARY(9.3.8): off the composer, recall/search.
 pub(crate) fn parse_shape_filter(raw: &str) -> Result<EdgeShape, McpError> {
     EdgeShape::from_word(raw).ok_or_else(|| {
         let written: Vec<&str> = EdgeShape::ALL.iter().map(|s| s.as_token()).collect();
@@ -117,6 +122,7 @@ pub(crate) fn parse_shape_filter(raw: &str) -> Result<EdgeShape, McpError> {
 /// on. A token that names neither direction is refused rather than defaulted,
 /// because guessing which way a caller meant to walk answers a question they
 /// did not ask.
+// TEMPORARY(9.3.8): off the composer, recall.
 pub(crate) fn parse_direction(raw: Option<&str>) -> Result<Direction, McpError> {
     match raw.map(str::trim).filter(|d| !d.is_empty()) {
         None => Ok(Direction::default()),
@@ -130,6 +136,7 @@ pub(crate) fn parse_direction(raw: Option<&str>) -> Result<Direction, McpError> 
 /// question a caller asking about an object is asking; a token naming neither
 /// scope is refused rather than defaulted, because the two keep different
 /// things and picking one would answer a question nobody asked.
+// TEMPORARY(9.3.8): off the composer, recall.
 pub(crate) fn parse_scope(
     raw: Option<&str>,
 ) -> Result<jojobot_domain::memory::graph::Scope, McpError> {
@@ -147,6 +154,7 @@ pub(crate) fn parse_scope(
 
 /// The comparison a filter uses. Absent is equality, which is what a key with
 /// no declaration behind it has.
+// TEMPORARY(9.3.8): off the composer, recall.
 pub(crate) fn parse_compare(
     raw: Option<&str>,
 ) -> Result<jojobot_domain::memory::types::Compare, McpError> {
@@ -162,6 +170,7 @@ pub(crate) fn parse_compare(
     }
 }
 
+// TEMPORARY(9.3.4): off the composer, capture/update_fact.
 pub(crate) fn parse_edge(shape: Option<&str>, object: Option<&str>) -> ParsedEdge {
     match (
         shape.map(str::trim).filter(|s| !s.is_empty()),
@@ -201,6 +210,7 @@ pub(crate) fn parse_edge(shape: Option<&str>, object: Option<&str>) -> ParsedEdg
 /// the input grammar does not: a caller reaching for one is reaching for a
 /// spelling this build retired, and silently aliasing it would teach the old
 /// model back to whoever sent it. The error says what to do instead.
+// TEMPORARY(9.3.8): off the composer, update_fact/search.
 pub(crate) fn parse_status(raw: &str) -> Result<FactStatus, McpError> {
     match raw.trim() {
         "active" => Ok(FactStatus::Active),
@@ -242,6 +252,7 @@ pub(crate) fn parse_status(raw: &str) -> Result<FactStatus, McpError> {
 ///
 /// A token that is no boot tier is a malformed call, exactly as a token that is
 /// no kind and a token that is no status are.
+// TEMPORARY(9.3.4): off the composer, add_entity.
 pub(crate) fn parse_boot(raw: Option<&str>) -> Result<Boot, McpError> {
     let Some(token) = raw.map(str::trim).filter(|t| !t.is_empty()) else {
         return Ok(Boot::default());
@@ -262,6 +273,7 @@ pub(crate) fn parse_boot(raw: Option<&str>) -> Result<Boot, McpError> {
 }
 
 /// Parse an explicit provenance value (no default — the caller named one).
+// TEMPORARY(9.3.8): off the composer, update_fact/search.
 pub(crate) fn parse_one_provenance(raw: &str) -> Result<Provenance, McpError> {
     match raw.trim() {
         "testimony" => Ok(Provenance::Testimony),
@@ -275,6 +287,7 @@ pub(crate) fn parse_one_provenance(raw: &str) -> Result<Provenance, McpError> {
 }
 
 /// Parse the provenance argument; unknown values are a client error.
+// TEMPORARY(9.3.4): off the composer, capture/put_document.
 pub(crate) fn parse_provenance(raw: Option<&str>) -> Result<Provenance, McpError> {
     match raw.map(str::trim) {
         None | Some("") | Some("inference") => Ok(Provenance::Inference),
@@ -293,6 +306,7 @@ pub(crate) fn parse_provenance(raw: Option<&str>) -> Result<Provenance, McpError
 /// silence through rather than deciding it. An unknown value is a client error,
 /// because a caller who wrote `maybe` meant something and guessing which of two
 /// values they meant is how a hedge becomes a settled fact.
+// TEMPORARY(9.3.8): off the composer, capture/update_fact/search.
 pub(crate) fn parse_standing(raw: &str) -> Result<Standing, McpError> {
     match raw.trim() {
         "settled" => Ok(Standing::Settled),
@@ -324,6 +338,7 @@ pub(crate) const FALLBACK_ZONE: &str = "UTC";
 /// stated a frame and had it dropped would be answered on the server's clock
 /// while believing otherwise, and the sweep is where that difference closes
 /// somebody's runs or leaves them open.
+// TEMPORARY(9.3.7): off the composer, start_here.
 pub(crate) fn parse_day(raw: Option<&str>) -> Result<Option<jiff::civil::Date>, McpError> {
     let Some(said) = raw.map(str::trim).filter(|day| !day.is_empty()) else {
         return Ok(None);
@@ -339,6 +354,7 @@ pub(crate) fn parse_day(raw: Option<&str>) -> Result<Option<jiff::civil::Date>, 
     })
 }
 
+// TEMPORARY(9.3.7): off the composer, start_here.
 pub(crate) fn parse_zone(raw: Option<&str>) -> Result<jiff::tz::TimeZone, McpError> {
     let name = raw.map(str::trim).filter(|n| !n.is_empty());
     let Some(name) = name else {
@@ -374,6 +390,7 @@ pub(crate) fn parse_zone(raw: Option<&str>) -> Result<jiff::tz::TimeZone, McpErr
 /// clock inside the parser bypassed both — a server acting out a day stamped
 /// records with the day the run really executed, which is a date nobody
 /// uttered.
+// TEMPORARY(9.3.8): off the composer, date-consuming memory/session tools.
 pub(crate) fn parse_date(raw: Option<&str>) -> Result<Option<jiff::civil::Date>, McpError> {
     jojobot_query_api::parse_date(raw).map_err(|error| McpError::invalid_params(error, None))
 }

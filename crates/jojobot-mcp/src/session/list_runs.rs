@@ -67,6 +67,7 @@ impl Jojobot {
                        with no `sid` at all comes back status: blocked — \
                        jojobot will not guess whose runs to read."
     )]
+    // TEMPORARY(9.3.7): off the composer, list_runs.
     pub(crate) async fn list_runs(
         &self,
         Parameters(args): Parameters<ListRunsArgs>,

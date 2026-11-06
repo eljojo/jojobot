@@ -159,6 +159,7 @@ impl Jojobot {
     /// **Teach the span keys on a claim whose words give a span and that sent
     /// neither.** Asked before the ledger row is spent, because spending is a side
     /// effect and a write that gave no span must not use up the session's one line.
+    // TEMPORARY(9.3.3): off the composer, capture.
     pub(crate) async fn note_span_in_words(
         &self,
         fact: &Fact,

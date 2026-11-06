@@ -104,6 +104,7 @@ impl Jojobot {
                        `notes` unset; there is no verb that lifts a quarantine. The \
                        receipt's `changed` lists changes, or is `nothing` or `not_read`."
     )]
+    // TEMPORARY(9.3.6): off the composer, mark_processed.
     pub(crate) async fn mark_processed(
         &self,
         Parameters(args): Parameters<MarkProcessedArgs>,
