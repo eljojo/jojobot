@@ -40,6 +40,7 @@ struct Plan {
     acknowledged: Notify,
     released: Notify,
     native: Option<Arc<NativeGate>>,
+    refuse_event: AtomicBool,
 }
 
 struct NativeGate {
@@ -148,6 +149,17 @@ async fn serve(
             if owner == Some(native.old_id.load(Ordering::SeqCst)) {
                 native.early_read.store(true, Ordering::SeqCst);
             }
+        }
+        if command == 0x16
+            && text.contains("INSERT INTO event_log")
+            && plan.refuse_event.swap(false, Ordering::SeqCst)
+        {
+            to_client
+                .lock()
+                .await
+                .write_all(&error_packet("refused event"))
+                .await?;
+            continue;
         }
         if command == 0x16 && text.contains("INSERT INTO session_teaching") {
             let armed = plan
@@ -457,8 +469,14 @@ async fn teaching_native_gate(release_before_receipt: bool) {
             }
         }
     });
-    let (log, writer) = Faulted::open(store.clone(), port).await.unwrap();
-    let log = Arc::new(log);
+    let source = MySqlPoolOptions::new().connect_lazy_with(
+        (*store.connect_options())
+            .clone()
+            .port(port)
+            .statement_cache_capacity(0),
+    );
+    let writer = Writer::default();
+    let log = Arc::new(WriterLog::open(source, writer.clone()).await.unwrap());
     let teachings = LoggedTeachings::open(log.clone(), &[])
         .await
         .unwrap()
@@ -679,6 +697,73 @@ async fn a_lost_standalone_ledger_commit_fences_the_old_connection() {
         fenced.is_ok(),
         "the lost commit sent no KILL CONNECTION: the old connection was never fenced"
     );
+    proxy.abort();
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn teaching_definite_native_rollback_keeps_the_published_rail() {
+    use crate::teaching_log::LoggedTeachings;
+    use jojobot_domain::session::Sid;
+    use jojobot_domain::teaching::{TeachingError, Teachings};
+    let scratch = Scratch::new("teaching-definite-rollback");
+    let mut server = Dolt::start(&scratch.0, free_port()).await.unwrap();
+    let store = migrated_database(&server, "alpha").await.unwrap();
+    let plan = Arc::new(Plan::default());
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let upstream = store.connect_options().get_port();
+    let proxy = tokio::spawn({
+        let plan = plan.clone();
+        async move {
+            while let Ok((client, _)) = listener.accept().await {
+                tokio::spawn(serve(client, upstream, plan.clone()));
+            }
+        }
+    });
+    let (log, writer) = Faulted::open(store.clone(), port).await.unwrap();
+    let log = Arc::new(log);
+    let teachings = LoggedTeachings::open(log.clone(), &[])
+        .await
+        .unwrap()
+        .with_writer(writer.clone());
+    let control = Sid("homer".into());
+    let pending = Sid("marge".into());
+    let at = jiff::Timestamp::UNIX_EPOCH;
+    assert!(
+        teachings
+            .first_contact(&control, "claims", at)
+            .await
+            .unwrap()
+    );
+    let head = log.read_from(Position(0), 100).await.unwrap();
+    plan.refuse_event.store(true, Ordering::SeqCst);
+    assert!(matches!(
+        teachings.first_contact(&pending, "claims", at).await,
+        Err(TeachingError::Store(_))
+    ));
+    assert!(!writer.rail_uncertain("event-log"));
+    assert_eq!(
+        writer.recovery_counts().attempted,
+        0,
+        "a definite failure reloaded the published rail"
+    );
+    assert!(teachings.has_contact(&control, "claims").await.unwrap());
+    assert!(!teachings.has_contact(&pending, "claims").await.unwrap());
+    assert_eq!(
+        log.read_from(Position(0), 100).await.unwrap(),
+        head,
+        "the failed transaction left a batch"
+    );
+    assert!(
+        teachings
+            .first_contact(&pending, "claims", at)
+            .await
+            .unwrap()
+    );
+    writer.drain().await;
     proxy.abort();
     server.stop().await;
 }
