@@ -183,8 +183,11 @@ impl Folded {
     /// The read behind [`rebuild`](Folded::rebuild), for a caller that already
     /// runs in the writer task. A failure leaves no image rather than a half one.
     async fn fill(&self) -> Result<usize, MemoryError> {
-        match crate::writer::sql::reading(Image::load(&self.inner, self.boot_reader.as_deref()))
-            .await
+        match crate::writer::sql::reading(Box::pin(Image::load(
+            &self.inner,
+            self.boot_reader.as_deref(),
+        )))
+        .await
         {
             Ok(image) => {
                 let held = image.len();
@@ -242,7 +245,7 @@ impl Folded {
         handle: &EntityId,
         wrote: Option<image::Wrote>,
     ) -> Result<(), MemoryError> {
-        let done = self.refresh_listing_inner(handle, wrote).await;
+        let done = Box::pin(self.refresh_listing_inner(handle, wrote)).await;
         self.publish_things(vec![handle.clone()], false);
         done
     }
@@ -934,7 +937,7 @@ impl Memory for Folded {
             .into_iter()
             .filter_map(|(key, value)| value.map(|_| key))
             .collect();
-        self.scoped(async {
+        self.scoped(Box::pin(async {
             match self
                 .inner
                 .update_fact_with_claim(address, patch, caller, claim)
@@ -949,7 +952,7 @@ impl Memory for Folded {
                 },
                 blocked => Ok(blocked),
             }
-        })
+        }))
         .await
     }
 
@@ -984,7 +987,7 @@ impl Memory for Folded {
             )
             .await
         );
-        self.scoped(async {
+        self.scoped(Box::pin(async {
             match self
                 .inner
                 .retract_with_claim(address, reason, date, caller, session, claim)
@@ -1002,7 +1005,7 @@ impl Memory for Folded {
                 },
                 blocked => Ok(blocked),
             }
-        })
+        }))
         .await
     }
 
@@ -1082,7 +1085,7 @@ impl Memory for Folded {
             this.merge_with_claim(&folded, &survivor, reason.as_deref(), date, &caller, claim)
                 .await
         );
-        self.scoped(async {
+        self.scoped(Box::pin(async {
             match self
                 .inner
                 .merge_with_claim(folded, survivor, reason, date, caller, claim)
@@ -1100,7 +1103,7 @@ impl Memory for Folded {
                 }
                 blocked => Ok(blocked),
             }
-        })
+        }))
         .await
     }
 

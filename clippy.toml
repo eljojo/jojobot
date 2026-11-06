@@ -1,0 +1,5 @@
+# A future larger than this fails the lint at the `.await` that holds it
+# (clippy::large_futures, denied in the bar's clippy calls). A debug build copies
+# a large future onto the worker's stack before it polls it, and a worker's stack
+# is small: Box::pin the call the lint names.
+future-size-threshold = 16384

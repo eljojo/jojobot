@@ -490,7 +490,7 @@ fn report_stored_records_over_the_ceiling(scan: &[jojobot_domain::memory::search
 /// a convenience over it. Refusing to start over one of them failing would
 /// be a worse outcome than serving on what the store already has.
 pub async fn boot_store(dir: &Path, port: u16, clock: Clock) -> anyhow::Result<Booted> {
-    boot_store_pushing(dir, port, clock, false).await
+    Box::pin(boot_store_pushing(dir, port, clock, false)).await
 }
 
 /// **[`boot_store`], with the mail store told whether a post to a person's box
@@ -502,13 +502,13 @@ pub async fn boot_store_pushing(
     clock: Clock,
     pushing: bool,
 ) -> anyhow::Result<Booted> {
-    boot_store_observed(
+    Box::pin(boot_store_observed(
         dir,
         port,
         clock,
         pushing,
         jojobot_adapters::observe::Observation::default(),
-    )
+    ))
     .await
 }
 

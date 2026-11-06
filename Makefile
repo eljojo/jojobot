@@ -236,7 +236,7 @@ test: ## Every fast suite (no network)
 	$(CARGO) test --workspace --no-fail-fast --locked
 
 lint: ## Clippy, warnings fatal
-	$(CARGO) clippy --workspace --all-targets --locked -- -D warnings
+	$(CARGO) clippy --workspace --all-targets --locked -- -D warnings -D clippy::large_futures
 
 fmt: ## Reformat the workspace
 	$(CARGO) fmt --all

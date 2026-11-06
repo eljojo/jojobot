@@ -22,6 +22,9 @@ const CUT_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
 /// drain, before the store stops.
 const TASK_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
 
+/// TEMPORARY(9.3.3): remove when the oversized futures are boxed and
+/// `clippy::large_futures` holds them.
+///
 /// **The stack of each worker thread.** Tokio's 2 MiB default is too little for a
 /// debug build: the frames of the boot and of the writer's first jobs nest deep,
 /// and the binary with a metrics address aborted with a stack overflow before it
@@ -145,13 +148,13 @@ async fn run() -> anyhow::Result<()> {
         .as_ref()
         .map(|metrics| jojobot_adapters::observe::Observation::new(metrics.clone()))
         .unwrap_or_default();
-    let booted = jojobot::wiring::boot_store_observed(
+    let booted = Box::pin(jojobot::wiring::boot_store_observed(
         &dir,
         jojobot::wiring::resolve_store_port(),
         config.clock,
         config.ntfy.is_some(),
         observation,
-    )
+    ))
     .await?;
     jojobot::wiring::require_journaled(&booted.served)?;
 

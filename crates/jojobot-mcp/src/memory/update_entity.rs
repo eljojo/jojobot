@@ -284,18 +284,17 @@ impl Jojobot {
                 must_back: sets.keys().cloned().collect(),
                 stale: false,
             };
-            let answered = self
-                .update_fact_checking_revision(
-                    super::update_fact::UpdateFactArgs {
-                        address: own.to_string(),
-                        sets: sent_sets.clone(),
-                        expected_revision: Some(revision),
-                        sid: args.sid.clone(),
-                        ..Default::default()
-                    },
-                    Some(&mut guard),
-                )
-                .await?;
+            let answered = Box::pin(self.update_fact_checking_revision(
+                super::update_fact::UpdateFactArgs {
+                    address: own.to_string(),
+                    sets: sent_sets.clone(),
+                    expected_revision: Some(revision),
+                    sid: args.sid.clone(),
+                    ..Default::default()
+                },
+                Some(&mut guard),
+            ))
+            .await?;
             if !guard.stale {
                 return Ok(answered);
             }

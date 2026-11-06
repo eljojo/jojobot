@@ -3062,7 +3062,7 @@ async fn within_a_deadline<T>(tool: &str, answering: impl std::future::Future<Ou
 }
 
 async fn call(client: &Client, tool: &str, args: Value) -> Value {
-    let (body, size) = call_measured(client, tool, args).await;
+    let (body, size) = Box::pin(call_measured(client, tool, args)).await;
     // **Every answer of every story is measured against the one ceiling.** A
     // story that asks for something big enough to pass it fails here, naming the
     // verb and the size, so a verb that grows past what a client can read is

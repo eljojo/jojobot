@@ -353,6 +353,10 @@ pub fn clippy_args(selected: &BTreeSet<String>) -> Option<Vec<String>> {
             "--",
             "-D",
             "warnings",
+            // A future too large for a worker's stack fails here, at the `.await`
+            // that holds it (threshold in clippy.toml).
+            "-D",
+            "clippy::large_futures",
         ]
         .map(str::to_string),
     );
@@ -839,12 +843,12 @@ mod tests {
         let one: BTreeSet<String> = ["alpha".to_string()].into();
         assert_eq!(
             clippy_args(&one).expect("one package").join(" "),
-            "clippy -p alpha --all-targets --all-features --locked -- -D warnings"
+            "clippy -p alpha --all-targets --all-features --locked -- -D warnings -D clippy::large_futures"
         );
         let several: BTreeSet<String> = ["beta".to_string(), "alpha".to_string()].into();
         assert_eq!(
             clippy_args(&several).expect("two packages").join(" "),
-            "clippy -p alpha -p beta --all-targets --all-features --locked -- -D warnings"
+            "clippy -p alpha -p beta --all-targets --all-features --locked -- -D warnings -D clippy::large_futures"
         );
     }
 

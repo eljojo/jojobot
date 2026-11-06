@@ -291,7 +291,9 @@ fn the_lint_phase_names_the_packages_the_tests_ran() {
     assert_eq!(ran.exit, Some(0), "{}", ran.stdout);
     assert_eq!(
         ran.clippy_calls(),
-        ["clippy -p jojobot-bar --all-targets --all-features --locked -- -D warnings"],
+        [
+            "clippy -p jojobot-bar --all-targets --all-features --locked -- -D warnings -D clippy::large_futures"
+        ],
         "{:?}",
         ran.calls
     );

@@ -38,13 +38,13 @@ impl WriterLog {
         // first: a predecessor that can still commit holds the lock, so this
         // read cannot be taken beside it, and a second owner is refused.
         let (pool, log) = (this.pool.clone(), this.log.clone());
-        this.job(async move {
+        this.job(Box::pin(async move {
             let mut tx = pool.begin().await.map_err(sql::store_error::<LogError>)?;
             log.create_validity().await?;
             let settled = log.settle_on(&mut tx).await;
             let _ = tx.rollback().await;
             settled
-        })
+        }))
         .await?;
         Ok(this)
     }
@@ -66,16 +66,14 @@ impl WriterLog {
     ) -> Result<T, LogError> {
         let log = self.log.clone();
         let writer = self.writer.clone();
-        let done = self
-            .writer
-            .run(async move {
-                guarded(&writer, RAIL, work, || {
-                    let log = log.clone();
-                    async move { log.settle_in_fence().await }
-                })
-                .await
+        let done = Box::pin(self.writer.run(async move {
+            guarded(&writer, RAIL, work, || {
+                let log = log.clone();
+                async move { log.settle_in_fence().await }
             })
-            .await;
+            .await
+        }))
+        .await;
         match done {
             // A job refused while the log is uncertain was not started, and what
             // the log holds is still not known: the caller is told so.
@@ -130,7 +128,9 @@ impl WriterLog {
         let this = self.clone();
         let batch = batch.clone();
         let appended = self
-            .job(async move { this.append_in_job(head, &batch).await })
+            .job(Box::pin(async move {
+                this.append_in_job(head, &batch).await
+            }))
             .await;
         match appended {
             // The contract answers an unknown commit as a value, not an error.
@@ -144,7 +144,8 @@ impl WriterLog {
 impl LogStore for WriterLog {
     async fn validity(&self) -> Result<Validity, LogError> {
         let log = self.log.clone();
-        self.job(async move { log.validity().await }).await
+        self.job(Box::pin(async move { log.validity().await }))
+            .await
     }
 
     async fn append(&self, head: Position, batch: &SealedBatch) -> Result<Append, LogError> {
@@ -157,23 +158,26 @@ impl LogStore for WriterLog {
         bound: usize,
     ) -> Result<Vec<SealedBatch>, LogError> {
         let log = self.log.clone();
-        self.job(async move { log.read_from(position, bound).await })
-            .await
+        self.job(Box::pin(
+            async move { log.read_from(position, bound).await },
+        ))
+        .await
     }
 
     async fn load_snapshot(&self) -> Result<Option<ValidatedSnapshot>, LogError> {
         let log = self.log.clone();
-        self.job(async move { log.load_snapshot().await }).await
+        self.job(Box::pin(async move { log.load_snapshot().await }))
+            .await
     }
 
     async fn store_snapshot(&self, snapshot: &ValidatedSnapshot) -> Result<(), LogError> {
         let pool = self.pool.clone();
         let snapshot = snapshot.clone();
-        self.job(async move {
+        self.job(Box::pin(async move {
             let mut tx = pool.begin().await.map_err(sql::store_error::<LogError>)?;
             DoltLog::put_snapshot(&mut tx, &snapshot).await?;
             sql::commit(tx).await.map_err(sql::store_error::<LogError>)
-        })
+        }))
         .await
     }
 }

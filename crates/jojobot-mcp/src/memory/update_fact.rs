@@ -433,7 +433,7 @@ impl Jojobot {
         &self,
         Parameters(args): Parameters<UpdateFactArgs>,
     ) -> Result<CallToolResult, McpError> {
-        self.update_fact_checking_revision(args, None).await
+        Box::pin(self.update_fact_checking_revision(args, None)).await
     }
 
     /// An internal rewrite may append when its revision guard refuses it. Keep

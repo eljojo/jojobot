@@ -1133,7 +1133,22 @@ impl Jojobot {
 impl Jojobot {
     /// Decide and write a parsed claim. Authorship and audit stamps are data;
     /// session accounting belongs to the handler that resolved them.
+    ///
+    /// The write's future is about 100 KB. It lives on the heap, so no caller
+    /// holds it on a worker's stack.
     pub(crate) async fn capture_write(
+        &self,
+        by: Attribution<'_>,
+        args: CaptureArgs,
+        day: jiff::civil::Date,
+        by_session: Option<&str>,
+        mode: &Mode,
+        working_on: Option<&crate::caller::Caller>,
+    ) -> Result<Result<Captured, CallToolResult>, McpError> {
+        Box::pin(self.capture_write_inline(by, args, day, by_session, mode, working_on)).await
+    }
+
+    async fn capture_write_inline(
         &self,
         by: Attribution<'_>,
         args: CaptureArgs,
@@ -1723,7 +1738,7 @@ impl Jojobot {
         // **The store decides the claim over the claims State it holds**, with the
         // door, the sizes, the boot and the runs this call hands its job.
         let job = self.capture_job(actor, std::sync::Arc::clone(&reads));
-        let write = jojobot_domain::log::claims::job::within(
+        let write = Box::pin(jojobot_domain::log::claims::job::within(
             job,
             self.write_the_claim(
                 mode.part.as_deref(),
@@ -1731,7 +1746,7 @@ impl Jojobot {
                 new,
                 (override_token.as_deref(), override_reason.as_deref()),
             ),
-        );
+        ));
         let writing = match &schedule {
             Some(schedule) => {
                 jojobot_domain::request::armed_part("claim", Some(schedule.frozen()), write).await

@@ -399,7 +399,7 @@ impl Jojobot {
             return ClaimWrite::Ran(Box::new(write.await));
         };
         let note = clears_due_on.then(|| super::due::CLEARS_DUE_ON.to_string());
-        match jojobot_domain::request::part(name, note, write).await {
+        match jojobot_domain::request::part(name, note, Box::pin(write)).await {
             jojobot_domain::request::Part::Ran(written) => ClaimWrite::Ran(Box::new(written)),
             jojobot_domain::request::Part::Recorded(recorded) => {
                 ClaimWrite::Early(match address_of(&recorded) {

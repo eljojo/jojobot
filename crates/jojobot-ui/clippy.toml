@@ -1,3 +1,7 @@
+# Repeated from the workspace file: a crate's own clippy.toml replaces it, it
+# does not add to it.
+future-size-threshold = 16384
+
 # TEMPORARY(9.3.8): a page reads through the query handle and names no store
 # port. The ports stay in the domain until 9.3.8 removes them (rule 682); this
 # list is deleted in the same change. The manifest test in lib.rs holds the list

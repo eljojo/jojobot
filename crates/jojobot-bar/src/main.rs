@@ -1367,7 +1367,7 @@ fn run_dev(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
     let started = std::time::Instant::now();
     let (lint_ok, _) = run_phase(
         &log_path,
-        "cargo clippy -p <selected> --all-targets --all-features --locked -- -D warnings",
+        "cargo clippy -p <selected> --all-targets --all-features --locked -- -D warnings -D clippy::large_futures",
         &cargo,
         &lint_args,
     )?;
@@ -1880,7 +1880,7 @@ fn run_check_phases(known: &KnownReds, level: Level) -> std::io::Result<ExitCode
     let started = std::time::Instant::now();
     let (ok, _) = run_phase(
         &log_path,
-        "cargo clippy --workspace --all-targets --all-features --locked -- -D warnings",
+        "cargo clippy --workspace --all-targets --all-features --locked -- -D warnings -D clippy::large_futures",
         &cargo,
         &[
             "clippy",
@@ -1894,6 +1894,8 @@ fn run_check_phases(known: &KnownReds, level: Level) -> std::io::Result<ExitCode
             "--",
             "-D",
             "warnings",
+            "-D",
+            "clippy::large_futures",
         ],
     )?;
     let took = started.elapsed();
@@ -2151,7 +2153,7 @@ fn run_narrow(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
 
     let (ok, _) = run_phase(
         &log_path,
-        "cargo clippy -p <crate> --all-targets --all-features -- -D warnings",
+        "cargo clippy -p <crate> --all-targets --all-features -- -D warnings -D clippy::large_futures",
         &cargo,
         &[
             "clippy",
@@ -2162,6 +2164,8 @@ fn run_narrow(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
             "--",
             "-D",
             "warnings",
+            "-D",
+            "clippy::large_futures",
         ],
     )?;
     if ok {
