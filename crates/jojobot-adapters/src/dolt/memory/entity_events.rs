@@ -8,10 +8,10 @@
 //! repair never emits (it would make the import skip), and the merge is the claim
 //! writers' to emit.
 
-use jiff::Timestamp;
+use jiff::{Timestamp, civil::Date};
 use jojobot_domain::log::ObjectId;
-use jojobot_domain::log::claims::ClaimEvent;
-use jojobot_domain::log::claims::import::{EntityRow, live, object_body};
+use jojobot_domain::log::claims::entity_change::{EntityChange, entity_change_events};
+use jojobot_domain::log::claims::import::EntityRow;
 
 use super::import_rows::{maybe, text};
 use super::*;
@@ -24,7 +24,7 @@ pub(super) enum Change<'a> {
     Revised,
     /// The row now answers to a new handle: the old one is retired and the new
     /// one bound.
-    Renamed { from: &'a EntityId },
+    Renamed { from: &'a EntityId, day: Date },
 }
 
 /// Emit the events of `entity`'s row as it stands in `tx`.
@@ -84,9 +84,9 @@ pub(super) async fn emit_object_write(
         (Some(reason), Some(at)) => at.parse::<Timestamp>().ok().map(|at| (reason, at)),
         _ => None,
     };
-    let body = object_body(&EntityRow {
-        key: key.clone(),
-        handle: handle.clone(),
+    let row = EntityRow {
+        key,
+        handle,
         kind: text(&row, "kind")?,
         name: text(&row, "name")?,
         source: text(&row, "source")?,
@@ -99,36 +99,15 @@ pub(super) async fn emit_object_write(
         archived,
         merged_into: None,
         taken_in: None,
-    });
-    let (at, run) = (clock.now(), session.map(str::to_string));
-    let event = |payload| live(payload, at, run.clone());
-    let mut events = Vec::new();
-    match change {
-        Change::Created => {
-            events.push(event(ClaimEvent::ObjectCreated {
-                object: key.clone(),
-                body,
-            }));
-            events.push(event(ClaimEvent::AddressBound {
-                object: key,
-                address: handle,
-            }));
-        }
-        Change::Revised => events.push(event(ClaimEvent::ObjectRevised { object: key, body })),
-        Change::Renamed { from } => {
-            events.push(event(ClaimEvent::ObjectRevised {
-                object: key.clone(),
-                body,
-            }));
-            events.push(event(ClaimEvent::AddressRetired {
-                object: key.clone(),
-                address: from.to_string(),
-            }));
-            events.push(event(ClaimEvent::AddressBound {
-                object: key,
-                address: handle,
-            }));
-        }
-    }
+    };
+    let change = match change {
+        Change::Created => EntityChange::Created,
+        Change::Revised => EntityChange::Revised,
+        Change::Renamed { from, day } => EntityChange::Renamed {
+            from: from.as_str(),
+            day,
+        },
+    };
+    let events = entity_change_events(&row, change, clock.now(), session.map(str::to_string));
     crate::writer::sql::emit(events).map_err(store)
 }

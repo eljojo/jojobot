@@ -731,6 +731,7 @@ impl State {
     }
 }
 
+pub mod entity_change;
 pub mod import;
 mod indexes;
 mod prepare;

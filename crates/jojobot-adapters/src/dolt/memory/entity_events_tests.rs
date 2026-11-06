@@ -280,6 +280,31 @@ async fn a_rename_moves_the_spelling_and_keeps_the_object() {
         None,
         "the old spelling no longer answers"
     );
+    // **The retirement carries the day the rename wrote to the former-handle
+    // row**, read from the log's own member and from the row.
+    let stored: String = sqlx::query_scalar(
+        "SELECT changed_at FROM entity_former_handle WHERE former_handle = 'person:homer'",
+    )
+    .fetch_one(&world.store)
+    .await
+    .expect("the former handle row");
+    let days: Vec<String> = world
+        .writer
+        .shared_log(&world.store)
+        .read_from(jojobot_domain::log::Position(0), 100)
+        .await
+        .expect("the log reads")
+        .iter()
+        .flat_map(|batch| batch.members().to_vec())
+        .filter_map(|member| crate::claims_log::codec::decode_own(&member).ok().flatten())
+        .filter_map(|event| match event.payload {
+            jojobot_domain::log::claims::ClaimEvent::AddressRetired { day, .. } => {
+                Some(day.to_string())
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(days, vec![stored], "the log holds the row's day");
     world.writer.drain().await;
     world.server.stop().await;
 }

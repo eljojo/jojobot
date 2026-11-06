@@ -5868,7 +5868,7 @@ impl Memory for DoltMemory {
         let change = if from == to {
             entity_events::Change::Revised
         } else {
-            entity_events::Change::Renamed { from }
+            entity_events::Change::Renamed { from, day: date }
         };
         entity_events::emit_object_write(&mut tx, to, change, &self.clock, session).await?;
         super::requests::commit(tx, &self.clock, || {
