@@ -450,7 +450,8 @@ async fn teaching_native_gate(release_before_receipt: bool) {
         }
     });
     let (log, writer) = Faulted::open(store.clone(), port).await.unwrap();
-    let teachings = LoggedTeachings::open(Arc::new(log), &[])
+    let log = Arc::new(log);
+    let teachings = LoggedTeachings::open(log.clone(), &[])
         .await
         .unwrap()
         .with_writer(writer.clone());
@@ -555,9 +556,7 @@ async fn teaching_native_gate(release_before_receipt: bool) {
         !native.early_read.load(Ordering::SeqCst),
         "recovery read the log before the old server command ended"
     );
-    let replay = LoggedTeachings::open(Arc::new(DoltLog::open(store.clone()).await.unwrap()), &[])
-        .await
-        .unwrap();
+    let replay = LoggedTeachings::open(log, &[]).await.unwrap();
     assert_eq!(
         teachings.has_contact(&pending, "claims").await.unwrap(),
         replay.has_contact(&pending, "claims").await.unwrap()
