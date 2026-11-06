@@ -103,6 +103,7 @@ async fn badge_of(pool: &sqlx::MySqlPool, handle: &str) -> String {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_merge_made_before_merge_events_existed_gets_its_event_once() {
     let (_scratch, _server, pool, memory) = a_store("repair-old-merge").await;
+    thing(&memory, "bot:sigma", "Sigma").await;
     let mut folded_keys = Vec::new();
     for (kept, kept_name, gone, gone_name) in [
         ("person:krusty", "Krusty", "person:skinner", "Skinner"),
@@ -226,6 +227,7 @@ async fn a_merge_made_before_merge_events_existed_gets_its_event_once() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn an_old_merge_under_a_later_one_gets_its_event_with_the_middle_thing_as_survivor() {
     let (_scratch, _server, pool, memory) = a_store("repair-old-merge-chain").await;
+    thing(&memory, "bot:sigma", "Sigma").await;
     let old = thing(&memory, "person:skinner", "Skinner").await;
     let middle = thing(&memory, "person:krusty", "Krusty").await;
     let last = thing(&memory, "person:homer", "Homer").await;

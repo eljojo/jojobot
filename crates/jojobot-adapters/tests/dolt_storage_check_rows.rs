@@ -282,6 +282,16 @@ async fn a_claim_derived_from_a_merged_in_claim_by_its_served_id_is_not_dangling
     let memory = DoltMemory::open(pool.clone());
     let survivor = EntityId("person:krusty".into());
     memory
+        .add_entity(NewEntity::new(
+            EntityId("bot:sigma".into()),
+            "Sigma",
+            "fixture",
+        ))
+        .await
+        .expect("add")
+        .written()
+        .expect("not blocked");
+    memory
         .merge(
             &EntityId("person:skinner".into()),
             &survivor,

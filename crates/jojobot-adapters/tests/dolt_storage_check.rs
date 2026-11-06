@@ -41,6 +41,7 @@ async fn a_store_with_two_real_merges(label: &str) -> (Scratch, Dolt, sqlx::MySq
         .await
         .expect("the kinds are seeded");
     let memory = DoltMemory::open(pool.clone());
+    thing(&memory, "bot:sigma", "Sigma").await;
     for (kept, kept_name, gone, gone_name) in [
         ("person:krusty", "Krusty", "person:skinner", "Skinner"),
         ("person:homer", "Homer", "person:apu", "Apu"),
