@@ -459,7 +459,7 @@ fn full_dispatch_uses_the_pull_request_boundary_jobs_and_a_separate_group() {
 }
 
 #[test]
-fn targeted_dispatch_requires_a_crate_and_one_filter_and_never_full_proof() {
+fn targeted_dispatch_requires_a_crate_and_a_filter_list_and_never_full_proof() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let text = fs::read_to_string(root.join(".forgejo/workflows/targeted.yml"))
         .expect("targeted workflow");
@@ -505,13 +505,23 @@ fn targeted_dispatch_requires_a_crate_and_one_filter_and_never_full_proof() {
     );
 }
 
+/// **A targeted run's FILTER is a list of test-name substrings** separated by
+/// spaces: one item, several items, and a run of spaces between them are taken;
+/// an empty list, any other whitespace, and an item that could become a make
+/// expansion, shell syntax or a libtest option are refused.
 #[test]
-fn targeted_dispatch_plan_refuses_empty_or_multiple_filters() {
+fn targeted_dispatch_plan_takes_a_list_of_filters_and_refuses_an_unsafe_one() {
     let dir = scratch();
     for (krate, filter, success) in [
         ("jojobot-adapters", "dolt_case", true),
+        ("jojobot-adapters", "one two", true),
+        ("jojobot-adapters", "one  two::three", true),
         ("jojobot-adapters", "", false),
-        ("jojobot-adapters", "one two", false),
+        ("jojobot-adapters", "   ", false),
+        ("jojobot-adapters", "one\ttwo", false),
+        ("jojobot-adapters", "one\ntwo", false),
+        ("jojobot-adapters", "one -x", false),
+        ("jojobot-adapters", "one $(command)", false),
         ("../outside", "case", false),
         ("jojobot-adapters", "$(command)", false),
     ] {

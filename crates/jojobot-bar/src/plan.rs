@@ -9,23 +9,28 @@ pub(super) fn run(args: &[String]) -> std::io::Result<ExitCode> {
     if lane == "targeted" {
         let [_, krate, filter] = args else {
             return Err(std::io::Error::other(
-                "targeted plan needs a crate and one FILTER",
+                "targeted plan needs a crate and a FILTER",
             ));
         };
-        // These values reach make's command-line variables. Test-name characters
-        // cannot become make expansions, shell syntax or libtest options.
+        // **FILTER is a list of test-name substrings separated by spaces.** `make
+        // narrow` takes the union of the items and refuses an item that selects no
+        // test, naming it. These values reach make's command-line variables, so an
+        // item's characters cannot become make expansions, shell syntax or libtest
+        // options, and no whitespace but the space is taken.
+        let items: Vec<&str> = filter.split(' ').filter(|item| !item.is_empty()).collect();
         if krate.is_empty()
             || krate.starts_with('-')
             || !krate
                 .chars()
                 .all(|c| c.is_alphanumeric() || matches!(c, '-' | '_'))
-            || filter.is_empty()
-            || !filter
-                .chars()
-                .all(|c| c.is_alphanumeric() || matches!(c, '_' | ':'))
+            || items.is_empty()
+            || !items.iter().all(|item| {
+                item.chars()
+                    .all(|c| c.is_alphanumeric() || matches!(c, '_' | ':'))
+            })
         {
             return Err(std::io::Error::other(
-                "targeted plan needs a Cargo crate and one test-name substring (letters, digits, _ or :)",
+                "targeted plan needs a Cargo crate and test-name substrings separated by spaces (letters, digits, _ or :)",
             ));
         }
         println!(

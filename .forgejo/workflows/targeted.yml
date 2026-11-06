@@ -1,6 +1,8 @@
 # One boundary selection, including real-store cases, on the dispatch's ref/SHA.
 # POST actions/workflows/targeted.yml/dispatches with:
-# {"ref":"<branch-or-sha>","inputs":{"crate":"jojobot-adapters","FILTER":"<case-substring>"}}
+# {"ref":"<branch-or-sha>","inputs":{"crate":"jojobot-adapters","FILTER":"<case-substring> [<case-substring> ...]"}}
+# FILTER is a list of test-name substrings separated by spaces. The run is the union
+# of the items, and an item that selects no test refuses the run, naming it.
 # This workflow is never a proof of the release gate.
 name: targeted
 
@@ -11,7 +13,7 @@ on:
         description: 'Cargo crate to test'
         required: true
       FILTER:
-        description: 'One test-name substring (letters, digits, _ or :)'
+        description: 'Test-name substrings separated by spaces (letters, digits, _ or :)'
         required: true
 
 concurrency:
