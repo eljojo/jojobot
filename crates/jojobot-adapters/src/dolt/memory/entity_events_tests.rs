@@ -416,12 +416,62 @@ async fn a_kind_declaration_and_its_reclaim_emit_only_what_changes() {
         .writer
         .seam()
         .expect("the seam is open")
+        .read_claims(|state| state.declared(&ObjectId("stockkind".into())).cloned());
+    assert_eq!(stock, None, "the reclaimed kind is held no more");
+    world.writer.drain().await;
+    world.server.stop().await;
+}
+
+/// **After a reclaim the State holds the declaration exactly as the store's rows
+/// hold it**, and a reclaim that changes nothing appends nothing. The parity is
+/// asked of the rows by the read that serves declared types, not by what the
+/// writer meant to emit.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_reclaim_leaves_the_state_as_the_rows_hold_the_type() {
+    use jojobot_domain::memory::types::{Field, Origin, ValueType};
+
+    let mut world = world("entity-events-reclaim").await;
+    let token = "stockkind";
+    {
+        let (memory, fields) = (
+            world.memory.clone(),
+            vec![Field::new("shelf", ValueType::Text)],
+        );
+        world
+            .job(async move { memory.declare_kind(token, Origin::Shipped, fields).await })
+            .await
+            .expect("a shipped kind");
+    }
+    for _ in 0..2 {
+        let memory = world.memory.clone();
+        world
+            .job(async move { memory.reclaim_kind(token).await })
+            .await
+            .expect("reclaimed");
+    }
+    let rows = world
+        .memory
+        .declared_types()
+        .await
+        .expect("the rows read")
+        .into_iter()
+        .find(|declared| declared.name == token);
+    let held = world
+        .writer
+        .seam()
+        .expect("the seam is open")
         .read_claims(|state| {
-            state
-                .declared(&ObjectId("stockkind".into()))
-                .map(|declared| declared.fields.len())
+            (
+                state.declared(&ObjectId(token.into())).cloned(),
+                state.declarations_of(&ObjectId(token.into())).len(),
+            )
         });
-    assert_eq!(stock, Some(0), "the reclaimed kind is held with no keys");
+    assert_eq!(held.0, rows, "the State holds the type as the rows do");
+    assert!(
+        held.1 <= 2,
+        "an unchanged reclaim appends nothing: {}",
+        held.1
+    );
     world.writer.drain().await;
     world.server.stop().await;
 }

@@ -7492,14 +7492,8 @@ impl Memory for DoltMemory {
                 .execute(&mut *tx)
                 .await
                 .map_err(store)?;
-            // The kind is held with no keys from here on.
-            let reclaimed = DeclaredType {
-                name: token.to_string(),
-                fields: Vec::new(),
-                origin: Origin::Shipped,
-                must: None,
-            };
-            entity_events::emit_type_declared(&reclaimed, &self.clock, None)?;
+            // The rows hold no declaration of the kind from here on.
+            entity_events::emit_type_withdrawn(token, &self.clock, None)?;
         }
         entity_events::commit_kind_write(tx, token, &self.clock).await?;
         Ok(())

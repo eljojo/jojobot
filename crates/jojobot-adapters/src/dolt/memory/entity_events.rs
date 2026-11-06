@@ -160,3 +160,24 @@ pub(super) async fn commit_kind_write(
             .map_err(store)
     }
 }
+
+/// **Emit `TypeWithdrawn` when the State holds a declaration of the kind.** A
+/// reclaim of a kind the State holds nothing for adds no event. Outside a writer
+/// job, or before the seam is open, nothing is emitted.
+pub(super) fn emit_type_withdrawn(
+    token: &str,
+    clock: &Clock,
+    session: Option<&str>,
+) -> Result<(), MemoryError> {
+    let kind = ObjectId(token.to_string());
+    let held = crate::writer::sql::read_claims(|state| state.declared(&kind).is_some());
+    if held != Some(true) {
+        return Ok(());
+    }
+    let event = jojobot_domain::log::claims::import::live(
+        jojobot_domain::log::claims::ClaimEvent::TypeWithdrawn { kind },
+        clock.now(),
+        session.map(str::to_string),
+    );
+    crate::writer::sql::emit(vec![event]).map_err(store)
+}
