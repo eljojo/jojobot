@@ -308,3 +308,17 @@ fn the_instructions_name_the_chart_a_mail_search_follows() {
         "the paragraph that says what search finds names the chart rule: {mailboxes}"
     );
 }
+
+#[test]
+fn the_instructions_name_the_reply_that_closes_mail() {
+    let instructions = crate::instructions();
+    let rule = instructions
+        .split("3. ")
+        .nth(1)
+        .and_then(|rest| rest.split("\n\n").next())
+        .expect("the instructions carry a third rule");
+    assert!(
+        rule.contains("in_reply_to"),
+        "the mail-closing rule names the argument that closes a reply's message: {rule}"
+    );
+}
