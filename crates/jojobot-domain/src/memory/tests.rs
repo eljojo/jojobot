@@ -1,5 +1,6 @@
 mod bot_request_rows;
 mod clear_backing;
+mod clear_fold;
 mod contract_parts_tests;
 mod kind_admission;
 mod reference_kinds;

@@ -5026,9 +5026,16 @@ pub fn folded_backing(
         }
         match types::held_value(write, declared) {
             // A clear is a write, and so is a blank: each takes the backing off
-            // with the value, as the fold takes the key off.
+            // with the value when it comes from the claim that backs the key, as
+            // the fold takes the key off. From any other claim it withdraws that
+            // claim's write only, and the key stays backed.
             None => {
-                backing.remove(&write.key);
+                if backing
+                    .get(&write.key)
+                    .is_some_and(|held: &FieldBacking| held.fact == write.fact)
+                {
+                    backing.remove(&write.key);
+                }
             }
             Some(_) => {
                 backing.insert(
@@ -5148,8 +5155,20 @@ fn fold(
     // and a total has to keep adding. It is dropped with the key, so a clear
     // ends the total the same way it ends the value.
     let mut totals: BTreeMap<&str, Total> = BTreeMap::new();
+    // **The claim whose write holds each newest-wins key.** A clear is an event
+    // about one claim's write, decided at its own place in the order: when the
+    // claim is the one holding the key, the key leaves the thing and an older
+    // write does not return; otherwise only that claim's write is withdrawn and
+    // the thing keeps its value.
+    let mut holders: BTreeMap<&str, &FactId> = BTreeMap::new();
     for write in standing {
         let Some(value) = types::held_value(write, declared) else {
+            if types::fold_of(&write.key, declared) == types::Fold::Newest
+                && holders.get(write.key.as_str()) != Some(&&write.fact)
+            {
+                continue;
+            }
+            holders.remove(write.key.as_str());
             folded.remove(&write.key);
             moments.remove(&write.key);
             totals.remove(write.key.as_str());
@@ -5157,6 +5176,7 @@ fn fold(
         };
         match types::fold_of(&write.key, declared) {
             types::Fold::Newest => {
+                holders.insert(write.key.as_str(), &write.fact);
                 folded.insert(write.key.clone(), value.clone());
                 moments.insert(write.key.clone(), write.written_at);
                 continue;
