@@ -34,8 +34,8 @@ impl State {
             return None;
         }
         let id = self.handle_of(object)?;
-        let kind = id.kind()?;
-        let folded_names = self
+        let mut row = self.entity_row(body, id)?;
+        row.folded_names = self
             .folded_under
             .get(object)
             .into_iter()
@@ -43,13 +43,21 @@ impl State {
             .filter_map(|folded| self.objects.get(folded))
             .map(|folded| folded.name.clone())
             .collect();
+        Some(row)
+    }
+
+    /// **The row of a thing's own object under the handle it wears**, with no
+    /// folded names and not folded into anything. `None` when the handle names no
+    /// kind.
+    fn entity_row(&self, body: &ObjectBody, id: EntityId) -> Option<memory::Entity> {
+        let kind = id.kind()?;
         Some(memory::Entity {
             id,
             merged_into: None,
             kind,
             name: body.name.clone(),
             aliases: body.aliases.clone(),
-            folded_names,
+            folded_names: Vec::new(),
             source: body.source.clone(),
             crm: body.metadata.get("crm").cloned(),
             parent: body
@@ -79,6 +87,28 @@ impl State {
             .iter()
             .filter_map(|(object, body)| self.entity_of(object, body))
             .collect()
+    }
+
+    /// **Every thing the State holds, folded rows too**, in the order of their
+    /// handles, each wearing the handle it wore itself. A folded row names what
+    /// it was folded into, and what was folded into a thing is named on it.
+    pub fn listing(&self) -> Vec<memory::Entity> {
+        let mut rows: Vec<memory::Entity> = self
+            .objects
+            .iter()
+            .filter_map(|(object, body)| {
+                let mut row = self.entity_row(body, self.own_handle_of(object)?)?;
+                row.merged_into = self
+                    .redirects
+                    .get(object)
+                    .map(|survivor| self.handle_worn_by(survivor));
+                Some(row)
+            })
+            .collect();
+        rows.sort_by(|a, b| a.id.cmp(&b.id));
+        // A fold that loops names nobody, and the rows stay as they are.
+        let _ = memory::with_folded_names(&mut rows);
+        rows
     }
 
     /// The thing a handle names, when the handle is the one it answers to now.

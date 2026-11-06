@@ -326,6 +326,13 @@ async fn a_document_read_from_the_state_is_the_document_the_store_reads() {
             "merge events\n  state:  {held_merges:?}\n  stored: {stored_merges:?}"
         ));
     }
+    let stored_listing = memory.list_entities(None).await.expect("the listing");
+    let held_listing = state.listing();
+    if held_listing != stored_listing {
+        differences.push(format!(
+            "listing\n  state:  {held_listing:#?}\n  stored: {stored_listing:#?}"
+        ));
+    }
     assert!(differences.is_empty(), "{}", differences.join("\n"));
     server.stop().await;
 }

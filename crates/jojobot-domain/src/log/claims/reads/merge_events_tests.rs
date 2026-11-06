@@ -86,3 +86,51 @@ fn the_merges_of_the_state_are_the_merge_events_of_the_port() {
     );
     assert!(state.merge_events(Some(&handle("person:gamma"))).is_empty());
 }
+
+/// **The listing holds every thing, folded rows too**, in the order of their
+/// handles. A folded row names the thing it was folded into, and that thing
+/// answers to the names of what was folded into it.
+#[test]
+fn the_listing_holds_the_folded_rows_and_names_what_was_folded_into_a_survivor() {
+    let state = state_of(
+        made("k1", "person:alpha")
+            .into_iter()
+            .chain(made("k2", "person:beta"))
+            .chain(made("k3", "person:gamma"))
+            .map(plain)
+            .chain([
+                plain(ClaimEvent::ObjectsMerged {
+                    folded: object("k2"),
+                    survivor: object("k1"),
+                    records: Vec::new(),
+                    writes: Vec::new(),
+                }),
+                plain(ClaimEvent::ObjectRedirected {
+                    folded: object("k3"),
+                    survivor: object("k1"),
+                }),
+            ]),
+    );
+    let rows = state.listing();
+    let seen: Vec<(&str, Option<&str>)> = rows
+        .iter()
+        .map(|row| {
+            (
+                row.id.0.as_str(),
+                row.merged_into.as_ref().map(|into| into.0.as_str()),
+            )
+        })
+        .collect();
+    assert_eq!(
+        seen,
+        vec![
+            ("person:alpha", None),
+            ("person:beta", Some("person:alpha")),
+            ("person:gamma", Some("person:alpha")),
+        ]
+    );
+    assert_eq!(
+        rows[0].folded_names,
+        vec!["person:beta".to_string(), "person:gamma".to_string()]
+    );
+}
