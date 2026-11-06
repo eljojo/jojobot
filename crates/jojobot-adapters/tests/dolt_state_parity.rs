@@ -296,14 +296,24 @@ async fn the_state_gives_the_backing_the_store_gives() {
 #[tokio::test]
 async fn the_state_gives_the_key_trails_the_store_gives() {
     let mut world = written("parity-trails").await;
+    // **The State names the home of an address by the thing's permanent key**, as
+    // its doc says, and the store by the handle; the shell supplies the handle.
+    let mut handles = std::collections::BTreeMap::new();
+    for handle in world
+        .standing
+        .iter()
+        .chain([&EntityId("person:lisa".into())])
+    {
+        handles.insert(object_of(&world.pool, handle).await.0, handle.clone());
+    }
     for handle in &world.standing {
         let at = object_of(&world.pool, handle).await;
         let stored = world.memory.key_trails(handle).await.expect("the store's");
-        assert_eq!(
-            world.state.key_trails(&at),
-            stored,
-            "{handle}: the writes of each key"
-        );
+        let mut served = world.state.key_trails(&at);
+        for write in served.history.values_mut().flatten() {
+            write.fact.home = handles[write.fact.home.as_str()].clone();
+        }
+        assert_eq!(served, stored, "{handle}: the writes of each key");
         if handle.as_str() == "person:homer" {
             // The comparison above is not over two empty answers.
             assert!(
