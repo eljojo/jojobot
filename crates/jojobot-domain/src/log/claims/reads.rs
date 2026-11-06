@@ -160,37 +160,7 @@ impl State {
         subject: &ObjectId,
         declared: &[DeclaredType],
     ) -> BTreeMap<String, String> {
-        self.compose_marks(self.fields(subject, declared))
-    }
-
-    /// **The objects each value of a bag points at**, by the marks it wears,
-    /// served as the handles they answer to now. A key whose value wears no mark
-    /// is absent.
-    pub(super) fn marked_links(
-        &self,
-        fields: &BTreeMap<String, String>,
-    ) -> BTreeMap<String, Vec<EntityId>> {
-        fields
-            .iter()
-            .filter_map(|(key, value)| {
-                let handles: Vec<EntityId> = value
-                    .split(',')
-                    .filter_map(|item| memory::stored_handle_id(item.trim()))
-                    .map(|id| {
-                        self.handle_of(&ObjectId(id.to_string()))
-                            .unwrap_or_else(|| EntityId(id.to_string()))
-                    })
-                    .collect();
-                (!handles.is_empty()).then(|| (key.clone(), handles))
-            })
-            .collect()
-    }
-
-    /// **A bag of values as a read serves it**: see [`State::fields_served`].
-    pub(super) fn compose_marks(
-        &self,
-        mut fields: BTreeMap<String, String>,
-    ) -> BTreeMap<String, String> {
+        let mut fields = self.fields(subject, declared);
         for (key, value) in fields.clone() {
             if let Some(served) = self.serve_handles(&value) {
                 fields.insert(key, served);
