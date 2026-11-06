@@ -19,6 +19,7 @@ struct World {
     _scratch: Scratch,
     server: Dolt,
     memory: DoltMemory,
+    store: sqlx::MySqlPool,
     writer: Writer,
 }
 
@@ -32,7 +33,8 @@ async fn world(name: &str) -> World {
     World {
         _scratch: scratch,
         server,
-        memory: DoltMemory::open(store),
+        memory: DoltMemory::open(store.clone()),
+        store,
         writer: Writer::default(),
     }
 }
@@ -163,6 +165,52 @@ async fn the_entity_writers_leave_the_claims_state_agreeing_with_the_store() {
         Some("Lives next door."),
         "the prose is in the State"
     );
+    world.writer.drain().await;
+    world.server.stop().await;
+}
+
+/// **A boot row repair never emits**, even run as a job of the writer. An early
+/// emission would make the claims import skip, because it runs only while the log
+/// holds no claims event, and the history would be lost. The repair here gives a
+/// badge to a row that has none, and the log must still hold no claims member.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_boot_row_repair_emits_no_claims_event() {
+    let mut world = world("entity-events-repair").await;
+    sqlx::query(
+        "INSERT INTO entity (id, kind, name, source, boot, prose) \
+         VALUES ('person:bart', 'person', 'Bart', 'fixture', 'on-demand', '')",
+    )
+    .execute(&world.store)
+    .await
+    .expect("a row from before badges");
+    // **Asked inside the job**, because a repair commits natively and never seals
+    // what it emitted: a repair that emitted would leave its events pending in the
+    // job's context, where the log cannot show them.
+    let (given, pending) = {
+        let memory = world.memory.clone();
+        world
+            .job(async move {
+                let given = memory.badge_the_unbadged().await;
+                (given, crate::writer::sql::take_emitted())
+            })
+            .await
+    };
+    assert_eq!(
+        given.expect("the repair runs"),
+        1,
+        "the repair did its work"
+    );
+    assert!(pending.is_empty(), "the repair emitted: {pending:?}");
+    let members: usize = world
+        .writer
+        .shared_log(&world.store)
+        .read_from(jojobot_domain::log::Position(0), 100)
+        .await
+        .expect("the log reads")
+        .iter()
+        .map(|batch| batch.members().len())
+        .sum();
+    assert_eq!(members, 0, "the repair put nothing in the log");
     world.writer.drain().await;
     world.server.stop().await;
 }
