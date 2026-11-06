@@ -591,25 +591,36 @@ pub fn import(rows: &Rows) -> Result<Vec<Event<ClaimEvent>>, ImportError> {
             }
             None => (None, None),
         };
-        events.push(envelope(
-            actor,
-            run,
-            write.written_at,
-            ClaimEvent::FieldWritten {
-                // **The record the claim was created as**: a stored claim keeps its
-                // key and its id whatever a merge has since called it.
-                record: match stored {
-                    Some(fact) => record_id(&fact.home, &fact.local),
-                    None => record_id(subject, local),
+        events.push(envelope(actor, run, write.written_at, {
+            // **The record the claim was created as**: a stored claim keeps its
+            // key and its id whatever a merge has since called it.
+            let record = match stored {
+                Some(fact) => record_id(&fact.home, &fact.local),
+                None => record_id(subject, local),
+            };
+            match &write.write {
+                // **Every stored clear took the key off the thing** (rule 677),
+                // whichever claim held the value, so it keeps that meaning in
+                // an event kind of its own.
+                FieldValue::Clear | FieldValue::Removed => ClaimEvent::FieldRemoved {
+                    record,
+                    subject: subject.clone(),
+                    key: write.key.clone(),
+                    ordinal: *ordinal,
+                    class: write.class,
+                    targets: write.targets.clone(),
                 },
-                subject: subject.clone(),
-                key: write.key.clone(),
-                ordinal: *ordinal,
-                class: write.class,
-                write: write.write.clone(),
-                targets: write.targets.clone(),
-            },
-        ));
+                set => ClaimEvent::FieldWritten {
+                    record,
+                    subject: subject.clone(),
+                    key: write.key.clone(),
+                    ordinal: *ordinal,
+                    class: write.class,
+                    write: set.clone(),
+                    targets: write.targets.clone(),
+                },
+            }
+        }));
     }
     // A merge made before `merge_event` existed is told only by the mark on the
     // folded entity. It has no moment and no run, and it comes first because it

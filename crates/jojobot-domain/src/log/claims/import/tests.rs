@@ -346,6 +346,49 @@ fn a_cleared_key_is_a_write_that_takes_the_key_off() {
     assert!(state.fields(&object("k1"), &[]).is_empty());
 }
 
+/// **A stored clear keeps the meaning it had: the key left the thing** (rule 677).
+/// Before the 2026-11-01 refusal any clear took the key off, whichever claim held
+/// the value, so the import says so in an event kind of its own and the State
+/// applies it in one arm. The clear here is by a claim that did not hold the key.
+#[test]
+fn a_stored_clear_by_a_claim_that_did_not_hold_the_key_still_takes_it_off() {
+    let mut clear = set("k1", "mood", 2, "", "f2", Some(1));
+    clear.write = FieldValue::Clear;
+    let rows = Rows {
+        entities: vec![entity("k1", "person:homer")],
+        facts: vec![
+            fact("k1", "f1", vec![write_of(1, "x", None, 1)]),
+            fact("k1", "f2", vec![write_of(1, "y", None, 1)]),
+        ],
+        field_writes: vec![set("k1", "mood", 1, "calm", "f1", Some(1)), clear],
+        ..Rows::default()
+    };
+    let events = imported(&rows);
+    let removed: Vec<u64> = events
+        .iter()
+        .filter_map(|event| match &event.payload {
+            ClaimEvent::FieldRemoved { key, ordinal, .. } if key.0 == "mood" => Some(*ordinal),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(removed, vec![2], "the clear is a removal: {events:?}");
+    assert!(
+        events.iter().all(|event| !matches!(
+            &event.payload,
+            ClaimEvent::FieldWritten {
+                write: FieldValue::Clear,
+                ..
+            }
+        )),
+        "no stored clear is written as a live clear"
+    );
+    let state = State::replay(&events);
+    assert!(
+        state.fields(&object("k1"), &[]).is_empty(),
+        "the key is off the thing, as the old store served it"
+    );
+}
+
 fn with_status(mut row: FactRow, status: FactStatus) -> FactRow {
     row.head.status = status;
     for write in &mut row.writes {
@@ -921,7 +964,7 @@ fn stored_writes(rows: &Rows, thing: &str) -> Vec<KeyWrite> {
             ordinal: write.ordinal,
             value: match &write.write {
                 FieldValue::Set(v) => Some(v.clone()),
-                FieldValue::Clear => None,
+                FieldValue::Clear | FieldValue::Removed => None,
             },
             fact: FactId(write.fact_local.clone()),
             status: fact.head.status,

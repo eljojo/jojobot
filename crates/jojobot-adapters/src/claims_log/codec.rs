@@ -128,7 +128,7 @@ type ValueWire = Option<String>;
 /// **Every shape this family stores**, as `Payload` names them. Kept beside the
 /// enum so a new shape is added in both places, and checked against the events and
 /// the pinned literals in the tests.
-pub const SHAPES: [&str; 13] = [
+pub const SHAPES: [&str; 14] = [
     "ObjectCreated",
     "ObjectRevised",
     "ObjectBaselined",
@@ -141,6 +141,7 @@ pub const SHAPES: [&str; 13] = [
     "RecordCreated",
     "RecordRevised",
     "FieldWritten",
+    "FieldRemoved",
     "TypeDeclared",
 ];
 
@@ -204,6 +205,14 @@ enum Payload {
         write: ValueWire,
         targets: Vec<ObjectId>,
     },
+    FieldRemoved {
+        record: RecordId,
+        subject: ObjectId,
+        key: String,
+        ordinal: u64,
+        class: String,
+        targets: Vec<ObjectId>,
+    },
     TypeDeclared {
         kind: ObjectId,
         declaration: DeclaredTypeWire,
@@ -226,6 +235,7 @@ impl Payload {
             Payload::RecordCreated { .. } => "RecordCreated",
             Payload::RecordRevised { .. } => "RecordRevised",
             Payload::FieldWritten { .. } => "FieldWritten",
+            Payload::FieldRemoved { .. } => "FieldRemoved",
             Payload::TypeDeclared { .. } => "TypeDeclared",
         };
         format!("{FAMILY}{name}")
@@ -503,8 +513,24 @@ fn payload_wire(event: &ClaimEvent) -> Payload {
             class: class_token(*class),
             write: match write {
                 FieldValue::Set(value) => Some(value.clone()),
-                FieldValue::Clear => None,
+                // A removal has its own event; it is never written as a value.
+                FieldValue::Clear | FieldValue::Removed => None,
             },
+            targets: targets.clone(),
+        },
+        ClaimEvent::FieldRemoved {
+            record,
+            subject,
+            key,
+            ordinal,
+            class,
+            targets,
+        } => Payload::FieldRemoved {
+            record: record.clone(),
+            subject: subject.clone(),
+            key: key.0.clone(),
+            ordinal: *ordinal,
+            class: class_token(*class),
             targets: targets.clone(),
         },
         ClaimEvent::TypeDeclared { kind, declaration } => Payload::TypeDeclared {
@@ -604,6 +630,21 @@ fn event_of(payload: Payload) -> Result<ClaimEvent, DecodeError> {
                 Some(value) => FieldValue::Set(value),
                 None => FieldValue::Clear,
             },
+            targets,
+        },
+        Payload::FieldRemoved {
+            record,
+            subject,
+            key,
+            ordinal,
+            class,
+            targets,
+        } => ClaimEvent::FieldRemoved {
+            record,
+            subject,
+            key: KeyId(key),
+            ordinal,
+            class: class_of(&class)?,
             targets,
         },
         Payload::TypeDeclared { kind, declaration } => ClaimEvent::TypeDeclared {

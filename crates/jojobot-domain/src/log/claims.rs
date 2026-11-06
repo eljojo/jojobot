@@ -45,6 +45,10 @@ pub struct KindId(pub String);
 pub enum FieldValue {
     Set(String),
     Clear,
+    /// **A stored clear, as the import reads it** (rule 677). Every clear the
+    /// store holds took the key off the thing, whichever claim held the value, and
+    /// that meaning does not change. A live clear is [`Self::Clear`].
+    Removed,
 }
 
 /// **Everything an object is, complete when written.**
@@ -226,6 +230,19 @@ pub enum ClaimEvent {
         write: FieldValue,
         targets: Vec<ObjectId>,
     },
+    /// **A key a stored clear took off the thing.** The import maps every stored
+    /// clear to this event, whose meaning is fixed: the key leaves the thing,
+    /// whichever claim held its value, and the clearing claim's own write of it is
+    /// withdrawn. Live writes never emit it. Places in the stream as
+    /// [`Self::FieldWritten`] does.
+    FieldRemoved {
+        record: RecordId,
+        subject: ObjectId,
+        key: KeyId,
+        ordinal: u64,
+        class: WriteClass,
+        targets: Vec<ObjectId>,
+    },
     /// A type is declared, or declared again. Each declaration is one event and
     /// the earlier ones stay in the history; the newest is the one in force.
     TypeDeclared {
@@ -377,6 +394,30 @@ impl State {
                     ordinal: *ordinal,
                     class: *class,
                     write: write.clone(),
+                    targets: targets.clone(),
+                    writer: event.actor.clone(),
+                    run: event.run.clone(),
+                    written_at: event.imported_source_time.or(event.written_at),
+                });
+                self.index_write(record, subject, key, *ordinal);
+            }
+            ClaimEvent::FieldRemoved {
+                record,
+                subject,
+                key,
+                ordinal,
+                class,
+                targets,
+            } => {
+                let stream = self
+                    .streams
+                    .entry((subject.clone(), key.clone()))
+                    .or_default();
+                stream.push(Write {
+                    record: record.clone(),
+                    ordinal: *ordinal,
+                    class: *class,
+                    write: FieldValue::Removed,
                     targets: targets.clone(),
                     writer: event.actor.clone(),
                     run: event.run.clone(),
@@ -551,7 +592,7 @@ impl State {
                 ordinal: write.ordinal,
                 value: match &write.write {
                     FieldValue::Set(value) => Some(value.clone()),
-                    FieldValue::Clear => None,
+                    FieldValue::Clear | FieldValue::Removed => None,
                 },
                 fact: FactId(record.claim.label.clone()),
                 status: record.claim.status,
@@ -597,7 +638,7 @@ impl State {
                 })
                 .max_by_key(|write| write.ordinal);
             if let Some(write) = newest
-                && write.write != FieldValue::Clear
+                && !matches!(write.write, FieldValue::Clear | FieldValue::Removed)
             {
                 out.extend(
                     write

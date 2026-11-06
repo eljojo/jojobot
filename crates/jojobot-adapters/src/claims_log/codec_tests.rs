@@ -192,6 +192,14 @@ fn every_kind() -> Vec<ClaimEvent> {
             write: FieldValue::Clear,
             targets: Vec::new(),
         },
+        ClaimEvent::FieldRemoved {
+            record: record("r1"),
+            subject: object("k1"),
+            key: KeyId("visits".into()),
+            ordinal: 4,
+            class: WriteClass::Stays,
+            targets: Vec::new(),
+        },
         ClaimEvent::TypeDeclared {
             kind: object("k5"),
             declaration: declaration(),
@@ -254,7 +262,7 @@ fn each_kind_names_itself_once() {
         .collect();
     names.sort();
     names.dedup();
-    assert_eq!(names.len(), 13, "{names:?}");
+    assert_eq!(names.len(), 14, "{names:?}");
 }
 
 /// **Another family's event is that family's to read**, and a claims kind this
@@ -324,6 +332,7 @@ fn the_stored_spelling_is_pinned() {
             "ClaimsRecordRevised",
             "ClaimsFieldWritten",
             "ClaimsFieldWritten",
+            "ClaimsFieldRemoved",
             "ClaimsTypeDeclared",
         ]
     );
@@ -357,7 +366,7 @@ fn the_stored_spelling_is_pinned() {
 /// payload a real event of that shape stores; a renamed key, tag or token moves
 /// the stored form and every event already in the log with it, so none of these
 /// may follow a rename. The shapes the family stores are the shape list, and the
-/// events, the literals and that list all name the same thirteen.
+/// events, the literals and that list all name the same fourteen.
 #[test]
 fn the_stored_payload_of_every_shape_is_pinned() {
     use serde_json::json;
@@ -403,6 +412,8 @@ fn the_stored_payload_of_every_shape_is_pinned() {
                "ordinal": 2, "class": "sets", "write": "3", "targets": ["k3"]}),
         json!({"shape": "FieldWritten", "record": "r1", "subject": "k1", "key": "visits",
                "ordinal": 3, "class": "stays", "write": null, "targets": []}),
+        json!({"shape": "FieldRemoved", "record": "r1", "subject": "k1", "key": "visits",
+               "ordinal": 4, "class": "stays", "targets": []}),
         json!({"shape": "TypeDeclared", "kind": "k5", "declaration": {
             "fields": [
                 {"folds": "sum", "holds": "number", "key": "visits", "list": false,
@@ -430,7 +441,7 @@ fn the_stored_payload_of_every_shape_is_pinned() {
     };
     let listed: std::collections::BTreeSet<String> =
         SHAPES.iter().map(|shape| shape.to_string()).collect();
-    assert_eq!(listed.len(), 13);
+    assert_eq!(listed.len(), 14);
     assert_eq!(shapes_of(&stored), listed, "an event of every shape stored");
     assert_eq!(
         shapes_of(&pinned),
