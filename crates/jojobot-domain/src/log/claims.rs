@@ -330,6 +330,17 @@ struct Write {
     written_at: Option<Timestamp>,
 }
 
+/// **One numbered merge**: the two objects, when the store took it in, the run
+/// that made it and each claim's label before and after.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MergeEntry {
+    folded: ObjectId,
+    survivor: ObjectId,
+    at: Option<Timestamp>,
+    run: Option<RunId>,
+    relabelled: Vec<(String, String)>,
+}
+
 /// **What the events so far say.**
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct State {
@@ -353,6 +364,8 @@ pub struct State {
     /// Every object folded into each survivor, at any depth.
     folded_under: BTreeMap<ObjectId, BTreeSet<ObjectId>>,
     version_seq: u64,
+    /// Every numbered merge, in the order they were made.
+    merge_log: Vec<MergeEntry>,
     indexes: indexes::Indexes,
 }
 
@@ -423,9 +436,18 @@ impl State {
                 survivor,
                 records,
                 writes,
-            } => self.merge(folded, survivor, records, writes, true),
+            } => self.merge(
+                folded,
+                survivor,
+                records,
+                writes,
+                Some((
+                    event.imported_source_time.or(event.written_at),
+                    event.run.clone(),
+                )),
+            ),
             ClaimEvent::ObjectRedirected { folded, survivor } => {
-                self.merge(folded, survivor, &[], &[], false)
+                self.merge(folded, survivor, &[], &[], None)
             }
             ClaimEvent::MergeNumbersLeftEmpty { count } => self.leave_merge_numbers_empty(*count),
             ClaimEvent::ImportCompleted { .. } => {}
@@ -585,8 +607,9 @@ impl State {
         survivor: &ObjectId,
         records: &[MovedRecord],
         writes: &[MovedWrite],
-        numbered: bool,
+        counted: Option<(Option<Timestamp>, Option<RunId>)>,
     ) {
+        let numbered = counted.is_some();
         // A redirect that closes a loop would make `survivor` spin forever.
         if self.survivor(survivor) == self.survivor(folded) {
             return;
@@ -610,11 +633,22 @@ impl State {
             }
         }
         self.move_spellings(folded, survivor);
+        let mut relabelled = Vec::new();
         for moved in records {
             if let Some(held) = self.records.get_mut(&moved.record) {
+                relabelled.push((held.claim.label.clone(), moved.label.clone()));
                 held.claim.home = survivor.clone();
                 held.claim.label = moved.label.clone();
             }
+        }
+        if let Some((at, run)) = counted {
+            self.merge_log.push(MergeEntry {
+                folded: folded.clone(),
+                survivor: survivor.clone(),
+                at,
+                run,
+                relabelled,
+            });
         }
         let keys: Vec<(ObjectId, KeyId)> = self
             .streams

@@ -333,6 +333,41 @@ impl State {
         })
     }
 
+    /// **The handle an object wore itself**, folded or not, else the id.
+    fn handle_worn_by(&self, object: &ObjectId) -> EntityId {
+        self.own_handle_of(object)
+            .or_else(|| self.handle_of(object))
+            .unwrap_or_else(|| EntityId(object.0.clone()))
+    }
+
+    /// **The merges the State holds, as the port serves them**, in the order they
+    /// were made. With a handle, only the merges that folded that thing or folded
+    /// something into it.
+    pub fn merge_events(&self, entity: Option<&EntityId>) -> Vec<memory::MergeEvent> {
+        self.merge_log
+            .iter()
+            // The sides of a merge are the two things it joined, by the handle
+            // each wore: a thing folded in by a later merge is not a side of this.
+            .filter(|entry| {
+                entity.is_none_or(|handle| {
+                    self.handle_worn_by(&entry.folded) == *handle
+                        || self.handle_worn_by(&entry.survivor) == *handle
+                })
+            })
+            .map(|entry| memory::MergeEvent {
+                folded: self.handle_worn_by(&entry.folded),
+                survivor: self.handle_worn_by(&entry.survivor),
+                merged_at: entry.at.unwrap_or(Timestamp::UNIX_EPOCH),
+                session: entry.run.as_ref().map(|run| run.0.clone()),
+                claims: entry
+                    .relabelled
+                    .iter()
+                    .map(|(old, new)| (FactId(old.clone()), FactId(new.clone())))
+                    .collect(),
+            })
+            .collect()
+    }
+
     /// **The marker of the writes behind a thing's fields**: how many writes of
     /// its claims and of its own row it holds, folded things included. It only
     /// grows, so a slower read of an earlier state cannot beat one already
@@ -527,6 +562,8 @@ pub use document::DocumentParts;
 mod histories_tests;
 #[cfg(test)]
 mod marker_tests;
+#[cfg(test)]
+mod merge_events_tests;
 #[cfg(test)]
 mod own_handle_tests;
 #[cfg(test)]
