@@ -62,6 +62,27 @@ impl InMemoryMemory {
         }
     }
 
+    /// **Emit the claims event of declaring `declared`**, unless the State already
+    /// holds exactly that declaration for its name. The choice is the domain's
+    /// (`type_declaration_events`); the fake applies what comes back, as the seam
+    /// applies it.
+    pub(super) fn emit_type_declaration(
+        &self,
+        declared: &crate::memory::types::DeclaredType,
+        session: Option<&str>,
+    ) {
+        let mut claims = self.claims.lock().expect("fake mutex poisoned");
+        let events = crate::log::claims::type_change::type_declaration_events(
+            claims.declared(&ObjectId(declared.name.clone())),
+            declared,
+            self.clock().now(),
+            session.map(str::to_string),
+        );
+        for event in &events {
+            claims.apply(event);
+        }
+    }
+
     /// The claims State as the entity writers have left it.
     pub fn claims_state(&self) -> crate::log::claims::State {
         self.claims.lock().expect("fake mutex poisoned").clone()

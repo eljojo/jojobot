@@ -121,3 +121,43 @@ async fn an_act_whose_claim_is_refused_leaves_the_claims_state_as_it_was() {
         "the refused edit left its name in the State"
     );
 }
+
+/// **A type declaration reaches the claims State only when it differs from the
+/// declaration the State holds for the name**: the first is one event, the same
+/// again adds none, and a changed one adds one. The same rule as the Dolt writer.
+#[tokio::test]
+async fn a_type_declaration_emits_only_when_it_differs_from_the_state() {
+    use crate::memory::types::{DeclaredType, Field, ValueType};
+
+    let fake = InMemoryMemory::seeded();
+    let declared = |keys: &[&str]| {
+        DeclaredType::new(
+            "pledge",
+            keys.iter()
+                .map(|key| Field::new(key, ValueType::Text))
+                .collect(),
+        )
+    };
+    fake.declare_type(declared(&["witness"]), None)
+        .await
+        .expect("declared");
+    fake.declare_type(declared(&["witness"]), None)
+        .await
+        .expect("declared again");
+    fake.declare_type(declared(&["witness", "date"]), None)
+        .await
+        .expect("changed");
+
+    let held = fake
+        .claims_state()
+        .declarations_of(&ObjectId("pledge".into()))
+        .to_vec();
+    assert_eq!(
+        held,
+        vec![
+            declared(&["witness"]).normalized(),
+            declared(&["witness", "date"]).normalized()
+        ],
+        "one event for the first declaration, none for the repeat, one for the change"
+    );
+}

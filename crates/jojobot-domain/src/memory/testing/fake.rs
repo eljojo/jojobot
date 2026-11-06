@@ -5515,6 +5515,7 @@ impl Memory for InMemoryMemory {
                 .unwrap()
                 .push((declared.name.clone(), by_session.map(str::to_string)));
         }
+        self.emit_type_declaration(&declared, by_session);
         Ok(declared)
     }
 
