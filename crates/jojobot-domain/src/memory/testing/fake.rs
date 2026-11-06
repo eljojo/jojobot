@@ -10,6 +10,7 @@ use crate::memory::forward_field_value;
 
 mod claims;
 mod classes;
+mod entity_events;
 mod fold_reads;
 mod link_rule;
 mod resolution;
@@ -239,6 +240,10 @@ pub struct InMemoryMemory {
     /// The human half of each entity's doc, keyed by handle — replaced whole by
     /// `set_prose`, exactly as the real store replaces the region.
     prose: Mutex<std::collections::HashMap<EntityId, String>>,
+    /// **The claims State the entity writers emit into**, built by the domain's
+    /// own event choice (`entity_change_events`) and applied by `State::apply`,
+    /// as the seam applies it. The fake writes no event of its own.
+    claims: Mutex<crate::log::claims::State>,
     /// **The badge each entity wears**, minted when it is created and never
     /// changed after.
     ///
@@ -2319,12 +2324,17 @@ impl Memory for InMemoryMemory {
         self.entities
             .lock()
             .expect("fake mutex poisoned")
-            .push(stored);
+            .push(stored.clone());
         self.badges.lock().expect("fake mutex poisoned").insert(
             entity.id.clone(),
             entity.badge.clone().expect("a row minted here wears one"),
         );
         self.touched(&entity, session.as_deref());
+        self.emit_entity_change(
+            &stored,
+            crate::log::claims::entity_change::EntityChange::Created,
+            session.as_deref(),
+        );
         Ok(Guarded::Written(entity))
     }
 
@@ -2442,6 +2452,7 @@ impl Memory for InMemoryMemory {
         // the thing it makes, which has no home before the act.
         let take_back = || {
             *self.entities.lock().expect("fake mutex poisoned") = entities_before.clone();
+            *self.claims.lock().expect("fake mutex poisoned") = claims_before.clone();
             *self.badges.lock().expect("fake mutex poisoned") = badges_before.clone();
             *self.facts.lock().expect("fake mutex poisoned") = facts_before.clone();
             *self.writes.lock().expect("fake mutex poisoned") = writes_before.clone();
@@ -2558,6 +2569,7 @@ impl Memory for InMemoryMemory {
         let take_back = || {
             self.put_heartbeats_back(&heartbeats_before);
             *self.entities.lock().expect("fake mutex poisoned") = entities_before.clone();
+            *self.claims.lock().expect("fake mutex poisoned") = claims_before.clone();
             *self.facts.lock().expect("fake mutex poisoned") = facts_before.clone();
             *self.writes.lock().expect("fake mutex poisoned") = writes_before.clone();
             *self.claim_writes.lock().expect("fake mutex poisoned") = claim_writes_before.clone();
@@ -2845,6 +2857,11 @@ impl Memory for InMemoryMemory {
             return Err(e);
         }
         self.touched(entity, session.as_deref());
+        self.emit_entity_change(
+            entity,
+            crate::log::claims::entity_change::EntityChange::Revised,
+            session.as_deref(),
+        );
         // **Served under the handle, stored under the badge** — `parent`
         // names a different row and never moved under this edit, so what it
         // carries here is whatever was stored, resolved for the reader.
@@ -2900,6 +2917,11 @@ impl Memory for InMemoryMemory {
             at: self.clock().now(),
         });
         self.touched(entity, session);
+        self.emit_entity_change(
+            entity,
+            crate::log::claims::entity_change::EntityChange::Revised,
+            session,
+        );
         let mut served = entity.clone();
         naming_folded_in(&entities, &mut served);
         Ok(served)
@@ -2945,6 +2967,11 @@ impl Memory for InMemoryMemory {
         })?;
         let was = entity.archived.take().expect("checked just above");
         self.touched(entity, session);
+        self.emit_entity_change(
+            entity,
+            crate::log::claims::entity_change::EntityChange::Revised,
+            session,
+        );
         let mut served = entity.clone();
         naming_folded_in(&entities, &mut served);
         Ok((served, was))
@@ -3196,6 +3223,17 @@ impl Memory for InMemoryMemory {
         naming_folded_in(&entities, &mut renamed);
         drop(entities);
         self.touched_naming(&entity, stored_parent.as_ref(), session);
+        self.emit_entity_change(
+            &Entity {
+                parent: stored_parent.clone(),
+                ..renamed.clone()
+            },
+            crate::log::claims::entity_change::EntityChange::Renamed {
+                from: from.as_str(),
+                day: date,
+            },
+            session,
+        );
         // **A same-handle reparent is not a former handle of itself.** The
         // handle never moved, so there is nothing here for a later resolve
         // to walk back through.
@@ -5328,6 +5366,22 @@ impl Memory for InMemoryMemory {
             .insert(entity.clone(), stored.clone());
         if let Some(row) = index.iter().find(|e| &e.id == entity) {
             self.touched(row, session);
+        }
+        // The row as stored, with its parent the key it wears: the index above
+        // serves it under the handle.
+        let row = self
+            .entities
+            .lock()
+            .expect("fake mutex poisoned")
+            .iter()
+            .find(|e| &e.id == entity)
+            .cloned();
+        if let Some(row) = row {
+            self.emit_entity_change(
+                &row,
+                crate::log::claims::entity_change::EntityChange::Revised,
+                session,
+            );
         }
         Ok(stored)
     }
