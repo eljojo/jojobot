@@ -165,12 +165,19 @@ fn parts_of(fields: &Map<String, Value>, part: &mut impl FnMut(u64, &str, &Value
                         // day it stands on (`as_of`) and the note that says which way the
                         // call asked (a walk of its own, or a plain read). The same block
                         // read under another frame says other things.
-                        let frame = (key == "held").then(|| {
-                            let text = |name: &str| {
-                                inner.get(name).and_then(Value::as_str).unwrap_or_default()
-                            };
-                            format!("{}|{}", text("as_of"), text("note"))
-                        });
+                        let frame = match key.as_str() {
+                            "held" => {
+                                let text = |name: &str| {
+                                    inner.get(name).and_then(Value::as_str).unwrap_or_default()
+                                };
+                                Some(format!("{}|{}", text("as_of"), text("note")))
+                            }
+                            // A walk that found nothing is a result, not the
+                            // absence of one: it is another part than a walk that
+                            // found a neighbor.
+                            "connected" => Some(says_something(inner).to_string()),
+                            _ => None,
+                        };
                         let window = frame.or_else(|| part_window(key, inner));
                         part(token(owner, key, window.as_deref()), key, inner);
                         // A read narrowed by `keys` serves some of the fields, so
@@ -208,9 +215,8 @@ fn shape_of(fields: &Map<String, Value>) -> Shape {
 fn part_values(fields: &Map<String, Value>) -> crate::seen::PartValues {
     let mut out = crate::seen::PartValues::new();
     parts_of(fields, &mut |token, key, value| {
-        // Narrowed reads serve individual fields, not the whole fields map. A part
-        // that says nothing hides no text.
-        if key != "fields" && says_something(value) {
+        // Narrowed reads serve individual fields, not the whole fields map.
+        if key != "fields" {
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
             value.to_string().hash(&mut hasher);
             out.entry(token)
@@ -564,6 +570,32 @@ mod tests {
             let count = collapse(&mut body, &[entity("list:errands")], &received);
             assert_eq!(count, usize::from(collapses), "{body}");
         }
+    }
+
+    /// **A walk that found nothing, after one that found a neighbor, is served
+    /// again**: an empty answer is a result the session was not handed, and an
+    /// empty walk is the same part as another empty one. The guard counts it.
+    #[test]
+    fn a_walk_that_found_nothing_after_one_that_did_is_served_again() {
+        let walked = |connected: Value| json!({"objects": [{"id": "person:homer", "name": "Homer", "connected": connected}]});
+        let first = walked(json!([{"id": "person:marge", "name": "Marge"}]));
+        let received = received_of(&first);
+        let mut empty = walked(json!([]));
+        assert_eq!(
+            collapse(&mut empty, &[entity("person:homer")], &received),
+            0
+        );
+        let mut again = walked(json!([]));
+        let received = received_of(&empty);
+        assert_eq!(
+            collapse(&mut again, &[entity("person:homer")], &received),
+            1
+        );
+        let object = empty["objects"][0].as_object().expect("an object");
+        assert!(
+            !part_values(object).is_empty(),
+            "the guard counts an empty walk as a value"
+        );
     }
 
     /// **A held block read under another frame is another part**: the same

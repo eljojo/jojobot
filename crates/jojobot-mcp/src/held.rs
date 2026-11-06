@@ -349,9 +349,22 @@ impl Jojobot {
             && let Ok(held) = self.memory.recall(&id).await
         {
             let setting = jojobot_domain::memory::entries::Setting::of(&fields);
-            sources.extend(jojobot_domain::memory::entries::counted_links(
-                &held, setting,
-            ));
+            let linked = jojobot_domain::memory::entries::counted_links(&held, setting);
+            // **Readiness reads what the linked work depends on, and progress
+            // reads the status words the instance maps.**
+            for work in &linked {
+                if let Ok(theirs) = self.memory.fields(work).await {
+                    for value in theirs.values() {
+                        sources.extend(jojobot_domain::memory::handles_in_value(value));
+                    }
+                }
+            }
+            if !linked.is_empty() {
+                sources.insert(EntityId(
+                    jojobot_domain::memory::INSTANCE_RECORD.to_string(),
+                ));
+            }
+            sources.extend(linked);
             for entry in &jojobot_domain::memory::entries::view(&held, setting).entries {
                 if let Ok(built) = self.memory.built_on(&entry.fact.address()).await {
                     sources.extend(built.into_iter().map(|fact| fact.home));
@@ -1090,6 +1103,47 @@ mod tests {
             version(&jojobot, "list:checklist").await,
             list,
             "a list's progress reads the state of the work its entries link"
+        );
+
+        // Readiness reads the linked work's own dependencies, and progress reads
+        // the status words the instance maps: a write to either, and to neither
+        // the list nor the work it links, still changes what the list says.
+        ensure(&jojobot, "work:phi").await;
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                sets: Some([("depends_on".to_string(), "work:phi".to_string())].into()),
+                ..capture_args("work:sigma", "waits for the slab")
+            },
+        )
+        .await;
+        let list = version(&jojobot, "list:checklist").await;
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                sets: Some([("status".to_string(), "done".to_string())].into()),
+                ..capture_args("work:phi", "is poured")
+            },
+        )
+        .await;
+        assert_ne!(
+            version(&jojobot, "list:checklist").await,
+            list,
+            "a list's readiness reads what the linked work depends on"
+        );
+        let list = version(&jojobot, "list:checklist").await;
+        capture_ok(
+            &jojobot,
+            capture_args(
+                jojobot_domain::memory::INSTANCE_RECORD,
+                "maps a status word",
+            ),
+        )
+        .await;
+        assert_ne!(
+            version(&jojobot, "list:checklist").await,
+            list,
+            "a list's progress reads the status words the instance maps"
         );
 
         capture_ok(
