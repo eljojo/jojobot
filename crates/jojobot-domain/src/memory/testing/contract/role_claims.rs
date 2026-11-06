@@ -1842,6 +1842,87 @@ pub async fn a_refused_write_to_the_lease_leaves_the_heartbeat_home_as_it_was<
     );
 }
 
+/// **A composite write whose companion claim is refused leaves the heartbeat
+/// home as it was.** A valid renewal rides with a companion claim naming a
+/// source that is nothing; the store refuses the act as one, so the home holds
+/// the moment it held before.
+pub async fn a_refused_companion_claim_leaves_the_heartbeat_home_as_it_was<
+    M: Memory,
+    H: LeaseHeartbeat,
+>(
+    store: &M,
+    home: &H,
+) {
+    let seat = a_seat(
+        store,
+        "bot:contract-role-lease-companion",
+        "role:contract-lease-companion",
+    )
+    .await;
+    let t0 = crate::session::testing::contract::epoch() + jiff::SignedDuration::from_secs(60);
+    let claimed = capture(
+        store,
+        computed(NewFact {
+            fields: role_fields("delta", t0),
+            ..NewFact::about(seat.role.clone(), "delta claims the role", date(2026, 7, 1))
+        }),
+    )
+    .await;
+    let renew = || {
+        Some(crate::session::RoleMove {
+            kind: crate::session::RoleMoveKind::Renew,
+            role: seat.name.clone(),
+            claimant: "delta".to_string(),
+        })
+    };
+    let kept_at = t0 + jiff::SignedDuration::from_mins(5);
+    store
+        .update_fact(
+            &claimed.address(),
+            computed_patch(FactPatch {
+                fields: role_fields("delta", kept_at),
+                role_move: renew(),
+                ..FactPatch::default()
+            }),
+            &seat.bot,
+        )
+        .await
+        .expect("the renewal lands");
+    assert_eq!(
+        home.heartbeat_of(&seat.role).await,
+        Some(kept_at.to_string())
+    );
+
+    let nothing = FactAddress::new(
+        EntityId("thing:contract-order-no-subject".to_string()),
+        FactId("f1".to_string()),
+    );
+    let refused = store
+        .update_fact_with_claim(
+            &claimed.address(),
+            computed_patch(FactPatch {
+                fields: role_fields("delta", t0 + jiff::SignedDuration::from_mins(10)),
+                role_move: renew(),
+                ..FactPatch::default()
+            }),
+            &seat.bot,
+            computed(NewFact {
+                derived_from: Some(nothing),
+                ..NewFact::about(seat.role.clone(), "delta renews the role", date(2026, 7, 1))
+            }),
+        )
+        .await;
+    assert!(
+        !matches!(refused, Ok(Guarded::Written(_))),
+        "a companion claim naming a source that is nothing is refused: {refused:?}"
+    );
+    assert_eq!(
+        home.heartbeat_of(&seat.role).await,
+        Some(kept_at.to_string()),
+        "a refused companion claim leaves the home as it was"
+    );
+}
+
 pub async fn run_all_role_claims<M: Memory>(store: &M) {
     many_renewals_leave_the_lease_moment_at_one_write(store).await;
     a_renewal_restamps_the_lease_moment_it_overwrites(store).await;

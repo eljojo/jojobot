@@ -2573,10 +2573,16 @@ impl Memory for InMemoryMemory {
             .lock()
             .expect("fake mutex poisoned")
             .clone();
+        let heartbeats_before = self
+            .lease_heartbeats
+            .lock()
+            .expect("fake mutex poisoned")
+            .clone();
         let take_back = || {
             *self.facts.lock().expect("fake mutex poisoned") = facts_before.clone();
             *self.writes.lock().expect("fake mutex poisoned") = writes_before.clone();
             *self.claim_writes.lock().expect("fake mutex poisoned") = claim_writes_before.clone();
+            *self.lease_heartbeats.lock().expect("fake mutex poisoned") = heartbeats_before.clone();
             *self.world_cache.lock().expect("fake mutex poisoned") = None;
         };
         let edited = match self.update_fact(address, patch, caller).await? {

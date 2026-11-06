@@ -435,6 +435,11 @@ async fn dolt_satisfies_the_role_claim_contract() {
         &Heartbeats(pool.clone()),
     )
     .await;
+    jojobot_domain::memory::testing::contract::a_refused_companion_claim_leaves_the_heartbeat_home_as_it_was(
+        &memory,
+        &Heartbeats(pool.clone()),
+    )
+    .await;
 
     store.stop().await;
 }

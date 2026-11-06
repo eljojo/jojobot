@@ -1958,6 +1958,9 @@ async fn fake_satisfies_the_role_claim_contract() {
     let refused = InMemoryMemory::booted();
     contract::a_refused_write_to_the_lease_leaves_the_heartbeat_home_as_it_was(&refused, &refused)
         .await;
+    let companion = InMemoryMemory::booted();
+    contract::a_refused_companion_claim_leaves_the_heartbeat_home_as_it_was(&companion, &companion)
+        .await;
 }
 
 /// **A deadline on a claim about a person does not make the person owed**,
