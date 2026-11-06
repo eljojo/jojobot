@@ -124,6 +124,32 @@ impl Doc {
         })
     }
 
+    /// **The document of one thing, read from the claims State alone**: the
+    /// domain's scan and value parts of the thing stored under `object`. `None`
+    /// when the State holds no such thing.
+    ///
+    /// Only the parity case calls it until the refresh reads the State.
+    #[cfg(test)]
+    pub fn from_state(
+        state: &jojobot_domain::log::claims::State,
+        object: &jojobot_domain::log::ObjectId,
+        declared: &[DeclaredType],
+    ) -> Option<Doc> {
+        let scan = state.document_scan(object, declared)?;
+        let parts = state.document_parts(object, declared)?;
+        Some(Doc {
+            scan,
+            fields: parts.fields,
+            version: parts.version,
+            ages: parts.ages,
+            histories: parts.histories,
+            backing: parts.backing,
+            trails: parts.trails,
+            unmapped_histories: parts.unmapped_histories,
+            entity_versions: Some(parts.entity_versions),
+        })
+    }
+
     /// The document of one thing, read from the store: the incremental half of
     /// [`Image::load`], taken after a write that touched only this thing.
     pub async fn load(inner: &dyn Memory, handle: &EntityId) -> Result<Doc, MemoryError> {

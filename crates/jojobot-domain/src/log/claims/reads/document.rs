@@ -20,6 +20,9 @@ pub struct DocumentParts {
     pub backing: BTreeMap<String, FieldBacking>,
     pub trails: KeyTrails,
     pub entity_versions: Vec<EntityVersion>,
+    /// **The writes of each claim the thing cannot serve**, by the address that
+    /// reads it.
+    pub unmapped_histories: HashMap<FactAddress, Vec<ClaimWrite>>,
 }
 
 /// The handle an object answers to now, or the id itself when it has none.
@@ -143,7 +146,20 @@ impl State {
                 .collect();
             histories.insert(FactId(held.claim.label.clone()), chain);
         }
+        let mut unmapped_histories = HashMap::new();
+        for (record, _) in &thing.unmapped {
+            if let Some(address) = address_of(self, record) {
+                let chain = self
+                    .claim_history(record)
+                    .iter()
+                    .enumerate()
+                    .map(|(at, write)| claim_write(self, at + 1, write))
+                    .collect();
+                unmapped_histories.insert(address, chain);
+            }
+        }
         Some(DocumentParts {
+            unmapped_histories,
             fields: thing.fields.clone(),
             version: self.write_marker(object),
             ages: FieldAges {

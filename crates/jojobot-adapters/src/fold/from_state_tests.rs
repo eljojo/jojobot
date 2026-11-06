@@ -303,6 +303,21 @@ async fn a_document_read_from_the_state_is_the_document_the_store_reads() {
             format!("{:?}", held.entity_versions),
             format!("{:?}", stored.entity_versions),
         );
+        let assembled = Doc::from_state(&state, &ObjectId(stored.scan.doc_id.clone()), &declared)
+            .unwrap_or_else(|| panic!("{handle}: the State assembles a document"));
+        differ(
+            "unmapped histories",
+            assembled.unmapped_histories == stored.unmapped_histories,
+            format!("{:?}", assembled.unmapped_histories),
+            format!("{:?}", stored.unmapped_histories),
+        );
+        differ(
+            "assembled scan and fields",
+            (&assembled.scan, &assembled.fields, assembled.version)
+                == (&stored.scan, &stored.fields, stored.version),
+            format!("{:?}", assembled.fields),
+            format!("{:?}", stored.fields),
+        );
     }
     assert!(differences.is_empty(), "{}", differences.join("\n"));
     server.stop().await;
