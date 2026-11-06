@@ -86,7 +86,8 @@ pub struct PostMessageArgs {
     /// It must name a message that exists — a miss comes back blocked and
     /// nothing is written. **A reply closes what it answers**: that message is
     /// processed, with a note naming this reply, when it is in your own box, and
-    /// nothing changes when it is in another. **It also closes your older messages
+    /// nothing changes when it is in another. Send a progress note or partial
+    /// report without `in_reply_to` while work remains. **It also closes your older messages
     /// on the same thread** in the box this one lands in that the reader has read
     /// (one still new is left; `supersedes` replaces it). The receipt names what
     /// closed, and what could not be closed, under `closed`. Messages riding back

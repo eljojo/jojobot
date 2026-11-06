@@ -586,8 +586,10 @@ pub(crate) const INSTRUCTIONS: &str = "jojobot — a personal-assistant server w
                  with `status: blocked`, `wrote: false`, `candidates` and \
                  `how_to_proceed`: use the candidate, or re-call with the \
                  `override_token` that refusal carries. Branch on `status`; a plain \
-                 error is a malformed call. 3. Mark a message processed only AFTER \
-                 acting on it.\
+                 error is a malformed call. 3. Close mail only AFTER acting on it: \
+                 `mark_processed` closes it, and a reply with `in_reply_to` closes \
+                 the message it answers in your own box. Send a progress note or \
+                 partial report without `in_reply_to` while work remains.\
                  \n\nA write returns a receipt, and eliding is never silent: it says \
                  what it left out and which call returns it. `start_here` has \
                  the vocabulary.";

@@ -147,6 +147,10 @@ pub(crate) const SHIPPED: &[(&str, &str)] = &[
         include_str!("../release-notes/deploy-9.3.2/recall-names-an-unreadable-thing.md"),
     ),
     (
+        "reply-closes-the-message-it-answers",
+        include_str!("../release-notes/deploy-9.3.3/reply-closes-the-message-it-answers.md"),
+    ),
+    (
         "watchbot-wakes-idle-lines",
         include_str!("../release-notes/deploy-9.3.1.3/watchbot-wakes-idle-lines.md"),
     ),

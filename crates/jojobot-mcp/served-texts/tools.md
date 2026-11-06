@@ -1920,7 +1920,8 @@ The id of the message this one answers, when it answers one. Optional.
 It must name a message that exists — a miss comes back blocked and
 nothing is written. **A reply closes what it answers**: that message is
 processed, with a note naming this reply, when it is in your own box, and
-nothing changes when it is in another. **It also closes your older messages
+nothing changes when it is in another. Send a progress note or partial
+report without `in_reply_to` while work remains. **It also closes your older messages
 on the same thread** in the box this one lands in that the reader has read
 (one still new is left; `supersedes` replaces it). The receipt names what
 closed, and what could not be closed, under `closed`. Messages riding back
@@ -2313,7 +2314,8 @@ Other mail above or beside you is refused in every state, processed included; po
 THE OPERATOR'S BOX IS NOT A BOT'S: no bot opens a message in it, in any state, whoever wrote it.
 Same envelope a delivery hands over, seen_before and all: true means somebody had already taken this message, so it is a leftover rather than fresh mail.
 A message its sender replaced before anyone read it is superseded, a final state: reading it by id takes nothing, and its envelope says state superseded and names what replaced it.
-Taking delivery is NOT handling: call mark_processed once you have acted on your own mail, and only then.
+Taking delivery is NOT handling: after acting on your own mail, close it with mark_processed or a reply with `in_reply_to`.
+That reply closes the message it answers in your own box, so send a progress note or partial report without `in_reply_to` while work remains.
 Reading your own mail renews your role claim.
 WITH `history: true` THIS VERB TAKES NO DELIVERY: it answers the message's changes of state in order, with the run that made each, and leaves the message where it is.
 A refusal is an answer with status: blocked and nothing taken, in three kinds: an id that names nothing at all; an id naming an item jojobot cannot read (which comes back saying why, and needs a person rather than a retry); and a message that is not yours to take.

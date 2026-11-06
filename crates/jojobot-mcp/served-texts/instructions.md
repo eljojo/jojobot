@@ -13,7 +13,7 @@ jojobot — a personal-assistant server with two worlds.
 
 **MAILBOXES.** A message left for someone not here moves new, read, processed. `read_mailbox` takes the whole box, all of it yours to finish; `read_message` takes one. `search` finds mail you sent or hold and mail below you on `reports_to`, never the operator's.
 
-**Three rules.** 1. Everything a write NAMES must already exist; something new is two steps, create then write. 2. A name resembling something known comes back as a SUCCESSFUL result with `status: blocked`, `wrote: false`, `candidates` and `how_to_proceed`: use the candidate, or re-call with the `override_token` that refusal carries. Branch on `status`; a plain error is a malformed call. 3. Mark a message processed only AFTER acting on it.
+**Three rules.** 1. Everything a write NAMES must already exist; something new is two steps, create then write. 2. A name resembling something known comes back as a SUCCESSFUL result with `status: blocked`, `wrote: false`, `candidates` and `how_to_proceed`: use the candidate, or re-call with the `override_token` that refusal carries. Branch on `status`; a plain error is a malformed call. 3. Close mail only AFTER acting on it: `mark_processed` closes it, and a reply with `in_reply_to` closes the message it answers in your own box. Send a progress note or partial report without `in_reply_to` while work remains.
 
 A write returns a receipt, and eliding is never silent: it says what it left out and which call returns it. `start_here` has the vocabulary.
 

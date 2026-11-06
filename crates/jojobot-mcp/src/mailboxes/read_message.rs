@@ -48,8 +48,10 @@ impl Jojobot {
                        already taken this message, so it is a leftover rather than fresh \
                        mail. A message its sender replaced before anyone read it is \
                        superseded, a final state: reading it by id takes nothing, and its \
-                       envelope says state superseded and names what replaced it. Taking delivery is NOT handling: call mark_processed once you \
-                       have acted on your own mail, and only then. Reading your own mail renews \
+                       envelope says state superseded and names what replaced it. Taking delivery is NOT handling: after acting on your own mail, \
+                       close it with mark_processed or a reply with `in_reply_to`. \
+                       That reply closes the message it answers in your own box, so send \
+                       a progress note or partial report without `in_reply_to` while work remains. Reading your own mail renews \
                        your role claim. WITH `history: true` THIS VERB TAKES NO \
                        DELIVERY: it answers the message's changes of state in order, with the \
                        run that made each, and leaves the message where it is. A refusal is an answer with status: blocked \
