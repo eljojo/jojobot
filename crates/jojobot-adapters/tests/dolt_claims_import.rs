@@ -496,3 +496,27 @@ async fn claims_import_points_a_citation_at_the_record_a_merged_claim_was_create
 
     server.stop().await;
 }
+
+/// **A claim under a name neither stored nor supplied still refuses the import.**
+/// The claim is made while the build supplies the record. The import then runs
+/// with no such record in the supply list, so no row and no supplied record
+/// answers to the name: the reader names it as a finding and nothing is appended.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn claims_import_refuses_a_claim_under_a_name_nothing_supplies() {
+    let (_scratch, mut server, pool) = store("claims-import-unsupplied-home").await;
+    let supplied = supplied_view("view:loops");
+    let memory = DoltMemory::open(pool.clone()).knowing(supplied);
+    let loops = EntityId("view:loops".to_string());
+    say(&memory, &loops, "the board is read on Mondays").await;
+
+    let refused = import_claims_once(&Writer::default(), &pool, &Provisions::default(), at())
+        .await
+        .expect_err("a name nothing holds is refused");
+    let ClaimsImportError::Findings { rows, .. } = &refused else {
+        panic!("a finding is named, not hidden: {refused:?}");
+    };
+    assert!(rows.contains("view:loops"), "{rows}");
+    assert!(logged(&pool).await.is_empty(), "nothing was appended");
+
+    server.stop().await;
+}
