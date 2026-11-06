@@ -171,36 +171,48 @@ async fn the_entity_writers_leave_the_claims_state_agreeing_with_the_store() {
 
 /// **A boot row repair never emits**, even run as a job of the writer. An early
 /// emission would make the claims import skip, because it runs only while the log
-/// holds no claims event, and the history would be lost. The repair here gives a
-/// badge to a row that has none, and the log must still hold no claims member.
+/// holds no claims event, and the history would be lost. The pass here gives a row
+/// to a handle that has claims filed under it and no row, through the same row
+/// writer the entity writers use, and the log must still hold no claims member.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_boot_row_repair_emits_no_claims_event() {
     let mut world = world("entity-events-repair").await;
+    let handle = "topic:contract-docket";
+    sqlx::query("INSERT INTO supplied_handle (handle) VALUES (?)")
+        .bind(handle)
+        .execute(&world.store)
+        .await
+        .expect("the handle was once supplied by a build");
     sqlx::query(
-        "INSERT INTO entity (id, kind, name, source, boot, prose) \
-         VALUES ('person:bart', 'person', 'Bart', 'fixture', 'on-demand', '')",
+        "INSERT INTO fact (entity, id, content, details, provenance, standing, status, \
+         recorded_at, edge_shape, edge_object, event_kind, derived_from, derived_from_id, \
+         inserted_at, stale_after, happened_at, happened_through) \
+         VALUES (?, 'f1', 'filed under a handle with no row', NULL, 'testimony', 'settled', \
+         'active', '2026-10-08', NULL, NULL, NULL, NULL, NULL, '2026-10-08T14:02:10Z', NULL, \
+         NULL, NULL)",
     )
+    .bind(handle)
     .execute(&world.store)
     .await
-    .expect("a row from before badges");
-    // **Asked inside the job**, because a repair commits natively and never seals
-    // what it emitted: a repair that emitted would leave its events pending in the
+    .expect("a claim filed under the handle");
+    // **Asked inside the job**, because a pass commits natively and never seals
+    // what it emitted: a pass that emitted would leave its events pending in the
     // job's context, where the log cannot show them.
-    let (given, pending) = {
+    let (report, pending) = {
         let memory = world.memory.clone();
         world
             .job(async move {
-                let given = memory.badge_the_unbadged().await;
-                (given, crate::writer::sql::take_emitted())
+                let report = memory.adopt_handles_without_a_row().await;
+                (report, crate::writer::sql::take_emitted())
             })
             .await
     };
     assert_eq!(
-        given.expect("the repair runs"),
-        1,
-        "the repair did its work"
+        report.expect("the pass runs").adopted,
+        vec![id(handle)],
+        "the pass did its work"
     );
-    assert!(pending.is_empty(), "the repair emitted: {pending:?}");
+    assert!(pending.is_empty(), "the pass emitted: {pending:?}");
     let members: usize = world
         .writer
         .shared_log(&world.store)

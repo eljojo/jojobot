@@ -24,7 +24,7 @@ use std::collections::BTreeSet;
 
 use jojobot_domain::memory::{Boot, Entity, EntityId, MemoryError};
 
-use super::{DoltMemory, store, write_entity};
+use super::{DoltMemory, store, write_entity_row};
 
 /// What the pass did.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -123,7 +123,9 @@ impl DoltMemory {
                 archived: None,
             };
             let mut tx = self.pool.begin().await.map_err(store)?;
-            let badge = write_entity(&mut tx, &self.draw, &entity, &self.clock, None).await?;
+            // The row only: this is a boot pass and never emits (rule c).
+            let (badge, _) =
+                write_entity_row(&mut tx, &self.draw, &entity, &self.clock, None).await?;
             Self::rekey_adopted(&mut tx, id.as_str(), &badge).await?;
             tx.commit().await.map_err(store)?;
             report.adopted.push(id);

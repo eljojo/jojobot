@@ -7800,6 +7800,29 @@ async fn write_entity(
     clock: &Clock,
     session: Option<&str>,
 ) -> Result<String, MemoryError> {
+    let (badge, existed) = write_entity_row(tx, draw, entity, clock, session).await?;
+    // **Create, update, archive and restore all end here**, so the object's event
+    // is emitted once, for the row as the write left it.
+    let change = if existed {
+        entity_events::Change::Revised
+    } else {
+        entity_events::Change::Created
+    };
+    entity_events::emit_object_write(tx, &entity.id, change, clock, session).await?;
+    Ok(badge)
+}
+
+/// **The row of an entity and the version kept for it, with no event.** A boot
+/// pass that gives a row to a handle calls this and not [`write_entity`], so it
+/// cannot emit whatever job it runs in: a pass that emitted would make the claims
+/// import skip. Hands back the badge and whether the row was there before.
+async fn write_entity_row(
+    tx: &mut Transaction<'_, MySql>,
+    draw: &Draw,
+    entity: &Entity,
+    clock: &Clock,
+    session: Option<&str>,
+) -> Result<(String, bool), MemoryError> {
     // **The prose is carried across rather than blanked.** A rewrite of an
     // entity's metadata is not a rewrite of what somebody wrote on its page,
     // and `REPLACE` deletes the row before inserting the new one.
@@ -7868,15 +7891,7 @@ async fn write_entity(
     }
     // **After the aliases, so the version kept holds the set just written.**
     append_entity_write(tx, &entity.id, clock, session).await?;
-    // **Create, update, archive and restore all end here**, so the object's event
-    // is emitted once, for the row as the write left it.
-    let change = if existed {
-        entity_events::Change::Revised
-    } else {
-        entity_events::Change::Created
-    };
-    entity_events::emit_object_write(tx, &entity.id, change, clock, session).await?;
-    Ok(badge)
+    Ok((badge, existed))
 }
 // LEGACY_READER(null-written-at): work:q-gate-binary-coverage
 /// **A stored stamp as a moment**, or nothing when there is none or it does not
