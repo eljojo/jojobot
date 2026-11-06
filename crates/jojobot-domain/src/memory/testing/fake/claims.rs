@@ -445,4 +445,94 @@ mod tests {
         let held = agrees().await;
         assert_eq!(held["mood"], "serene", "the newest write holds the key");
     }
+
+    /// **A clear and a retraction in the State are what the fake holds**: a clear
+    /// sent to a claim that does not hold the key leaves the value, one sent to the
+    /// holder takes the key off and nothing older returns, and a retracted claim's
+    /// writes stop counting.
+    #[tokio::test]
+    async fn a_clear_and_a_retraction_are_held_by_the_state_as_the_fake_holds_them() {
+        let fake = InMemoryMemory::booted();
+        let homer = EntityId("person:homer".into());
+        fake.add_entity(NewEntity::new(homer.clone(), "Homer", "fixture"))
+            .await
+            .expect("add")
+            .written()
+            .expect("written");
+        let said = |what: &'static str, mood: &'static str| {
+            let (fake, homer) = (&fake, homer.clone());
+            async move {
+                let mut fact = NewFact::about(homer, what, jiff::civil::date(2026, 9, 1));
+                fact.provenance = Provenance::Inference;
+                fact.fields = [("mood".to_string(), mood.to_string())].into();
+                fact.sets = fact.fields.keys().cloned().collect();
+                fake.capture(fact)
+                    .await
+                    .expect("capture")
+                    .written()
+                    .expect("not blocked")
+                    .address()
+            }
+        };
+        let agrees = || async {
+            let key = fake.object_key(&homer);
+            let declared = fake.declared_types().await.expect("declarations");
+            let (held, ages, backing) = fake.read_claims(|state| {
+                (
+                    state.fields(&key, &declared),
+                    state.held_since(&key, &declared),
+                    state.backing(&key, &declared),
+                )
+            });
+            assert_eq!(held, fake.fields(&homer).await.expect("the fake's values"));
+            assert_eq!(
+                ages,
+                fake.field_ages(&homer).await.expect("the fake's ages").keys
+            );
+            assert_eq!(
+                backing,
+                fake.backing(&homer).await.expect("the fake's backing")
+            );
+            held
+        };
+        let clear = |at: FactAddress| {
+            let fake = &fake;
+            async move {
+                fake.update_fact(
+                    &at,
+                    FactPatch {
+                        clear_fields: vec!["mood".to_string()],
+                        provenance: Some(Provenance::Inference),
+                        ..Default::default()
+                    },
+                    &EntityId("bot:sigma".into()),
+                )
+                .await
+                .expect("the clear lands")
+                .written()
+                .expect("not blocked");
+            }
+        };
+        let older = said("felt content", "content").await;
+        let newer = said("felt queasy", "queasy").await;
+
+        clear(older).await;
+        assert_eq!(agrees().await["mood"], "queasy");
+        clear(newer).await;
+        assert!(!agrees().await.contains_key("mood"));
+
+        // A retracted claim's writes stop counting.
+        let retracted = said("felt giddy", "giddy").await;
+        assert_eq!(agrees().await["mood"], "giddy");
+        fake.retract(
+            &retracted,
+            Some("a mistake"),
+            jiff::civil::date(2026, 9, 5),
+            &EntityId("bot:sigma".into()),
+            None,
+        )
+        .await
+        .expect("the claim is retracted");
+        assert!(!agrees().await.contains_key("mood"));
+    }
 }
