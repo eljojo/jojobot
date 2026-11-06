@@ -309,6 +309,21 @@ fn split_sql_statements(dump: &str) -> Vec<String> {
 async fn restored_store(name: &str) -> Scratch {
     let fixture = std::env::var("UPGRADE_FIXTURE_DIR")
         .expect("CI supplies UPGRADE_FIXTURE_DIR, the store the last deployed tag recorded");
+    // **A relative path is the workspace root's**, as the upgrade gate reads it: a
+    // test runs from its own crate's directory, and CI names the directory
+    // `target/upgrade-fixture`.
+    let fixture = std::path::PathBuf::from(fixture);
+    let fixture = if fixture.is_absolute() {
+        fixture
+    } else {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join(fixture)
+    };
+    let fixture = fixture
+        .to_str()
+        .expect("the fixture path is UTF-8")
+        .to_string();
     let dir = jojobot_adapters::testing::scratch_path(name);
     std::fs::create_dir_all(&dir).expect("a scratch directory");
     let state = Scratch(dir);
