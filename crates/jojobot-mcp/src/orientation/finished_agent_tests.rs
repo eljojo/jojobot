@@ -148,6 +148,80 @@ async fn p1_finished_agent_cannot_boot_or_claim_again() {
     finished_agent_journey(&jojobot).await;
 }
 
+#[tokio::test]
+async fn p1_every_host_is_refused_after_a_picked_up_run_wraps() {
+    let jojobot = handler().quiet_after(jiff::SignedDuration::ZERO);
+    make_bot(&jojobot, "gamma").await;
+    let alpha = boot_args(
+        &jojobot,
+        serde_json::json!({
+            "bot":"gamma", "resume":"new", "agent":"alpha-agent"
+        }),
+    )
+    .await;
+    let alpha_key = sid_of(&alpha).expect("alpha key");
+    let caller = jojobot.identified(Some(&alpha_key)).expect("alpha caller");
+    let gate = jojobot.registry.gate(caller.bot.as_str());
+    {
+        let held = gate.lock().await;
+        jojobot
+            .session_for(&held, &caller, Some("a quiet run"), None)
+            .await
+            .expect("run record");
+    }
+    let restored = boot_args(
+        &jojobot,
+        serde_json::json!({
+            "bot":"gamma", "resume":alpha["session"]["run"], "agent":"alpha-agent"
+        }),
+    )
+    .await;
+    assert_eq!(
+        restored["session"]["run"], alpha["session"]["run"],
+        "{restored}"
+    );
+    let beta = boot_args(
+        &jojobot,
+        serde_json::json!({
+            "bot":"gamma", "resume":alpha["session"]["run"], "agent":"beta-agent"
+        }),
+    )
+    .await;
+    assert_eq!(beta["session"]["run"], alpha["session"]["run"], "{beta}");
+    let wrapped = wrap(&jojobot, sid_of(&beta).expect("beta key")).await;
+    assert_eq!(wrapped["session"]["state"], "wrapped", "{wrapped}");
+    let restarted = Jojobot::new(
+        jojobot.memory.clone(),
+        jojobot.search.clone(),
+        jojobot.mailboxes.clone(),
+        jojobot.sessions.clone(),
+        jojobot.teachings.clone(),
+        std::sync::Arc::new(crate::sid::SessionRegistry::new()),
+    );
+    restarted.registry.rebuild_from(
+        &restarted
+            .sessions
+            .all_sessions()
+            .await
+            .expect("persisted runs"),
+    );
+    for agent in ["alpha-agent", "beta-agent"] {
+        let refused = boot_args(
+            &restarted,
+            serde_json::json!({
+                "bot":"gamma", "resume":"new", "agent":agent
+            }),
+        )
+        .await;
+        assert_eq!(refused["status"], "blocked", "{agent}: {refused}");
+        let text = refused.to_string();
+        assert!(
+            text.contains("end the turn and do nothing") && text.contains("document:build-runtime"),
+            "{text}"
+        );
+    }
+}
+
 async fn finished_agent_journey(jojobot: &Jojobot) {
     let booted = boot_args(
         jojobot,
