@@ -56,6 +56,21 @@ async fn run() -> anyhow::Result<()> {
         print!("{}", jojobot::app_api::token_report());
         return Ok(());
     }
+    // **`jojobot snapshot-only`** is the deploy's pre-build. It connects to the
+    // store the running process serves (`JOJOBOT_STORE_PORT`), replays the log with
+    // the code boot uses, writes one snapshot of this build's shape and exits. It
+    // starts no store, holds no writer and serves nothing, so it runs beside the old
+    // process. A failure exits non-zero, and a deploy step that sees it stops
+    // before the old process does.
+    if std::env::args().nth(1).as_deref() == Some("snapshot-only") {
+        init_tracing();
+        let port = jojobot::wiring::resolve_store_port();
+        let covered = jojobot_adapters::snapshot_only::run(port)
+            .await
+            .context("building the snapshot of the live log")?;
+        println!("snapshot-only: the snapshot covers position {}", covered.0);
+        return Ok(());
+    }
     init_tracing();
 
     let config = Config::from_env().context("loading configuration")?;

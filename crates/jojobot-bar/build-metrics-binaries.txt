@@ -194,6 +194,7 @@ test-single_store_per_process
 test-size_report
 test-slot_bound
 test-slow_tests
+test-snapshot_only
 test-spares_lock
 test-spawn_gate
 test-standing_gate

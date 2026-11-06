@@ -29,6 +29,7 @@ pub mod provisioned;
 pub mod provisioned_boot;
 pub mod search;
 pub mod snapshot_keeper;
+pub mod snapshot_only;
 pub mod teaching_log;
 pub mod writer;
 pub mod writer_log;
