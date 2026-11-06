@@ -105,9 +105,10 @@ struct Session {
 /// The fingerprints of the texts served of one object (see `held::collapse`).
 pub(crate) type Shape = std::collections::BTreeSet<u64>;
 
-/// Test-only values of received parts, keyed by the production part tokens.
+/// All test-only received value variants, keyed by the production part tokens.
 #[cfg(any(test, feature = "testing"))]
-pub(crate) type PartValues = std::collections::BTreeMap<u64, (String, u64)>;
+pub(crate) type PartValues =
+    std::collections::BTreeMap<u64, (String, std::collections::BTreeSet<u64>)>;
 
 /// **The whole ledger.**
 #[derive(Debug, Default)]

@@ -168,7 +168,10 @@ fn part_values(fields: &Map<String, Value>) -> crate::seen::PartValues {
         if key != "fields" {
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
             value.to_string().hash(&mut hasher);
-            out.insert(token, (key.to_string(), hasher.finish()));
+            out.entry(token)
+                .or_insert_with(|| (key.to_string(), Default::default()))
+                .1
+                .insert(hasher.finish());
         }
     });
     out
@@ -211,7 +214,7 @@ pub(super) fn assert_received(
                         values
                             .get(&what)
                             .and_then(|had| had.get(&token))
-                            .is_some_and(|(_, was)| *was == now),
+                            .is_some_and(|(_, was)| now.is_subset(was)),
                         "collapse withheld unseen text: thing={name}, part={part}, verb={verb}"
                     );
                 }
@@ -243,7 +246,13 @@ pub(super) fn received_values(
                 crate::seen::PartValues::new()
             }
         });
-        entry.extend(values);
+        for (token, (part, values)) in values {
+            entry
+                .entry(token)
+                .or_insert_with(|| (part, Default::default()))
+                .1
+                .extend(values);
+        }
     }
     out.into_iter().collect()
 }
