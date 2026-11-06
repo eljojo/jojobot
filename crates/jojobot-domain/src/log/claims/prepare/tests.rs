@@ -1170,6 +1170,140 @@ fn a_handle_in_a_field_value_is_stored_as_the_id_and_follows_a_rename() {
     assert_eq!(served(&state).as_deref(), Some("person:delta"));
 }
 
+/// A world with the subject person:homer and a thing `k9` that wears `handle`.
+fn homer_and(handle: &str) -> State {
+    crate::memory::kinds::load_shipped();
+    let mut state = replay(&thing("person:homer"));
+    for event in [
+        ClaimEvent::ObjectCreated {
+            object: object("k9"),
+            body: body("person", handle),
+        },
+        ClaimEvent::AddressBound {
+            object: object("k9"),
+            address: handle.into(),
+        },
+    ] {
+        apply(&mut state, &event);
+    }
+    state
+}
+
+fn owner_sent(value: &str) -> CaptureRequest {
+    CaptureRequest {
+        fields: BTreeMap::from([("owner".to_string(), value.to_string())]),
+        ..request("person:homer")
+    }
+}
+
+fn stored_owner(events: &[ClaimEvent]) -> String {
+    events
+        .iter()
+        .find_map(|event| match event {
+            ClaimEvent::FieldWritten {
+                write: crate::log::claims::FieldValue::Set(value),
+                ..
+            } => Some(value.clone()),
+            _ => None,
+        })
+        .expect("the field is written")
+}
+
+/// **A handle reused for another thing does not take the value with it.** The
+/// value was stored as the id of the first thing, so it follows that thing's
+/// handle, and its link names that thing, though another now wears the spelling.
+#[test]
+fn a_handle_reused_for_another_thing_does_not_move_a_stored_value() {
+    let mut state = homer_and("person:gamma");
+    let events = prepare(&state, &[], &owner_sent("person:gamma")).expect("admitted");
+    for event in &events {
+        apply(&mut state, event);
+    }
+    for event in [
+        ClaimEvent::AddressRetired {
+            object: object("k9"),
+            address: "person:gamma".into(),
+            day: day(4),
+        },
+        ClaimEvent::AddressBound {
+            object: object("k9"),
+            address: "person:delta".into(),
+        },
+        ClaimEvent::ObjectCreated {
+            object: object("k10"),
+            body: body("person", "person:gamma"),
+        },
+        ClaimEvent::AddressBound {
+            object: object("k10"),
+            address: "person:gamma".into(),
+        },
+    ] {
+        apply(&mut state, &event);
+    }
+    let fact = state
+        .fact(&record("new"))
+        .expect("the State holds the fact");
+    assert_eq!(
+        fact.fields.get("owner").map(String::as_str),
+        Some("person:delta")
+    );
+    assert_eq!(
+        fact.field_links.get("owner"),
+        Some(&vec![crate::memory::EntityId("person:delta".into())])
+    );
+}
+
+/// **A list with a handle and loose words stores the id of the handle and keeps
+/// the words as written**, and serves both.
+#[test]
+fn a_mixed_list_stores_the_id_of_the_handle_and_keeps_the_words() {
+    let mut state = homer_and("person:gamma");
+    let events = prepare(&state, &[], &owner_sent("person:gamma, some words")).expect("admitted");
+    assert_eq!(
+        stored_owner(&events),
+        format!("{}, some words", crate::memory::marked_stored_handle("k9"))
+    );
+    for event in &events {
+        apply(&mut state, event);
+    }
+    let fact = state
+        .fact(&record("new"))
+        .expect("the State holds the fact");
+    assert_eq!(
+        fact.fields.get("owner").map(String::as_str),
+        Some("person:gamma, some words")
+    );
+}
+
+/// **A badge a thing wears, under a key a type declares a reference, is stored as
+/// the id of that thing**; loose prose beside it is kept as written.
+#[test]
+fn a_badge_under_a_reference_key_is_stored_as_the_id_of_the_thing() {
+    crate::memory::kinds::load_shipped();
+    let mut state = replay(&thing("person:homer"));
+    for event in [
+        ClaimEvent::ObjectCreated {
+            object: object("k8"),
+            body: body("thing", "a badge holder"),
+        },
+        ClaimEvent::AddressBound {
+            object: object("k8"),
+            address: "badge1".into(),
+        },
+    ] {
+        apply(&mut state, &event);
+    }
+    let declared = vec![DeclaredType::new(
+        "person",
+        vec![Field::new("owner", ValueType::Reference)],
+    )];
+    let events = prepare(&state, &declared, &owner_sent("badge1, loose prose")).expect("admitted");
+    assert_eq!(
+        stored_owner(&events),
+        format!("{}, loose prose", crate::memory::marked_stored_handle("k8"))
+    );
+}
+
 /// A world with one bot request and one plain thing.
 fn requests_world() -> State {
     crate::memory::kinds::load_shipped();
