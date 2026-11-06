@@ -99,9 +99,71 @@ fn runners_of(room: &str, sources: &[(String, String)]) -> String {
     named.join(", ")
 }
 
+/// **The assertions of one test body**, each as the text of its macro call with
+/// the white space folded, in the order they stand. Line comments are not read.
+pub fn assertions_of(body: &str) -> Vec<String> {
+    let code: String = body
+        .lines()
+        .map(|line| match line.find("//") {
+            Some(at) if !line[..at].contains('"') => &line[..at],
+            _ => line,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let bytes = code.as_bytes();
+    let mut found = Vec::new();
+    let mut at = 0;
+    while at < code.len() {
+        let rest = &code[at..];
+        let Some(start) = ["assert!", "assert_eq!", "assert_ne!"]
+            .iter()
+            .filter_map(|name| rest.find(name))
+            .min()
+        else {
+            break;
+        };
+        let begin = at + start;
+        let before = code[..begin].chars().next_back();
+        let open = code[begin..].find('(').map(|o| begin + o);
+        let (true, Some(open)) = (
+            !before.is_some_and(|c| c.is_alphanumeric() || c == '_'),
+            open,
+        ) else {
+            at = begin + 1;
+            continue;
+        };
+        let (mut depth, mut end, mut quoted) = (0usize, open, false);
+        let mut i = open;
+        while i < bytes.len() {
+            match bytes[i] {
+                b'\\' if quoted => i += 1,
+                b'"' => quoted = !quoted,
+                b'(' if !quoted => depth += 1,
+                b')' if !quoted => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = i;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        found.push(
+            code[begin..=end]
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" "),
+        );
+        at = end + 1;
+    }
+    found
+}
+
 /// **Every integration test of this crate**, with the claim in the comment above
-/// it: `(file, function, claim)`.
-fn cases() -> Vec<(String, String, String)> {
+/// it and the text of its body: `(file, function, claim, body)`.
+fn cases() -> Vec<(String, String, String, String)> {
     let mut found = Vec::new();
     for (file, text) in test_sources() {
         let lines: Vec<&str> = text.lines().collect();
@@ -110,15 +172,22 @@ fn cases() -> Vec<(String, String, String)> {
             if !(attribute.starts_with("#[test]") || attribute.starts_with("#[tokio::test")) {
                 continue;
             }
-            let Some(name) = lines[at + 1..].iter().find_map(|next| {
+            let Some((from, name)) = lines[at + 1..].iter().enumerate().find_map(|(n, next)| {
                 let next = next.trim_start();
                 let rest = next
                     .strip_prefix("async fn ")
                     .or_else(|| next.strip_prefix("fn "))?;
-                Some(rest.split('(').next()?.trim().to_string())
+                Some((at + 1 + n, rest.split('(').next()?.trim().to_string()))
             }) else {
                 continue;
             };
+            // A test at the top of a file ends at the first closing brace in
+            // the first column.
+            let to = lines[from..]
+                .iter()
+                .position(|line| *line == "}")
+                .map_or(lines.len(), |n| from + n + 1);
+            let body = lines[from..to].join("\n");
             let mut claim: Vec<&str> = Vec::new();
             for above in lines[..at].iter().rev() {
                 let above = above.trim_start();
@@ -134,10 +203,21 @@ fn cases() -> Vec<(String, String, String)> {
                 }
             }
             claim.reverse();
-            found.push((file.clone(), name, claim.join(" ")));
+            found.push((file.clone(), name, claim.join(" "), body));
         }
     }
     found
+}
+
+/// The room constants a test body names, `NAME_ROOM`, in order and each once.
+fn room_constants(body: &str) -> String {
+    let mut found: Vec<&str> = Vec::new();
+    for word in body.split(|c: char| !(c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')) {
+        if word.ends_with("_ROOM") && word.len() > "_ROOM".len() && !found.contains(&word) {
+            found.push(word);
+        }
+    }
+    found.join(", ")
 }
 
 /// **The ledger, whole**: the header, one row per lock of every shipped room in
@@ -160,14 +240,12 @@ pub fn render() -> String {
                 .collect::<Vec<_>>()
                 .join(" | ");
             let phase = lock.phase_key.clone().unwrap_or_default();
-            let history = format!(
-                "playbook {room}, through {}",
-                if phase.is_empty() {
-                    "the end of the room"
-                } else {
-                    &phase
-                }
-            );
+            // **The history is the one the window reads**: a live check asks the
+            // room as the run left it, the other two read a stored boundary.
+            let history = match (lock.when, phase.is_empty()) {
+                (When::Live, _) | (_, true) => format!("playbook {room}, to the end of the room"),
+                (_, false) => format!("playbook {room}, through {phase}"),
+            };
             let proof = match NEGATIVE_CONTROLS
                 .iter()
                 .find(|c| c.room == room && c.lock == lock.name)
@@ -201,7 +279,19 @@ pub fn render() -> String {
             out.push('\n');
         }
     }
-    for (file, name, claim) in cases() {
+    for (file, name, claim, body) in cases() {
+        let held = assertions_of(&body);
+        let oracle = if held.is_empty() {
+            "no assertion macro".to_string()
+        } else {
+            held.join("; ")
+        };
+        let rooms = room_constants(&body);
+        let history = if rooms.is_empty() {
+            "the test builds its own input".to_string()
+        } else {
+            format!("playbook of {rooms}")
+        };
         let row = [
             "case".to_string(),
             String::new(),
@@ -210,12 +300,12 @@ pub fn render() -> String {
             String::new(),
             String::new(),
             String::new(),
-            String::new(),
+            oracle,
             String::new(),
             claim,
-            String::new(),
+            history,
             file,
-            String::new(),
+            "the test itself".to_string(),
             String::new(),
         ];
         out.push_str(&row.map(|cell| one_line(&cell)).join("\t"));
