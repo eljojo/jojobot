@@ -4905,7 +4905,10 @@ impl Memory for InMemoryMemory {
                 self.append_writes(&folded_key, &place.fact, wrote, &classes);
             }
         }
-        let mut entities = self.entities.lock().expect("fake mutex poisoned");
+        // **The event of the fold, made from the writes as they are served before
+        // it**, before the entities are locked: the merged view and the keys the
+        // event names read them.
+        self.emit_merge(&folded_key, &survivor_key, &moved, caller, session);
         self.merges
             .lock()
             .expect("fake mutex poisoned")
@@ -4951,7 +4954,9 @@ impl Memory for InMemoryMemory {
         self.append_claim_write(&record, session.map(str::to_string), None);
 
         // **The folded row stays and starts forwarding.** It is not deleted and
-        // it is not left looking like a thing.
+        // it is not left looking like a thing. The entities are locked only now:
+        // the claim write above names its keys through them.
+        let mut entities = self.entities.lock().expect("fake mutex poisoned");
         for entity in entities.iter_mut() {
             if entity.id == *folded {
                 entity.merged_into = Some(survivor.clone());

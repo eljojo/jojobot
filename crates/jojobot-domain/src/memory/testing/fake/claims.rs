@@ -8,7 +8,7 @@
 use super::*;
 use crate::log::claims::emit::{self, Origin, Served};
 use crate::log::claims::import::record_id;
-use crate::log::claims::{ClaimEvent, State};
+use crate::log::claims::{ClaimEvent, KeyId, MovedRecord, MovedWrite, State};
 use crate::log::{Event, ObjectId, RecordId};
 use crate::memory::write_origin::{WriteOrigin, written_by};
 
@@ -129,6 +129,72 @@ impl InMemoryMemory {
                 .iter()
                 .map(|named| self.object_key(&EntityId(named.clone())))
                 .collect(),
+            &origin,
+        )]);
+    }
+
+    /// **Add the event of a merge to the State**: the claims it gave new ids, and
+    /// the place each key write takes among the survivor's, by the domain's one
+    /// rule over the writes as they are served before the merge. Called before
+    /// the merge is recorded.
+    pub(super) fn emit_merge(
+        &self,
+        folded: &EntityId,
+        survivor: &EntityId,
+        moved: &[(FactId, FactId)],
+        caller: &EntityId,
+        session: Option<&str>,
+    ) {
+        let claims: std::collections::HashMap<&str, &str> = moved
+            .iter()
+            .map(|(was, now)| (was.as_str(), now.as_str()))
+            .collect();
+        let records = moved
+            .iter()
+            .map(|(was, now)| MovedRecord {
+                record: self.stored_record(&FactAddress::new(folded.clone(), was.clone())),
+                label: now.as_str().to_string(),
+            })
+            .collect();
+        let (theirs, ours) = self.with_writes(|served| {
+            let on = |key: &EntityId| -> Vec<StoredWrite> {
+                served
+                    .iter()
+                    .filter(|w| &w.entity == key)
+                    .cloned()
+                    .collect()
+            };
+            (on(folded), on(survivor))
+        });
+        let writes = emit::placements(theirs, ours, &claims)
+            .into_iter()
+            .map(|placed| {
+                let home = if placed.side == crate::memory::merge::Side::Folded {
+                    folded
+                } else {
+                    survivor
+                };
+                MovedWrite {
+                    record: self
+                        .stored_record(&FactAddress::new(home.clone(), placed.write.fact.clone())),
+                    key: KeyId(placed.write.key.clone()),
+                    from_ordinal: placed.write.ordinal,
+                    ordinal: placed.ordinal as u64,
+                }
+            })
+            .collect();
+        let actor =
+            super::super::super::authorship::stored_writer(caller, |named| self.storage_key(named));
+        let origin = Origin {
+            actor: Some(crate::actor::Actor::Bot(actor)),
+            run: session.map(str::to_string),
+            written_at: Some(self.clock().now()),
+        };
+        self.emit([emit::merge(
+            self.object_key(folded),
+            self.object_key(survivor),
+            records,
+            writes,
             &origin,
         )]);
     }
@@ -258,5 +324,125 @@ mod tests {
             backing,
             fake.backing(&homer).await.expect("the fake's backing")
         );
+    }
+
+    /// **A merge in the State is the merge in the fake**: the folded thing's
+    /// writes take their places among the survivor's, the survivor's own writes
+    /// move on, and a write after the merge to a claim of either side lands where
+    /// the fake serves it.
+    #[tokio::test]
+    async fn a_merge_and_the_writes_after_it_are_held_by_the_state_as_the_fake_holds_them() {
+        let fake = InMemoryMemory::booted();
+        let homer = EntityId("person:homer".into());
+        let marge = EntityId("person:marge".into());
+        for (who, name) in [(&homer, "Homer"), (&marge, "Marge")] {
+            fake.add_entity(NewEntity::new(who.clone(), name, "fixture"))
+                .await
+                .expect("add")
+                .written()
+                .expect("written");
+        }
+        let said =
+            |about: EntityId, what: &'static str, kept: &'static [(&'static str, &'static str)]| {
+                let fake = &fake;
+                async move {
+                    let mut fact = NewFact::about(about, what, jiff::civil::date(2026, 9, 1));
+                    fact.provenance = Provenance::Inference;
+                    fact.fields = kept
+                        .iter()
+                        .map(|(key, value)| (key.to_string(), value.to_string()))
+                        .collect();
+                    fact.sets = fact.fields.keys().cloned().collect();
+                    fake.capture(fact)
+                        .await
+                        .expect("capture")
+                        .written()
+                        .expect("not blocked")
+                        .address()
+                }
+            };
+        // Marge's write falls between Homer's two, so the merge places it
+        // between them and moves Homer's later write on.
+        let _happy = said(homer.clone(), "eats donuts", &[("mood", "happy")]).await;
+        let calm = said(
+            marge.clone(),
+            "keeps the house",
+            &[("mood", "calm"), ("hat", "red")],
+        )
+        .await;
+        let grumpy = said(homer.clone(), "is grumpy", &[("mood", "grumpy")]).await;
+        fake.merge(
+            &marge,
+            &homer,
+            Some("filed twice"),
+            jiff::civil::date(2026, 9, 3),
+            &EntityId("bot:sigma".into()),
+            Some("run-a"),
+        )
+        .await
+        .expect("the fold lands");
+
+        let agrees = || async {
+            let key = fake.object_key(&homer);
+            let declared = fake.declared_types().await.expect("declarations");
+            let (held, ages, backing) = fake.read_claims(|state| {
+                (
+                    state.fields(&key, &declared),
+                    state.held_since(&key, &declared),
+                    state.backing(&key, &declared),
+                )
+            });
+            assert_eq!(held, fake.fields(&homer).await.expect("the fake's values"));
+            assert_eq!(
+                ages,
+                fake.field_ages(&homer).await.expect("the fake's ages").keys
+            );
+            assert_eq!(
+                backing,
+                fake.backing(&homer).await.expect("the fake's backing")
+            );
+            held
+        };
+        let held = agrees().await;
+        assert_eq!(held["mood"], "grumpy");
+        assert_eq!(
+            held["hat"], "red",
+            "the survivor holds a key only the fold held"
+        );
+
+        // Both sides' claims are written again after the merge; the moved claim is
+        // named by the id the merge gave it.
+        let moved = fake
+            .merge_events(None)
+            .await
+            .expect("the merge events")
+            .into_iter()
+            .flat_map(|event| event.claims)
+            .find(|(was, _)| *was == calm.local)
+            .map(|(_, now)| now)
+            .expect("the merge mapped the claim");
+        let rewrite = |at: FactAddress, mood: &'static str| {
+            let fake = &fake;
+            async move {
+                fake.update_fact(
+                    &at,
+                    FactPatch {
+                        fields: [("mood".to_string(), mood.to_string())].into(),
+                        sets: ["mood".to_string()].into(),
+                        provenance: Some(Provenance::Inference),
+                        ..Default::default()
+                    },
+                    &EntityId("bot:sigma".into()),
+                )
+                .await
+                .expect("the claim is rewritten")
+                .written()
+                .expect("not blocked");
+            }
+        };
+        rewrite(grumpy, "restless").await;
+        rewrite(FactAddress::new(homer.clone(), moved), "serene").await;
+        let held = agrees().await;
+        assert_eq!(held["mood"], "serene", "the newest write holds the key");
     }
 }
