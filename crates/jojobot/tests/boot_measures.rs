@@ -111,7 +111,16 @@ const GROW_CLIENTS: i64 = 8;
 const SMALL_TAIL: u64 = 1_000;
 const STOP_PATIENCE: Duration = Duration::from_secs(60);
 
+/// **One boot at a time.** The cases run side by side in one binary on one runner,
+/// and a boot timed while five others start is timed against their contention: the
+/// same case moved from 23.1 s to 18.6 s between two runs. A process holds this from
+/// before it starts until its first answer, so every boot is timed alone; the rest
+/// of a case (preparing its store, stopping the process) runs side by side.
+static ONE_BOOT: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 struct Running {
+    /// Held from before the process starts until it has answered.
+    boot_turn: Option<std::sync::MutexGuard<'static, ()>>,
     child: Option<Child>,
     pid: u32,
     lines: mpsc::Receiver<String>,
@@ -132,6 +141,9 @@ impl Drop for Running {
 
 /// Start the real binary over `state` and return at once.
 fn spawn(state: Scratch) -> Running {
+    let boot_turn = ONE_BOOT
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let stderr = state.0.join("server.stderr");
     let mut child = Command::new(env!("CARGO_BIN_EXE_jojobot"))
         .env_clear()
@@ -164,6 +176,7 @@ fn spawn(state: Scratch) -> Running {
         }
     });
     Running {
+        boot_turn: Some(boot_turn),
         child: Some(child),
         pid,
         lines,
@@ -209,7 +222,9 @@ impl Running {
         let mut answer = String::new();
         call.read_to_string(&mut answer).expect("the answer");
         assert!(answer.starts_with("HTTP/1.1 200"), "{answer}");
-        self.started.elapsed()
+        let took = self.started.elapsed();
+        self.boot_turn = None;
+        took
     }
 
     /// **Peak resident memory of the server and the store it started**, from the
