@@ -4,7 +4,7 @@
 //! The run is kept per write of a claim, so the run of a key write is the run of
 //! the claim write that set that value, not of the claim's first write.
 
-use super::support::{capture, edit, ensure};
+use super::support::{capture, ensure};
 use super::*;
 use crate::actor::Actor;
 use crate::app::{AppId, AppStamp};
@@ -29,7 +29,7 @@ fn staged(value: &str) -> BTreeMap<String, String> {
 /// middle write is the one a join on the claim alone gets wrong: it would name
 /// alpha, the run of the claim's first write.
 pub async fn a_keys_history_names_the_writer_and_run_of_each_write<M: Memory>(store: &M) {
-    key_history(store, None).await;
+    key_history(store).await;
 }
 
 /// The same history with real session rows resolving the edit's writer.
@@ -54,10 +54,10 @@ pub async fn a_keys_history_names_the_writer_and_run_with_sessions<M: Memory>(
             .await
             .expect("a real session row names the writer");
     }
-    key_history(store, Some(Actor::Bot(bot))).await;
+    key_history(store).await;
 }
 
-async fn key_history<M: Memory>(store: &M, edit_writer: Option<Actor>) {
+async fn key_history<M: Memory>(store: &M) {
     let thing = EntityId("thing:contract-stage-edict".into());
     let bot = EntityId("bot:contract-key-writer".into());
     ensure(store, &thing).await;
@@ -73,17 +73,23 @@ async fn key_history<M: Memory>(store: &M, edit_writer: Option<Actor>) {
         },
     )
     .await;
-    edit(
-        store,
-        &claim.address(),
-        FactPatch {
-            fields: staged("final"),
-            sets: ["stage".to_string()].into(),
-            session: Some("cnf1".to_string()),
-            ..FactPatch::default()
-        },
-    )
-    .await;
+    // **The edit is made by the bot the run belongs to**, as every edit is, and a
+    // write names the bot that made it whether or not a session row says so.
+    store
+        .update_fact(
+            &claim.address(),
+            FactPatch {
+                fields: staged("final"),
+                sets: ["stage".to_string()].into(),
+                session: Some("cnf1".to_string()),
+                ..FactPatch::default()
+            },
+            &bot,
+        )
+        .await
+        .expect("the edit lands")
+        .written()
+        .expect("the guard must not block the edit");
     capture(
         store,
         NewFact {
@@ -109,7 +115,7 @@ async fn key_history<M: Memory>(store: &M, edit_writer: Option<Actor>) {
         seen,
         vec![
             (Some("draft"), Some(Actor::Bot(bot.clone())), Some("kwyj")),
-            (Some("final"), edit_writer, Some("cnf1")),
+            (Some("final"), Some(Actor::Bot(bot.clone())), Some("cnf1")),
             (Some("deployed"), Some(app), None),
         ],
         "each write names the run that set its value"
