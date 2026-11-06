@@ -497,9 +497,7 @@ impl Seam {
     }
 
     /// Read the held claims state. The capture job reads the State it prepares
-    /// against through this, and it is the next commit; until then only the case
-    /// that replays the log reads it.
-    #[allow(dead_code)]
+    /// against through this.
     pub(crate) fn read_claims<T>(
         &self,
         read: impl FnOnce(&jojobot_domain::log::claims::State) -> T,

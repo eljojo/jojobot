@@ -529,6 +529,15 @@ impl State {
         self.declarations.get(kind).and_then(|held| held.last())
     }
 
+    /// **Every declaration in force now**, the newest of each kind: what the
+    /// types declare, as `prepare` reads it.
+    pub fn declared_types(&self) -> Vec<DeclaredType> {
+        self.declarations
+            .values()
+            .filter_map(|held| held.last().cloned())
+            .collect()
+    }
+
     /// Every declaration of a kind, oldest first.
     pub fn declarations_of(&self, kind: &ObjectId) -> &[DeclaredType] {
         self.declarations.get(kind).map_or(&[], Vec::as_slice)

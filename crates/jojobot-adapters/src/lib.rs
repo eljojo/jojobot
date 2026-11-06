@@ -12,6 +12,7 @@
 //! mailbox asks whether a handle resolves, because the question crosses a
 //! context rather than a store: mail does not know what an entity is.
 
+pub(crate) mod claims_capture;
 pub mod claims_import;
 pub mod claims_log;
 pub mod deferred_counts;

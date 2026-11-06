@@ -746,6 +746,16 @@ fn a_redeclared_type_keeps_its_history_and_the_newest_is_in_force() {
         .collect();
     assert_eq!(history, [None, Some("a"), Some("b")]);
     assert!(state.declared(&object("toy")).is_none());
+    let in_force: Vec<_> = state
+        .declared_types()
+        .iter()
+        .map(|held| held.must.clone())
+        .collect();
+    assert_eq!(
+        in_force,
+        [Some("b".to_string())],
+        "only the newest is served"
+    );
     assert!(state.declarations_of(&object("toy")).is_empty());
 }
 
