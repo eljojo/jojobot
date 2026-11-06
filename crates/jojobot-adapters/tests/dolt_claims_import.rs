@@ -569,3 +569,36 @@ async fn claims_import_places_an_edge_and_a_reference_on_a_supplied_record() {
 
     server.stop().await;
 }
+
+/// **A stored row at a supplied handle keeps the binding** (rule 508). The handle
+/// is bound once, to the stored thing; the supplied record is created and never
+/// takes the name from it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn claims_import_leaves_a_stored_rows_handle_bound_to_the_stored_row() {
+    let (_scratch, mut server, pool) = store("claims-import-supplied-collision").await;
+    let memory = DoltMemory::open(pool.clone());
+    thing(&memory, "view:loops", "A stored loops").await;
+
+    let imported = import_claims_once(
+        &Writer::default(),
+        &pool,
+        &supplied_view("view:loops"),
+        at(),
+    )
+    .await
+    .expect("a supplied handle a stored row wears does not stop the import");
+    assert!(matches!(imported, Imported::Done { .. }), "{imported:?}");
+    let supply = jojobot_domain::log::claims::import::supply_identity("view:loops");
+    let bound: Vec<_> = logged(&pool)
+        .await
+        .into_iter()
+        .filter_map(|event| match event.payload {
+            ClaimEvent::AddressBound { object, address } if address == "view:loops" => Some(object),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(bound.len(), 1, "the handle is bound once: {bound:?}");
+    assert_ne!(bound[0], supply, "the stored row keeps the handle");
+
+    server.stop().await;
+}
