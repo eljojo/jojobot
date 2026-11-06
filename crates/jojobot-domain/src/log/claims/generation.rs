@@ -55,8 +55,24 @@ impl State {
                 _ => {}
             }
         }
+        // **A writer that numbered its own act has done it**: its batch carries
+        // the write of the generation, and a second number would name the same spec
+        // twice. The writers that still work the number out themselves are met here
+        // until they leave the work to this function.
+        let numbered: Vec<&ObjectId> = pending
+            .iter()
+            .filter_map(|event| match event {
+                ClaimEvent::FieldWritten { subject, key, .. }
+                    if key.0 == bot_request::GENERATION =>
+                {
+                    Some(self.survivor(subject))
+                }
+                _ => None,
+            })
+            .collect();
         touched
             .into_iter()
+            .filter(|(object, _)| !numbered.contains(&object))
             .filter_map(|(object, record)| {
                 let handle = self
                     .handle_of(&object)

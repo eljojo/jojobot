@@ -106,6 +106,19 @@ fn a_batch_that_touches_two_requests_makes_one_for_each() {
 }
 
 #[test]
+fn a_batch_that_carries_its_own_generation_is_not_numbered_again() {
+    let mut events = world();
+    events.extend(holding("r1", "f1", "k1", "running", "1"));
+    let state = replay(&events);
+    let pending = [
+        created("r2", claim("f2", "k1", "stop", 2)),
+        write("r2", "k1", "desired", 2, "stopped"),
+        write("r2", "k1", "generation", 2, "2"),
+    ];
+    assert_eq!(generations(&state, &pending), Vec::new());
+}
+
+#[test]
 fn a_batch_that_touches_no_spec_key_makes_none() {
     let state = replay(&world());
     let pending = [
