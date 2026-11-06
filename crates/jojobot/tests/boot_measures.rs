@@ -37,6 +37,10 @@ const MEMORY_BOUND_KIB: u64 = 1024 * 1024;
 /// Teaching events in the log's tail, in batches of [`PER_BATCH`].
 const EVENTS: u64 = 20_000;
 const PER_BATCH: u64 = 500;
+/// The instance's size the release is measured at: its entity count today, and
+/// the floor of its message count until the instance's own is read.
+const PRODUCTION_THINGS: i64 = 3_144;
+const PRODUCTION_MESSAGES: i64 = 11_852;
 /// A tail under the snapshot cadence of 10,000 events, for the case that needs the
 /// stop to be the only moment a snapshot is due.
 const SMALL_TAIL: u64 = 1_000;
@@ -341,7 +345,119 @@ async fn restored_store(name: &str) -> Scratch {
     store.stop().await;
     let mut first = spawn(state);
     first.first_answer();
+    grow(first.http_port).await;
     first.stopped().0
+}
+
+/// **Bring the store to production's size through the server's own front door.**
+/// The recorded store holds a few dozen things and a handful of messages; the
+/// fold fill and the search index cost what the instance holds, so a boot
+/// measured over that store says little. Each thing is written by `add_entity`
+/// and given one fact by `capture`, each message by `post_message`, so every
+/// table gets the rows the server really writes. Nothing here is committed
+/// (rule 661): the rows are made per run, and [`prepare`] refuses a store
+/// smaller than [`PRODUCTION_THINGS`] and [`PRODUCTION_MESSAGES`].
+async fn grow(port: u16) {
+    use rmcp::ServiceExt;
+    use rmcp::model::{CallToolRequestParams, ClientCapabilities, ClientInfo, Implementation};
+    use rmcp::transport::StreamableHttpClientTransport;
+
+    let client = ClientInfo::new(
+        ClientCapabilities::default(),
+        Implementation::new("boot-measures-grow", "0.0.1"),
+    )
+    .serve(StreamableHttpClientTransport::from_uri(format!(
+        "http://127.0.0.1:{port}/mcp"
+    )))
+    .await
+    .expect("the client connects to the server");
+    let call = |name: &'static str, arguments: serde_json::Value| {
+        let client = &client;
+        async move {
+            let result = client
+                .call_tool(
+                    CallToolRequestParams::new(name)
+                        .with_arguments(arguments.as_object().expect("an object").clone()),
+                )
+                .await
+                .unwrap_or_else(|e| panic!("{name} failed: {e}"));
+            let text = serde_json::to_value(&result).expect("a result serializes");
+            assert!(text["isError"] != true, "{name} was an error: {text}");
+            text
+        }
+    };
+    // A name that resembles a known one comes back blocked with a token that
+    // lets the same call through, which a bulk writer takes.
+    let writing = |name: &'static str, arguments: serde_json::Value| {
+        let call = &call;
+        async move {
+            let first = call(name, arguments.clone()).await;
+            let body = first.to_string();
+            if !body.contains("override_token") {
+                return;
+            }
+            let token = body
+                .split("override_token")
+                .nth(1)
+                .and_then(|rest| {
+                    rest.split('"')
+                        .find(|part| part.len() > 8 && !part.contains(':'))
+                })
+                .expect("a blocked write carries its token")
+                .to_string();
+            let mut again = arguments;
+            again["override_token"] = token.into();
+            call(name, again).await;
+        }
+    };
+
+    let booted = call(
+        "start_here",
+        serde_json::json!({ "bot": "assistant", "brief": true }),
+    )
+    .await;
+    let booted = booted["content"][0]["text"]
+        .as_str()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())
+        .expect("start_here answers with json");
+    let sid = booted["session"]["sid"]
+        .as_str()
+        .expect("the default identity boots")
+        .to_string();
+
+    for n in 0..PRODUCTION_THINGS {
+        let handle = format!("load-{n}");
+        writing(
+            "add_entity",
+            serde_json::json!({
+                "kind": "thing", "handle": handle, "name": format!("Load subject {n}"),
+                "source": "user-named", "sid": sid,
+            }),
+        )
+        .await;
+        writing(
+            "capture",
+            serde_json::json!({
+                "subject": format!("thing:{handle}"),
+                "content": format!("Load subject {n} sits on shelf {} of aisle {}", n % 97, n % 31),
+                "provenance": "testimony", "recorded_at": "2026-07-01", "sid": sid,
+            }),
+        )
+        .await;
+    }
+    for n in 0..PRODUCTION_MESSAGES {
+        writing(
+            "post_message",
+            serde_json::json!({
+                "to": "assistant",
+                "subject": format!("load message {n}"),
+                "body": format!("Load message {n} about shelf {} and aisle {}", n % 97, n % 31),
+                "sid": sid,
+            }),
+        )
+        .await;
+    }
+    client.cancel().await.expect("the client closes");
 }
 
 /// What the store held when a case was measured.
@@ -469,6 +585,12 @@ async fn prepare(state: &Scratch, plan: Plan, events: u64) -> Size {
         messages: count("message").await,
         events: head.0,
     };
+    assert!(
+        size.things >= PRODUCTION_THINGS && size.messages >= PRODUCTION_MESSAGES,
+        "the measured store is smaller than production: {} things, {} messages",
+        size.things,
+        size.messages
+    );
     drop(log);
     writer.drain().await;
     drop(writer);
