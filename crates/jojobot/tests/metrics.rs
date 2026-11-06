@@ -321,6 +321,9 @@ async fn a_scrape_reads_the_numbers_of_the_calls_made_and_the_main_listener_has_
                 "state" => matches!(value.as_str(), "new" | "read" | "processed"),
                 "read" => matches!(value.as_str(), "sessions" | "mail" | "things"),
                 "family" => value == "referring_to",
+                "reason" => jojobot_adapters::log_snapshot::Skip::ALL
+                    .iter()
+                    .any(|skip| skip.name() == value),
                 "version" => value == jojobot_mcp::observe::VERSION,
                 "build" => value == jojobot_mcp::observe::BUILD,
                 "le" => value == "+Inf" || value.parse::<f64>().is_ok(),
