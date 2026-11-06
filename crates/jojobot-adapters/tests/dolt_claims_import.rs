@@ -602,3 +602,49 @@ async fn claims_import_leaves_a_stored_rows_handle_bound_to_the_stored_row() {
 
     server.stop().await;
 }
+
+/// **A retired handle carries the day the rename was made.** The rename writes
+/// its own day to the former-handle row. The import reads it back from the real
+/// store and puts it on the retirement, so a replay serves the same day.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn claims_import_carries_the_day_of_a_rename_on_the_retirement() {
+    let (_scratch, mut server, pool) = store("claims-import-retired-day").await;
+    let memory = DoltMemory::open(pool.clone());
+    let before = thing(&memory, "person:sigma", "Sigma").await;
+    let after = EntityId("person:omega".to_string());
+    memory
+        .rename_entity(
+            &before,
+            &after,
+            None,
+            date(2026, 9, 4),
+            jojobot_domain::memory::Override::new(None, None),
+            None,
+        )
+        .await
+        .expect("the rename answers")
+        .written()
+        .expect("the rename lands");
+
+    let imported = import_claims_once(&Writer::default(), &pool, &Provisions::default(), at())
+        .await
+        .expect("the import runs");
+    assert!(matches!(imported, Imported::Done { .. }), "{imported:?}");
+    let days: Vec<_> = logged(&pool)
+        .await
+        .into_iter()
+        .filter_map(|event| match event.payload {
+            ClaimEvent::AddressRetired { address, day, .. } if address == "person:sigma" => {
+                Some(day)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        days,
+        vec![date(2026, 9, 4)],
+        "the retirement carries the day"
+    );
+
+    server.stop().await;
+}
