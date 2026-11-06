@@ -351,3 +351,77 @@ async fn a_type_declaration_emits_only_when_it_differs_from_the_state() {
     world.writer.drain().await;
     world.server.stop().await;
 }
+
+/// **A kind declaration emits `TypeDeclared` like a type declaration does**, and
+/// only when it differs from what the State holds: the same kind declared twice
+/// emits once. Reclaiming a shipped kind takes its keys away, and the State holds
+/// the kind with none.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_kind_declaration_and_its_reclaim_emit_only_what_changes() {
+    use jojobot_domain::memory::types::{Field, Origin, ValueType};
+
+    let mut world = world("entity-events-kinds").await;
+    let keys = |names: &[&str]| -> Vec<Field> {
+        names
+            .iter()
+            .map(|key| Field::new(key, ValueType::Text))
+            .collect()
+    };
+    for names in [&["witness"][..], &["witness"][..], &["witness", "date"][..]] {
+        let (memory, fields) = (world.memory.clone(), keys(names));
+        world
+            .job(async move {
+                memory
+                    .declare_kind("pledgekind", Origin::Declared, fields)
+                    .await
+            })
+            .await
+            .expect("declared");
+    }
+    let held = |world: &World| {
+        world
+            .writer
+            .seam()
+            .expect("the seam is open")
+            .read_claims(|state| {
+                state
+                    .declarations_of(&ObjectId("pledgekind".into()))
+                    .iter()
+                    .map(|declared| declared.fields.len())
+                    .collect::<Vec<_>>()
+            })
+    };
+    assert_eq!(
+        held(&world),
+        vec![1, 2],
+        "one event for the first declaration, none for the repeat, one for the change"
+    );
+    {
+        let (memory, fields) = (world.memory.clone(), keys(&["shelf"]));
+        world
+            .job(async move {
+                memory
+                    .declare_kind("stockkind", Origin::Shipped, fields)
+                    .await
+            })
+            .await
+            .expect("a shipped kind");
+        let memory = world.memory.clone();
+        world
+            .job(async move { memory.reclaim_kind("stockkind").await })
+            .await
+            .expect("reclaimed");
+    }
+    let stock = world
+        .writer
+        .seam()
+        .expect("the seam is open")
+        .read_claims(|state| {
+            state
+                .declared(&ObjectId("stockkind".into()))
+                .map(|declared| declared.fields.len())
+        });
+    assert_eq!(stock, Some(0), "the reclaimed kind is held with no keys");
+    world.writer.drain().await;
+    world.server.stop().await;
+}

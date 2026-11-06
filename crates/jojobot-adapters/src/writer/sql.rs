@@ -120,6 +120,13 @@ pub(crate) fn read_claims<T>(
     Some(seam.read_claims(read))
 }
 
+/// Whether any event is waiting to be sealed into the transaction's batch.
+pub(crate) fn has_emitted() -> bool {
+    NATIVE
+        .try_with(|native| !native.borrow().emitted.is_empty())
+        .unwrap_or(false)
+}
+
 /// The events emitted since the transaction began, handed over once.
 pub(crate) fn take_emitted() -> Vec<Event<ClaimEvent>> {
     NATIVE

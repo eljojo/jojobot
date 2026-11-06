@@ -138,3 +138,25 @@ pub(super) fn emit_type_declared(
     }
     crate::writer::sql::emit(events).map_err(store)
 }
+
+/// **Commit a kind writer's transaction.** A kind writer commits natively, which
+/// seals nothing, so a transaction that emitted goes through the request commit
+/// that seals its events into the batch. One that emitted nothing (a seed, a
+/// repeat of what the State holds) commits as it always did.
+pub(super) async fn commit_kind_write(
+    tx: Transaction<'_, MySql>,
+    token: &str,
+    clock: &Clock,
+) -> Result<(), MemoryError> {
+    if crate::writer::sql::has_emitted() {
+        super::super::requests::commit(tx, clock, || {
+            serde_json::json!({ "kind": token }).to_string()
+        })
+        .await
+        .map_err(store)
+    } else {
+        super::super::requests::commit_native(tx)
+            .await
+            .map_err(store)
+    }
+}

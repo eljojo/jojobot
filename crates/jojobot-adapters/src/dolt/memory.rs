@@ -7387,7 +7387,8 @@ impl Memory for DoltMemory {
                 if origin == Origin::Declared {
                     append_type_write(&mut tx, token, &declared.fields, None, &self.clock).await?;
                 }
-                commit_native(tx).await.map_err(store)?;
+                entity_events::emit_type_declared(&declared, &self.clock, None)?;
+                entity_events::commit_kind_write(tx, token, &self.clock).await?;
                 return Ok(changed);
             }
             changed = true;
@@ -7462,7 +7463,8 @@ impl Memory for DoltMemory {
         if origin == Origin::Declared {
             append_type_write(&mut tx, token, &declared.fields, None, &self.clock).await?;
         }
-        commit_native(tx).await.map_err(store)?;
+        entity_events::emit_type_declared(&declared, &self.clock, None)?;
+        entity_events::commit_kind_write(tx, token, &self.clock).await?;
         Ok(changed)
     }
 
@@ -7490,8 +7492,16 @@ impl Memory for DoltMemory {
                 .execute(&mut *tx)
                 .await
                 .map_err(store)?;
+            // The kind is held with no keys from here on.
+            let reclaimed = DeclaredType {
+                name: token.to_string(),
+                fields: Vec::new(),
+                origin: Origin::Shipped,
+                must: None,
+            };
+            entity_events::emit_type_declared(&reclaimed, &self.clock, None)?;
         }
-        commit_native(tx).await.map_err(store)?;
+        entity_events::commit_kind_write(tx, token, &self.clock).await?;
         Ok(())
     }
 
