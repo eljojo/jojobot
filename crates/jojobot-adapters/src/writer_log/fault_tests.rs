@@ -39,6 +39,17 @@ struct Plan {
     kills: std::sync::atomic::AtomicUsize,
     acknowledged: Notify,
     released: Notify,
+    native: Option<Arc<NativeGate>>,
+}
+
+struct NativeGate {
+    observer: sqlx::MySqlPool,
+    armed: AtomicBool,
+    old_id: std::sync::atomic::AtomicU64,
+    commits: std::sync::atomic::AtomicUsize,
+    finished: Notify,
+    early_read: AtomicBool,
+    killed: AtomicBool,
 }
 
 fn error_packet(message: &str) -> Vec<u8> {
@@ -64,6 +75,9 @@ async fn serve(
     let to_client = Arc::new(tokio::sync::Mutex::new(to_client));
     let hold_reply = Arc::new(AtomicBool::new(false));
     let quiet = Arc::new(AtomicBool::new(false));
+    let native_reply = Arc::new(AtomicBool::new(false));
+    let kill_reply = Arc::new(AtomicBool::new(false));
+    let mut kill_statement = false;
     let replies = tokio::spawn({
         let (to_client, hold_reply, quiet, plan) = (
             to_client.clone(),
@@ -71,9 +85,28 @@ async fn serve(
             quiet.clone(),
             plan.clone(),
         );
+        let native_reply = native_reply.clone();
+        let kill_reply = kill_reply.clone();
         async move {
             while let Ok(bytes) = packet(&mut from_server).await {
+                if kill_reply.swap(false, Ordering::SeqCst)
+                    && bytes.get(4) == Some(&0)
+                    && let Some(native) = &plan.native
+                {
+                    native.killed.store(true, Ordering::SeqCst);
+                }
                 if quiet.load(Ordering::SeqCst) {
+                    // The gated command contains only SET and COMMIT. Their OK
+                    // packets carry zero affected rows and last-insert id; bit
+                    // 3 says another result follows. Keep the server connection
+                    // alive until its final result, even after the client left.
+                    if native_reply.load(Ordering::SeqCst)
+                        && (bytes.get(4) == Some(&0xff)
+                            || (bytes.get(4..7) == Some(&[0, 0, 0])
+                                && bytes.get(7).is_some_and(|status| status & 8 == 0)))
+                    {
+                        break;
+                    }
                     continue;
                 }
                 if hold_reply.swap(false, Ordering::SeqCst) {
@@ -90,6 +123,25 @@ async fn serve(
         let mut bytes = packet(&mut from_client).await?;
         let text = String::from_utf8_lossy(&bytes[5..]).into_owned();
         let command = bytes[4];
+        if command == 0x16 {
+            kill_statement = text.starts_with("KILL CONNECTION");
+        }
+        if command == 0x17 && kill_statement {
+            kill_reply.store(true, Ordering::SeqCst);
+        }
+        if command == 0x16
+            && text.contains("FROM event_log")
+            && plan.kills.load(Ordering::SeqCst) > 0
+            && let Some(native) = &plan.native
+        {
+            let owner: Option<u64> = sqlx::query_scalar("SELECT IS_USED_LOCK('alpha-ready')")
+                .fetch_one(&native.observer)
+                .await
+                .expect("observe the old command before a recovery read");
+            if owner == Some(native.old_id.load(Ordering::SeqCst)) {
+                native.early_read.store(true, Ordering::SeqCst);
+            }
+        }
         if command == 0x16 && text.contains("INSERT INTO session_teaching") {
             let armed = plan
                 .fault
@@ -117,6 +169,45 @@ async fn serve(
             bytes = [&[9, 0, 0, bytes[3]][..], b"\x16SELECT 1"].concat();
         }
         if command == 0x03 && text == "COMMIT" {
+            if let Some(native) = &plan.native {
+                native.commits.fetch_add(1, Ordering::SeqCst);
+                if native.armed.swap(false, Ordering::SeqCst) {
+                    let query = b"\x03SET @ready = GET_LOCK('alpha-ready', 0); \
+                        SET @gate = GET_LOCK('alpha-gate', 30); COMMIT; \
+                        SET @released = RELEASE_LOCK('alpha-gate'); \
+                        SET @done = RELEASE_LOCK('alpha-ready')";
+                    let mut gated = (query.len() as u32).to_le_bytes()[..3].to_vec();
+                    gated.push(bytes[3]);
+                    gated.extend(query);
+                    quiet.store(true, Ordering::SeqCst);
+                    native_reply.store(true, Ordering::SeqCst);
+                    to_server.write_all(&gated).await?;
+                    let entered = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                        loop {
+                            let owner: Option<u64> =
+                                sqlx::query_scalar("SELECT IS_USED_LOCK('alpha-ready')")
+                                    .fetch_one(&native.observer)
+                                    .await
+                                    .expect("observe server entry");
+                            if let Some(owner) = owner {
+                                break owner;
+                            }
+                            tokio::task::yield_now().await;
+                        }
+                    })
+                    .await
+                    .expect("the server entered the gated COMMIT");
+                    native.old_id.store(entered, Ordering::SeqCst);
+                    let _ = to_client.lock().await.shutdown().await;
+                    let native = native.clone();
+                    tokio::spawn(async move {
+                        let _ = replies.await;
+                        let _ = to_server.shutdown().await;
+                        native.finished.notify_one();
+                    });
+                    return Ok(());
+                }
+            }
             let fault =
                 plan.fault.lock().unwrap().take_if(|f| {
                     matches!(f, Fault::DelayedCommit | Fault::CancelledAcknowledgement)
@@ -320,6 +411,171 @@ fn committed(id: &str) -> jojobot_domain::request::events::LedgerEvent {
         written_at: at,
         expires_at: at + std::time::Duration::from_secs(60),
     })
+}
+
+/// The proxy sends COMMIT into Dolt's own GET_LOCK gate before losing the
+/// acknowledgement. KILL can answer while that command is still executing.
+async fn teaching_native_gate(release_before_receipt: bool) {
+    use crate::teaching_log::LoggedTeachings;
+    use jojobot_domain::session::Sid;
+    use jojobot_domain::teaching::{TeachingError, Teachings};
+
+    let scratch = Scratch::new("teaching-native-fence");
+    let mut server = Dolt::start(&scratch.0, free_port()).await.unwrap();
+    let store = migrated_database(&server, "alpha").await.unwrap();
+    let native = Arc::new(NativeGate {
+        observer: store.clone(),
+        armed: AtomicBool::new(false),
+        old_id: std::sync::atomic::AtomicU64::new(0),
+        commits: std::sync::atomic::AtomicUsize::new(0),
+        finished: Notify::new(),
+        early_read: AtomicBool::new(false),
+        killed: AtomicBool::new(false),
+    });
+    let plan = Arc::new(Plan {
+        native: Some(native.clone()),
+        ..Plan::default()
+    });
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let upstream = store.connect_options().get_port();
+    let proxy = tokio::spawn({
+        let plan = plan.clone();
+        async move {
+            while let Ok((client, _)) = listener.accept().await {
+                tokio::spawn(serve(client, upstream, plan.clone()));
+            }
+        }
+    });
+    let (log, writer) = Faulted::open(store.clone(), port).await.unwrap();
+    let teachings = LoggedTeachings::open(Arc::new(log), &[])
+        .await
+        .unwrap()
+        .with_writer(writer.clone());
+    let control = Sid("homer".into());
+    let pending = Sid("marge".into());
+    let next = Sid("bart".into());
+    let at = jiff::Timestamp::UNIX_EPOCH;
+    teachings
+        .first_contact(&control, "claims", at)
+        .await
+        .unwrap();
+    let before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM event_log")
+        .fetch_one(&store)
+        .await
+        .unwrap();
+    let mut gate = store.acquire().await.unwrap();
+    let locked: Option<i64> = sqlx::query_scalar("SELECT GET_LOCK('alpha-gate', 0)")
+        .fetch_one(&mut *gate)
+        .await
+        .unwrap();
+    assert_eq!(locked, Some(1));
+    native.armed.store(true, Ordering::SeqCst);
+    let mut caller = tokio::spawn({
+        let teachings = teachings.clone();
+        let pending = pending.clone();
+        async move { teachings.first_contact(&pending, "claims", at).await }
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        while !native.killed.load(Ordering::SeqCst) {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("Dolt acknowledged recovery's KILL before the old command ended");
+    let old = native.old_id.load(Ordering::SeqCst);
+    assert_ne!(old, 0);
+    let owner: Option<u64> = sqlx::query_scalar("SELECT IS_USED_LOCK('alpha-ready')")
+        .fetch_one(&store)
+        .await
+        .unwrap();
+    assert_eq!(owner, Some(old), "the old command is executing inside Dolt");
+    assert!(writer.rail_uncertain("event-log"));
+    assert_eq!(writer.recovery_counts().recovered, 0);
+    assert!(teachings.has_contact(&control, "claims").await.unwrap());
+    assert!(matches!(
+        teachings.has_contact(&pending, "claims").await,
+        Ok(false) | Err(TeachingError::Indeterminate)
+    ));
+    let during: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM event_log")
+        .fetch_one(&store)
+        .await
+        .unwrap();
+    assert_eq!(during, before, "the gated batch is not committed yet");
+    if release_before_receipt {
+        sqlx::query("SELECT RELEASE_LOCK('alpha-gate')")
+            .execute(&mut *gate)
+            .await
+            .unwrap();
+    }
+    let answer = tokio::time::timeout(std::time::Duration::from_secs(15), &mut caller)
+        .await
+        .expect("bounded uncertain receipt")
+        .unwrap();
+    assert!(
+        matches!(answer, Err(TeachingError::Indeterminate)),
+        "{answer:?}"
+    );
+    if !release_before_receipt {
+        assert!(writer.rail_uncertain("event-log"));
+        assert!(writer.recovery_counts().failed > 0);
+        assert_eq!(writer.recovery_counts().recovered, 0);
+        let commits = native.commits.load(Ordering::SeqCst);
+        assert!(teachings.first_contact(&next, "claims", at).await.is_err());
+        assert_eq!(
+            native.commits.load(Ordering::SeqCst),
+            commits,
+            "an uncertain rail accepted a write"
+        );
+        assert!(teachings.has_contact(&control, "claims").await.unwrap());
+        assert!(matches!(
+            teachings.has_contact(&pending, "claims").await,
+            Err(TeachingError::Indeterminate)
+        ));
+        sqlx::query("SELECT RELEASE_LOCK('alpha-gate')")
+            .execute(&mut *gate)
+            .await
+            .unwrap();
+    }
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        native.finished.notified(),
+    )
+    .await
+    .expect("old native command ends");
+    if !release_before_receipt {
+        assert!(teachings.first_contact(&next, "claims", at).await.unwrap());
+        assert!(teachings.has_contact(&next, "claims").await.unwrap());
+    }
+    assert!(!writer.rail_uncertain("event-log"));
+    assert_eq!(writer.recovery_counts().recovered, 1);
+    assert!(
+        !native.early_read.load(Ordering::SeqCst),
+        "recovery read the log before the old server command ended"
+    );
+    let replay = LoggedTeachings::open(Arc::new(DoltLog::open(store.clone()).await.unwrap()), &[])
+        .await
+        .unwrap();
+    assert_eq!(
+        teachings.has_contact(&pending, "claims").await.unwrap(),
+        replay.has_contact(&pending, "claims").await.unwrap()
+    );
+    drop(teachings);
+    writer.drain().await;
+    proxy.abort();
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn teaching_native_fence_precedes_reload_even_when_kill_returns_first() {
+    teaching_native_gate(true).await;
+}
+
+#[tokio::test]
+async fn teaching_native_fence_timeout_keeps_the_rail_uncertain_and_published() {
+    teaching_native_gate(false).await;
 }
 
 /// **A standalone ledger commit whose answer is lost closes the old connection
