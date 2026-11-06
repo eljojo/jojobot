@@ -460,18 +460,27 @@ async fn a_reclaim_leaves_the_state_as_the_rows_hold_the_type() {
         .writer
         .seam()
         .expect("the seam is open")
-        .read_claims(|state| {
-            (
-                state.declared(&ObjectId(token.into())).cloned(),
-                state.declarations_of(&ObjectId(token.into())).len(),
+        .read_claims(|state| state.declared(&ObjectId(token.into())).cloned());
+    assert_eq!(held, rows, "the State holds the type as the rows do");
+    // **Counted in the log, which the State cannot show**: a withdrawal clears the
+    // State, so a repeated reclaim that appended another leaves it unchanged.
+    let withdrawn = world
+        .writer
+        .shared_log(&world.store)
+        .read_from(jojobot_domain::log::Position(0), 100)
+        .await
+        .expect("the log reads")
+        .iter()
+        .flat_map(|batch| batch.members().to_vec())
+        .filter_map(|member| crate::claims_log::codec::decode_own(&member).ok().flatten())
+        .filter(|event| {
+            matches!(
+                &event.payload,
+                jojobot_domain::log::claims::ClaimEvent::TypeWithdrawn { kind } if kind.0 == token
             )
-        });
-    assert_eq!(held.0, rows, "the State holds the type as the rows do");
-    assert!(
-        held.1 <= 2,
-        "an unchanged reclaim appends nothing: {}",
-        held.1
-    );
+        })
+        .count();
+    assert_eq!(withdrawn, 1, "an unchanged reclaim appends nothing");
     world.writer.drain().await;
     world.server.stop().await;
 }

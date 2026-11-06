@@ -12,7 +12,7 @@ use jiff::{Timestamp, civil::Date};
 use jojobot_domain::log::ObjectId;
 use jojobot_domain::log::claims::entity_change::{EntityChange, entity_change_events};
 use jojobot_domain::log::claims::import::EntityRow;
-use jojobot_domain::log::claims::type_change::type_declaration_events;
+use jojobot_domain::log::claims::type_change::{type_declaration_events, type_withdrawal_events};
 use jojobot_domain::memory::types::DeclaredType;
 
 use super::import_rows::{maybe, text};
@@ -161,23 +161,26 @@ pub(super) async fn commit_kind_write(
     }
 }
 
-/// **Emit `TypeWithdrawn` when the State holds a declaration of the kind.** A
-/// reclaim of a kind the State holds nothing for adds no event. Outside a writer
-/// job, or before the seam is open, nothing is emitted.
+/// **Emit the withdrawal of the kind's declaration** the domain chooses, with the
+/// declaration the State holds. Outside a writer job, or before the seam is open,
+/// nothing is emitted.
 pub(super) fn emit_type_withdrawn(
     token: &str,
     clock: &Clock,
     session: Option<&str>,
 ) -> Result<(), MemoryError> {
     let kind = ObjectId(token.to_string());
-    let held = crate::writer::sql::read_claims(|state| state.declared(&kind).is_some());
-    if held != Some(true) {
+    let Some(held) = crate::writer::sql::read_claims(|state| state.declared(&kind).cloned()) else {
         return Ok(());
-    }
-    let event = jojobot_domain::log::claims::import::live(
-        jojobot_domain::log::claims::ClaimEvent::TypeWithdrawn { kind },
+    };
+    let events = type_withdrawal_events(
+        &kind,
+        held.as_ref(),
         clock.now(),
         session.map(str::to_string),
     );
-    crate::writer::sql::emit(vec![event]).map_err(store)
+    if events.is_empty() {
+        return Ok(());
+    }
+    crate::writer::sql::emit(events).map_err(store)
 }

@@ -33,10 +33,46 @@ pub fn type_declaration_events(
     )]
 }
 
+/// **The events of withdrawing the declaration of `kind`**, when the rows hold
+/// none: one `TypeWithdrawn` if the State holds a declaration for the kind, and
+/// none if it holds nothing, so a repeat of a reclaim leaves the log as it was.
+pub fn type_withdrawal_events(
+    kind: &ObjectId,
+    held: Option<&DeclaredType>,
+    at: Timestamp,
+    run: Option<String>,
+) -> Vec<Event<ClaimEvent>> {
+    if held.is_none() {
+        return Vec::new();
+    }
+    vec![live(
+        ClaimEvent::TypeWithdrawn { kind: kind.clone() },
+        at,
+        run,
+    )]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::memory::types::{Field, ValueType};
+
+    /// A withdrawal is made only when the State holds a declaration, and it names
+    /// the kind.
+    #[test]
+    fn a_withdrawal_is_made_only_when_the_state_holds_a_declaration() {
+        let (kind, at) = (ObjectId("pledge".into()), Timestamp::UNIX_EPOCH);
+        assert!(type_withdrawal_events(&kind, None, at, None).is_empty());
+        let held = declared(&["witness"]);
+        let events = type_withdrawal_events(&kind, Some(&held), at, None);
+        let [event] = events.as_slice() else {
+            panic!("a withdrawal makes one event: {events:?}");
+        };
+        assert_eq!(
+            event.payload,
+            ClaimEvent::TypeWithdrawn { kind: kind.clone() }
+        );
+    }
 
     fn declared(keys: &[&str]) -> DeclaredType {
         DeclaredType::new(
