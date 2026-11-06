@@ -491,9 +491,16 @@ async fn count_of(pool: &sqlx::MySqlPool, what: &str) -> i64 {
 /// brings its writes and its field writes, a longer history brings later ordinals
 /// of the same claim, and the counters are scaled. Returns what the store holds.
 async fn scale_to_production(pool: &sqlx::MySqlPool) -> String {
-    // The things and claims this recorder wrote; a copy gets a suffix no id has.
-    let mine = "entity LIKE '%load-%'";
-    let original = |column: &str| format!("{mine} AND {column} REGEXP '^f[0-9]+$'");
+    // **The claims this recorder wrote are found by their content**, which does not
+    // depend on how the store spells an entity or a claim id. A copy gets an `x`
+    // and its round after the id, and no id the server makes holds an `x`, so a
+    // copy is never copied again.
+    let grown = "content LIKE 'Load % sits on shelf%'";
+    let fact_original = format!("{grown} AND id NOT LIKE '%x%'");
+    let write_original = format!("{grown} AND fact_id NOT LIKE '%x%' AND ordinal = 1");
+    let field_original = "fact_id NOT LIKE '%x%' AND EXISTS (SELECT 1 FROM fact f \
+         WHERE f.entity = field_write.entity AND f.id = field_write.fact_id \
+         AND f.content LIKE 'Load % sits on shelf%')";
 
     // **Messages**: copied whole, with their events, in the ordinal order the
     // original gave, after the last one.
@@ -531,23 +538,44 @@ async fn scale_to_production(pool: &sqlx::MySqlPool) -> String {
     // the field writes take the next ordinal of their key.
     let claims = count_of(
         pool,
-        &format!("(SELECT COUNT(*) FROM fact WHERE {})", original("id")),
+        &format!("(SELECT COUNT(*) FROM fact WHERE {})", fact_original),
     )
     .await;
+    // **A store that holds none of the claims this recorder wrote is told apart
+    // from a miscounted one by what it does hold**: the recorder stops and names a
+    // few rows, so the next run does not have to guess at their spelling.
+    if claims == 0 {
+        use sqlx::Row;
+        let seen: Vec<String> = sqlx::query("SELECT entity, id, content FROM fact LIMIT 8")
+            .fetch_all(pool)
+            .await
+            .expect("a sample of the claims")
+            .iter()
+            .map(|row| {
+                format!(
+                    "{:?} {:?} {:?}",
+                    row.get::<String, _>("entity"),
+                    row.get::<String, _>("id"),
+                    row.get::<String, _>("content")
+                )
+            })
+            .collect();
+        panic!("the store holds none of the claims the recorder wrote; some it holds: {seen:?}");
+    }
     let claim_rounds = (PRODUCTION_CLAIMS + claims / 2) / claims - 1;
     for round in 1..=claim_rounds {
         copy_rows(
             pool,
             "fact",
             &[("id", format!("CONCAT(`id`, 'x{round}')"))],
-            &original("id"),
+            &fact_original,
         )
         .await;
         copy_rows(
             pool,
             "fact_write",
             &[("fact_id", format!("CONCAT(`fact_id`, 'x{round}')"))],
-            &original("fact_id"),
+            &write_original,
         )
         .await;
         copy_rows(
@@ -557,7 +585,7 @@ async fn scale_to_production(pool: &sqlx::MySqlPool) -> String {
                 ("fact_id", format!("CONCAT(`fact_id`, 'x{round}')")),
                 ("ordinal", format!("`ordinal` + {round}")),
             ],
-            &original("fact_id"),
+            field_original,
         )
         .await;
     }
@@ -567,10 +595,7 @@ async fn scale_to_production(pool: &sqlx::MySqlPool) -> String {
     let writes = count_of(pool, "(SELECT COUNT(*) FROM fact_write)").await;
     let originals = count_of(
         pool,
-        &format!(
-            "(SELECT COUNT(*) FROM fact_write WHERE {})",
-            original("fact_id")
-        ),
+        &format!("(SELECT COUNT(*) FROM fact_write WHERE {})", write_original),
     )
     .await;
     let history_rounds = ((PRODUCTION_FACT_WRITES - writes + originals - 1) / originals).max(0);
@@ -579,7 +604,7 @@ async fn scale_to_production(pool: &sqlx::MySqlPool) -> String {
             pool,
             "fact_write",
             &[("ordinal", format!("`ordinal` + {round}"))],
-            &original("fact_id"),
+            &write_original,
         )
         .await;
     }
