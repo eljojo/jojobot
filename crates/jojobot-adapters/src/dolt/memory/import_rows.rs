@@ -121,6 +121,19 @@ fn maybe(row: &sqlx::mysql::MySqlRow, column: &str) -> Result<Option<String>, Me
     row.try_get::<Option<String>, _>(column).map_err(store)
 }
 
+/// **The records a build supplies, as the import is handed them.**
+pub fn supplied_rows(supplied: &jojobot_domain::memory::owned::Provisions) -> Vec<SuppliedRow> {
+    supplied
+        .records()
+        .map(|(entity, _)| SuppliedRow {
+            handle: entity.id.to_string(),
+            kind: entity.kind.as_token().to_string(),
+            name: entity.name.clone(),
+            source: entity.source.clone(),
+        })
+        .collect()
+}
+
 impl DoltMemory {
     /// **Every row the claims import names, read from this store.**
     pub async fn import_rows(&self) -> Result<ImportRead, MemoryError> {
@@ -200,16 +213,7 @@ impl DoltMemory {
             skipped: BTreeMap::new(),
         };
         let mut rows = Rows {
-            supplied: self
-                .supplied
-                .records()
-                .map(|(entity, _)| SuppliedRow {
-                    handle: entity.id.to_string(),
-                    kind: entity.kind.as_token().to_string(),
-                    name: entity.name.clone(),
-                    source: entity.source.clone(),
-                })
-                .collect(),
+            supplied: supplied_rows(&self.supplied),
             adopted,
             ..Rows::default()
         };

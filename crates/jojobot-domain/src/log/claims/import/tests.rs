@@ -1787,3 +1787,47 @@ fn a_retired_supplied_handle_is_adopted_under_an_identity_of_its_own() {
     let state = State::replay(&events);
     assert_eq!(state.resolve("view:board"), Some(&identity));
 }
+
+/// **A later boot appends only what the supply list added.** The import made the
+/// record the first build supplied; a later build supplies one more. The log then
+/// holds exactly that record's creation and binding, and a second pass over the
+/// same list appends nothing.
+#[test]
+fn a_new_supplied_record_is_created_and_bound_and_an_unchanged_list_appends_nothing() {
+    let first = vec![supplied("view:loops")];
+    let mut held = imported(&Rows {
+        supplied: first.clone(),
+        ..Default::default()
+    });
+    assert!(
+        reconcile_supply_list(&State::replay(&held), &first).is_empty(),
+        "the list the import saw appends nothing"
+    );
+    let later = vec![supplied("view:loops"), supplied("view:board")];
+    let added = reconcile_supply_list(&State::replay(&held), &later);
+    let board = supply_identity("view:board");
+    assert_eq!(created_objects(&added), vec![&board]);
+    assert_eq!(bound_addresses(&added), vec![(&board, "view:board")]);
+    held.extend(added);
+    assert!(
+        reconcile_supply_list(&State::replay(&held), &later).is_empty(),
+        "an unchanged list appends nothing the second time"
+    );
+}
+
+/// **A stored row at a newly supplied handle keeps the binding** (rule 508): the
+/// supplied object is created, and stays unbound.
+#[test]
+fn a_stored_row_at_a_newly_supplied_handle_keeps_the_binding_on_a_later_boot() {
+    let held = imported(&Rows {
+        entities: vec![entity("k1", "view:board")],
+        ..Default::default()
+    });
+    let added = reconcile_supply_list(&State::replay(&held), &[supplied("view:board")]);
+    let board = supply_identity("view:board");
+    assert_eq!(created_objects(&added), vec![&board]);
+    assert!(
+        bound_addresses(&added).is_empty(),
+        "the stored row holds the binding: {added:?}"
+    );
+}

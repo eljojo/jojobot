@@ -201,3 +201,94 @@ async fn import_in_job(
         }
     }
 }
+
+/// **Reconcile the build's supply list with the log, every boot.** The import made
+/// the supply identity of every record the build supplied at its boot. A later
+/// build can supply more, and no import runs for it: this reads the claims the log
+/// holds, replays them, and appends in one batch only the records the log does not
+/// hold. A list the log already holds appends nothing, and no batch.
+pub async fn reconcile_supply_list_once(
+    writer: &Writer,
+    pool: &MySqlPool,
+    supplied: &Provisions,
+    at: Timestamp,
+) -> Result<usize, ClaimsImportError> {
+    let pool = sql::Pool::from(pool.clone());
+    let owner = writer.clone();
+    let supplied = crate::dolt::memory::import_rows::supplied_rows(supplied);
+    writer
+        .run(async move { reconcile_in_job(&owner, &pool, supplied, at).await })
+        .await
+}
+
+async fn reconcile_in_job(
+    writer: &Writer,
+    pool: &sql::Pool,
+    supplied: Vec<jojobot_domain::log::claims::import::SuppliedRow>,
+    at: Timestamp,
+) -> Result<usize, ClaimsImportError> {
+    let log = writer.shared_log(pool);
+    let mut tx = pool
+        .writer()
+        .begin()
+        .await
+        .map_err(|e| ClaimsImportError::Store(e.to_string()))?;
+    let settled = log.settle_on(&mut tx).await;
+    let _ = tx.rollback().await;
+    settled.map_err(log_failed)?;
+
+    let mut held = Vec::new();
+    let mut from = Position::default();
+    loop {
+        let batches = log.read_from(from, READ_BOUND).await.map_err(log_failed)?;
+        let Some(last) = batches.last().map(|batch| batch.range().last) else {
+            break;
+        };
+        for batch in &batches {
+            for member in batch.members() {
+                if let Some(event) =
+                    codec::decode_own(member).map_err(|e| ClaimsImportError::Log(e.to_string()))?
+                {
+                    held.push(event);
+                }
+            }
+        }
+        from = last;
+    }
+    let events = jojobot_domain::log::claims::import::reconcile_supply_list(
+        &jojobot_domain::log::claims::State::replay(held.iter()),
+        &supplied,
+    );
+    if events.is_empty() {
+        return Ok(0);
+    }
+    let members: Vec<Vec<u8>> = events.iter().map(codec::encode).collect();
+    let mut tx = pool
+        .writer()
+        .begin()
+        .await
+        .map_err(|e| ClaimsImportError::Store(e.to_string()))?;
+    let head = log.head_in(&mut tx).await.map_err(log_failed)?;
+    let batch = SealedBatch::seal(
+        BatchId(format!("claims-reconcile:{head}")),
+        Position(head),
+        at,
+        REPRESENTATION_VERSION,
+        members,
+    )
+    .map_err(log_failed)?;
+    let staged = log
+        .stage(&mut tx, Position(head), &batch)
+        .await
+        .map_err(log_failed)?;
+    match sql::commit(tx).await {
+        Ok(()) => {
+            staged.committed();
+            Ok(events.len())
+        }
+        Err(error) => {
+            staged.unknown();
+            Err(sql::store_error::<ClaimsImportError>(error))
+        }
+    }
+}

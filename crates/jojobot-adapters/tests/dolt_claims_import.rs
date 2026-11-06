@@ -321,6 +321,34 @@ fn supplied_view(handle: &str) -> Provisions {
     )])
 }
 
+/// Several records the build supplies, as the boot hands them over.
+fn supplied_views(handles: &[&str]) -> Provisions {
+    Provisions::new(
+        handles
+            .iter()
+            .map(|handle| {
+                Provision::record(
+                    Entity {
+                        folded_names: Vec::new(),
+                        id: EntityId((*handle).to_string()),
+                        kind: EntityKind::VIEW,
+                        name: "A view".into(),
+                        aliases: Vec::new(),
+                        source: "jojobot".into(),
+                        crm: None,
+                        parent: None,
+                        boot: Default::default(),
+                        merged_into: None,
+                        badge: None,
+                        archived: None,
+                    },
+                    std::collections::BTreeMap::new(),
+                )
+            })
+            .collect(),
+    )
+}
+
 /// **A claim filed under a handle the build supplies is placed at the record's
 /// supply identity.** The overlay's claim has no row to name, so the reader used
 /// to refuse it and the boot with it (rule 508: a supplied record never stops the
@@ -722,6 +750,68 @@ async fn claims_import_adopts_a_handle_the_build_stopped_supplying() {
         state.active_records(&adopted).len(),
         1,
         "the claim sits on the adopted object"
+    );
+
+    server.stop().await;
+}
+
+/// **A later boot binds only what the supply list added, and an unchanged list
+/// appends nothing.** The import made the record the first build supplied. A build
+/// that supplies one more appends exactly that record's creation and binding in
+/// one batch; the same list again appends no batch.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn claims_reconcile_appends_the_new_record_and_then_nothing() {
+    use jojobot_adapters::claims_import::reconcile_supply_list_once;
+    let (_scratch, mut server, pool) = store("claims-reconcile").await;
+    let first = supplied_views(&["view:loops"]);
+    import_claims_once(&Writer::default(), &pool, &first, at())
+        .await
+        .expect("the import runs");
+    let batches = |pool: sqlx::MySqlPool| async move {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM event_log WHERE first_position IS NOT NULL",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("the batches count")
+    };
+    let after_import = batches(pool.clone()).await;
+    assert_eq!(
+        reconcile_supply_list_once(&Writer::default(), &pool, &first, at())
+            .await
+            .expect("reconcile runs"),
+        0,
+        "the list the import saw appends nothing"
+    );
+    assert_eq!(batches(pool.clone()).await, after_import);
+
+    let later = supplied_views(&["view:loops", "view:board"]);
+    assert_eq!(
+        reconcile_supply_list_once(&Writer::default(), &pool, &later, at())
+            .await
+            .expect("reconcile runs"),
+        2,
+        "exactly the new record's creation and binding"
+    );
+    assert_eq!(
+        batches(pool.clone()).await,
+        after_import + 1,
+        "in one batch"
+    );
+    assert_eq!(
+        reconcile_supply_list_once(&Writer::default(), &pool, &later, at())
+            .await
+            .expect("reconcile runs"),
+        0,
+        "the same list again appends nothing"
+    );
+    assert_eq!(batches(pool.clone()).await, after_import + 1);
+    let state = State::replay(logged(&pool).await.iter());
+    assert_eq!(
+        state.resolve("view:board"),
+        Some(&jojobot_domain::log::claims::import::supply_identity(
+            "view:board"
+        ))
     );
 
     server.stop().await;

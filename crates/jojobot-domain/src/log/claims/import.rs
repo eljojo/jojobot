@@ -24,6 +24,7 @@ use jiff::Timestamp;
 
 use super::{
     ClaimBody, ClaimEvent, FieldValue, KeyId, KindId, MovedRecord, ObjectBody, ObjectSnapshot,
+    State,
 };
 use crate::actor::Actor;
 use crate::log::{Event, ObjectId, RecordId, RunId};
@@ -203,6 +204,49 @@ pub fn supply_identity(handle: &str) -> ObjectId {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AdoptedRow {
     pub handle: String,
+}
+
+/// **What a supplied record is in the log**: only its identity moves here; its
+/// fields and prose still answer from the build's own list.
+fn supplied_body(row: &SuppliedRow) -> ObjectBody {
+    ObjectBody {
+        kind: KindId(row.kind.clone()),
+        parent: None,
+        name: row.name.clone(),
+        source: row.source.clone(),
+        aliases: Vec::new(),
+        boot: None,
+        metadata: BTreeMap::new(),
+        archived: false,
+        bound_to: None,
+    }
+}
+
+/// **The events a later boot appends so the log holds the build's supply list.**
+/// The import made the supply identity of every record the build supplied at its
+/// boot; a later build can supply more. Each record the log holds no object for is
+/// created, and a handle nothing answers to yet is bound to it. **Where a stored
+/// row wears the handle, that row holds the binding** (rule 508) and the supplied
+/// object stays unbound. A list the log already holds gives no event, so an
+/// unchanged list appends nothing.
+pub fn reconcile_supply_list(state: &State, supplied: &[SuppliedRow]) -> Vec<Event<ClaimEvent>> {
+    let mut events = Vec::new();
+    for row in supplied {
+        let identity = supply_identity(&row.handle);
+        if state.object(&identity).is_none() {
+            events.push(plain(ClaimEvent::ObjectCreated {
+                object: identity.clone(),
+                body: supplied_body(row),
+            }));
+        }
+        if state.resolve(&row.handle).is_none() {
+            events.push(plain(ClaimEvent::AddressBound {
+                object: identity,
+                address: row.handle.clone(),
+            }));
+        }
+    }
+    events
 }
 
 /// **The identity an adopted handle has in the log.** Deterministic from the
@@ -440,20 +484,9 @@ pub fn import(rows: &Rows) -> Result<Vec<Event<ClaimEvent>>, ImportError> {
     // unbound. Only its identity moves here; its fields and prose still answer
     // from the build's own list.
     for row in &rows.supplied {
-        let object = supply_identity(&row.handle);
         events.push(plain(ClaimEvent::ObjectCreated {
-            object: object.clone(),
-            body: ObjectBody {
-                kind: KindId(row.kind.clone()),
-                parent: None,
-                name: row.name.clone(),
-                source: row.source.clone(),
-                aliases: Vec::new(),
-                boot: None,
-                metadata: BTreeMap::new(),
-                archived: false,
-                bound_to: None,
-            },
+            object: supply_identity(&row.handle),
+            body: supplied_body(row),
         }));
     }
     // **Each adopted handle is created once, under its own identity**, with the

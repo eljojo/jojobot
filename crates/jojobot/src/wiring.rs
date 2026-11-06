@@ -1084,6 +1084,31 @@ pub async fn boot_store_observed(
         }
     }
 
+    // **A later boot binds the records a new build supplies**, directly after the
+    // import: the difference between the supply list and the log, in one batch, and
+    // nothing when the list is unchanged. A failure stops the boot, as the import's.
+    match timed(
+        "claims-reconcile",
+        jojobot_adapters::claims_import::reconcile_supply_list_once(
+            &folded.writer(),
+            store.pool(),
+            &supplied,
+            clock.now(),
+        ),
+    )
+    .await
+    {
+        Ok(0) => tracing::info!("claims reconcile: the log holds the supply list"),
+        Ok(events) => tracing::info!(events, "bound the records this build newly supplies"),
+        Err(why) => {
+            tracing::error!(
+                error = %why,
+                "THE SUPPLY LIST RECONCILE FAILED — the boot stops and the next start tries again."
+            );
+            anyhow::bail!("the supply list reconcile failed: {why}");
+        }
+    }
+
     Ok(Booted {
         store,
         memory: indexed.memory(),

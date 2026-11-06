@@ -35,7 +35,7 @@ impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Kept {
 }
 
 /// The steps of `wiring::boot_store`, in the order it runs them.
-const STEPS: [&str; 18] = [
+const STEPS: [&str; 19] = [
     "store-up",
     "badge-the-unbadged",
     "load-kinds",
@@ -54,6 +54,7 @@ const STEPS: [&str; 18] = [
     "startup-passes",
     "old-role-claims",
     "claims-import",
+    "claims-reconcile",
 ];
 
 #[tokio::test]
