@@ -421,16 +421,6 @@ pub fn import(rows: &Rows) -> Result<Vec<Event<ClaimEvent>>, ImportError> {
                 bound_to: None,
             },
         }));
-        if !rows
-            .entities
-            .iter()
-            .any(|entity| entity.handle == row.handle)
-        {
-            events.push(plain(ClaimEvent::AddressBound {
-                object,
-                address: row.handle.clone(),
-            }));
-        }
     }
     // **Every write of an entity's own row is an observation, in the order the
     // store reads them**: a write nobody stamped first, then by moment. Rows of
@@ -471,6 +461,23 @@ pub fn import(rows: &Rows) -> Result<Vec<Event<ClaimEvent>>, ImportError> {
             object: row.key.clone(),
             address: row.handle.clone(),
         }));
+    }
+    // **A supplied handle is bound last**, after the replay of every handle a
+    // stored thing wore and left: that replay binds a handle and retires it, and
+    // a supplied binding made before it would be taken away. A stored row that
+    // wears the handle now holds the binding (rule 508), and the supplied object
+    // stays unbound.
+    for row in &rows.supplied {
+        if !rows
+            .entities
+            .iter()
+            .any(|entity| entity.handle == row.handle)
+        {
+            events.push(plain(ClaimEvent::AddressBound {
+                object: supply_identity(&row.handle),
+                address: row.handle.clone(),
+            }));
+        }
     }
     let mut declared: Vec<&TypeWriteRow> = rows.type_writes.iter().collect();
     declared.sort_by_key(|row| (row.declaration.name.clone(), row.ordinal));
@@ -521,7 +528,12 @@ pub fn import(rows: &Rows) -> Result<Vec<Event<ClaimEvent>>, ImportError> {
             run,
             write.written_at,
             ClaimEvent::FieldWritten {
-                record: record_id(&claim_home(stored.is_some(), write, subject), local),
+                // **The record the claim was created as**: a stored claim keeps its
+                // key and its id whatever a merge has since called it.
+                record: match stored {
+                    Some(fact) => record_id(&fact.home, &fact.local),
+                    None => record_id(subject, local),
+                },
                 subject: subject.clone(),
                 key: write.key.clone(),
                 ordinal: *ordinal,
@@ -561,7 +573,37 @@ pub fn import(rows: &Rows) -> Result<Vec<Event<ClaimEvent>>, ImportError> {
     }
     let mut steps: Vec<&MergeRow> = rows.merges.iter().collect();
     steps.sort_by_key(|step| step.no);
+    // **The record each (home, label) names is the one the claim was created
+    // as.** A merge moves no row: the claim stays under the key it was made on
+    // with the local id it had, and each merge gives it a label under its
+    // survivor. Walked in merge order, a claim moved twice is still the record it
+    // was created as.
+    let mut created: HashMap<(ObjectId, String), RecordId> = rows
+        .facts
+        .iter()
+        .map(|fact| {
+            (
+                (fact.home.clone(), fact.local.clone()),
+                record_id(&fact.home, &fact.local),
+            )
+        })
+        .collect();
     for step in steps {
+        let records: Vec<MovedRecord> = step
+            .claims
+            .iter()
+            .map(|(old, new)| {
+                let record = created
+                    .get(&(step.folded.clone(), old.clone()))
+                    .cloned()
+                    .unwrap_or_else(|| record_id(&step.folded, old));
+                created.insert((step.survivor.clone(), new.clone()), record.clone());
+                MovedRecord {
+                    record,
+                    label: new.clone(),
+                }
+            })
+            .collect();
         events.push(envelope(
             None,
             step.session.clone(),
@@ -570,29 +612,12 @@ pub fn import(rows: &Rows) -> Result<Vec<Event<ClaimEvent>>, ImportError> {
                 folded: step.folded.clone(),
                 survivor: step.survivor.clone(),
                 // The claims the merge gave a new id keep the label they now wear.
-                records: step
-                    .claims
-                    .iter()
-                    .map(|(_, new)| MovedRecord {
-                        record: record_id(&step.survivor, new),
-                        label: new.clone(),
-                    })
-                    .collect(),
+                records,
                 writes: Vec::new(),
             },
         ));
     }
     Ok(events)
-}
-
-/// The home a key write's claim is filed under after the merges: the thing the
-/// write sits on now, unless the claim was never moved.
-fn claim_home(filed: bool, write: &FieldWriteRow, subject: &ObjectId) -> ObjectId {
-    if filed {
-        write.fact_home.clone()
-    } else {
-        subject.clone()
-    }
 }
 
 /// One event for each write of a claim, each in the envelope of its own write.

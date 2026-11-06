@@ -353,3 +353,78 @@ async fn claims_import_files_a_claim_under_a_supplied_record_at_its_supply_ident
 
     server.stop().await;
 }
+
+/// **A folded thing's claim keeps serving from the survivor after the import.**
+/// Made with the real port, so the rows are the shape the store leaves: the
+/// merge moves no row, the folded claim stays under the folded key with the
+/// local id it had, and the merge row gives it the id it wears under the
+/// survivor. The import is replayed into a State and the survivor is asked for
+/// the key the folded thing's claim wrote.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn claims_import_keeps_a_folded_things_claim_under_the_survivor() {
+    let (_scratch, mut server, pool) = store("claims-import-merged-claim").await;
+    let memory = DoltMemory::open(pool.clone());
+    let bart = thing(&memory, "person:bart", "Bart").await;
+    let lisa = thing(&memory, "person:lisa", "Lisa").await;
+    let me = thing(&memory, "bot:sigma", "Sigma").await;
+    // The survivor has a claim of its own, so the folded claim's local id is taken
+    // under it and the merge gives the folded one another.
+    let mut own = NewFact::about(bart.clone(), "skates", date(2026, 9, 1));
+    own.provenance = Provenance::Testimony;
+    own.fields = [("mood".to_string(), "mischievous".to_string())]
+        .into_iter()
+        .collect();
+    own.sets = own.fields.keys().cloned().collect();
+    memory
+        .capture(own)
+        .await
+        .expect("capture")
+        .written()
+        .expect("not blocked");
+    let mut fact = NewFact::about(lisa.clone(), "plays the saxophone", date(2026, 9, 1));
+    fact.provenance = Provenance::Testimony;
+    fact.fields = [("instrument".to_string(), "saxophone".to_string())]
+        .into_iter()
+        .collect();
+    fact.sets = fact.fields.keys().cloned().collect();
+    memory
+        .capture(fact)
+        .await
+        .expect("capture")
+        .written()
+        .expect("not blocked");
+    memory
+        .merge(
+            &lisa,
+            &bart,
+            Some("filed twice"),
+            date(2026, 9, 3),
+            &me,
+            Some("run-a"),
+        )
+        .await
+        .expect("the fold lands");
+
+    let read = memory.import_rows().await.expect("the reader reads");
+    assert!(read.findings.is_empty(), "{:?}", read.findings);
+    let events = import(&read.rows).expect("the rows map");
+    let state = State::replay(events.iter());
+    let survivor = read
+        .rows
+        .entities
+        .iter()
+        .find(|row| row.handle == "person:bart")
+        .expect("the survivor is listed")
+        .key
+        .clone();
+    assert_eq!(
+        state
+            .fields(&survivor, &[])
+            .get("instrument")
+            .map(String::as_str),
+        Some("saxophone"),
+        "the survivor lost the folded thing's key write"
+    );
+
+    server.stop().await;
+}

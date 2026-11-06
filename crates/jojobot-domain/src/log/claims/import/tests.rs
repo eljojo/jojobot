@@ -389,34 +389,7 @@ fn a_numbered_member_taken_back_keeps_its_number_write() {
 }
 
 fn merged_pair() -> Rows {
-    let survivor_write = write_of(1, "ours", Some("run-s"), 1);
-    let mut folded_write = write_of(1, "theirs", Some("run-f"), 2);
-    folded_write.claim.home = object("k1");
-    folded_write.claim.label = "f9".into();
-    Rows {
-        entities: vec![entity("k1", "person:homer"), entity("k2", "person:marge")],
-        // The merge gave the folded thing's claim `f9` under the survivor.
-        facts: vec![
-            fact("k1", "f1", vec![survivor_write]),
-            fact("k1", "f9", vec![folded_write]),
-        ],
-        field_writes: vec![
-            set("k1", "mood", 1, "ours", "f1", Some(1)),
-            FieldWriteRow {
-                written_at: at(100),
-                ..set("k2", "mood", 1, "theirs", "f1", Some(1))
-            },
-        ],
-        merges: vec![MergeRow {
-            no: 1,
-            folded: object("k2"),
-            survivor: object("k1"),
-            merged_at: at(50).unwrap(),
-            session: Some("run-m".into()),
-            claims: vec![("f1".into(), "f9".into())],
-        }],
-        ..Rows::default()
-    }
+    merged_pair_as_the_store_leaves_it()
 }
 
 /// A merged pair: the folded thing's write is interleaved by the ledger's rule,
@@ -731,7 +704,7 @@ fn a_merged_pairs_former_handle_and_moved_claim_survive() {
     assert_eq!(
         records,
         vec![vec![MovedRecord {
-            record: RecordId("k1/f9".into()),
+            record: RecordId("k2/f1".into()),
             label: "f9".into(),
         }]]
     );
@@ -741,7 +714,7 @@ fn a_merged_pairs_former_handle_and_moved_claim_survive() {
         Some(&object("k2"))
     );
     assert_eq!(state.survivor(&object("k2")), &object("k1"));
-    let moved = state.record(&record_id(&object("k1"), "f9")).unwrap();
+    let moved = state.record(&record_id(&object("k2"), "f1")).unwrap();
     assert_eq!(moved.claim.label, "f9");
     assert_eq!(moved.claim.derived_from, lineage);
 }
@@ -1549,4 +1522,153 @@ fn the_supply_identity_is_stable_and_cannot_be_a_stored_key() {
     assert_ne!(supply_identity("view:loops"), supply_identity("view:board"));
     assert!(supply_identity("view:loops").0.contains('/'));
     assert_ne!(supply_identity("view:loops").0, "view:loops");
+}
+
+/// **A supplied handle a stored thing once wore still answers to the supplied
+/// record.** The thing left the handle for another, so no stored row wears it
+/// now, and the replay of its former handles must not take the binding away.
+/// The answer is asked of the replayed State, where the order of the events
+/// decides it.
+#[test]
+fn a_supplied_handle_a_stored_thing_once_wore_answers_to_the_supplied_record() {
+    let rows = Rows {
+        entities: vec![entity("k1", "view:board")],
+        former_handles: vec![FormerHandleRow {
+            former: "view:loops".into(),
+            object: object("k1"),
+            ordinal: 1,
+        }],
+        supplied: vec![supplied("view:loops")],
+        ..Default::default()
+    };
+    let state = state_of(&rows);
+    assert_eq!(
+        state.resolve("view:loops"),
+        Some(&supply_identity("view:loops")),
+        "the supplied record lost its handle to the former one's retirement"
+    );
+    assert_eq!(state.resolve("view:board"), Some(&object("k1")));
+}
+
+/// **The merged pair as the store leaves it.** A merge moves no row: the folded
+/// thing's claim stays under the folded key with the local id it had, and the
+/// merge row says which id it wears under the survivor now.
+fn merged_pair_as_the_store_leaves_it() -> Rows {
+    let survivor_write = write_of(1, "ours", Some("run-s"), 1);
+    let mut folded_write = write_of(1, "theirs", Some("run-f"), 2);
+    folded_write.claim.home = object("k2");
+    Rows {
+        entities: vec![entity("k1", "person:homer"), entity("k2", "person:marge")],
+        facts: vec![
+            fact("k1", "f1", vec![survivor_write]),
+            fact("k2", "f1", vec![folded_write]),
+        ],
+        field_writes: vec![
+            set("k1", "mood", 1, "ours", "f1", Some(1)),
+            FieldWriteRow {
+                written_at: at(100),
+                ..set("k2", "mood", 1, "theirs", "f1", Some(1))
+            },
+        ],
+        merges: vec![MergeRow {
+            no: 1,
+            folded: object("k2"),
+            survivor: object("k1"),
+            merged_at: at(50).unwrap(),
+            session: Some("run-m".into()),
+            claims: vec![("f1".into(), "f9".into())],
+        }],
+        ..Rows::default()
+    }
+}
+
+fn moved_records(events: &[Event<ClaimEvent>]) -> Vec<Vec<MovedRecord>> {
+    events
+        .iter()
+        .filter_map(|event| match &event.payload {
+            ClaimEvent::ObjectsMerged { records, .. } => Some(records.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// **A merge names the record the claim was created under.** The claim is
+/// created under the folded key and its old id; the merge moves that record and
+/// gives it the label it wears under the survivor.
+#[test]
+fn a_merge_moves_the_record_the_claim_was_created_under() {
+    let events = imported(&merged_pair_as_the_store_leaves_it());
+    assert_eq!(
+        moved_records(&events),
+        vec![vec![MovedRecord {
+            record: record_id(&object("k2"), "f1"),
+            label: "f9".into(),
+        }]]
+    );
+}
+
+/// **The survivor serves the folded thing's key writes.** Asked of the replayed
+/// State: both sides' writes of the key, the folded one newest.
+#[test]
+fn the_survivor_keeps_the_folded_things_key_writes_after_the_replay() {
+    let state = state_of(&merged_pair_as_the_store_leaves_it());
+    let writes = stream(&state, "k1", "mood");
+    assert_eq!(
+        writes.iter().map(|w| w.ordinal).collect::<Vec<_>>(),
+        vec![1, 2],
+        "the survivor lost the folded claim's key write"
+    );
+    assert_eq!(state.fields(&object("k1"), &[])["mood"], "theirs");
+    assert!(stream(&state, "k2", "mood").is_empty());
+}
+
+/// **A claim moved twice is followed through both merges.** It is created under
+/// the first folded key and its first id; the second merge moves the record it
+/// was created as, whatever it is called by then.
+#[test]
+fn a_claim_moved_twice_keeps_naming_the_record_it_was_created_under() {
+    let mut rows = merged_pair_as_the_store_leaves_it();
+    // lisa (k3) is folded into marge (k2), then marge into homer.
+    let mut deepest = write_of(1, "deepest", None, 3);
+    deepest.claim.home = object("k3");
+    rows.entities.push(entity("k3", "person:lisa"));
+    rows.facts.push(fact("k3", "f1", vec![deepest]));
+    rows.merges = vec![
+        MergeRow {
+            no: 1,
+            folded: object("k3"),
+            survivor: object("k2"),
+            merged_at: at(40).unwrap(),
+            session: None,
+            claims: vec![("f1".into(), "f5".into())],
+        },
+        MergeRow {
+            no: 2,
+            folded: object("k2"),
+            survivor: object("k1"),
+            merged_at: at(50).unwrap(),
+            session: None,
+            claims: vec![("f1".into(), "f9".into()), ("f5".into(), "f10".into())],
+        },
+    ];
+    let events = imported(&rows);
+    assert_eq!(
+        moved_records(&events),
+        vec![
+            vec![MovedRecord {
+                record: record_id(&object("k3"), "f1"),
+                label: "f5".into(),
+            }],
+            vec![
+                MovedRecord {
+                    record: record_id(&object("k2"), "f1"),
+                    label: "f9".into(),
+                },
+                MovedRecord {
+                    record: record_id(&object("k3"), "f1"),
+                    label: "f10".into(),
+                },
+            ],
+        ]
+    );
 }
