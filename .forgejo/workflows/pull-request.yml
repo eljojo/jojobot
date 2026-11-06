@@ -66,6 +66,9 @@ jobs:
     runs-on: nix
     timeout-minutes: 120
     steps:
+      - name: Runner cleanup
+        run: |
+          [ -z "${JOJOBOT_PRE_JOB:-}" ] || "$JOJOBOT_PRE_JOB"
       - name: Level
         run: |
           echo "level: boundary; workflow jobs: $BAR_WORKFLOW_JOBS; left to boundary: none"
@@ -114,6 +117,9 @@ jobs:
     needs: static
     runs-on: nix-x86_64
     steps:
+      - name: Runner cleanup
+        run: |
+          [ -z "${JOJOBOT_PRE_JOB:-}" ] || "$JOJOBOT_PRE_JOB"
       - name: Level
         run: |
           echo "level: boundary; workflow jobs: $BAR_WORKFLOW_JOBS; left to boundary: none"
@@ -173,6 +179,9 @@ jobs:
     if: ${{ always() }}
     runs-on: nix-x86_64
     steps:
+      - name: Runner cleanup
+        run: |
+          [ -z "${JOJOBOT_PRE_JOB:-}" ] || "$JOJOBOT_PRE_JOB"
       - name: Level
         run: |
           echo "level: boundary; workflow jobs: $BAR_WORKFLOW_JOBS; left to boundary: none"
@@ -241,6 +250,9 @@ jobs:
     if: ${{ always() }}
     runs-on: nix-x86_64
     steps:
+      - name: Runner cleanup
+        run: |
+          [ -z "${JOJOBOT_PRE_JOB:-}" ] || "$JOJOBOT_PRE_JOB"
       - name: Level
         run: |
           echo "level: boundary; workflow jobs: $BAR_WORKFLOW_JOBS; left to boundary: none"
@@ -293,6 +305,9 @@ jobs:
     if: ${{ always() }}
     runs-on: nix-x86_64
     steps:
+      - name: Runner cleanup
+        run: |
+          [ -z "${JOJOBOT_PRE_JOB:-}" ] || "$JOJOBOT_PRE_JOB"
       - name: Level
         run: |
           echo "level: boundary; workflow jobs: $BAR_WORKFLOW_JOBS; left to boundary: none"
@@ -344,6 +359,9 @@ jobs:
     runs-on: nix
     timeout-minutes: 130
     steps:
+      - name: Runner cleanup
+        run: |
+          [ -z "${JOJOBOT_PRE_JOB:-}" ] || "$JOJOBOT_PRE_JOB"
       - name: Level
         run: |
           echo "level: boundary; workflow jobs: $BAR_WORKFLOW_JOBS; left to boundary: none"
@@ -374,6 +392,9 @@ jobs:
     runs-on: nix
     timeout-minutes: 130
     steps:
+      - name: Runner cleanup
+        run: |
+          [ -z "${JOJOBOT_PRE_JOB:-}" ] || "$JOJOBOT_PRE_JOB"
       - name: Level
         run: |
           echo "level: boundary; workflow jobs: $BAR_WORKFLOW_JOBS; left to boundary: none"

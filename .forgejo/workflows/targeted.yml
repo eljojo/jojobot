@@ -26,6 +26,9 @@ jobs:
       CRATE: ${{ forgejo.event.inputs.crate }}
       FILTER: ${{ forgejo.event.inputs.FILTER }}
     steps:
+      - name: Runner cleanup
+        run: |
+          [ -z "${JOJOBOT_PRE_JOB:-}" ] || "$JOJOBOT_PRE_JOB"
       - name: Level
         run: |
           echo 'level: boundary, targeted; workflow jobs: targeted; run requested crate/FILTER; left to full boundary: other tests'

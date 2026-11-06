@@ -35,6 +35,9 @@ jobs:
     env:
       DELETE: ${{ forgejo.event.inputs.delete || 'true' }}
     steps:
+      - name: Runner cleanup
+        run: |
+          [ -z "${JOJOBOT_PRE_JOB:-}" ] || "$JOJOBOT_PRE_JOB"
       # Every branch head and `origin/main`, for the ancestor and patch checks.
       - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
