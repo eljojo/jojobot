@@ -4945,4 +4945,33 @@ async fn a_clear_says_whether_it_took_the_key_off_the_thing_or_off_one_claim() {
         !from_holder.contains(&address_of(&first)),
         "the receipt names no claim that holds the key: {from_holder}"
     );
+
+    // **A clear of a key the thing already lacks says so**: the older claim still
+    // carries the key on its own record, the thing does not hold it, and the
+    // call changed nothing on the thing.
+    let again = postcondition_line(
+        &update_ok(
+            &jojobot,
+            UpdateFactArgs {
+                clear_fields: Some(vec!["mood".into()]),
+                ..update_args(&address_of(&first))
+            },
+        )
+        .await,
+    );
+    assert!(
+        fields_of(&jojobot, "thing:beta")
+            .await
+            .get("mood")
+            .is_none(),
+        "the thing still lacks the key"
+    );
+    assert!(
+        again.contains("already"),
+        "the receipt says the key was already off: {again}"
+    );
+    assert!(
+        !from_holder.contains("already"),
+        "a clear that took the key off does not say it was already off: {from_holder}"
+    );
 }

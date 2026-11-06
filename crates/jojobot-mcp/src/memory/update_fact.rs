@@ -1089,6 +1089,14 @@ impl Jojobot {
         // chunk that carries it on. The first keeps the plan.
         let defrag_archive =
             archives_this_write && jojobot_domain::memory::review::is_defrag(&caller.bot);
+        // **What the thing held before the write**, read only for a clear, so the
+        // receipt can tell a clear that took a key off from one asked of a key the
+        // thing already lacked.
+        let held_before = if cleared.is_empty() {
+            None
+        } else {
+            self.memory.fields(&address.home).await.ok()
+        };
         let writing = super::must_override::update_fact_lifting(
             &*self.memory,
             &address,
@@ -1267,7 +1275,13 @@ impl Jojobot {
                     );
                 }
                 let mut line = self
-                    .what_an_update_left_standing(&fact, &cleared, keep, &mut body)
+                    .what_an_update_left_standing(
+                        &fact,
+                        &cleared,
+                        held_before.as_ref(),
+                        keep,
+                        &mut body,
+                    )
                     .await;
                 if let Some(due) = crate::answer::falls_due_sentence(&fact.subject, due_on_computed)
                 {
@@ -1500,6 +1514,7 @@ impl Jojobot {
         &self,
         fact: &Fact,
         cleared: &[String],
+        before: Option<&std::collections::BTreeMap<String, String>>,
         keep: bool,
         body: &mut serde_json::Value,
     ) -> String {
@@ -1558,6 +1573,9 @@ impl Jojobot {
                 .iter()
                 .flat_map(|held| {
                     cleared.iter().map(|key| match held.get(key) {
+                        None if before.is_some_and(|was| !was.contains_key(key)) => format!(
+                            "{key} was already off {subject}: this call changed nothing on it"
+                        ),
                         None => format!("{key} is off {subject}"),
                         Some(_) => match backing.as_ref().and_then(|backed| backed.get(key)) {
                             Some(backed) => format!(
