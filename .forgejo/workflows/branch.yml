@@ -226,9 +226,20 @@ jobs:
         env:
           UPGRADE_FIXTURE_DIR: target/upgrade-fixture
           TOKEN: ${{ forgejo.token }}
+      # The store of production's size the boot measures restore. Growing it takes
+      # about half an hour, so it is grown once per grower and kept outside git
+      # (scripts/prepare-boot-store); a run that finds it only copies it.
+      - name: Grown store
+        if: ${{ steps.plan.outputs.fast != 'true' }}
+        run: scripts/stop-with-siblings nix develop -c python3 scripts/prepare-boot-store
+        env:
+          UPGRADE_FIXTURE_DIR: target/upgrade-fixture
+          BOOT_STORE_DIR: target/boot-store
+          TOKEN: ${{ forgejo.token }}
       - run: scripts/stop-with-siblings nix develop -c make report
         env:
           UPGRADE_FIXTURE_DIR: target/upgrade-fixture
+          BOOT_STORE_DIR: target/boot-store
           BAR_PUSH_BASE: ${{ forgejo.event.before }}
           TOKEN: ${{ forgejo.token }}
       # The bar's own log, kept a week. The job log carries only the summary,

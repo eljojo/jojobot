@@ -1,0 +1,140 @@
+#!/usr/bin/env python3
+"""Grow the store the boot measures run on, once per grower. CI only; no dump enters git.
+
+The boot_measures cases need a store of production's size, and growing one through
+the server's tools takes about half an hour. This script grows it on a cache miss
+and copies the cached dump into BOOT_STORE_DIR on every run, so the cases only
+restore it.
+
+The cache key is the digest of what the grower reads (the boot_measures test file
+and this script) beside the commit of the upgrade fixture it starts from. A change to
+either records again; a cache miss records, it never skips the cases.
+"""
+import fcntl
+import hashlib
+import os
+from pathlib import Path
+import shutil
+import signal
+import subprocess
+import tempfile
+import time
+
+
+# The grow alone took 1,137 s on the first run with no facts; facts and the restore
+# come on top. A waiter holds out longer than the build it waits for.
+BUILD_TIMEOUT = 3600
+LOCK_TIMEOUT = BUILD_TIMEOUT + 300
+GROWER_INPUTS = (
+    "scripts/prepare-boot-store",
+    "crates/jojobot/tests/boot_measures.rs",
+)
+FILES = ("doltdump.sql", "grown.txt", "dump.sha256", "key.txt")
+
+
+def lock_cache(lock):
+    deadline = time.monotonic() + LOCK_TIMEOUT
+    while True:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                raise SystemExit(f"boot store refused: lock wait exceeded {LOCK_TIMEOUT:g}s")
+            time.sleep(0.05)
+
+
+def grower_digest():
+    digest = hashlib.sha256()
+    for name in GROWER_INPUTS:
+        path = Path(name)
+        digest.update(name.encode() + b"\0")
+        digest.update(path.read_bytes() if path.is_file() else b"missing")
+        digest.update(b"\0")
+    return digest.hexdigest()[:16]
+
+
+def upgrade_fixture_commit():
+    fixture = Path(os.environ["UPGRADE_FIXTURE_DIR"]).resolve()
+    try:
+        return (fixture / "ref.txt").read_text().strip()
+    except OSError:
+        raise SystemExit("boot store refused: the upgrade fixture is not prepared (no ref.txt)")
+
+
+def complete(directory, key):
+    try:
+        dump = (directory / "doltdump.sql").read_bytes()
+        return (
+            bool(dump)
+            and (directory / "key.txt").read_text().strip() == key
+            and bool((directory / "grown.txt").read_text().strip())
+            and (directory / "dump.sha256").read_text().strip() == hashlib.sha256(dump).hexdigest()
+        )
+    except OSError:
+        return False
+
+
+def record(directory):
+    env = dict(os.environ, BOOT_STORE_DIR=str(directory))
+    command = [
+        "cargo", "test", "-p", "jojobot",
+        "--features=jojobot/room-harness", "--features=jojobot-mcp/room-harness",
+        "--features=jojobot-domain/room-harness",
+        "--test", "boot_measures", "--locked",
+        "--", "--ignored", "--nocapture", "record_the_grown_store",
+    ]
+    with subprocess.Popen(command, env=env, start_new_session=True) as build:
+        try:
+            code = build.wait(timeout=BUILD_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            for sig in (signal.SIGTERM, signal.SIGKILL):
+                try:
+                    os.killpg(build.pid, sig)
+                except ProcessLookupError:
+                    pass
+                try:
+                    build.wait(timeout=5)
+                    break
+                except subprocess.TimeoutExpired:
+                    pass
+            raise SystemExit(f"boot store refused: growing exceeded {BUILD_TIMEOUT:g}s")
+        if code:
+            raise SystemExit(f"boot store refused: the recorder exited {code}")
+
+
+def main():
+    if os.environ.get("GITHUB_ACTIONS") != "true":
+        raise SystemExit("boot store refused: the grown store is made only in CI")
+    key = upgrade_fixture_commit() + "-" + grower_digest()
+    output = Path(os.environ["BOOT_STORE_DIR"]).resolve()
+    cache_home = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
+    parent = cache_home / "jojobot" / "boot-stores"
+    parent.mkdir(parents=True, exist_ok=True)
+    cache = parent / key
+    with (parent / "grow.lock").open("w") as lock:
+        lock_cache(lock)
+        if complete(cache, key):
+            print(f"boot store: cache hit; key {key}", flush=True)
+        else:
+            print(f"boot store: cache miss; growing key {key}", flush=True)
+            with tempfile.TemporaryDirectory(prefix="grow-", dir=parent) as temporary:
+                recording = Path(temporary) / "store"
+                recording.mkdir()
+                record(recording)
+                dump = (recording / "doltdump.sql").read_bytes()
+                (recording / "dump.sha256").write_text(hashlib.sha256(dump).hexdigest() + "\n")
+                (recording / "key.txt").write_text(key + "\n")
+                if not complete(recording, key):
+                    raise SystemExit("boot store refused: the recording is incomplete")
+                if cache.exists():
+                    shutil.rmtree(cache)
+                recording.rename(cache)
+        output.mkdir(parents=True, exist_ok=True)
+        for name in FILES:
+            shutil.copyfile(cache / name, output / name)
+    print(f"boot store: ready at {output}; key {key}", flush=True)
+
+
+if __name__ == "__main__":
+    main()

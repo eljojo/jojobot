@@ -41,6 +41,10 @@ const PER_BATCH: u64 = 500;
 /// the floor of its message count until the instance's own is read.
 const PRODUCTION_THINGS: i64 = 3_144;
 const PRODUCTION_MESSAGES: i64 = 11_852;
+/// Facts written under each grown thing. **A stand-in until the live instance's
+/// own count is known**: the number of facts per thing there is read from the
+/// instance and replaces this.
+const FACTS_PER_THING: i64 = 3;
 /// Connections that write the grown store at once.
 const GROW_CLIENTS: i64 = 8;
 /// A tail under the snapshot cadence of 10,000 events, for the case that needs the
@@ -307,15 +311,16 @@ fn split_sql_statements(dump: &str) -> Vec<String> {
     statements
 }
 
-/// **The store the last deployed build recorded**, which CI restores for the
-/// upgrade gate and names in `UPGRADE_FIXTURE_DIR`, replayed into a store of this
-/// case's own and then booted once by the binary under test, so its migrations
-/// and imports are done before anything is measured. This is the size of a real
-/// instance's rows; the log's tail is added on top by [`prepare`].
-async fn build_template() -> Scratch {
-    let name = "jojobot-measure-template";
-    let fixture = std::env::var("UPGRADE_FIXTURE_DIR")
-        .expect("CI supplies UPGRADE_FIXTURE_DIR, the store the last deployed tag recorded");
+/// **A recorded store** replayed into a store of this case's own and then booted
+/// once by the binary under test, so its migrations and imports are done before
+/// anything is measured. `source` names the variable that holds its directory:
+/// the cases read the grown store CI cached (`BOOT_STORE_DIR`), and the recorder
+/// that makes that store starts from the one the last deployed build recorded
+/// (`UPGRADE_FIXTURE_DIR`, as for the upgrade gate) and grows it when `growing`.
+/// The log's tail is added on top by [`prepare`].
+async fn restore_into(name: &str, source: &str, growing: bool) -> Scratch {
+    let fixture = std::env::var(source)
+        .unwrap_or_else(|_| panic!("CI supplies {source}, the store this case starts from"));
     // **A relative path is the workspace root's**, as the upgrade gate reads it: a
     // test runs from its own crate's directory, and CI names the directory
     // `target/upgrade-fixture`.
@@ -348,18 +353,22 @@ async fn build_template() -> Scratch {
     store.stop().await;
     let mut first = spawn(state);
     first.first_answer();
-    grow(first.http_port).await;
+    if growing {
+        grow(first.http_port).await;
+    }
     first.stopped().0
 }
 
-/// The grown store, made once for the whole test binary: making it takes
-/// minutes, and every case needs the same one.
+/// The cached grown store, restored once for the whole test binary: every case
+/// needs the same one.
 static TEMPLATE: tokio::sync::OnceCell<Scratch> = tokio::sync::OnceCell::const_new();
 
 /// **A copy of the grown store for one case**, so a case changes its own and no
 /// other.
 async fn restored_store(name: &str) -> Scratch {
-    let template = TEMPLATE.get_or_init(build_template).await;
+    let template = TEMPLATE
+        .get_or_init(|| restore_into("jojobot-measure-template", "BOOT_STORE_DIR", false))
+        .await;
     let dir = jojobot_adapters::testing::scratch_path(name);
     let _ = std::fs::remove_dir_all(&dir);
     let copied = Command::new("cp")
@@ -372,15 +381,63 @@ async fn restored_store(name: &str) -> Scratch {
     Scratch(dir)
 }
 
+/// **The recorder of the cached grown store.** `scripts/prepare-boot-store` runs it
+/// on a cache miss, with `BOOT_STORE_DIR` naming an absolute directory outside git
+/// for the result. It grows the store the last deployed build recorded, stops the
+/// server and dumps the store the way the upgrade fixture is dumped. The bar never
+/// runs it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "run through scripts/prepare-boot-store, never by `make check`"]
+async fn record_the_grown_store() {
+    let out = std::path::PathBuf::from(
+        std::env::var("BOOT_STORE_DIR").expect("the script names BOOT_STORE_DIR"),
+    );
+    assert!(
+        out.is_absolute(),
+        "the recorder writes to an absolute directory"
+    );
+    let grown = restore_into("jojobot-measure-recorder", "UPGRADE_FIXTURE_DIR", true).await;
+    let database = grown.0.join("db").join("jojobot");
+    assert!(
+        database.join(".dolt").is_dir(),
+        "the binary's database is not where the recorder expects: {}",
+        database.display()
+    );
+    // The dump tool keeps its configuration under a home directory of its own.
+    let home = grown.0.join("dolt-home");
+    std::fs::create_dir_all(&home).expect("a directory for the dump tool's configuration");
+    let dump = Command::new("dolt")
+        .env("DOLT_ROOT_PATH", &home)
+        .args(["dump", "-r", "sql", "-f", "-fn", "doltdump.sql"])
+        .current_dir(&database)
+        .output()
+        .expect("dolt dump runs");
+    assert!(
+        dump.status.success(),
+        "dolt dump failed: {}",
+        String::from_utf8_lossy(&dump.stderr)
+    );
+    std::fs::create_dir_all(&out).expect("the output directory");
+    std::fs::copy(database.join("doltdump.sql"), out.join("doltdump.sql"))
+        .expect("the dump is copied");
+    std::fs::write(
+        out.join("grown.txt"),
+        format!(
+            "things={PRODUCTION_THINGS} messages={PRODUCTION_MESSAGES} facts_per_thing={FACTS_PER_THING}\n"
+        ),
+    )
+    .expect("the record of what was grown");
+}
+
 /// **Bring the store to production's size through the server's own front door.**
 /// The recorded store holds a few dozen things and a handful of messages; the
 /// fold fill and the search index cost what the instance holds, so a boot
 /// measured over that store says little. Each thing is written by `add_entity`
-/// and each message by `post_message`, so those tables get the rows the server
-/// really writes. A fact per thing would add 3,144 writes, which the bar's 1200 s
-/// limit on this binary does not leave room for. Nothing here is committed
-/// (rule 661): the rows are made per run, and [`prepare`] refuses a store
-/// smaller than [`PRODUCTION_THINGS`] and [`PRODUCTION_MESSAGES`].
+/// and given [`FACTS_PER_THING`] facts by `capture`, and each message by
+/// `post_message`, so every table gets the rows the server really writes. This
+/// takes about half an hour, which is why only the recorder runs it and CI caches
+/// the result. Nothing here is committed (rule 661), and [`prepare`] refuses a
+/// store smaller than [`PRODUCTION_THINGS`] and [`PRODUCTION_MESSAGES`].
 async fn grow(port: u16) {
     use rmcp::ServiceExt;
     use rmcp::model::{CallToolRequestParams, ClientCapabilities, ClientInfo, Implementation};
@@ -486,6 +543,22 @@ async fn grow(port: u16) {
                     }),
                 )
                 .await;
+                for fact in 0..FACTS_PER_THING {
+                    writing(
+                        &peer,
+                        "capture",
+                        serde_json::json!({
+                            "subject": format!("thing:{handle}"),
+                            "content": format!(
+                                "Load {word} holds item {fact} on shelf {} of aisle {}",
+                                n % 97,
+                                n % 31
+                            ),
+                            "provenance": "testimony", "recorded_at": "2026-07-01", "sid": sid,
+                        }),
+                    )
+                    .await;
+                }
                 if shard == 0 && n % 400 == 0 {
                     record(&format!(
                         "grow: things at {n} after {} s",
