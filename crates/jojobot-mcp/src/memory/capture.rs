@@ -1389,8 +1389,12 @@ impl Jojobot {
         }
         // **A write of a bot request's spec raises its generation**, worked out
         // from what the request holds. The key is jojobot's: the licence check
-        // above refused a caller's own copy.
-        if jojobot_domain::memory::bot_request::is_request(&subject) {
+        // above refused a caller's own copy. A call that carries a capture job is
+        // numbered by the writer, in the batch of the act.
+        // TEMPORARY(9.3.3): the old route goes with the live switch.
+        if jojobot_domain::memory::bot_request::is_request(&subject)
+            && jojobot_domain::log::claims::job::current().is_none()
+        {
             let held = match self.memory.fields(&subject).await {
                 Ok(held) => held,
                 Err(e) => return memory_declined("capture", e).map(Err),
