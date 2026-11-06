@@ -4609,7 +4609,7 @@ impl Memory for InMemoryMemory {
         );
         // **An edit rewrites the row and appends a write**, which is what makes
         // what the claim used to say readable after it stops being true.
-        self.append_claim_write(&edited, patch.session.clone(), None);
+        self.append_claim_write(&edited, patch.session.clone(), self.writing_bot(caller));
         drop(facts);
         // **Guarded and stored are different questions.** The guard just
         // above validated the patch's own handle-form values, exactly as a
@@ -5222,8 +5222,9 @@ impl Memory for InMemoryMemory {
         // **A retraction is two writes**: the one that marked the claim, and
         // the account's first. Taking a claim back is a write of it, so the
         // chain says when it stopped standing rather than only that it did.
-        self.append_claim_write(&retracted, session.map(str::to_string), None);
-        self.append_claim_write(&record, session.map(str::to_string), None);
+        let bot = self.writing_bot(caller);
+        self.append_claim_write(&retracted, session.map(str::to_string), bot.clone());
+        self.append_claim_write(&record, session.map(str::to_string), bot);
         drop(facts);
         self.append_writes(
             &record.home,

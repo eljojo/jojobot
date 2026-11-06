@@ -199,6 +199,12 @@ impl InMemoryMemory {
         )]);
     }
 
+    /// **The bot a write names**: the caller, when the caller is a bot. A write
+    /// with no session still says who wrote it.
+    pub(super) fn writing_bot(&self, caller: &EntityId) -> Option<EntityId> {
+        (caller.kind() == Some(crate::memory::EntityKind::BOT)).then(|| caller.clone())
+    }
+
     /// **Read the claims State**, as the seam's `read_claims` lets a case read it.
     pub fn read_claims<T>(&self, read: impl FnOnce(&State) -> T) -> T {
         read(&self.claims.lock().expect("fake mutex poisoned"))
@@ -534,5 +540,74 @@ mod tests {
         .await
         .expect("the claim is retracted");
         assert!(!agrees().await.contains_key("mood"));
+    }
+
+    /// **The bot that wrote is the actor of every write of a claim on the fake**,
+    /// with no session to say so: a capture, an update and a retraction each name
+    /// their bot, and a record a write creates is first written by it.
+    #[tokio::test]
+    async fn the_bot_that_wrote_is_the_actor_of_every_claim_write_on_the_fake() {
+        let fake = InMemoryMemory::booted();
+        let homer = EntityId("person:homer".into());
+        let sigma = EntityId("bot:sigma".into());
+        fake.add_entity(NewEntity::new(homer.clone(), "Homer", "fixture"))
+            .await
+            .expect("add")
+            .written()
+            .expect("written");
+        let mut fact = NewFact::about(homer.clone(), "felt giddy", jiff::civil::date(2026, 9, 1));
+        fact.provenance = Provenance::Inference;
+        fact.written_by_bot = Some(sigma.clone());
+        let made = fake
+            .capture(fact)
+            .await
+            .expect("capture")
+            .written()
+            .expect("not blocked")
+            .address();
+        fake.update_fact(
+            &made,
+            FactPatch {
+                content: Some("felt giddy all day".into()),
+                provenance: Some(Provenance::Inference),
+                ..Default::default()
+            },
+            &sigma,
+        )
+        .await
+        .expect("the claim is rewritten")
+        .written()
+        .expect("not blocked");
+        fake.retract(
+            &made,
+            Some("a mistake"),
+            jiff::civil::date(2026, 9, 5),
+            &sigma,
+            None,
+        )
+        .await
+        .expect("the claim is retracted");
+
+        let by_sigma = Some(crate::actor::Actor::Bot(sigma));
+        let held = fake.recall(&homer).await.expect("the claims");
+        assert_eq!(held.len(), 2, "the claim and the record of its retraction");
+        for fact in held {
+            let record = fake.stored_record(&fact.address());
+            let (first, history) = fake.read_claims(|state| {
+                let held = state.record(&record).expect("the State holds the record");
+                (
+                    held.first_writer.clone(),
+                    held.history
+                        .iter()
+                        .map(|write| write.actor.clone())
+                        .collect::<Vec<_>>(),
+                )
+            });
+            assert_eq!(first, by_sigma, "{record:?}: first written by the bot");
+            assert!(
+                history.iter().all(|actor| *actor == by_sigma),
+                "{record:?}: every write names its bot: {history:?}"
+            );
+        }
     }
 }

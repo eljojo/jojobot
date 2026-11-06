@@ -66,6 +66,20 @@ fn emit_one(event: Event<ClaimEvent>) {
 }
 
 impl DoltMemory {
+    /// **The bot a write names**: the caller, filed under the id the store keeps
+    /// for it, when the caller is a bot. A write with no session still says who
+    /// wrote it.
+    pub(super) async fn writing_bot(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        caller: &EntityId,
+    ) -> Result<Option<EntityId>, MemoryError> {
+        if caller.kind() != Some(jojobot_domain::memory::EntityKind::BOT) {
+            return Ok(None);
+        }
+        Ok(Some(self.stored_writer(tx, caller).await?))
+    }
+
     /// **The permanent key a stored name stands for**: a badge, an entity's id
     /// (filed under its badge when it has one), or a handle some thing wore and
     /// left. A name that stands for none keeps its stored spelling, as the

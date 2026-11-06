@@ -660,3 +660,103 @@ async fn a_retraction_is_held_by_the_state_as_the_store_holds_it() {
     writer.drain().await;
     server.stop().await;
 }
+
+/// **The bot that wrote is the actor of every write of a claim**, with no session
+/// to say so: a capture, an update and a retraction each name their bot, and the
+/// record a write creates is first written by it.
+#[tokio::test]
+async fn the_bot_that_wrote_is_the_actor_of_every_claim_write() {
+    let (_scratch, mut server, memory, writer, pool) = world("claim-events-actor").await;
+    let homer = EntityId("person:homer".into());
+    let sigma = EntityId("bot:sigma".into());
+
+    let made = {
+        let (memory, homer, sigma) = (memory.clone(), homer.clone(), sigma.clone());
+        as_request(&writer, "alpha", async move {
+            let mut fact = NewFact::about(homer, "felt giddy", date(2026, 9, 1));
+            fact.provenance = Provenance::Inference;
+            fact.written_by_bot = Some(sigma);
+            memory
+                .capture(fact)
+                .await
+                .expect("capture")
+                .written()
+                .expect("not blocked")
+                .address()
+        })
+        .await
+    };
+    {
+        let (memory, made, sigma) = (memory.clone(), made.clone(), sigma.clone());
+        as_request(&writer, "beta", async move {
+            memory
+                .update_fact(
+                    &made,
+                    FactPatch {
+                        content: Some("felt giddy all day".into()),
+                        provenance: Some(Provenance::Inference),
+                        ..Default::default()
+                    },
+                    &sigma,
+                )
+                .await
+                .expect("the claim is rewritten")
+                .written()
+                .expect("not blocked");
+        })
+        .await;
+    }
+    {
+        let (memory, made, sigma) = (memory.clone(), made.clone(), sigma.clone());
+        as_request(&writer, "gamma", async move {
+            memory
+                .retract(&made, Some("a mistake"), date(2026, 9, 5), &sigma, None)
+                .await
+                .expect("the claim is retracted");
+        })
+        .await;
+    }
+
+    let by_sigma = Some(jojobot_domain::actor::Actor::Bot(sigma));
+    let records: Vec<jojobot_domain::log::RecordId> = writer
+        .shared_log(&pool)
+        .read_from(Position(0), 100)
+        .await
+        .unwrap()
+        .iter()
+        .flat_map(|batch| batch.members().to_vec())
+        .filter_map(|bytes| crate::claims_log::codec::decode_own(&bytes).ok().flatten())
+        .filter_map(|event| match event.payload {
+            jojobot_domain::log::claims::ClaimEvent::RecordCreated { record, .. } => Some(record),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        records.len(),
+        2,
+        "the claim and the record of its retraction"
+    );
+    let seam = writer.seam().expect("the seam opened with the first begin");
+    for record in &records {
+        let (first, history) = seam.read_claims(|state| {
+            let held = state.record(record).expect("the State holds the record");
+            (
+                held.first_writer.clone(),
+                held.history
+                    .iter()
+                    .map(|write| write.actor.clone())
+                    .collect::<Vec<_>>(),
+            )
+        });
+        assert_eq!(
+            first, by_sigma,
+            "{record:?}: the record is first written by the bot"
+        );
+        assert!(
+            history.iter().all(|actor| *actor == by_sigma),
+            "{record:?}: every write names its bot: {history:?}"
+        );
+    }
+    writer.drain().await;
+    server.stop().await;
+}

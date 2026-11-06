@@ -2345,8 +2345,9 @@ impl DoltMemory {
             return Err(err);
         }
         let retracted_on_disk = self.as_stored(tx, &retracted).await?;
-        Self::write_fact(tx, &retracted_on_disk, &self.clock, session, None).await?;
-        let claim_write = Self::write_fact(tx, &record, &self.clock, session, None).await?;
+        let bot = self.writing_bot(tx, caller).await?;
+        Self::write_fact(tx, &retracted_on_disk, &self.clock, session, bot.as_ref()).await?;
+        let claim_write = Self::write_fact(tx, &record, &self.clock, session, bot.as_ref()).await?;
         // The account is a record like any other, and the key naming what it
         // takes back is a write of its own. The record being taken back writes
         // no key: what changed there is its status.
@@ -2899,8 +2900,15 @@ impl DoltMemory {
             }
         }
         let on_disk = self.as_stored(tx, &fact).await?;
-        let claim_write =
-            Self::write_fact(tx, &on_disk, &self.clock, patch.session.as_deref(), None).await?;
+        let bot = self.writing_bot(tx, caller).await?;
+        let claim_write = Self::write_fact(
+            tx,
+            &on_disk,
+            &self.clock,
+            patch.session.as_deref(),
+            bot.as_ref(),
+        )
+        .await?;
         // **The edit appends.** The record reads back changed — that is the
         // surface — and the value it replaced stays where it was written.
         // **A reference-typed value is lowered to the permanent id it
