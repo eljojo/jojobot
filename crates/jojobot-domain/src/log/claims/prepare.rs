@@ -267,7 +267,9 @@ pub fn prepare(
     }
     if request.route == Route::Verb
         && let Some(key) = request.fields.keys().map(|key| key.trim()).find(|key| {
-            *key == attention::DUE_ON || memory::review::SERVER_WRITTEN_KEYS.contains(key)
+            (*key == attention::DUE_ON || memory::review::SERVER_WRITTEN_KEYS.contains(key))
+                // A key the verb computed rides as derived: the verb's, not the caller's.
+                && !request.derived.iter().any(|computed| computed.trim() == *key)
         })
     {
         return Err(Refusal::ServerWritten {

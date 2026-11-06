@@ -939,6 +939,33 @@ fn a_key_jojobot_writes_itself_is_refused_on_the_verb_and_not_on_the_engine() {
     }
 }
 
+/// **A key the verb computed is its own to write**: the due moment of a check-in
+/// and the stamp of a defrag ride the call as derived keys, and the guard on the
+/// keys jojobot writes judges what a caller sent, never what the verb worked out.
+#[test]
+fn a_key_the_verb_computed_is_not_refused_as_server_written() {
+    let (state, declared) = world();
+    for key in ["due_on", "defragged_at", "review_mark"] {
+        let computed = CaptureRequest {
+            fields: BTreeMap::from([(key.to_string(), "v".to_string())]),
+            derived: BTreeSet::from([key.to_string()]),
+            ..request("alpha")
+        };
+        assert!(prepare(&state, &declared, &computed).is_ok(), "{key}");
+        let sent = CaptureRequest {
+            derived: BTreeSet::new(),
+            ..computed
+        };
+        assert_eq!(
+            prepare(&state, &declared, &sent),
+            Err(Refusal::ServerWritten {
+                key: key.to_string()
+            }),
+            "{key}"
+        );
+    }
+}
+
 /// **A number is one whole number, and a member keeps the one it holds.** The
 /// numbering decision of the store, asked over the state.
 #[test]
