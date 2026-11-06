@@ -29,6 +29,77 @@ fn thing(id: &str) -> Vec<ClaimEvent> {
     ]
 }
 
+/// Supply identities use the same address binding as stored identities. The
+/// importer owns their encoding; this opaque key must stay distinct from the handle.
+#[test]
+fn a_supplied_record_is_admitted_as_a_subject_or_edge_through_its_supply_identity() {
+    crate::memory::kinds::load_shipped();
+    let (mut state, declared) = world();
+    let supplied = object("supply-view-loops");
+    apply(
+        &mut state,
+        &ClaimEvent::ObjectCreated {
+            object: supplied.clone(),
+            body: ObjectBody {
+                source: "supplied".into(),
+                ..body("view", "Loops")
+            },
+        },
+    );
+    apply(
+        &mut state,
+        &ClaimEvent::AddressBound {
+            object: supplied.clone(),
+            address: "view:loops".into(),
+        },
+    );
+    assert_ne!(supplied, object("view:loops"));
+    assert_eq!(state.resolve("view:loops"), Some(&supplied));
+
+    // A spelling outside both the stored and supplied identities stays unknown.
+    assert_eq!(
+        prepare(&state, &declared, &request("view:omega")),
+        Err(Refusal::UnknownSubject("view:omega".into(), Vec::new()))
+    );
+    assert_eq!(
+        prepare(
+            &state,
+            &declared,
+            &CaptureRequest {
+                edge: Some((EdgeShape::About, "view:omega".into())),
+                ..request("alpha")
+            },
+        ),
+        Err(Refusal::UnknownEdgeObject("view:omega".into(), Vec::new()))
+    );
+
+    let rows = [
+        ("subject", request("view:loops"), supplied.clone(), None),
+        (
+            "edge object",
+            CaptureRequest {
+                edge: Some((EdgeShape::About, "view:loops".into())),
+                ..request("alpha")
+            },
+            object("alpha"),
+            Some(("about".into(), supplied)),
+        ),
+    ];
+    for (name, sent, home, edge) in rows {
+        let admitted = prepare(&state, &declared, &sent)
+            .unwrap_or_else(|refused| panic!("supplied {name} must be admitted: {refused:?}"));
+        let claim = admitted
+            .iter()
+            .find_map(|event| match event {
+                ClaimEvent::RecordCreated { claim, .. } => Some(claim),
+                _ => None,
+            })
+            .expect("the admitted capture creates its claim");
+        assert_eq!(claim.home, home, "{name}: the subject uses its identity");
+        assert_eq!(claim.edge, edge, "{name}: the edge uses its identity");
+    }
+}
+
 /// Two homes and a claim on `alpha`; `ref-key` is a declared reference.
 fn world() -> (State, Vec<DeclaredType>) {
     // An edge check on a handle asks the process's kind set, which a case run
