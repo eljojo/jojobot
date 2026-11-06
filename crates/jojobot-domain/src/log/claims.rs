@@ -330,6 +330,14 @@ struct Write {
     written_at: Option<Timestamp>,
 }
 
+/// **One spelling retired from an object**, and the day it stopped being current.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Retirement {
+    address: String,
+    object: ObjectId,
+    day: Date,
+}
+
 /// **One numbered merge**: the two objects, when the store took it in, the run
 /// that made it and each claim's label before and after.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -366,6 +374,8 @@ pub struct State {
     version_seq: u64,
     /// Every numbered merge, in the order they were made.
     merge_log: Vec<MergeEntry>,
+    /// Every spelling retired from an object, in the order they were retired.
+    retirements: Vec<Retirement>,
     indexes: indexes::Indexes,
 }
 
@@ -422,13 +432,20 @@ impl State {
                 self.bind_spelling(object, address);
             }
             ClaimEvent::AddressRetired {
-                object, address, ..
+                object,
+                address,
+                day,
             } => {
                 if self.addresses.get(address) == Some(object) {
                     self.addresses.remove(address);
                     self.unbind_spelling(object, address);
                     self.retired_addresses
                         .insert(address.clone(), object.clone());
+                    self.retirements.push(Retirement {
+                        address: address.clone(),
+                        object: object.clone(),
+                        day: *day,
+                    });
                 }
             }
             ClaimEvent::ObjectsMerged {

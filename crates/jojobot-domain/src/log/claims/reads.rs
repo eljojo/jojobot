@@ -9,7 +9,8 @@ use std::collections::BTreeMap;
 use jiff::Timestamp;
 
 use super::{
-    FieldValue, KeyId, ObjectBody, ObjectVersion, ObservedWrite, Record, Revision, State, Write,
+    FieldValue, KeyId, ObjectBody, ObjectVersion, ObservedWrite, Record, Retirement, Revision,
+    State, Write,
 };
 use crate::log::{ObjectId, RecordId};
 use crate::memory::{
@@ -109,6 +110,23 @@ impl State {
         // A fold that loops names nobody, and the rows stay as they are.
         let _ = memory::with_folded_names(&mut rows);
         rows
+    }
+
+    /// **The handles things no longer wear**, each with the badge of the thing that
+    /// wore it and the day it stopped being current: by handle, and for one handle
+    /// the latest retirement first.
+    pub fn former_handles(&self) -> Vec<memory::FormerHandle> {
+        let mut formers: Vec<&Retirement> = self.retirements.iter().rev().collect();
+        // Stable, so for one handle the latest retirement stays first.
+        formers.sort_by(|a, b| a.address.cmp(&b.address));
+        formers
+            .into_iter()
+            .map(|retired| memory::FormerHandle {
+                former: EntityId(retired.address.clone()),
+                badge: retired.object.0.clone(),
+                changed_at: retired.day,
+            })
+            .collect()
     }
 
     /// **Which claims were worked out from this one**, of every status, in the
@@ -627,6 +645,8 @@ mod served;
 pub use document::DocumentParts;
 #[cfg(test)]
 mod built_on_tests;
+#[cfg(test)]
+mod former_handles_tests;
 #[cfg(test)]
 mod histories_tests;
 #[cfg(test)]

@@ -333,6 +333,13 @@ async fn a_document_read_from_the_state_is_the_document_the_store_reads() {
             "listing\n  state:  {held_listing:#?}\n  stored: {stored_listing:#?}"
         ));
     }
+    let stored_formers = memory.former_handles().await.expect("the former handles");
+    let held_formers = state.former_handles();
+    if held_formers != stored_formers {
+        differences.push(format!(
+            "former handles\n  state:  {held_formers:?}\n  stored: {stored_formers:?}"
+        ));
+    }
     for entity in stored_listing.iter().filter(|e| e.merged_into.is_none()) {
         let stored_referring = memory
             .referring_to(&entity.id)
