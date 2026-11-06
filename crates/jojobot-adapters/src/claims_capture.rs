@@ -116,6 +116,14 @@ pub(crate) async fn admit(
     };
     let events: Vec<Event<ClaimEvent>> = admitted
         .into_iter()
+        .map(|mut payload| {
+            // **The moment the claim was inserted is the moment of this write.**
+            // The rule is pure and holds no clock, so the stamp is put on here.
+            if let ClaimEvent::RecordCreated { claim, .. } = &mut payload {
+                claim.inserted_at = Some(at);
+            }
+            payload
+        })
         .map(|payload| Event {
             event_kind: String::new(),
             meaning_version: 1,

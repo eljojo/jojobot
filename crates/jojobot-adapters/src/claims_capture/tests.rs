@@ -278,6 +278,27 @@ async fn an_admitted_capture_is_sealed_and_the_state_answers_it() {
     server.stop().await;
 }
 
+/// **The fact the State serves for an admitted capture says when it was inserted**:
+/// the moment of the write that admitted it.
+#[tokio::test]
+async fn an_admitted_capture_is_served_with_the_moment_it_was_inserted() {
+    let (_scratch, mut server, _store, pool, writer) = world("capture-job-inserted").await;
+    let saw = Arc::new(Mutex::new(Vec::new()));
+    capture_once(&writer, &pool, "person:homer", "r1", saw)
+        .await
+        .expect("the capture is admitted");
+    let seam = writer.seam().expect("the seam is open");
+    let inserted = seam.read_claims(|state| {
+        state
+            .fact(&RecordId("r1".into()))
+            .expect("the State holds the fact")
+            .inserted_at
+    });
+    assert_eq!(inserted, Some(at()));
+    writer.drain().await;
+    server.stop().await;
+}
+
 /// **A refused capture leaves nothing**: no event in the log, no record held.
 #[tokio::test]
 async fn a_refused_capture_leaves_nothing() {
