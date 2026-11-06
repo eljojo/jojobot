@@ -55,14 +55,45 @@ struct Held {
     /// log fills both, because the log holds every family's members and a batch
     /// may carry both (one batch per transaction).
     claims: jojobot_domain::log::claims::State,
-    /// The position of the last batch applied to `state` and `claims`.
+    /// The position of the last batch applied to `state`.
     applied: Position,
+    /// **The position of the last batch whose claims members `claims` applied.**
+    /// It follows `applied` while every claims member reads. A claims member the
+    /// process cannot read (a declaration naming a kind the set does not hold yet)
+    /// stops it, and `claims_unreadable` says why: the ledgers go on, the claims
+    /// state stays at the last batch it could read whole, and
+    /// [`Seam::settle_claims`] reads on from here once the member can be read.
+    claims_applied: Position,
+    /// Why the claims state stopped behind the log, while it is behind.
+    claims_unreadable: Option<String>,
     /// A commit's outcome was not known: the log may hold a batch `state` has not
     /// applied.
     behind: bool,
     /// The log holds a ledger event. The state cannot say, because it evicts, and
     /// the import runs only into a log that holds none.
     seen: bool,
+}
+
+impl Held {
+    /// **Apply the claims members of the batch that ends at `last`**, all of them or
+    /// none. A batch at or before `claims_applied` was applied already (the claims
+    /// state may have read ahead of the ledgers' cursor). While the claims state is
+    /// behind the log nothing more is applied, so it never skips a batch it could
+    /// not read; a batch that cannot be read stops it there and says why.
+    fn take_claims(&mut self, last: Position, claims: Result<Vec<Event<ClaimEvent>>, String>) {
+        if last <= self.claims_applied || self.claims_unreadable.is_some() {
+            return;
+        }
+        match claims {
+            Ok(events) => {
+                for event in &events {
+                    self.claims.apply(event);
+                }
+                self.claims_applied = last;
+            }
+            Err(why) => self.claims_unreadable = Some(why),
+        }
+    }
 }
 
 pub(crate) struct Seam {
@@ -94,8 +125,15 @@ impl Pending {
                 tracing::error!(%error, "a committed ledger event could not be applied");
             }
         }
-        for claim in &self.claims {
-            held.claims.apply(claim);
+        // A write that carries claims is refused while the claims state is behind
+        // (see `stage_with`), so a batch with claims is applied only to a state
+        // that is current; a ledger-only batch leaves a state that is behind as
+        // it was.
+        if held.claims_unreadable.is_none() {
+            for claim in &self.claims {
+                held.claims.apply(claim);
+            }
+            held.claims_applied = self.last;
         }
         // Only a ledger event says the log holds one.
         held.seen |= !self.events.is_empty();
@@ -132,6 +170,8 @@ impl Seam {
                 state: State::default(),
                 claims: jojobot_domain::log::claims::State::default(),
                 applied: Position::default(),
+                claims_applied: Position::default(),
+                claims_unreadable: None,
                 behind: false,
                 seen: false,
             }),
@@ -158,15 +198,21 @@ impl Seam {
             }
             let mut held = self.lock();
             for batch in batches {
+                // A member of the ledger family is applied to the ledgers, and a
+                // ledger member that cannot be read fails the seam. A member of the
+                // claims family is gathered for the claims state, and one that
+                // cannot be read does NOT fail the seam: every write that spends a
+                // request id needs the ledgers, and the claims can catch up later.
+                let mut claims = Vec::new();
+                let mut unreadable_claim = None;
                 for member in batch.members() {
-                    // A member of the ledger family is applied to the ledgers; a
-                    // member of the claims family, to the claims; any other
-                    // family's member is that family's to read.
                     let Some(event) = codec::decode_own(member).map_err(unreadable)? else {
-                        if let Some(claim) = crate::claims_log::codec::decode_own(member)
-                            .map_err(|error| LedgerError::Store(error.to_string()))?
-                        {
-                            held.claims.apply(&claim);
+                        match crate::claims_log::codec::decode_own(member) {
+                            Ok(Some(claim)) => claims.push(claim),
+                            Ok(None) => {}
+                            Err(error) => {
+                                unreadable_claim.get_or_insert_with(|| error.to_string());
+                            }
                         }
                         continue;
                     };
@@ -175,6 +221,13 @@ impl Seam {
                         .map_err(|error| LedgerError::Store(error.to_string()))?;
                     held.seen = true;
                 }
+                held.take_claims(
+                    batch.range().last,
+                    match unreadable_claim {
+                        None => Ok(claims),
+                        Some(why) => Err(why),
+                    },
+                );
                 held.applied = batch.range().last;
             }
         }
@@ -263,6 +316,13 @@ impl Seam {
             .state
             .check(&events)
             .map_err(|error| LedgerError::Refused(error.to_string()))?;
+        // **A write that carries claims is prepared against the claims state, so it
+        // is refused while that state is behind the log**: an event built on what
+        // the log has moved past would be wrong. A write of the ledgers alone does
+        // not need it and goes on.
+        if !claims.is_empty() {
+            self.settle_claims().await?;
+        }
         let claims: Vec<Event<ClaimEvent>> = claims
             .iter()
             .map(|event| {
@@ -378,6 +438,57 @@ impl Seam {
 
     pub(crate) fn behind(&self) -> bool {
         self.lock().behind
+    }
+
+    /// **Whether the claims state is behind the log** because a claims member could
+    /// not be read. The capture job asks before it reads the state it prepares
+    /// against, and it is the next commit; until then the cases read it.
+    #[allow(dead_code)]
+    pub(crate) fn claims_behind(&self) -> bool {
+        self.lock().claims_unreadable.is_some()
+    }
+
+    /// **Bring the claims state up to the log again** when it stopped behind it.
+    /// The member that stopped it is read once more with the kinds the process
+    /// holds now, and then the batches after it; nothing is applied from a batch
+    /// that still cannot be read, and the error says why the state is behind.
+    pub(crate) async fn settle_claims(&self) -> Result<(), LedgerError> {
+        if self.lock().claims_unreadable.is_none() {
+            return Ok(());
+        }
+        loop {
+            let from = self.lock().claims_applied;
+            let batches = self
+                .log
+                .read_from(from, READ_BOUND)
+                .await
+                .map_err(refused)?;
+            if batches.is_empty() {
+                self.lock().claims_unreadable = None;
+                return Ok(());
+            }
+            let mut held = self.lock();
+            for batch in &batches {
+                let mut claims = Vec::new();
+                for member in batch.members() {
+                    // Only the claims family's members: the ledgers have read these
+                    // batches already.
+                    match crate::claims_log::codec::decode_own(member) {
+                        Ok(Some(claim)) => claims.push(claim),
+                        Ok(None) => {}
+                        Err(error) => {
+                            let why = format!("the claims state is behind the log: {error}");
+                            held.claims_unreadable = Some(why.clone());
+                            return Err(LedgerError::Store(why));
+                        }
+                    }
+                }
+                for claim in &claims {
+                    held.claims.apply(claim);
+                }
+                held.claims_applied = batch.range().last;
+            }
+        }
     }
 
     /// Read the held state.
