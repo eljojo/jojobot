@@ -602,3 +602,60 @@ async fn the_claim_carrying_an_overlay_on_a_supplied_record_is_a_capture_the_sta
     writer.drain().await;
     server.stop().await;
 }
+
+/// **The bot a callback names for a run is the door's**: the map the job is handed
+/// is the map `prepare` decides with, not only a question that was asked.
+#[tokio::test]
+async fn the_bots_a_callback_names_for_runs_reach_the_door() {
+    let (_scratch, mut server, _store, pool, writer) = world("capture-job-runs-door").await;
+    let admitted = {
+        let pool = pool.clone();
+        writer
+            .run(async move {
+                let tx = pool.begin().await.unwrap();
+                let seam = crate::writer::Writer::current()
+                    .and_then(|writer| writer.seam())
+                    .expect("begin opened the seam");
+                let thought = CaptureRequest {
+                    edge: Some((
+                        jojobot_domain::memory::EdgeShape::Connection,
+                        "person:homer".into(),
+                    )),
+                    ..request("bot:alpha", "r1")
+                };
+                let run_bots: Arc<jojobot_domain::log::claims::job::RunBotsMeasure> =
+                    Arc::new(|runs| {
+                        Box::pin(async move {
+                            runs.into_iter()
+                                .map(|run| (run, EntityId("bot:alpha".into())))
+                                .collect()
+                        })
+                    });
+                let decided = admit(
+                    &seam,
+                    Box::new(move |_, _| Ok(thought)),
+                    Box::new(|_, _| fits()),
+                    None,
+                    Some(run_bots),
+                    at(),
+                )
+                .await
+                .unwrap();
+                requests::commit(tx, &Clock::default(), || "{}".into())
+                    .await
+                    .unwrap();
+                decided
+            })
+            .await
+    };
+    let Ok(admission) = admitted else {
+        panic!("the thought is admitted");
+    };
+    assert_eq!(
+        admission.request.door.runs,
+        BTreeMap::from([(RunId("run-x".into()), EntityId("bot:alpha".into()))]),
+        "the door carries the bot the callback named for the run"
+    );
+    writer.drain().await;
+    server.stop().await;
+}
