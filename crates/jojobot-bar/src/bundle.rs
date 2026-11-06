@@ -364,6 +364,9 @@ mod tests {
             exe("unittests src/main.rs", "/t/debug/deps/jojobot_bar-dd"),
             exe("tests/ci.rs", "/t/debug/deps/ci-ee"),
             exe("tests/ci_extra.rs", "/t/debug/deps/ci_extra-ff"),
+            exe("tests/ui/main.rs", "/t/debug/deps/ui-gg"),
+            exe("tests/ui_extra/main.rs", "/t/debug/deps/ui_extra-hh"),
+            exe("tests/ui/helper.rs", "/t/debug/deps/helper-ii"),
         ];
         let job = |words: &[&str]| words.iter().map(|w| w.to_string()).collect::<Vec<_>>();
         let paths = |job: Vec<String>| -> Vec<String> {
@@ -381,6 +384,7 @@ mod tests {
             ["/t/debug/deps/jojobot-cc", "/t/debug/deps/jojobot_bar-dd"]
         );
         assert_eq!(paths(job(&["--test", "ci"])), ["/t/debug/deps/ci-ee"]);
+        assert_eq!(paths(job(&["--test", "ui"])), ["/t/debug/deps/ui-gg"]);
         assert!(paths(job(&["--doc"])).is_empty());
         assert!(paths(job(&["--test", "nothing"])).is_empty());
     }
