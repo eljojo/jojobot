@@ -76,6 +76,8 @@ pub async fn build(pool: MySqlPool, at: jiff::Timestamp) -> Result<Position, Log
 }
 
 #[cfg(test)]
+mod malformed_tests;
+#[cfg(test)]
 mod tests;
 
 /// **Build the snapshot of the store serving on `port` of the loopback address.**

@@ -525,3 +525,55 @@ async fn put(pool: &MySqlPool, snapshot: &ValidatedSnapshot) {
     DoltLog::put_snapshot(&mut tx, snapshot).await.unwrap();
     tx.commit().await.unwrap();
 }
+
+/// **The slots are bounded: the publisher's own and the newest other.** Each
+/// release that changes the shape would otherwise leave one more snapshot of the
+/// whole State in the log for good.
+#[tokio::test]
+async fn publishing_keeps_the_publishers_slot_and_the_newest_other_only() {
+    let (_scratch, mut server, pool, log) = fixture().await;
+    let own = crate::log_snapshot::PROJECTION_FINGERPRINT;
+    let first = batch("alpha", 0, &[b"a"]);
+    let second = batch("beta", 1, &[b"b"]);
+    let third = batch("gamma", 2, &[b"c"]);
+    appended(&log, &pool, Position(0), &first).await;
+    appended(&log, &pool, first.range().last, &second).await;
+    appended(&log, &pool, second.range().last, &third).await;
+    let validity = log.validity().await.unwrap();
+
+    // Three older builds' snapshots, at three positions.
+    for (offset, covered, b) in [
+        (1, first.range().last, &first),
+        (2, second.range().last, &second),
+        (3, third.range().last, &third),
+    ] {
+        put(
+            &pool,
+            &snapshot_for(
+                own.wrapping_add(offset),
+                &validity,
+                covered,
+                b.header().checksum,
+            ),
+        )
+        .await;
+    }
+    put(
+        &pool,
+        &snapshot_for(own, &validity, third.range().last, third.header().checksum),
+    )
+    .await;
+
+    let slots: Vec<String> =
+        sqlx::query_scalar("SELECT slot FROM event_log WHERE slot LIKE 'snapshot:%' ORDER BY slot")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    let mut expected = vec![
+        format!("snapshot:{own}"),
+        format!("snapshot:{}", own.wrapping_add(3)),
+    ];
+    expected.sort();
+    assert_eq!(slots, expected, "the publisher's slot and the newest other");
+    server.stop().await;
+}

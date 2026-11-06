@@ -10,7 +10,7 @@ use crate::testing::{Scratch, free_port, migrated_database};
 use crate::writer::Writer;
 use crate::writer_log::WriterLog;
 
-fn batch(id: &str, head: Position, first: u64, count: u64) -> SealedBatch {
+pub(super) fn batch(id: &str, head: Position, first: u64, count: u64) -> SealedBatch {
     let members = (first..first + count)
         .map(|n| {
             teaching::encode(&TeachingEvent::Recorded {

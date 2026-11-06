@@ -383,7 +383,15 @@ impl DoltLog {
             .await
             .map_err(failed)?,
         };
-        bytes.map(|bytes| decode_snapshot(&bytes)).transpose()
+        // **A stored snapshot this build cannot decode is a snapshot it will not
+        // use**, not a log it cannot read: it is handed back as one in no format,
+        // the boot names the format as its reason and replays the whole log.
+        Ok(bytes.map(|bytes| {
+            decode_snapshot(&bytes).unwrap_or_else(|error| {
+                tracing::warn!(%error, "a stored snapshot cannot be decoded; it is not used");
+                unreadable_snapshot()
+            })
+        }))
     }
     /// **Put the snapshot into a transaction the caller owns.**
     pub(crate) async fn put_snapshot(
@@ -401,9 +409,24 @@ impl DoltLog {
             .bind(snapshot_slot(snapshot.projection_version))
             .bind(snapshot.covered_position.0)
             .bind(bytes)
-            .execute(connection)
+            .execute(&mut *connection)
             .await
             .map_err(failed)?;
+        // **Bounded to the publisher's slot and the newest other**: a release that
+        // changes the shape would otherwise leave one more snapshot of the whole
+        // State in the log for good.
+        sqlx::query(
+            "DELETE FROM event_log WHERE slot LIKE ? AND slot <> ? AND slot NOT IN \
+             (SELECT slot FROM (SELECT slot FROM event_log WHERE slot LIKE ? AND slot <> ? \
+              ORDER BY last_position DESC, slot DESC LIMIT 1) AS newest)",
+        )
+        .bind(format!("{SNAPSHOT_SLOT_PREFIX}%"))
+        .bind(snapshot_slot(snapshot.projection_version))
+        .bind(format!("{SNAPSHOT_SLOT_PREFIX}%"))
+        .bind(snapshot_slot(snapshot.projection_version))
+        .execute(connection)
+        .await
+        .map_err(failed)?;
         Ok(())
     }
 }
@@ -434,6 +457,24 @@ fn encode_snapshot(s: &ValidatedSnapshot) -> Result<Vec<u8>, LogError> {
     ))
     .map_err(failed)
 }
+/// **What a snapshot nobody can decode stands for.** Format 0 is no format any
+/// build reads, so the boot refuses it by name and nothing else of it is looked at.
+fn unreadable_snapshot() -> ValidatedSnapshot {
+    ValidatedSnapshot {
+        snapshot_format_version: 0,
+        projection_version: 0,
+        log_identity: String::new(),
+        representation_epoch: 0,
+        erasure_epoch: 0,
+        covered_position: Position(0),
+        batch_checksum: [0; 32],
+        created_at: jiff::Timestamp::UNIX_EPOCH,
+        checksum: [0; 32],
+        serialized_length: 0,
+        blob: Vec::new(),
+    }
+}
+
 fn decode_snapshot(bytes: &[u8]) -> Result<ValidatedSnapshot, LogError> {
     let (
         snapshot_format_version,
