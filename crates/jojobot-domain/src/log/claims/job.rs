@@ -38,6 +38,18 @@ pub async fn within<F: Future>(job: CaptureJob, work: F) -> F::Output {
     JOB.scope(job, work).await
 }
 
+/// **A fresh identity for the claim a capture creates.** Drawn from the system's
+/// entropy: the State holds no counter for it, and an imported record's identity
+/// is made from the thing and its label, so the two cannot meet.
+pub fn fresh_record() -> crate::log::RecordId {
+    let mut bytes = [0u8; 16];
+    getrandom::fill(&mut bytes).expect("the system draws entropy");
+    crate::log::RecordId(format!(
+        "new-{}",
+        bytes.iter().map(|b| format!("{b:02x}")).collect::<String>()
+    ))
+}
+
 /// The job of the call in flight, when it carries one.
 pub fn current() -> Option<CaptureJob> {
     JOB.try_with(Clone::clone).ok()

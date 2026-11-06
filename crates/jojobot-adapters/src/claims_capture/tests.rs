@@ -9,12 +9,15 @@ use jiff::Timestamp;
 use jiff::civil::date;
 use jojobot_domain::actor::Actor;
 use jojobot_domain::clock::Clock;
+use jojobot_domain::log::claims::job::{CaptureJob, within};
 use jojobot_domain::log::claims::{
-    CaptureRequest, ClaimEvent, ClaimSize, Door, Draft, KindId, Measures, ObjectBody, Refusal,
+    CaptureRequest, ClaimEvent, ClaimSize, Declined, Door, Draft, KindId, Measures, ObjectBody,
     Route,
 };
 use jojobot_domain::log::{Event, ObjectId, Position, RecordId};
-use jojobot_domain::memory::{FactStatus, Provenance, Standing};
+use jojobot_domain::memory::{
+    EntityId, FactStatus, Guarded, Memory, NewFact, Provenance, Standing,
+};
 
 use super::{Admission, admit};
 use crate::dolt::Dolt;
@@ -152,7 +155,7 @@ async fn capture_once(
     subject: &'static str,
     record: &'static str,
     saw: Arc<Mutex<Vec<bool>>>,
-) -> Result<Admission, Refusal> {
+) -> Result<Admission, Declined> {
     let pool = pool.clone();
     writer
         .run(async move {
@@ -216,7 +219,7 @@ async fn a_refused_capture_leaves_nothing() {
         .await
         .err()
         .expect("an unknown subject is refused");
-    assert!(matches!(refused, Refusal::UnknownSubject(..)));
+    assert!(matches!(refused, Declined::Blocked { .. }));
 
     assert!(
         writer
@@ -250,4 +253,83 @@ async fn a_measure_sees_the_state_the_earlier_write_left() {
     );
     writer.drain().await;
     server.stop().await;
+}
+
+fn job() -> CaptureJob {
+    CaptureJob {
+        door: Arc::new(|_, _, _| {
+            Ok(Door {
+                actor: Actor::Operator,
+                owned_keys: BTreeSet::new(),
+                owner_revoked: false,
+                measures: Measures::default(),
+                runs: BTreeMap::new(),
+                run: None,
+                aged_before: None,
+            })
+        }),
+        measure: Arc::new(|_, _| fits()),
+    }
+}
+
+/// **The store's capture, called with a job, is decided over the State.** The
+/// fact it returns is the State's own read of the record; a name nothing holds
+/// is a block; neither the old tables nor a second route is written.
+#[tokio::test]
+async fn the_ports_capture_with_a_job_is_decided_over_the_state() {
+    let (_scratch, mut server, store, _pool, writer) = world("capture-job-port").await;
+    let memory = Arc::new(crate::dolt::memory::DoltMemory::open(store.clone()));
+    let written = {
+        let memory = Arc::clone(&memory);
+        let fact = NewFact::about(
+            EntityId("person:homer".into()),
+            "a claim",
+            date(2026, 4, 19),
+        );
+        within(job(), writer.run(async move { memory.capture(fact).await })).await
+    };
+    let Ok(Guarded::Written(fact)) = written else {
+        panic!("the capture is decided over the State: {written:?}");
+    };
+    assert_eq!(fact.id.0, "f1");
+    assert_eq!(fact.home.0, "person:homer");
+    assert_eq!(fact.content, "a claim");
+    let seam = writer.seam().expect("the seam is open");
+    // The record is named first: the seam's lock is not reentrant, so a read of
+    // the State cannot ask the seam again inside itself.
+    let record = RecordId(fact_record(&seam, "f1"));
+    assert_eq!(
+        seam.read_claims(|state| state.fact(&record)),
+        Some(fact),
+        "the State serves the fact the port returned"
+    );
+
+    let blocked = {
+        let memory = Arc::clone(&memory);
+        let fact = NewFact::about(
+            EntityId("person:marge".into()),
+            "a claim",
+            date(2026, 4, 19),
+        );
+        within(job(), writer.run(async move { memory.capture(fact).await })).await
+    };
+    assert!(
+        matches!(blocked, Ok(Guarded::Blocked { .. })),
+        "a name nothing holds is a block: {blocked:?}"
+    );
+    writer.drain().await;
+    server.stop().await;
+}
+
+/// The record that carries `label`, as the State holds it.
+fn fact_record(seam: &Arc<crate::ledger_seam::Seam>, label: &str) -> String {
+    seam.read_claims(|state| {
+        let home = state.resolve("person:homer").cloned().expect("homer");
+        state
+            .live_records(&home)
+            .into_iter()
+            .find(|held| held.label == label)
+            .map(|held| held.record.0)
+            .expect("the record is held")
+    })
 }

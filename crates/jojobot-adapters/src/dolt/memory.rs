@@ -3061,6 +3061,58 @@ impl DoltMemory {
     /// transaction and commits it only when this answers `Written`, so a refusal
     /// or a block leaves nothing behind. [`capture`](Memory::capture) is that, and so
     /// is the creation that writes its own first claim.
+    /// **Capture decided over the claims State the writer holds.** The job of the
+    /// call fills the door and renders the sizes inside the writer's job, `prepare`
+    /// decides, and what it admits joins the transaction's batch (see
+    /// [`crate::claims_capture`]). The fact returned is the State's own read of the
+    /// record, after the commit applied it.
+    async fn capture_on_the_log(
+        &self,
+        fact: NewFact,
+        job: jojobot_domain::log::claims::job::CaptureJob,
+    ) -> Result<Guarded<Fact>, MemoryError> {
+        use jojobot_domain::log::claims::{ClaimEvent, Declined};
+        let tx = self.pool.begin().await.map_err(store)?;
+        let seam = crate::writer::Writer::current()
+            .and_then(|writer| writer.seam())
+            .ok_or_else(|| {
+                MemoryError::Store("the event log is not open on this writer".to_string())
+            })?;
+        let admitted =
+            match crate::claims_capture::admit_fact(&seam, &fact, &job, self.clock.now()).await? {
+                Ok(admitted) => admitted,
+                Err(Declined::Blocked {
+                    attempted,
+                    candidates,
+                }) => {
+                    return Ok(Guarded::Blocked {
+                        attempted,
+                        candidates,
+                    });
+                }
+                Err(Declined::Refused(error)) => return Err(error),
+            };
+        let address = admitted
+            .events
+            .iter()
+            .find_map(|event| match &event.payload {
+                ClaimEvent::RecordCreated { claim, .. } => seam
+                    .read_claims(|state| state.handle(&claim.home))
+                    .map(|home| format!("{home}#{}", claim.label)),
+                _ => None,
+            });
+        super::requests::commit(tx, &self.clock, || {
+            serde_json::json!({ "address": address }).to_string()
+        })
+        .await
+        .map_err(store)?;
+        seam.read_claims(|state| state.fact(&admitted.record))
+            .map(Guarded::Written)
+            .ok_or_else(|| {
+                MemoryError::Store("the capture committed and its record is not held".to_string())
+            })
+    }
+
     async fn capture_in(
         &self,
         tx: &mut Transaction<'_, MySql>,
@@ -5976,6 +6028,10 @@ impl Memory for DoltMemory {
 
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
         validate_new_fact(&fact)?;
+        // A call that carries a capture job is decided over the claims State.
+        if let Some(job) = jojobot_domain::log::claims::job::current() {
+            return self.capture_on_the_log(fact, job).await;
+        }
         let mut tx = self.pool.begin().await.map_err(store)?;
         let written = self.capture_in(&mut tx, fact).await?;
         if let Guarded::Written(stored) = &written {

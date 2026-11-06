@@ -21,8 +21,12 @@ use std::sync::Arc;
 
 use jiff::Timestamp;
 use jojobot_domain::log::Event;
-use jojobot_domain::log::claims::{CaptureRequest, ClaimEvent, Measures, Refusal, State, prepare};
-use jojobot_domain::memory::{MemoryError, types::DeclaredType};
+use jojobot_domain::log::RecordId;
+use jojobot_domain::log::claims::job::{self, CaptureJob};
+use jojobot_domain::log::claims::{
+    CaptureRequest, ClaimEvent, Declined, Measures, Route, State, prepare,
+};
+use jojobot_domain::memory::{MemoryError, NewFact, types::DeclaredType};
 
 use crate::ledger_seam::Seam;
 use crate::writer::sql;
@@ -39,6 +43,8 @@ pub(crate) type Measure<'a> = Box<dyn Fn(&State, &CaptureRequest) -> Measures + 
 /// What the job admitted: the request as it was decided and the events that
 /// were added to the transaction's batch.
 pub(crate) struct Admission {
+    /// The record the capture created.
+    pub record: RecordId,
     pub request: CaptureRequest,
     pub events: Vec<Event<ClaimEvent>>,
 }
@@ -54,7 +60,7 @@ pub(crate) async fn admit(
     build: Build<'_>,
     measure: Measure<'_>,
     at: Timestamp,
-) -> Result<Result<Admission, Refusal>, MemoryError> {
+) -> Result<Result<Admission, Declined>, MemoryError> {
     seam.settle().await.map_err(store)?;
     seam.settle_claims().await.map_err(store)?;
     let decided = seam.read_claims(|state| {
@@ -63,7 +69,8 @@ pub(crate) async fn admit(
         request.door.measures = measure(state, &request);
         Ok::<_, MemoryError>(match prepare(state, &declared, &request) {
             Ok(admitted) => Ok((request, admitted)),
-            Err(refusal) => Err(refusal),
+            // **Answered from the State that refused**, before it can move.
+            Err(refusal) => Err(refusal.declined(state)),
         })
     })?;
     let (request, admitted) = match decided {
@@ -87,7 +94,35 @@ pub(crate) async fn admit(
         })
         .collect();
     sql::emit(events.clone()).map_err(store)?;
-    Ok(Ok(Admission { request, events }))
+    Ok(Ok(Admission {
+        record: request.record.clone(),
+        request,
+        events,
+    }))
+}
+
+/// **Decide the capture of `fact` with the job its call carries**: the door is
+/// filled from the held State, the sizes are rendered from it, and the claim is
+/// written under a fresh record. A call with no job fails; the store has no door
+/// of its own.
+pub(crate) async fn admit_fact(
+    seam: &Arc<Seam>,
+    fact: &NewFact,
+    job: &CaptureJob,
+    at: Timestamp,
+) -> Result<Result<Admission, Declined>, MemoryError> {
+    let record = job::fresh_record();
+    let (door, measure) = (Arc::clone(&job.door), Arc::clone(&job.measure));
+    admit(
+        seam,
+        Box::new(move |state, declared| {
+            let door = door(state, declared, fact)?;
+            Ok(CaptureRequest::of_fact(fact, record, Route::Verb, door))
+        }),
+        Box::new(move |state, request| measure(state, request)),
+        at,
+    )
+    .await
 }
 
 #[cfg(test)]
