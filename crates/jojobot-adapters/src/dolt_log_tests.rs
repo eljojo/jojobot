@@ -456,3 +456,72 @@ async fn an_unreadable_taught_at_names_its_run_and_domain() {
     drop(log);
     server.stop().await;
 }
+
+/// A snapshot stored for the shape `projection`, covering the one batch.
+fn snapshot_for(
+    projection: u32,
+    validity: &Validity,
+    covered: Position,
+    checksum: [u8; 32],
+) -> ValidatedSnapshot {
+    use sha2::{Digest, Sha256};
+    let blob = projection.to_le_bytes().to_vec();
+    ValidatedSnapshot {
+        snapshot_format_version: 1,
+        projection_version: projection,
+        log_identity: validity.log_identity.clone(),
+        representation_epoch: validity.representation_epoch,
+        erasure_epoch: validity.erasure_epoch,
+        covered_position: covered,
+        batch_checksum: checksum,
+        created_at: jiff::Timestamp::UNIX_EPOCH,
+        checksum: Sha256::digest(&blob).into(),
+        serialized_length: blob.len() as u64,
+        blob,
+    }
+}
+
+/// **A build's snapshot survives the stop of the build before it.** Snapshots are
+/// kept by the fingerprint of the State's shape, so the old build publishing its
+/// last snapshot at its stop does not replace the one the new build pre-built.
+/// The build loads its own; with none of its own it is handed the newest other, so
+/// the boot can name the fingerprint as its reason.
+#[tokio::test]
+async fn a_snapshot_is_kept_for_each_shape_and_a_build_loads_its_own() {
+    let (_scratch, mut server, pool, log) = fixture().await;
+    let own = crate::log_snapshot::PROJECTION_FINGERPRINT;
+    let old = own.wrapping_add(1);
+    let first = batch("alpha", 0, &[b"a"]);
+    let second = batch("beta", 1, &[b"b"]);
+    appended(&log, &pool, Position(0), &first).await;
+    appended(&log, &pool, first.range().last, &second).await;
+    let validity = log.validity().await.unwrap();
+
+    // Only another build's snapshot is held: it is handed over to be refused.
+    let theirs = snapshot_for(old, &validity, first.range().last, first.header().checksum);
+    put(&pool, &theirs).await;
+    assert_eq!(log.load_snapshot().await.unwrap(), Some(theirs.clone()));
+
+    // This build's pre-built snapshot is held beside it, and is the one loaded.
+    let mine = snapshot_for(own, &validity, first.range().last, first.header().checksum);
+    put(&pool, &mine).await;
+    assert_eq!(log.load_snapshot().await.unwrap(), Some(mine.clone()));
+
+    // The old build's stop publishes a newer snapshot of its shape: it replaces
+    // its own slot and leaves this build's alone.
+    let newer = snapshot_for(
+        old,
+        &validity,
+        second.range().last,
+        second.header().checksum,
+    );
+    put(&pool, &newer).await;
+    assert_eq!(log.load_snapshot().await.unwrap(), Some(mine));
+    server.stop().await;
+}
+
+async fn put(pool: &MySqlPool, snapshot: &ValidatedSnapshot) {
+    let mut tx = pool.begin().await.unwrap();
+    DoltLog::put_snapshot(&mut tx, snapshot).await.unwrap();
+    tx.commit().await.unwrap();
+}

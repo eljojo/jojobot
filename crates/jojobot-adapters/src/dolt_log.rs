@@ -359,13 +359,30 @@ impl DoltLog {
             .collect()
     }
 
+    /// **The snapshot this build can read, else the newest of another build's.**
+    /// A build publishes into the slot of its own fingerprint, so the build that
+    /// is stopping cannot replace the snapshot the next build pre-built. When this
+    /// build has none, the newest other one is returned so the boot names the
+    /// fingerprint as its reason for not using it, and does not report none held.
     pub(crate) async fn load_snapshot(&self) -> Result<Option<ValidatedSnapshot>, LogError> {
         let mut reader = self.reader().await?;
-        let bytes: Option<Vec<u8>> =
-            sqlx::query_scalar("SELECT payload FROM event_log WHERE slot = 'snapshot'")
+        let own: Option<Vec<u8>> =
+            sqlx::query_scalar("SELECT payload FROM event_log WHERE slot = ?")
+                .bind(snapshot_slot(crate::log_snapshot::PROJECTION_FINGERPRINT))
                 .fetch_optional(reader.connection())
                 .await
                 .map_err(failed)?;
+        let bytes = match own {
+            Some(bytes) => Some(bytes),
+            None => sqlx::query_scalar(
+                "SELECT payload FROM event_log WHERE slot LIKE ? \
+                 ORDER BY last_position DESC LIMIT 1",
+            )
+            .bind(format!("{SNAPSHOT_SLOT_PREFIX}%"))
+            .fetch_optional(reader.connection())
+            .await
+            .map_err(failed)?,
+        };
         bytes.map(|bytes| decode_snapshot(&bytes)).transpose()
     }
     /// **Put the snapshot into a transaction the caller owns.**
@@ -380,7 +397,8 @@ impl DoltLog {
             return Err(LogError::Conflict);
         }
         let bytes = encode_snapshot(snapshot)?;
-        sqlx::query("REPLACE INTO event_log (slot, first_position, last_position, payload) VALUES ('snapshot', NULL, ?, ?)")
+        sqlx::query("REPLACE INTO event_log (slot, first_position, last_position, payload) VALUES (?, NULL, ?, ?)")
+            .bind(snapshot_slot(snapshot.projection_version))
             .bind(snapshot.covered_position.0)
             .bind(bytes)
             .execute(connection)
@@ -388,6 +406,16 @@ impl DoltLog {
             .map_err(failed)?;
         Ok(())
     }
+}
+
+/// **The slots a snapshot is kept in start with this**, one slot for each
+/// fingerprint of the State's shape.
+const SNAPSHOT_SLOT_PREFIX: &str = "snapshot:";
+
+/// **The one place a snapshot's slot is named.** A build's snapshot is kept under
+/// the fingerprint of the shape it was written for.
+fn snapshot_slot(fingerprint: u32) -> String {
+    format!("{SNAPSHOT_SLOT_PREFIX}{fingerprint}")
 }
 
 fn encode_snapshot(s: &ValidatedSnapshot) -> Result<Vec<u8>, LogError> {
