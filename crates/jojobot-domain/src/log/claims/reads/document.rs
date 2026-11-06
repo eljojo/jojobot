@@ -147,16 +147,19 @@ impl State {
             histories.insert(FactId(held.claim.label.clone()), chain);
         }
         let mut unmapped_histories = HashMap::new();
-        for (record, _) in &thing.unmapped {
-            if let Some(address) = address_of(self, record) {
-                let chain = self
-                    .claim_history(record)
-                    .iter()
-                    .enumerate()
-                    .map(|(at, write)| claim_write(self, at + 1, write))
-                    .collect();
-                unmapped_histories.insert(address, chain);
-            }
+        for (record, held) in &thing.unmapped {
+            // Read at the address the folded thing's own handle gives the claim.
+            let address = FactAddress::new(
+                self.handle_worn_by(&held.claim.home),
+                FactId(held.claim.label.clone()),
+            );
+            let chain = self
+                .claim_history(record)
+                .iter()
+                .enumerate()
+                .map(|(at, write)| claim_write(self, at + 1, write))
+                .collect();
+            unmapped_histories.insert(address, chain);
         }
         Some(DocumentParts {
             unmapped_histories,

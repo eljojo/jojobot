@@ -5,7 +5,7 @@
 //! the object as metadata, and the owner is none.
 
 use super::super::State;
-use crate::log::{ObjectId, RecordId};
+use crate::log::ObjectId;
 use crate::memory::search::DocScan;
 use crate::memory::unmapped::UnmappedClaim;
 use crate::memory::{EntityId, FactAddress, FactId, types::DeclaredType};
@@ -17,15 +17,6 @@ impl State {
         self.own_handle_of(self.survivor(object))
             .or_else(|| self.handle_of(object))
             .unwrap_or_else(|| EntityId(object.0.clone()))
-    }
-
-    /// **The address a claim is served at now.**
-    fn served_address(&self, record: &RecordId) -> Option<FactAddress> {
-        let claim = &self.claim_history(record).last()?.claim;
-        Some(FactAddress::new(
-            self.served_handle(&claim.home),
-            FactId(claim.label.clone()),
-        ))
     }
 
     /// **The document of one thing as its scan serves it**, from the State
@@ -42,11 +33,21 @@ impl State {
         let unmapped = thing
             .unmapped
             .iter()
-            .filter_map(|(record, _)| {
-                self.served_address(record).map(|address| UnmappedClaim {
-                    address,
-                    merge_no: 0,
-                })
+            .map(|(_, held)| {
+                let home = &held.claim.home;
+                UnmappedClaim {
+                    // Under the handle the folded thing answers to now, and the
+                    // number of the merge that folded it.
+                    address: FactAddress::new(
+                        self.handle_worn_by(home),
+                        FactId(held.claim.label.clone()),
+                    ),
+                    merge_no: self
+                        .merge_log
+                        .iter()
+                        .position(|entry| &entry.folded == home)
+                        .map_or(0, |at| at as u64 + 1),
+                }
             })
             .collect();
         Some(DocScan {
