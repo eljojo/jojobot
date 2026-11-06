@@ -714,6 +714,67 @@ mod tests {
     use crate::memory::testing::*;
 
     #[tokio::test]
+    async fn collapse_guard_accepts_both_received_forms_of_each_graph_root() {
+        async fn read(jojobot: &Jojobot, sid: &str) -> CallToolResponse {
+            jojobot
+                .recall(rmcp::handler::server::wrapper::Parameters(
+                    serde_json::from_value(serde_json::json!({
+                        "kind":"person", "facts":false, "sid":sid,
+                        "follow":{"shape":"connection", "direction":"out", "depth":1}
+                    }))
+                    .expect("recall arguments"),
+                ))
+                .await
+                .expect("the graph read answers")
+                .into()
+        }
+
+        let jojobot = handler();
+        let sid = crate::mailboxes::testing::owning(&jojobot, "gamma").await;
+        for (subject, object, content) in [
+            ("person:homer", "person:marge", "saw the neighbor"),
+            ("person:marge", "person:homer", "met at the assembly"),
+        ] {
+            capture_ok(
+                &jojobot,
+                CaptureArgs {
+                    sid: Some(sid.clone()),
+                    shape: Some("connection".into()),
+                    object: Some(object.into()),
+                    ..capture_args(subject, content)
+                },
+            )
+            .await;
+        }
+
+        let mut first = read(&jojobot, &sid).await;
+        let CallToolResponse::Complete(result) = &first else {
+            panic!("the graph read completes");
+        };
+        let body = json_of(result);
+        let roots = body["objects"].as_array().expect("the real graph roots");
+        assert_eq!(roots.len(), 2, "{body}");
+        for root in roots {
+            let children = root["connected"].as_array().expect("the root's walk");
+            assert_eq!(children.len(), 1, "{root}");
+            assert_ne!(root["id"], children[0]["id"]);
+            assert_eq!(children[0]["connected"], serde_json::json!([]));
+        }
+        mark_call(&mut first, "recall", false);
+        jojobot.add_held_changed(&mut first, Some(&sid)).await;
+
+        // Each person was received both as a root with a neighbor and as a
+        // depth-limited child. Repeating that read withholds no unseen form.
+        let mut again = read(&jojobot, &sid).await;
+        mark_call(&mut again, "recall", false);
+        jojobot.add_held_changed(&mut again, Some(&sid)).await;
+        let CallToolResponse::Complete(result) = again else {
+            panic!("the repeated graph read completes");
+        };
+        assert_eq!(json_of(&result)[collapse::COLLAPSED]["count"], 2);
+    }
+
+    #[tokio::test]
     async fn collapse_guard_catches_a_changed_part_at_an_unchanged_version() {
         fn answer(prose: &str) -> CallToolResponse {
             let mut answered =
