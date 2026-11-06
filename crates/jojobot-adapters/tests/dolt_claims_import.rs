@@ -520,3 +520,52 @@ async fn claims_import_refuses_a_claim_under_a_name_nothing_supplies() {
 
     server.stop().await;
 }
+
+/// **An edge and a reference that name a supplied record import at its supply
+/// identity.** The record has no row, so the reader must place the name the claim
+/// carries on the supplied record the build gives it, or the import refuses.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn claims_import_places_an_edge_and_a_reference_on_a_supplied_record() {
+    let (_scratch, mut server, pool) = store("claims-import-supplied-edge").await;
+    let supplied = supplied_view("view:loops");
+    let memory = DoltMemory::open(pool.clone()).knowing(supplied.clone());
+    let bart = thing(&memory, "person:bart", "Bart").await;
+    let loops = EntityId("view:loops".to_string());
+    let mut fact = NewFact::about(bart.clone(), "reads the board", date(2026, 9, 1));
+    fact.provenance = Provenance::Testimony;
+    fact.edge = Some(jojobot_domain::memory::Edge::new(
+        jojobot_domain::memory::EdgeShape::About,
+        loops.clone(),
+    ));
+    fact.refs = vec![loops.clone()];
+    memory
+        .capture(fact)
+        .await
+        .expect("capture")
+        .written()
+        .expect("not blocked");
+
+    let imported = import_claims_once(&Writer::default(), &pool, &supplied, at())
+        .await
+        .expect("an edge to a supplied record does not stop the import");
+    assert!(matches!(imported, Imported::Done { .. }), "{imported:?}");
+    let supply = jojobot_domain::log::claims::import::supply_identity("view:loops");
+    let held = logged(&pool).await;
+    let body = held
+        .iter()
+        .find_map(|event| match &event.payload {
+            ClaimEvent::RecordCreated { claim, .. } if claim.content == "reads the board" => {
+                Some(claim)
+            }
+            _ => None,
+        })
+        .expect("the claim is imported");
+    assert_eq!(
+        body.edge.as_ref().map(|(_, object)| object),
+        Some(&supply),
+        "the edge names the supply identity: {body:?}"
+    );
+    assert_eq!(body.refs, vec![supply], "the reference names it too");
+
+    server.stop().await;
+}
