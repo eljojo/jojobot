@@ -8,6 +8,8 @@ use std::pin::Pin;
 
 use futures_core::stream::BoxStream;
 use futures_util::{StreamExt, TryStreamExt};
+use jojobot_domain::log::Event;
+use jojobot_domain::log::claims::ClaimEvent;
 use sqlx::mysql::{MySqlQueryResult, MySqlRow, MySqlStatement, MySqlTypeInfo};
 use sqlx::{Either, Execute, Executor, MySql, MySqlPool, SqlStr, Transaction};
 
@@ -30,6 +32,8 @@ pub(super) enum Phase {
 struct Native {
     phase: Phase,
     unhandled: bool,
+    /// The claims events the open transaction's writer has added to its batch.
+    emitted: Vec<Event<ClaimEvent>>,
 }
 
 tokio::task_local! {
@@ -79,6 +83,27 @@ fn set_phase(phase: Phase) {
 
 pub(super) fn handled() {
     let _ = NATIVE.try_with(|native| native.borrow_mut().unhandled = false);
+}
+
+/// **Add claims events to the batch of the transaction now open.** The commit
+/// seals them with the request's ledger event (see `requests::commit`), so a
+/// writer never stages a batch of its own. Outside a writer job there is no
+/// batch to join, and the call fails.
+// No writer calls it until the entity and claim slices of 9.3.3-d land.
+#[allow(dead_code)]
+pub(crate) fn emit(events: Vec<Event<ClaimEvent>>) -> Result<(), sqlx::Error> {
+    NATIVE
+        .try_with(|native| native.borrow_mut().emitted.extend(events))
+        .map_err(|_| {
+            sqlx::Error::Protocol("claims events were emitted outside a writer job".into())
+        })
+}
+
+/// The events emitted since the transaction began, handed over once.
+pub(crate) fn take_emitted() -> Vec<Event<ClaimEvent>> {
+    NATIVE
+        .try_with(|native| std::mem::take(&mut native.borrow_mut().emitted))
+        .unwrap_or_default()
 }
 
 pub(crate) fn store_error<E: super::recovery::StoreError>(error: sqlx::Error) -> E {
@@ -196,6 +221,9 @@ impl Pool {
             return self.reader().begin().await;
         }
         set_phase(Phase::BeforeCommit);
+        // **A transaction starts with nothing emitted**: what an earlier one
+        // emitted and did not commit (it rolled back) is not this one's.
+        take_emitted();
         // **The ledgers open before the first transaction of a job begins**, never
         // inside one: the writer holds one connection, and the open writes.
         if let Some(writer) = Writer::current() {

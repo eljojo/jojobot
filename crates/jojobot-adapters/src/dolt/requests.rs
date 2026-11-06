@@ -385,11 +385,18 @@ pub(crate) async fn claim(
     clock: &Clock,
     landed: impl FnOnce() -> String,
 ) -> Result<Claim, sqlx::Error> {
+    let claims = crate::writer::sql::take_emitted();
     let Some(reservation) = take() else {
+        // **No id, but the writer may have emitted**: its events are a batch of
+        // their own, in this transaction.
+        let pending = match claims.is_empty() {
+            true => None,
+            false => Some(stage_claims(tx, clock, claims).await?),
+        };
         return Ok(Claim {
             reservation: None,
             landed: String::new(),
-            pending: None,
+            pending,
         });
     };
     // **Held by the claim from here on**, so every way out of this function that
@@ -474,8 +481,31 @@ pub(crate) async fn claim(
             expires_at,
         }),
     };
-    claim.pending = Some(seam.stage(tx, vec![event], now).await.map_err(ledger)?);
+    claim.pending = Some(
+        seam.stage_with(tx, vec![event], claims, now)
+            .await
+            .map_err(ledger)?,
+    );
     Ok(claim)
+}
+
+async fn stage_claims(
+    tx: &mut Transaction<'_, MySql>,
+    clock: &Clock,
+    claims: Vec<jojobot_domain::log::Event<jojobot_domain::log::claims::ClaimEvent>>,
+) -> Result<Pending, sqlx::Error> {
+    let seam = Writer::current()
+        .and_then(|writer| writer.seam())
+        .ok_or_else(|| {
+            sqlx::Error::Protocol(
+                "the event log is not open on this writer; a write that emits events cannot \
+                 commit without it"
+                    .into(),
+            )
+        })?;
+    seam.stage_with(tx, Vec::new(), claims, clock.now())
+        .await
+        .map_err(ledger)
 }
 
 /// **Commit the transaction that stores a write, with the id's ledger event in

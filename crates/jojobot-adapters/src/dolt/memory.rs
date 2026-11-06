@@ -8171,7 +8171,7 @@ impl DoltMemory {
         let landed = serde_json::to_string(&receipt).expect("a receipt is two strings");
         let now = self.clock.now();
         let pending = seam
-            .stage(
+            .stage_with(
                 &mut tx,
                 vec![
                     jojobot_domain::request::events::LedgerEvent::AppAttemptCommitted(
@@ -8183,6 +8183,7 @@ impl DoltMemory {
                         },
                     ),
                 ],
+                crate::writer::sql::take_emitted(),
                 now,
             )
             .await
