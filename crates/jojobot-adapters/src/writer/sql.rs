@@ -89,14 +89,19 @@ pub(super) fn handled() {
 /// seals them with the request's ledger event (see `requests::commit`), so a
 /// writer never stages a batch of its own. Outside a writer job there is no
 /// batch to join, and the call fails.
-// No writer calls it until the entity and claim slices of 9.3.3-d land.
-#[allow(dead_code)]
 pub(crate) fn emit(events: Vec<Event<ClaimEvent>>) -> Result<(), sqlx::Error> {
     NATIVE
         .try_with(|native| native.borrow_mut().emitted.extend(events))
         .map_err(|_| {
             sqlx::Error::Protocol("claims events were emitted outside a writer job".into())
         })
+}
+
+/// **Whether the caller runs inside a writer job.** A write made outside one (a
+/// boot pass on the bare store, a case that opens the store directly) has no batch
+/// to join, and emits nothing.
+pub(crate) fn in_writer_job() -> bool {
+    NATIVE.try_with(|_| ()).is_ok()
 }
 
 /// The events emitted since the transaction began, handed over once.

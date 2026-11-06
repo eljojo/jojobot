@@ -5865,6 +5865,12 @@ impl Memory for DoltMemory {
             .map_err(store)?;
         }
         append_entity_write(&mut tx, to, &self.clock, session).await?;
+        let change = if from == to {
+            entity_events::Change::Revised
+        } else {
+            entity_events::Change::Renamed { from }
+        };
+        entity_events::emit_object_write(&mut tx, to, change, &self.clock, session).await?;
         super::requests::commit(tx, &self.clock, || {
             serde_json::json!({ "handle": to.to_string() }).to_string()
         })
@@ -7005,6 +7011,14 @@ impl Memory for DoltMemory {
             .await
             .map_err(store)?;
         append_entity_write(&mut tx, entity, &self.clock, session).await?;
+        entity_events::emit_object_write(
+            &mut tx,
+            entity,
+            entity_events::Change::Revised,
+            &self.clock,
+            session,
+        )
+        .await?;
         super::requests::commit(tx, &self.clock, || {
             serde_json::json!({ "handle": entity.to_string() }).to_string()
         })
@@ -7794,6 +7808,8 @@ async fn write_entity(
         .fetch_optional(&mut **tx)
         .await
         .map_err(store)?;
+    // A row that was not there is a creation; one that was is a revision.
+    let existed = prose.is_some();
     // **The badge is carried across for the same reason and it matters more.**
     // Prose that came back blank would be visible to whoever wrote it; a badge
     // that came back different is a row that quietly stopped being the thing
@@ -7852,6 +7868,14 @@ async fn write_entity(
     }
     // **After the aliases, so the version kept holds the set just written.**
     append_entity_write(tx, &entity.id, clock, session).await?;
+    // **Create, update, archive and restore all end here**, so the object's event
+    // is emitted once, for the row as the write left it.
+    let change = if existed {
+        entity_events::Change::Revised
+    } else {
+        entity_events::Change::Created
+    };
+    entity_events::emit_object_write(tx, &entity.id, change, clock, session).await?;
     Ok(badge)
 }
 // LEGACY_READER(null-written-at): work:q-gate-binary-coverage
@@ -8082,6 +8106,9 @@ mod adopt;
 mod ages;
 mod assembly;
 mod boot_reads;
+mod entity_events;
+#[cfg(test)]
+mod entity_events_tests;
 pub mod import_rows;
 use boot_reads::trails_from;
 mod link_rule;

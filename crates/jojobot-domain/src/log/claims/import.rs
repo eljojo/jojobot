@@ -375,7 +375,18 @@ fn plain(payload: ClaimEvent) -> Event<ClaimEvent> {
     envelope(None, None, None, payload)
 }
 
-fn object_body(row: &EntityRow) -> ObjectBody {
+/// **A claims event a writer emits when it writes, not when an import reads.**
+/// The envelope carries the moment the store took the write in and the run that
+/// made it; an import's events carry neither.
+pub fn live(payload: ClaimEvent, at: Timestamp, run: Option<String>) -> Event<ClaimEvent> {
+    let mut event = envelope(None, run, None, payload);
+    event.written_at = Some(at);
+    event
+}
+
+/// **The object a stored entity row says**, as the import reads it and as a writer
+/// emits it, so the log cannot hold two readings of one row.
+pub fn object_body(row: &EntityRow) -> ObjectBody {
     let mut metadata = BTreeMap::new();
     if let Some(crm) = &row.crm {
         metadata.insert("crm".to_string(), crm.clone());

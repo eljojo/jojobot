@@ -133,11 +133,14 @@ impl Read {
     }
 }
 
-fn text(row: &sqlx::mysql::MySqlRow, column: &str) -> Result<String, MemoryError> {
+pub(super) fn text(row: &sqlx::mysql::MySqlRow, column: &str) -> Result<String, MemoryError> {
     row.try_get::<String, _>(column).map_err(store)
 }
 
-fn maybe(row: &sqlx::mysql::MySqlRow, column: &str) -> Result<Option<String>, MemoryError> {
+pub(super) fn maybe(
+    row: &sqlx::mysql::MySqlRow,
+    column: &str,
+) -> Result<Option<String>, MemoryError> {
     row.try_get::<Option<String>, _>(column).map_err(store)
 }
 
