@@ -914,7 +914,8 @@ as a list, which an emptied list leaves holding an empty list, and on a
 view's declaration keys (`selects`, `answers_type`, `follow_shape`,
 `follow_relation`, `follow_direction`, `follow_fits_type`), which keep a
 blank. `update_fact`'s `clear_fields` on the claim that backs a key
-(`recall` with `backing: true` names it) takes the key off the thing. Setting `status` to `now` on work your bot owns
+(`recall` with `backing: true` names it) takes the key off the thing; on any
+other claim it takes the key off that claim only. Setting `status` to `now` on work your bot owns
 also points your bot's `working_on` at it.
 A write whose status words could not be read from `topic:instance` still lands, and its receipt carries `instance_unread`, naming under `not_worked_out` what it left undone. A note the receipt would have carried and a failed read kept from it is named the same way, under `reads_left`.
 
@@ -4809,7 +4810,8 @@ keep a blank, so this argument is how they come off.
 bag holds it, so this is the way to take a key off a thing. Send it to
 the active claim that carries the key: `recall` the thing with
 `backing` true and the key names that claim. A clear sent to a claim that
-carries the key but does not back it is refused, naming the claim that does.
+carries the key but does not back it takes the key off that claim only: the
+thing keeps the value the backing claim holds, and the receipt says so.
 A counter key names none,
 because its total has no single claim behind it: `recall` with
 `history` set to the key lists the claims that wrote it, oldest first,

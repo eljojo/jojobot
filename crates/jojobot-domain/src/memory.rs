@@ -3950,58 +3950,16 @@ pub fn writes_of(
         .collect()
 }
 
-/// **A clear may only go to the claim that backs the value.** A clear is the newest
-/// write of its key, so one sent to a claim whose write is older than the one the
-/// thing holds would take the key off the thing and erase another session's newer
-/// value. It is refused, naming the claim that backs the value
-/// ([`MemoryError::ClearsAnOlderWrite`]).
-///
-/// It judges only an active record's clear that reaches the thing: the held
-/// write class is already projected in [`Fact::reaching`]. Only a key that folds
-/// as the newest write has one backing claim, and a key the same patch sets
-/// again leaves the value it asked for. One function, called from both stores.
-pub fn guard_clear_backing(
-    writes: &[KeyWrite],
-    edited: &Fact,
-    patch: &FactPatch,
-    carried: &BTreeMap<String, String>,
-    declared: &[types::DeclaredType],
-) -> Result<(), MemoryError> {
-    if edited.status != FactStatus::Active {
-        return Ok(());
-    }
-    let backing = folded_backing(writes, declared);
-    for key in patch.clear_fields.iter().map(|key| key.trim()) {
-        if !carried.contains_key(key)
-            || !edited.reaching.contains(key)
-            || patch.fields.keys().any(|set| set.trim() == key)
-        {
-            continue;
-        }
-        if let Some(held) = backing.get(key)
-            && held.fact != edited.id
-        {
-            return Err(MemoryError::ClearsAnOlderWrite {
-                address: edited.address().to_string(),
-                key: key.to_string(),
-                backing: held.fact.as_str().to_string(),
-                backing_address: FactAddress::new(edited.home.clone(), held.fact.clone())
-                    .to_string(),
-            });
-        }
-    }
-    Ok(())
-}
-
 /// **The thing's fields as they will stand once this edit lands** — what
 /// [`guard_fit`] weighs the write against.
 ///
 /// Built over the substrate rather than over the records, because that is the
 /// only place the answer is: the patch's own writes take the newest ordinals of
 /// their keys, so a set replaces the thing's value whichever record held it —
-/// and a clear of a key the addressed record carries takes it off the thing,
-/// because that clear is then the newest write of the key. A clear the record
-/// does not need writes nothing, so it costs the thing nothing ([`writes_of`]).
+/// and a clear of a key the addressed record carries takes it off the thing when
+/// the record is the one holding it, and withdraws only the record's own write
+/// when another record holds it. A clear the record does not need writes
+/// nothing, so it costs the thing nothing ([`writes_of`]).
 ///
 /// **A status is a write's standing, so an edit that moves the record past
 /// re-weighs every key it wrote.** Only writes carried by an active record
@@ -5030,9 +4988,10 @@ pub fn folded_backing(
             // the fold takes the key off. From any other claim it withdraws that
             // claim's write only, and the key stays backed.
             None => {
-                if backing
-                    .get(&write.key)
-                    .is_some_and(|held: &FieldBacking| held.fact == write.fact)
+                if write.value.is_some()
+                    || backing
+                        .get(&write.key)
+                        .is_some_and(|held: &FieldBacking| held.fact == write.fact)
                 {
                     backing.remove(&write.key);
                 }
@@ -5163,7 +5122,10 @@ fn fold(
     let mut holders: BTreeMap<&str, &FactId> = BTreeMap::new();
     for write in standing {
         let Some(value) = types::held_value(write, declared) else {
+            // Only a clear is an event about its claim's write. A blank is a write
+            // of its own, the newest word on the key, and takes the key off.
             if types::fold_of(&write.key, declared) == types::Fold::Newest
+                && write.value.is_none()
                 && holders.get(write.key.as_str()) != Some(&&write.fact)
             {
                 continue;
@@ -6704,29 +6666,6 @@ pub enum MemoryError {
         held: &'static str,
         /// How this call names it.
         named: &'static str,
-    },
-    /// **A clear was sent to a claim whose write of the key is not the one the
-    /// thing holds.** A clear is the newest write of its key, so it would take
-    /// the key off the thing and erase a newer value another session wrote. It is
-    /// refused, naming the claim that backs the value.
-    ///
-    /// TEMPORARY(9.3.3): a clear becomes an event about one claim's write, the fold
-    /// picks the newest remaining write, and the key leaves only when none remains.
-    #[error(
-        "'{key}' is held by the claim {backing_address}, and {address} wrote an older value of \
-         it. A clear sent to {address} would take '{key}' off the thing and erase the newer \
-         value {backing_address} holds. Send the clear to {backing_address} (the address \
-         argument of update_fact), or write a new value of '{key}'"
-    )]
-    ClearsAnOlderWrite {
-        /// The claim the clear was sent to.
-        address: String,
-        /// The key.
-        key: String,
-        /// The local id of the claim that backs the value the thing holds.
-        backing: String,
-        /// The full address (`kind:slug#fN`) of that claim, the form update_fact takes.
-        backing_address: String,
     },
     /// **An open claim was asked to be settled with no receipt.** Settling
     /// moves standing and never provenance, and what makes the move honest is

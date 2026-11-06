@@ -94,3 +94,16 @@ fn a_withdrawn_write_leaves_the_age_of_the_held_key_alone() {
         "2026-09-02T00:00:00Z".parse::<jiff::Timestamp>().unwrap()
     );
 }
+
+/// **A blank value is a write, not a clear**: the claim that sends it wrote the
+/// newest word on the key, so the key leaves the thing even though that claim
+/// did not hold it before.
+#[test]
+fn a_blank_written_by_a_new_claim_takes_the_key_off_the_thing() {
+    let writes = [
+        by("f1", "mood", 1, Some("content")),
+        by("f2", "mood", 2, Some("")),
+    ];
+    assert!(folded_fields(&writes, &[]).is_empty());
+    assert!(folded_backing(&writes, &[]).is_empty());
+}

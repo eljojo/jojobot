@@ -225,7 +225,8 @@ pub struct UpdateFactArgs {
     /// bag holds it, so this is the way to take a key off a thing. Send it to
     /// the active claim that carries the key: `recall` the thing with
     /// `backing` true and the key names that claim. A clear sent to a claim that
-    /// carries the key but does not back it is refused, naming the claim that does.
+    /// carries the key but does not back it takes the key off that claim only: the
+    /// thing keeps the value the backing claim holds, and the receipt says so.
     /// A counter key names none,
     /// because its total has no single claim behind it: `recall` with
     /// `history` set to the key lists the claims that wrote it, oldest first,
@@ -1152,24 +1153,6 @@ impl Jojobot {
                 }
                 return memory_declined("update_fact", e);
             }
-            // **The refusal names its claims under the handle the thing wears now**,
-            // the form `address` takes, and not under the key the store files them.
-            Err(MemoryError::ClearsAnOlderWrite {
-                address,
-                key,
-                backing,
-                backing_address,
-            }) => {
-                return memory_declined(
-                    "update_fact",
-                    MemoryError::ClearsAnOlderWrite {
-                        address: self.served_text(&address).await,
-                        key,
-                        backing,
-                        backing_address: self.served_text(&backing_address).await,
-                    },
-                );
-            }
             Err(e) => return super::must_override::declined_or_lifted("update_fact", e, &slot),
         };
         match written {
@@ -1562,15 +1545,39 @@ impl Jojobot {
                     ),
                 }
             });
+        // **Which happened, for each key**: a clear sent to the claim that backs a
+        // key took the key off the thing, and one sent to any other claim took it
+        // off that claim only. Read from the thing as it stands after the write.
         let removed = if cleared.is_empty() {
             String::new()
         } else {
-            format!(
-                " It no longer carries {}, so what those keys answer for {} falls back to the \
-                 records that set them.",
-                cleared.join(", "),
-                fact.subject.as_str(),
-            )
+            let after = self.memory.fields(&fact.subject).await.ok();
+            let backing = self.memory.backing(&fact.subject).await.ok();
+            let subject = fact.subject.as_str();
+            let outcomes: Vec<String> = after
+                .iter()
+                .flat_map(|held| {
+                    cleared.iter().map(|key| match held.get(key) {
+                        None => format!("{key} is off {subject}"),
+                        Some(_) => match backing.as_ref().and_then(|backed| backed.get(key)) {
+                            Some(backed) => format!(
+                                "{key} stays on {subject}, held by {subject}#{}: only this \
+                                 claim's write is withdrawn",
+                                backed.fact.as_str()
+                            ),
+                            None => format!(
+                                "{key} stays on {subject}: only this claim's write is withdrawn"
+                            ),
+                        },
+                    })
+                })
+                .collect();
+            let which = if outcomes.is_empty() {
+                String::new()
+            } else {
+                format!(" {}.", outcomes.join("; "))
+            };
+            format!(" It no longer carries {}.{which}", cleared.join(", "))
         };
         // **A clear that took off part of a rhythm's schedule, not all of
         // it, does not quiet the loop — it leaves the loop reading overdue

@@ -1,7 +1,7 @@
-//! **A clear is held to the claim that backs the value** (the architect's ruling,
-//! 2026-11-01), proven against any [`Memory`] adapter.
+//! **A clear changes the thing only when its claim holds the key** (the architect's
+//! ruling, 2026-11-05), proven against any [`Memory`] adapter.
 
-use super::support::{capture, edit, ensure, other_caller};
+use super::support::{capture, edit, ensure};
 use super::*;
 use std::collections::BTreeMap;
 
@@ -10,12 +10,12 @@ fn mood(value: &str) -> BTreeMap<String, String> {
 }
 
 /// **A clear sent to a claim whose write of the key is not the one the thing
-/// holds is refused, naming the claim that backs the value; a clear sent to that
-/// claim takes the key off.** One case, both halves: a store that refused every
-/// clear passes the first half alone, and one that took every clear passes the
-/// second alone. The older claim still holds the key on its own record (so the
-/// clear is a write), and a newer claim holds the value the thing reads.
-pub async fn a_clear_on_an_older_claim_is_refused_and_one_on_the_backing_claim_takes_the_key_off<
+/// holds withdraws only that claim's write and the thing keeps its value; a clear
+/// sent to the claim that backs the value takes the key off the thing.** One
+/// case, both halves: a store that refused or took every clear passes one half
+/// alone. The older claim still holds the key on its own record, and a newer
+/// claim holds the value the thing reads.
+pub async fn a_clear_on_an_older_claim_leaves_the_value_and_one_on_the_backing_claim_takes_the_key_off<
     M: Memory,
 >(
     store: &M,
@@ -45,41 +45,16 @@ pub async fn a_clear_on_an_older_claim_is_refused_and_one_on_the_backing_claim_t
         clear_fields: vec!["mood".to_string()],
         ..FactPatch::default()
     };
-    let refused = store
-        .update_fact(&older.address(), clear(), &other_caller())
-        .await;
-    match refused {
-        Err(MemoryError::ClearsAnOlderWrite {
-            address,
-            key,
-            backing,
-            backing_address,
-        }) => {
-            assert_eq!(key, "mood");
-            assert_eq!(
-                backing,
-                newer.id.as_str(),
-                "the refusal names the backing claim"
-            );
-            // The domain error carries the storage form of the home, which a store may
-            // keep as a badge; the MCP arm maps it to the handle. Both addresses must share
-            // that form and differ only in the local id.
-            assert_eq!(
-                backing_address,
-                format!(
-                    "{}#{backing}",
-                    address.rsplit_once('#').expect("a full address").0
-                ),
-                "the refusal names the backing claim by a full address of the same home"
-            );
-        }
-        other => panic!("a clear on the older claim must be refused, got {other:?}"),
-    }
+    let withdrawn = edit(store, &older.address(), clear()).await;
+    assert!(
+        !withdrawn.fields.contains_key("mood"),
+        "the older claim no longer carries the key: {withdrawn:?}"
+    );
     let held = store.fields(&thing).await.expect("fields read");
     assert_eq!(
         held.get("mood").map(String::as_str),
         Some("queasy"),
-        "the newer value survived the refused clear: {held:?}"
+        "the newer value survived the clear on the older claim: {held:?}"
     );
 
     // This record names no setting: its mood is a Stays write, so its clear

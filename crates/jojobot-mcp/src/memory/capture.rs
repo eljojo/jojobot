@@ -266,7 +266,8 @@ pub struct CaptureArgs {
     /// view's declaration keys (`selects`, `answers_type`, `follow_shape`,
     /// `follow_relation`, `follow_direction`, `follow_fits_type`), which keep a
     /// blank. `update_fact`'s `clear_fields` on the claim that backs a key
-    /// (`recall` with `backing: true` names it) takes the key off the thing. Setting `status` to `now` on work your bot owns
+    /// (`recall` with `backing: true` names it) takes the key off the thing; on any
+    /// other claim it takes the key off that claim only. Setting `status` to `now` on work your bot owns
     /// also points your bot's `working_on` at it.
     /// A write whose status words could not be read from `topic:instance` still lands, and its receipt carries `instance_unread`, naming under `not_worked_out` what it left undone. A note the receipt would have carried and a failed read kept from it is named the same way, under `reads_left`.
     ///

@@ -1048,8 +1048,8 @@ const PIANO_CADENCE_FRAGMENT: &str = "the piano's loop still carries a cadence";
 
 /// **The cadence taken off the piano's loop**, the way a sitting that clears
 /// the schedule rather than dropping the loop would write it: each key is
-/// cleared on the claim that backs it, because a clear sent to an older claim
-/// is refused.
+/// cleared on the claim that backs it, so each clear takes the key off the
+/// thing.
 async fn clear_the_piano_cadence(surface: &Surface, sid: &str) {
     // A clear goes to the claim that backing names for the key, the cadence
     // last so no step leaves a schedule without one.

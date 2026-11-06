@@ -313,7 +313,7 @@ pub async fn run_all_app<M: Memory>(store: &M) {
     a_folded_values_backing_tells_the_app_from_a_bot(store).await;
     super::key_writer::a_keys_history_names_the_writer_and_run_of_each_write(store).await;
     super::list_blank::a_blank_keeps_a_list_key_and_takes_a_single_valued_key_off(store).await;
-    super::clear_backing::a_clear_on_an_older_claim_is_refused_and_one_on_the_backing_claim_takes_the_key_off(store).await;
+    super::clear_backing::a_clear_on_an_older_claim_leaves_the_value_and_one_on_the_backing_claim_takes_the_key_off(store).await;
     super::columns_blank::an_empty_columns_list_is_the_default_and_a_short_one_is_refused(store)
         .await;
     super::done_open_entries::done_is_refused_while_a_checklist_has_an_open_entry(store).await;

@@ -4864,3 +4864,68 @@ async fn an_edit_names_the_words_by_size_and_a_keep_changes_nothing() {
     .await;
     assert_eq!(kept["changed"], "nothing", "{kept}");
 }
+
+/// **A clear says which happened.** Sent to the claim the thing does not hold, it
+/// takes the key off that claim only: the thing keeps its value and the receipt
+/// names the claim that still holds it. Sent to the claim that backs the key, it
+/// takes the key off the thing, and the receipt names no holder.
+#[tokio::test]
+async fn a_clear_says_whether_it_took_the_key_off_the_thing_or_off_one_claim() {
+    let jojobot = handler();
+    let older = capture_ok(
+        &jojobot,
+        CaptureArgs {
+            sets: Some([("mood".into(), "content".into())].into()),
+            ..capture_args("thing:kettle", "felt content")
+        },
+    )
+    .await;
+    let newer = capture_ok(
+        &jojobot,
+        CaptureArgs {
+            sets: Some([("mood".into(), "queasy".into())].into()),
+            ..capture_args("thing:kettle", "felt queasy")
+        },
+    )
+    .await;
+    let holder = address_of(&newer);
+    let older_address = address_of(&older);
+
+    let from_older = postcondition_line(
+        &update_ok(
+            &jojobot,
+            UpdateFactArgs {
+                clear_fields: Some(vec!["mood".into()]),
+                ..update_args(&address_of(&older))
+            },
+        )
+        .await,
+    );
+    assert_eq!(fields_of(&jojobot, "thing:kettle").await["mood"], "queasy");
+    assert!(
+        from_older.contains(&holder),
+        "the receipt names the claim that still holds the value: {from_older}"
+    );
+
+    let from_holder = postcondition_line(
+        &update_ok(
+            &jojobot,
+            UpdateFactArgs {
+                clear_fields: Some(vec!["mood".into()]),
+                ..update_args(&holder)
+            },
+        )
+        .await,
+    );
+    assert!(
+        fields_of(&jojobot, "thing:kettle")
+            .await
+            .get("mood")
+            .is_none(),
+        "the holder's clear took the key off the thing"
+    );
+    assert!(
+        !from_holder.contains(&older_address),
+        "no older claim holds the key after the holder's clear: {from_holder}"
+    );
+}

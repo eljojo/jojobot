@@ -174,13 +174,15 @@ async fn a_counter_key_is_cleared_by_following_the_sentence() {
     story.finish().await;
 }
 
-/// **A clear goes to the record that backs the value, and a clear sent to an
-/// older record is turned away.** Two records wrote Homer's mood, the newer one
-/// holds it, and a clear sent to the older one would take the key off the
-/// thing and erase the newer value. The refusal names the record that backs the
-/// value; the thing still holds it; the clear sent there takes the key off.
+/// **A clear sent to an older record takes the key off that record only, and
+/// one sent to the record that backs the value takes the key off the thing.** Two
+/// records wrote Homer's mood and the newer one holds it. The clear sent to the
+/// older one leaves the thing's value, which the newer record still backs; the
+/// clear sent to the newer one takes the key off the thing, and the older
+/// record's value does not come back.
 #[tokio::test]
-async fn a_clear_sent_to_an_older_record_is_refused_and_one_sent_to_the_backing_record_lands() {
+async fn a_clear_sent_to_an_older_record_leaves_the_value_and_one_sent_to_the_backing_record_takes_the_key_off()
+ {
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
     s.add("person:homer", "Homer").await;
@@ -202,19 +204,25 @@ async fn a_clear_sent_to_an_older_record_is_refused_and_one_sent_to_the_backing_
         )
         .await;
 
-    // ── the older record: refused, naming the record that holds the value ───
-    let refused = s
-        .refused(
-            "update_fact",
-            json!({ "address": older, "clear_fields": ["mood"] }),
-        )
-        .await;
-    // The way forward is the full address update_fact takes, not a bare id.
-    refused.says("mood").says(&newer);
+    // ── the older record: its own write comes off, the thing keeps its value ──
+    s.call(
+        "update_fact",
+        json!({ "address": older, "clear_fields": ["mood"] }),
+    )
+    .await;
     let kept = s
         .shape("what Homer holds now", json!({ "subject": "person:homer" }))
         .await;
     kept.says("\"mood\":\"queasy\"");
+    // The newer record still backs the value.
+    let backed = s
+        .shape(
+            "who backs Homer's mood",
+            json!({ "subject": "person:homer", "backing": true }),
+        )
+        .await;
+    let holder = newer.rsplit_once('#').expect("an address").1;
+    backed.says(&format!("\"claim\":\"{holder}\""));
 
     // ── the record that backs it: the key comes off ─────────────────────────
     s.call(
