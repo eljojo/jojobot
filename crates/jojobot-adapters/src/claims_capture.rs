@@ -40,6 +40,16 @@ pub(crate) type Build<'a> =
 /// Renders the sizes of the request as an answer would carry them. Pure.
 pub(crate) type Measure<'a> = Box<dyn Fn(&State, &CaptureRequest) -> Measures + Send + 'a>;
 
+/// The boot render of one claim, asked with the request it belongs to.
+pub(crate) type RequestBoot = dyn Fn(
+        &CaptureRequest,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Option<jojobot_domain::log::claims::BootFloor>> + Send,
+        >,
+    > + Send
+    + Sync;
+
 /// What the job admitted: the request as it was decided and the events that
 /// were added to the transaction's batch.
 pub(crate) struct Admission {
@@ -59,7 +69,7 @@ pub(crate) async fn admit(
     seam: &Arc<Seam>,
     build: Build<'_>,
     measure: Measure<'_>,
-    boot_floor: Option<Arc<job::BootFloorMeasure>>,
+    boot_floor: Option<Arc<RequestBoot>>,
     run_bots: Option<Arc<job::RunBotsMeasure>>,
     at: Timestamp,
 ) -> Result<Result<Admission, Declined>, MemoryError> {
@@ -140,7 +150,11 @@ pub(crate) async fn admit_fact(
 ) -> Result<Result<Admission, Declined>, MemoryError> {
     let record = job::fresh_record();
     let (door, measure) = (Arc::clone(&job.door), Arc::clone(&job.measure));
-    let boot_floor = Some(Arc::clone(&job.boot_floor));
+    let boot_floor: Arc<RequestBoot> = {
+        let (boot, fact) = (Arc::clone(&job.boot_floor), fact.clone());
+        Arc::new(move |request| boot(&fact, request))
+    };
+    let boot_floor = Some(boot_floor);
     let run_bots = Some(Arc::clone(&job.run_bots));
     admit(
         seam,
@@ -148,7 +162,7 @@ pub(crate) async fn admit_fact(
             let door = door(state, declared, fact)?;
             Ok(CaptureRequest::of_fact(fact, record, Route::Verb, door))
         }),
-        Box::new(move |state, request| measure(state, request)),
+        Box::new(move |state, request| measure(state, fact, request)),
         boot_floor,
         run_bots,
         at,

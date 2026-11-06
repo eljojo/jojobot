@@ -1722,7 +1722,7 @@ impl Jojobot {
         // The claim keeps that plan in its note, so a resend finishes it.
         // **The store decides the claim over the claims State it holds**, with the
         // door, the sizes, the boot and the runs this call hands its job.
-        let job = self.capture_job(&new, actor, std::sync::Arc::clone(&reads));
+        let job = self.capture_job(actor, std::sync::Arc::clone(&reads));
         let write = jojobot_domain::log::claims::job::within(
             job,
             self.write_the_claim(

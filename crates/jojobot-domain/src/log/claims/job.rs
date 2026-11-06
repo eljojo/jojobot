@@ -19,8 +19,8 @@ use crate::memory::{MemoryError, NewFact, types::DeclaredType};
 pub type FillDoor =
     dyn Fn(&State, &[DeclaredType], &NewFact) -> Result<Door, MemoryError> + Send + Sync;
 
-/// Renders the sizes of the request as an answer would carry them.
-pub type Measure = dyn Fn(&State, &CaptureRequest) -> Measures + Send + Sync;
+/// Renders the sizes of the request for `fact` as an answer would carry them.
+pub type Measure = dyn Fn(&State, &NewFact, &CaptureRequest) -> Measures + Send + Sync;
 
 /// **What a bot's boot weighs with and without the claim**, rendered by today's
 /// boot render, which reads the box through the port. Called only for a write that
@@ -28,7 +28,10 @@ pub type Measure = dyn Fn(&State, &CaptureRequest) -> Measures + Send + Sync;
 /// It reaches no write. `None` is a boot that could not be read, and passes.
 ///
 /// TEMPORARY(9.3.7): it retires when the boot renders from the State.
-pub type BootFloorMeasure = dyn Fn(&CaptureRequest) -> std::pin::Pin<Box<dyn Future<Output = Option<BootFloor>> + Send>>
+pub type BootFloorMeasure = dyn Fn(
+        &NewFact,
+        &CaptureRequest,
+    ) -> std::pin::Pin<Box<dyn Future<Output = Option<BootFloor>> + Send>>
     + Send
     + Sync;
 
@@ -100,8 +103,8 @@ mod tests {
     fn job() -> CaptureJob {
         CaptureJob {
             door: Arc::new(|_, _, _| Err(MemoryError::Store("no door in this case".into()))),
-            measure: Arc::new(|_, _| Measures::default()),
-            boot_floor: Arc::new(|_| Box::pin(async { None })),
+            measure: Arc::new(|_, _, _| Measures::default()),
+            boot_floor: Arc::new(|_, _| Box::pin(async { None })),
             run_bots: Arc::new(|_| Box::pin(async { Default::default() })),
         }
     }

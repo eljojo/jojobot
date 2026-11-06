@@ -230,7 +230,7 @@ impl Jojobot {
         }
         // **A bot's name and aliases ride in its own boot**, which a boot never
         // declines: an edit that takes the floor over the ceiling is refused.
-        let floor_reads = super::reads_left::ReadsLeft::default();
+        let floor_reads = std::sync::Arc::new(super::reads_left::ReadsLeft::default());
         if let Some(refused) = self
             .refuses_a_boot_floor_for_relabelling(&handle, &patch, &floor_reads)
             .await
@@ -332,8 +332,14 @@ impl Jojobot {
         let mut due_moved = jojobot_domain::attention::DueMove::Unchanged;
         let mut moves_to_now = Ok(false);
         let written = match sets {
-            None => match jojobot_domain::request::armed(self.memory.update_entity(&handle, patch))
-                .await
+            None => match jojobot_domain::request::armed(jojobot_domain::log::claims::job::within(
+                self.capture_job(
+                    &jojobot_domain::actor::Actor::Bot(caller.bot.clone()),
+                    std::sync::Arc::clone(&floor_reads),
+                ),
+                self.memory.update_entity(&handle, patch),
+            ))
+            .await
             {
                 Ok(written) => written,
                 Err(e) => return memory_declined("update_entity", e),
@@ -475,7 +481,13 @@ impl Jojobot {
                 }
                 match super::due::writing_a_claim(
                     matches!(due_moved, jojobot_domain::attention::DueMove::Cleared),
-                    self.memory.update_entity_with_claim(&handle, patch, first),
+                    jojobot_domain::log::claims::job::within(
+                        self.capture_job(
+                            &jojobot_domain::actor::Actor::Bot(caller.bot.clone()),
+                            std::sync::Arc::clone(&floor_reads),
+                        ),
+                        self.memory.update_entity_with_claim(&handle, patch, first),
+                    ),
                 )
                 .await
                 {
