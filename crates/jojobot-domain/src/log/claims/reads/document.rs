@@ -178,30 +178,39 @@ impl State {
                 }
                 trails
             },
-            entity_versions: self
-                .observed_chain(object)
-                .into_iter()
-                .map(|(thing, write)| EntityVersion {
-                    ordinal: 0,
-                    thing: served(self, thing),
-                    written_at: write.source_time,
-                    session: None,
-                    snapshot: write
-                        .snapshot
-                        .as_ref()
-                        .map(|snapshot| observed_snapshot(self, snapshot)),
-                })
-                .chain(
-                    self.entity_versions(object)
-                        .into_iter()
-                        .map(|version| entity_version(self, 0, version)),
-                )
-                .enumerate()
-                .map(|(at, version)| EntityVersion {
-                    ordinal: at + 1,
-                    ..version
-                })
-                .collect(),
+            entity_versions: {
+                let mut versions: Vec<EntityVersion> = self
+                    .observed_chain(object)
+                    .into_iter()
+                    .map(|(thing, write)| EntityVersion {
+                        ordinal: 0,
+                        thing: served(self, thing),
+                        written_at: write.source_time,
+                        session: None,
+                        snapshot: write
+                            .snapshot
+                            .as_ref()
+                            .map(|snapshot| observed_snapshot(self, snapshot)),
+                    })
+                    .chain(
+                        self.entity_versions(object)
+                            .into_iter()
+                            .map(|version| entity_version(self, 0, version)),
+                    )
+                    .collect();
+                // In the order they happened, the store's own order: a version
+                // nobody stamped sorts first, and equal moments keep the order
+                // they were gathered in. The ordinal is this list's own count.
+                versions.sort_by_key(|version| version.written_at);
+                versions
+                    .into_iter()
+                    .enumerate()
+                    .map(|(at, version)| EntityVersion {
+                        ordinal: at + 1,
+                        ..version
+                    })
+                    .collect()
+            },
         })
     }
 }

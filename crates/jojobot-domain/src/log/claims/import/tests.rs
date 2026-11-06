@@ -1630,6 +1630,38 @@ fn the_current_state_is_a_baseline_and_not_a_version() {
     );
 }
 
+/// **A survivor's served versions are in the order the writes were made**,
+/// whichever object they were written under: the folded thing's write between two
+/// of the survivor's reads between them, and the ordinals count that order.
+#[test]
+fn a_survivors_versions_are_served_in_time_order_across_what_it_absorbed() {
+    let rows = Rows {
+        entities: vec![entity("k1", "person:homer"), entity("k2", "person:marge")],
+        entity_writes: vec![
+            entity_write("k1", 1, Some(10), None, Some(snapshot_of("Homer"))),
+            entity_write("k1", 2, Some(30), None, Some(snapshot_of("Homer"))),
+            entity_write("k2", 1, Some(20), None, Some(snapshot_of("Marge"))),
+        ],
+        merges: vec![MergeRow {
+            no: 1,
+            folded: object("k2"),
+            survivor: object("k1"),
+            merged_at: at(40).unwrap(),
+            session: None,
+            claims: Vec::new(),
+        }],
+        ..Rows::default()
+    };
+    let state = State::replay(&imported(&rows));
+    let parts = state
+        .document_parts(&object("k1"), &[])
+        .expect("the survivor is held");
+    let moments: Vec<_> = parts.entity_versions.iter().map(|v| v.written_at).collect();
+    assert_eq!(moments, [at(10), at(20), at(30)]);
+    let ordinals: Vec<_> = parts.entity_versions.iter().map(|v| v.ordinal).collect();
+    assert_eq!(ordinals, [1, 2, 3]);
+}
+
 /// The writes of a thing folded into another are read in one order with the
 /// survivor's: unstamped first, then by moment, and the folded thing's own key and
 /// its snapshot's `merged_into` stay as stored.
