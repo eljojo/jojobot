@@ -346,6 +346,23 @@ async fn a_document_read_from_the_state_is_the_document_the_store_reads() {
             ));
         }
     }
+    for entity in stored_listing.iter().filter(|e| e.merged_into.is_none()) {
+        let scanned = memory
+            .scan_entity(&entity.id)
+            .await
+            .expect("the scan")
+            .expect("the thing");
+        for fact in &scanned.facts {
+            let address = FactAddress::new(entity.id.clone(), fact.id.clone());
+            let stored_built = memory.built_on(&address).await.expect("what stands on it");
+            let held_built = state.built_on(&address);
+            if held_built != stored_built {
+                differences.push(format!(
+                    "built on {address}\n  state:  {held_built:#?}\n  stored: {stored_built:#?}"
+                ));
+            }
+        }
+    }
     assert!(differences.is_empty(), "{}", differences.join("\n"));
     server.stop().await;
 }
