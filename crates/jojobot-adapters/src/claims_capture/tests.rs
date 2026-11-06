@@ -88,6 +88,26 @@ fn seeded() -> Vec<Event<ClaimEvent>> {
             object: ObjectId("k2".into()),
             address: "bot:alpha".into(),
         }),
+        // A record the build supplies, held under an identity of its own: the import
+        // creates and binds it, and the overlay on it is a capture.
+        envelope(ClaimEvent::ObjectCreated {
+            object: ObjectId("supply-view-loops".into()),
+            body: ObjectBody {
+                kind: KindId("view".into()),
+                parent: None,
+                name: "The loops view".into(),
+                source: "jojobot".into(),
+                aliases: Vec::new(),
+                boot: None,
+                metadata: Default::default(),
+                archived: false,
+                bound_to: None,
+            },
+        }),
+        envelope(ClaimEvent::AddressBound {
+            object: ObjectId("supply-view-loops".into()),
+            address: "view:loops".into(),
+        }),
         // A claim on the bot that a run first wrote: the door asks whose run it is.
         Event {
             run: Some(RunId("run-x".into())),
@@ -244,7 +264,7 @@ async fn an_admitted_capture_is_sealed_and_the_state_answers_it() {
 
     let batches = writer
         .shared_log(&store)
-        .read_from(Position(5), 10)
+        .read_from(Position(7), 10)
         .await
         .unwrap();
     assert_eq!(batches.len(), 1, "one batch for the one transaction");
@@ -272,7 +292,7 @@ async fn a_refused_capture_leaves_nothing() {
     assert!(
         writer
             .shared_log(&store)
-            .read_from(Position(5), 10)
+            .read_from(Position(7), 10)
             .await
             .unwrap()
             .is_empty(),
@@ -316,8 +336,8 @@ fn job() -> CaptureJob {
                 aged_before: None,
             })
         }),
-        measure: Arc::new(|_, _| fits()),
-        boot_floor: Arc::new(|_| Box::pin(async { None })),
+        measure: Arc::new(|_, _, _| fits()),
+        boot_floor: Arc::new(|_, _| Box::pin(async { None })),
         run_bots: Arc::new(|_| Box::pin(async { BTreeMap::new() })),
     }
 }
@@ -325,7 +345,7 @@ fn job() -> CaptureJob {
 /// A job whose boot render answers `floor`, counting how often it is asked.
 fn job_with_boot(floor: Option<BootFloor>, asked: Arc<AtomicUsize>) -> CaptureJob {
     CaptureJob {
-        boot_floor: Arc::new(move |_| {
+        boot_floor: Arc::new(move |_, _| {
             asked.fetch_add(1, Ordering::SeqCst);
             let floor = floor.clone();
             Box::pin(async move { floor })
@@ -434,7 +454,7 @@ async fn a_star_that_makes_the_boot_too_heavy_is_refused_and_writes_nothing() {
     assert!(
         writer
             .shared_log(&store)
-            .read_from(Position(5), 10)
+            .read_from(Position(7), 10)
             .await
             .unwrap()
             .is_empty(),
@@ -515,6 +535,69 @@ async fn the_runs_of_a_subject_are_asked_of_a_write_that_could_be_a_thought() {
         *asked.lock().unwrap(),
         [vec![RunId("run-x".into())]],
         "the run that first wrote a claim on the subject is asked about"
+    );
+    writer.drain().await;
+    server.stop().await;
+}
+
+/// **The claim that carries an overlay on a supplied record is a capture the
+/// State answers.** The build supplies `view:loops` and the import holds it in the
+/// State under an identity of its own; the claim the overlay writes (the operator's
+/// name and aliases, in the overlay's keys) is decided by `prepare` like any other,
+/// and the State serves it and the keys on the record.
+///
+/// The overlay layer's own reads before it writes (the fields and the listing of the
+/// store beneath) still go to the store's rows, which hold nothing for a supplied
+/// record: they move to the State with the fold's re-read, and this case holds the
+/// write.
+#[tokio::test]
+async fn the_claim_carrying_an_overlay_on_a_supplied_record_is_a_capture_the_state_answers() {
+    use jojobot_domain::memory::owned::{is_overlay_key, overlay_fields};
+
+    let (_scratch, mut server, store, _pool, writer) = world("capture-job-overlay").await;
+    let memory = Arc::new(crate::dolt::memory::DoltMemory::open(store.clone()));
+    let new = overlay_fields(Some("Weekly rounds"), Some(&["Rounds".to_string()]));
+    let claim = NewFact {
+        sets: new.keys().cloned().collect(),
+        fields: new,
+        ..NewFact::about(
+            EntityId("view:loops".into()),
+            "Set the name and aliases of this record.",
+            date(2026, 4, 19),
+        )
+    };
+    let written = {
+        let memory = Arc::clone(&memory);
+        within(
+            job(),
+            writer.run(async move { memory.capture(claim).await }),
+        )
+        .await
+    };
+    let Ok(Guarded::Written(fact)) = written else {
+        panic!("the claim on a supplied record is admitted: {written:?}");
+    };
+    assert_eq!(
+        fact.home.0, "view:loops",
+        "it is homed on the supplied record"
+    );
+    assert!(
+        fact.sets.iter().any(|key| is_overlay_key(key)),
+        "it carries the overlay's keys as settings: {:?}",
+        fact.sets
+    );
+    let seam = writer.seam().expect("the seam is open");
+    let (fields, held) = seam
+        .read_claims(|state| {
+            state
+                .thing_as_read("view:loops", &state.declared_types())
+                .map(|(_, fields, held)| (fields, held))
+        })
+        .expect("the State holds the supplied record");
+    assert_eq!(held, 1, "the overlay is one claim on the record");
+    assert!(
+        fields.keys().any(|key| is_overlay_key(key)),
+        "the overlay's keys reach the record in the State: {fields:?}"
     );
     writer.drain().await;
     server.stop().await;
