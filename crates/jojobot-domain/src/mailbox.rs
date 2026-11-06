@@ -1405,7 +1405,7 @@ mod tests {
     #[tokio::test]
     async fn the_fake_satisfies_the_contract() {
         crate::memory::kinds::load_shipped();
-        contract::run_all(|| async { InMemoryMailboxes::new() }).await;
+        Box::pin(contract::run_all(|| async { InMemoryMailboxes::new() })).await;
     }
 
     /// **An empty list of senders finds nothing even when the board cannot be

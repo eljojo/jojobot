@@ -82,7 +82,7 @@ async fn a_commit_seals_the_emitted_claims_with_the_requests_ledger_event() {
         let pool = pool.clone();
         writer
             .run(async move {
-                request::within(
+                Box::pin(request::within(
                     scope(),
                     request::armed(async {
                         let tx = pool.begin().await.unwrap();
@@ -91,7 +91,7 @@ async fn a_commit_seals_the_emitted_claims_with_the_requests_ledger_event() {
                             .await
                             .unwrap();
                     }),
-                )
+                ))
                 .await;
             })
             .await;
@@ -163,7 +163,7 @@ async fn events_emitted_in_a_rolled_back_transaction_are_not_sealed_by_the_next(
                 let tx = pool.begin().await.unwrap();
                 sql::emit(created()).unwrap();
                 tx.rollback().await.unwrap();
-                request::within(
+                Box::pin(request::within(
                     scope(),
                     request::armed(async {
                         let tx = pool.begin().await.unwrap();
@@ -171,7 +171,7 @@ async fn events_emitted_in_a_rolled_back_transaction_are_not_sealed_by_the_next(
                             .await
                             .unwrap();
                     }),
-                )
+                ))
                 .await;
             })
             .await;
