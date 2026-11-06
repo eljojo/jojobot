@@ -91,6 +91,7 @@ test-entrance
 test-exit_status
 test-failability_gate
 test-fair_lock
+test-finished_session_hooks
 test-fixture_roster
 test-fold_agreement_dolt
 test-fold_agreement_fake
