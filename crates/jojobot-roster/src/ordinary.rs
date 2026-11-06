@@ -642,6 +642,7 @@ pub const ORDINARY: &[&str] = &[
     "thing:contract-app-backing",
     "thing:contract-outing-list",
     "thing:contract-clear-older",
+    "thing:contract-clear-holder-first",
     "thing:contract-edge-alpha",
     "thing:contract-edge-beta",
     "thing:contract-stage-edict",

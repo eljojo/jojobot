@@ -72,24 +72,73 @@ pub async fn a_clear_on_an_older_claim_leaves_the_value_and_one_on_the_backing_c
     assert!(!cleared.fields.contains_key("mood"), "{cleared:?}");
     assert_eq!(store.fields(&thing).await.expect("fields read"), held);
 
-    // The resulting status is Archived, so no write of this record folds.
-    let archived = edit(
+    // **A claim archived while it holds the key stops counting**: the newest
+    // write that still counts holds the key again, so an archive that left the
+    // claim's write in the fold would leave "rested" here.
+    let third = capture(
         store,
-        &older.address(),
-        FactPatch {
-            status: Some(FactStatus::Archived),
-            ..clear()
+        NewFact {
+            fields: mood("rested"),
+            sets: ["mood".to_string()].into(),
+            ..NewFact::about(thing.clone(), "felt rested", date(2026, 10, 4))
         },
     )
     .await;
-    assert_eq!(archived.status, FactStatus::Archived);
-    assert!(!archived.fields.contains_key("mood"), "{archived:?}");
-    assert_eq!(store.fields(&thing).await.expect("fields read"), held);
+    assert_eq!(
+        store.fields(&thing).await.expect("fields read")["mood"],
+        "rested",
+        "the newest claim holds the key"
+    );
+    edit(
+        store,
+        &third.address(),
+        FactPatch {
+            status: Some(FactStatus::Archived),
+            ..FactPatch::default()
+        },
+    )
+    .await;
+    assert_eq!(
+        store.fields(&thing).await.expect("fields read")["mood"],
+        "queasy",
+        "the archived claim's write stopped counting"
+    );
 
     edit(store, &newer.address(), clear()).await;
     let held = store.fields(&thing).await.expect("fields read");
     assert!(
         !held.contains_key("mood"),
         "a clear on the backing claim takes the key off: {held:?}"
+    );
+
+    // **The holder clears first, and the older claim's value does not return.**
+    // The older claim still carries the key on its own record, so a fold that
+    // ranked records, or that fell back to the next write, would give "content"
+    // here.
+    let other = EntityId("thing:contract-clear-holder-first".into());
+    ensure(store, &other).await;
+    capture(
+        store,
+        NewFact {
+            fields: mood("content"),
+            sets: ["mood".to_string()].into(),
+            ..NewFact::about(other.clone(), "felt content", date(2026, 10, 1))
+        },
+    )
+    .await;
+    let holder = capture(
+        store,
+        NewFact {
+            fields: mood("queasy"),
+            sets: ["mood".to_string()].into(),
+            ..NewFact::about(other.clone(), "felt queasy", date(2026, 10, 2))
+        },
+    )
+    .await;
+    edit(store, &holder.address(), clear()).await;
+    let held = store.fields(&other).await.expect("fields read");
+    assert!(
+        !held.contains_key("mood"),
+        "an older claim's value does not return once the holder clears: {held:?}"
     );
 }

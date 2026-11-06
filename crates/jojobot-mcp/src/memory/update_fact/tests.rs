@@ -4889,7 +4889,6 @@ async fn a_clear_says_whether_it_took_the_key_off_the_thing_or_off_one_claim() {
     )
     .await;
     let holder = address_of(&newer);
-    let older_address = address_of(&older);
 
     let from_older = postcondition_line(
         &update_ok(
@@ -4907,25 +4906,43 @@ async fn a_clear_says_whether_it_took_the_key_off_the_thing_or_off_one_claim() {
         "the receipt names the claim that still holds the value: {from_older}"
     );
 
+    // **The holder clears first, on a thing whose older claim still carries the
+    // key**, so a receipt that fell back to the older claim would name it.
+    let first = capture_ok(
+        &jojobot,
+        CaptureArgs {
+            sets: Some([("mood".into(), "content".into())].into()),
+            ..capture_args("thing:beta", "felt content")
+        },
+    )
+    .await;
+    let second = capture_ok(
+        &jojobot,
+        CaptureArgs {
+            sets: Some([("mood".into(), "queasy".into())].into()),
+            ..capture_args("thing:beta", "felt queasy")
+        },
+    )
+    .await;
     let from_holder = postcondition_line(
         &update_ok(
             &jojobot,
             UpdateFactArgs {
                 clear_fields: Some(vec!["mood".into()]),
-                ..update_args(&holder)
+                ..update_args(&address_of(&second))
             },
         )
         .await,
     );
     assert!(
-        fields_of(&jojobot, "thing:kettle")
+        fields_of(&jojobot, "thing:beta")
             .await
             .get("mood")
             .is_none(),
-        "the holder's clear took the key off the thing"
+        "the holder's clear took the key off the thing, and the older claim's value did not return"
     );
     assert!(
-        !from_holder.contains(&older_address),
-        "no older claim holds the key after the holder's clear: {from_holder}"
+        !from_holder.contains(&address_of(&first)),
+        "the receipt names no claim that holds the key: {from_holder}"
     );
 }
