@@ -12,11 +12,62 @@ use super::dsl::Story;
 
 const APP: &str = "springfield-watch";
 
+#[tokio::test]
+async fn a_controller_pages_only_the_boxes_its_grant_names() {
+    let post = serde_json::from_value(json!({
+        "operation": "post_message", "recipients": ["bot:marge"]
+    }))
+    .expect("a configured recipient grant");
+    let (story, token) = Story::begin_serving_an_app("bot:marge", APP, vec![post]).await;
+    let s = story.session().await;
+    s.add("bot:bart", "Bart").await;
+
+    let (status, posted) = story
+        .app_calls(
+            &token,
+            "post_message",
+            json!({"to": "marge", "subject": "gate", "body": "The gate needs a keeper."}),
+        )
+        .await;
+    assert_eq!(
+        status, 200,
+        "the granted box accepts a bare bot name: {posted}"
+    );
+    let inbox = s
+        .call("read_mailbox", json!({"new_only": false}))
+        .await
+        .json();
+    let message = inbox["messages"]
+        .as_array()
+        .expect("the bot's inbox")
+        .iter()
+        .find(|message| message["id"] == posted["id"])
+        .unwrap_or_else(|| panic!("the page reached the granted box: {inbox}"));
+    assert_eq!(message["body"], "The gate needs a keeper.");
+    assert_eq!(message["sender"], format!("app/{APP}"));
+
+    let (status, refused) = story
+        .app_calls(
+            &token,
+            "post_message",
+            json!({"to": "bot:bart", "body": "The gate needs a keeper."}),
+        )
+        .await;
+    assert_eq!(status, 403, "an existing box outside the grant: {refused}");
+    let why = refused["error"].as_str().expect("a grant refusal");
+    assert!(
+        why.contains("bot:marge") && why.contains("bot:bart"),
+        "{why}"
+    );
+    story.finish().await;
+}
+
 fn grant(operation: &str, kinds: &[&str], keys: &[&str]) -> OperationSpec {
     OperationSpec {
         operation: operation.into(),
         kinds: kinds.iter().map(|s| s.to_string()).collect(),
         keys: keys.iter().map(|s| s.to_string()).collect(),
+        recipients: vec![],
     }
 }
 

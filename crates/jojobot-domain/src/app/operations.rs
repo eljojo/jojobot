@@ -17,7 +17,7 @@ use std::collections::BTreeSet;
 use serde::Deserialize;
 
 use super::{AppError, AppPrincipal, key_never_granted, key_shape_ok};
-use crate::memory::EntityKind;
+use crate::memory::{EntityId, EntityKind};
 
 /// The arguments an app may send to `capture`. Everything else is refused: a
 /// tick, a check-in, a drop and the claim's labels are a bot's.
@@ -46,6 +46,8 @@ pub struct OperationGrant {
     pub kinds: BTreeSet<EntityKind>,
     /// The keys a write may set. Empty for an operation that sets none.
     pub keys: BTreeSet<String>,
+    /// The recipient handles a message may reach. Empty means the operator only.
+    pub recipients: BTreeSet<EntityId>,
 }
 
 /// One granted operation as the rendered configuration file spells it.
@@ -60,6 +62,9 @@ pub struct OperationSpec {
     /// The keys a write may set.
     #[serde(default)]
     pub keys: Vec<String>,
+    /// The recipient handles for `post_message`. Empty means the operator only.
+    #[serde(default)]
+    pub recipients: Vec<String>,
 }
 
 /// **Read every operation an app's spec names**, or say why the operator is
@@ -97,6 +102,20 @@ pub(super) fn grants_from_specs(
         if writes && spec.kinds.is_empty() {
             return Err(named(format!("the grant of {name:?} names no kinds")));
         }
+        if name != "post_message" && !spec.recipients.is_empty() {
+            return Err(named(format!("the operation {name:?} takes no recipients")));
+        }
+        let mut recipients = BTreeSet::new();
+        for handle in &spec.recipients {
+            let recipient = EntityId(handle.clone());
+            crate::memory::validate_subject(&recipient).map_err(|why| named(why.to_string()))?;
+            if !matches!(recipient.kind(), Some(EntityKind::BOT | EntityKind::PERSON)) {
+                return Err(named(format!(
+                    "the recipient {handle:?} must name a bot or the operator"
+                )));
+            }
+            recipients.insert(recipient);
+        }
         let mut kinds = BTreeSet::new();
         for token in &spec.kinds {
             let kind = EntityKind::from_token(token)
@@ -124,6 +143,7 @@ pub(super) fn grants_from_specs(
             operation: name.to_string(),
             kinds,
             keys,
+            recipients,
         });
     }
     Ok(grants)
@@ -171,6 +191,8 @@ pub struct Operation {
     pub keys: Vec<String>,
     /// Whether a message is for the operator's box.
     pub to_operator: bool,
+    /// The resolved recipient handle, before the permission check.
+    pub recipient: Option<EntityId>,
     /// **The `bound_app` the subject holds now**, for a write on an existing bot
     /// request. The status of a request is written by that app alone.
     pub bound_app: Option<String>,
@@ -208,8 +230,22 @@ pub fn permit(app: &AppPrincipal, call: &Operation) -> Result<(), AppError> {
             listed(allowed.iter().copied())
         ));
     }
-    if name == "post_message" && !call.to_operator {
-        return outside("an app may post to the operator's box only".into());
+    if name == "post_message" {
+        if grant.recipients.is_empty() {
+            if !call.to_operator {
+                return outside("an app may post to the operator's box only".into());
+            }
+        } else if !call
+            .recipient
+            .as_ref()
+            .is_some_and(|recipient| grant.recipients.contains(recipient))
+        {
+            return outside(format!(
+                "the recipient {} is not one this app may post to; it may post to: {}",
+                call.recipient.as_ref().map_or("none", EntityId::as_str),
+                listed(grant.recipients.iter().map(EntityId::as_str))
+            ));
+        }
     }
     if matches!(name, "capture" | "add_entity") {
         match call.kind {
@@ -307,6 +343,7 @@ mod tests {
             operation: operation.into(),
             kinds: kinds.iter().map(|s| s.to_string()).collect(),
             keys: keys.iter().map(|s| s.to_string()).collect(),
+            recipients: vec![],
         }
     }
 
@@ -343,6 +380,7 @@ mod tests {
             kind,
             keys: keys.iter().map(|s| s.to_string()).collect(),
             to_operator: false,
+            recipient: None,
             bound_app: None,
         }
     }
@@ -529,6 +567,43 @@ mod tests {
         assert_eq!(permit(&watcher(), &c), Ok(()));
         c.args_sent.push("supersedes".into());
         assert!(refusal(permit(&watcher(), &c)).contains("supersedes"));
+    }
+
+    #[test]
+    fn a_message_grant_names_the_recipients_it_permits() {
+        let post = serde_json::from_value(serde_json::json!({
+            "operation": "post_message", "recipients": ["bot:marge"]
+        }))
+        .expect("a recipient grant");
+        let granted = app(vec![post]);
+        let mut c = call("post_message", &["to", "body"], None, &[]);
+        c.recipient = Some(EntityId("bot:marge".into()));
+        assert_eq!(permit(&granted, &c), Ok(()));
+        for handle in ["bot:bart", "person:homer"] {
+            c.recipient = Some(EntityId(handle.into()));
+            c.to_operator = handle == "person:homer";
+            let why = refusal(permit(&granted, &c));
+            assert!(why.contains(handle) && why.contains("bot:marge"), "{why}");
+        }
+    }
+
+    #[test]
+    fn a_message_grant_requires_recipient_handles_on_the_message_operation() {
+        crate::memory::kinds::load_shipped();
+        for (operation, recipient) in [
+            ("recall", "bot:marge"),
+            ("post_message", "work:alpha"),
+            ("post_message", "marge"),
+        ] {
+            let grant = serde_json::from_value(serde_json::json!({
+                "operation": operation, "recipients": [recipient]
+            }))
+            .expect("a configured grant");
+            assert!(
+                AppPrincipal::from_spec(&spec(vec![grant]), &hash_token(&mint_token())).is_err(),
+                "{operation} with {recipient}"
+            );
+        }
     }
 
     #[test]

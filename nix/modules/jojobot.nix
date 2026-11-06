@@ -19,7 +19,7 @@ let
         {
           inherit name;
           operations = map (o: {
-            inherit (o) operation kinds keys;
+            inherit (o) operation kinds keys recipients;
           }) app.operations;
           revoked = app.revoked;
         }
@@ -237,8 +237,8 @@ in
             description = ''
               The operations of the unstable tier the app may call, one entry for
               each. A write names the kinds the app may write and the keys it may
-              set. `recall` and `post_message` name none: a message goes to the
-              operator's box only. An identity key, a due-making key and a label
+              set. `post_message` names recipient handles; an empty list permits
+              the operator's box only. An identity key, a due-making key and a label
               key cannot be listed, `bot` cannot be a kind and `set_charter`
               cannot be granted. The server refuses to start on a name its
               registry does not serve.
@@ -261,6 +261,15 @@ in
                   default = [ ];
                   example = [ "watch_state" ];
                   description = "The keys a write may set.";
+                };
+                recipients = mkOption {
+                  type = types.listOf types.str;
+                  default = [ ];
+                  example = [ "bot:marge" ];
+                  description = ''
+                    The recipient handles post_message may reach. An empty list
+                    permits the operator's box only.
+                  '';
                 };
               };
             });

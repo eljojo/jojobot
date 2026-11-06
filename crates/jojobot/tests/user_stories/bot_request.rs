@@ -49,11 +49,13 @@ async fn a_manager_asks_for_a_bot_and_only_its_app_reports_on_it() {
                 operation: "recall".into(),
                 kinds: vec![],
                 keys: vec![],
+                recipients: vec![],
             },
             OperationSpec {
                 operation: "capture".into(),
                 kinds: vec!["bot-request".into()],
                 keys: status_keys(),
+                recipients: vec![],
             },
         ],
     )
@@ -223,11 +225,13 @@ async fn only_the_app_a_request_names_writes_its_status() {
                 operation: "recall".into(),
                 kinds: vec![],
                 keys: vec![],
+                recipients: vec![],
             },
             OperationSpec {
                 operation: "capture".into(),
                 kinds: vec!["bot-request".into()],
                 keys: status_keys(),
+                recipients: vec![],
             },
         ]
     };
@@ -398,11 +402,13 @@ async fn clearing_an_older_desired_claim_keeps_the_generation() {
                 operation: "recall".into(),
                 kinds: vec![],
                 keys: vec![],
+                recipients: vec![],
             },
             OperationSpec {
                 operation: "capture".into(),
                 kinds: vec!["bot-request".into()],
                 keys: status_keys(),
+                recipients: vec![],
             },
         ],
     )

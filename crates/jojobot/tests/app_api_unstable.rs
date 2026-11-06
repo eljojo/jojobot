@@ -27,6 +27,7 @@ fn op(operation: &str, kinds: &[&str], keys: &[&str]) -> OperationSpec {
         operation: operation.into(),
         kinds: kinds.iter().map(|s| s.to_string()).collect(),
         keys: keys.iter().map(|s| s.to_string()).collect(),
+        recipients: vec![],
     }
 }
 

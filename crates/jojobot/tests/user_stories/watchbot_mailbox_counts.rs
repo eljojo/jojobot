@@ -27,6 +27,7 @@ async fn a_controller_sees_a_bot_has_mail_waiting_then_sees_it_taken() {
             operation: "mailbox_counts".into(),
             kinds: vec![],
             keys: vec![],
+            recipients: vec![],
         }],
     )
     .await;
