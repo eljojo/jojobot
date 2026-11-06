@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use super::{PartRow, Recorded, Request, RequestError, RequestId, Requests, Reservation, Stored};
+use super::{PartRow, Receipt, Recorded, RequestError, RequestId, Requests, Reservation, Stored};
 use crate::memory::EntityId;
 
 /// A fake ledger, keyed by the bot's handle. A real store keys on the bot's
@@ -74,6 +74,7 @@ impl InMemoryRequests {
                 key.0,
                 key.1,
                 PartRow {
+                    key: None,
                     part,
                     verb: request.verb,
                     digest: request.digest,
@@ -165,7 +166,8 @@ impl Requests for InMemoryRequests {
             .collect())
     }
 
-    async fn finish(&self, request: &Request, receipt: &str) -> Result<(), RequestError> {
+    async fn finish(&self, call: &Receipt, receipt: &str) -> Result<(), RequestError> {
+        let request = &call.request;
         let names = self
             .parts(&request.bot, &request.id)
             .await?
@@ -197,7 +199,8 @@ impl Requests for InMemoryRequests {
             .cloned())
     }
 
-    async fn fill(&self, request: &Request, receipt: &str) -> Result<(), RequestError> {
+    async fn fill(&self, call: &Receipt, receipt: &str) -> Result<(), RequestError> {
+        let request = &call.request;
         if let Some(row) = self
             .rows
             .lock()
@@ -213,7 +216,7 @@ impl Requests for InMemoryRequests {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::request::{Scope, armed, armed_part, digest_of, take, within};
+    use crate::request::{Request, Scope, armed, armed_part, digest_of, take, within};
 
     fn request(bot: &str, id: &str) -> Request {
         Request {
@@ -275,7 +278,10 @@ mod tests {
         assert_eq!(held.verb, "capture");
         assert_eq!(held.landed, "{\"address\":\"person:alpha#f1\"}");
         assert_eq!(held.receipt, None, "the receipt comes after the commit");
-        ledger.fill(&me, "{\"ok\":true}").await.unwrap();
+        ledger
+            .fill(&Scope::new(me.clone()).receipt(), "{\"ok\":true}")
+            .await
+            .unwrap();
         let filled = ledger
             .lookup(&me.bot, &me.id)
             .await
@@ -344,7 +350,10 @@ mod tests {
         let ledger = InMemoryRequests::new();
         let me = request("bot:milhouse", "r1");
         write_part(&ledger, me.clone(), "one").await;
-        ledger.finish(&me, "{\"ok\":true}").await.unwrap();
+        ledger
+            .finish(&Scope::new(me.clone()).receipt(), "{\"ok\":true}")
+            .await
+            .unwrap();
         let held = ledger
             .lookup(&me.bot, &me.id)
             .await
@@ -354,7 +363,10 @@ mod tests {
         assert_eq!(held.verb, "capture");
         assert!(held.landed.contains("one"), "{}", held.landed);
         // Finishing twice keeps one row and the newest receipt.
-        ledger.finish(&me, "{\"ok\":2}").await.unwrap();
+        ledger
+            .finish(&Scope::new(me.clone()).receipt(), "{\"ok\":2}")
+            .await
+            .unwrap();
         assert_eq!(ledger.len(), 1);
     }
 }

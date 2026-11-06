@@ -470,23 +470,23 @@ impl State {
     }
 
     /// **The generation a write under this id belongs to.** The newest
-    /// generation while one of its rows is still held at `at`; the next number
-    /// once every row of it has aged out; 1 for an id with no generation held. A
+    /// generation while one of its rows is still held at `at`; the first event's
+    /// signed second, biased into unsigned order, once every row has aged out. A
     /// reused id so starts a generation of its own, and a late receipt of the
     /// old attempt cannot attach to it.
     pub fn generation_for(&self, actor: &ObjectId, id: &RequestId, at: Timestamp) -> u64 {
-        let Some((generation, held)) = self
+        if let Some((generation, held)) = self
             .requests
             .get(&(actor.clone(), id.clone()))
             .and_then(|generations| generations.last_key_value())
-        else {
-            return 1;
-        };
-        if held.horizon().is_some_and(|horizon| horizon >= at) {
-            *generation
-        } else {
-            generation + 1
+            && held.horizon().is_some_and(|horizon| horizon >= at)
+        {
+            return *generation;
         }
+        // New attempts are separated by the keep window, so their first
+        // seconds differ even after eviction. The bias preserves time order
+        // before the epoch too; imported generation 1 remains below them.
+        (at.as_second() as u64) ^ (1_u64 << 63)
     }
 
     pub fn lookup(&self, actor: &ObjectId, id: &RequestId, at: Timestamp) -> Option<&Commit> {

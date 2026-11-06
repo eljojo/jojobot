@@ -99,13 +99,15 @@ async fn a_capture_spends_its_id_with_the_claim_and_a_second_one_stores_nothing(
 
     // ── the first call spends the id, and the claim is stored ───────────────
     let first = request("bot:sigma", "r1");
+    let first_scope = Scope::new(first.clone());
+    let stored = within(
+        Arc::clone(&first_scope),
+        armed(memory.capture(claim_about(&milhouse, "wears glasses"))),
+    )
+    .await
+    .is_ok();
     assert_eq!(
-        captured(
-            &memory,
-            first.clone(),
-            claim_about(&milhouse, "wears glasses")
-        )
-        .await,
+        (stored, first_scope.was_spent()),
         (true, true),
         "the first call stores the claim and spends the id"
     );
@@ -123,7 +125,10 @@ async fn a_capture_spends_its_id_with_the_claim_and_a_second_one_stores_nothing(
         held.landed
     );
     assert_eq!(held.receipt, None, "the receipt is filled after the commit");
-    ledger.fill(&first, "{\"ok\":true}").await.expect("filled");
+    ledger
+        .fill(&first_scope.receipt(), "{\"ok\":true}")
+        .await
+        .expect("filled");
     assert_eq!(
         ledger
             .lookup(&first.bot, &first.id)
@@ -1575,6 +1580,7 @@ async fn each_part_is_stored_with_its_own_row_and_the_id_is_spent_when_the_verb_
     assert_eq!(held[0].part, "one");
     assert_eq!(held[0].verb, "capture");
     assert_eq!(held[0].digest, first.digest);
+    assert_eq!(held[0].key, scope.receipt().key);
     assert_eq!(held[0].recorded.note.as_deref(), Some("plan"));
     assert_eq!(
         scope.recorded("one"),
@@ -1633,6 +1639,13 @@ async fn each_part_is_stored_with_its_own_row_and_the_id_is_spent_when_the_verb_
     );
 
     // ── finishing spends the id, with the receipt ────────────────────────────
+    let resumed = Scope::resuming(
+        first.clone(),
+        held[0].key.clone(),
+        held.into_iter()
+            .map(|row| (row.part, row.recorded))
+            .collect(),
+    );
     assert!(
         ledger
             .lookup(&first.bot, &first.id)
@@ -1641,7 +1654,7 @@ async fn each_part_is_stored_with_its_own_row_and_the_id_is_spent_when_the_verb_
             .is_none()
     );
     ledger
-        .finish(&first, "{\"ok\":true}")
+        .finish(&resumed.receipt(), "{\"ok\":true}")
         .await
         .expect("finished");
     let spent = ledger
@@ -1653,7 +1666,7 @@ async fn each_part_is_stored_with_its_own_row_and_the_id_is_spent_when_the_verb_
     assert_eq!(spent.verb, "capture");
     assert_eq!(rows(&pool).await, 1);
     ledger
-        .finish(&first, "{\"ok\":2}")
+        .finish(&scope.receipt(), "{\"ok\":2}")
         .await
         .expect("finishing again is no error");
     assert_eq!(rows(&pool).await, 1, "one row for one id");
@@ -2447,7 +2460,7 @@ async fn a_restart_recognises_the_ids_of_a_memory_a_mail_and_a_session_write() {
         .await
         .expect("the entry lands");
         ledger
-            .finish(&session_request, "{\"ok\":true}")
+            .finish(&scope.receipt(), "{\"ok\":true}")
             .await
             .expect("the verb finishes");
     }

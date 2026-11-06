@@ -670,7 +670,10 @@ async fn writer_recovery_native_request_receipt_uses_the_process_writer() {
             digest: "same arguments".into(),
         };
         assert!(
-            requests.fill(&request, "{}").await.is_err(),
+            requests
+                .fill(&Scope::new(request).receipt(), "{}")
+                .await
+                .is_err(),
             "the pool is closed"
         );
     })

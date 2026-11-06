@@ -248,6 +248,7 @@ impl Jojobot {
             } else {
                 Scope::resuming(
                     request,
+                    written.first().and_then(|row| row.key.clone()),
                     written
                         .into_iter()
                         .map(|row| (row.part, row.recorded))
@@ -293,7 +294,7 @@ impl Jojobot {
                 }
                 if let Some(result) = &kept
                     && let Ok(receipt) = serde_json::to_string(result)
-                    && let Err(error) = ledger.finish(request, &receipt).await
+                    && let Err(error) = ledger.finish(&scope.receipt(), &receipt).await
                 {
                     tracing::error!(%error, "the receipt of a finished request id was not stored");
                 }
@@ -313,7 +314,7 @@ impl Jojobot {
             }
             if let Some(result) = &kept
                 && let Ok(receipt) = serde_json::to_string(result)
-                && let Err(error) = ledger.fill(request, &receipt).await
+                && let Err(error) = ledger.fill(&scope.receipt(), &receipt).await
             {
                 tracing::error!(%error, "the receipt of a spent request id was not stored");
             }

@@ -100,6 +100,14 @@ pub struct Request {
     pub digest: String,
 }
 
+/// The call's claim and the exact attempt its commit staged. A fake ledger
+/// has no permanent-identity key and leaves `key` empty.
+#[derive(Debug, Clone)]
+pub struct Receipt {
+    pub request: Request,
+    pub key: Option<events::RequestKey>,
+}
+
 /// What a store keeps for a spent id.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Stored {
@@ -124,7 +132,7 @@ pub trait Requests: Send + Sync {
 
     /// Record the answer the verb gave for a spent id. Filling an id nobody
     /// spent changes nothing.
-    async fn fill(&self, request: &Request, receipt: &str) -> Result<(), RequestError>;
+    async fn fill(&self, request: &Receipt, receipt: &str) -> Result<(), RequestError>;
 
     /// **The parts of a write that an earlier call under this id wrote**, in the
     /// order they were written. Empty when the id began no write that commits in
@@ -134,7 +142,7 @@ pub trait Requests: Send + Sync {
     /// **Spend the id of a write that committed in parts, now that every part is
     /// written**, with the answer the verb gave. A repeat then answers from it. An
     /// id already spent keeps its row and takes the receipt.
-    async fn finish(&self, request: &Request, receipt: &str) -> Result<(), RequestError>;
+    async fn finish(&self, request: &Receipt, receipt: &str) -> Result<(), RequestError>;
 }
 
 /// Why a request operation failed.
@@ -212,6 +220,7 @@ pub fn digest_of(canonical: &str) -> String {
 #[derive(Debug)]
 pub struct Scope {
     request: Request,
+    key: Mutex<Option<events::RequestKey>>,
     state: Mutex<State>,
     parts: Mutex<Parts>,
 }
@@ -231,6 +240,7 @@ pub struct Recorded {
 /// One part of a write that commits in several, as the ledger holds it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PartRow {
+    pub key: Option<events::RequestKey>,
     pub part: String,
     pub verb: String,
     pub digest: String,
@@ -263,6 +273,7 @@ impl Scope {
     pub fn new(request: Request) -> Arc<Self> {
         Arc::new(Self {
             request,
+            key: Mutex::new(None),
             state: Mutex::new(State::Open),
             parts: Mutex::new(Parts::default()),
         })
@@ -270,8 +281,13 @@ impl Scope {
 
     /// **A call that sends an id some of whose parts an earlier call already
     /// wrote.** The parts are skipped by [`part`] and read back from here.
-    pub fn resuming(request: Request, recorded: Vec<(String, Recorded)>) -> Arc<Self> {
+    pub fn resuming(
+        request: Request,
+        key: Option<events::RequestKey>,
+        recorded: Vec<(String, Recorded)>,
+    ) -> Arc<Self> {
         let scope = Self::new(request);
+        *scope.key.lock().expect("a scope is poisoned") = key;
         scope
             .parts
             .lock()
@@ -304,6 +320,15 @@ impl Scope {
 
     pub fn request(&self) -> &Request {
         &self.request
+    }
+
+    /// The key is published only after its transaction commits, or carried
+    /// from the parts an earlier call committed.
+    pub fn receipt(&self) -> Receipt {
+        Receipt {
+            request: self.request.clone(),
+            key: self.key.lock().expect("a scope is poisoned").clone(),
+        }
     }
 
     /// Whether a commit stored the write with the id's row.
@@ -508,6 +533,12 @@ impl Reservation {
     /// What the verb asked the ledger to keep beside this part.
     pub fn note(&self) -> Option<&str> {
         self.part.as_ref().and_then(|armed| armed.note.as_deref())
+    }
+
+    /// Publish the key staged by this commit together with its landed value.
+    pub fn spent_as(self, key: events::RequestKey, landed: String) {
+        *self.scope.key.lock().expect("a scope is poisoned") = Some(key);
+        self.spent_with(landed);
     }
 
     /// The commit stored the write with the id's row.
@@ -716,6 +747,7 @@ mod tests {
     async fn a_recorded_part_is_read_back_and_its_work_does_not_run() {
         let scope = Scope::resuming(
             request("r1"),
+            None,
             vec![(
                 "one".into(),
                 Recorded {
@@ -739,6 +771,7 @@ mod tests {
     async fn the_parts_a_call_skipped_are_named_in_the_order_it_met_them() {
         let scope = Scope::resuming(
             request("r1"),
+            None,
             ["one", "two"]
                 .map(|name| {
                     (

@@ -399,9 +399,8 @@ fn ledger_events_number_the_generation_a_new_write_belongs_to() {
     let mut state = State::default();
     let actor = ObjectId("homer".into());
     let id = RequestId("alpha".into());
-    assert_eq!(
-        state.generation_for(&actor, &id, at(0)),
-        1,
+    assert!(
+        state.generation_for(&actor, &id, at(0)) > 1,
         "an id never seen"
     );
 
@@ -413,9 +412,8 @@ fn ledger_events_number_the_generation_a_new_write_belongs_to() {
         1,
         "a live part holds the generation open for the rest of the write"
     );
-    assert_eq!(
-        state.generation_for(&actor, &id, at(11)),
-        2,
+    assert!(
+        state.generation_for(&actor, &id, at(11)) > 1,
         "a part past its keep window is no longer held"
     );
 
@@ -423,23 +421,61 @@ fn ledger_events_number_the_generation_a_new_write_belongs_to() {
         .apply(&LedgerEvent::RequestCommitted(commit(2)))
         .unwrap();
     assert_eq!(state.generation_for(&actor, &id, at(5)), 2);
-    assert_eq!(state.generation_for(&actor, &id, at(11)), 3);
+    assert!(state.generation_for(&actor, &id, at(11)) > 2);
 
     state
         .apply(&LedgerEvent::RequestExpired {
             key: request(2).key,
         })
         .unwrap();
-    assert_eq!(
-        state.generation_for(&actor, &id, at(5)),
-        1,
+    assert!(
+        state.generation_for(&actor, &id, at(5)) > 2,
         "an expired generation is evicted, so none is joined"
     );
-    assert_eq!(
-        state.generation_for(&ObjectId("marge".into()), &id, at(5)),
-        1,
+    assert!(
+        state.generation_for(&ObjectId("marge".into()), &id, at(5)) > 1,
         "another actor's id is its own"
     );
+}
+
+#[test]
+fn ledger_events_derive_distinct_generations_after_eviction_across_the_timestamp_range() {
+    use crate::request::KEPT_FOR;
+    let actor = ObjectId("homer".into());
+    let id = RequestId("alpha".into());
+    let mut previous = 1;
+    for written in [
+        Timestamp::MIN,
+        Timestamp::from_second(-1_000_000).unwrap(),
+        Timestamp::UNIX_EPOCH,
+        at(0),
+        Timestamp::MAX - KEPT_FOR - KEPT_FOR - KEPT_FOR,
+    ] {
+        let mut state = State::default();
+        let generation = state.generation_for(&actor, &id, written);
+        assert!(generation > previous);
+        previous = generation;
+        let mut original = commit(generation);
+        original.written_at = written;
+        original.expires_at = written + KEPT_FOR;
+        let key = original.request.key.clone();
+        state
+            .apply(&LedgerEvent::RequestCommitted(original))
+            .unwrap();
+        let edge = written + KEPT_FOR;
+        assert_eq!(state.generation_for(&actor, &id, edge), generation);
+        let after = edge + jiff::SignedDuration::from_nanos(1);
+        let newer = state.generation_for(&actor, &id, after);
+        assert!(newer > generation);
+        let mut unrelated = commit_of("beta", 0);
+        unrelated.written_at = after;
+        unrelated.expires_at = after + KEPT_FOR;
+        state
+            .apply(&LedgerEvent::RequestCommitted(unrelated))
+            .unwrap();
+        assert!(state.request(&key).is_none());
+        assert_eq!(state.generation_for(&actor, &id, after), newer);
+    }
 }
 
 fn commit_of(id: &str, written: i64) -> Commit {
@@ -616,7 +652,7 @@ fn ledger_events_keep_an_id_for_the_window_and_not_one_second_longer() {
     assert!(state.lookup(&key.actor, &key.id, last).is_some());
     assert_eq!(state.generation_for(&key.actor, &key.id, last), 1);
     assert!(state.lookup(&key.actor, &key.id, after).is_none());
-    assert_eq!(state.generation_for(&key.actor, &key.id, after), 2);
+    assert!(state.generation_for(&key.actor, &key.id, after) > 1);
 
     // An event at the last instant evicts nothing; one a second later does.
     let mut again = spent.clone();

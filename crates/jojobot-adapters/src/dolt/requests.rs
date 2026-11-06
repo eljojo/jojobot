@@ -23,7 +23,7 @@ use jojobot_domain::log::{ObjectId, RequestId as LogRequestId};
 use jojobot_domain::memory::EntityId;
 use jojobot_domain::request::events::{self, LedgerEvent, RequestKey};
 use jojobot_domain::request::{
-    KEPT_FOR, PartRow, Recorded, Request, RequestError, RequestId, Requests, Reservation, Stored,
+    KEPT_FOR, PartRow, Receipt, Recorded, RequestError, RequestId, Requests, Reservation, Stored,
     take,
 };
 use sqlx::{MySql, MySqlConnection, MySqlPool, Row, Transaction};
@@ -149,7 +149,7 @@ impl DoltRequests {
     /// **The ledger, open and settled.** Opened on the first call as a job of the
     /// writer (a replay of the log, and the import of the old tables into a log
     /// that holds no ledger event), and brought up to the log again when a commit
-    /// left its outcome unknown. After that a read touches no store.
+    /// left its outcome unknown. Identity reads still use the store until d.
     async fn seam(&self) -> Result<Arc<Seam>, RequestError> {
         if let Some(seam) = self.writer.seam()
             && !seam.behind()
@@ -168,6 +168,7 @@ impl DoltRequests {
     }
 
     /// The identity a handle answers to, read from the entity tables.
+    /// TEMPORARY(9.3.3): d's read side moves this lookup into the State.
     async fn actor(&self, bot: &EntityId) -> Result<Option<ObjectId>, RequestError> {
         let mut conn = self.pool.acquire().await.map_err(store)?;
         Ok(bot_key(&mut conn, bot).await.map_err(store)?.map(ObjectId))
@@ -209,27 +210,25 @@ impl Requests for DoltRequests {
         }))
     }
 
-    async fn fill(&self, request: &Request, receipt: &str) -> Result<(), RequestError> {
+    async fn fill(&self, request: &Receipt, receipt: &str) -> Result<(), RequestError> {
         owned!(
             self,
             this,
             [request = request.clone(), receipt = receipt.to_string()],
             this.fill(&request, &receipt).await
         );
-        let Some(actor) = self.actor(&request.bot).await? else {
-            return Ok(());
-        };
         let seam = self.seam().await?;
-        let id = LogRequestId(request.id.as_str().to_string());
-        // Filling an id nobody spent changes nothing, and appends nothing.
-        let Some(key) = seam.read(|state| {
-            state
-                .current(&actor, &id)
-                .and_then(|held| held.committed.as_ref())
-                .map(|commit| commit.request.key.clone())
-        }) else {
+        let Some(key) = request.key.clone() else {
             return Ok(());
         };
+        // Filling an id nobody spent changes nothing, and appends nothing.
+        if !seam.read(|state| {
+            state
+                .request(&key)
+                .is_some_and(|held| held.committed.is_some())
+        }) {
+            return Ok(());
+        }
         self.append(vec![LedgerEvent::RequestReceiptRecorded {
             key,
             receipt: receipt.to_string(),
@@ -251,6 +250,7 @@ impl Requests for DoltRequests {
                 .parts(&actor, &id, now)
                 .into_iter()
                 .map(|part| PartRow {
+                    key: Some(part.request.key.clone()),
                     part: part.name.clone(),
                     verb: part.request.verb.clone(),
                     digest: part.request.digest.clone(),
@@ -260,35 +260,39 @@ impl Requests for DoltRequests {
         }))
     }
 
-    async fn finish(&self, request: &Request, receipt: &str) -> Result<(), RequestError> {
+    async fn finish(&self, request: &Receipt, receipt: &str) -> Result<(), RequestError> {
         owned!(
             self,
             this,
             [request = request.clone(), receipt = receipt.to_string()],
             this.finish(&request, &receipt).await
         );
-        let Some(actor) = self.actor(&request.bot).await? else {
+        let seam = self.seam().await?;
+        let Some(key) = request.key.clone() else {
             return Ok(());
         };
-        let seam = self.seam().await?;
-        let id = LogRequestId(request.id.as_str().to_string());
         let now = self.clock.now();
-        let (generation, parts, spent) = seam.read(|state| {
-            (
-                state.generation_for(&actor, &id, now),
-                state
-                    .parts(&actor, &id, now)
-                    .iter()
+        let Some((parts, spent)) = seam.read(|state| {
+            let held = state.request(&key)?;
+            let mut parts: Vec<_> = held
+                .parts
+                .values()
+                .filter(|part| part.expires_at >= now)
+                .collect();
+            parts.sort_by(|a, b| (a.written_at, &a.name).cmp(&(b.written_at, &b.name)));
+            Some((
+                parts
+                    .into_iter()
                     .map(|part| part.name.clone())
                     .collect::<Vec<_>>(),
-                state
-                    .lookup(&actor, &id, now)
-                    .map(|commit| commit.request.key.clone()),
-            )
-        });
+                held.committed.is_some(),
+            ))
+        }) else {
+            return Ok(());
+        };
         // **One row for one id**: a second finish keeps the row and takes the
         // newer receipt.
-        if let Some(key) = spent {
+        if spent {
             return self
                 .append(vec![LedgerEvent::RequestReceiptRecorded {
                     key,
@@ -304,13 +308,9 @@ impl Requests for DoltRequests {
         self.append(vec![LedgerEvent::RequestCompleted {
             commit: events::Commit {
                 request: events::Request {
-                    key: RequestKey {
-                        actor,
-                        id,
-                        generation,
-                    },
-                    verb: request.verb.clone(),
-                    digest: request.digest.clone(),
+                    key,
+                    verb: request.request.verb.clone(),
+                    digest: request.request.digest.clone(),
                 },
                 landed: format!("{{\"parts\":[{names}]}}"),
                 receipt: Some(receipt.to_string()),
@@ -337,6 +337,7 @@ pub(crate) struct Claim {
     landed: String,
     /// The ledger event, staged in the transaction of the write.
     pending: Option<Pending>,
+    key: Option<RequestKey>,
 }
 
 impl Claim {
@@ -345,10 +346,10 @@ impl Claim {
             pending.committed();
         }
         if let Some(reservation) = self.reservation.take() {
-            match reservation.part() {
-                Some(_) => reservation.spent_with(std::mem::take(&mut self.landed)),
-                None => reservation.spent(),
-            }
+            reservation.spent_as(
+                self.key.take().expect("a staged request has its key"),
+                std::mem::take(&mut self.landed),
+            );
         }
     }
 
@@ -397,6 +398,7 @@ pub(crate) async fn claim(
             reservation: None,
             landed: String::new(),
             pending,
+            key: None,
         });
     };
     // **Held by the claim from here on**, so every way out of this function that
@@ -405,6 +407,7 @@ pub(crate) async fn claim(
         reservation: Some(reservation),
         landed: String::new(),
         pending: None,
+        key: None,
     };
     let request = claim
         .reservation
@@ -458,6 +461,7 @@ pub(crate) async fn claim(
         verb: request.verb,
         digest: request.digest,
     };
+    claim.key = Some(request.key.clone());
     let (written_at, expires_at) = (now, now + KEPT_FOR);
     let event = match part {
         Some((name, note)) => {
@@ -554,3 +558,6 @@ pub(crate) async fn commit(
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -67,6 +67,7 @@ mod tests {
                     verb: "rename_entity".into(),
                     digest: request::digest_of("{}"),
                 },
+                None,
                 vec![(
                     "rename".into(),
                     Recorded {
