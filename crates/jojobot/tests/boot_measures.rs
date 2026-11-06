@@ -420,22 +420,33 @@ async fn grow(port: u16) {
         name: &'static str,
         arguments: serde_json::Value,
     ) {
-        let body = call(peer, name, arguments.clone()).await.to_string();
-        if !body.contains("override_token") {
+        // **A refused write is a successful call**, so the answer is read: a write
+        // that did not land would leave the store smaller than the case says.
+        let answer = |result: &serde_json::Value| {
+            result["content"][0]["text"]
+                .as_str()
+                .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())
+                .unwrap_or_default()
+        };
+        let first = answer(&call(peer, name, arguments.clone()).await);
+        assert!(
+            first["wrote"] != false || first["status"] == "blocked",
+            "{name} wrote nothing: {first}"
+        );
+        if first["status"] != "blocked" {
             return;
         }
-        let token = body
-            .split("override_token")
-            .nth(1)
-            .and_then(|rest| {
-                rest.split('"')
-                    .find(|part| part.len() > 8 && !part.contains(':'))
-            })
-            .unwrap_or_else(|| panic!("a blocked write carries its token: {body}"))
+        let token = first["override_token"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{name} was blocked with no token: {first}"))
             .to_string();
         let mut again = arguments;
         again["override_token"] = token.into();
-        call(peer, name, again).await;
+        let second = answer(&call(peer, name, again).await);
+        assert!(
+            second["status"] != "blocked",
+            "{name} was blocked after its token: {second}"
+        );
     }
 
     // **The recorded store may hold a run of this bot**, and a boot then offers
@@ -463,12 +474,13 @@ async fn grow(port: u16) {
         let (peer, sid) = (peer.clone(), sid.clone());
         shards.spawn(async move {
             for n in (shard..PRODUCTION_THINGS).step_by(GROW_CLIENTS as usize) {
-                let handle = format!("load-{n}");
+                let word = scrambled(n);
+                let handle = format!("load-{word}");
                 writing(
                     &peer,
                     "add_entity",
                     serde_json::json!({
-                        "kind": "thing", "handle": handle, "name": format!("Load subject {n}"),
+                        "kind": "thing", "handle": handle, "name": format!("Load {word}"),
                         "source": "user-named", "sid": sid,
                     }),
                 )
@@ -479,7 +491,7 @@ async fn grow(port: u16) {
                     serde_json::json!({
                         "subject": format!("thing:{handle}"),
                         "content": format!(
-                            "Load subject {n} sits on shelf {} of aisle {}", n % 97, n % 31
+                            "Load {word} sits on shelf {} of aisle {}", n % 97, n % 31
                         ),
                         "provenance": "testimony", "recorded_at": "2026-07-01", "sid": sid,
                     }),
@@ -511,6 +523,18 @@ async fn grow(port: u16) {
         started.elapsed().as_secs()
     ));
     client.cancel().await.expect("the client closes");
+}
+
+/// **A name that resembles no other**, so the server's near-miss screen on names
+/// lets each written thing through: ten letters from a mix of the number.
+fn scrambled(n: i64) -> String {
+    let mut x = (n as u64).wrapping_add(0x9E37_79B9_7F4A_7C15);
+    x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    x ^= x >> 31;
+    (0..10)
+        .map(|i| char::from(b'a' + ((x >> (i * 5)) % 26) as u8))
+        .collect()
 }
 
 /// What the store held when a case was measured.
