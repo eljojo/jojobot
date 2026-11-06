@@ -116,6 +116,10 @@ async fn world(store: &Dolt, name: &str) -> World {
     jojobot_domain::memory::kinds::seed(&memory)
         .await
         .expect("the kinds are seeded");
+    // The bot the edits and the merge below are made by. A write names the bot
+    // that made it, and a bot no entity answers to is a name the reader cannot
+    // place and leaves to the read of one thing.
+    thing(&memory, "bot:sigma", "Sigma").await;
     let homer = thing(&memory, "person:homer", "Homer").await;
     let marge = thing(&memory, "person:marge", "Marge").await;
     let bart = thing(&memory, "person:bart", "Bart").await;
