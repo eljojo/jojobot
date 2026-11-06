@@ -9,7 +9,8 @@ file afresh from jojobot before landing; this script writes nothing and pushes
 nothing. WAIT_RUN_API has the same meaning as in scripts/wait-run.
 
 Only pull-request.yml gates count, including dispatches on TRUNK and pull
-requests whose recorded head branch is TRUNK. The newest run that finished
+requests whose recorded head branch is TRUNK. Runs on the trunk tip, or an
+ancestor with an identical tree, count regardless of ref. The newest run that finished
 green or red decides, even on an older sha. Pending, cancelled and skipped runs
 are skipped. A red passes only if every failed job has named tests, every name
 is known, and no other phase failed. No finished verdict means no red to block.
@@ -24,6 +25,7 @@ import importlib.util
 import json
 import os
 import re
+import subprocess
 import sys
 
 
@@ -45,13 +47,24 @@ def trunk_of(run):
 
 
 def newest_verdict(trunk):
+    tip = None
     for page in range(1, wr.PAGES + 1):
         runs = wr.runs_of(page=page)
         for run in sorted(runs, key=lambda r: r["id"], reverse=True):
             if (run["workflow_id"] == "pull-request.yml"
-                    and run["status"] in {"success", "failure"}
-                    and trunk_of(run) == trunk):
-                return run
+                    and run["status"] in {"success", "failure"}):
+                if trunk_of(run) == trunk:
+                    return run
+                if tip is None:
+                    tip, _ = wr.resolve(trunk)
+                sha = run["commit_sha"]
+                if sha == tip:
+                    return run
+                if (subprocess.run(["git", "merge-base", "--is-ancestor", sha, tip],
+                                   capture_output=True).returncode == 0
+                        and subprocess.run(["git", "diff", "--quiet", sha, tip, "--"],
+                                           capture_output=True).returncode == 0):
+                    return run
         if len(runs) < wr.PAGE:
             return None
     raise ValueError("run history exceeds the read window; no verdict established")

@@ -201,11 +201,19 @@ fn landing(standing: &Standing) -> (i32, String) {
 }
 
 fn landing_with(standing: &Standing, release: Value) -> (i32, String) {
+    landing_in(standing, release, None)
+}
+
+fn landing_in(standing: &Standing, release: Value, repo: Option<&Path>) -> (i32, String) {
     let dir = std::env::temp_dir().join(jojobot_bar::scratch::name("jojobot-landing"));
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join("release.json");
     std::fs::write(&file, release.to_string()).unwrap();
-    let output = Command::new(tool().with_file_name("check-landing"))
+    let mut command = Command::new(tool().with_file_name("check-landing"));
+    if let Some(repo) = repo {
+        command.current_dir(repo);
+    }
+    let output = command
         .arg("em-carry")
         .arg("--release")
         .arg(&file)
@@ -227,6 +235,80 @@ fn trunk_gate(id: u64, status: &str) -> Value {
     let mut gate = run(id, "em-carry", RED_SHA, status);
     gate["workflow_id"] = json!("pull-request.yml");
     gate
+}
+
+#[test]
+fn landing_gate_sha_ref_verdict_matches_the_tip_or_an_unchanged_ancestor() {
+    let dir = std::env::temp_dir().join(jojobot_bar::scratch::name("jojobot-landing-sha"));
+    std::fs::create_dir_all(&dir).unwrap();
+    let git = |args: &[&str]| {
+        let output = Command::new("git")
+            .args([
+                "-c",
+                "user.name=Case",
+                "-c",
+                "user.email=case@example.invalid",
+            ])
+            .args(args)
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        String::from_utf8(output.stdout).unwrap().trim().to_string()
+    };
+    git(&["init", "-q"]);
+    git(&["commit", "--allow-empty", "-qm", "base"]);
+    let base = git(&["rev-parse", "HEAD"]);
+    std::fs::write(dir.join("alpha"), "alpha").unwrap();
+    git(&["add", "alpha"]);
+    git(&["commit", "-qm", "change"]);
+    let changed = git(&["rev-parse", "HEAD"]);
+    git(&["commit", "--allow-empty", "-qm", "tip"]);
+    let tip = git(&["rev-parse", "HEAD"]);
+    // An identical descendant tree cannot license the earlier trunk tip.
+    git(&["commit", "--allow-empty", "-qm", "descendant"]);
+    let descendant = git(&["rev-parse", "HEAD"]);
+    for (sha, accepted) in [
+        (&tip, true),
+        (&changed, true),
+        (&base, false),
+        (&descendant, false),
+    ] {
+        for status in ["success", "failure"] {
+            let opposite = if status == "success" {
+                "failure"
+            } else {
+                "success"
+            };
+            let mut candidate = trunk_gate(102, status);
+            candidate["prettyref"] = json!(sha);
+            candidate["commit_sha"] = json!(sha);
+            candidate["event"] = json!("");
+            candidate["trigger_event"] = json!("workflow_dispatch");
+            let standing = stand(Forge {
+                branches: vec![("em-carry", tip.clone())],
+                runs: vec![
+                    (candidate, String::new()),
+                    (trunk_gate(101, opposite), String::new()),
+                ],
+                ..Default::default()
+            });
+            let (code, output) = landing_in(&standing, json!({}), Some(&dir));
+            let expected = if accepted { status } else { opposite };
+            assert_eq!(
+                code,
+                i32::from(expected == "failure"),
+                "{sha}/{status}: {output}"
+            );
+            let number = if accepted {
+                "forge id 102"
+            } else {
+                "forge id 101"
+            };
+            assert!(output.contains(number), "{sha}/{status}: {output}");
+        }
+    }
+    std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]
@@ -294,6 +376,7 @@ fn landing_gate_reads_the_pull_request_head_and_ignores_other_workflows_and_bran
             (other, String::new()),
             (pr, String::new()),
         ],
+        branches: vec![("em-carry", GREEN_SHA.into())],
         ..Default::default()
     });
     let (code, output) = landing(&standing);
@@ -482,7 +565,7 @@ struct Forge {
     /// Every run, newest first, as `(run, job log)`.
     runs: Vec<(Value, String)>,
     /// Branches the forge holds: name and head.
-    branches: Vec<(&'static str, &'static str)>,
+    branches: Vec<(&'static str, String)>,
     /// A run that reads `running` for this many asks of the list, then its own status.
     running_for: usize,
     /// The forge answers 500 to this many asks before it answers anything.
@@ -686,9 +769,9 @@ fn two_runs_of_one_commit() -> Forge {
             ),
         ],
         branches: vec![
-            ("dev9-2374r-work", GREEN_SHA),
-            ("dev9-2374-work", GREEN_SHA),
-            ("dev9-2403-work", RED_SHA),
+            ("dev9-2374r-work", GREEN_SHA.into()),
+            ("dev9-2374-work", GREEN_SHA.into()),
+            ("dev9-2403-work", RED_SHA.into()),
         ],
         ..Default::default()
     }
@@ -915,7 +998,7 @@ fn a_record_without_a_run_number_is_never_given_the_forge_id_as_one() {
     record.as_object_mut().unwrap().remove("index_in_repo");
     let forge = stand(Forge {
         runs: vec![(record, fixture("wait-run-green-job.txt"))],
-        branches: vec![("dev9-2999-work", GREEN_SHA)],
+        branches: vec![("dev9-2999-work", GREEN_SHA.into())],
         ..Default::default()
     });
     let (code, out, err) = wait(&forge, &["dev9-2999-work"]);
@@ -935,7 +1018,7 @@ fn a_cancelled_run_exits_two() {
             run(230, "dev4-2413-work", GREEN_SHA, "cancelled"),
             "2026-10-15T02:00:00.0Z started\n".into(),
         )],
-        branches: vec![("dev4-2413-work", GREEN_SHA)],
+        branches: vec![("dev4-2413-work", GREEN_SHA.into())],
         ..Default::default()
     });
     let (code, out, err) = wait(&forge, &["dev4-2413-work"]);
@@ -1155,7 +1238,7 @@ fn a_red_job_in_a_superseded_run_still_exits_one() {
 fn a_commit_with_no_run_in_time_exits_three() {
     let forge = stand(Forge {
         runs: Vec::new(),
-        branches: vec![("dev4-2413-work", GREEN_SHA)],
+        branches: vec![("dev4-2413-work", GREEN_SHA.into())],
         ..Default::default()
     });
     let ran = Command::new(tool())
@@ -1203,7 +1286,7 @@ fn the_bar_s_own_block_comes_out_whole() {
     );
     let forge = stand(Forge {
         runs: vec![(run(240, "dev4-2413-work", GREEN_SHA, "failure"), log)],
-        branches: vec![("dev4-2413-work", GREEN_SHA)],
+        branches: vec![("dev4-2413-work", GREEN_SHA.into())],
         ..Default::default()
     });
     let (code, out, err) = wait(&forge, &["dev4-2413-work"]);
@@ -1226,7 +1309,7 @@ fn a_run_that_did_not_finish_says_its_log_holds_no_block() {
                 run(230, "dev4-2413-work", GREEN_SHA, status),
                 "2026-10-15T02:00:00.0Z verdict: RED\n2026-10-15T02:00:01.0Z test: FAILED\n".into(),
             )],
-            branches: vec![("dev4-2413-work", GREEN_SHA)],
+            branches: vec![("dev4-2413-work", GREEN_SHA.into())],
             ..Default::default()
         });
         let (code, out, err) = wait(&forge, &["dev4-2413-work"]);
@@ -1251,7 +1334,7 @@ fn a_skipped_job_beside_a_green_one_is_named_and_the_run_exits_zero() {
             run(251, "dev9-2647-work", GREEN_SHA, "success"),
             fixture("wait-run-green-job.txt"),
         )],
-        branches: vec![("dev9-2647-work", GREEN_SHA)],
+        branches: vec![("dev9-2647-work", GREEN_SHA.into())],
         more_jobs: vec![(251, "rooms", "skipped", String::new())],
         ..Default::default()
     });
@@ -1277,7 +1360,7 @@ fn a_skipped_job_beside_a_red_one_is_named_and_the_run_exits_one() {
             run(253, "dev9-2647-work", RED_SHA, "failure"),
             fixture("wait-run-rooms-red-job.txt"),
         )],
-        branches: vec![("dev9-2647-work", RED_SHA)],
+        branches: vec![("dev9-2647-work", RED_SHA.into())],
         more_jobs: vec![(253, "rooms", "skipped", String::new())],
         ..Default::default()
     });
@@ -1303,7 +1386,7 @@ fn a_red_job_in_a_cancelled_run_exits_one() {
             run(254, "dev9-2647-work", RED_SHA, "cancelled"),
             fixture("wait-run-rooms-red-job.txt"),
         )],
-        branches: vec![("dev9-2647-work", RED_SHA)],
+        branches: vec![("dev9-2647-work", RED_SHA.into())],
         more_jobs: vec![(254, "rooms", "cancelled", String::new())],
         ..Default::default()
     });
@@ -1324,7 +1407,7 @@ fn a_job_cancelled_before_it_started_has_no_log_and_the_run_exits_two() {
             run(252, "dev9-2647-work", GREEN_SHA, "cancelled"),
             fixture("wait-run-green-job.txt"),
         )],
-        branches: vec![("dev9-2647-work", GREEN_SHA)],
+        branches: vec![("dev9-2647-work", GREEN_SHA.into())],
         more_jobs: vec![(252, "rooms", "cancelled", String::new())],
         ..Default::default()
     });
@@ -1346,7 +1429,7 @@ fn a_job_prints_its_block_under_its_own_name() {
             run(231, "dev4-2413-work", GREEN_SHA, "success"),
             fixture("wait-run-green-job.txt"),
         )],
-        branches: vec![("dev4-2413-work", GREEN_SHA)],
+        branches: vec![("dev4-2413-work", GREEN_SHA.into())],
         job_name: Some("build"),
         ..Default::default()
     });
@@ -1360,7 +1443,7 @@ fn a_job_prints_its_block_under_its_own_name() {
 fn two_jobs(report: &str, rooms: &str, status: &str) -> Forge {
     Forge {
         runs: vec![(run(250, "dev9-2647-work", RED_SHA, status), fixture(report))],
-        branches: vec![("dev9-2647-work", RED_SHA)],
+        branches: vec![("dev9-2647-work", RED_SHA.into())],
         more_jobs: vec![(250, "rooms", status_of(rooms), fixture(rooms))],
         ..Default::default()
     }
