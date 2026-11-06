@@ -163,6 +163,7 @@ const ALL_VERSIONS: &[&str] = &[
     "0120_role_lease_heartbeat",
     "0121_session_agent",
     "0122_session_agent_history_index",
+    "0123_session_agent_index",
 ];
 
 /// **The versions a start on a fresh store records and does not issue.** An

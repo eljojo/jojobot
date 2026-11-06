@@ -910,6 +910,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../../migrations/0122_session_agent_history_index.sql"),
         leaves: Leaves::Index("session_write", "by_agent"),
     },
+    Migration {
+        version: "0123_session_agent_index",
+        sql: include_str!("../../migrations/0123_session_agent_index.sql"),
+        leaves: Leaves::Index("session", "by_agent"),
+    },
 ];
 
 /// The table recording what has run. Created by hand rather than by a
