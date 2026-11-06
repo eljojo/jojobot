@@ -31,6 +31,7 @@ impl Jojobot {
                 // state. A probe must not turn a recoverable boot into an error.
                 && let Ok(run) = self.sessions.read_session(&id).await
                 && run.state == jojobot_domain::session::SessionState::Wrapped
+                && (!run.takes_writes() || run.window_lapsed_at(self.clock().now()))
             {
                 return Ok(Some(crate::caller::finished_session_declined(
                     handle.name.as_str(),
