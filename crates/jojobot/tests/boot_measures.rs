@@ -41,6 +41,8 @@ const PER_BATCH: u64 = 500;
 /// the floor of its message count until the instance's own is read.
 const PRODUCTION_THINGS: i64 = 3_144;
 const PRODUCTION_MESSAGES: i64 = 11_852;
+/// Connections that write the grown store at once.
+const GROW_CLIENTS: i64 = 8;
 /// A tail under the snapshot cadence of 10,000 events, for the case that needs the
 /// stop to be the only moment a snapshot is due.
 const SMALL_TAIL: u64 = 1_000;
@@ -310,7 +312,8 @@ fn split_sql_statements(dump: &str) -> Vec<String> {
 /// case's own and then booted once by the binary under test, so its migrations
 /// and imports are done before anything is measured. This is the size of a real
 /// instance's rows; the log's tail is added on top by [`prepare`].
-async fn restored_store(name: &str) -> Scratch {
+async fn build_template() -> Scratch {
+    let name = "jojobot-measure-template";
     let fixture = std::env::var("UPGRADE_FIXTURE_DIR")
         .expect("CI supplies UPGRADE_FIXTURE_DIR, the store the last deployed tag recorded");
     // **A relative path is the workspace root's**, as the upgrade gate reads it: a
@@ -349,6 +352,26 @@ async fn restored_store(name: &str) -> Scratch {
     first.stopped().0
 }
 
+/// The grown store, made once for the whole test binary: making it takes
+/// minutes, and every case needs the same one.
+static TEMPLATE: tokio::sync::OnceCell<Scratch> = tokio::sync::OnceCell::const_new();
+
+/// **A copy of the grown store for one case**, so a case changes its own and no
+/// other.
+async fn restored_store(name: &str) -> Scratch {
+    let template = TEMPLATE.get_or_init(build_template).await;
+    let dir = jojobot_adapters::testing::scratch_path(name);
+    let _ = std::fs::remove_dir_all(&dir);
+    let copied = Command::new("cp")
+        .arg("-a")
+        .arg(&template.0)
+        .arg(&dir)
+        .status()
+        .expect("the copy runs");
+    assert!(copied.success(), "the grown store copies");
+    Scratch(dir)
+}
+
 /// **Bring the store to production's size through the server's own front door.**
 /// The recorded store holds a few dozen things and a handful of messages; the
 /// fold fill and the search index cost what the instance holds, so a boot
@@ -371,45 +394,49 @@ async fn grow(port: u16) {
     )))
     .await
     .expect("the client connects to the server");
-    let call = |name: &'static str, arguments: serde_json::Value| {
-        let client = &client;
-        async move {
-            let result = client
-                .call_tool(
-                    CallToolRequestParams::new(name)
-                        .with_arguments(arguments.as_object().expect("an object").clone()),
-                )
-                .await
-                .unwrap_or_else(|e| panic!("{name} failed: {e}"));
-            let text = serde_json::to_value(&result).expect("a result serializes");
-            assert!(text["isError"] != true, "{name} was an error: {text}");
-            text
-        }
-    };
+    let started = Instant::now();
+    let peer = client.peer().clone();
+
+    async fn call(
+        peer: &rmcp::Peer<rmcp::RoleClient>,
+        name: &'static str,
+        arguments: serde_json::Value,
+    ) -> serde_json::Value {
+        let result = peer
+            .call_tool(
+                CallToolRequestParams::new(name)
+                    .with_arguments(arguments.as_object().expect("an object").clone()),
+            )
+            .await
+            .unwrap_or_else(|e| panic!("{name} failed: {e}"));
+        let text = serde_json::to_value(&result).expect("a result serializes");
+        assert!(text["isError"] != true, "{name} was an error: {text}");
+        text
+    }
     // A name that resembles a known one comes back blocked with a token that
     // lets the same call through, which a bulk writer takes.
-    let writing = |name: &'static str, arguments: serde_json::Value| {
-        let call = &call;
-        async move {
-            let first = call(name, arguments.clone()).await;
-            let body = first.to_string();
-            if !body.contains("override_token") {
-                return;
-            }
-            let token = body
-                .split("override_token")
-                .nth(1)
-                .and_then(|rest| {
-                    rest.split('"')
-                        .find(|part| part.len() > 8 && !part.contains(':'))
-                })
-                .expect("a blocked write carries its token")
-                .to_string();
-            let mut again = arguments;
-            again["override_token"] = token.into();
-            call(name, again).await;
+    async fn writing(
+        peer: &rmcp::Peer<rmcp::RoleClient>,
+        name: &'static str,
+        arguments: serde_json::Value,
+    ) {
+        let body = call(peer, name, arguments.clone()).await.to_string();
+        if !body.contains("override_token") {
+            return;
         }
-    };
+        let token = body
+            .split("override_token")
+            .nth(1)
+            .and_then(|rest| {
+                rest.split('"')
+                    .find(|part| part.len() > 8 && !part.contains(':'))
+            })
+            .unwrap_or_else(|| panic!("a blocked write carries its token: {body}"))
+            .to_string();
+        let mut again = arguments;
+        again["override_token"] = token.into();
+        call(peer, name, again).await;
+    }
 
     // **The recorded store may hold a run of this bot**, and a boot then offers
     // resume-or-new and hands back no sid until it is answered.
@@ -419,7 +446,7 @@ async fn grow(port: u16) {
         serde_json::json!({ "bot": "assistant", "brief": true }),
         serde_json::json!({ "bot": "assistant", "brief": true, "resume": "new" }),
     ] {
-        let booted = call("start_here", arguments).await;
+        let booted = call(&peer, "start_here", arguments).await;
         let text = booted["content"][0]["text"].as_str().unwrap_or_default();
         answered = text.chars().take(2_000).collect();
         sid = serde_json::from_str::<serde_json::Value>(text)
@@ -431,38 +458,58 @@ async fn grow(port: u16) {
     }
     let sid = sid.unwrap_or_else(|| panic!("the default identity boots; it answered: {answered}"));
 
-    for n in 0..PRODUCTION_THINGS {
-        let handle = format!("load-{n}");
-        writing(
-            "add_entity",
-            serde_json::json!({
-                "kind": "thing", "handle": handle, "name": format!("Load subject {n}"),
-                "source": "user-named", "sid": sid,
-            }),
-        )
-        .await;
-        writing(
-            "capture",
-            serde_json::json!({
-                "subject": format!("thing:{handle}"),
-                "content": format!("Load subject {n} sits on shelf {} of aisle {}", n % 97, n % 31),
-                "provenance": "testimony", "recorded_at": "2026-07-01", "sid": sid,
-            }),
-        )
-        .await;
+    let mut shards = tokio::task::JoinSet::new();
+    for shard in 0..GROW_CLIENTS {
+        let (peer, sid) = (peer.clone(), sid.clone());
+        shards.spawn(async move {
+            for n in (shard..PRODUCTION_THINGS).step_by(GROW_CLIENTS as usize) {
+                let handle = format!("load-{n}");
+                writing(
+                    &peer,
+                    "add_entity",
+                    serde_json::json!({
+                        "kind": "thing", "handle": handle, "name": format!("Load subject {n}"),
+                        "source": "user-named", "sid": sid,
+                    }),
+                )
+                .await;
+                writing(
+                    &peer,
+                    "capture",
+                    serde_json::json!({
+                        "subject": format!("thing:{handle}"),
+                        "content": format!(
+                            "Load subject {n} sits on shelf {} of aisle {}", n % 97, n % 31
+                        ),
+                        "provenance": "testimony", "recorded_at": "2026-07-01", "sid": sid,
+                    }),
+                )
+                .await;
+            }
+            for n in (shard..PRODUCTION_MESSAGES).step_by(GROW_CLIENTS as usize) {
+                writing(
+                    &peer,
+                    "post_message",
+                    serde_json::json!({
+                        "to": "assistant",
+                        "subject": format!("load message {n}"),
+                        "body": format!(
+                            "Load message {n} about shelf {} and aisle {}", n % 97, n % 31
+                        ),
+                        "sid": sid,
+                    }),
+                )
+                .await;
+            }
+        });
     }
-    for n in 0..PRODUCTION_MESSAGES {
-        writing(
-            "post_message",
-            serde_json::json!({
-                "to": "assistant",
-                "subject": format!("load message {n}"),
-                "body": format!("Load message {n} about shelf {} and aisle {}", n % 97, n % 31),
-                "sid": sid,
-            }),
-        )
-        .await;
+    while let Some(done) = shards.join_next().await {
+        done.expect("a grow client finished");
     }
+    record(&format!(
+        "grow: {PRODUCTION_THINGS} things and {PRODUCTION_MESSAGES} messages written by {GROW_CLIENTS} clients in {} s",
+        started.elapsed().as_secs()
+    ));
     client.cancel().await.expect("the client closes");
 }
 
