@@ -1,0 +1,115 @@
+#!/usr/bin/env python3
+"""Read the trunk's last finished gate before landing, without waiting on CI.
+
+    scripts/check-landing TRUNK --release FILE
+
+FILE holds the release item's recalled fields, including known_reds (a comma
+list of exact test names). Missing known_reds means none are known. Read the
+file afresh from jojobot before landing; this script writes nothing and pushes
+nothing. WAIT_RUN_API has the same meaning as in scripts/wait-run.
+
+Only pull-request.yml gates count, including dispatches on TRUNK and pull
+requests whose recorded head branch is TRUNK. The newest run that finished
+green or red decides, even on an older sha. Pending, cancelled and skipped runs
+are skipped. A red passes only if every failed job has named tests, every name
+is known, and no other phase failed. No finished verdict means no red to block.
+
+Exit 0 permits landing, 1 names the red run to ticket to the EM, 4 means the
+check could not read its inputs. This check does not replace the branch's own
+green run and independent review.
+"""
+import argparse
+import importlib.machinery
+import importlib.util
+import json
+import os
+import re
+import sys
+
+
+# Reading the check must not leave a module cache in the checkout.
+sys.dont_write_bytecode = True
+loader = importlib.machinery.SourceFileLoader(
+    "wait_run", os.path.join(os.path.dirname(os.path.realpath(__file__)), "wait-run")
+)
+spec = importlib.util.spec_from_loader("wait_run", loader)
+wr = importlib.util.module_from_spec(spec)
+loader.exec_module(wr)
+
+
+def trunk_of(run):
+    ref = run["prettyref"]
+    if ref.startswith("#"):
+        return json.loads(run["event_payload"])["pull_request"]["head"]["ref"]
+    return ref
+
+
+def newest_verdict(trunk):
+    for page in range(1, wr.PAGES + 1):
+        runs = wr.runs_of(page=page)
+        for run in sorted(runs, key=lambda r: r["id"], reverse=True):
+            if (run["workflow_id"] == "pull-request.yml"
+                    and run["status"] in {"success", "failure"}
+                    and trunk_of(run) == trunk):
+                return run
+        if len(runs) < wr.PAGE:
+            return None
+    raise ValueError("run history exceeds the read window; no verdict established")
+
+
+def only_known_reds(run, known):
+    if not known:
+        return False
+    jobs = json.loads(wr.fetch(f"/actions/runs/{run['id']}/jobs"))
+    red_jobs = [job for job in jobs if job["status"] == "failure"]
+    if not red_jobs:
+        return False
+    for job in red_jobs:
+        kind, block = wr.classify(wr.fetch(f"/actions/jobs/{job['id']}/logs"))
+        if kind != "block" or block[0] != "verdict: RED":
+            return False
+        names = set()
+        for line in block:
+            phase = re.match(r"^(\S+): FAILED\b", line)
+            if phase and phase[1] != "test":
+                return False
+            failed = re.match(r"^  FAILED: (\S+)", line)
+            if failed:
+                names.add(failed[1])
+        if not names or not names <= known:
+            return False
+    return True
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("trunk")
+    parser.add_argument("--release", required=True, help="JSON of the release item's recalled fields")
+    args = parser.parse_args()
+    if not wr.API:
+        print("WAIT_RUN_API is not set: set it to the repository's API root", file=sys.stderr)
+        return 4
+    try:
+        with open(args.release, encoding="utf-8") as stream:
+            release = json.load(stream)
+        value = release.get("known_reds", "")
+        if not isinstance(value, str):
+            raise ValueError("known_reds must be a comma list of exact test names")
+        known = {name.strip() for name in value.split(",") if name.strip()}
+        run = newest_verdict(args.trunk)
+        if run is None:
+            print(f"pass: {args.trunk} has no finished gate verdict; no red to block")
+            return 0
+        label = f"{wr.named(run)} sha {run['commit_sha']} on {args.trunk}"
+        if run["status"] == "failure" and not only_known_reds(run, known):
+            print(f"REFUSE: {label} is red outside known_reds; wait and ticket the EM")
+            return 1
+        print(f"pass: {label} is {run['status']}" + (" (only known_reds)" if run["status"] == "failure" else ""))
+        return 0
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, wr.Gone) as err:
+        print(f"REFUSE: landing check could not read its inputs: {err}", file=sys.stderr)
+        return 4
+
+
+if __name__ == "__main__":
+    sys.exit(main())

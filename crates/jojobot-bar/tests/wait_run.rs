@@ -196,6 +196,162 @@ const REPO: &str = "/api/v1/repos/homer/jojobot";
 const GREEN_SHA: &str = "5bd016dd9bb84bcd03726abab28b71fd61a0dbb2";
 const RED_SHA: &str = "65c9ebcb5e15fe82d91e0064c00611a5ae7ac057";
 
+fn landing(standing: &Standing) -> (i32, String) {
+    landing_with(standing, json!({}))
+}
+
+fn landing_with(standing: &Standing, release: Value) -> (i32, String) {
+    let dir = std::env::temp_dir().join(jojobot_bar::scratch::name("jojobot-landing"));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("release.json");
+    std::fs::write(&file, release.to_string()).unwrap();
+    let output = Command::new(tool().with_file_name("check-landing"))
+        .arg("em-carry")
+        .arg("--release")
+        .arg(&file)
+        .env("WAIT_RUN_API", format!("{}{REPO}", standing.addr))
+        .output()
+        .expect("run check-landing");
+    std::fs::remove_dir_all(&dir).unwrap();
+    (
+        output.status.code().unwrap_or(-1),
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ),
+    )
+}
+
+fn trunk_gate(id: u64, status: &str) -> Value {
+    let mut gate = run(id, "em-carry", RED_SHA, status);
+    gate["workflow_id"] = json!("pull-request.yml");
+    gate
+}
+
+#[test]
+fn landing_gate_uses_the_newest_finished_verdict_without_waiting() {
+    for newest in [
+        "success",
+        "failure",
+        "running",
+        "waiting",
+        "cancelled",
+        "skipped",
+    ] {
+        for older in ["failure", "success"] {
+            let standing = stand(Forge {
+                runs: vec![
+                    (trunk_gate(102, newest), String::new()),
+                    (trunk_gate(101, older), String::new()),
+                ],
+                ..Default::default()
+            });
+            let (code, output) = landing(&standing);
+            let (status, number) = if ["success", "failure"].contains(&newest) {
+                (newest, "#100 (forge id 102)")
+            } else {
+                (older, "#99 (forge id 101)")
+            };
+            assert_eq!(
+                code,
+                i32::from(status == "failure"),
+                "{newest}/{older}: {output}"
+            );
+            assert!(
+                output.contains(number) && output.contains(RED_SHA),
+                "{output}"
+            );
+            assert_eq!(standing.asked_for("/actions/runs?"), 1);
+        }
+    }
+}
+
+#[test]
+fn landing_gate_refuses_red_and_accepts_green_and_no_finished_run() {
+    for status in ["failure", "success", "running"] {
+        let standing = stand(Forge {
+            runs: vec![(trunk_gate(101, status), String::new())],
+            ..Default::default()
+        });
+        let (code, output) = landing(&standing);
+        assert_eq!(code, i32::from(status == "failure"), "{status}: {output}");
+    }
+}
+
+#[test]
+fn landing_gate_reads_the_pull_request_head_and_ignores_other_workflows_and_branches() {
+    let mut pr = trunk_gate(101, "failure");
+    pr["prettyref"] = json!("#68");
+    pr["event_payload"] = json!(json!({"pull_request": {"head": {"ref": "em-carry"}}}).to_string());
+    let mut other = trunk_gate(103, "success");
+    other["prettyref"] = json!("other-carry");
+    let mut targeted = trunk_gate(104, "success");
+    targeted["workflow_id"] = json!("targeted.yml");
+    let standing = stand(Forge {
+        runs: vec![
+            (targeted, String::new()),
+            (other, String::new()),
+            (pr, String::new()),
+        ],
+        ..Default::default()
+    });
+    let (code, output) = landing(&standing);
+    assert_eq!(code, 1, "{output}");
+    assert!(output.contains("#99 (forge id 101)"), "{output}");
+}
+
+#[test]
+fn landing_gate_only_excuses_exact_known_tests_and_no_other_red_phase() {
+    let log = "verdict: RED\nsize: ok\nbuild: ok\ntest: FAILED — 1 failed\n  FAILED: tests::known\nlint: ok\nlog: target/bar/check.log\n";
+    for (known, log, code) in [
+        (None, log.to_string(), 1),
+        (Some("tests::known"), log.to_string(), 0),
+        (Some("tests::know"), log.to_string(), 1),
+        (Some("tests::known, tests::other"), log.to_string(), 0),
+        (
+            Some("tests::known"),
+            log.replace("lint: ok", "lint: FAILED"),
+            1,
+        ),
+        (
+            Some("tests::known"),
+            log.replace("  FAILED: tests::known\n", ""),
+            1,
+        ),
+        (
+            Some("tests::known"),
+            log.replace(
+                "  FAILED: tests::known",
+                "  FAILED: tests::known\n  FAILED: tests::new",
+            ),
+            1,
+        ),
+    ] {
+        let standing = stand(Forge {
+            runs: vec![(trunk_gate(101, "failure"), log)],
+            ..Default::default()
+        });
+        let fields = known.map_or_else(|| json!({}), |value| json!({"known_reds": value}));
+        let (actual, output) = landing_with(&standing, fields);
+        assert_eq!(actual, code, "known={known:?}: {output}");
+    }
+}
+
+#[test]
+fn landing_gate_checks_every_red_job_before_accepting_known_tests() {
+    let log = "verdict: RED\ntest: FAILED\n  FAILED: tests::known\nlog: target/bar/check.log\n";
+    for extra in ["tests::known", "tests::new"] {
+        let standing = stand(Forge {
+            runs: vec![(trunk_gate(101, "failure"), log.to_string())],
+            more_jobs: vec![(101, "rooms", "failure", log.replace("tests::known", extra))],
+            ..Default::default()
+        });
+        let (code, output) = landing_with(&standing, json!({"known_reds": "tests::known"}));
+        assert_eq!(code, i32::from(extra != "tests::known"), "{output}");
+    }
+}
+
 fn tool() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/wait-run")
 }
