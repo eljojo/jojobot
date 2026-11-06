@@ -18,6 +18,8 @@ mod carried_role;
 pub mod charter;
 pub mod compaction;
 pub mod essay;
+#[cfg(test)]
+mod finished_agent_tests;
 pub mod floor;
 #[cfg(test)]
 mod floor_guard_tests;

@@ -39,6 +39,7 @@ use crate::memory::EntityId;
 pub mod history;
 pub mod mention;
 pub mod role_keys;
+pub mod role_write;
 pub mod run_named;
 
 #[cfg(any(test, feature = "testing"))]

@@ -1946,6 +1946,8 @@ pub async fn a_refused_companion_claim_leaves_the_heartbeat_home_as_it_was<
 }
 
 pub async fn run_all_role_claims<M: Memory>(store: &M) {
+    p1_claim_replaces_or_clears_its_agent(store).await;
+    p1_release_clears_its_agent(store).await;
     many_renewals_leave_the_lease_moment_at_one_write(store).await;
     a_renewal_restamps_the_lease_moment_it_overwrites(store).await;
     a_renewal_is_a_write_on_the_thing(store).await;
@@ -1963,4 +1965,189 @@ pub async fn run_all_role_claims<M: Memory>(store: &M) {
     a_stale_holders_own_write_is_refused_once_a_rival_has_taken_over(store).await;
     a_renewal_after_a_release_is_refused_and_the_role_stays_free(store).await;
     a_renewal_that_carries_more_than_the_lease_is_applied_whole(store).await;
+}
+
+/// The store keeps the pointer in the same write as the holder, including a
+/// takeover and a claim that supplies no agent.
+pub async fn p1_claim_replaces_or_clears_its_agent<M: Memory>(store: &M) {
+    use crate::session::role_write::RoleWrite;
+    let seat = a_seat(
+        store,
+        "bot:contract-role-agent",
+        "role:contract-agent-claim",
+    )
+    .await;
+    let now = crate::session::testing::contract::epoch();
+    let first = RoleWrite::Claim {
+        claimant: "delta",
+        now,
+        agent: Some("delta-agent"),
+    }
+    .patch(&seat.name);
+    let claimed = capture(
+        store,
+        computed(NewFact {
+            fields: first.fields,
+            ..NewFact::about(
+                seat.role.clone(),
+                "the role and its runtime",
+                date(2026, 7, 1),
+            )
+        }),
+    )
+    .await;
+    let fields = folded_fields_of(store, &seat.role).await;
+    assert_eq!(
+        fields.get("agent").map(String::as_str),
+        Some("delta-agent"),
+        "{fields:?}"
+    );
+    assert_eq!(
+        store
+            .claim_history(&claimed.address())
+            .await
+            .expect("claim history")
+            .len(),
+        1
+    );
+    for (agent, claimant, at) in [
+        (
+            Some("epsilon-agent"),
+            "epsilon",
+            now + jiff::SignedDuration::from_hours(1),
+        ),
+        (None, "epsilon", now + jiff::SignedDuration::from_hours(2)),
+    ] {
+        let before = store
+            .claim_history(&claimed.address())
+            .await
+            .expect("claim history")
+            .len();
+        store
+            .update_fact(
+                &claimed.address(),
+                RoleWrite::Claim {
+                    claimant,
+                    now: at,
+                    agent,
+                }
+                .patch(&seat.name),
+                &seat.bot,
+            )
+            .await
+            .expect("claim lands")
+            .written()
+            .expect("claim is not blocked");
+        let fields = folded_fields_of(store, &seat.role).await;
+        assert_eq!(
+            fields.get("holder").map(String::as_str),
+            Some(claimant),
+            "{fields:?}"
+        );
+        assert_eq!(fields.get("agent").map(String::as_str), agent, "{fields:?}");
+        assert_eq!(
+            store
+                .claim_history(&claimed.address())
+                .await
+                .expect("claim history")
+                .len(),
+            before + 1,
+            "the binding takes one revision"
+        );
+        if agent.is_some() {
+            capture(
+                store,
+                NewFact {
+                    sets: ["agent".into()].into(),
+                    fields: [("agent".into(), "delta-agent".into())].into(),
+                    ..NewFact::about(
+                        seat.role.clone(),
+                        "a legacy agent recorded separately",
+                        date(2026, 7, 1),
+                    )
+                },
+            )
+            .await;
+        }
+    }
+}
+
+/// A legacy separate agent write must disappear with its holder.
+pub async fn p1_release_clears_its_agent<M: Memory>(store: &M) {
+    use crate::session::role_write::RoleWrite;
+    let seat = a_seat(
+        store,
+        "bot:contract-role-agent",
+        "role:contract-agent-release",
+    )
+    .await;
+    let now = crate::session::testing::contract::epoch();
+    let claimed = capture(
+        store,
+        computed(NewFact {
+            fields: role_fields("delta", now),
+            ..NewFact::about(
+                seat.role.clone(),
+                "the role and its runtime",
+                date(2026, 7, 1),
+            )
+        }),
+    )
+    .await;
+    capture(
+        store,
+        NewFact {
+            sets: ["agent".into()].into(),
+            fields: [("agent".into(), "delta-agent".into())].into(),
+            ..NewFact::about(
+                seat.role.clone(),
+                "a legacy agent recorded separately",
+                date(2026, 7, 1),
+            )
+        },
+    )
+    .await;
+    let before = store
+        .claim_history(&claimed.address())
+        .await
+        .expect("claim history")
+        .len();
+    store
+        .update_fact(
+            &claimed.address(),
+            RoleWrite::Release { claimant: "delta" }.patch(&seat.name),
+            &seat.bot,
+        )
+        .await
+        .expect("release lands")
+        .written()
+        .expect("release is not blocked");
+    let fields = folded_fields_of(store, &seat.role).await;
+    assert!(!fields.contains_key("holder"), "{fields:?}");
+    assert!(!fields.contains_key("agent"), "{fields:?}");
+    assert_eq!(
+        store
+            .claim_history(&claimed.address())
+            .await
+            .expect("claim history")
+            .len(),
+        before + 1,
+        "the release takes one revision"
+    );
+}
+
+#[cfg(test)]
+mod agent_pointer_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn p1_fake_claim_pointer() {
+        p1_claim_replaces_or_clears_its_agent(&crate::memory::testing::InMemoryMemory::booted())
+            .await;
+    }
+
+    #[tokio::test]
+    async fn p1_fake_release_pointer() {
+        p1_release_clears_its_agent(&crate::memory::testing::InMemoryMemory::booted()).await;
+    }
 }
