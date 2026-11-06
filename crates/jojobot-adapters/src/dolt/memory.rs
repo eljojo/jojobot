@@ -7211,6 +7211,7 @@ impl Memory for DoltMemory {
             )
             .await?;
         }
+        entity_events::emit_type_declared(&declared, &self.clock, by_session)?;
         super::requests::commit(tx, &self.clock, || {
             serde_json::json!({ "name": declared.name.clone() }).to_string()
         })

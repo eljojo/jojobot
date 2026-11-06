@@ -308,3 +308,46 @@ async fn a_rename_moves_the_spelling_and_keeps_the_object() {
     world.writer.drain().await;
     world.server.stop().await;
 }
+
+/// **A type declaration is an entity write too: it emits `TypeDeclared`, and only
+/// when the declaration differs from the one the State holds.** The first
+/// declaration and a changed one are events; declaring the same set again adds
+/// none, so a boot that seeds the shipped types over a log that holds them leaves
+/// the log as it was.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_type_declaration_emits_only_when_it_differs_from_the_state() {
+    use jojobot_domain::memory::types::{DeclaredType, Field, ValueType};
+
+    let mut world = world("entity-events-declare").await;
+    let declared = |keys: &[&str]| {
+        DeclaredType::new(
+            "pledge",
+            keys.iter()
+                .map(|key| Field::new(key, ValueType::Text))
+                .collect(),
+        )
+    };
+    let declare = |keys: &'static [&'static str]| {
+        let (memory, declaration) = (world.memory.clone(), declared(keys));
+        world.job(async move { memory.declare_type(declaration, None).await })
+    };
+    declare(&["witness"]).await.expect("declared");
+    declare(&["witness"]).await.expect("declared again");
+    declare(&["witness", "date"]).await.expect("changed");
+
+    let held = world
+        .writer
+        .seam()
+        .expect("the seam is open")
+        .read_claims(|state| state.declarations_of(&ObjectId("pledge".into())).to_vec());
+    assert_eq!(
+        held,
+        vec![
+            declared(&["witness"]).normalized(),
+            declared(&["witness", "date"]).normalized()
+        ],
+        "one event for the first declaration, none for the repeat, one for the change"
+    );
+    world.writer.drain().await;
+    world.server.stop().await;
+}

@@ -10,8 +10,10 @@
 
 use jiff::{Timestamp, civil::Date};
 use jojobot_domain::log::ObjectId;
+use jojobot_domain::log::claims::ClaimEvent;
 use jojobot_domain::log::claims::entity_change::{EntityChange, entity_change_events};
-use jojobot_domain::log::claims::import::EntityRow;
+use jojobot_domain::log::claims::import::{EntityRow, live};
+use jojobot_domain::memory::types::DeclaredType;
 
 use super::import_rows::{maybe, text};
 use super::*;
@@ -110,4 +112,31 @@ pub(super) async fn emit_object_write(
     };
     let events = entity_change_events(&row, change, clock.now(), session.map(str::to_string));
     crate::writer::sql::emit(events).map_err(store)
+}
+
+/// **Emit `TypeDeclared` when `declared` differs from the declaration the State
+/// holds for its name.** A declaration the State already holds adds no event, so
+/// a seed run over a log that holds the shipped types leaves the log as it was.
+/// Outside a writer job, or before the seam is open, nothing is emitted.
+pub(super) fn emit_type_declared(
+    declared: &DeclaredType,
+    clock: &Clock,
+    session: Option<&str>,
+) -> Result<(), MemoryError> {
+    let kind = ObjectId(declared.name.clone());
+    let Some(held) = crate::writer::sql::read_claims(|state| state.declared(&kind).cloned()) else {
+        return Ok(());
+    };
+    if held.as_ref() == Some(declared) {
+        return Ok(());
+    }
+    let event = live(
+        ClaimEvent::TypeDeclared {
+            kind,
+            declaration: declared.clone(),
+        },
+        clock.now(),
+        session.map(str::to_string),
+    );
+    crate::writer::sql::emit(vec![event]).map_err(store)
 }

@@ -40,11 +40,17 @@ tokio::task_local! {
     static NATIVE: RefCell<Native>;
     static READING: ();
     static READER: MySqlPool;
+    /// The writer whose job this is, so a writer inside it can read the State.
+    static JOB_WRITER: Writer;
 }
 
 type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 pub(super) async fn job<F: Future>(writer: &Writer, work: F) -> F::Output {
+    JOB_WRITER.scope(writer.clone(), job_in(writer, work)).await
+}
+
+async fn job_in<F: Future>(writer: &Writer, work: F) -> F::Output {
     NATIVE
         .scope(RefCell::new(Native::default()), async {
             let answer = work.await;
@@ -102,6 +108,16 @@ pub(crate) fn emit(events: Vec<Event<ClaimEvent>>) -> Result<(), sqlx::Error> {
 /// to join, and emits nothing.
 pub(crate) fn in_writer_job() -> bool {
     NATIVE.try_with(|_| ()).is_ok()
+}
+
+/// **Read the claims State the running job's writer holds.** `None` outside a
+/// writer job and before the seam is open. A writer decides what to emit from
+/// the State, not from the store it is writing.
+pub(crate) fn read_claims<T>(
+    read: impl FnOnce(&jojobot_domain::log::claims::State) -> T,
+) -> Option<T> {
+    let seam = JOB_WRITER.try_with(|writer| writer.seam()).ok()??;
+    Some(seam.read_claims(read))
 }
 
 /// The events emitted since the transaction began, handed over once.
