@@ -130,7 +130,7 @@ fn two_faults_are_told_in_the_order() {
                 edge: Some((EdgeShape::About, "thing:omega".into())),
                 ..request("nobody")
             },
-            refused: Refusal::UnknownSubject("nobody".into()),
+            refused: Refusal::UnknownSubject("nobody".into(), Vec::new()),
         },
         Row {
             name: "a missing edge object before a missing ref",
@@ -139,7 +139,7 @@ fn two_faults_are_told_in_the_order() {
                 refs: vec!["phantom".into()],
                 ..request("alpha")
             },
-            refused: Refusal::UnknownEdgeObject("thing:omega".into()),
+            refused: Refusal::UnknownEdgeObject("thing:omega".into(), Vec::new()),
         },
         Row {
             name: "a missing ref before a missing reference field object",
@@ -148,7 +148,7 @@ fn two_faults_are_told_in_the_order() {
                 fields: BTreeMap::from([("ref-key".into(), "person:moe".into())]),
                 ..request("alpha")
             },
-            refused: Refusal::UnknownRef("phantom".into()),
+            refused: Refusal::UnknownRef("phantom".into(), Vec::new()),
         },
         Row {
             name: "a missing reference field object before a missing source",
@@ -448,7 +448,7 @@ fn an_edge_the_shape_cannot_hold_is_told_before_its_object_is_looked_up() {
     ));
     assert!(matches!(
         prepare(&state, &declared, &located("place:omega")),
-        Err(Refusal::UnknownEdgeObject(_))
+        Err(Refusal::UnknownEdgeObject(..))
     ));
 }
 
@@ -631,7 +631,7 @@ fn a_role_lease_field_is_refused_on_the_verb_and_not_on_the_engine() {
             &declared,
             &leased(Route::Engine, "role:alpha", None)
         ),
-        Err(Refusal::UnknownSubject("role:alpha".into())),
+        Err(Refusal::UnknownSubject("role:alpha".into(), Vec::new())),
         "the engine's route skips the guard"
     );
     assert!(
@@ -762,7 +762,7 @@ fn a_missing_subject_is_told_before_an_owned_key_and_that_before_a_missing_edge(
     let missing_subject = writing("nobody", "state", Actor::Operator, false);
     assert_eq!(
         prepare(&state, &declared, &missing_subject),
-        Err(Refusal::UnknownSubject("nobody".into()))
+        Err(Refusal::UnknownSubject("nobody".into(), Vec::new()))
     );
     let both = CaptureRequest {
         edge: Some((EdgeShape::About, "thing:omega".into())),
@@ -2281,4 +2281,74 @@ fn a_stored_thoughts_first_run_identifies_its_writer() {
         prepare(&state, &[], &sent),
         Err(Refusal::RoomFull { live: 2, capacity: 2, room, .. }) if room.len() == 2
     ));
+}
+
+/// **A name nothing holds is refused with the names it resembles**, read from
+/// the State the refusal was decided on: the subject, an edge's object and a
+/// ref alike. A name nothing resembles carries none.
+#[test]
+fn an_unknown_name_is_refused_with_the_names_it_resembles() {
+    crate::memory::kinds::load_shipped();
+    // Each thing answers to a roster name that is not its handle, so a handle
+    // nobody holds can resemble it by the name alone.
+    let named = |handle: &str, name: &str| {
+        vec![
+            ClaimEvent::ObjectCreated {
+                object: object(handle),
+                body: body("thing", name),
+            },
+            ClaimEvent::AddressBound {
+                object: object(handle),
+                address: handle.to_string(),
+            },
+        ]
+    };
+    let state = replay(
+        &[
+            named("thing:alpha", "delta"),
+            named("thing:omega", "epsilon"),
+        ]
+        .concat(),
+    );
+    let handles = |matches: &[crate::memory::guard::EntityMatch]| -> Vec<String> {
+        matches.iter().map(|m| m.handle.to_string()).collect()
+    };
+
+    let Err(Refusal::UnknownSubject(attempted, near)) =
+        prepare(&state, &[], &request("thing:delta"))
+    else {
+        panic!("a subject nobody holds is refused");
+    };
+    assert_eq!(attempted, "thing:delta");
+    assert_eq!(handles(&near), vec!["thing:alpha"]);
+
+    let Err(Refusal::UnknownEdgeObject(_, near)) = prepare(
+        &state,
+        &[],
+        &CaptureRequest {
+            edge: Some((EdgeShape::Connection, "thing:epsilon".into())),
+            ..request("thing:alpha")
+        },
+    ) else {
+        panic!("an edge object nobody holds is refused");
+    };
+    assert_eq!(handles(&near), vec!["thing:omega"]);
+
+    let Err(Refusal::UnknownRef(_, near)) = prepare(
+        &state,
+        &[],
+        &CaptureRequest {
+            refs: vec!["thing:delta".into()],
+            ..request("thing:alpha")
+        },
+    ) else {
+        panic!("a ref nobody holds is refused");
+    };
+    assert_eq!(handles(&near), vec!["thing:alpha"]);
+
+    let Err(Refusal::UnknownSubject(_, near)) = prepare(&state, &[], &request("thing:sigma"))
+    else {
+        panic!("a subject nobody holds is refused");
+    };
+    assert!(near.is_empty(), "nothing resembles it: {near:?}");
 }

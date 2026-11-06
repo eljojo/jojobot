@@ -22,6 +22,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use jiff::civil::Date;
 
+mod candidates;
 mod chart;
 mod kind;
 mod limits;
@@ -34,6 +35,7 @@ use super::{
 use crate::actor::Actor;
 use crate::app::AppStamp;
 use crate::attention;
+use crate::memory::guard::EntityMatch;
 use crate::memory::{
     self, Edge, EdgeShape, EntityId, FactStatus, MemoryError, Provenance, Standing, WriteClass,
     receipt::Receipt, types::DeclaredType,
@@ -183,9 +185,11 @@ pub enum Refusal {
     /// store reserves, an observation with no source, a receipt that says
     /// nothing or rides an unsettled claim, an edge the shape does not fit.
     Invalid(MemoryError),
-    UnknownSubject(String),
-    UnknownEdgeObject(String),
-    UnknownRef(String),
+    /// A name nothing holds, with the names the held State holds that it
+    /// resembles (see [`candidates`]). Empty when nothing resembles it.
+    UnknownSubject(String, Vec<EntityMatch>),
+    UnknownEdgeObject(String, Vec<EntityMatch>),
+    UnknownRef(String, Vec<EntityMatch>),
     /// A reference field names an object nobody holds.
     UnknownFieldTarget(String),
     /// The home a `derived_from` names is unknown.
@@ -290,7 +294,12 @@ pub fn prepare(
 
     let home = state
         .resolve(&request.subject)
-        .ok_or_else(|| Refusal::UnknownSubject(request.subject.clone()))?
+        .ok_or_else(|| {
+            Refusal::UnknownSubject(
+                request.subject.clone(),
+                candidates::of(state, &request.subject),
+            )
+        })?
         .clone();
     // Who may write a key: only the app the subject is bound to, and only while
     // its grant stands. A key the kind does not mark, or a subject bound to no
@@ -348,9 +357,9 @@ pub fn prepare(
     }
     let edge = match &request.edge {
         Some((shape, object)) => {
-            let object = state
-                .resolve(object)
-                .ok_or_else(|| Refusal::UnknownEdgeObject(object.clone()))?;
+            let object = state.resolve(object).ok_or_else(|| {
+                Refusal::UnknownEdgeObject(object.clone(), candidates::of(state, object))
+            })?;
             if let Some(handle) = state.handle_of(object) {
                 memory::validate_resolved_edge(
                     &Edge {
@@ -369,7 +378,7 @@ pub fn prepare(
     for name in &request.refs {
         let object = state
             .resolve(name)
-            .ok_or_else(|| Refusal::UnknownRef(name.clone()))?;
+            .ok_or_else(|| Refusal::UnknownRef(name.clone(), candidates::of(state, name)))?;
         refs.push(object.clone());
     }
     // The link decision (rule 646): a lone name under a reference key must be the

@@ -82,7 +82,7 @@ fn prepared_verdict(answer: &Result<Vec<ClaimEvent>, Refusal>) -> Verdict {
     match answer {
         Ok(_) => Verdict::Admitted,
         Err(
-            Refusal::UnknownSubject(_) | Refusal::UnknownEdgeObject(_) | Refusal::UnknownRef(_),
+            Refusal::UnknownSubject(..) | Refusal::UnknownEdgeObject(..) | Refusal::UnknownRef(..),
         ) => Verdict::Absent,
         Err(Refusal::BreaksKind(_)) => Verdict::BreaksKind,
         Err(_) => Verdict::Other,
