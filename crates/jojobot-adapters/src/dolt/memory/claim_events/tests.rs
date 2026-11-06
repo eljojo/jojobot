@@ -210,3 +210,176 @@ async fn the_keys_a_claim_sets_are_held_by_the_state_as_the_store_holds_them() {
     writer.drain().await;
     server.stop().await;
 }
+
+/// **What the State holds for a thing, after asserting it is what the store
+/// holds**: the moment each key's value was taken in and who backs each key.
+/// Returns the values the State holds.
+async fn agrees(
+    memory: &DoltMemory,
+    writer: &Writer,
+    pool: &sqlx::MySqlPool,
+    thing: &EntityId,
+) -> std::collections::BTreeMap<String, String> {
+    let key = ObjectId(
+        sqlx::query_scalar::<_, Option<String>>("SELECT badge FROM entity WHERE id = ?")
+            .bind(thing.as_str())
+            .fetch_one(pool)
+            .await
+            .expect("the entity row")
+            .unwrap_or_else(|| thing.to_string()),
+    );
+    let declared = memory.declared_types().await.expect("declarations");
+    let seam = writer.seam().expect("the seam opened with the first begin");
+    let (held, ages, backing) = seam.read_claims(|state| {
+        (
+            state.fields(&key, &declared),
+            state.held_since(&key, &declared),
+            state.backing(&key, &declared),
+        )
+    });
+    let stored = memory.field_ages(thing).await.expect("the store's ages");
+    assert_eq!(
+        ages, stored.keys,
+        "the moment each key's value was taken in"
+    );
+    assert_eq!(
+        backing,
+        memory.backing(thing).await.expect("the store's backing"),
+        "who backs each key"
+    );
+    held
+}
+
+/// **A merge in the State is the merge in the store**: the folded thing's
+/// writes take their places among the survivor's, the survivor's own writes
+/// move on, and a write made after the merge, to a claim of either side, lands
+/// where the store serves it. The claim the merge moved wears its new id.
+#[tokio::test]
+async fn a_merge_and_the_writes_after_it_are_held_by_the_state_as_the_store_holds_them() {
+    let (_scratch, mut server, memory, writer, pool) = world("claim-events-merge").await;
+    let homer = EntityId("person:homer".into());
+    let marge = EntityId("person:marge".into());
+    memory
+        .add_entity(NewEntity::new(marge.clone(), "Marge", "fixture"))
+        .await
+        .expect("add")
+        .written()
+        .expect("written");
+
+    // Marge's write falls between Homer's two, so the merge places it between
+    // them and moves Homer's later write on.
+    let said =
+        |about: EntityId, what: &'static str, kept: &'static [(&'static str, &'static str)]| {
+            let memory = memory.clone();
+            async move {
+                let mut fact = NewFact::about(about, what, date(2026, 9, 1));
+                fact.provenance = Provenance::Inference;
+                fact.fields = kept
+                    .iter()
+                    .map(|(key, value)| (key.to_string(), value.to_string()))
+                    .collect();
+                fact.sets = fact.fields.keys().cloned().collect();
+                memory
+                    .capture(fact)
+                    .await
+                    .expect("capture")
+                    .written()
+                    .expect("not blocked")
+                    .address()
+            }
+        };
+    let _happy = as_request(
+        &writer,
+        "alpha",
+        said(homer.clone(), "eats donuts", &[("mood", "happy")]),
+    )
+    .await;
+    let calm = as_request(
+        &writer,
+        "beta",
+        said(
+            marge.clone(),
+            "keeps the house",
+            &[("mood", "calm"), ("hat", "red")],
+        ),
+    )
+    .await;
+    let grumpy = as_request(
+        &writer,
+        "gamma",
+        said(homer.clone(), "is grumpy", &[("mood", "grumpy")]),
+    )
+    .await;
+    {
+        let (memory, marge, homer) = (memory.clone(), marge.clone(), homer.clone());
+        as_request(&writer, "delta", async move {
+            memory
+                .merge(
+                    &marge,
+                    &homer,
+                    Some("filed twice"),
+                    date(2026, 9, 3),
+                    &EntityId("bot:sigma".into()),
+                    Some("run-a"),
+                )
+                .await
+                .expect("the fold lands");
+        })
+        .await;
+    }
+    let held = agrees(&memory, &writer, &pool, &homer).await;
+    assert_eq!(
+        held["mood"], "grumpy",
+        "the fold's write sits between the survivor's, which keep their order"
+    );
+    assert_eq!(
+        held["hat"], "red",
+        "the survivor holds a key only the fold held"
+    );
+    // Both sides' claims are written again after the merge. The moved claim is
+    // named by the id the merge gave it.
+    let moved = memory
+        .merge_events(None)
+        .await
+        .expect("the merge events")
+        .into_iter()
+        .flat_map(|event| event.claims)
+        .find(|(was, _)| *was == calm.local)
+        .map(|(_, now)| now)
+        .expect("the merge mapped the claim");
+    let rewrite = |at: jojobot_domain::memory::FactAddress, mood: &'static str| {
+        let memory = memory.clone();
+        async move {
+            memory
+                .update_fact(
+                    &at,
+                    FactPatch {
+                        fields: [("mood".to_string(), mood.to_string())].into(),
+                        sets: ["mood".to_string()].into(),
+                        provenance: Some(Provenance::Inference),
+                        ..Default::default()
+                    },
+                    &EntityId("bot:sigma".into()),
+                )
+                .await
+                .expect("the claim is rewritten")
+                .written()
+                .expect("not blocked");
+        }
+    };
+    as_request(&writer, "epsilon", rewrite(grumpy.clone(), "restless")).await;
+    as_request(
+        &writer,
+        "zeta",
+        rewrite(
+            jojobot_domain::memory::FactAddress::new(homer.clone(), moved.clone()),
+            "serene",
+        ),
+    )
+    .await;
+
+    let held = agrees(&memory, &writer, &pool, &homer).await;
+    assert_eq!(held["mood"], "serene", "the newest write holds the key");
+    writer.drain().await;
+    server.stop().await;
+}

@@ -8,19 +8,46 @@
 
 use jiff::Timestamp;
 use jojobot_domain::log::claims::import::{EVENT_KIND, MEANING_VERSION, record_id};
-use jojobot_domain::log::claims::{ClaimBody, ClaimEvent, FieldValue, KeyId};
+use jojobot_domain::log::claims::{
+    ClaimBody, ClaimEvent, FieldValue, KeyId, MovedRecord, MovedWrite,
+};
 use jojobot_domain::log::{Event, ObjectId, RunId};
 use jojobot_domain::memory::WriteClass;
+use jojobot_domain::memory::merge::{Side, interleave};
 use jojobot_domain::memory::write_origin::{WriteOrigin, written_by};
 
 use jojobot_domain::actor::Actor;
 
 use super::*;
 
+/// **A key write as a merge places it**: the key, the place it holds, the moment
+/// the store took it in and the claim that carried it.
+#[derive(Clone)]
+struct Placed {
+    key: String,
+    ordinal: i64,
+    written_at: Option<Timestamp>,
+    fact: String,
+}
+
+impl ServedWrite for Placed {
+    fn at(&self) -> (&str, i64, Option<Timestamp>, &str) {
+        (&self.key, self.ordinal, self.written_at, &self.fact)
+    }
+    fn place(&mut self, ordinal: i64, fact: Option<&str>) {
+        self.ordinal = ordinal;
+        if let Some(fact) = fact {
+            self.fact = fact.to_string();
+        }
+    }
+}
+
 /// What the key writes of one claim write share.
 pub(super) struct Emitting {
     record: jojobot_domain::log::RecordId,
     subject: ObjectId,
+    /// The thing the key writes belong to now, when merges have placed them.
+    merged: Option<String>,
     run: Option<String>,
     actor: Option<Actor>,
 }
@@ -88,7 +115,11 @@ impl DoltMemory {
         tx: &mut Transaction<'_, MySql>,
         fact: &Fact,
     ) -> Result<ClaimBody, MemoryError> {
-        let home = Self::object_key(tx, fact.home.as_str()).await?;
+        // **A claim a merge moved is served at the survivor under the id the
+        // merge gave it**, wherever it is stored.
+        let (served_home, label) =
+            Self::served_address(tx, fact.home.as_str(), fact.id.as_str()).await?;
+        let home = Self::object_key(tx, &served_home).await?;
         let edge = match &fact.edge {
             Some(edge) => Some((
                 edge.shape.to_string(),
@@ -115,7 +146,7 @@ impl DoltMemory {
             ));
         }
         Ok(ClaimBody {
-            label: fact.id.as_str().to_string(),
+            label,
             home,
             content: fact.content.clone(),
             details: fact.details.clone(),
@@ -194,7 +225,10 @@ impl DoltMemory {
         let claim = Self::claim_body_of(tx, fact).await?;
         let (written_at, run, actor) =
             Self::claim_write_origin(tx, &fact.home, &fact.id, ordinal).await?;
-        let record = record_id(&claim.home, fact.id.as_str());
+        let record = record_id(
+            &Self::object_key(tx, fact.home.as_str()).await?,
+            fact.id.as_str(),
+        );
         let payload = if ordinal == 1 {
             ClaimEvent::RecordCreated { record, claim }
         } else {
@@ -212,11 +246,21 @@ impl DoltMemory {
         fact: &FactId,
         claim_write: i64,
     ) -> Result<Emitting, MemoryError> {
-        let subject = Self::object_key(tx, entity.as_str()).await?;
+        let stored = Self::object_key(tx, entity.as_str()).await?;
         let (_, run, actor) = Self::claim_write_origin(tx, entity, fact, claim_write).await?;
+        // **Writes of a merged thing are numbered among the survivor's**, and
+        // belong to it.
+        let survivor = Self::final_survivor(tx, entity.as_str()).await?;
+        let merged = Self::has_merges(tx, &survivor).await?;
+        let subject = if survivor == entity.as_str() {
+            stored.clone()
+        } else {
+            Self::object_key(tx, &survivor).await?
+        };
         Ok(Emitting {
-            record: record_id(&subject, fact.as_str()),
+            record: record_id(&stored, fact.as_str()),
             subject,
+            merged: merged.then_some(survivor),
             run,
             actor,
         })
@@ -233,6 +277,13 @@ impl DoltMemory {
         class: WriteClass,
         value: &Option<String>,
     ) -> Result<(), MemoryError> {
+        // **The place a key write holds is the one the merges give it**, which is
+        // the count of the key's writes on the thing it belongs to now: a write is
+        // the newest of them.
+        let ordinal = match &emitting.merged {
+            Some(survivor) => Self::served_count(tx, survivor, key).await?,
+            None => ordinal,
+        };
         let mut targets = Vec::new();
         if let Some(value) = value {
             for target in jojobot_domain::memory::field_link_targets(value) {
@@ -254,6 +305,200 @@ impl DoltMemory {
                     None => FieldValue::Clear,
                 },
                 targets,
+            },
+        );
+        Ok(())
+    }
+
+    /// The thing a key was folded into, through every merge, or the key itself.
+    async fn final_survivor(
+        tx: &mut Transaction<'_, MySql>,
+        key: &str,
+    ) -> Result<String, MemoryError> {
+        let mut at = key.to_string();
+        for _ in 0..64 {
+            let next: Option<String> = sqlx::query_scalar(
+                "SELECT survivor FROM merge_event WHERE ordinal = 0 AND folded = ?
+                 ORDER BY merge_no DESC LIMIT 1",
+            )
+            .bind(&at)
+            .fetch_optional(&mut **tx)
+            .await
+            .map_err(store)?;
+            match next {
+                Some(next) => at = next,
+                None => break,
+            }
+        }
+        Ok(at)
+    }
+
+    /// Whether any merge folded a thing into this key.
+    async fn has_merges(tx: &mut Transaction<'_, MySql>, key: &str) -> Result<bool, MemoryError> {
+        let found: Option<i64> = sqlx::query_scalar(
+            "SELECT merge_no FROM merge_event WHERE ordinal = 0 AND survivor = ? LIMIT 1",
+        )
+        .bind(key)
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(store)?;
+        Ok(found.is_some())
+    }
+
+    /// **How many writes of a key a thing holds once the merges placed them**,
+    /// the folded things' writes interleaved with its own.
+    async fn served_count(
+        tx: &mut Transaction<'_, MySql>,
+        survivor: &str,
+        key: &str,
+    ) -> Result<i64, MemoryError> {
+        let steps = Self::merges_into(tx, &EntityId(survivor.to_string())).await?;
+        let mut held = std::collections::HashMap::new();
+        for name in std::iter::once(survivor.to_string())
+            .chain(steps.iter().map(|step| step.folded.clone()))
+        {
+            let rows = sqlx::query(
+                "SELECT `key`, ordinal, fact_id, written_at FROM field_write
+                 WHERE entity = ? ORDER BY ordinal",
+            )
+            .bind(&name)
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(store)?;
+            let mut writes = Vec::with_capacity(rows.len());
+            for row in &rows {
+                writes.push(Placed {
+                    key: row.try_get("key").map_err(store)?,
+                    ordinal: row.try_get("ordinal").map_err(store)?,
+                    fact: row.try_get("fact_id").map_err(store)?,
+                    written_at: parse_stamp(
+                        row.try_get::<Option<String>, _>("written_at")
+                            .map_err(store)?,
+                        &name,
+                    ),
+                });
+            }
+            held.insert(name, writes);
+        }
+        apply_merges(&mut held, &steps);
+        Ok(held
+            .remove(survivor)
+            .unwrap_or_default()
+            .iter()
+            .filter(|write| write.key == key)
+            .count() as i64)
+    }
+
+    /// **Where a stored claim is served now**: the thing and the id a merge gave
+    /// it, followed through every merge that moved it on.
+    async fn served_address(
+        tx: &mut Transaction<'_, MySql>,
+        home: &str,
+        local: &str,
+    ) -> Result<(String, String), MemoryError> {
+        let mut at = (home.to_string(), local.to_string());
+        for _ in 0..64 {
+            let next: Option<(String, String)> = sqlx::query_as(
+                "SELECT survivor, survivor_id FROM merge_event
+                 WHERE folded = ? AND folded_id = ? AND ordinal > 0
+                 ORDER BY merge_no DESC LIMIT 1",
+            )
+            .bind(&at.0)
+            .bind(&at.1)
+            .fetch_optional(&mut **tx)
+            .await
+            .map_err(store)?;
+            match next {
+                Some(next) => at = next,
+                None => break,
+            }
+        }
+        Ok(at)
+    }
+
+    /// The record a claim is held in, named by the row it is stored in.
+    async fn stored_record(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        home: &EntityId,
+        local: &str,
+    ) -> Result<jojobot_domain::log::RecordId, MemoryError> {
+        let served = FactAddress::new(home.clone(), FactId(local.to_string()));
+        let at = self.stored_address_of(tx, &served).await?.unwrap_or(served);
+        Ok(record_id(
+            &Self::object_key(tx, at.home.as_str()).await?,
+            at.local.as_str(),
+        ))
+    }
+
+    /// **Add the event of a merge to the open transaction's batch**: who was
+    /// folded into whom, which claims it gave new ids, and the place each key
+    /// write takes among the survivor's. The places are the domain's one rule
+    /// ([`interleave`]) over the writes as they are served before the merge.
+    pub(super) async fn emit_merge(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        folded: &EntityId,
+        survivor: &EntityId,
+        at: &str,
+        session: Option<&str>,
+        address_map: &[(String, String)],
+    ) -> Result<(), MemoryError> {
+        let claims: std::collections::HashMap<&str, &str> = address_map
+            .iter()
+            .map(|(was, now)| (was.as_str(), now.as_str()))
+            .collect();
+        let mut records = Vec::with_capacity(address_map.len());
+        for (was, now) in address_map {
+            records.push(MovedRecord {
+                record: self.stored_record(tx, folded, was).await?,
+                label: now.clone(),
+            });
+        }
+        type Sides = (Vec<RawWrite>, Vec<RawWrite>);
+        let mut by_key: std::collections::BTreeMap<String, Sides> = Default::default();
+        for write in self.raw_writes_on(tx, folded).await? {
+            if claims.contains_key(write.fact.as_str()) {
+                by_key.entry(write.key.clone()).or_default().0.push(write);
+            }
+        }
+        for write in self.raw_writes_on(tx, survivor).await? {
+            by_key.entry(write.key.clone()).or_default().1.push(write);
+        }
+        let mut writes = Vec::new();
+        for (key, (mut theirs, mut ours)) in by_key {
+            if theirs.is_empty() {
+                continue;
+            }
+            theirs.sort_by_key(|write| write.ordinal);
+            ours.sort_by_key(|write| write.ordinal);
+            for (place, (side, write)) in interleave(theirs, ours).into_iter().enumerate() {
+                let ordinal = place as i64 + 1;
+                if side == Side::Survivor && ordinal == write.ordinal {
+                    continue;
+                }
+                let home = if side == Side::Folded {
+                    folded
+                } else {
+                    survivor
+                };
+                writes.push(MovedWrite {
+                    record: self.stored_record(tx, home, &write.fact).await?,
+                    key: KeyId(key.clone()),
+                    from_ordinal: write.ordinal as u64,
+                    ordinal: ordinal as u64,
+                });
+            }
+        }
+        emit_one(
+            None,
+            session.map(str::to_string),
+            parse_stamp(Some(at.to_string()), folded.as_str()),
+            ClaimEvent::ObjectsMerged {
+                folded: Self::object_key(tx, folded.as_str()).await?,
+                survivor: Self::object_key(tx, survivor.as_str()).await?,
+                records,
+                writes,
             },
         );
         Ok(())

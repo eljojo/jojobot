@@ -2112,11 +2112,21 @@ impl DoltMemory {
         // **The merge as an appended event**, in the transaction that makes it:
         // who was folded into whom, when, in which run, and where each claim
         // went. Nothing reads it to decide anything about the fold itself.
+        let merged_at = self.clock.now().to_string();
+        self.emit_merge(
+            tx,
+            &folded_key,
+            &survivor_key,
+            &merged_at,
+            session,
+            &address_map,
+        )
+        .await?;
         append_merge_event(
             tx,
             &folded_key,
             &survivor_key,
-            self.clock.now().to_string(),
+            merged_at,
             session,
             &address_map,
         )
