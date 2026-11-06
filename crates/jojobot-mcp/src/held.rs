@@ -683,6 +683,52 @@ mod tests {
     use crate::harness::*;
     use crate::memory::testing::*;
 
+    #[tokio::test]
+    async fn collapse_guard_catches_a_changed_part_at_an_unchanged_version() {
+        fn answer(prose: &str) -> CallToolResponse {
+            let mut answered =
+                CallToolResponse::from(CallToolResult::success(vec![ContentBlock::text(
+                    serde_json::json!({"objects":[{
+                        "id":"person:homer", "name":"Homer", "prose":prose
+                    }]})
+                    .to_string(),
+                )]));
+            mark_call(&mut answered, "recall", false);
+            answered
+        }
+
+        let jojobot = handler();
+        let sid = crate::mailboxes::testing::owning(&jojobot, "gamma").await;
+        ensure(&jojobot, "homer").await;
+        let mut first = answer("received page");
+        jojobot.add_held_changed(&mut first, Some(&sid)).await;
+        let mut same = answer("received page");
+        jojobot.add_held_changed(&mut same, Some(&sid)).await;
+        let CallToolResponse::Complete(same) = same else {
+            panic!("the unchanged control completes");
+        };
+        assert_eq!(json_of(&same)[collapse::COLLAPSED]["count"], 1);
+
+        // A missed stamp or a derived read can change a part while its owner's
+        // store version stays put. The guard must catch the text it would hide.
+        let caught = tokio::spawn(async move {
+            let mut changed = answer("unreceived page");
+            jojobot.add_held_changed(&mut changed, Some(&sid)).await;
+        })
+        .await
+        .expect_err("the guard must catch unseen prose at the same version");
+        assert!(caught.is_panic());
+        let payload = caught.into_panic();
+        let diagnostic = payload
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| payload.downcast_ref::<&str>().copied())
+            .unwrap_or_default();
+        for identifier in ["person:homer", "prose", "recall"] {
+            assert!(diagnostic.contains(identifier), "{diagnostic}");
+        }
+    }
+
     /// **An answer reads the messages a session holds with one query to the
     /// store, however many it holds.** The check rides on every answer, so a
     /// query for each held message is a query for each message on every call. The
