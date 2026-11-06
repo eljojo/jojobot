@@ -147,6 +147,20 @@ jobs:
           name: upgrade-fixture
           path: target/upgrade-fixture
           retention-days: 1
+      # The store of production's size the boot measures restore, grown once per
+      # grower and kept outside git (scripts/prepare-boot-store).
+      - name: Grown store
+        if: ${{ steps.plan.outputs.fast != 'true' }}
+        run: nix develop -c python3 scripts/prepare-boot-store
+        env:
+          UPGRADE_FIXTURE_DIR: target/upgrade-fixture
+          BOOT_STORE_DIR: target/boot-store
+      - if: ${{ steps.plan.outputs.fast != 'true' }}
+        uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5
+        with:
+          name: boot-store
+          path: target/boot-store
+          retention-days: 1
       - if: ${{ steps.plan.outputs.fast != 'true' }}
         run: nix develop -c make bundle CI_ROOT=${{ env.CI_ROOT }}
       # The bundle is kept a day: a re-run of one job below needs it.
@@ -217,11 +231,17 @@ jobs:
           name: upgrade-fixture
           path: target/upgrade-fixture
       - if: ${{ steps.plan.outputs.fast != 'true' }}
+        uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
+        with:
+          name: boot-store
+          path: target/boot-store
+      - if: ${{ steps.plan.outputs.fast != 'true' }}
         run: scripts/stop-with-siblings nix develop -c make check CI_ROOT=${{ env.CI_ROOT }}
         env:
           BAR_BUNDLE: target/bundle/manifest.json
           TOKEN: ${{ forgejo.token }}
           UPGRADE_FIXTURE_DIR: target/upgrade-fixture
+          BOOT_STORE_DIR: target/boot-store
           SIZE_BASE: ${{ forgejo.event.pull_request.base.sha || 'origin/deploy-9' }}
       # The bar's own log, kept a week. The job log carries only the summary,
       # so a red case's output is in here or nowhere. v3: v4 refuses any host
