@@ -17,6 +17,10 @@ value it reads is the forge runner's own mark, GITHUB_ACTIONS=true: a runner's
 job builds in the shared target dir its runner sets, which no checkout name
 fits, so the ownership check is skipped there. A launch is never relied on.
 
+SIGNALS. TERM, INT and HUP sent to the guard (by `timeout`, or a terminal) go down
+to the command's whole process group, which has a few seconds to end before it is
+killed; the guard then exits with 128 plus the signal and keeps the marker.
+
 RECOVERY. Before the command compiles anything the guard writes a marker in the
 target dir with a snapshot of the units in debug/incremental; the command waits
 for that. A command that ends by itself, red or green, removes the marker and
@@ -76,6 +80,20 @@ def reap(state):
     except PermissionError:
         pass
     raise Refused(f"the process group {pgid} of the dead run did not end")
+
+
+def end_group(pgid):
+    """Wait a few seconds for a group that was told to end, then kill what is left."""
+    for _ in range(100):
+        try:
+            os.killpg(pgid, 0)
+        except ProcessLookupError:
+            return
+        time.sleep(0.05)
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
 
 
 def snapshot(incremental):
@@ -150,7 +168,25 @@ def main(command):
         return 2
     os.write(release, b"go\n")
     os.close(release)
+    # The command runs in a session of its own, so a signal to this process (from
+    # `timeout` or a terminal) never reaches it. Pass TERM down to its group, then
+    # wait for the group to end before this process does.
+    told = []
+
+    def forward(number, _frame):
+        told.append(number)
+        try:
+            os.killpg(child.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+
+    for number in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(number, forward)
     code = child.wait()
+    if told:
+        end_group(child.pid)
+        # The build was cut short: keep the marker, as for any signal.
+        return 128 + told[0]
     if code < 0:
         # A signal ended the command, so the build was cut short: keep the marker.
         return 128 - code

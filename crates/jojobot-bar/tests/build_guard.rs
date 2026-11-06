@@ -39,6 +39,15 @@ fn guard_as(
     command: &str,
     runner: Option<&str>,
 ) -> Output {
+    let mut run = guard_command(root, reported, checkout, command);
+    if let Some(value) = runner {
+        run.env("GITHUB_ACTIONS", value);
+    }
+    support::output_fenced(&mut run).expect("the guard runs")
+}
+
+/// The guard's command line, not yet started, for a case that signals it.
+fn guard_command(root: &Path, reported: &Path, checkout: &str, command: &str) -> Command {
     let script = root
         .join("checkouts")
         .join(checkout)
@@ -62,10 +71,7 @@ fn guard_as(
         .args(["sh", "-c", command])
         .env("CARGO", &cargo)
         .env_remove("GITHUB_ACTIONS");
-    if let Some(value) = runner {
-        run.env("GITHUB_ACTIONS", value);
-    }
-    support::output_fenced(&mut run).expect("the guard runs")
+    run
 }
 
 fn said(out: &Output) -> String {
@@ -390,4 +396,84 @@ fn a_killed_build_leaves_the_marker_with_build_metrics_on_and_off() {
         "a build that failed by itself kept the marker"
     );
     let _ = fs::remove_dir_all(root);
+}
+
+fn is_running(pid: &str) -> bool {
+    Command::new("kill")
+        .args(["-0", pid])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// **A guard ended by TERM or INT ends the whole tree of its command.** `timeout`
+/// signals only the process it started, and the command runs in a session of its
+/// own, so without a forward its grandchildren keep running. The command starts a
+/// grandchild that sleeps. After the signal the guard has exited with the code of
+/// the signal, no process of the tree is left, and the marker stays so that the
+/// next run cleans the units the cut-short build touched.
+#[test]
+fn a_guard_ended_by_a_signal_ends_the_tree_of_its_command() {
+    for (name, number) in [("TERM", 15), ("INT", 2)] {
+        let root = scratch(&format!("tree-{name}"));
+        let own = root.join("own");
+        unit(&own, "touched");
+        let pidfile = root.join("sleeper.pid");
+        let command = format!(
+            "(sleep 300 </dev/null >/dev/null 2>&1 & echo $! > {p}; wait) & wait",
+            p = pidfile.display()
+        );
+        let mut run = guard_command(&root, &own, "own", &command);
+        run.stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        let mut guard = support::fenced_spawn(&mut run).expect("the guard starts");
+        let mut waited = 0;
+        while fs::read_to_string(&pidfile).map_or(true, |text| text.trim().is_empty()) {
+            assert!(waited < 400, "the command never started its grandchild");
+            std::thread::sleep(std::time::Duration::from_millis(25));
+            waited += 1;
+        }
+        let sleeper = fs::read_to_string(&pidfile).unwrap().trim().to_string();
+        assert!(
+            is_running(&sleeper),
+            "the grandchild runs before the signal"
+        );
+
+        Command::new("kill")
+            .args([&format!("-{name}"), &guard.id().to_string()])
+            .status()
+            .expect("the signal is sent");
+        let mut ended = None;
+        for _ in 0..400 {
+            if let Some(status) = guard.try_wait().unwrap() {
+                ended = Some(status);
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        let mut survived = true;
+        for _ in 0..200 {
+            if !is_running(&sleeper) {
+                survived = false;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        // Whatever the guard did, no sleeper outlives this case.
+        let _ = Command::new("kill").args(["-KILL", &sleeper]).status();
+        let _ = guard.kill();
+        let ended = ended.expect("the guard ended after the signal");
+        assert!(!survived, "the grandchild outlived a {name} to the guard");
+        assert_eq!(
+            ended.code(),
+            Some(128 + number),
+            "{name}: how the guard ended"
+        );
+        assert!(
+            own.join(".build-guard.json").exists(),
+            "the marker went with a build that was cut short"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
 }
