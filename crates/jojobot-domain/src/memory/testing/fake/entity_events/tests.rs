@@ -320,3 +320,83 @@ async fn a_kind_declaration_emits_only_when_it_differs_from_the_state() {
         "one event for the first declaration, none for the repeat, one for the change"
     );
 }
+
+/// **The declaration the State holds for a kind is the one the rows hold after the
+/// write**, with every key the kind retains, and not the keys the call brought.
+/// A caller adding a key to a shipped kind leaves the shipped key in the rows; a
+/// call naming no keys takes none away.
+#[tokio::test]
+async fn a_kind_declaration_in_the_state_keeps_every_key_the_rows_keep() {
+    use crate::memory::types::{Field, Origin, ValueType};
+
+    crate::memory::kinds::load_shipped();
+    let fake = InMemoryMemory::seeded();
+    let keys = |names: &[&str]| -> Vec<Field> {
+        names
+            .iter()
+            .map(|name| Field::new(name, ValueType::Text))
+            .collect()
+    };
+    let kind = ObjectId("pledge".into());
+    let state_keys = |fake: &InMemoryMemory| -> Vec<String> {
+        let mut named: Vec<String> = fake
+            .claims_state()
+            .declared(&kind)
+            .expect("the State holds a declaration")
+            .fields
+            .iter()
+            .map(|field| field.key.clone())
+            .collect();
+        named.sort();
+        named
+    };
+
+    fake.declare_kind("pledge", Origin::Shipped, keys(&["witness"]))
+        .await
+        .expect("the shipped key is declared");
+    fake.declare_kind("pledge", Origin::Declared, keys(&["date"]))
+        .await
+        .expect("a caller adds a key");
+    assert_eq!(
+        state_keys(&fake),
+        ["date", "witness"],
+        "the State lost the shipped key the rows keep"
+    );
+    assert_eq!(
+        fake.claims_state().declared(&kind).cloned(),
+        fake.kind_keys_of("pledge")
+            .first()
+            .map(crate::memory::types::DeclaredType::normalized),
+        "the State and the rows disagree on the declaration"
+    );
+
+    fake.declare_kind("pledge", Origin::Shipped, Vec::new())
+        .await
+        .expect("a call naming no keys lands");
+    assert_eq!(
+        state_keys(&fake),
+        ["date", "witness"],
+        "a call naming no keys took keys out of the State"
+    );
+
+    // **A kind that names no keys is held with none**, under its row's origin, as
+    // the Dolt writer holds it.
+    fake.declare_kind("oath", Origin::Shipped, Vec::new())
+        .await
+        .expect("a kind naming no keys lands");
+    assert_eq!(
+        fake.claims_state()
+            .declared(&ObjectId("oath".into()))
+            .cloned(),
+        Some(
+            crate::memory::types::DeclaredType {
+                name: "oath".to_string(),
+                fields: Vec::new(),
+                origin: Origin::Shipped,
+                must: None,
+            }
+            .normalized()
+        ),
+        "a kind with no keys is held empty in the State"
+    );
+}
