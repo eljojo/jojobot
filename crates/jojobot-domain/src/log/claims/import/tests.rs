@@ -1553,6 +1553,7 @@ fn a_supplied_handle_a_stored_thing_once_wore_answers_to_the_supplied_record() {
             former: "view:loops".into(),
             object: object("k1"),
             ordinal: 1,
+            day: jiff::civil::date(2026, 3, 9),
         }],
         supplied: vec![supplied("view:loops")],
         ..Default::default()
