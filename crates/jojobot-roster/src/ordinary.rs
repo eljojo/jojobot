@@ -550,6 +550,7 @@ pub const ORDINARY: &[&str] = &[
     "person:contract-nobody-such-handle",
     "person:contract-someone-else",
     "person:upgrade-fixture-person",
+    "person:upgrade-fixture-cleared",
     "person:contract-x",
     "person:contract-y",
     "person:zenit",

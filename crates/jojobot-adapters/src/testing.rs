@@ -411,6 +411,38 @@ pub async fn ledger_events(
     events
 }
 
+/// **Every claims event the store's log holds, oldest first.** A case that wants
+/// to know what the claims import wrote reads the log with this.
+pub async fn claims_events(
+    pool: &sqlx::MySqlPool,
+) -> Vec<jojobot_domain::log::Event<jojobot_domain::log::claims::ClaimEvent>> {
+    let payloads: Vec<Vec<u8>> = sqlx::query_scalar(
+        "SELECT payload FROM event_log WHERE first_position IS NOT NULL ORDER BY first_position",
+    )
+    .fetch_all(pool)
+    .await
+    .expect("the log is readable");
+    let mut events = Vec::new();
+    for payload in payloads {
+        let batch: serde_json::Value = serde_json::from_slice(&payload).expect("a stored batch");
+        let members = batch[5].as_array().expect("a batch holds its members");
+        for member in members {
+            let bytes: Vec<u8> = member
+                .as_array()
+                .expect("a member is bytes")
+                .iter()
+                .map(|byte| byte.as_u64().expect("a byte") as u8)
+                .collect();
+            if let Some(event) =
+                crate::claims_log::codec::decode_own(&bytes).expect("a claims event reads")
+            {
+                events.push(event);
+            }
+        }
+    }
+    events
+}
+
 /// **Copy the ledger's events into the old tables, as the last release wrote
 /// them.** The storage check still reads `request_receipt` and `request_part`;
 /// until it reads the ledger, a case that wants the check to see a write made

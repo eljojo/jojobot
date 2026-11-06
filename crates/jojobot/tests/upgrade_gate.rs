@@ -4362,6 +4362,87 @@ async fn plant_a_claim_filed_under(
     .expect("the field lands");
 }
 
+/// **A store from before the refusal of a clear by a claim that did not hold the
+/// key keeps what that clear did: the key is off the thing** (rule 677). One claim
+/// holds `mood`; a second, which never held it, cleared it. Before the refusal
+/// that took the key off the thing, so the import writes it as a removal and the
+/// State the log replays to serves no `mood`. The claim that held the value
+/// beside it and cleared by itself reads the same.
+#[tokio::test]
+async fn a_stored_clear_by_a_claim_that_did_not_hold_the_key_is_imported_as_a_removal() {
+    use jojobot_domain::log::ObjectId;
+    use jojobot_domain::log::claims::{ClaimEvent, State};
+    let Restored {
+        scratch,
+        state_dir,
+        store_port,
+        git_ref,
+        ..
+    } = restore_a_fixture(&fixture_dir(), "stored-clear").await;
+    let mut store = open_the_store(&state_dir, store_port).await;
+    sqlx::query(
+        "INSERT INTO entity (id, kind, name, source, crm, parent, boot, prose, badge,
+                             merged_into, archived_reason, archived_at)
+         VALUES ('person:upgrade-fixture-cleared', 'person', 'Cleared', 'test', NULL, NULL,
+                 'on-demand', '', 'clrthg', NULL, NULL, NULL)",
+    )
+    .execute(store.pool())
+    .await
+    .expect("the stored thing lands");
+    plant_a_claim_filed_under(
+        store.pool(),
+        "clrthg",
+        "a claim that holds the mood",
+        ("mood", "calm"),
+    )
+    .await;
+    for statement in [
+        "INSERT INTO fact (entity, id, content, details, provenance, standing, status,
+                           recorded_at, edge_shape, edge_object, event_kind, derived_from,
+                           derived_from_id, inserted_at, stale_after, happened_at,
+                           happened_through)
+         VALUES ('clrthg', 'f2', 'a claim that never held the mood', NULL, 'testimony',
+                 'settled', 'active', '2026-10-09', NULL, NULL, NULL, NULL, NULL,
+                 '2026-10-09T09:00:00Z', NULL, NULL, NULL)",
+        "INSERT INTO fact_write (entity, fact_id, ordinal, content, details, provenance,
+                                standing, status, recorded_at, edge_shape, edge_object,
+                                derived_from, derived_from_id, inserted_at, stale_after,
+                                written_at, happened_at, happened_through, session)
+         VALUES ('clrthg', 'f2', 1, 'a claim that never held the mood', NULL, 'testimony',
+                 'settled', 'active', '2026-10-09', NULL, NULL, NULL, NULL,
+                 '2026-10-09T09:00:00Z', NULL, '2026-10-09T09:00:00Z', NULL, NULL, NULL)",
+        "INSERT INTO field_write (entity, `key`, ordinal, value, fact_id, written_at, write_class)
+         VALUES ('clrthg', 'mood', 2, NULL, 'f2', '2026-10-09T09:00:00Z', 'sets')",
+    ] {
+        sqlx::query(statement)
+            .execute(store.pool())
+            .await
+            .expect("the clear lands");
+    }
+    store.stop().await;
+
+    let first = boot_current(&state_dir, store_port, &git_ref).await;
+    first.stop().await;
+    let mut store = open_the_store(&state_dir, store_port).await;
+    let events = jojobot_adapters::testing::claims_events(store.pool()).await;
+    store.stop().await;
+    assert!(
+        events.iter().any(|event| matches!(
+            &event.payload,
+            ClaimEvent::FieldRemoved { key, ordinal, .. } if key.0 == "mood" && *ordinal == 2
+        )),
+        "recorded at {git_ref}: the stored clear is written as a removal"
+    );
+    let state = State::replay(events.iter());
+    assert!(
+        !state
+            .fields(&ObjectId("clrthg".into()), &[])
+            .contains_key("mood"),
+        "recorded at {git_ref}: the key is off the thing, as the old store served it"
+    );
+    drop(scratch);
+}
+
 /// **What `recall` answers for one handle, with its claims**, or the answer's own
 /// words when it is not an object.
 async fn recalled_with_claims(booted: &Booted, handle: &str) -> serde_json::Value {
