@@ -610,4 +610,76 @@ mod tests {
             );
         }
     }
+
+    /// **The bot that merged is the actor of the claim the merge writes on the
+    /// fake**, with no session to say so: the record of the fold is first written
+    /// by it, and every write of every record on the survivor names it.
+    #[tokio::test]
+    async fn the_bot_that_merged_is_the_actor_of_the_claim_the_merge_writes_on_the_fake() {
+        let fake = InMemoryMemory::booted();
+        let homer = EntityId("person:homer".into());
+        let marge = EntityId("person:marge".into());
+        let sigma = EntityId("bot:sigma".into());
+        for (who, name) in [(&homer, "Homer"), (&marge, "Marge")] {
+            fake.add_entity(NewEntity::new(who.clone(), name, "fixture"))
+                .await
+                .expect("add")
+                .written()
+                .expect("written");
+            let mut fact = NewFact::about(
+                who.clone(),
+                "keeps the house",
+                jiff::civil::date(2026, 9, 1),
+            );
+            fact.provenance = Provenance::Inference;
+            fact.written_by_bot = Some(sigma.clone());
+            fake.capture(fact)
+                .await
+                .expect("capture")
+                .written()
+                .expect("not blocked");
+        }
+        fake.merge(
+            &marge,
+            &homer,
+            Some("filed twice"),
+            jiff::civil::date(2026, 9, 3),
+            &sigma,
+            None,
+        )
+        .await
+        .expect("the fold lands");
+
+        let by_sigma = Some(crate::actor::Actor::Bot(sigma));
+        let held = fake.recall(&homer).await.expect("the claims");
+        assert_eq!(
+            held.len(),
+            3,
+            "Homer's claim, Marge's claim and the record of the fold"
+        );
+        for fact in held {
+            // A claim is served under the handle; the merges are walked by key.
+            let served = FactAddress::new(
+                fake.storage_key(&fact.home)
+                    .expect("the fake files the thing"),
+                fact.id.clone(),
+            );
+            let record = fake.stored_record(&served);
+            let (first, history) = fake.read_claims(|state| {
+                let held = state.record(&record).expect("the State holds the record");
+                (
+                    held.first_writer.clone(),
+                    held.history
+                        .iter()
+                        .map(|write| write.actor.clone())
+                        .collect::<Vec<_>>(),
+                )
+            });
+            assert_eq!(first, by_sigma, "{record:?}: first written by the bot");
+            assert!(
+                history.iter().all(|actor| *actor == by_sigma),
+                "{record:?}: every write names its bot: {history:?}"
+            );
+        }
+    }
 }

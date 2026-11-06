@@ -760,3 +760,97 @@ async fn the_bot_that_wrote_is_the_actor_of_every_claim_write() {
     writer.drain().await;
     server.stop().await;
 }
+
+/// **The bot that merged is the actor of the claim the merge writes**, with no
+/// session to say so: the record of the fold is first written by it, and every
+/// write of every record on the survivor names it.
+#[tokio::test]
+async fn the_bot_that_merged_is_the_actor_of_the_claim_the_merge_writes() {
+    let (_scratch, mut server, memory, writer, pool) = world("claim-events-merge-actor").await;
+    let homer = EntityId("person:homer".into());
+    let marge = EntityId("person:marge".into());
+    let sigma = EntityId("bot:sigma".into());
+    memory
+        .add_entity(NewEntity::new(marge.clone(), "Marge", "fixture"))
+        .await
+        .expect("add")
+        .written()
+        .expect("written");
+
+    for (id, about, what) in [
+        ("alpha", homer.clone(), "eats donuts"),
+        ("beta", marge.clone(), "keeps the house"),
+    ] {
+        let (memory, sigma) = (memory.clone(), sigma.clone());
+        as_request(&writer, id, async move {
+            let mut fact = NewFact::about(about, what, date(2026, 9, 1));
+            fact.provenance = Provenance::Inference;
+            fact.written_by_bot = Some(sigma);
+            memory
+                .capture(fact)
+                .await
+                .expect("capture")
+                .written()
+                .expect("not blocked");
+        })
+        .await;
+    }
+    {
+        let (memory, homer, marge, sigma) =
+            (memory.clone(), homer.clone(), marge.clone(), sigma.clone());
+        as_request(&writer, "gamma", async move {
+            memory
+                .merge(
+                    &marge,
+                    &homer,
+                    Some("filed twice"),
+                    date(2026, 9, 3),
+                    &sigma,
+                    None,
+                )
+                .await
+                .expect("the fold lands");
+        })
+        .await;
+    }
+
+    let by_sigma = Some(jojobot_domain::actor::Actor::Bot(sigma));
+    let records: Vec<jojobot_domain::log::RecordId> = writer
+        .shared_log(&pool)
+        .read_from(Position(0), 100)
+        .await
+        .unwrap()
+        .iter()
+        .flat_map(|batch| batch.members().to_vec())
+        .filter_map(|bytes| crate::claims_log::codec::decode_own(&bytes).ok().flatten())
+        .filter_map(|event| match event.payload {
+            jojobot_domain::log::claims::ClaimEvent::RecordCreated { record, .. } => Some(record),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        records.len(),
+        3,
+        "Homer's claim, Marge's claim and the record of the fold"
+    );
+    let seam = writer.seam().expect("the seam opened with the first begin");
+    for record in &records {
+        let (first, history) = seam.read_claims(|state| {
+            let held = state.record(record).expect("the State holds the record");
+            (
+                held.first_writer.clone(),
+                held.history
+                    .iter()
+                    .map(|write| write.actor.clone())
+                    .collect::<Vec<_>>(),
+            )
+        });
+        assert_eq!(first, by_sigma, "{record:?}: first written by the bot");
+        assert!(
+            history.iter().all(|actor| *actor == by_sigma),
+            "{record:?}: every write names its bot: {history:?}"
+        );
+    }
+    writer.drain().await;
+    server.stop().await;
+}

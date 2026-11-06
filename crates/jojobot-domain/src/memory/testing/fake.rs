@@ -4649,6 +4649,7 @@ impl Memory for InMemoryMemory {
         caller: &EntityId,
         session: Option<&str>,
     ) -> Result<Merge, MemoryError> {
+        let merging_bot = self.writing_bot(caller);
         // **Wrong by kind alone, before either side's existence is even
         // asked.** A fold naming a session steps past the same three things
         // any other memory write onto its handle would.
@@ -4878,7 +4879,7 @@ impl Memory for InMemoryMemory {
                     continue;
                 };
                 let classes = self.held_classes(&folded_key, &tick.fact);
-                self.append_claim_write(record, session.map(str::to_string), None);
+                self.append_claim_write(record, session.map(str::to_string), merging_bot.clone());
                 self.append_writes(
                     &folded_key,
                     &tick.fact,
@@ -4901,7 +4902,7 @@ impl Memory for InMemoryMemory {
                 // Each key keeps the class it was first written under, so the new
                 // order stays on the record as the old one did.
                 let classes = self.held_classes(&folded_key, &place.fact);
-                self.append_claim_write(record, session.map(str::to_string), None);
+                self.append_claim_write(record, session.map(str::to_string), merging_bot.clone());
                 self.append_writes(&folded_key, &place.fact, wrote, &classes);
             }
         }
@@ -4951,7 +4952,7 @@ impl Memory for InMemoryMemory {
             fields: Default::default(),
             ..record.clone()
         });
-        self.append_claim_write(&record, session.map(str::to_string), None);
+        self.append_claim_write(&record, session.map(str::to_string), merging_bot);
 
         // **The folded row stays and starts forwarding.** It is not deleted and
         // it is not left looking like a thing. The entities are locked only now:

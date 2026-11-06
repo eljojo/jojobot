@@ -1999,7 +1999,9 @@ impl DoltMemory {
             stale_after: None,
             receipt: None,
         };
-        let claim_write = Self::write_fact(tx, &record, &self.clock, session, None).await?;
+        // **The fold is made by the caller's bot**, and so is every claim it writes.
+        let bot = self.writing_bot(tx, caller).await?;
+        let claim_write = Self::write_fact(tx, &record, &self.clock, session, bot.as_ref()).await?;
         Self::append_writes(
             tx,
             &record.home,
@@ -2054,7 +2056,7 @@ impl DoltMemory {
                 let on_disk = self.as_stored(tx, &record).await?;
                 let classes = self.held_classes(tx, &folded_key, &tick.fact).await?;
                 let claim_write =
-                    Self::write_fact(tx, &on_disk, &self.clock, session, None).await?;
+                    Self::write_fact(tx, &on_disk, &self.clock, session, bot.as_ref()).await?;
                 Self::append_writes(
                     tx,
                     &on_disk.home,
@@ -2095,7 +2097,7 @@ impl DoltMemory {
                     ));
                 }
                 let claim_write =
-                    Self::write_fact(tx, &on_disk, &self.clock, session, None).await?;
+                    Self::write_fact(tx, &on_disk, &self.clock, session, bot.as_ref()).await?;
                 Self::append_writes(
                     tx,
                     &on_disk.home,
