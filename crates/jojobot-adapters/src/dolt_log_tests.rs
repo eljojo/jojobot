@@ -270,9 +270,9 @@ async fn a_staged_batch_rolls_back_when_a_companion_row_is_refused() {
     assert_eq!(
         refused
             .as_database_error()
-            .and_then(|e| e.code())
-            .as_deref(),
-        Some("23000"),
+            .and_then(|e| e.try_downcast_ref::<sqlx::mysql::MySqlDatabaseError>())
+            .map(|e| e.number()),
+        Some(1062),
         "a real duplicate-key refusal: {refused}"
     );
     tx.rollback().await.unwrap();
@@ -288,6 +288,7 @@ async fn a_staged_batch_rolls_back_when_a_companion_row_is_refused() {
     );
     let kept = batch("after-refused-companion", 0, &[b"kept"]);
     appended(&log, &pool, Position(0), &kept).await;
+    let log = DoltLog::open(pool.clone()).await.unwrap();
     assert_eq!(log.read_from(Position(0), 10).await.unwrap(), [kept]);
     drop(log);
     server.stop().await;
