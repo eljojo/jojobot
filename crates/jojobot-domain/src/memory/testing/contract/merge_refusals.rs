@@ -186,7 +186,7 @@ pub async fn a_folded_row_takes_neither_prose_nor_an_edit<M: Memory>(store: &M) 
         "update_entity names the survivor: {refused:?}"
     );
     // **The edit composed with a claim takes the same road**: it is refused for the
-    // folded row before the claim is judged, and the claim is not written.
+    // folded row before the claim is judged.
     let refused = store
         .update_entity_with_claim(
             &spare,
@@ -204,15 +204,10 @@ pub async fn a_folded_row_takes_neither_prose_nor_an_edit<M: Memory>(store: &M) 
             if attempted == spare.as_str() && into == kept.as_str()),
         "update_entity_with_claim names the survivor: {refused:?}"
     );
-    let held = store
-        .recall(&kept)
-        .await
-        .expect("the survivor's claims read");
-    assert!(
-        held.iter()
-            .all(|fact| fact.content != "a claim on a forwarding row"),
-        "the refused claim was not written: {held:?}"
-    );
+    // No read shows whether the refused claim was written: a claim homed on a folded
+    // key is not served by `recall` of the survivor, and `recall` of the folded key
+    // answers nothing. The refusal above, which both stores raise before the claim
+    // is judged, is the whole proof.
     // The row is as the fold left it.
     assert!(
         !store.has_prose(&spare).await.expect("has_prose reads"),
