@@ -20,7 +20,7 @@ pub const ORDINARY: &[&str] = &[
     "bot:gate-thinker",
     "thing:gate-fern",
     "thing:gate-fine",
-    "thing:gate-kettle",
+    "thing:gate-whisk",
     "thing:gate-pointer",
     "thing:gate-shadow-off",
     "topic:gate-ordinances",

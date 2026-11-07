@@ -15,6 +15,13 @@ fn parsed(what: &str, git_ref: &str, body: &str) -> Value {
 
 /// The head, connected to as the assistant in a run of its own.
 async fn as_the_assistant(booted: &Booted, git_ref: &str) -> (Surface, String) {
+    let (surface, sid, _) = as_the_assistant_run(booted, git_ref).await;
+    (surface, sid)
+}
+
+/// The same, with the run's public name beside its key: the teaching marks are
+/// filed under the name.
+async fn as_the_assistant_run(booted: &Booted, git_ref: &str) -> (Surface, String, String) {
     let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
         .await
         .expect("connecting to the current binary");
@@ -32,7 +39,11 @@ async fn as_the_assistant(booted: &Booted, git_ref: &str) -> (Surface, String) {
         .as_str()
         .unwrap_or_else(|| panic!("recorded at {git_ref}: no run to write in: {boot}"))
         .to_string();
-    (surface, sid)
+    let run = boot["session"]["run"]
+        .as_str()
+        .unwrap_or_else(|| panic!("recorded at {git_ref}: no run name: {boot}"))
+        .to_string();
+    (surface, sid, run)
 }
 
 /// ── (c) The teaching shadow off ─────────────────────────────────────────────
@@ -86,7 +97,7 @@ async fn a_boot_with_the_teaching_shadow_off_keeps_the_marks_and_serves_the_ledg
         &off,
     )
     .await;
-    let (surface, sid) = as_the_assistant(&second, &git_ref).await;
+    let (surface, sid, run) = as_the_assistant_run(&second, &git_ref).await;
     let made = surface
         .call(
             "add_entity",
@@ -127,7 +138,7 @@ async fn a_boot_with_the_teaching_shadow_off_keeps_the_marks_and_serves_the_ledg
         );
     }
     assert!(
-        logged.iter().any(|mark| mark.sid.as_str() == sid),
+        logged.iter().any(|mark| mark.sid.as_str() == run),
         "recorded at {git_ref}: the log did not take the mark of the run that was taught: {logged:?}"
     );
     // **What tells the shadow off from the shadow on**: the legacy rows are no
@@ -139,7 +150,7 @@ async fn a_boot_with_the_teaching_shadow_off_keeps_the_marks_and_serves_the_ledg
         .await
         .expect("the teaching rows read back");
     assert!(
-        rows.iter().all(|mark| mark.sid.as_str() != sid),
+        rows.iter().all(|mark| mark.sid.as_str() != run),
         "recorded at {git_ref}: the legacy rows were kept current with the shadow off: {rows:?}"
     );
     store.stop().await;
@@ -205,7 +216,7 @@ async fn a_thought_stored_over_its_cap_is_read_and_edited_and_refuses_a_merge_wi
     for (kind, handle, name) in [
         ("bot", "gate-thinker", "Gate Thinker"),
         ("bot", "gate-heir", "Gate Heir"),
-        ("thing", "gate-kettle", "Gate Kettle"),
+        ("thing", "gate-whisk", "Gate Whisk"),
     ] {
         let made = surface
             .call(
@@ -239,7 +250,7 @@ async fn a_thought_stored_over_its_cap_is_read_and_edited_and_refuses_a_merge_wi
     // fold would carry over to a bot as a thought.
     let mut store = open_the_store(&state_dir, store_port).await;
     plant_a_long_thought(store.pool(), "bot:gate-thinker", "f90", "bot:assistant").await;
-    plant_a_long_thought(store.pool(), "thing:gate-kettle", "f90", "bot:assistant").await;
+    plant_a_long_thought(store.pool(), "thing:gate-whisk", "f90", "bot:assistant").await;
     store.stop().await;
 
     let booted = boot_current_expecting(&state_dir, store_port, &git_ref, Some(0), &[]).await;
@@ -297,8 +308,8 @@ async fn a_thought_stored_over_its_cap_is_read_and_edited_and_refuses_a_merge_wi
         &surface
             .call(
                 "merge_entities",
-                json!({"duplicate": "thing:gate-kettle", "survivor": "bot:gate-heir",
-                       "reason": "the gate folds the kettle", "sid": sid}),
+                json!({"duplicate": "thing:gate-whisk", "survivor": "bot:gate-heir",
+                       "reason": "the gate folds the whisk", "sid": sid}),
             )
             .await,
     );
@@ -385,12 +396,24 @@ async fn a_message_the_earlier_build_left_replaced_in_new_reads_as_superseded() 
         );
     }
 
-    let delivered = surface.call("read_mailbox", json!({"sid": sid})).await;
-    if !delivered.contains(SECOND_DATE) || !delivered.contains("on the fourth") {
-        fail("the correction delivered", &delivered);
+    // **By message, not by text**: the correction's own envelope names the id it
+    // replaces, so the id may appear in the answer; the replaced message may not.
+    let delivered_raw = surface.call("read_mailbox", json!({"sid": sid})).await;
+    let delivered = parsed("the delivery", &git_ref, &delivered_raw);
+    let ids: Vec<&str> = delivered["messages"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|message| message["id"].as_str())
+        .collect();
+    if !ids.contains(&SECOND_DATE) || !delivered_raw.contains("on the fourth") {
+        fail("the correction delivered", &delivered_raw);
     }
-    if delivered.contains(FIRST_DATE) || delivered.contains("on the third") {
-        fail("the replaced message left out of the delivery", &delivered);
+    if ids.contains(&FIRST_DATE) || delivered_raw.contains("on the third") {
+        fail(
+            "the replaced message left out of the delivery",
+            &delivered_raw,
+        );
     }
 
     let read = parsed(
@@ -454,6 +477,7 @@ async fn a_message_the_earlier_build_left_replaced_in_new_reads_as_superseded() 
 const ORDINANCES: &str = "topic:gate-ordinances";
 const FINE: &str = "thing:gate-fine";
 const POINTER: &str = "thing:gate-pointer";
+const NUMBERED: &str = "topic:gate-ordinances/2";
 
 /// A collection that numbers its members by `number`, one member holding 2, and
 /// a thing whose field names that member by its numbered address, as text. The
@@ -488,13 +512,14 @@ async fn plant_a_numbered_address_in_a_field_value(pool: &sqlx::MySqlPool) {
     .expect("the preceding pass had finished");
 }
 
-/// **A field value holding `<collection>/<N>` as text becomes a link at the first
-/// boot of the head, and the second boot changes nothing.** The marking pass keeps
-/// its name and reads a numbered address as the head's resolver does, so a store
-/// where it had not finished is marked by the new body.
+/// **A field value holding `<collection>/<N>` as text, on a store where the
+/// marking pass had not finished, is named once and left as text, and the second
+/// boot changes nothing.** The marking pass keeps its name and reads a numbered
+/// address as the head's resolver does. The older lowering pass had decided plain
+/// handle text, so the address stays text and the boot says so once; the earlier
+/// body of the pass did not know the address names a member and said nothing.
 #[tokio::test]
-async fn a_numbered_address_in_an_old_field_value_is_marked_once_and_the_second_boot_changes_nothing()
- {
+async fn a_numbered_address_in_an_old_field_value_is_named_once_and_left_as_text() {
     let Restored {
         scratch,
         state_dir,
@@ -509,8 +534,29 @@ async fn a_numbered_address_in_an_old_field_value_is_marked_once_and_the_second_
     plant_a_numbered_address_in_a_field_value(store.pool()).await;
     store.stop().await;
 
-    let first = boot_current(&state_dir, store_port, &git_ref).await;
+    // **The older lowering pass had finished**, so the marking pass leaves a plain
+    // handle as the text the older pass decided on, and says so once. The head
+    // reads `<collection>/<N>` as a handle that names one member: the line below
+    // names the item, which the earlier body of the pass did not know to name.
+    let reports = usize::from(recording_holds_the_plain_ambiguous_handle(&git_ref));
+    let first = boot_current_expecting(
+        &state_dir,
+        store_port,
+        &git_ref,
+        Some(reports),
+        &["FIELD VALUE LEFT AS TEXT"],
+    )
+    .await;
+    let named = first
+        .log
+        .iter()
+        .filter(|line| line.contains("FIELD VALUE LEFT AS TEXT") && line.contains(NUMBERED))
+        .count();
     first.stop().await;
+    assert_eq!(
+        named, 1,
+        "recorded at {git_ref}: the boot did not name the numbered address once"
+    );
     let mut store = open_the_store(&state_dir, store_port).await;
     let linked: Vec<(String,)> = sqlx::query_as(
         "SELECT target FROM field_link WHERE entity = 'gpoint1' AND `key` = 'ruled_by'",
@@ -519,10 +565,9 @@ async fn a_numbered_address_in_an_old_field_value_is_marked_once_and_the_second_
     .await
     .expect("the links of the pointer");
     store.stop().await;
-    assert_eq!(
-        linked,
-        vec![("gfine01".to_string(),)],
-        "recorded at {git_ref}: the numbered address was not marked as a link to the member"
+    assert!(
+        linked.is_empty(),
+        "recorded at {git_ref}: the numbered address was linked against the older pass: {linked:?}"
     );
     let after_first = dump_store(&state_dir).await;
 
@@ -542,8 +587,8 @@ async fn a_numbered_address_in_an_old_field_value_is_marked_once_and_the_second_
         .expect("connecting to the current binary");
     let read = surface.call("recall", json!({"subject": POINTER})).await;
     assert!(
-        read.contains(FINE) && !read.contains(&format!("{ORDINANCES}/2")),
-        "recorded at {git_ref}: the pointer did not serve the member the address names: {read}"
+        read.contains(NUMBERED),
+        "recorded at {git_ref}: the pointer did not keep the numbered address as written: {read}"
     );
     surface.finish().await;
     second.stop().await;
