@@ -77,6 +77,9 @@ enum Placed {
 }
 
 impl Keys {
+    /// **A current name answers before a former one**, in the order
+    /// `DoltMemory::resolve` answers: badge, stored id, supplied handle, former
+    /// handle, adoption.
     fn placed(&self, stored: &str) -> Placed {
         if self.badges.contains(stored) {
             return Placed::Key(stored.to_string());
@@ -84,16 +87,15 @@ impl Keys {
         if let Some(key) = self.by_id.get(stored) {
             return Placed::Key(key.clone());
         }
+        if let Some(key) = self.supplied.get(stored) {
+            return Placed::Key(key.clone());
+        }
         match self.former.get(stored).map(Vec::as_slice) {
             Some([only]) => return Placed::Key(only.clone()),
             Some(_) => return Placed::Ambiguous,
             None => {}
         }
-        match self
-            .supplied
-            .get(stored)
-            .or_else(|| self.adopted.get(stored))
-        {
+        match self.adopted.get(stored) {
             Some(key) => Placed::Key(key.clone()),
             None => Placed::Absent,
         }

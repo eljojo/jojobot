@@ -987,3 +987,48 @@ async fn claims_reconcile_moves_a_renamed_record_and_refuses_two_with_one_first_
 
     server.stop().await;
 }
+
+/// **A current name answers before a former one.** A build supplies `view:loops`
+/// while a stored thing once wore that handle and left it. A claim filed under the
+/// text belongs to the record the build supplies now, as `DoltMemory::resolve`
+/// answers: badge, stored id, supplied handle, former handle, adoption. The claim
+/// lands on the supply identity, not on the thing that wore the handle before.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn claims_import_places_a_current_supplied_name_before_a_former_one() {
+    let (_scratch, mut server, pool) = store("claims-import-current-before-former").await;
+    let supplied = supplied_view("view:loops");
+    let memory = DoltMemory::open(pool.clone()).knowing(supplied.clone());
+    thing(&memory, "person:homer", "Homer").await;
+    let badge: String = sqlx::query_scalar("SELECT badge FROM entity WHERE id = 'person:homer'")
+        .fetch_one(&pool)
+        .await
+        .expect("the thing wears a badge");
+    sqlx::query(
+        "INSERT INTO entity_former_handle (former_handle, badge, changed_at, ordinal)
+         VALUES ('view:loops', ?, '2026-10-01', 1)",
+    )
+    .bind(&badge)
+    .execute(&pool)
+    .await
+    .expect("a former handle the thing wore");
+    say(
+        &memory,
+        &EntityId("view:loops".to_string()),
+        "the board is read on Mondays",
+    )
+    .await;
+
+    import_claims_once(&Writer::default(), &pool, &supplied, at())
+        .await
+        .expect("the import runs");
+    let held = logged(&pool).await;
+    let supply = jojobot_domain::log::claims::import::supply_identity("view:loops");
+    let state = State::replay(held.iter());
+    assert_eq!(
+        state.active_records(&supply).len(),
+        1,
+        "the claim sits on the record the build supplies now: {held:?}"
+    );
+
+    server.stop().await;
+}
