@@ -1870,3 +1870,40 @@ fn a_renamed_supplied_record_keeps_its_identity_and_moves_its_address() {
         "the renamed list appends nothing the second time"
     );
 }
+
+/// **Chained renames in one build keep every binding.** Record A was first
+/// supplied as `view:loops` and record B as `view:board`. The next build calls A
+/// `view:board` and B `view:ready`: A moves into the address B leaves. Every
+/// retirement is decided before any binding, so A's new address is not taken for
+/// one a record still holds. A second pass appends nothing.
+#[test]
+fn chained_supplied_renames_in_one_build_keep_every_binding() {
+    let held = imported(&Rows {
+        supplied: vec![supplied("view:loops"), supplied("view:board")],
+        ..Default::default()
+    });
+    let mut a = supplied("view:board");
+    a.first_handle = "view:loops".into();
+    let mut b = supplied("view:ready");
+    b.first_handle = "view:board".into();
+    let list = [a, b];
+    let moved = reconcile_supply_list(&State::replay(&held), &list, day());
+    let mut after = held;
+    after.extend(moved);
+    let state = State::replay(&after);
+    assert_eq!(
+        state.resolve("view:board"),
+        Some(&supply_identity("view:loops")),
+        "A answers at the address B left"
+    );
+    assert_eq!(
+        state.resolve("view:ready"),
+        Some(&supply_identity("view:board")),
+        "B answers at its new address"
+    );
+    assert_eq!(state.resolve("view:loops"), None);
+    assert!(
+        reconcile_supply_list(&state, &list, day()).is_empty(),
+        "a second pass appends nothing"
+    );
+}

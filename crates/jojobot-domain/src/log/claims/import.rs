@@ -244,34 +244,54 @@ pub fn reconcile_supply_list(
     supplied: &[SuppliedRow],
     day: jiff::civil::Date,
 ) -> Vec<Event<ClaimEvent>> {
-    let mut events = Vec::new();
+    // **Every retirement is decided before any binding.** One build can move a
+    // record into the address another record leaves, so a binding is judged
+    // against the addresses the batch retires, not against the State before it.
+    let mut created = Vec::new();
+    let mut retired = Vec::new();
     for row in supplied {
         let identity = supply_identity(&row.first_handle);
         if state.object(&identity).is_none() {
-            events.push(plain(ClaimEvent::ObjectCreated {
+            created.push(plain(ClaimEvent::ObjectCreated {
                 object: identity.clone(),
                 body: supplied_body(row),
             }));
         }
         // **A renamed record keeps its identity**: the address it answered at is
-        // retired, with the day, and the new one is bound. A handle a stored row
-        // wears stays that row's.
+        // retired, with the day, and the new one is bound.
         for held in state.addresses_of(&identity) {
             if held != row.handle {
-                events.push(plain(ClaimEvent::AddressRetired {
-                    object: identity.clone(),
-                    address: held,
-                    day,
-                }));
+                retired.push((identity.clone(), held));
             }
         }
-        if state.resolve(&row.handle).is_none() {
-            events.push(plain(ClaimEvent::AddressBound {
+    }
+    let mut bound = Vec::new();
+    for row in supplied {
+        let identity = supply_identity(&row.first_handle);
+        // A handle a stored row wears stays that row's: only an address nothing
+        // answers to, or one this batch retires from a supplied record, is bound.
+        let free = match state.resolve(&row.handle) {
+            None => true,
+            Some(holder) => retired
+                .iter()
+                .any(|(object, address)| object == holder && *address == row.handle),
+        };
+        if free {
+            bound.push(plain(ClaimEvent::AddressBound {
                 object: identity,
                 address: row.handle.clone(),
             }));
         }
     }
+    let mut events = created;
+    events.extend(retired.into_iter().map(|(object, address)| {
+        plain(ClaimEvent::AddressRetired {
+            object,
+            address,
+            day,
+        })
+    }));
+    events.extend(bound);
     events
 }
 
