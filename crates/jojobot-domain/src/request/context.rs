@@ -27,7 +27,9 @@ impl Context {
     pub async fn run<F: Future>(self, work: F) -> F::Output {
         // Boxed so the wrapper holds a pointer and not a second copy of `work`: a
         // future is held by value in debug builds, and a write's `work` can be large
-        // enough that one more copy overflows a 2 MiB test stack.
+        // enough that one more copy overflows a 2 MiB test stack. This is partial:
+        // the writer's `run` and its port macro hold the work by value too, and the
+        // better site is one `Box::pin(work)` in `Writer::run`.
         let work = Box::pin(crate::log::claims::job::carried(self.capture, work));
         let work = async {
             if self.armed {
