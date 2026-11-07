@@ -44,6 +44,84 @@ pub(super) fn points_at(fact: &Fact, parent: Option<&EntityId>, text: &str, id: 
         || text.contains(id.as_str())
 }
 
+/// **One thing a possible-subject note names, and the ledger row naming it
+/// would spend.**
+#[derive(Clone, Debug)]
+struct NamedThing {
+    handle: String,
+    key: String,
+}
+
+/// **A possible-subject note decided and not yet spent.** The things it names
+/// are peeked at, never spent: the owner of the receipt spends their rows only
+/// if the note ships, so a note the budget drops is told again by a later write
+/// that names the same thing.
+#[derive(Clone, Debug)]
+pub(crate) struct PossibleSubject {
+    subject: String,
+    address: String,
+    things: Vec<NamedThing>,
+}
+
+impl PossibleSubject {
+    /// The words of the note, naming each thing and the route that moves a claim.
+    pub(crate) fn note(&self) -> String {
+        let first = &self.things[0].handle;
+        let things: Vec<&str> = self
+            .things
+            .iter()
+            .map(|thing| thing.handle.as_str())
+            .collect();
+        format!(
+            "This claim is filed on {} and its content or fields also name {}. It is recorded \
+             where you filed it and nothing was refused. If it belongs on {first} instead, \
+             capture it there with derived_from {}, then archive this one with update_fact \
+             (status: archived).",
+            self.subject,
+            things.join(", "),
+            self.address,
+        )
+    }
+
+    /// A note of the given things, each with its ledger row, for a case that
+    /// hands the owner a note without writing a claim.
+    #[cfg(test)]
+    pub(crate) fn of(subject: &str, address: &str, things: &[(&str, &str)]) -> Self {
+        PossibleSubject {
+            subject: subject.to_string(),
+            address: address.to_string(),
+            things: things
+                .iter()
+                .map(|(handle, key)| NamedThing {
+                    handle: handle.to_string(),
+                    key: key.to_string(),
+                })
+                .collect(),
+        }
+    }
+
+    /// The ledger rows the note spends when it ships.
+    pub(crate) fn keys(&self) -> impl Iterator<Item = &str> {
+        self.things.iter().map(|thing| thing.key.as_str())
+    }
+
+    /// The note without the things whose rows another receipt spent first;
+    /// none when no thing is left to name.
+    pub(crate) fn without(&self, lost: &std::collections::BTreeSet<String>) -> Option<Self> {
+        let things: Vec<NamedThing> = self
+            .things
+            .iter()
+            .filter(|thing| !lost.contains(&thing.key))
+            .cloned()
+            .collect();
+        (!things.is_empty()).then(|| PossibleSubject {
+            subject: self.subject.clone(),
+            address: self.address.clone(),
+            things,
+        })
+    }
+}
+
 impl Jojobot {
     /// **Note it on the receipt when this claim's words say another known
     /// thing's whole name or alias** and that thing is not its subject, a ref or
@@ -60,8 +138,35 @@ impl Jojobot {
         caller: &Caller,
         body: &mut serde_json::Value,
     ) {
-        let Ok(known) = self.memory.list_entities(None).await else {
+        let Some(possible) = self.possible_subject_candidate(fact, caller).await else {
             return;
+        };
+        // The write that decides the note is the write that tells it, so the rows
+        // are spent here, and a row another receipt spent first takes its thing
+        // out of the note.
+        let mut lost = std::collections::BTreeSet::new();
+        for key in possible.keys() {
+            if !self.first_contact(key, Some(caller)).await {
+                lost.insert(key.to_string());
+            }
+        }
+        if let Some(possible) = possible.without(&lost)
+            && let Some(object) = body.as_object_mut()
+        {
+            object.insert("possible_subject_note".into(), possible.note().into());
+        }
+    }
+
+    /// **The note this claim earns, decided and not spent.** The rows of the
+    /// things it names are only peeked at, so a caller that serves the note
+    /// only if a later choice keeps it spends them once that choice is made.
+    pub(crate) async fn possible_subject_candidate(
+        &self,
+        fact: &Fact,
+        caller: &Caller,
+    ) -> Option<PossibleSubject> {
+        let Ok(known) = self.memory.list_entities(None).await else {
+            return None;
         };
         let text = claim_text(fact);
         // **The subject's parent is where a claim on its child belongs**: a
@@ -73,7 +178,7 @@ impl Jojobot {
             .find(|entity| entity.id == fact.subject)
             .and_then(|entity| entity.parent.as_ref());
         let points_at = |id: &EntityId| points_at(fact, parent, &text, id);
-        let mut named: Vec<&EntityId> = Vec::new();
+        let mut named: Vec<NamedThing> = Vec::new();
         for entity in jojobot_domain::memory::words::named_in_full(&text, &known) {
             if named.len() == NAMED_AT_MOST {
                 break;
@@ -87,32 +192,22 @@ impl Jojobot {
             let Some(badge) = &entity.badge else {
                 continue;
             };
-            if self
-                .first_contact(
-                    &crate::teaching::ledger_key(NOTED_DOMAIN, badge),
-                    Some(caller),
-                )
-                .await
-            {
-                named.push(&entity.id);
+            let key = crate::teaching::ledger_key(NOTED_DOMAIN, badge);
+            if self.untaught(&key, caller).await {
+                named.push(NamedThing {
+                    handle: entity.id.as_str().to_string(),
+                    key,
+                });
             }
         }
-        let Some(first) = named.first() else {
-            return;
-        };
-        let things: Vec<&str> = named.iter().map(|id| id.as_str()).collect();
-        let note = format!(
-            "This claim is filed on {} and its content or fields also name {}. It is recorded \
-             where you filed it and nothing was refused. If it belongs on {first} instead, \
-             capture it there with derived_from {}, then archive this one with update_fact \
-             (status: archived).",
-            fact.subject,
-            things.join(", "),
-            fact.address(),
-        );
-        if let Some(object) = body.as_object_mut() {
-            object.insert("possible_subject_note".into(), note.into());
+        if named.is_empty() {
+            return None;
         }
+        Some(PossibleSubject {
+            subject: fact.subject.as_str().to_string(),
+            address: fact.address().to_string(),
+            things: named,
+        })
     }
 }
 

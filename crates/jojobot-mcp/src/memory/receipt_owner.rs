@@ -9,6 +9,7 @@ use std::collections::BTreeSet;
 
 use serde_json::Value;
 
+use super::possible_subject::PossibleSubject;
 use super::unlocks::OwedUnlock;
 use crate::answer::compose::{Answer, Composed, Kind, Layer, Tier, compose_within};
 use crate::{Jojobot, caller::Caller};
@@ -69,9 +70,38 @@ impl Jojobot {
         caller: &Caller,
         carry_hint: bool,
         owed: &[OwedUnlock],
+        possible: Option<PossibleSubject>,
         mut notes: Vec<TeachingNote>,
     ) -> Value {
         let mut served = compose_receipt(body.clone(), &notes);
+        // A possible-subject note spends the rows of the things it names only if
+        // it ships. A row another receipt spent first takes its thing out of the
+        // note, and a note left naming nothing goes, so the next suggestion
+        // ships in its place.
+        if let Some(possible) = possible
+            && served.served.get("possible_subject_note").is_some()
+        {
+            let mut lost = BTreeSet::new();
+            for key in possible.keys() {
+                if !self.first_contact(key, Some(caller)).await {
+                    lost.insert(key.to_string());
+                }
+            }
+            if !lost.is_empty() {
+                let object = body
+                    .as_object_mut()
+                    .expect("a capture receipt is an object");
+                match possible.without(&lost) {
+                    Some(rest) => {
+                        object.insert("possible_subject_note".into(), rest.note().into());
+                    }
+                    None => {
+                        object.remove("possible_subject_note");
+                    }
+                }
+                served = compose_receipt(body.clone(), &notes);
+            }
+        }
         if carry_hint
             && served.served.get("hint").is_some()
             && !self
@@ -273,6 +303,7 @@ mod tests {
                     owed("type-unlocks:taken", "taken step"),
                     owed("type-unlocks:free", "free step"),
                 ],
+                None,
                 Vec::new(),
             )
             .await;
@@ -294,6 +325,7 @@ mod tests {
                 &caller,
                 false,
                 &[owed("type-unlocks:taken", "taken step")],
+                None,
                 Vec::new(),
             )
             .await;
@@ -325,6 +357,7 @@ mod tests {
                 &caller,
                 true,
                 &[owed("type-unlocks:step", "step")],
+                None,
                 Vec::new(),
             )
             .await;
@@ -431,6 +464,7 @@ mod tests {
                 &caller,
                 false,
                 &[],
+                None,
                 vec![
                     note("teaching:low", "owner-test:low", "low note", Tier::Low),
                     note("teaching:high", "owner-test:high", "high note", Tier::High),
@@ -468,6 +502,7 @@ mod tests {
                 &caller,
                 false,
                 &[],
+                None,
                 vec![
                     note(
                         "teaching:taken",
@@ -497,6 +532,7 @@ mod tests {
                 &the_caller(),
                 false,
                 &[],
+                None,
                 vec![note(
                     "teaching:one",
                     "owner-test:one",
@@ -510,5 +546,84 @@ mod tests {
             json!(["already there", "ranked note"]),
             "{served}"
         );
+    }
+
+    fn naming(things: &[(&str, &str)]) -> (super::PossibleSubject, serde_json::Value) {
+        let possible = super::PossibleSubject::of("work:atlas-root", "work:atlas-root#f1", things);
+        let body = json!({
+            "address": "work:atlas-root#f1",
+            "possible_subject_note": possible.note(),
+            "hint": "a hint",
+        });
+        (possible, body)
+    }
+
+    /// **A possible-subject note spends the row of each thing it names when it
+    /// ships**, and not before: the next receipt finds the rows taught.
+    #[tokio::test]
+    async fn a_possible_subject_note_that_ships_spends_its_rows() {
+        let jojobot = handler();
+        let caller = the_caller();
+        let (possible, body) = naming(&[
+            ("thing:the-furnace", "possible-subject:one"),
+            ("thing:the-air-filter", "possible-subject:two"),
+        ]);
+        for key in ["possible-subject:one", "possible-subject:two"] {
+            assert!(jojobot.untaught(key, &caller).await, "{key} is fresh");
+        }
+        let served = jojobot
+            .own_capture_receipt(body, &caller, false, &[], Some(possible), Vec::new())
+            .await;
+        let note = served["possible_subject_note"].as_str().expect("the note");
+        assert!(note.contains("thing:the-furnace") && note.contains("thing:the-air-filter"));
+        for key in ["possible-subject:one", "possible-subject:two"] {
+            assert!(!jojobot.untaught(key, &caller).await, "{key} is spent");
+        }
+    }
+
+    /// **A row another receipt spent first takes its thing out of the note**,
+    /// and the thing whose row was free is still named and spent.
+    #[tokio::test]
+    async fn a_thing_whose_row_another_receipt_spent_first_is_not_named() {
+        let jojobot = handler();
+        let caller = the_caller();
+        let (possible, body) = naming(&[
+            ("thing:the-furnace", "possible-subject:taken"),
+            ("thing:the-air-filter", "possible-subject:free"),
+        ]);
+        assert!(
+            jojobot
+                .first_contact("possible-subject:taken", Some(&caller))
+                .await
+        );
+        let served = jojobot
+            .own_capture_receipt(body, &caller, false, &[], Some(possible), Vec::new())
+            .await;
+        let note = served["possible_subject_note"].as_str().expect("the note");
+        assert!(note.contains("thing:the-air-filter"), "{note}");
+        assert!(!note.contains("thing:the-furnace"), "{note}");
+        assert!(
+            !jojobot.untaught("possible-subject:free", &caller).await,
+            "the row that shipped is spent"
+        );
+    }
+
+    /// **A note left naming nothing goes, and the hint it outranked ships in
+    /// its place.**
+    #[tokio::test]
+    async fn a_note_left_naming_nothing_gives_way_to_the_next_suggestion() {
+        let jojobot = handler();
+        let caller = the_caller();
+        let (possible, body) = naming(&[("thing:the-furnace", "possible-subject:taken")]);
+        assert!(
+            jojobot
+                .first_contact("possible-subject:taken", Some(&caller))
+                .await
+        );
+        let served = jojobot
+            .own_capture_receipt(body, &caller, false, &[], Some(possible), Vec::new())
+            .await;
+        assert!(served.get("possible_subject_note").is_none(), "{served}");
+        assert_eq!(served["hint"], "a hint", "{served}");
     }
 }

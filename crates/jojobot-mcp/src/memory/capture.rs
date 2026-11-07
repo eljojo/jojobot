@@ -1021,7 +1021,14 @@ impl Jojobot {
         unread.note(&mut body);
         reads.note(&mut body);
         self.note_depends_on_read(&fact, &caller, &mut body).await;
-        self.note_possible_subject(&fact, &caller, &mut body).await;
+        // **Decided here, spent by the owner**: the note is on the receipt, and the
+        // ledger rows it would spend are spent only if it ships.
+        let possible = self.possible_subject_candidate(&fact, &caller).await;
+        if let Some(possible) = &possible
+            && let Some(object) = body.as_object_mut()
+        {
+            object.insert("possible_subject_note".into(), possible.note().into());
+        }
         self.note_span_in_words(&fact, &caller, &mut body).await;
         let owed_unlocks = self.offer_unlocks(&fact.subject, &caller, &mut body).await;
         self.note_unstars_without_a_summary(&fact, false, caller.sid.as_str(), &mut body);
@@ -1124,7 +1131,7 @@ impl Jojobot {
         }
         json_result(
             &self
-                .own_capture_receipt(body, &caller, carry_hint, &owed_unlocks, notes)
+                .own_capture_receipt(body, &caller, carry_hint, &owed_unlocks, possible, notes)
                 .await,
         )
     }
