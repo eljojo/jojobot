@@ -2001,13 +2001,14 @@ impl DoltMemory {
         };
         // **The fold is made by the caller's bot**, and so is every claim it writes.
         let bot = self.writing_bot(tx, caller).await?;
-        let claim_write = Self::write_fact(tx, &record, &self.clock, session, bot.as_ref()).await?;
-        Self::append_writes(
+        let claim_write = self
+            .write_fact(tx, &record, &self.clock, session, bot.as_ref())
+            .await?;
+        self.append_writes(
             tx,
             &record.home,
             &record.id,
             written_keys(&record),
-            &self.clock,
             &Default::default(),
             claim_write,
         )
@@ -2055,9 +2056,10 @@ impl DoltMemory {
                 self.lower_pointers(tx, &mut record, &folded_key).await?;
                 let on_disk = self.as_stored(tx, &record).await?;
                 let classes = self.held_classes(tx, &folded_key, &tick.fact).await?;
-                let claim_write =
-                    Self::write_fact(tx, &on_disk, &self.clock, session, bot.as_ref()).await?;
-                Self::append_writes(
+                let claim_write = self
+                    .write_fact(tx, &on_disk, &self.clock, session, bot.as_ref())
+                    .await?;
+                self.append_writes(
                     tx,
                     &on_disk.home,
                     &on_disk.id,
@@ -2065,7 +2067,6 @@ impl DoltMemory {
                         jojobot_domain::memory::entries::TICK_ENTRY.to_string(),
                         Some(tick.entry),
                     )],
-                    &self.clock,
                     &classes,
                     claim_write,
                 )
@@ -2096,18 +2097,11 @@ impl DoltMemory {
                         Some(head),
                     ));
                 }
-                let claim_write =
-                    Self::write_fact(tx, &on_disk, &self.clock, session, bot.as_ref()).await?;
-                Self::append_writes(
-                    tx,
-                    &on_disk.home,
-                    &on_disk.id,
-                    wrote,
-                    &self.clock,
-                    &classes,
-                    claim_write,
-                )
-                .await?;
+                let claim_write = self
+                    .write_fact(tx, &on_disk, &self.clock, session, bot.as_ref())
+                    .await?;
+                self.append_writes(tx, &on_disk.home, &on_disk.id, wrote, &classes, claim_write)
+                    .await?;
             }
         }
 
@@ -2348,17 +2342,19 @@ impl DoltMemory {
         }
         let retracted_on_disk = self.as_stored(tx, &retracted).await?;
         let bot = self.writing_bot(tx, caller).await?;
-        Self::write_fact(tx, &retracted_on_disk, &self.clock, session, bot.as_ref()).await?;
-        let claim_write = Self::write_fact(tx, &record, &self.clock, session, bot.as_ref()).await?;
+        self.write_fact(tx, &retracted_on_disk, &self.clock, session, bot.as_ref())
+            .await?;
+        let claim_write = self
+            .write_fact(tx, &record, &self.clock, session, bot.as_ref())
+            .await?;
         // The account is a record like any other, and the key naming what it
         // takes back is a write of its own. The record being taken back writes
         // no key: what changed there is its status.
-        Self::append_writes(
+        self.append_writes(
             tx,
             &record.home,
             &record.id,
             written_keys(&record),
-            &self.clock,
             &Default::default(),
             claim_write,
         )
@@ -2903,14 +2899,15 @@ impl DoltMemory {
         }
         let on_disk = self.as_stored(tx, &fact).await?;
         let bot = self.writing_bot(tx, caller).await?;
-        let claim_write = Self::write_fact(
-            tx,
-            &on_disk,
-            &self.clock,
-            patch.session.as_deref(),
-            bot.as_ref(),
-        )
-        .await?;
+        let claim_write = self
+            .write_fact(
+                tx,
+                &on_disk,
+                &self.clock,
+                patch.session.as_deref(),
+                bot.as_ref(),
+            )
+            .await?;
         // **The edit appends.** The record reads back changed — that is the
         // surface — and the value it replaced stays where it was written.
         // **A reference-typed value is lowered to the permanent id it
@@ -2918,12 +2915,11 @@ impl DoltMemory {
         // the handle-form value the patch sent, so what lands here is free
         // to be the storage shape.
         let lowered_writes = self.lower_writes(tx, writes_of(&patch, &carried)).await?;
-        Self::append_writes(
+        self.append_writes(
             tx,
             &on_disk.home,
             &on_disk.id,
             lowered_writes,
-            &self.clock,
             &classes,
             claim_write,
         )
@@ -3326,7 +3322,7 @@ impl DoltMemory {
                                 victim_fact.details = Some(reason.clone());
                                 let on_disk = self.as_stored(tx, &victim_fact).await?;
                                 // The archive is the capture's own act: it carries the capture's run and bot.
-                                Self::write_fact(
+                                self.write_fact(
                                     tx,
                                     &on_disk,
                                     &self.clock,
@@ -3449,14 +3445,15 @@ impl DoltMemory {
             None,
         )
         .await?;
-        let claim_write = Self::write_fact(
-            tx,
-            &stored,
-            &self.clock,
-            fact.session.as_deref(),
-            writer.as_ref(),
-        )
-        .await?;
+        let claim_write = self
+            .write_fact(
+                tx,
+                &stored,
+                &self.clock,
+                fact.session.as_deref(),
+                writer.as_ref(),
+            )
+            .await?;
         // Every key this record carries is a write of its own, appended to the
         // history of that key on this thing. **A reference-typed value is
         // lowered to the permanent id it names first** (rule 268), guarded
@@ -3475,12 +3472,11 @@ impl DoltMemory {
         )?;
         let lowered_writes = self.lower_writes(tx, written_keys(&stored)).await?;
         let served = self.serve_written_fields(tx, &lowered_writes).await?;
-        Self::append_writes(
+        self.append_writes(
             tx,
             &stored.home,
             &stored.id,
             lowered_writes,
-            &self.clock,
             &classes,
             claim_write,
         )
@@ -4481,11 +4477,11 @@ impl DoltMemory {
     /// of `None` is a clear, and it is stored rather than acted on: nothing is
     /// removed from this table.
     async fn append_writes(
+        &self,
         tx: &mut Transaction<'_, MySql>,
         entity: &EntityId,
         fact: &FactId,
         wrote: Vec<(String, Option<String>)>,
-        clock: &Clock,
         classes: &std::collections::BTreeMap<String, jojobot_domain::memory::WriteClass>,
         claim_write: i64,
     ) -> Result<(), MemoryError> {
@@ -4495,11 +4491,11 @@ impl DoltMemory {
         // one act, so none is a later change than another: the review stamp rides
         // such a write and reads as reviewed only if it is not earlier than the
         // keys beside it.
-        let moment = clock.now().to_string();
+        let moment = self.clock.now().to_string();
         let emitting = if wrote.is_empty() {
             None
         } else {
-            Some(Self::emitting(tx, entity, fact, claim_write).await?)
+            Some(Self::emitting(tx, entity, fact, claim_write, self.journal()).await?)
         };
         for (key, value) in wrote {
             let ordinal = ordinal::next(
@@ -4595,6 +4591,7 @@ impl DoltMemory {
     /// edit and a retraction cannot come to write a record three different
     /// ways.
     async fn write_fact(
+        &self,
         tx: &mut Transaction<'_, MySql>,
         fact: &Fact,
         clock: &Clock,
@@ -4679,7 +4676,7 @@ impl DoltMemory {
             .map_err(store)?;
         }
         let ordinal = Self::append_fact_write(tx, fact, clock, session, bot).await?;
-        Self::emit_claim_write(tx, fact, ordinal).await?;
+        Self::emit_claim_write(tx, fact, ordinal, self.journal()).await?;
         Ok(ordinal)
     }
 

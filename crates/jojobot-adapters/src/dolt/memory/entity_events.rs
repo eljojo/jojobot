@@ -33,7 +33,7 @@ pub(super) enum Journal {
 impl Journal {
     /// Whether the emitter goes on; the error is the refusal of a journaled store
     /// that was written with no writer job.
-    fn takes_part(self) -> Result<bool, MemoryError> {
+    pub(super) fn takes_part(self) -> Result<bool, MemoryError> {
         match self {
             Journal::Bare => Ok(false),
             Journal::Journaled => crate::writer::sql::emit(Vec::new())

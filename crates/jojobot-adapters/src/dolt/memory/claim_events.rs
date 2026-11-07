@@ -17,6 +17,7 @@ use jojobot_domain::memory::write_origin::{WriteOrigin, written_by};
 
 use jojobot_domain::actor::Actor;
 
+use super::entity_events::Journal;
 use super::*;
 
 /// **A key write as a merge places it**: the key, the place it holds, the moment
@@ -57,12 +58,19 @@ pub(super) struct Emitting {
     /// The thing the key writes belong to now, when merges have placed them.
     merged: Option<String>,
     origin: Origin,
+    /// Whether the store takes part in the log, asked when the write began.
+    journal: Journal,
 }
 
-/// Add one event to the batch of the transaction now open. Outside a writer job
-/// there is no batch and the call fails, and nothing is kept.
-fn emit_one(event: Event<ClaimEvent>) {
-    let _ = crate::writer::sql::emit(vec![event]);
+/// Add one event to the batch of the transaction now open, when the store takes
+/// part in the log. A bare store emits nothing and the write goes on. A
+/// journaled store reaching here with no writer job returns `emit`'s error, and
+/// the caller drops the transaction, so the claim write leaves nothing behind.
+fn emit_one(journal: Journal, event: Event<ClaimEvent>) -> Result<(), MemoryError> {
+    if journal.takes_part()? {
+        crate::writer::sql::emit(vec![event]).map_err(store)?;
+    }
+    Ok(())
 }
 
 impl DoltMemory {
@@ -210,6 +218,7 @@ impl DoltMemory {
         tx: &mut Transaction<'_, MySql>,
         fact: &Fact,
         ordinal: i64,
+        journal: Journal,
     ) -> Result<(), MemoryError> {
         let claim = Self::claim_body_of(tx, fact).await?;
         let origin = Self::claim_write_origin(tx, &fact.home, &fact.id, ordinal).await?;
@@ -217,8 +226,7 @@ impl DoltMemory {
             &Self::object_key(tx, fact.home.as_str()).await?,
             fact.id.as_str(),
         );
-        emit_one(emit::claim_write(record, ordinal, claim, &origin));
-        Ok(())
+        emit_one(journal, emit::claim_write(record, ordinal, claim, &origin))
     }
 
     /// **What the key writes of one claim write share**: the claim's record, the
@@ -228,6 +236,7 @@ impl DoltMemory {
         entity: &EntityId,
         fact: &FactId,
         claim_write: i64,
+        journal: Journal,
     ) -> Result<Emitting, MemoryError> {
         let stored = Self::object_key(tx, entity.as_str()).await?;
         let origin = Self::claim_write_origin(tx, entity, fact, claim_write).await?;
@@ -245,6 +254,7 @@ impl DoltMemory {
             subject,
             merged: merged.then_some(survivor),
             origin,
+            journal,
         })
     }
 
@@ -276,17 +286,19 @@ impl DoltMemory {
             written_at: parse_stamp(Some(at.to_string()), emitting.subject.0.as_str()),
             ..emitting.origin.clone()
         };
-        emit_one(emit::key_write(
-            emitting.record.clone(),
-            emitting.subject.clone(),
-            key,
-            ordinal as u64,
-            class,
-            value,
-            targets,
-            &origin,
-        ));
-        Ok(())
+        emit_one(
+            emitting.journal,
+            emit::key_write(
+                emitting.record.clone(),
+                emitting.subject.clone(),
+                key,
+                ordinal as u64,
+                class,
+                value,
+                targets,
+                &origin,
+            ),
+        )
     }
 
     /// The thing a key was folded into, through every merge, or the key itself.
@@ -466,14 +478,16 @@ impl DoltMemory {
             run: session.map(str::to_string),
             written_at: parse_stamp(Some(at.to_string()), folded.as_str()),
         };
-        emit_one(emit::merge(
-            Self::object_key(tx, folded.as_str()).await?,
-            Self::object_key(tx, survivor.as_str()).await?,
-            records,
-            writes,
-            &origin,
-        ));
-        Ok(())
+        emit_one(
+            self.journal(),
+            emit::merge(
+                Self::object_key(tx, folded.as_str()).await?,
+                Self::object_key(tx, survivor.as_str()).await?,
+                records,
+                writes,
+                &origin,
+            ),
+        )
     }
 }
 

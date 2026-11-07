@@ -41,7 +41,7 @@ async fn world(name: &str) -> (Scratch, Dolt, DoltMemory, Writer, sqlx::MySqlPoo
         .expect("add")
         .written()
         .expect("written");
-    (scratch, server, memory, Writer::default(), pool)
+    (scratch, server, memory.journaled(), Writer::default(), pool)
 }
 
 async fn as_request<T: Send + 'static>(
@@ -259,7 +259,7 @@ async fn a_merge_and_the_writes_after_it_are_held_by_the_state_as_the_store_hold
     let (_scratch, mut server, memory, writer, pool) = world("claim-events-merge").await;
     let homer = EntityId("person:homer".into());
     let marge = EntityId("person:marge".into());
-    memory
+    DoltMemory::open(pool.clone())
         .add_entity(NewEntity::new(marge.clone(), "Marge", "fixture"))
         .await
         .expect("add")
@@ -416,7 +416,7 @@ async fn a_claim_citing_a_merged_claim_names_the_record_it_is_stored_in() {
     let (_scratch, mut server, memory, writer, pool) = world("claim-events-pointer").await;
     let homer = EntityId("person:homer".into());
     let marge = EntityId("person:marge".into());
-    memory
+    DoltMemory::open(pool.clone())
         .add_entity(NewEntity::new(marge.clone(), "Marge", "fixture"))
         .await
         .expect("add")
@@ -770,7 +770,7 @@ async fn the_bot_that_merged_is_the_actor_of_the_claim_the_merge_writes() {
     let homer = EntityId("person:homer".into());
     let marge = EntityId("person:marge".into());
     let sigma = EntityId("bot:sigma".into());
-    memory
+    DoltMemory::open(pool.clone())
         .add_entity(NewEntity::new(marge.clone(), "Marge", "fixture"))
         .await
         .expect("add")
@@ -851,6 +851,58 @@ async fn the_bot_that_merged_is_the_actor_of_the_claim_the_merge_writes() {
             "{record:?}: every write names its bot: {history:?}"
         );
     }
+    writer.drain().await;
+    server.stop().await;
+}
+
+/// **A journaled store refuses a claim write that reaches it with no writer
+/// job**, and the refused write leaves no row: the transaction is dropped. The
+/// store the server serves is journaled, so no claim write of it is lost with
+/// the log never told.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_journaled_store_refuses_a_claim_write_with_no_writer_job() {
+    let (_scratch, mut server, memory, writer, pool) =
+        world("claim-events-journaled-refuses").await;
+    let homer = EntityId("person:homer".into());
+    let refused = memory
+        .capture(NewFact::about(homer, "likes donuts", date(2026, 9, 1)))
+        .await;
+    assert!(refused.is_err(), "the claim write went through with no job");
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM fact")
+        .fetch_one(&pool)
+        .await
+        .expect("the count reads");
+    assert_eq!(rows, 0, "the refused write left a claim row");
+    writer.drain().await;
+    server.stop().await;
+}
+
+/// **A bare store writes the same claim and emits nothing**: it is what the boot
+/// passes, the seeds and the direct-store cases use, and the log stays as it was.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_bare_store_commits_a_claim_write_and_emits_nothing() {
+    let (_scratch, mut server, _journaled, writer, pool) = world("claim-events-bare-commits").await;
+    let homer = EntityId("person:homer".into());
+    DoltMemory::open(pool.clone())
+        .capture(NewFact::about(homer, "likes donuts", date(2026, 9, 1)))
+        .await
+        .expect("a bare store takes the write")
+        .written()
+        .expect("not blocked");
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM fact")
+        .fetch_one(&pool)
+        .await
+        .expect("the count reads");
+    assert_eq!(rows, 1, "the bare store did not commit");
+    let members: usize = writer
+        .shared_log(&pool)
+        .read_from(Position(0), 100)
+        .await
+        .expect("the log reads")
+        .iter()
+        .map(|batch| batch.members().len())
+        .sum();
+    assert_eq!(members, 0, "the bare store put something in the log");
     writer.drain().await;
     server.stop().await;
 }
