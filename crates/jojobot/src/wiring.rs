@@ -1088,13 +1088,12 @@ pub async fn boot_store_observed(
     // nothing when the list is unchanged. A failure stops the boot, as the import's.
     match timed(
         "claims-reconcile",
-        jojobot_adapters::claims_import::reconcile_supply_list_once(
+        reconcile_claims_supply(
             &folded.writer(),
-            store.pool(),
+            &store,
             &supplied,
-            &shipped_declarations(),
-            clock.now(),
-            the_day_of_this_boot(seed_memory.as_ref(), &clock).await,
+            seed_memory.as_ref(),
+            &clock,
         ),
     )
     .await
@@ -1349,6 +1348,27 @@ fn claims_import_failure(why: &jojobot_adapters::claims_import::ClaimsImportErro
     }
 }
 
+/// **The boot's reconcile of the supply list and the shipped declarations**, with
+/// the day the boot states: the instance's, the way every other boot pass stamps
+/// one. The build's list is an argument so a case can hand it a renamed record.
+pub async fn reconcile_claims_supply(
+    writer: &jojobot_adapters::writer::Writer,
+    store: &Dolt,
+    supplied: &jojobot_domain::memory::owned::Provisions,
+    memory: &dyn Memory,
+    clock: &Clock,
+) -> Result<usize, jojobot_adapters::claims_import::ClaimsImportError> {
+    jojobot_adapters::claims_import::reconcile_supply_list_once(
+        writer,
+        store.pool(),
+        supplied,
+        &shipped_declarations(),
+        clock.now(),
+        the_day_of_this_boot(memory, clock).await,
+    )
+    .await
+}
+
 /// **Every kind and type this build ships**, as the claims reconcile compares them
 /// with the log: the kinds with the keys they carry, then the shipped types.
 fn shipped_declarations() -> Vec<jojobot_domain::memory::types::DeclaredType> {
@@ -1600,6 +1620,126 @@ mod tests {
             instances_day,
             "the instance holds {zone}: its day"
         );
+    }
+
+    /// **The boot's reconcile retires a renamed address on the instance's day**, not
+    /// on the UTC day of the clock. The build's first list supplies `view:loops`; a
+    /// later one supplies the same record as `view:board`, and the instance holds a
+    /// zone whose day is not UTC's now.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn the_reconcile_retires_a_renamed_address_on_the_instances_day() {
+        use jojobot_adapters::claims_import::import_claims_once;
+        use jojobot_adapters::claims_log::codec;
+        use jojobot_adapters::dolt::memory::DoltMemory;
+        use jojobot_adapters::testing::{Scratch, free_port};
+        use jojobot_adapters::writer::Writer;
+        use jojobot_domain::log::claims::ClaimEvent;
+        use jojobot_domain::memory::owned::{Provision, Provisions};
+        use jojobot_domain::memory::{Entity, EntityKind};
+
+        let view = |handle: &str, first: Option<&str>| {
+            let record = Provision::record(
+                Entity {
+                    folded_names: Vec::new(),
+                    id: EntityId(handle.to_string()),
+                    kind: EntityKind::VIEW,
+                    name: "The loops view".into(),
+                    aliases: Vec::new(),
+                    source: "jojobot".into(),
+                    crm: None,
+                    parent: None,
+                    boot: Default::default(),
+                    merged_into: None,
+                    badge: None,
+                    archived: None,
+                },
+                std::collections::BTreeMap::new(),
+            );
+            Provisions::new(vec![match first {
+                Some(first) => record.first_supplied_as(first),
+                None => record,
+            }])
+        };
+        let (zone, instances_day) = a_zone_on_another_day_than_utc();
+        let utc_day = Clock::Real.today_in(&jiff::tz::TimeZone::UTC);
+        assert_ne!(instances_day, utc_day, "the case needs two different days");
+        let memory = InMemoryMemory::booted();
+        let instance = EntityId::person(jojobot_domain::memory::INSTANCE_RECORD);
+        memory
+            .add_entity(NewEntity::new(instance.clone(), "Instance", "test"))
+            .await
+            .expect("add ok")
+            .written()
+            .expect("not blocked");
+        memory
+            .capture(jojobot_domain::memory::testing::contract::state(NewFact {
+                fields: std::collections::BTreeMap::from([(
+                    "timezone".to_string(),
+                    zone.to_string(),
+                )]),
+                ..NewFact::about(instance, "the operator's zone", date(2026, 9, 1))
+            }))
+            .await
+            .expect("capture ok")
+            .written()
+            .expect("not blocked");
+
+        let scratch = Scratch::new("reconcile-instance-day");
+        let (mut store, _) = Dolt::ready(&scratch.0, free_port())
+            .await
+            .expect("the store comes up");
+        jojobot_domain::memory::kinds::seed(&DoltMemory::open(store.pool().clone()))
+            .await
+            .expect("the kinds are seeded");
+        import_claims_once(
+            &Writer::default(),
+            store.pool(),
+            &view("view:loops", None),
+            Clock::Real.now(),
+        )
+        .await
+        .expect("the import runs");
+        reconcile_claims_supply(
+            &Writer::default(),
+            &store,
+            &view("view:board", Some("view:loops")),
+            &memory,
+            &Clock::Real,
+        )
+        .await
+        .expect("the rename reconciles");
+
+        let payloads: Vec<Vec<u8>> = sqlx::query_scalar(
+            "SELECT payload FROM event_log WHERE first_position IS NOT NULL ORDER BY first_position",
+        )
+        .fetch_all(store.pool())
+        .await
+        .expect("the log is readable");
+        let mut retired_on = Vec::new();
+        for payload in payloads {
+            let batch: serde_json::Value =
+                serde_json::from_slice(&payload).expect("a stored batch");
+            for member in batch[5].as_array().expect("a batch holds its members") {
+                let bytes: Vec<u8> = member
+                    .as_array()
+                    .expect("a member is bytes")
+                    .iter()
+                    .map(|byte| byte.as_u64().expect("a byte") as u8)
+                    .collect();
+                if let Some(event) = codec::decode_own(&bytes).expect("every stored event reads")
+                    && let ClaimEvent::AddressRetired { address, day, .. } = event.payload
+                    && address == "view:loops"
+                {
+                    retired_on.push(day);
+                }
+            }
+        }
+        assert_eq!(
+            retired_on,
+            vec![instances_day],
+            "the boot retires the old spelling on {zone}'s day, not on UTC's {utc_day}"
+        );
+        store.stop().await;
     }
 
     /// **Every layer above the fold forwards `has_prose`**, so the stack the
