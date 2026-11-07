@@ -137,6 +137,7 @@ async fn main() -> anyhow::Result<()> {
         observation,
     )
     .await?;
+    jojobot::wiring::require_journaled(&booted.served)?;
 
     // **Pushes to the operator's phone**, only when the instance is set up for
     // them. An instance with no ntfy settings starts no task and says nothing.

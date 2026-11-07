@@ -356,6 +356,10 @@ pub fn resolve_store_port() -> u16 {
 /// with it (`Dolt` kills its child on drop), so a caller holds it for the
 /// life of whatever serves through the ports beside it.
 pub struct Booted {
+    /// **The store the server serves**, a clone that shares its journal flag with the
+    /// store under `memory`. The binary hands it to [`require_journaled`] before it
+    /// builds the app.
+    pub served: DoltMemory,
     /// The store process and its pool. Kept alive rather than read from
     /// again — everything else here already holds the pool it needs.
     pub store: Dolt,
@@ -1109,15 +1113,9 @@ pub async fn boot_store_observed(
     // the repairs, the import and the reconcile, which write rows and emit nothing
     // of their own, and before anything serves.
     bare_memory.start_journaling();
-    // **The door: a boot that serves a bare store stops.** A bare store writes rows
-    // and emits no event, so every write served would leave the log short without a
-    // word.
-    anyhow::ensure!(
-        bare_memory.is_journaled(),
-        "the store about to be served is not journaled, so its writes would leave no event"
-    );
 
     Ok(Booted {
+        served: bare_memory,
         store,
         memory: indexed.memory(),
         search,
@@ -1136,6 +1134,18 @@ pub async fn boot_store_observed(
         writer: folded.writer(),
         shadow: folded.shadow(),
     })
+}
+
+/// **The door of the server: a store that does not take part in the event log is
+/// refused.** A bare store writes rows and emits no event, so every write served
+/// would leave the log short without a word. The binary calls this with the store
+/// that arrives from the boot, before it builds the app.
+pub fn require_journaled(store: &DoltMemory) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        store.is_journaled(),
+        "the store about to be served is not journaled, so its writes would leave no event"
+    );
+    Ok(())
 }
 
 /// **The passes that run after the stores are wired and before anything
@@ -1350,6 +1360,24 @@ fn shipped_declarations() -> Vec<jojobot_domain::memory::types::DeclaredType> {
 mod tests {
     use super::*;
     use jiff::civil::date;
+
+    fn a_store_nobody_answers() -> DoltMemory {
+        let nowhere = sqlx::mysql::MySqlPoolOptions::new()
+            .connect_lazy("mysql://root@127.0.0.1:1/nothing-is-there")
+            .expect("a pool that will never answer");
+        DoltMemory::open(nowhere)
+    }
+
+    /// **The server's door refuses a store with the journal off and admits one with
+    /// it on**, and the flag a clone turns on is the one the door reads.
+    #[tokio::test]
+    async fn the_door_refuses_a_store_with_the_journal_off() {
+        let store = a_store_nobody_answers();
+        assert!(require_journaled(&store).is_err());
+        let clone = store.clone();
+        clone.start_journaling();
+        assert!(require_journaled(&store).is_ok());
+    }
     use jojobot_domain::memory::testing::InMemoryMemory;
     use jojobot_domain::memory::{EntityId, NewEntity, NewFact};
 
