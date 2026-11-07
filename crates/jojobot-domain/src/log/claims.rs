@@ -728,6 +728,7 @@ impl State {
                 continue;
             };
             out.push(KeyWrite {
+                removed: matches!(write.write, FieldValue::Removed),
                 key: key.0.clone(),
                 ordinal: write.ordinal,
                 value: match &write.write {

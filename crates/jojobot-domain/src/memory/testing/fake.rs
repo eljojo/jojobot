@@ -2165,6 +2165,7 @@ impl InMemoryMemory {
                     carried.app_stamp.as_ref(),
                 );
                 Some(super::super::KeyWrite {
+                    removed: false,
                     recorded_by: by.recorded_by,
                     writer: by.writer,
                     run: by.run,

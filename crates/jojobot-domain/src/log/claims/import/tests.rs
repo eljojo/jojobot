@@ -35,9 +35,22 @@ fn entity(id: &str, handle: &str) -> EntityRow {
 }
 
 fn write_of(ordinal: u64, content: &str, run: Option<&str>, stamp: i64) -> FactWriteRow {
+    write_by_label("f1", ordinal, content, run, stamp)
+}
+
+/// A write of the claim the label names. `write_of` files every claim under `f1`,
+/// so two claims of a case share one label and a fold that tells claims apart by
+/// it cannot tell these apart.
+fn write_by_label(
+    label: &str,
+    ordinal: u64,
+    content: &str,
+    run: Option<&str>,
+    stamp: i64,
+) -> FactWriteRow {
     FactWriteRow {
         ordinal,
-        claim: claim("f1", "k1", content, 1),
+        claim: claim(label, "k1", content, 1),
         run: run.map(String::from),
         bot: None,
         run_bot: None,
@@ -358,7 +371,7 @@ fn a_stored_clear_by_a_claim_that_did_not_hold_the_key_still_takes_it_off() {
         entities: vec![entity("k1", "person:homer")],
         facts: vec![
             fact("k1", "f1", vec![write_of(1, "x", None, 1)]),
-            fact("k1", "f2", vec![write_of(1, "y", None, 1)]),
+            fact("k1", "f2", vec![write_by_label("f2", 1, "y", None, 1)]),
         ],
         field_writes: vec![set("k1", "mood", 1, "calm", "f1", Some(1)), clear],
         ..Rows::default()
@@ -960,6 +973,7 @@ fn stored_writes(rows: &Rows, thing: &str) -> Vec<KeyWrite> {
             .map(origin_of);
         let by = write_origin::written_by(origin, fact.head.app.as_ref());
         writes.push(KeyWrite {
+            removed: false,
             key: write.key.0.clone(),
             ordinal: write.ordinal,
             value: match &write.write {

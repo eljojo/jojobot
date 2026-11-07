@@ -8,6 +8,7 @@ use super::*;
 /// One write of a key by the claim `fact`.
 fn by(fact: &str, key: &str, ordinal: u64, value: Option<&str>) -> KeyWrite {
     KeyWrite {
+        removed: false,
         fact: FactId(fact.into()),
         ..wrote(key, ordinal, value)
     }
@@ -77,14 +78,17 @@ fn a_withdrawn_claim_that_writes_the_key_again_holds_it() {
 fn a_withdrawn_write_leaves_the_age_of_the_held_key_alone() {
     let writes = [
         KeyWrite {
+            removed: false,
             fact: FactId("f1".into()),
             ..wrote_at("mood", 1, Some("content"), "2026-09-01T00:00:00Z")
         },
         KeyWrite {
+            removed: false,
             fact: FactId("f2".into()),
             ..wrote_at("mood", 2, Some("queasy"), "2026-09-02T00:00:00Z")
         },
         KeyWrite {
+            removed: false,
             fact: FactId("f1".into()),
             ..wrote_at("mood", 3, None, "2026-09-03T00:00:00Z")
         },
