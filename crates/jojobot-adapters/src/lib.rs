@@ -69,3 +69,6 @@ mod writer_recovery_tests;
 
 #[cfg(test)]
 mod writer_recovery_outcome_tests;
+
+#[cfg(test)]
+mod ledger_seam_tests;
