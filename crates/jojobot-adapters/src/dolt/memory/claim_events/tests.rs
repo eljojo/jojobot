@@ -55,6 +55,66 @@ async fn as_request<T: Send + 'static>(
         .await
 }
 
+/// **A claim's own label, changed by a rewrite, is changed in the State**: a
+/// starred claim that is rewritten with `starred: false` is no longer starred
+/// there, so the seats it held are free to a capture decided over the State.
+#[tokio::test]
+async fn a_label_changed_by_a_rewrite_is_changed_in_the_state() {
+    let (_scratch, mut server, memory, writer, pool) = world("claim-events-label").await;
+    let homer = EntityId("person:homer".into());
+
+    let made = {
+        let (memory, homer) = (memory.clone(), homer.clone());
+        as_request(&writer, "alpha", async move {
+            let mut fact = NewFact::about(homer, "keep every reply short", date(2026, 9, 1));
+            fact.fields = [("starred".to_string(), "true".to_string())].into();
+            memory
+                .capture(fact)
+                .await
+                .expect("capture")
+                .written()
+                .expect("not blocked")
+                .address()
+        })
+        .await
+    };
+    let key = ObjectId(
+        sqlx::query_scalar::<_, Option<String>>("SELECT badge FROM entity WHERE id = ?")
+            .bind(homer.as_str())
+            .fetch_one(&pool)
+            .await
+            .expect("the entity row")
+            .unwrap_or_else(|| homer.to_string()),
+    );
+    let seam = writer.seam().expect("the seam opened with the first begin");
+    let seats = |seam: &std::sync::Arc<crate::ledger_seam::Seam>| {
+        seam.read_claims(|state| state.starred_rules(&key).len())
+    };
+    assert_eq!(seats(&seam), 1, "the captured claim is starred");
+    {
+        let (memory, made) = (memory.clone(), made.clone());
+        as_request(&writer, "beta", async move {
+            memory
+                .update_fact(
+                    &made,
+                    FactPatch {
+                        fields: [("starred".to_string(), "false".to_string())].into(),
+                        ..Default::default()
+                    },
+                    &EntityId("bot:sigma".into()),
+                )
+                .await
+                .expect("the claim is rewritten")
+                .written()
+                .expect("not blocked");
+        })
+        .await;
+    }
+    assert_eq!(seats(&seam), 0, "the rewritten claim is no longer starred");
+    writer.drain().await;
+    server.stop().await;
+}
+
 /// **A claim captured and then rewritten is one record with two writes in the
 /// State**, as it is in the store: the first write creates it and the second
 /// revises it.

@@ -122,6 +122,16 @@ impl DoltMemory {
         }))
     }
 
+    /// **The record a claim is held under**: the one the State holds under the
+    /// label when it holds one, because a claim the capture job decided is filed
+    /// under an id of its own; else the id the object and the label make.
+    fn record_named(object: &ObjectId, label: &str) -> jojobot_domain::log::RecordId {
+        crate::writer::Writer::current()
+            .and_then(|writer| writer.seam())
+            .and_then(|seam| seam.read_claims(|state| state.record_under(object, label)))
+            .unwrap_or_else(|| record_id(object, label))
+    }
+
     /// **A claim as the State holds it**, from the claim as it was written.
     async fn claim_body_of(
         tx: &mut Transaction<'_, MySql>,
@@ -222,7 +232,7 @@ impl DoltMemory {
     ) -> Result<(), MemoryError> {
         let claim = Self::claim_body_of(tx, fact).await?;
         let origin = Self::claim_write_origin(tx, &fact.home, &fact.id, ordinal).await?;
-        let record = record_id(
+        let record = Self::record_named(
             &Self::object_key(tx, fact.home.as_str()).await?,
             fact.id.as_str(),
         );
@@ -250,7 +260,7 @@ impl DoltMemory {
             Self::object_key(tx, &survivor).await?
         };
         Ok(Emitting {
-            record: record_id(&stored, fact.as_str()),
+            record: Self::record_named(&stored, fact.as_str()),
             subject,
             merged: merged.then_some(survivor),
             origin,
@@ -421,7 +431,7 @@ impl DoltMemory {
         let at = Self::written_at_or_before(tx, &served)
             .await?
             .unwrap_or(served);
-        Ok(record_id(
+        Ok(Self::record_named(
             &Self::object_key(tx, at.home.as_str()).await?,
             at.local.as_str(),
         ))

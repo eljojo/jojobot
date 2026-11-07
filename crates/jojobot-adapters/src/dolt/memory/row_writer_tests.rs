@@ -450,6 +450,57 @@ async fn a_former_handle_in_an_edge_a_ref_or_a_field_is_answered_as_the_old_rout
     new.server.stop().await;
 }
 
+/// **A label a rewrite changes on a claim the job route wrote is changed in the
+/// State**: the seats a starred rule holds are counted there.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_rewrite_unstars_a_claim_the_job_route_starred() {
+    let mut world = world("row-writer-unstar").await;
+    world.add("bot:lisa", "Lisa").await;
+    let mut addresses = Vec::new();
+    for content in ["rule one", "rule two", "rule three"] {
+        let mut rule = NewFact::about(id("bot:lisa"), content, date(2026, 4, 19));
+        rule.fields = [("starred".to_string(), "true".to_string())].into();
+        addresses.push(world.capture(rule, true).await.address());
+    }
+    let seats = |world: &World| {
+        let writer = world.writer.clone();
+        async move {
+            let seam = writer.seam().expect("the seam is open");
+            seam.read_claims(|state| {
+                state
+                    .resolve("bot:lisa")
+                    .map(|bot| state.starred_rules(bot).len())
+            })
+        }
+    };
+    assert_eq!(seats(&world).await, Some(3));
+    let (memory, first) = (world.memory.clone(), addresses[0].clone());
+    world
+        .writer
+        .run(async move {
+            memory
+                .update_fact(
+                    &first,
+                    jojobot_domain::memory::FactPatch {
+                        fields: [("starred".to_string(), "false".to_string())].into(),
+                        ..Default::default()
+                    },
+                    &id("bot:lisa"),
+                )
+                .await
+                .expect("the claim is rewritten")
+                .written()
+                .expect("not blocked");
+        })
+        .await;
+    assert_eq!(
+        seats(&world).await,
+        Some(2),
+        "the unstarred rule left its seat"
+    );
+    world.server.stop().await;
+}
+
 /// **A claim decided over the State is read back by the row readers and edited by
 /// `update_fact`**, which finds its claim with a row read until the reads move.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

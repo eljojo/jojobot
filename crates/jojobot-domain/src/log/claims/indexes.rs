@@ -254,6 +254,14 @@ impl State {
         self.handle_of(object)
     }
 
+    /// **The record an object holds under a label**, when it holds one.
+    pub fn record_under(&self, object: &ObjectId, label: &str) -> Option<RecordId> {
+        self.indexes
+            .labels
+            .get(&(self.survivor(object).clone(), label.to_string()))
+            .cloned()
+    }
+
     /// **The claim an address names**: a spelling of the object, a `#`, and the
     /// label the claim is served under. The spelling may be one the object
     /// answers to now or one it gave up, and a merged object's follows it to its
