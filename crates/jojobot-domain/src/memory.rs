@@ -643,6 +643,22 @@ pub fn children_in<'a>(all: &'a [Entity], parent: &EntityId) -> Vec<&'a Entity> 
         .collect()
 }
 
+/// **Who stands under whom, for every parent at once**, from an inventory already
+/// read. [`children_in`] asked of each parent: archived children stand and a thing
+/// folded into another stands under nothing, decided here and nowhere else.
+pub fn children_index(all: &[Entity]) -> std::collections::HashMap<EntityId, Vec<EntityId>> {
+    let mut index: std::collections::HashMap<EntityId, Vec<EntityId>> = Default::default();
+    for entity in all.iter().filter(|e| e.merged_into.is_none()) {
+        if let Some(parent) = &entity.parent {
+            index
+                .entry(parent.clone())
+                .or_default()
+                .push(entity.id.clone());
+        }
+    }
+    index
+}
+
 /// **Resolve a handle that may be stale.** A direct match wins; failing that,
 /// the handle's own rename history is checked, and the entity now wearing
 /// that badge is returned. `None` means nothing — not now, not ever —

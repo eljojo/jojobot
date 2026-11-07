@@ -306,19 +306,10 @@ impl HeldMessages {
     ) -> &std::collections::HashMap<EntityId, Vec<EntityId>> {
         self.1
             .get_or_init(|| async {
-                let mut index: std::collections::HashMap<EntityId, Vec<EntityId>> =
-                    Default::default();
-                if let Ok(all) = memory.list_entities(None).await {
-                    for entity in all.iter().filter(|e| e.merged_into.is_none()) {
-                        if let Some(parent) = &entity.parent {
-                            index
-                                .entry(parent.clone())
-                                .or_default()
-                                .push(entity.id.clone());
-                        }
-                    }
+                match memory.list_entities(None).await {
+                    Ok(all) => jojobot_domain::memory::children_index(&all),
+                    Err(_) => Default::default(),
                 }
-                index
             })
             .await
     }

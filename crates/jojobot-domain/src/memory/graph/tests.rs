@@ -3840,6 +3840,51 @@ fn decisions_read_by_number_when_the_container_numbers_them_and_by_handle_otherw
     );
 }
 
+/// **The index of every parent's children is `children_in` asked of each parent.**
+/// The held pass reads who stands under whom for many parents at once, and it must
+/// not decide "whose child is it" a second way: archived children stand, a thing
+/// folded into another stands under nothing.
+#[test]
+fn the_index_of_children_agrees_with_children_in_for_every_parent() {
+    let parent = EntityId("project:atlas".into());
+    let under = |handle: &str, of: &EntityId| Entity {
+        parent: Some(of.clone()),
+        ..entity(handle, handle)
+    };
+    let archived = Entity {
+        archived: Some(crate::memory::Archived {
+            reason: "no longer part of the plan".into(),
+            at: "2026-10-01T00:00:00Z".parse().expect("a moment"),
+        }),
+        ..under("work:omega", &parent)
+    };
+    let folded = Entity {
+        merged_into: Some(EntityId("work:sigma".into())),
+        ..under("work:tau", &parent)
+    };
+    let other = EntityId("project:atlas-two".into());
+    let all = vec![
+        entity("project:atlas", "atlas"),
+        entity("project:atlas-two", "atlas two"),
+        under("work:sigma", &parent),
+        under("work:delta", &parent),
+        archived,
+        folded,
+        under("work:kappa", &other),
+    ];
+    let index = crate::memory::children_index(&all);
+    for who in [&parent, &other, &EntityId("work:sigma".into())] {
+        let mut want: Vec<EntityId> = crate::memory::children_in(&all, who)
+            .into_iter()
+            .map(|child| child.id.clone())
+            .collect();
+        let mut got = index.get(who).cloned().unwrap_or_default();
+        want.sort();
+        got.sort();
+        assert_eq!(got, want, "the children of {who}");
+    }
+}
+
 /// **Every thing's children are counted in one pass, with the whole subtree.**
 /// The subtree is the live things reached through live children, so an archived
 /// child hides what sits under it, as a page listing what stands would. A loop in

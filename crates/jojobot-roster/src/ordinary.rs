@@ -1774,4 +1774,5 @@ pub const ORDINANCES: &[&str] = &[
     "topic:contract-fusion-stamped",
     "thing:contract-fusion-stack",
     "topic:scrapbook",
+    "work:q-933-judge-102-story-opt-ins",
 ];
