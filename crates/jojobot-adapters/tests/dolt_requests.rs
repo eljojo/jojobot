@@ -544,6 +544,89 @@ async fn a_spent_id_follows_the_bot_through_a_rename_and_is_not_inherited_by_a_n
     server.stop().await;
 }
 
+/// **A large old ledger and a row nobody can read do not stop the first write.**
+/// The old `app_write` table is never pruned, so the import can be large, and its
+/// columns are plain text, so a stamp can be unreadable. The import reads the
+/// readable rows in batches of at most 256 events and skips the unreadable one,
+/// and the write lands.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_large_old_ledger_and_an_unreadable_row_do_not_stop_the_first_write() {
+    use jojobot_domain::request::events::LedgerEvent;
+    let dir = jojobot_adapters::testing::scratch_path("jojobot-requests-large");
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    let _scratch = Scratch(dir.clone());
+    let mut server = Dolt::start(&dir, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&server, "requests_large")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
+        .await
+        .expect("the kinds are seeded");
+    let plain = DoltMemory::open(pool.clone());
+    let milhouse = thing(&plain, "person:milhouse", "Milhouse").await;
+    thing(&plain, "bot:sigma", "Sigma").await;
+    let key: String = sqlx::query_scalar("SELECT badge FROM entity WHERE id = 'bot:sigma'")
+        .fetch_one(&pool)
+        .await
+        .expect("the bot's badge");
+    for n in 0..600 {
+        sqlx::query(
+            "INSERT INTO app_write (app_id, event_key, digest, landed, written_at) \
+             VALUES ('springfield-ci', ?, 'd', '{}', '2999-01-01T00:00:00.000000000Z')",
+        )
+        .bind(format!("a{n}"))
+        .execute(&pool)
+        .await
+        .expect("an app row");
+    }
+    sqlx::query(
+        "INSERT INTO request_receipt (bot_key, request_id, verb, args_digest, landed, written_at) \
+         VALUES (?, 'garbled', 'capture', 'd', '{}', 'garbage')",
+    )
+    .bind(&key)
+    .execute(&pool)
+    .await
+    .expect("a row nobody can read");
+
+    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
+    let _ledger = DoltRequests::new(pool.clone()).with_writer(memory.writer());
+    let (stored, _) = captured(
+        &memory,
+        request("bot:sigma", "now"),
+        claim_about(&milhouse, "wears glasses"),
+    )
+    .await;
+    assert!(
+        stored,
+        "the first write lands over a large and a garbled ledger"
+    );
+    let imported = jojobot_adapters::testing::ledger_events(&pool)
+        .await
+        .into_iter()
+        .filter(|event| matches!(event, LedgerEvent::Imported { .. }))
+        .count();
+    assert_eq!(
+        imported, 600,
+        "every readable row is imported, the garbled one is not"
+    );
+    let widest: i64 = sqlx::query_scalar(
+        "SELECT CAST(MAX(last_position - first_position + 1) AS SIGNED) FROM event_log \
+         WHERE first_position IS NOT NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("batch sizes");
+    assert!(
+        widest <= 256,
+        "no batch holds more than 256 events, widest {widest}"
+    );
+
+    server.stop().await;
+}
+
 /// **The rows of the old tables are imported once, before the first live event,
 /// and read from the log afterwards.** The rows are written before the writer's
 /// first job, as a store filled by the last release holds them. An id still in

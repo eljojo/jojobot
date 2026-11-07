@@ -149,20 +149,56 @@ impl Seam {
         }
     }
 
-    /// **The one-time import of the old tables.** Each retained row becomes an
-    /// `Imported` event with its source time, all in one batch, when the log holds
-    /// no ledger event yet. A log that holds one is never imported into again.
+    /// **The one-time import of the old tables.** Each readable row becomes an
+    /// `Imported` event with its source time, when the log holds no ledger event
+    /// yet. A log that holds one is never imported into again.
+    ///
+    /// **The events go in batches of at most [`READ_BOUND`], all in one
+    /// transaction.** The old `app_write` table is never pruned, so the import can
+    /// be large, and a batch is one stored row. One transaction keeps the import
+    /// whole: a failure leaves the log with no ledger event, so the next write
+    /// imports again, and no half of it is ever taken for all of it.
     async fn import(self: &Arc<Self>, pool: &sql::Pool) -> Result<(), LedgerError> {
         let rows = legacy_rows(pool).await?;
         if rows.is_empty() {
             return Ok(());
         }
-        let events = rows
-            .into_iter()
-            .map(|row| row.into_event(IMPORTED_GENERATION))
-            .collect();
-        self.append_event_batch(pool, events, Timestamp::now())
+        let mut chunks: Vec<Vec<LedgerEvent>> = Vec::new();
+        for row in rows {
+            let event = row.into_event(IMPORTED_GENERATION);
+            match chunks.last_mut() {
+                Some(chunk) if chunk.len() < READ_BOUND => chunk.push(event),
+                _ => chunks.push(vec![event]),
+            }
+        }
+        let at = Timestamp::now();
+        let mut tx = pool
+            .writer()
+            .begin()
             .await
+            .map_err(|e| LedgerError::Store(e.to_string()))?;
+        let mut pending: Vec<Pending> = Vec::new();
+        for chunk in chunks {
+            let next = match pending.last() {
+                None => self.stage(&mut tx, chunk, at).await?,
+                Some(previous) => self.stage_after(&mut tx, previous.last, chunk, at).await?,
+            };
+            pending.push(next);
+        }
+        match sql::commit(tx).await {
+            Ok(()) => {
+                for staged in pending {
+                    staged.committed();
+                }
+                Ok(())
+            }
+            Err(error) => {
+                for staged in pending {
+                    staged.unknown();
+                }
+                Err(sql::store_error::<LedgerError>(error))
+            }
+        }
     }
 
     /// Stage `events` as one batch in `tx`, against the head the log holds.
@@ -176,23 +212,7 @@ impl Seam {
             self.catch_up().await?;
         }
         let head = self.log.head_in(tx).await.map_err(refused)?;
-        let members: Vec<Vec<u8>> = events.iter().map(codec::encode).collect();
-        let identity = jojobot_domain::request::digest_of(&format!(
-            "{head}:{}",
-            members
-                .iter()
-                .map(|member| String::from_utf8_lossy(member).into_owned())
-                .collect::<Vec<_>>()
-                .join("\n")
-        ));
-        let batch = SealedBatch::seal(
-            BatchId(format!("ledger:{identity}")),
-            Position(head),
-            at,
-            REPRESENTATION_VERSION,
-            members,
-        )
-        .map_err(refused)?;
+        let batch = Self::seal(head, &events, at)?;
         let staged = self
             .log
             .stage(tx, Position(head), &batch)
@@ -204,6 +224,49 @@ impl Seam {
             events,
             last: batch.range().last,
         })
+    }
+
+    /// Stage `events` as one more batch in `tx`, after the batch this transaction
+    /// staged last, which ended at `after`. The import stages its chunks this way.
+    async fn stage_after(
+        self: &Arc<Self>,
+        tx: &mut Transaction<'_, MySql>,
+        after: Position,
+        events: Vec<LedgerEvent>,
+        at: Timestamp,
+    ) -> Result<Pending, LedgerError> {
+        let batch = Self::seal(after.0, &events, at)?;
+        let staged = self
+            .log
+            .stage_after(tx, after, &batch)
+            .await
+            .map_err(refused)?;
+        Ok(Pending {
+            seam: Arc::clone(self),
+            staged,
+            events,
+            last: batch.range().last,
+        })
+    }
+
+    fn seal(head: u64, events: &[LedgerEvent], at: Timestamp) -> Result<SealedBatch, LedgerError> {
+        let members: Vec<Vec<u8>> = events.iter().map(codec::encode).collect();
+        let identity = jojobot_domain::request::digest_of(&format!(
+            "{head}:{}",
+            members
+                .iter()
+                .map(|member| String::from_utf8_lossy(member).into_owned())
+                .collect::<Vec<_>>()
+                .join("\n")
+        ));
+        SealedBatch::seal(
+            BatchId(format!("ledger:{identity}")),
+            Position(head),
+            at,
+            REPRESENTATION_VERSION,
+            members,
+        )
+        .map_err(refused)
     }
 
     /// Append `events` as a batch of their own, in a transaction of their own.
@@ -256,9 +319,20 @@ impl Seam {
 /// Every retained row of the three old tables, as the events that import them.
 async fn legacy_rows(pool: &sql::Pool) -> Result<Vec<LegacyRow>, LedgerError> {
     let store = |e: sqlx::Error| LedgerError::Store(e.to_string());
-    let time = |text: String| {
-        text.parse::<Timestamp>()
-            .map_err(|e| LedgerError::Store(format!("a ledger row's time is unreadable: {e}")))
+    // **A row whose stamp cannot be read is named and left out.** The columns are
+    // plain text, and one such row must not stop the import, and with it every
+    // write of the writer.
+    let time = |table: &str, key: String, text: String| match text.parse::<Timestamp>() {
+        Ok(at) => Some(at),
+        Err(error) => {
+            tracing::warn!(
+                table,
+                key,
+                %error,
+                "an old ledger row has an unreadable time and is not imported"
+            );
+            None
+        }
     };
     let mut rows = Vec::new();
     for row in sqlx::query(
@@ -269,14 +343,23 @@ async fn legacy_rows(pool: &sql::Pool) -> Result<Vec<LegacyRow>, LedgerError> {
     .await
     .map_err(store)?
     {
+        let bot_key: String = row.try_get("bot_key").map_err(store)?;
+        let request_id: String = row.try_get("request_id").map_err(store)?;
+        let Some(written_at) = time(
+            "request_receipt",
+            format!("{bot_key}/{request_id}"),
+            row.try_get("written_at").map_err(store)?,
+        ) else {
+            continue;
+        };
         rows.push(LegacyRow::RequestReceipt {
-            bot_key: ObjectId(row.try_get("bot_key").map_err(store)?),
-            request_id: RequestId(row.try_get("request_id").map_err(store)?),
+            bot_key: ObjectId(bot_key),
+            request_id: RequestId(request_id),
             verb: row.try_get("verb").map_err(store)?,
             args_digest: row.try_get("args_digest").map_err(store)?,
             landed: row.try_get("landed").map_err(store)?,
             receipt: row.try_get("receipt").map_err(store)?,
-            written_at: time(row.try_get("written_at").map_err(store)?)?,
+            written_at,
         });
     }
     for row in sqlx::query(
@@ -287,15 +370,25 @@ async fn legacy_rows(pool: &sql::Pool) -> Result<Vec<LegacyRow>, LedgerError> {
     .await
     .map_err(store)?
     {
+        let bot_key: String = row.try_get("bot_key").map_err(store)?;
+        let request_id: String = row.try_get("request_id").map_err(store)?;
+        let part: String = row.try_get("part").map_err(store)?;
+        let Some(written_at) = time(
+            "request_part",
+            format!("{bot_key}/{request_id}/{part}"),
+            row.try_get("written_at").map_err(store)?,
+        ) else {
+            continue;
+        };
         rows.push(LegacyRow::RequestPart {
-            bot_key: ObjectId(row.try_get("bot_key").map_err(store)?),
-            request_id: RequestId(row.try_get("request_id").map_err(store)?),
-            part: row.try_get("part").map_err(store)?,
+            bot_key: ObjectId(bot_key),
+            request_id: RequestId(request_id),
+            part,
             verb: row.try_get("verb").map_err(store)?,
             args_digest: row.try_get("args_digest").map_err(store)?,
             landed: row.try_get("landed").map_err(store)?,
             note: row.try_get("note").map_err(store)?,
-            written_at: time(row.try_get("written_at").map_err(store)?)?,
+            written_at,
         });
     }
     for row in sqlx::query(
@@ -306,12 +399,21 @@ async fn legacy_rows(pool: &sql::Pool) -> Result<Vec<LegacyRow>, LedgerError> {
     .await
     .map_err(store)?
     {
+        let app_id: String = row.try_get("app_id").map_err(store)?;
+        let event_key: String = row.try_get("event_key").map_err(store)?;
+        let Some(written_at) = time(
+            "app_write",
+            format!("{app_id}/{event_key}"),
+            row.try_get("written_at").map_err(store)?,
+        ) else {
+            continue;
+        };
         rows.push(LegacyRow::AppWrite {
-            app_id: row.try_get("app_id").map_err(store)?,
-            event_key: row.try_get("event_key").map_err(store)?,
+            app_id,
+            event_key,
             digest: row.try_get("digest").map_err(store)?,
             landed: row.try_get("landed").map_err(store)?,
-            written_at: time(row.try_get("written_at").map_err(store)?)?,
+            written_at,
         });
     }
     Ok(rows)

@@ -273,6 +273,40 @@ impl DoltLog {
     }
 }
 
+impl DoltLog {
+    /// **Put one more batch into a transaction that already staged one**, which
+    /// ended at `after`. The head held is the head before that first batch, so
+    /// this admits the batch against `after` alone, which the caller took from the
+    /// batch it staged. Report each [`Staged`] in order after the COMMIT.
+    pub async fn stage_after(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::MySql>,
+        after: Position,
+        batch: &SealedBatch,
+    ) -> Result<Staged, LogError> {
+        if after != batch.header().expected_previous_position {
+            return Err(LogError::Conflict);
+        }
+        let slot = format!(
+            "b:{}",
+            jojobot_domain::request::digest_of(&batch.header().batch_id.0)
+        );
+        let bytes = StoredBatch::encode(batch)?;
+        sqlx::query("INSERT INTO event_log (slot, first_position, last_position, payload) VALUES (?, ?, ?, ?)")
+            .bind(&slot)
+            .bind(batch.range().first.0)
+            .bind(batch.range().last.0)
+            .bind(&bytes)
+            .execute(&mut **tx)
+            .await
+            .map_err(failed)?;
+        Ok(Staged {
+            log: self.clone(),
+            last: batch.range().last.0,
+        })
+    }
+}
+
 /// **A batch inside a caller's transaction that has not committed.** Call
 /// [`Staged::committed`] after the COMMIT is acknowledged; dropping it any other
 /// way leaves the head where it was.
