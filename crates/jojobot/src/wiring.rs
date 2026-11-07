@@ -1073,12 +1073,9 @@ pub async fn boot_store_observed(
         // nothing was appended and the import runs again; a data failure needs a
         // fix and is loud. A boot that went on would serve a state with no history.
         Err(why) => {
-            tracing::error!(
-                error = %why,
-                "THE CLAIMS IMPORT FAILED — nothing was appended to the log; the boot stops \
-                 and the next start tries again."
-            );
-            anyhow::bail!("the claims import failed: {why}");
+            let line = claims_import_failure(&why);
+            tracing::error!("{line}");
+            anyhow::bail!("{line}");
         }
     }
 
@@ -1297,6 +1294,27 @@ async fn the_day_of_this_boot(memory: &dyn Memory, clock: &Clock) -> jiff::civil
 
 pub mod field_links;
 
+/// **What the boot says when the claims import stops**, for the log and for the
+/// error, so the two cannot differ. A failure to reach the store says the next
+/// start tries again. A row the import will not take says that starting again
+/// fails the same way, and names the one step: report the line, because the fix
+/// is a build that imports the row. It never tells anyone to change production
+/// rows (rule 796: a fault in production is fixed forward).
+fn claims_import_failure(why: &jojobot_adapters::claims_import::ClaimsImportError) -> String {
+    if why.heals_on_restart() {
+        format!(
+            "THE CLAIMS IMPORT FAILED — nothing was appended to the log; the boot stops \
+             and the next start tries again. {why}"
+        )
+    } else {
+        format!(
+            "THE CLAIMS IMPORT FOUND STORED DATA IT WILL NOT TAKE — nothing was appended \
+             to the log and the boot stops. Starting again fails the same way. Report this \
+             line: the fix is a build that imports this row. {why}"
+        )
+    }
+}
+
 /// **Every kind and type this build ships**, as the claims reconcile compares them
 /// with the log: the kinds with the keys they carry, then the shipped types.
 fn shipped_declarations() -> Vec<jojobot_domain::memory::types::DeclaredType> {
@@ -1311,6 +1329,52 @@ mod tests {
     use jiff::civil::date;
     use jojobot_domain::memory::testing::InMemoryMemory;
     use jojobot_domain::memory::{EntityId, NewEntity, NewFact};
+
+    /// **A failure to reach the store says a restart tries again; a row the import
+    /// will not take says a restart fails the same way and what to do instead.**
+    /// The step is to report the line: the fix is a build that imports the row,
+    /// and no line tells anyone to change production rows (rule 796).
+    #[test]
+    fn the_import_failure_line_tells_a_retry_from_a_row_that_needs_a_build() {
+        use jojobot_adapters::claims_import::ClaimsImportError as Why;
+        let retry = "the next start tries again";
+        for why in [Why::Store("connection lost".into()), Why::Indeterminate] {
+            let line = claims_import_failure(&why);
+            assert!(line.contains(retry), "{line}");
+        }
+        let data = [
+            Why::Unmappable(
+                "claim person:homer/f1 holds a metadata row under mood, which no event carries"
+                    .into(),
+            ),
+            Why::Unmappable(
+                "merge numbers must run 1, 2, 3 without a gap: expected 3, found 5".into(),
+            ),
+            Why::Findings {
+                count: 1,
+                rows: "fact person:homer/f2: a derived_from nobody holds".into(),
+            },
+            Why::Log("an event this build cannot read".into()),
+        ];
+        for why in &data {
+            let line = claims_import_failure(why);
+            assert!(!line.contains(retry), "a restart cannot heal this: {line}");
+            assert!(line.contains("fails the same way"), "{line}");
+            assert!(line.contains("Report this line"), "{line}");
+            assert!(
+                line.contains("a build that imports this row"),
+                "the step is a build: {line}"
+            );
+            assert!(
+                !line.to_lowercase().contains("delete") && !line.to_lowercase().contains("remove"),
+                "no step edits production rows: {line}"
+            );
+            assert!(
+                line.contains(&why.to_string()),
+                "the line carries the row: {line}"
+            );
+        }
+    }
 
     /// Queue admission survives the caller; the search signal must survive too.
     #[tokio::test]

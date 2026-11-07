@@ -66,6 +66,16 @@ pub enum ClaimsImportError {
     Indeterminate,
 }
 
+impl ClaimsImportError {
+    /// **Whether starting again can pass.** A failure to reach the store or the log
+    /// may be gone on the next start; a row the import will not take, or an event
+    /// the build cannot read, fails the same way on every start until a build that
+    /// takes it.
+    pub fn heals_on_restart(&self) -> bool {
+        crate::writer::recovery::StoreError::unknown(self)
+    }
+}
+
 impl crate::writer::recovery::StoreError for ClaimsImportError {
     fn store(why: String) -> Self {
         Self::Store(why)

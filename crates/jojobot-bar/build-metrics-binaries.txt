@@ -27,6 +27,7 @@ test-binary_deadline
 test-binary_reports_its_bound_port
 test-boot_adopts_a_retired_handle_under_one_key
 test-boot_failure
+test-boot_import_failure_names_the_step
 test-boot_imports_a_declaration_that_points_at_a_kind
 test-boot_imports_claims_after_the_repairs
 test-boot_logs_the_time_of_each_step
