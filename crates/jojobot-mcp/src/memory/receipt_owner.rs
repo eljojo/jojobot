@@ -60,115 +60,143 @@ impl Jojobot {
     }
 
     /// **What a capture receipt serves, and the teachings it spends for it.** A
-    /// dropped part spends nothing: a carry hint spends its domain, a type step
-    /// its ledger key and a teaching note its domain only if the receipt still
-    /// carries them once the composer has chosen. If another receipt claimed the
-    /// teaching first, or its ledger write fails, choose again without it.
+    /// part that is dropped spends nothing: a possible-subject note spends the
+    /// rows of the things it names, a carry hint its domain, a type step its
+    /// ledger key and a teaching note its domain, each only if the receipt still
+    /// carries it once the composer has chosen. If another receipt claimed the
+    /// teaching first, or its ledger write fails, the part comes out and the
+    /// receipt is composed again. **Every spend happens after the last compose**,
+    /// in one loop, since a smaller receipt can let a part ship that the first
+    /// compose dropped; a part that already spent stays served, since a smaller
+    /// set never drops a served layer.
     pub(crate) async fn own_capture_receipt(
         &self,
         mut body: Value,
         caller: &Caller,
-        carry_hint: bool,
+        mut carry_hint: bool,
         owed: &[OwedUnlock],
-        possible: Option<PossibleSubject>,
+        mut possible: Option<PossibleSubject>,
         mut notes: Vec<TeachingNote>,
     ) -> Value {
-        let mut served = compose_receipt(body.clone(), &notes);
-        // A possible-subject note spends the rows of the things it names only if
-        // it ships. A row another receipt spent first takes its thing out of the
-        // note, and a note left naming nothing goes, so the next suggestion
-        // ships in its place.
-        if let Some(possible) = possible
-            && served.served.get("possible_subject_note").is_some()
-        {
-            let mut lost = BTreeSet::new();
-            for key in possible.keys() {
-                if !self.first_contact(key, Some(caller)).await {
-                    lost.insert(key.to_string());
-                }
-            }
-            if !lost.is_empty() {
-                let object = body
-                    .as_object_mut()
-                    .expect("a capture receipt is an object");
-                match possible.without(&lost) {
-                    Some(rest) => {
-                        object.insert("possible_subject_note".into(), rest.note().into());
-                    }
-                    None => {
-                        object.remove("possible_subject_note");
-                    }
-                }
-                served = compose_receipt(body.clone(), &notes);
-            }
-        }
-        if carry_hint
-            && served.served.get("hint").is_some()
-            && !self
-                .first_contact(super::list_carry::PLAN_CARRY_DOMAIN, Some(caller))
-                .await
-        {
-            body.as_object_mut()
-                .expect("a capture receipt is an object")
-                .remove("hint");
-            served = compose_receipt(body.clone(), &notes);
-        }
-        if served.served.get("unlocks").is_some() && !owed.is_empty() {
-            let mut lost = Vec::new();
-            for step in owed {
-                if !self.first_contact(&step.key, Some(caller)).await {
-                    lost.push(step.sentence.as_str());
-                }
-            }
-            if !lost.is_empty() {
-                let steps = body
-                    .get_mut("unlocks")
-                    .and_then(|block| block.get_mut("steps"))
-                    .and_then(Value::as_array_mut)
-                    .expect("the served block came from the body");
-                steps.retain(|step| {
-                    !step["unlocks"]
-                        .as_str()
-                        .is_some_and(|sentence| lost.contains(&sentence))
-                });
-                if steps.is_empty() {
-                    body.as_object_mut()
-                        .expect("a capture receipt is an object")
-                        .remove("unlocks");
-                }
-                served = compose_receipt(body.clone(), &notes);
-            }
-        }
-        // A note spends its domain once. One that lost the race to another
-        // receipt is taken out and the receipt is composed again; a note that
-        // already spent stays, since a smaller set never drops a served layer.
+        // The type steps by ledger key and sentence, owned, so no borrow of the
+        // caller's steps is held across a spend.
+        let mut owed: Vec<(String, String)> = owed
+            .iter()
+            .map(|step| (step.key.clone(), step.sentence.clone()))
+            .collect();
         let mut spent: BTreeSet<String> = BTreeSet::new();
         loop {
-            let left: BTreeSet<&str> = served
-                .left_out
-                .iter()
-                .map(|omitted| omitted.layer)
-                .collect();
-            let mut lost: Option<usize> = None;
-            for (at, note) in notes.iter().enumerate() {
-                if left.contains(note.name) || spent.contains(note.domain.as_ref()) {
+            let composed = compose_receipt(body.clone(), &notes);
+            if let Some(current) = possible.clone()
+                && composed.served.get("possible_subject_note").is_some()
+            {
+                let keys: Vec<String> = current.keys().map(str::to_string).collect();
+                let lost = self.spend(keys, caller, &mut spent).await;
+                if !lost.is_empty() {
+                    let object = body
+                        .as_object_mut()
+                        .expect("a capture receipt is an object");
+                    possible = current.without(&lost);
+                    match &possible {
+                        Some(rest) => {
+                            object.insert("possible_subject_note".into(), rest.note().into());
+                        }
+                        None => {
+                            object.remove("possible_subject_note");
+                        }
+                    }
                     continue;
                 }
-                if self.first_contact(&note.domain, Some(caller)).await {
-                    spent.insert(note.domain.to_string());
-                } else {
-                    lost = Some(at);
+            }
+            if carry_hint && composed.served.get("hint").is_some() {
+                let key = super::list_carry::PLAN_CARRY_DOMAIN.to_string();
+                if !self.spend(vec![key], caller, &mut spent).await.is_empty() {
+                    body.as_object_mut()
+                        .expect("a capture receipt is an object")
+                        .remove("hint");
+                    carry_hint = false;
+                    continue;
+                }
+            }
+            if composed.served.get("unlocks").is_some() && !owed.is_empty() {
+                let keys: Vec<String> = owed.iter().map(|(key, _)| key.clone()).collect();
+                let lost = self.spend(keys, caller, &mut spent).await;
+                if !lost.is_empty() {
+                    let sentences: Vec<String> = owed
+                        .iter()
+                        .filter(|(key, _)| lost.contains(key))
+                        .map(|(_, sentence)| sentence.clone())
+                        .collect();
+                    let steps = body
+                        .get_mut("unlocks")
+                        .and_then(|block| block.get_mut("steps"))
+                        .and_then(Value::as_array_mut)
+                        .expect("the served block came from the body");
+                    steps.retain(|step| {
+                        !step["unlocks"]
+                            .as_str()
+                            .is_some_and(|sentence| sentences.iter().any(|lost| lost == sentence))
+                    });
+                    if steps.is_empty() {
+                        body.as_object_mut()
+                            .expect("a capture receipt is an object")
+                            .remove("unlocks");
+                    }
+                    owed.retain(|(key, _)| !lost.contains(key));
+                    continue;
+                }
+            }
+            let left: BTreeSet<String> = composed
+                .left_out
+                .iter()
+                .map(|omitted| omitted.layer.to_string())
+                .collect();
+            let mut lost_note: Option<usize> = None;
+            let served_notes: Vec<(usize, String)> = notes
+                .iter()
+                .enumerate()
+                .filter(|(_, note)| !left.contains(note.name))
+                .map(|(at, note)| (at, note.domain.to_string()))
+                .collect();
+            for (at, domain) in served_notes {
+                if !self
+                    .spend(vec![domain], caller, &mut spent)
+                    .await
+                    .is_empty()
+                {
+                    lost_note = Some(at);
                     break;
                 }
             }
-            match lost {
-                None => return served.served,
+            match lost_note {
+                None => return composed.served,
                 Some(at) => {
                     notes.remove(at);
-                    served = compose_receipt(body.clone(), &notes);
                 }
             }
         }
+    }
+
+    /// **Spend each ledger key this receipt has not spent**, and say which
+    /// another receipt had spent first. A key this receipt spent stays spent.
+    async fn spend(
+        &self,
+        keys: Vec<String>,
+        caller: &Caller,
+        spent: &mut BTreeSet<String>,
+    ) -> BTreeSet<String> {
+        let mut lost = BTreeSet::new();
+        for key in keys {
+            if spent.contains(&key) {
+                continue;
+            }
+            if self.first_contact(&key, Some(caller)).await {
+                spent.insert(key);
+            } else {
+                lost.insert(key);
+            }
+        }
+        lost
     }
 }
 
