@@ -1099,8 +1099,72 @@ fn record(text: &str) {
     writeln!(file, "{text}").expect("the measures file takes the line");
 }
 
-/// One measured boot: record its numbers and assert the bounds.
-fn measured(case: &str, size: &Size, run: &mut Running) -> Duration {
+/// **A copy of a stopped store**, made before anything boots it, so the same boot
+/// can be run over the same bytes again.
+fn copy_of(state: &Scratch, name: &str) -> Scratch {
+    let dir = jojobot_adapters::testing::scratch_path(name);
+    let _ = std::fs::remove_dir_all(&dir);
+    let copied = Command::new("cp")
+        .arg("-a")
+        .arg(&state.0)
+        .arg(&dir)
+        .status()
+        .expect("the copy runs");
+    assert!(copied.success(), "the store copies");
+    Scratch(dir)
+}
+
+/// **The boot of `run`, then the same boot again over `copy`**, both recorded,
+/// before either is judged. The first starts as soon as the template was copied;
+/// the second starts after the first has run and stopped, on a copy made before the
+/// first, so the disk and the runner are warm and the bytes are the same. The
+/// bounds are asserted on the first boot only.
+fn measured_twice(case: &str, size: &Size, run: &mut Running, copy: Scratch) -> Duration {
+    let first = measure(case, size, run);
+    let mut again = spawn(copy);
+    let second = measure(&format!("{case} second boot"), size, &mut again);
+    let _ = again.stopped();
+    record(&format!(
+        "boot-pair {case}: first {} ms, second {} ms; peak first {} kB, second {} kB",
+        first.took.as_millis(),
+        second.took.as_millis(),
+        first.peak,
+        second.peak
+    ));
+    assert_bounds(case, &first);
+    first.took
+}
+
+#[derive(Clone, Copy)]
+struct Boot {
+    took: Duration,
+    peak: u64,
+    server: u64,
+    store: u64,
+}
+
+fn assert_bounds(case: &str, boot: &Boot) {
+    let Boot {
+        took,
+        peak,
+        server,
+        store,
+    } = *boot;
+    assert!(
+        took < BOOT_BOUND,
+        "{case}: the first answer took {took:?}, over {BOOT_BOUND:?}"
+    );
+    let bound = memory_bound_kib();
+    assert!(
+        peak < bound,
+        "{case}: peak memory was {peak} kB (server {server} + store {store}), over \
+         {bound} kB (the module's memoryMax)"
+    );
+}
+
+/// One measured boot: wait for its first answer, read its peak memory, and record
+/// the numbers with the steps the server timed. It asserts nothing.
+fn measure(case: &str, size: &Size, run: &mut Running) -> Boot {
     let took = run.first_answer();
     let (server, store) = run.peaks_kib();
     let peak = server + store;
@@ -1134,24 +1198,20 @@ fn measured(case: &str, size: &Size, run: &mut Running) -> Duration {
         memory_bound_kib(),
         steps.join("\n  ")
     ));
-    assert!(
-        took < BOOT_BOUND,
-        "{case}: the first answer took {took:?}, over {BOOT_BOUND:?}"
-    );
-    let bound = memory_bound_kib();
-    assert!(
-        peak < bound,
-        "{case}: peak memory was {peak} kB (server {server} + store {store}), over \
-         {bound} kB (the module's memoryMax)"
-    );
-    took
+    Boot {
+        took,
+        peak,
+        server,
+        store,
+    }
 }
 
 async fn case(name: &str, plan: Plan, from_snapshot: bool) {
     let state = restored_store(&format!("jojobot-measure-{name}")).await;
     let size = prepare(&state, plan, EVENTS).await;
+    let copy = copy_of(&state, &format!("jojobot-measure-{name}-again"));
     let mut run = spawn(state);
-    measured(name, &size, &mut run);
+    measured_twice(name, &size, &mut run, copy);
     let line = run.log_boot();
     assert!(
         line.contains(&format!("from_snapshot={from_snapshot}")),
@@ -1206,8 +1266,9 @@ async fn a_boot_after_a_crash_loads_the_snapshot_the_stop_left() {
     second.first_answer();
     assert!(second.log_boot().contains("from_snapshot=true"));
     let state = second.killed();
+    let copy = copy_of(&state, "jojobot-measure-crash-again");
     let mut third = spawn(state);
-    measured("crash", &size, &mut third);
+    measured_twice("crash", &size, &mut third, copy);
     assert!(
         third.log_boot().contains("from_snapshot=true"),
         "{}",
@@ -1252,8 +1313,9 @@ async fn an_orderly_stop_publishes_a_snapshot_the_next_boot_loads() {
             .any(|line| line.contains("snapshot taken covered")),
         "a tick published it before the stop"
     );
+    let copy = copy_of(&state, "jojobot-measure-stop-again");
     let mut second = spawn(state);
-    measured("stop", &size, &mut second);
+    measured_twice("stop", &size, &mut second, copy);
     // The stop's snapshot covers the head: loaded, with nothing left to replay.
     assert!(
         second.log_boot().contains("from_snapshot=true"),
