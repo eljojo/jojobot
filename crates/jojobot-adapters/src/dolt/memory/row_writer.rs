@@ -85,7 +85,7 @@ impl DoltMemory {
                         .unwrap_or_else(|| held_writes(seam, record));
                     let value = match write {
                         FieldValue::Set(value) => Some(value.clone()),
-                        FieldValue::Clear => None,
+                        FieldValue::Clear | FieldValue::Removed => None,
                     };
                     let thing = EntityId(subject.0.clone());
                     Self::insert_field_write(

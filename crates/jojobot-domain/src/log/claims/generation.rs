@@ -127,7 +127,7 @@ impl State {
                                 ordinal: *ordinal,
                                 value: match write {
                                     FieldValue::Set(value) => Some(value.clone()),
-                                    FieldValue::Clear => None,
+                                    FieldValue::Clear | FieldValue::Removed => None,
                                 },
                                 fact: FactId(claim.label.clone()),
                                 status: claim.status,
