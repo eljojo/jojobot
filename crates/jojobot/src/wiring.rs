@@ -1307,10 +1307,21 @@ fn claims_import_failure(why: &jojobot_adapters::claims_import::ClaimsImportErro
              and the next start tries again. {why}"
         )
     } else {
+        // The fault is a row for most kinds and an event for the log; what fixes
+        // it is a build that takes the row, or one that reads the event.
+        let (found, fix) = match why {
+            jojobot_adapters::claims_import::ClaimsImportError::Log(_) => (
+                "THE CLAIMS IMPORT FOUND A LOG EVENT IT CANNOT READ",
+                "a build that reads it",
+            ),
+            _ => (
+                "THE CLAIMS IMPORT FOUND STORED DATA IT WILL NOT TAKE",
+                "a build that imports this row",
+            ),
+        };
         format!(
-            "THE CLAIMS IMPORT FOUND STORED DATA IT WILL NOT TAKE — nothing was appended \
-             to the log and the boot stops. Starting again fails the same way. Report this \
-             line: the fix is a build that imports this row. {why}"
+            "{found} — nothing was appended to the log and the boot stops. Starting again \
+             fails the same way. Report this line: the fix is {fix}. {why}"
         )
     }
 }
@@ -1361,14 +1372,24 @@ mod tests {
             assert!(!line.contains(retry), "a restart cannot heal this: {line}");
             assert!(line.contains("fails the same way"), "{line}");
             assert!(line.contains("Report this line"), "{line}");
-            assert!(
-                line.contains("a build that imports this row"),
-                "the step is a build: {line}"
-            );
-            assert!(
-                !line.to_lowercase().contains("delete") && !line.to_lowercase().contains("remove"),
-                "no step edits production rows: {line}"
-            );
+            let fix = match why {
+                Why::Log(_) => "a build that reads it",
+                _ => "a build that imports this row",
+            };
+            assert!(line.contains(fix), "the step is a build: {line}");
+            // Whole words, so a step that says "edit" is caught and a word that
+            // merely contains one is not.
+            let lowered = line.to_lowercase();
+            let words: Vec<&str> = lowered
+                .split(|c: char| !c.is_alphanumeric())
+                .filter(|word| !word.is_empty())
+                .collect();
+            for forbidden in ["delete", "remove", "edit"] {
+                assert!(
+                    !words.contains(&forbidden),
+                    "no step changes production rows ({forbidden}): {line}"
+                );
+            }
             assert!(
                 line.contains(&why.to_string()),
                 "the line carries the row: {line}"
