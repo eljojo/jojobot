@@ -67,7 +67,7 @@ async fn a_cap_set_on_a_person_binds_the_connection_claim_a_bot_writes_there() {
 #[tokio::test]
 async fn a_claim_another_bot_writes_on_a_bot_makes_no_writer_of_the_thread_it_points_at() {
     let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
     for (handle, name) in [
         ("bot:alpha", "Alpha"),
         ("bot:beta", "Beta"),
@@ -77,9 +77,9 @@ async fn a_claim_another_bot_writes_on_a_bot_makes_no_writer_of_the_thread_it_po
     }
     s.add(THREAD, "Milhouse moves").await;
     let (alpha, beta, gamma) = (
-        story.as_bot("bot:alpha").await,
-        story.as_bot("bot:beta").await,
-        story.as_bot("bot:gamma").await,
+        story.as_bot("bot:alpha").await.asking_whole(),
+        story.as_bot("bot:beta").await.asking_whole(),
+        story.as_bot("bot:gamma").await.asking_whole(),
     );
     let points_at_the_thread = |on: &str, content: &str| json!({"subject": on, "content": content, "shape": "connection", "object": THREAD});
 

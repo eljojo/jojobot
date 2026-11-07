@@ -101,7 +101,7 @@ async fn a_mistaken_entry_drops_out_of_the_default_list_and_stays_reachable_by_n
 #[tokio::test]
 async fn an_archived_thing_is_put_back_with_its_records_and_the_history_of_both_acts() {
     let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
 
     s.add("project:atlas", "Atlas").await;
     s.add_under("project:atlas", "work:phi", "Phi").await;

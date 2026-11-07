@@ -1063,7 +1063,7 @@ async fn a_start_that_sends_a_note_leaves_a_reviewed_bot_reviewed() {
 async fn a_bot_is_never_left_without_the_record_of_what_it_was_told() {
     for failing in ["entity", "box"] {
         let story = Story::begin("bot:otto").await;
-        let s = story.session().await;
+        let s = story.session().await.asking_whole();
         let call = json!({"kind": "bot", "handle": "gamma", "name": "Gamma",
                           "source": "user-named", "request_id": "make-gamma"});
         story.fails_the_next_commit_of(failing);
@@ -1107,15 +1107,15 @@ async fn a_bot_is_never_left_without_the_record_of_what_it_was_told() {
         assert_eq!(later.mail_held_by("bot:delta").await, (0, 0, 0));
         assert_eq!(later.mail_held_by("bot:omega").await, (0, 0, 0));
         assert_eq!(
-            told_ids(&later.as_bot("bot:omega").await, "bot:omega").await,
+            told_ids(&later.as_bot("bot:omega").await.asking_whole(), "bot:omega").await,
             shipped_note_ids()
         );
         assert_eq!(
-            told_ids(&later.as_bot("bot:gamma").await, "bot:gamma").await,
+            told_ids(&later.as_bot("bot:gamma").await.asking_whole(), "bot:gamma").await,
             shipped_note_ids()
         );
         assert_eq!(
-            told_ids(&later.as_bot("bot:delta").await, "bot:delta").await,
+            told_ids(&later.as_bot("bot:delta").await.asking_whole(), "bot:delta").await,
             shipped_note_ids()
         );
         later.finish().await;

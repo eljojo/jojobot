@@ -11,7 +11,7 @@ use super::dsl::Story;
 #[tokio::test]
 async fn a_thing_erased_under_the_store_is_no_longer_served_after_the_store_is_read_again() {
     let (story, store) = Story::begin_over_a_store_that_can_go_away("bot:otto").await;
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
     s.add("person:nelson", "Nelson").await;
     s.fact("person:nelson", "laughs at everything").await;
     s.add("person:milhouse", "Milhouse").await;

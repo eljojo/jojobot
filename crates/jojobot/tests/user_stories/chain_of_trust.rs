@@ -514,7 +514,7 @@ async fn a_code_goes_to_the_operator_alone_and_a_boot_that_presents_it_is_given_
 #[tokio::test]
 async fn the_assistants_code_grants_the_root_which_turns_the_gate_on_and_dies_with_its_session() {
     let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
     an_instance_with_an_operator(&s).await;
 
     // ── a coded boot of another bot leaves the gate open ────────────────────
@@ -625,7 +625,7 @@ async fn the_assistants_code_grants_the_root_which_turns_the_gate_on_and_dies_wi
 #[tokio::test]
 async fn a_pending_code_is_not_replaced_and_three_wrong_codes_void_a_challenge() {
     let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
     an_instance_with_an_operator(&s).await;
 
     // ── a second request is refused while the first is good ─────────────────

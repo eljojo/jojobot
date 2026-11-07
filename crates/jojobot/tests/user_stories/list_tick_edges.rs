@@ -92,7 +92,7 @@ async fn undone_on_an_open_entry_is_refused_and_writes_nothing() {
 #[tokio::test]
 async fn done_on_a_done_entry_of_a_sink_list_is_refused_and_the_done_order_holds() {
     let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
     let at = homers_chores(&s, "sink").await;
 
     s.call("capture", ticking("list:homer-chores", &at[0], "done"))
@@ -117,7 +117,7 @@ async fn done_on_a_done_entry_of_a_sink_list_is_refused_and_the_done_order_holds
 #[tokio::test]
 async fn done_on_a_done_entry_of_a_leave_list_is_refused() {
     let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
     let at = homers_chores(&s, "leave").await;
 
     s.call("capture", ticking("list:homer-chores", &at[0], "done"))
@@ -144,7 +144,7 @@ async fn done_on_a_done_entry_of_a_leave_list_is_refused() {
 #[tokio::test]
 async fn a_batch_with_a_tick_that_changes_nothing_is_refused_whole_and_one_in_order_lands() {
     let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
     let at = homers_chores(&s, "sink").await;
 
     s.call("capture", ticking("list:homer-chores", &at[0], "done"))

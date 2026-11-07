@@ -336,7 +336,7 @@ async fn a_decision_is_kept_in_the_operators_words_with_the_option_turned_down()
 #[tokio::test]
 async fn a_conclusion_from_a_quote_is_an_inference_that_points_at_the_quote() {
     let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
     s.add("project:visa", "The App").await;
     let quote = s
         .event(
@@ -425,7 +425,7 @@ async fn a_pause_on_a_thing_with_no_loop_is_a_promise_regarding_it() {
 #[tokio::test]
 async fn a_piece_of_work_that_is_done_is_no_longer_owed() {
     let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
     s.add("project:atlas", "The Campaign").await;
     s.add_under("project:atlas", "work:phi", "The Wiring").await;
     s.event_with(
@@ -762,7 +762,7 @@ async fn an_operators_own_status_word_lands_and_is_named_until_it_is_mapped() {
 #[tokio::test]
 async fn a_shipped_word_cannot_be_remapped_and_the_refusal_leaves_the_instance_alone() {
     let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
     s.add("project:atlas", "The Campaign").await;
     s.event_with(
         "topic:instance",

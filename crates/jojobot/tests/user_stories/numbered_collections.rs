@@ -148,7 +148,7 @@ async fn a_member_is_found_by_its_number_and_a_number_is_never_held_twice() {
 async fn a_number_stays_with_its_member_through_a_fold_and_a_move_and_a_retraction_is_served() {
     const OUTSIDER: &str = "decision:contract-ordinance-story-outsider";
     let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
     s.add(COLLECTION, "Town ordinances").await;
     s.call(
         "capture",
@@ -266,7 +266,7 @@ async fn a_number_stays_with_its_member_through_a_fold_and_a_move_and_a_retracti
 #[tokio::test]
 async fn a_merge_refused_for_a_number_is_told_the_two_ways_that_work_and_each_works() {
     let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
     s.add(COLLECTION, "Town ordinances").await;
     s.call(
         "capture",

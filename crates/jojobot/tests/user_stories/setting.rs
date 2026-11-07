@@ -225,7 +225,7 @@ async fn a_thing_made_with_settings_holds_them_as_settings() {
 #[tokio::test]
 async fn an_edit_and_its_settings_are_made_whole_or_not_at_all() {
     let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
     s.add("thing:handcart", "The Handcart").await;
 
     let edited = s

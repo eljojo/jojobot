@@ -23,7 +23,7 @@ async fn a_hedged_claim_and_a_guess_no_longer_read_the_same() {
     let story = Story::begin("bot:otto").await;
 
     // ── session 1 · the two places ──────────────────────────────────────────
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
 
     s.add("place:leftorium", "The Leftorium Diner").await;
     s.add("place:moes", "Moe's").await;
@@ -31,7 +31,7 @@ async fn a_hedged_claim_and_a_guess_no_longer_read_the_same() {
     s.wrap("standing up the two places").await;
 
     // ── session 2 · both things, in one breath ──────────────────────────────
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
 
     // Settled and first hand.
     let breakfast = s
@@ -46,7 +46,7 @@ async fn a_hedged_claim_and_a_guess_no_longer_read_the_same() {
         .await;
 
     // ── session 3 · a session works a third claim out of the first two ──────
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
 
     // Genuinely derived: it follows from the hedged closing time and from the
     // settled breakfast hours, and nobody said it.
@@ -71,7 +71,7 @@ async fn a_hedged_claim_and_a_guess_no_longer_read_the_same() {
     s.wrap("worked out a third claim from the first two").await;
 
     // ── session 4 · which of these can be relied on? ────────────────────────
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
 
     // What the operator stated flatly: they back it, and it is settled.
     s.recall("place:leftorium")
@@ -125,7 +125,7 @@ async fn a_hedged_claim_and_a_guess_no_longer_read_the_same() {
         .await;
 
     // ── session 5 · the operator confirms the one they were unsure of ───────
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
 
     // Confirmation moves `standing` and leaves `provenance` alone: they backed
     // this claim the day they said it, and what changed is that they are now
@@ -163,7 +163,7 @@ async fn a_hedged_claim_and_a_guess_no_longer_read_the_same() {
         .await;
 
     // ── session 6 · "no, scratch that, I was wrong" ─────────────────────────
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
 
     // A week on, the operator went on a Sunday and it was open. The claim they
     // settled is theirs and an earlier session wrote it, so it is archived and

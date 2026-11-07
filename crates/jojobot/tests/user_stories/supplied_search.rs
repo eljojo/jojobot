@@ -37,7 +37,7 @@ async fn found(s: &Session, word: &str) -> Vec<String> {
 #[tokio::test]
 async fn a_claim_about_a_supplied_view_is_found_by_its_words_like_one_about_a_stored_person() {
     let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
     s.add("person:milhouse", "Milhouse").await;
     let stored = s
         .call(
@@ -74,7 +74,7 @@ async fn a_claim_about_a_supplied_view_is_found_by_its_words_like_one_about_a_st
     );
 
     let again = story.restarted().await;
-    let t = again.session_in("UTC", Some("new")).await;
+    let t = again.session_in("UTC", Some("new")).await.asking_whole();
     assert_eq!(
         found(&t, "quuxwort").await,
         vec![stored],

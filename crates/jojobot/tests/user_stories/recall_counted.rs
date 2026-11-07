@@ -34,7 +34,7 @@ fn instant(object: &Value) -> jiff::Timestamp {
 #[tokio::test]
 async fn a_counted_selection_says_what_sits_under_each_object_and_when_it_was_written() {
     let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
     s.add(BOARD, "Counted story board").await;
     for (handle, parent) in [(CARD, BOARD), (CHILD_CARD, CARD), (GONE_CARD, BOARD)] {
         let (kind, slug) = handle.split_once(':').expect("a handle");

@@ -202,7 +202,7 @@ async fn a_move_holds_on_sink_and_leave_lists_and_a_tick_does_what_the_list_is_f
 #[tokio::test]
 async fn a_move_that_cannot_be_honoured_is_refused_and_writes_nothing() {
     let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
     a_list_on_the_trip(&s, "packing", json!({"tick": "sink"})).await;
     let tent = add_entry(&s, "list:packing", "tent", None).await;
     let stove = add_entry(&s, "list:packing", "stove", None).await;
@@ -294,7 +294,7 @@ async fn a_new_entry_on_a_rotation_that_has_turned_sits_where_the_list_reads_it(
 #[tokio::test]
 async fn a_new_entry_cannot_be_put_behind_a_done_entry() {
     let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
     a_list_on_the_trip(&s, "packing", json!({"tick": "sink"})).await;
     let tent = add_entry(&s, "list:packing", "tent", None).await;
     add_entry(&s, "list:packing", "stove", None).await;
@@ -333,7 +333,7 @@ async fn a_new_entry_cannot_be_put_behind_a_done_entry() {
 #[tokio::test]
 async fn another_session_moves_an_entry_without_touching_its_words() {
     let story = Story::begin("bot:gamma").await;
-    let writer = story.session().await;
+    let writer = story.session().await.asking_whole();
     a_driving_rotation(&writer, "rotation", json!({"tick": "back"})).await;
     let homer = add_entry(&writer, "list:rotation", "Homer", None).await;
     add_entry(&writer, "list:rotation", "Bart", None).await;
@@ -341,7 +341,7 @@ async fn another_session_moves_an_entry_without_touching_its_words() {
         .call("capture", ticking("list:rotation", &homer, "done"))
         .await;
 
-    let mover = story.session_in("UTC", Some("new")).await;
+    let mover = story.session_in("UTC", Some("new")).await.asking_whole();
     moving(&mover, &homer, "first").await;
     assert_eq!(read_back(&mover, "list:rotation").await, ["Homer", "Bart"]);
 

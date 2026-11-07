@@ -27,7 +27,7 @@ fn events(read: &Value) -> Vec<Value> {
 async fn a_colleague_finds_a_deploy_event_an_app_recorded_and_cannot_rewrite_it() {
     let (story, token) =
         Story::begin_with_an_app("bot:marge", APP, THREAD, &["commit", "host"]).await;
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
     s.add(THREAD, "Deploys of the alpha service").await;
 
     // ── the app posts, over its own route ───────────────────────────────────

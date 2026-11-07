@@ -617,7 +617,7 @@ async fn a_loop_holding_counts_from_and_no_cadence_is_overdue_and_one_holding_no
 #[tokio::test]
 async fn clearing_a_checked_in_calendar_loop_names_the_anchor_that_keeps_it_overdue() {
     let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
     s.add("person:homer", "Homer").await;
     s.add_under("person:homer", "rhythm:leap-check", "Leap check")
         .await;

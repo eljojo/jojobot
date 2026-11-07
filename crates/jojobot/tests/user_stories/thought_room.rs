@@ -19,7 +19,7 @@ async fn a_full_room_borrows_once_and_a_drop_frees_a_slot() {
     let story = Story::begin("bot:otto").await;
 
     // ── the emergency reserve, on Gamma's room ───────────────────────────────
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
 
     s.add("bot:gamma", "Gamma").await;
     // Gamma cannot set this on itself — otto is asking, about a different
@@ -36,7 +36,7 @@ async fn a_full_room_borrows_once_and_a_drop_frees_a_slot() {
 
     // **Gamma writes its own thoughts**: another identity's connection claim on a
     // bot is an ordinary claim and takes no seat in the room.
-    let gamma = story.as_bot("bot:gamma").await;
+    let gamma = story.as_bot("bot:gamma").await.asking_whole();
 
     // 🚨 **The negative `borrow` rests on**: the room holds nothing yet, so
     // naming `borrow: true` here costs nothing — it lands like an ordinary
@@ -114,7 +114,7 @@ async fn a_full_room_borrows_once_and_a_drop_frees_a_slot() {
         .await;
 
     // ── dropping a thought, on Milhouse's room ───────────────────────────────
-    let s2 = story.session().await;
+    let s2 = story.session().await.asking_whole();
 
     s2.add("bot:milhouse", "Milhouse").await;
     s2.call(
@@ -127,7 +127,7 @@ async fn a_full_room_borrows_once_and_a_drop_frees_a_slot() {
     )
     .await;
 
-    let milhouse = story.as_bot("bot:milhouse").await;
+    let milhouse = story.as_bot("bot:milhouse").await.asking_whole();
     s2.add("thing:the-couch", "The Couch").await;
     let couch = milhouse
         .call(
@@ -584,7 +584,7 @@ async fn a_coordinators_room_crosses_a_boot_and_the_thought_nobody_touched_goes_
     // **Otto cannot set its own ceilings**, so the assistant does: room for
     // three thoughts, and a thought untouched through two runs goes quiet. The
     // threads carry the detail, written as the operator's own words.
-    let owner = story.as_bot("bot:assistant").await;
+    let owner = story.as_bot("bot:assistant").await.asking_whole();
     owner
         .call(
             "capture",
@@ -605,7 +605,7 @@ async fn a_coordinators_room_crosses_a_boot_and_the_thought_nobody_touched_goes_
     }
 
     // ── the first session: three pointers, and the session wraps ────────────
-    let first = story.session().await;
+    let first = story.session().await.asking_whole();
     // **The session says what it set out to do before it writes anything**, as a
     // session is taught to. The first write of a run is also the write that makes
     // the run exist.

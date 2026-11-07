@@ -26,7 +26,7 @@ async fn a_reader_with_three_addresses_reads_what_each_says_now_in_one_call() {
     let story = Story::begin("bot:otto").await;
 
     // ── Spring · two things, and one claim written three times ────────────────
-    let spring = story.session_on("2026-04-14", None).await;
+    let spring = story.session_on("2026-04-14", None).await.asking_whole();
     spring
         .add("org:springfield-town-council", "Springfield Town Council")
         .await;
@@ -52,7 +52,10 @@ async fn a_reader_with_three_addresses_reads_what_each_says_now_in_one_call() {
     spring.wrap("wrote down the council and the mailbox").await;
 
     // ── December · the question ───────────────────────────────────────────────
-    let winter = story.session_on("2026-12-20", Some("new")).await;
+    let winter = story
+        .session_on("2026-12-20", Some("new"))
+        .await
+        .asking_whole();
     let asked = winter
         .shape(
             "what do these say now?",

@@ -18,7 +18,7 @@ async fn one_thing_filed_twice_can_be_put_back_together() {
     let story = Story::begin("bot:otto").await;
 
     // ── session 1 · the same person, filed twice ────────────────────────────
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
 
     s.add("person:nelson", "Nelson").await;
     s.fact("person:nelson", "plays the bass").await;
@@ -29,7 +29,7 @@ async fn one_thing_filed_twice_can_be_put_back_together() {
     // exists because that session read the candidates and insisted the two were
     // different people. **That is how a duplicate gets past a guard that is
     // only good, and it is why the repair has to exist.**
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
     let refusal = s
         .refused(
             "add_entity",
@@ -67,7 +67,7 @@ async fn one_thing_filed_twice_can_be_put_back_together() {
     s.wrap("and again, under a second handle").await;
 
     // ── session 2 · somebody notices and repairs it ─────────────────────────
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
 
     let done = s
         .merge_entities(

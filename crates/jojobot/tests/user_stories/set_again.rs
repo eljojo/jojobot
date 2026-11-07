@@ -28,7 +28,7 @@ async fn set_records(s: &Session, handle: &str) -> Vec<Value> {
 
 /// A bot booted with its role claimed, and the colleague that writes beside it.
 async fn gamma_and_marge(story: &Story) -> (Session, Session) {
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
     s.add("bot:gamma", "Gamma").await;
     s.add("bot:marge", "Marge").await;
     let (_, gamma) = story
@@ -37,8 +37,8 @@ async fn gamma_and_marge(story: &Story) -> (Session, Session) {
             json!({"bot": "gamma", "brief": true, "claim": "gamma"}),
         )
         .await;
-    let marge = story.as_bot("bot:marge").await;
-    (gamma.expect("gamma boots"), marge)
+    let marge = story.as_bot("bot:marge").await.asking_whole();
+    (gamma.expect("gamma boots").asking_whole(), marge)
 }
 
 async fn set_agent(s: &Session, handle: &str, agent: &str) -> Value {

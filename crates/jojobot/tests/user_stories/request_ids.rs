@@ -40,7 +40,7 @@ fn without_repeat_marks(mut receipt: Value) -> Value {
 #[tokio::test]
 async fn a_write_sent_again_returns_the_first_receipt_and_writes_nothing() {
     let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
     s.add("person:milhouse", "Milhouse").await;
 
     let first = s

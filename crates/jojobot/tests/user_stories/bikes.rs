@@ -17,7 +17,7 @@ async fn keeping_track_of_bikes() {
     let story = Story::begin("bot:otto").await;
 
     // ── session 1 · what they are ───────────────────────────────────────────
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
 
     s.add("thing:gravel-bike", "Gravel Bike").await;
     s.fact("thing:gravel-bike", "ridden most weeks").await;
@@ -372,7 +372,7 @@ async fn keeping_track_of_bikes() {
     s.wrap("both bikes recorded").await;
 
     // ── session 2 · the shop, and the work it did ───────────────────────────
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
 
     s.add("org:springfield-cyclery", "Springfield Cyclery")
         .await;
@@ -504,7 +504,7 @@ async fn keeping_track_of_bikes() {
     s.wrap("service history, such as it is").await;
 
     // ── session 3 · the numbers, year after year ────────────────────────────
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
 
     // The same measurement at three sittings, a year apart. It goes under a
     // key rather than into a sentence, which is what makes the three of them
@@ -635,7 +635,7 @@ async fn keeping_track_of_bikes() {
     s.wrap("tallies in, and what each year came to").await;
 
     // ── session 4 · months later, the questions actually asked ──────────────
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
 
     s.find("warranty")
         .await
@@ -745,7 +745,7 @@ async fn keeping_track_of_bikes() {
     s.wrap("still riding").await;
 
     // ── session 5 · one of them is sold ─────────────────────────────────────
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
 
     s.fact("thing:road-bike", "sold — tyres thrown in, gone in March")
         .await;

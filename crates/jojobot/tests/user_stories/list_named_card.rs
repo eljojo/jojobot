@@ -35,7 +35,7 @@ async fn entries(s: &Session) -> Vec<Value> {
 #[tokio::test]
 async fn a_step_naming_one_card_reads_back_with_the_cards_state() {
     let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
     a_list_on_the_trip(&s, "checklist", json!({"tick": "sink"})).await;
     work(&s, "pour-the-slab", "now").await;
 

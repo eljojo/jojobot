@@ -258,7 +258,7 @@ async fn a_rename_whose_box_repoint_failed_is_finished_by_sending_it_again() {
 #[tokio::test]
 async fn a_numbered_rename_whose_box_repoint_failed_is_finished_by_sending_it_again() {
     let story = Story::begin("bot:gamma").await;
-    let gamma = story.session().await;
+    let gamma = story.session().await.asking_whole();
     gamma
         .call(
             "add_entity",
@@ -299,7 +299,7 @@ async fn a_numbered_rename_whose_box_repoint_failed_is_finished_by_sending_it_ag
     assert_eq!(finished["mailbox"], "epsilon", "{finished}");
     assert_eq!(story.mail_held_by("bot:epsilon").await, (1, 0, 0));
     assert_eq!(row_versions(&gamma, "bot:epsilon").await, before + 1);
-    let epsilon = story.as_bot("bot:epsilon").await;
+    let epsilon = story.as_bot("bot:epsilon").await.asking_whole();
     let moved = epsilon
         .call("read_message", json!({"message_id": message}))
         .await

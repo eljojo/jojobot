@@ -316,7 +316,7 @@ async fn a_slash_number_after_a_thing_that_numbers_nothing_is_words_in_every_tex
 #[tokio::test]
 async fn a_reason_naming_a_members_number_follows_it_through_a_rename() {
     let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
     ordinances(&s).await;
     s.add("thing:kettle", "Kettle").await;
     s.call(
@@ -333,7 +333,7 @@ async fn a_reason_naming_a_members_number_follows_it_through_a_rename() {
                "sets": {"thought_capacity": "1"}}),
     )
     .await;
-    let gamma = story.as_bot("bot:gamma").await;
+    let gamma = story.as_bot("bot:gamma").await.asking_whole();
     s.add("thing:jukebox", "The Jukebox").await;
     s.add("thing:battery", "The Battery").await;
     let first = gamma

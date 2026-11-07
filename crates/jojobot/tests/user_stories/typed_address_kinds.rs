@@ -20,7 +20,7 @@ pub(super) async fn world(story: &Story) -> Session {
         .await
         .expect("the instance's kind schema");
     story.the_store_changed_underneath().await;
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
     s.add(RULES, "Springfield rules").await;
     s.call(
         "capture",

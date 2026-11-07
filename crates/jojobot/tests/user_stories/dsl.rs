@@ -1454,6 +1454,7 @@ impl Story {
             client: self.connect().await,
             sid: earlier.sid.clone(),
             run: earlier.run.clone(),
+            whole: earlier.whole,
         }
     }
 
@@ -1474,7 +1475,12 @@ impl Story {
             .as_str()
             .unwrap_or_default()
             .to_string();
-        Session { client, sid, run }
+        Session {
+            client,
+            sid,
+            run,
+            whole: false,
+        }
     }
 
     /// **The same run on a connection of its own**: the `sid` of `session`
@@ -1486,6 +1492,7 @@ impl Story {
             client: self.connect().await,
             sid: session.sid.clone(),
             run: session.run.clone(),
+            whole: session.whole,
         }
     }
 
@@ -1508,7 +1515,12 @@ impl Story {
             .as_str()
             .unwrap_or_default()
             .to_string();
-        Session { client, sid, run }
+        Session {
+            client,
+            sid,
+            run,
+            whole: false,
+        }
     }
 
     /// **A new session that sends no zone**, with its boot answer, on its own
@@ -1530,7 +1542,15 @@ impl Story {
             .as_str()
             .unwrap_or_default()
             .to_string();
-        (booted, Session { client, sid, run })
+        (
+            booted,
+            Session {
+                client,
+                sid,
+                run,
+                whole: false,
+            },
+        )
     }
 
     /// **A new session that says which DAY it is working in**, on its own
@@ -1553,7 +1573,12 @@ impl Story {
             .as_str()
             .unwrap_or_default()
             .to_string();
-        Session { client, sid, run }
+        Session {
+            client,
+            sid,
+            run,
+            whole: false,
+        }
     }
 
     /// A new session's own boot, whole — the essay included. `.session()`
@@ -1571,7 +1596,15 @@ impl Story {
             .as_str()
             .unwrap_or_default()
             .to_string();
-        (booted, Session { client, sid, run })
+        (
+            booted,
+            Session {
+                client,
+                sid,
+                run,
+                whole: false,
+            },
+        )
     }
 
     /// A session of ANOTHER bot on this same server — the other side of a
@@ -1604,7 +1637,12 @@ impl Story {
             .as_str()
             .unwrap_or_default()
             .to_string();
-        Session { client, sid, run }
+        Session {
+            client,
+            sid,
+            run,
+            whole: false,
+        }
     }
 
     /// **Any verb, before there is a session to make it from.**
@@ -1636,7 +1674,15 @@ impl Story {
                     .as_str()
                     .unwrap_or_default()
                     .to_string();
-                (answer, Some(Session { client, sid, run }))
+                (
+                    answer,
+                    Some(Session {
+                        client,
+                        sid,
+                        run,
+                        whole: false,
+                    }),
+                )
             }
             None => {
                 client.cancel().await.unwrap();
@@ -1663,7 +1709,15 @@ impl Story {
                     .as_str()
                     .unwrap_or_default()
                     .to_string();
-                (answer, Some(Session { client, sid, run }))
+                (
+                    answer,
+                    Some(Session {
+                        client,
+                        sid,
+                        run,
+                        whole: false,
+                    }),
+                )
             }
             None => {
                 client.cancel().await.unwrap();
@@ -1709,9 +1763,32 @@ pub struct Session {
     sid: String,
     /// The run's public name: what records carry and a resume names.
     run: String,
+    /// **Whether this session reads the body again on purpose.** A real session
+    /// sends no `reship` and is handed a handle for what it holds unchanged; a
+    /// story that re-reads a thing to see its body says so with
+    /// [`Session::asking_whole`].
+    whole: bool,
 }
 
 impl Session {
+    /// **This session deliberately reads what it holds again, in full.** A story
+    /// that re-reads one unchanged thing to see its body (it asserts inside the
+    /// body, not on the handle) takes this; the reads of a verb that publishes
+    /// `reship` then send `reship: true` unless the story names `reship` itself.
+    pub fn asking_whole(mut self) -> Self {
+        self.whole = true;
+        self
+    }
+
+    fn ask_whole(&self, tool: &str, args: &mut Value) {
+        if self.whole
+            && matches!(tool, "recall" | "search" | "list_entities")
+            && let Some(fields) = args.as_object_mut()
+        {
+            fields.entry("reship").or_insert(Value::Bool(true));
+        }
+    }
+
     /// **The handle this session carries — unless the story named one.**
     ///
     /// The default does not move: every story here leaves `sid` out and gets
@@ -1735,6 +1812,7 @@ impl Session {
 
     async fn write(&self, what: &str, tool: &str, mut args: Value) -> Value {
         self.riding(&mut args);
+        self.ask_whole(tool, &mut args);
         let body = call(&self.client, tool, args).await;
         assert_ne!(
             body["status"], "blocked",
@@ -1745,6 +1823,7 @@ impl Session {
 
     async fn read(&self, what: String, tool: &str, mut args: Value) -> Answer {
         self.riding(&mut args);
+        self.ask_whole(tool, &mut args);
         let body = call(&self.client, tool, args).await;
         Answer {
             what,
@@ -1773,6 +1852,7 @@ impl Session {
     pub async fn call(&self, tool: &str, args: Value) -> Answer {
         let mut args = args;
         self.riding(&mut args);
+        self.ask_whole(tool, &mut args);
         let body = call(&self.client, tool, args).await;
         assert_ne!(
             body["status"], "blocked",
@@ -1790,6 +1870,7 @@ impl Session {
     pub async fn answer_size(&self, tool: &str, args: Value) -> usize {
         let mut args = args;
         self.riding(&mut args);
+        self.ask_whole(tool, &mut args);
         call_measured(&self.client, tool, args).await.1
     }
 
@@ -1799,6 +1880,7 @@ impl Session {
     pub async fn answer_and_size(&self, tool: &str, args: Value) -> (Value, usize) {
         let mut args = args;
         self.riding(&mut args);
+        self.ask_whole(tool, &mut args);
         call_measured(&self.client, tool, args).await
     }
 
@@ -1808,6 +1890,7 @@ impl Session {
     pub async fn attempt(&self, tool: &str, args: Value) -> Value {
         let mut args = args;
         self.riding(&mut args);
+        self.ask_whole(tool, &mut args);
         call_measured(&self.client, tool, args).await.0
     }
 

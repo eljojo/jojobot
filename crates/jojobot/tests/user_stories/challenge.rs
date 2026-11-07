@@ -18,7 +18,7 @@ async fn where_did_you_get_that() {
     let story = Story::begin("bot:otto").await;
 
     // ── session 1 · research, and a claim nobody actually said ──────────────
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
 
     s.add("place:moes", "Moe's").await;
 
@@ -36,7 +36,7 @@ async fn where_did_you_get_that() {
         .await;
 
     // ── session 2 · they went. it was shut. ─────────────────────────────────
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
 
     // The claim is rewritten in place, so a reader gets one answer rather than
     // two and a judgement.
@@ -94,7 +94,7 @@ async fn where_did_you_get_that() {
         .await;
 
     // ── session 3 · weeks later, a fresh session reaches the same conclusion ─
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
 
     // Nothing stops it. The corrected fact states the negative truth, but a new
     // session doing new research infers the old claim again — and this time it
@@ -125,7 +125,7 @@ async fn where_did_you_get_that() {
         .await;
 
     // ── session 4 · what else came from that summary? ───────────────────────
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
 
     // The same search summary produced a second claim, about a different
     // place, and that one is still standing.

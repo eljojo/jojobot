@@ -24,7 +24,7 @@ use super::dsl::Story;
 #[tokio::test]
 async fn the_software_ships_a_vocabulary_a_session_never_declared() {
     let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
 
     // ── the things ──────────────────────────────────────────────────────────
     s.add("thing:gravel-bike", "The Gravel Bike").await;

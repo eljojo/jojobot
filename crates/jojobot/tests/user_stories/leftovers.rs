@@ -39,7 +39,7 @@ async fn leftovers_a_numbered_mention_walks_to_the_member_and_a_miss_writes_noth
     const COLLECTION: &str = "topic:contract-ordinances-story";
     const PARKING: &str = "decision:contract-ordinance-story-parking";
     let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
     s.add(COLLECTION, "Town ordinances").await;
     s.call(
         "capture",

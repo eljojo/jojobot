@@ -14,15 +14,15 @@ use super::dsl::Story;
 #[tokio::test]
 async fn a_threads_ceiling_is_raised_by_a_bot_above_its_writers_and_never_by_them() {
     let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
     s.add("thread:milhouse-moves", "Milhouse moves").await;
     for bot in ["marge", "patty", "nelson", "moe", "ralph"] {
         s.add(&format!("bot:{bot}"), bot).await;
     }
-    let marge = story.as_bot("bot:marge").await;
-    let patty = story.as_bot("bot:patty").await;
-    let nelson = story.as_bot("bot:nelson").await;
-    let ralph = story.as_bot("bot:ralph").await;
+    let marge = story.as_bot("bot:marge").await.asking_whole();
+    let patty = story.as_bot("bot:patty").await.asking_whole();
+    let nelson = story.as_bot("bot:nelson").await.asking_whole();
+    let ralph = story.as_bot("bot:ralph").await.asking_whole();
     let reports_to = |bot: &str, manager: &str| {
         json!({
             "subject": bot, "content": format!("{bot} reports up"),
@@ -31,7 +31,7 @@ async fn a_threads_ceiling_is_raised_by_a_bot_above_its_writers_and_never_by_the
     };
 
     // Two charts: ralph reports to patty, patty to marge; nelson to moe.
-    let assistant = story.as_bot("bot:assistant").await;
+    let assistant = story.as_bot("bot:assistant").await.asking_whole();
     assistant
         .call("capture", reports_to("bot:patty", "bot:marge"))
         .await;

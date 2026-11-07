@@ -52,7 +52,7 @@ fn hit_with<'a>(found: &'a Value, word: &str) -> &'a Value {
 #[tokio::test]
 async fn an_archived_claim_is_found_below_the_active_ones_and_a_retracted_one_is_asked_for() {
     let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
 
     s.add("person:homer", "Homer").await;
 

@@ -34,7 +34,7 @@ async fn a_shelf_renamed_after_its_history_was_written() -> (super::dsl::Session
 
     // ── Spring · the thing is made, a key is written twice, a claim is
     // corrected ────────────────────────────────────────────────────────────
-    let spring = story.session_on("2026-04-14", None).await;
+    let spring = story.session_on("2026-04-14", None).await.asking_whole();
     spring.add(OLD, "The Shelf").await;
     for colour in ["red", "blue"] {
         spring
@@ -52,7 +52,10 @@ async fn a_shelf_renamed_after_its_history_was_written() -> (super::dsl::Session
     spring.wrap("wrote the shelf down").await;
 
     // ── Autumn · another run renames it ──────────────────────────────────────
-    let autumn = story.session_on("2026-09-15", Some("new")).await;
+    let autumn = story
+        .session_on("2026-09-15", Some("new"))
+        .await
+        .asking_whole();
     autumn
         .call(
             "rename_entity",
@@ -63,7 +66,10 @@ async fn a_shelf_renamed_after_its_history_was_written() -> (super::dsl::Session
 
     // ── Winter · the reader ───────────────────────────────────────────────────
     (
-        story.session_on("2026-12-20", Some("new")).await,
+        story
+            .session_on("2026-12-20", Some("new"))
+            .await
+            .asking_whole(),
         first,
         corrected,
     )

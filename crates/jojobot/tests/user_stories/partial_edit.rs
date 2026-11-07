@@ -28,7 +28,7 @@ fn details_of(recalled: &Value, address: &str) -> Value {
 #[tokio::test]
 async fn one_span_of_a_long_note_is_changed_and_every_other_byte_stays() {
     let story = Story::begin("bot:gamma").await;
-    let run = story.session().await;
+    let run = story.session().await.asking_whole();
     run.add("person:kenny", "Kenny").await;
     let claim = run
         .call(
@@ -147,7 +147,7 @@ async fn one_span_of_a_long_note_is_changed_and_every_other_byte_stays() {
 
 /// A claim to edit: `person:kenny` holds one note, and its address comes back.
 async fn kenny_with_the_note(story: &Story) -> (super::dsl::Session, String) {
-    let run = story.session().await;
+    let run = story.session().await.asking_whole();
     run.add("person:kenny", "Kenny").await;
     let claim = run
         .call(

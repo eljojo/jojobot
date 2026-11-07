@@ -18,7 +18,7 @@ use super::dsl::Story;
 #[tokio::test]
 async fn a_session_searching_a_degraded_jojobot_is_told_what_its_answer_is_missing() {
     let (story, store) = Story::begin_over_a_store_that_can_go_away("bot:otto").await;
-    let earlier = story.session().await;
+    let earlier = story.session().await.asking_whole();
 
     // ── yesterday · something recorded while everything worked ──────────────
     earlier.add("person:milhouse", "Milhouse").await;
@@ -117,7 +117,7 @@ async fn a_server_that_scanned_its_store_at_start_is_not_unscanned_when_the_stor
 #[tokio::test]
 async fn a_write_that_lands_with_the_fold_behind_is_found_by_search() {
     let (story, store) = Story::begin_over_a_store_that_can_go_away("bot:otto").await;
-    let earlier = story.session().await;
+    let earlier = story.session().await.asking_whole();
     earlier.add("person:milhouse", "Milhouse").await;
     store.the_corpus_read_fails();
     let restarted = story.restarted().await;

@@ -24,7 +24,7 @@ use super::dsl::Story;
 #[tokio::test]
 async fn the_loops_a_person_actually_keeps() {
     let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
 
     // ── the things the loops are ON ─────────────────────────────────────────
     s.add("thing:the-fern", "The Fern").await;

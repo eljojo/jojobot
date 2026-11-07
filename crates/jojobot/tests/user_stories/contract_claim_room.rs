@@ -442,7 +442,7 @@ fn aliases(seed: usize, count: usize) -> Vec<String> {
 #[tokio::test]
 async fn aliases_that_could_not_be_read_back_whole_are_refused_on_creation_and_on_edit() {
     let story = Story::begin("bot:otto").await;
-    let otto = story.session().await;
+    let otto = story.session().await.asking_whole();
     let probes = std::cell::Cell::new(70_000usize);
     let creating = |count: usize| {
         let (otto, probes) = (&otto, &probes);
@@ -551,7 +551,7 @@ async fn aliases_that_could_not_be_read_back_whole_are_refused_on_creation_and_o
 #[tokio::test]
 async fn a_merge_whose_account_is_too_big_to_read_back_moves_nothing() {
     let story = Story::begin("bot:otto").await;
-    let otto = story.session().await;
+    let otto = story.session().await.asking_whole();
     let probes = std::cell::Cell::new(90_000usize);
     let merging = |len: usize| {
         let (otto, probes) = (&otto, &probes);

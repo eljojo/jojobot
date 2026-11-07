@@ -17,7 +17,7 @@ use super::dsl::Story;
 #[tokio::test]
 async fn the_operator_gives_a_shipped_view_a_name_and_another_name() {
     let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
 
     // ── before: the build's name ────────────────────────────────────────────
     let before = s

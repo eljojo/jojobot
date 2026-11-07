@@ -16,7 +16,7 @@ async fn moving_abroad() {
     let story = Story::begin("bot:otto").await;
 
     // ── session 1 · the open question, and what it is optimising for ────────
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
 
     s.add("person:maude", "Maude").await;
     s.add("place:springfield", "Springfield").await;
@@ -60,7 +60,7 @@ async fn moving_abroad() {
     s.wrap("constraints captured, one city looked at").await;
 
     // ── session 2 · "add that one to the shortlist too" ─────────────────────
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
 
     s.add("place:north-haverbrook", "North Haverbrook").await;
     s.guess(
@@ -104,7 +104,7 @@ async fn moving_abroad() {
     s.wrap("two cities on the table").await;
 
     // ── session 3 · the work that actually has to happen ────────────────────
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
 
     s.add("project:atlas", "The Move").await;
     s.fact(
@@ -251,7 +251,7 @@ async fn moving_abroad() {
     s.wrap("the list exists; nothing is done").await;
 
     // ── session 4 · shipping a life ─────────────────────────────────────────
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
 
     s.add("org:springfield-movers", "Springfield Movers").await;
     s.fact(
@@ -361,7 +361,7 @@ async fn moving_abroad() {
     s.wrap("movers quoted, flight sketched").await;
 
     // ── session 5 · a session that was not there for any of it ──────────────
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
 
     s.add("person:barney-gumble", "Barney").await;
     s.fact_about(

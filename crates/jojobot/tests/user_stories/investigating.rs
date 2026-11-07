@@ -18,7 +18,7 @@ async fn an_investigation_keeps_what_it_ruled_out() {
     let story = Story::begin("bot:otto").await;
 
     // ── session 1 · the fleet, and what an earlier run believed ─────────────
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
 
     // **A machine is a kind of its own**, so the four are the same sort of
     // object rather than four possessions filed beside the bike pump. The kind
@@ -112,7 +112,7 @@ async fn an_investigation_keeps_what_it_ruled_out() {
     .never_says("\"text\":\"ruled out the power supply on sigma\"");
 
     // ── session 2 · the incident ────────────────────────────────────────────
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
 
     s.event(
         "machine:sigma",
@@ -196,7 +196,7 @@ async fn an_investigation_keeps_what_it_ruled_out() {
     s.wrap("recorded the outage and the reading").await;
 
     // ── session 3 · the reading was taken off the wrong host ────────────────
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
 
     // The record is taken back rather than corrected: it did not happen the
     // way it was written down, so the reading stands as something that was
@@ -227,7 +227,7 @@ async fn an_investigation_keeps_what_it_ruled_out() {
         .await;
 
     // ── session 4 · a conclusion, and the retraction that is worth more ─────
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
 
     let deliberate = s
         .guess_from(
@@ -275,7 +275,7 @@ async fn an_investigation_keeps_what_it_ruled_out() {
     s.wrap("was wrong, and said so").await;
 
     // ── session 5 · what is already ruled out ───────────────────────────────
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
 
     // An exclusion is an ordinary dated claim, and all five come back in one
     // read.
@@ -305,7 +305,7 @@ async fn an_investigation_keeps_what_it_ruled_out() {
     s.wrap("wrote down what it is not").await;
 
     // ── session 6 · state that was true this morning ────────────────────────
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
 
     // The shelf life goes on the record, under a key, and the day is one that
     // has already passed by the time this is read.
@@ -341,7 +341,7 @@ async fn an_investigation_keeps_what_it_ruled_out() {
         .await;
 
     // ── session 7 · the questions the record cannot answer ──────────────────
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
 
     // Per subject, each host's own record is intact and readable.
     s.recall("machine:sigma").await.says("stopped responding");

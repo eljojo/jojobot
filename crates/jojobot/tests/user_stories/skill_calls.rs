@@ -65,12 +65,12 @@ fn printed(body: &str, prefix: &str) -> (String, Value) {
 #[tokio::test]
 async fn the_asking_skills_calls_do_what_the_skill_says() {
     let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
     let asking = body_of(&story, "asking").await;
 
     // ── a view with one thing added ─────────────────────────────────────────
     s.add("bot:delta", "Delta").await;
-    let delta = story.as_bot("bot:delta").await;
+    let delta = story.as_bot("bot:delta").await.asking_whole();
     delta
         .call(
             "set_charter",

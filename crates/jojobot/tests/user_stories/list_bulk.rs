@@ -78,7 +78,7 @@ fn the_packing() -> Vec<String> {
 #[tokio::test]
 async fn twenty_three_entries_in_one_call_read_back_in_the_order_sent() {
     let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
     a_list_on_the_trip(&s, "packing", json!({"tick": "sink"})).await;
     let packing = the_packing();
 
@@ -191,7 +191,7 @@ async fn three_ticks_in_one_call_are_three_tick_records() {
 #[tokio::test]
 async fn one_bad_item_refuses_the_whole_call_names_its_position_and_writes_nothing() {
     let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
     a_list_on_the_trip(&s, "packing", json!({"tick": "sink"})).await;
     let tent = add_entry(&s, "list:packing", "tent", None).await;
     let before = read_states(&s, "list:packing").await;
@@ -241,7 +241,7 @@ async fn one_bad_item_refuses_the_whole_call_names_its_position_and_writes_nothi
 #[tokio::test]
 async fn a_resent_batch_writes_nothing_a_second_time() {
     let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
     a_list_on_the_trip(&s, "packing", json!({"tick": "back"})).await;
     let entries = json!({"subject": "list:packing", "provenance": "testimony",
                          "entries": ["tent", "stove", "lantern"], "request_id": "pack-1"});
@@ -277,7 +277,7 @@ async fn a_resent_batch_writes_nothing_a_second_time() {
 #[tokio::test]
 async fn the_single_forms_are_unchanged_and_a_batch_past_the_cap_is_refused() {
     let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
     a_list_on_the_trip(&s, "packing", json!({"tick": "sink"})).await;
     let tent = add_entry(&s, "list:packing", "tent", None).await;
     s.call(
@@ -375,7 +375,7 @@ async fn homer_chores(s: &Session) -> (String, String) {
 #[tokio::test]
 async fn a_cut_batch_with_a_drop_is_finished_by_the_same_call_again() {
     let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
     let (lawn, car) = homer_chores(&s).await;
     let call = json!({"subject": "list:homer-chores", "provenance": "testimony",
                       "request_id": "chores-1",
@@ -412,7 +412,7 @@ async fn a_cut_batch_with_a_drop_is_finished_by_the_same_call_again() {
 #[tokio::test]
 async fn a_batch_that_cannot_stand_is_refused_whole_naming_the_second_item() {
     let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
     let (lawn, _car) = homer_chores(&s).await;
     let before = read_states(&s, "list:homer-chores").await;
 

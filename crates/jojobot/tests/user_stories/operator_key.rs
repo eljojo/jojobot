@@ -32,16 +32,16 @@ fn naming(operator: &str) -> serde_json::Value {
 #[tokio::test]
 async fn the_operator_is_named_by_any_bot_and_changed_only_by_the_head_of_the_chart() {
     let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
     s.add("topic:widgets", "Widgets").await;
     s.add("person:lisa", "Lisa").await;
     s.add("person:milhouse", "Milhouse").await;
     for bot in ["marge", "patty", "nelson", "ralph"] {
         s.add(&format!("bot:{bot}"), bot).await;
     }
-    let marge = story.as_bot("bot:marge").await;
-    let nelson = story.as_bot("bot:nelson").await;
-    let ralph = story.as_bot("bot:ralph").await;
+    let marge = story.as_bot("bot:marge").await.asking_whole();
+    let nelson = story.as_bot("bot:nelson").await.asking_whole();
+    let ralph = story.as_bot("bot:ralph").await.asking_whole();
 
     // ── nobody is named yet: any bot may name the operator ──────────────────
     let address = ralph
@@ -66,7 +66,7 @@ async fn the_operator_is_named_by_any_bot_and_changed_only_by_the_head_of_the_ch
         .says("\"operator\":\"person:lisa\"");
 
     // ── a head appears: marge, the coordinator, has a report and no manager ─
-    let assistant = story.as_bot("bot:assistant").await;
+    let assistant = story.as_bot("bot:assistant").await.asking_whole();
     assistant
         .call(
             "capture",
@@ -80,7 +80,7 @@ async fn the_operator_is_named_by_any_bot_and_changed_only_by_the_head_of_the_ch
     // ── a bot with reports and a manager above it is not the head ───────────
     //
     // Patty has a report of its own now, and still has marge above it.
-    let patty = story.as_bot("bot:patty").await;
+    let patty = story.as_bot("bot:patty").await.asking_whole();
     assistant
         .call(
             "capture",

@@ -1061,7 +1061,7 @@ async fn a_boot_bounds_the_purpose_groups_it_counts_and_the_length_of_each_name(
 #[tokio::test]
 async fn loading_a_bots_rules_by_status_active_leaves_out_the_retired_and_counts_them() {
     let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
     s.add("bot:omega", "Omega").await;
     rule(
         &s,

@@ -21,7 +21,7 @@ use super::dsl::Story;
 #[tokio::test]
 async fn a_session_writes_handles_into_a_sentence_and_reads_them_all_back() {
     let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
 
     s.add("person:milhouse", "Milhouse").await;
     s.add("pet:santas-little-helper", "The Dog").await;
@@ -246,7 +246,7 @@ async fn a_real_handle_inside_code_stays_as_written_through_a_rename_and_the_sam
 #[tokio::test]
 async fn a_rename_reaches_months_of_mentions_written_under_the_old_name() {
     let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
 
     s.add("place:shelbyvile", "Shelbyville").await;
     s.add("person:milhouse", "Milhouse").await;
@@ -563,7 +563,7 @@ async fn a_quarantine_reason_that_names_a_thing_follows_it_through_a_rename() {
 #[tokio::test]
 async fn a_link_under_a_key_nobody_declared_follows_its_target_through_a_rename() {
     let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
 
     s.add("work:sigma", "The First Job").await;
     s.add("thing:handcart", "The Handcart").await;
@@ -799,7 +799,7 @@ async fn a_renamed_bots_outbox_still_lists_the_mail_it_sent_under_its_old_handle
 #[tokio::test]
 async fn search_finds_a_claim_by_the_renamed_things_new_handle_and_not_the_old_one() {
     let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
 
     s.add("place:shelbyvile", "Shelbyville").await;
     s.add("person:milhouse", "Milhouse").await;
@@ -859,7 +859,7 @@ async fn search_finds_a_claim_by_the_renamed_things_new_handle_and_not_the_old_o
 #[tokio::test]
 async fn search_follows_a_rename_into_a_claim_that_mentions_the_thing_only_in_its_details() {
     let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
 
     s.add("place:shelbyvile", "Shelbyville").await;
     s.add("person:homer", "Homer").await;

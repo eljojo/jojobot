@@ -110,7 +110,7 @@ async fn a_later_run_cannot_rewrite_the_operators_words_in_place_and_the_route_w
 #[tokio::test]
 async fn a_run_rewrites_its_own_words_and_keeps_their_provenance() {
     let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
     s.add("thing:handcart", "The Handcart").await;
     let said_by_operator = s.fact("thing:handcart", "the handcart is red").await;
     let guessed = s
@@ -222,7 +222,7 @@ async fn a_run_still_needs_the_operators_word_to_make_its_own_guess_testimony() 
 #[tokio::test]
 async fn a_later_run_still_rewrites_an_earlier_runs_inference_in_place() {
     let story = Story::begin("bot:gamma").await;
-    let first = story.session().await;
+    let first = story.session().await.asking_whole();
     first.add("thing:handcart", "The Handcart").await;
     let guess = first
         .call(
@@ -238,7 +238,7 @@ async fn a_later_run_still_rewrites_an_earlier_runs_inference_in_place() {
         .to_string();
     first.wrap("guessed a colour").await;
 
-    let later = story.session_in("UTC", Some("new")).await;
+    let later = story.session_in("UTC", Some("new")).await.asking_whole();
     // Without a provenance it lands as an inference: an agent's new words are
     // an inference whoever writes them.
     let landed = later

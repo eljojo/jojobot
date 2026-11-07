@@ -129,7 +129,7 @@ async fn a_caller_cannot_send_or_clear_a_sections_edges_but_the_engine_still_wri
 #[tokio::test]
 async fn a_caller_cannot_send_the_seam_the_engine_writes() {
     let story = Story::begin("bot:gamma").await;
-    let a = story.as_bot("bot:gamma").await;
+    let a = story.as_bot("bot:gamma").await.asking_whole();
     a.add("document:homer", "Fryer manual").await;
     a.call(
         "put_document",
@@ -142,7 +142,7 @@ async fn a_caller_cannot_send_the_seam_the_engine_writes() {
         .as_str()
         .expect("a section keeps its edges")
         .to_string();
-    let b = story.as_bot("bot:gamma").await;
+    let b = story.as_bot("bot:gamma").await.asking_whole();
     let before = read(&b).await;
 
     b.refused(

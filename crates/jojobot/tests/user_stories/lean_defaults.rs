@@ -118,7 +118,7 @@ async fn a_records_read_leads_with_each_claim_and_says_how_many_details_it_left_
 #[tokio::test]
 async fn reading_records_by_address_and_searching_follow_the_same_default() {
     let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
     a_topic_with_two_paragraphs(&s).await;
     let first = format!("{TOPIC}#f1");
     let second = format!("{TOPIC}#f2");

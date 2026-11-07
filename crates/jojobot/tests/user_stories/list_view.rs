@@ -174,7 +174,7 @@ async fn an_archived_list_is_left_out_of_the_lists_view_and_counted() {
 #[tokio::test]
 async fn a_list_read_that_names_keys_gets_only_the_blocks_it_names() {
     let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
     three_lists(&s).await;
 
     // The regression: no keys, the whole list as it always was.

@@ -195,7 +195,7 @@ fn records_in(read: &Value, found: &mut Vec<(&'static str, Value)>) {
 #[tokio::test]
 async fn whatever_a_read_serves_the_write_that_sets_it_accepts_as_served() {
     let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
     a_world_that_uses_every_write_option(&s).await;
     let mut reads = vec![
         s.call("search", json!({"query": "edge"})).await.json(),

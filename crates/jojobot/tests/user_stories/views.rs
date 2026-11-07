@@ -330,7 +330,7 @@ async fn the_colleagues_view_leaves_operational_keys_out_and_names_what_it_left_
 #[tokio::test]
 async fn the_note_a_view_leaves_names_calls_that_return_the_keys_it_left_out() {
     let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
     s.add("bot:omega", "Omega").await;
     s.event_with(
         "bot:omega",

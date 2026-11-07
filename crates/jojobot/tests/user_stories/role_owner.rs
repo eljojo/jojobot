@@ -501,10 +501,10 @@ async fn only_the_owner_or_the_chart_head_may_move_or_merge_a_role_object() {
 #[tokio::test]
 async fn a_stranger_may_not_rename_or_retype_a_role_object_and_the_owner_may() {
     let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
     s.add("bot:marge", "Marge").await;
     s.add("bot:bart", "Bart").await;
-    let bart = story.as_bot("bot:bart").await;
+    let bart = story.as_bot("bot:bart").await.asking_whole();
     let (claimed, _) = story
         .call(
             "start_here",
@@ -529,7 +529,7 @@ async fn a_stranger_may_not_rename_or_retype_a_role_object_and_the_owner_may() {
             .says("\"parent\":\"bot:marge\"");
     }
 
-    let marge = story.as_bot("bot:marge").await;
+    let marge = story.as_bot("bot:marge").await.asking_whole();
     marge
         .call(
             "rename_entity",

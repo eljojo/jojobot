@@ -33,7 +33,7 @@ fn claim<'a>(recalled: &'a serde_json::Value, address: &str) -> &'a serde_json::
 #[tokio::test]
 async fn a_setting_and_a_label_read_apart_and_a_label_moves_in_one_call() {
     let story = Story::begin("bot:gamma").await;
-    let run = story.session().await;
+    let run = story.session().await.asking_whole();
     run.add("place:leftorium", "The Leftorium").await;
 
     let priced = address_of(

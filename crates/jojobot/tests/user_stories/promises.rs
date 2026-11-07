@@ -161,7 +161,7 @@ async fn a_borrowed_thing_that_has_to_go_back_is_owed_beside_the_loops() {
 #[tokio::test]
 async fn the_stored_due_moment_is_jojobots_and_a_promise_keeps_the_operators_word() {
     let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
 
     s.add("person:ned-flanders", "Ned").await;
     s.add_under(

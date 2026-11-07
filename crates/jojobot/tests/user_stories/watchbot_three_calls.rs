@@ -33,7 +33,7 @@ async fn a_controller_reads_a_working_card_records_what_it_saw_pages_the_operato
         ],
     )
     .await;
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
     s.add("work:omega", "Mow the lawn").await;
     s.add("work:sigma", "Paint the fence").await;
     s.add("role:alpha", "Gatekeeper").await;

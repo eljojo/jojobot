@@ -436,7 +436,7 @@ async fn a_thread_with_a_number(
 #[tokio::test]
 async fn a_merge_is_held_to_the_lower_of_the_two_numbers() {
     let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
     // otto sets the numbers and merges; marge writes the notes, and reports to
     // otto, so otto is above marge and is not one of the bots that fill the threads.
     s.add("bot:marge", "Marge").await;
@@ -451,7 +451,7 @@ async fn a_merge_is_held_to_the_lower_of_the_two_numbers() {
             }),
         )
         .await;
-    let marge = story.as_bot("bot:marge").await;
+    let marge = story.as_bot("bot:marge").await.asking_whole();
     // The duplicate's lower number is set FIRST and the survivor's higher one
     // LAST, so a merge that took the number set last would take the survivor's.
     a_thread_with_a_number(&s, &marge, THREAD, 3, 3).await;
@@ -606,9 +606,9 @@ async fn the_bot_that_fills_a_container_does_not_raise_its_number() {
 #[tokio::test]
 async fn a_thread_merge_refused_for_its_writers_names_who_may_make_it() {
     let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
     s.add("bot:marge", "Marge").await;
-    let marge = story.as_bot("bot:marge").await;
+    let marge = story.as_bot("bot:marge").await.asking_whole();
     // marge reports to otto, so otto is above marge.
     story
         .as_bot("bot:assistant")

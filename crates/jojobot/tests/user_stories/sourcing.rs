@@ -22,7 +22,7 @@ async fn a_claim_names_where_it_came_from() {
     let story = Story::begin("bot:otto").await;
 
     // ── session 1 · a claim from a source ───────────────────────────────────
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
 
     s.add("place:daredevil-gorge", "Daredevil Gorge").await;
 
@@ -43,7 +43,7 @@ async fn a_claim_names_where_it_came_from() {
         .await;
 
     // ── session 2 · a claim derived from a claim ────────────────────────────
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
 
     // Derived from the closure claim rather than from an entity: the
     // fact-to-fact link is an address, never an edge's object.
@@ -58,7 +58,7 @@ async fn a_claim_names_where_it_came_from() {
         .await;
 
     // ── session 3 · a claim from an event ───────────────────────────────────
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
 
     // An event is an entity kind like any other, and a fact can be about one
     // exactly as it can about a place.
@@ -95,7 +95,7 @@ async fn a_claim_names_where_it_came_from() {
         .await;
 
     // ── session 4 · the brief, and the challenge ────────────────────────────
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
 
     // Everything about the place, testimony and inference side by side, in one
     // read.
@@ -139,7 +139,7 @@ async fn a_claim_names_where_it_came_from() {
     s.wrap("caught up, and traceable in both directions").await;
 
     // ── session 5 · years later, conditions change ──────────────────────────
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
 
     s.add("event:rockslide-review", "Rockslide Review").await;
     s.fact("event:rockslide-review", "found loose rock along the path")
@@ -191,7 +191,7 @@ async fn a_claim_names_where_it_came_from() {
         .await;
 
     // ── session 6 · the claim under a derivation is taken back ──────────────
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
 
     // A jotting that should never have been filed. Taken back, with nothing
     // to replace it — archiving covers this the same way it would a claim a

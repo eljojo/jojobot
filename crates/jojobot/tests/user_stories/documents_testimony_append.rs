@@ -21,8 +21,8 @@ const WHOLE: &str = "# Fryer manual\n\nRead this before the first shift.\n\n## O
 #[tokio::test]
 async fn another_session_appends_to_a_testimony_document_and_its_words_are_untouched() {
     let story = Story::begin("bot:gamma").await;
-    let writer = story.session().await;
-    let other = story.as_bot("bot:assistant").await;
+    let writer = story.session().await.asking_whole();
+    let other = story.as_bot("bot:assistant").await.asking_whole();
     writer.add("document:homer", "Fryer manual").await;
     writer
         .call(

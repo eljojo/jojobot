@@ -84,7 +84,7 @@ async fn a_sink_list_keeps_done_entries_at_the_bottom_in_the_order_done() {
 #[tokio::test]
 async fn a_leave_list_lets_a_done_entry_go_and_says_so() {
     let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
     let at = a_list_of_three(&s, "leave").await;
     s.call("capture", ticking("list:packing", &at[0], "done"))
         .await;
@@ -473,7 +473,7 @@ async fn undone_revives_a_dropped_entry_on_a_back_list() {
 #[tokio::test]
 async fn undone_still_refuses_to_undo_a_turn_on_a_back_list() {
     let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    let s = story.session().await.asking_whole();
     s.add("thing:springfield-camping", "Springfield camping")
         .await;
     let at = an_errands_list(&s, "back").await;

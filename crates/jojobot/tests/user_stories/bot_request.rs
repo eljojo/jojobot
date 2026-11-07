@@ -345,7 +345,7 @@ async fn observed(story: &Story, token: &str, handle: &str) -> serde_json::Value
 #[tokio::test]
 async fn clearing_a_spec_key_raises_the_generation_and_the_generation_stays() {
     let story = Story::begin("bot:marge").await;
-    let marge = story.session().await;
+    let marge = story.session().await.asking_whole();
     marge
         .call(
             "add_entity",
