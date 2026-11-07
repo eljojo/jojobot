@@ -715,17 +715,16 @@ async fn a_boot_that_stamps_a_due_day_before_the_teaching_ledger_opens_leaves_bo
         "recorded at {git_ref}: the due-days pass did not write before the serving line: {:?}",
         booted.log
     );
-    // **Before the images are filled**, which the boot does after it opens the
-    // teaching ledger: a pass moved behind that point stamps after the ledger is
-    // open, and this line is the first the boot logs from there.
-    let held = booted
+    // **Before the teaching ledger opens**: the boot logs the open on the line
+    // below, so a pass moved to any point behind it stamps after that line.
+    let opened = booted
         .log
         .iter()
-        .position(|line| line.contains("fold: every run is held in memory"));
+        .position(|line| line.contains("teaching ledger: open over the event log"));
     assert!(
-        held.is_some() && stamped < held,
+        opened.is_some() && stamped < opened,
         "recorded at {git_ref}: the due-days pass did not write before the teaching ledger \
-         opened and the images were filled: {:?}",
+         opened: {:?}",
         booted.log
     );
     booted.stop().await;
@@ -802,13 +801,17 @@ async fn a_run_closed_twice_offers_its_wrap_code_once_on_the_head() {
             &second.to_string(),
         );
     }
+    // **No key comes back.** Each use of a code issues a key of its own, so the
+    // key of the first reopening cannot be the thing compared: a spent code that
+    // reopened the run would hand back another.
     let spent = surface
         .call(
             "start_here",
             json!({"bot": "assistant", "resume": code, "brief": true}),
         )
         .await;
-    if spent.contains(reopened_sid) {
+    let spent_answer = parsed("the spent code", &git_ref, &spent);
+    if !spent_answer["session"]["sid"].is_null() || spent.contains("\"sid\":\"sk-") {
         fail("the spent code reopening nothing", &spent);
     }
     surface.finish().await;

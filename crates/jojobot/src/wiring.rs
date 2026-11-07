@@ -903,6 +903,7 @@ pub async fn boot_store_observed(
         jojobot_adapters::teaching_log::serving_kept(store.pool(), folded.writer())
             .await
             .map_err(|e| anyhow::anyhow!("TEACHING LEDGER UNAVAILABLE — {e}"))?;
+    tracing::info!("teaching ledger: open over the event log");
     let teachings: Arc<dyn Teachings> = observation.teachings(Arc::new(logged_teachings));
 
     // **Wrapped in the same decorators the story harness shares** — see this
