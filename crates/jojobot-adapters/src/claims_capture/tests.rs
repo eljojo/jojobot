@@ -309,6 +309,8 @@ async fn a_reopened_seam_serves_the_moment_a_claim_was_inserted() {
         .await
         .expect("the capture is admitted");
     writer.drain().await;
+    // The first writer keeps the store's connection until it is dropped.
+    drop(writer);
 
     let reopened = Writer::default();
     let seam = {
