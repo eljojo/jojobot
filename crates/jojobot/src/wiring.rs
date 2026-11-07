@@ -1034,12 +1034,12 @@ pub async fn boot_store_observed(
     // already holds a claims event is never imported into twice.
     match timed(
         "claims-import",
-        jojobot_adapters::claims_import::import_claims_once(
+        Box::pin(jojobot_adapters::claims_import::import_claims_once(
             &folded.writer(),
             store.pool(),
             &supplied,
             clock.now(),
-        ),
+        )),
     )
     .await
     {
