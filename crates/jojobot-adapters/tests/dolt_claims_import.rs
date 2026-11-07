@@ -1374,3 +1374,69 @@ async fn claims_import_skips_a_home_that_only_key_writes_name() {
 
     server.stop().await;
 }
+
+/// **Each table that files rows under a home can be the only one that names it.**
+/// One arm per table: a record no build supplies any more keeps rows in that table
+/// alone, and the import skips and names the home.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn claims_import_skips_a_home_that_one_table_alone_names() {
+    for (kept, removed) in [
+        (
+            "fact_write",
+            ["fact", "field_write", "field_link"].as_slice(),
+        ),
+        (
+            "fact_event_metadata",
+            ["fact", "fact_write", "field_write", "field_link"].as_slice(),
+        ),
+    ] {
+        let (_scratch, mut server, pool) = store(&format!("claims-import-only-{kept}")).await;
+        let memory = DoltMemory::open(pool.clone()).knowing(supplied_view("view:loops"));
+        let loops = EntityId("view:loops".to_string());
+        let mut mood = NewFact::about(loops.clone(), "is read", date(2026, 9, 1));
+        mood.provenance = Provenance::Testimony;
+        mood.fields.insert("mood".to_string(), "calm".to_string());
+        mood.sets.insert("mood".to_string());
+        memory
+            .capture(mood)
+            .await
+            .expect("capture")
+            .written()
+            .expect("not blocked");
+        let local: String = sqlx::query_scalar("SELECT id FROM fact WHERE entity = 'view:loops'")
+            .fetch_one(&pool)
+            .await
+            .expect("the claim row");
+        for table in removed {
+            let statement = format!("DELETE FROM {table} WHERE entity = 'view:loops'");
+            sqlx::query(sqlx::AssertSqlSafe(statement))
+                .execute(&pool)
+                .await
+                .expect("the rows go");
+        }
+        if kept == "fact_event_metadata" {
+            sqlx::query(
+                "INSERT INTO fact_event_metadata (fact_home, fact_id, `key`, value) \
+                 VALUES ('view:loops', ?, 'kind', 'note')",
+            )
+            .bind(&local)
+            .execute(&pool)
+            .await
+            .expect("a metadata row");
+        }
+
+        let imported = import_claims_once(&Writer::default(), &pool, &Provisions::default(), at())
+            .await
+            .unwrap_or_else(|why| panic!("{kept} alone under a removed home refused: {why}"));
+        let Imported::Done { skipped_homes, .. } = imported else {
+            panic!("the import ran: {imported:?}");
+        };
+        assert_eq!(
+            skipped_homes,
+            vec![("view:loops".to_string(), 0)],
+            "{kept} alone names the home"
+        );
+
+        server.stop().await;
+    }
+}

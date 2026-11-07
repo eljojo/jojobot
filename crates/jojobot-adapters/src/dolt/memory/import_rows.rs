@@ -111,6 +111,16 @@ struct Read {
 }
 
 impl Read {
+    /// **Skip a home that no key holds**, naming it with `claims` more claim rows.
+    /// Only an absent home is skipped; an ambiguous one is refused by name.
+    fn skip_if_absent(&mut self, stored: &str, claims: usize) -> bool {
+        let absent = matches!(self.keys.placed(stored), Placed::Absent);
+        if absent {
+            *self.skipped.entry(stored.to_string()).or_default() += claims;
+        }
+        absent
+    }
+
     /// **The key a stored name stands for**, or its stored spelling with a
     /// finding when it stands for none.
     fn key(&mut self, table: &'static str, row: &str, column: &str, stored: &str) -> ObjectId {
@@ -417,8 +427,7 @@ impl DoltMemory {
                 .unwrap_or_default();
             // A row filed under a name no key holds, which no history reads, is the
             // write of a thing removed by hand: skipped like its claims.
-            if owners.is_empty() && matches!(read.keys.placed(&filed_under), Placed::Absent) {
-                read.skipped.entry(filed_under).or_default();
+            if owners.is_empty() && read.skip_if_absent(&filed_under, 0) {
                 continue;
             }
             if owners.len() != 1 {
@@ -531,11 +540,7 @@ impl DoltMemory {
         // thing and refusing would stop the import altogether. They stay in the old
         // tables, and the import names each home with its claim count.
         for row in &head_rows {
-            let stored = text(row, "entity")?;
-            // Only an absent home is skipped; an ambiguous one is refused by name.
-            if matches!(read.keys.placed(&stored), Placed::Absent) {
-                *read.skipped.entry(stored).or_default() += 1;
-            }
+            read.skip_if_absent(&text(row, "entity")?, 1);
         }
         // The same hand-removal can leave rows under a home with no claim row left,
         // so every table that files rows under a home names its absent homes.
@@ -551,9 +556,7 @@ impl DoltMemory {
             .await
             .map_err(store)?;
             for stored in homes {
-                if matches!(read.keys.placed(&stored), Placed::Absent) {
-                    read.skipped.entry(stored).or_default();
-                }
+                read.skip_if_absent(&stored, 0);
             }
         }
         // The references and the mark a claim holds NOW sit in two tables of their

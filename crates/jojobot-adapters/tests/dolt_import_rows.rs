@@ -540,13 +540,22 @@ async fn every_stored_row_is_read_and_the_legacy_shapes_read_as_stored() {
     .execute(&pool)
     .await
     .expect("an old version row");
-    // A row filed under a handle nobody ever held is a finding and keeps its spelling.
+    // A row filed under a handle nobody ever held is the write of a thing removed by
+    // hand: skipped, and the handle named.
     sqlx::query(
         "INSERT INTO entity_write (entity, ordinal, written_at) VALUES ('person:milhouse', 1, '2026-01-01T00:00:00Z')",
     )
     .execute(&pool)
     .await
     .expect("an orphan version row");
+    // A row filed under a handle somebody wears, naming a thing that is none of the
+    // wearer's, is read by no history: a finding, because the reader never picks one.
+    sqlx::query(
+        "INSERT INTO entity_write (entity, ordinal, written_at, badge) VALUES ('person:bart', 98, '2026-01-01T00:00:00Z', 'badge-of-nobody')",
+    )
+    .execute(&pool)
+    .await
+    .expect("a version row of nobody's history");
     // A claim last written before its write kept references holds NULL there, and
     // the reference it holds now is in the table the store's reads take it from.
     sqlx::query(
@@ -662,17 +671,31 @@ async fn every_stored_row_is_read_and_the_legacy_shapes_read_as_stored() {
         [
             ("entity", "person:moe"),
             ("entity", "person:smithers"),
-            ("entity_write", "person:milhouse#1")
+            ("entity_write", "person:bart#98")
         ],
         "a forward the owner cannot place is a finding, whoever wears the handle now: {:?}",
         read.findings
     );
     assert!(
+        read.skipped_homes
+            .iter()
+            .any(|(home, claims)| home == "person:milhouse" && *claims == 0),
+        "the handle nobody held is named as a skipped home: {:?}",
+        read.skipped_homes
+    );
+    assert!(
         read.rows
             .entity_writes
             .iter()
-            .any(|row| row.filed_under == "person:milhouse" && row.thing.0 == "person:milhouse"),
-        "an orphan keeps its stored spelling"
+            .all(|row| row.filed_under != "person:milhouse"),
+        "its version row is not imported"
+    );
+    assert!(
+        read.rows
+            .entity_writes
+            .iter()
+            .any(|row| row.filed_under == "person:bart" && row.ordinal == 98),
+        "a row under a live handle keeps its stored spelling beside its finding"
     );
     server.stop().await;
 }
