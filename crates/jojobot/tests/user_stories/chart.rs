@@ -23,8 +23,8 @@ async fn the_chart_is_changed_only_by_a_superior() {
     let s = story.session().await.asking_whole();
     s.add("bot:omega", "Omega").await;
     s.add("bot:sigma", "Sigma").await;
-    let omega = story.as_bot("bot:omega").await.asking_whole();
-    let sigma = story.as_bot("bot:sigma").await.asking_whole();
+    let omega = story.as_bot("bot:omega").await;
+    let sigma = story.as_bot("bot:sigma").await;
 
     // ── a bot with no manager is adopted only by the head of the chart ──────
     //
@@ -39,7 +39,7 @@ async fn the_chart_is_changed_only_by_a_superior() {
         .await
         .says("\"wrote\":false")
         .says("bot:assistant");
-    let assistant = story.as_bot("bot:assistant").await.asking_whole();
+    let assistant = story.as_bot("bot:assistant").await;
     assistant
         .call("capture", reporting_to("bot:sigma", "bot:omega"))
         .await;
@@ -239,7 +239,7 @@ async fn the_chart_is_guarded_the_same_through_an_edit_a_retraction_and_a_merge(
     ] {
         s.add(handle, name).await;
     }
-    let assistant = story.as_bot("bot:assistant").await.asking_whole();
+    let assistant = story.as_bot("bot:assistant").await;
 
     // Omega reports to the assistant, so the assistant is above sigma too.
     assistant

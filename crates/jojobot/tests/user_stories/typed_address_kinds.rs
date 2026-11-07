@@ -20,7 +20,7 @@ pub(super) async fn world(story: &Story) -> Session {
         .await
         .expect("the instance's kind schema");
     story.the_store_changed_underneath().await;
-    let s = story.session().await.asking_whole();
+    let s = story.session().await;
     s.add(RULES, "Springfield rules").await;
     s.call(
         "capture",
@@ -222,7 +222,7 @@ async fn b5_story_rename_moves_the_member_and_its_references() {
 #[tokio::test]
 async fn b5_story_parent_selects_the_members_children() {
     let story = Story::begin("bot:gamma").await;
-    let s = world(&story).await;
+    let s = world(&story).await.asking_whole();
     s.call(
         "add_entity",
         json!({"kind": "thing", "handle": "springfield-camping",
@@ -255,7 +255,7 @@ async fn b5_story_parent_selects_the_members_children() {
 #[tokio::test]
 async fn b5_story_location_uses_the_members_kind() {
     let story = Story::begin("bot:gamma").await;
-    let s = world(&story).await;
+    let s = world(&story).await.asking_whole();
     for (collection, name) in [("topic:alpha", "Venues"), ("place:shelbyville", "Guests")] {
         s.add(collection, name).await;
         s.call(

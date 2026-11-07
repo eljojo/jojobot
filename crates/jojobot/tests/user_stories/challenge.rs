@@ -18,7 +18,7 @@ async fn where_did_you_get_that() {
     let story = Story::begin("bot:otto").await;
 
     // ── session 1 · research, and a claim nobody actually said ──────────────
-    let s = story.session().await.asking_whole();
+    let s = story.session().await;
 
     s.add("place:moes", "Moe's").await;
 
@@ -125,7 +125,7 @@ async fn where_did_you_get_that() {
         .await;
 
     // ── session 4 · what else came from that summary? ───────────────────────
-    let s = story.session().await.asking_whole();
+    let s = story.session().await;
 
     // The same search summary produced a second claim, about a different
     // place, and that one is still standing.

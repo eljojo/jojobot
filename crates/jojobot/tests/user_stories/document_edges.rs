@@ -142,7 +142,7 @@ async fn a_caller_cannot_send_the_seam_the_engine_writes() {
         .as_str()
         .expect("a section keeps its edges")
         .to_string();
-    let b = story.as_bot("bot:gamma").await.asking_whole();
+    let b = story.as_bot("bot:gamma").await;
     let before = read(&b).await;
 
     b.refused(

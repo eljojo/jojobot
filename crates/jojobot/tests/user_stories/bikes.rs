@@ -504,7 +504,7 @@ async fn keeping_track_of_bikes() {
     s.wrap("service history, such as it is").await;
 
     // ── session 3 · the numbers, year after year ────────────────────────────
-    let s = story.session().await.asking_whole();
+    let s = story.session().await;
 
     // The same measurement at three sittings, a year apart. It goes under a
     // key rather than into a sentence, which is what makes the three of them
@@ -635,7 +635,7 @@ async fn keeping_track_of_bikes() {
     s.wrap("tallies in, and what each year came to").await;
 
     // ── session 4 · months later, the questions actually asked ──────────────
-    let s = story.session().await.asking_whole();
+    let s = story.session().await;
 
     s.find("warranty")
         .await
@@ -745,7 +745,7 @@ async fn keeping_track_of_bikes() {
     s.wrap("still riding").await;
 
     // ── session 5 · one of them is sold ─────────────────────────────────────
-    let s = story.session().await.asking_whole();
+    let s = story.session().await;
 
     s.fact("thing:road-bike", "sold — tyres thrown in, gone in March")
         .await;
