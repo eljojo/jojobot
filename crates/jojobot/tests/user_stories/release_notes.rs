@@ -398,13 +398,15 @@ async fn a_quarantined_note_is_told_and_never_sent_again() {
     let gamma = later.as_bot("bot:gamma").await;
     let delivered = gamma.call("read_mailbox", json!({})).await.json();
     system_bodies("gamma", &gamma, &delivered).await;
-    let messages = delivered["messages"].as_array().expect("messages");
-    let sent = messages.len();
-    for message in messages {
+    // Every message of the start, the ones the delivery carries and the ones it
+    // only names: a message past the answer ceiling is still in the box.
+    let ids = message_ids(&delivered);
+    let sent = ids.len();
+    for id in &ids {
         gamma
             .call(
                 "mark_processed",
-                json!({"message_id": message["id"], "quarantine": "not for me"}),
+                json!({"message_id": id, "quarantine": "not for me"}),
             )
             .await;
     }
