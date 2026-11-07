@@ -124,6 +124,19 @@ pub async fn open_provisioned_on<M: Memory + Clone + 'static>(
     supplied: Provisions,
     clock: jojobot_domain::clock::Clock,
 ) -> anyhow::Result<Arc<dyn Memory>> {
+    open_provisioned_serving(bare.clone(), bare, supplied, clock).await
+}
+
+/// **[`open_provisioned_on`], seeding and reading over `bare` and serving `serving`.**
+/// The two are one store in two modes: the seeds and the boot checks write and read
+/// through the bare one, which takes part in no event log, and what is served is the
+/// journaled one, which refuses a write that reaches it with no writer job.
+pub async fn open_provisioned_serving<M: Memory + Clone + 'static>(
+    bare: M,
+    serving: M,
+    supplied: Provisions,
+    clock: jojobot_domain::clock::Clock,
+) -> anyhow::Result<Arc<dyn Memory>> {
     if PROVISIONED.set(()).is_err() {
         anyhow::bail!(
             "a store is already provisioned in this process — a process serves one store, and \
@@ -169,7 +182,9 @@ pub async fn open_provisioned_on<M: Memory + Clone + 'static>(
              wrongly; a restart once the store is reachable names them."
         ),
     }
-    Ok(Arc::new(Provisioned::new(bare, supplied).on_clock(clock)))
+    Ok(Arc::new(
+        Provisioned::new(serving, supplied).on_clock(clock),
+    ))
 }
 
 /// **Stage one: wrap memory, and open the fold and the index over it.**
@@ -604,7 +619,13 @@ pub async fn boot_store_observed(
         bare_memory.boot_reader(),
         supplied.clone(),
     ));
-    let resolved = open_provisioned_on(bare_memory, supplied.clone(), clock).await?;
+    let resolved = open_provisioned_serving(
+        bare_memory.clone(),
+        bare_memory.journaled(),
+        supplied.clone(),
+        clock,
+    )
+    .await?;
 
     // **A handle the build stopped supplying, or renamed, keeps the writes the
     // operator made while it was supplied** (rule 508). They are filed under the

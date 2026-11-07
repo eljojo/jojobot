@@ -249,6 +249,12 @@ pub struct DoltMemory {
     /// read and write that touches it, and a log that repeats it hides the
     /// warning that is new. Shared across a clone, like the pool.
     warned: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, u64>>>,
+    /// **Whether this store takes part in the event log.** The one the server
+    /// serves is [`journaled`](Self::journaled): its entity and type writers emit
+    /// their claim events into the writer job's batch, and a write that reaches it
+    /// with no job is refused. Every other store is bare: boot passes, seeds and
+    /// direct-store cases write their rows and emit nothing.
+    journaled: bool,
 }
 
 /// **How an edit of a claim is committed by the caller that owns its
@@ -294,6 +300,7 @@ impl DoltMemory {
             supplied: Provisions::default(),
             clock: Clock::default(),
             warned: Default::default(),
+            journaled: false,
         }
     }
 
@@ -347,6 +354,22 @@ impl DoltMemory {
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     }
 
+    /// **This store, taking part in the event log.** By value, so the store the
+    /// server serves is one made on purpose. See the field.
+    #[must_use]
+    pub fn journaled(mut self) -> Self {
+        self.journaled = true;
+        self
+    }
+
+    fn journal(&self) -> entity_events::Journal {
+        if self.journaled {
+            entity_events::Journal::Journaled
+        } else {
+            entity_events::Journal::Bare
+        }
+    }
+
     /// **The store, told what the build supplies over it.** Only the existence
     /// guard reads it: nothing is stored, nothing is listed, and a read still
     /// resolves supplied records in the layer above.
@@ -381,6 +404,7 @@ impl DoltMemory {
             supplied: Provisions::default(),
             clock: Clock::default(),
             warned: Default::default(),
+            journaled: false,
         }
     }
 
@@ -1785,8 +1809,15 @@ impl DoltMemory {
         // carries the handle the caller sent and is served back exactly as
         // written.
         let stored = self.stored_form(tx, &entity).await?;
-        let badge =
-            write_entity(tx, &self.draw, &stored, &self.clock, new.session.as_deref()).await?;
+        let badge = write_entity(
+            tx,
+            &self.draw,
+            &stored,
+            &self.clock,
+            self.journal(),
+            new.session.as_deref(),
+        )
+        .await?;
         Ok(Guarded::Written(Entity {
             badge: Some(badge),
             ..entity
@@ -2967,6 +2998,7 @@ impl DoltMemory {
             &self.draw,
             &stored,
             &self.clock,
+            self.journal(),
             patch.session.as_deref(),
         )
         .await?;
@@ -5531,7 +5563,15 @@ impl Memory for DoltMemory {
         // as `update_entity` carries it — no name changed, so there is
         // nothing for the guard to screen.
         let stored = self.stored_form(&mut tx, &entity).await?;
-        write_entity(&mut tx, &self.draw, &stored, &self.clock, session).await?;
+        write_entity(
+            &mut tx,
+            &self.draw,
+            &stored,
+            &self.clock,
+            self.journal(),
+            session,
+        )
+        .await?;
         super::requests::commit(tx, &self.clock, || {
             serde_json::json!({ "handle": id.to_string() }).to_string()
         })
@@ -5576,7 +5616,15 @@ impl Memory for DoltMemory {
         // The parent rides as the key the row stores, exactly as archiving
         // writes it back.
         let stored = self.stored_form(&mut tx, &entity).await?;
-        write_entity(&mut tx, &self.draw, &stored, &self.clock, session).await?;
+        write_entity(
+            &mut tx,
+            &self.draw,
+            &stored,
+            &self.clock,
+            self.journal(),
+            session,
+        )
+        .await?;
         // **What the restore cleared is part of what it returned**, because the
         // row no longer says it and the claim that records the restore needs it.
         super::requests::commit(tx, &self.clock, || {
@@ -5871,7 +5919,8 @@ impl Memory for DoltMemory {
         } else {
             entity_events::Change::Renamed { from, day: date }
         };
-        entity_events::emit_object_write(&mut tx, to, change, &self.clock, session).await?;
+        entity_events::emit_object_write(&mut tx, to, change, &self.clock, self.journal(), session)
+            .await?;
         super::requests::commit(tx, &self.clock, || {
             serde_json::json!({ "handle": to.to_string() }).to_string()
         })
@@ -7017,6 +7066,7 @@ impl Memory for DoltMemory {
             entity,
             entity_events::Change::Revised,
             &self.clock,
+            self.journal(),
             session,
         )
         .await?;
@@ -7212,7 +7262,7 @@ impl Memory for DoltMemory {
             )
             .await?;
         }
-        entity_events::emit_type_declared(&declared, &self.clock, by_session)?;
+        entity_events::emit_type_declared(&declared, &self.clock, self.journal(), by_session)?;
         super::requests::commit(tx, &self.clock, || {
             serde_json::json!({ "name": declared.name.clone() }).to_string()
         })
@@ -7387,7 +7437,7 @@ impl Memory for DoltMemory {
             // **What the kind holds once this lands**, built from the plan and the
             // keys it keeps, which a store with no writer job has no use for and a
             // boot before the kinds are loaded cannot read.
-            if crate::writer::sql::in_writer_job() {
+            if self.journal() == entity_events::Journal::Journaled {
                 let held_fields = held_rows
                     .iter()
                     .map(|(key, holds, folds, held_origin, required, one_of)| {
@@ -7403,7 +7453,12 @@ impl Memory for DoltMemory {
                     append_type_write(&mut tx, token, &declared.fields, None, &self.clock).await?;
                 }
                 if let Some(effective) = &effective {
-                    entity_events::emit_type_declared(effective, &self.clock, None)?;
+                    entity_events::emit_type_declared(
+                        effective,
+                        &self.clock,
+                        self.journal(),
+                        None,
+                    )?;
                 }
                 entity_events::commit_kind_write(tx, token, &self.clock).await?;
                 return Ok(changed);
@@ -7481,7 +7536,7 @@ impl Memory for DoltMemory {
             append_type_write(&mut tx, token, &declared.fields, None, &self.clock).await?;
         }
         if let Some(effective) = &effective {
-            entity_events::emit_type_declared(effective, &self.clock, None)?;
+            entity_events::emit_type_declared(effective, &self.clock, self.journal(), None)?;
         }
         entity_events::commit_kind_write(tx, token, &self.clock).await?;
         Ok(changed)
@@ -7512,7 +7567,7 @@ impl Memory for DoltMemory {
                 .await
                 .map_err(store)?;
             // The rows hold no declaration of the kind from here on.
-            entity_events::emit_type_withdrawn(token, &self.clock, None)?;
+            entity_events::emit_type_withdrawn(token, &self.clock, self.journal(), None)?;
         }
         entity_events::commit_kind_write(tx, token, &self.clock).await?;
         Ok(())
@@ -7822,6 +7877,7 @@ async fn write_entity(
     draw: &Draw,
     entity: &Entity,
     clock: &Clock,
+    journal: entity_events::Journal,
     session: Option<&str>,
 ) -> Result<String, MemoryError> {
     let (badge, existed) = write_entity_row(tx, draw, entity, clock, session).await?;
@@ -7832,7 +7888,7 @@ async fn write_entity(
     } else {
         entity_events::Change::Created
     };
-    entity_events::emit_object_write(tx, &entity.id, change, clock, session).await?;
+    entity_events::emit_object_write(tx, &entity.id, change, clock, journal, session).await?;
     Ok(badge)
 }
 

@@ -103,13 +103,6 @@ pub(crate) fn emit(events: Vec<Event<ClaimEvent>>) -> Result<(), sqlx::Error> {
         })
 }
 
-/// **Whether the caller runs inside a writer job.** A write made outside one (a
-/// boot pass on the bare store, a case that opens the store directly) has no batch
-/// to join, and emits nothing.
-pub(crate) fn in_writer_job() -> bool {
-    NATIVE.try_with(|_| ()).is_ok()
-}
-
 /// **Read the claims State the running job's writer holds.** `None` outside a
 /// writer job and before the seam is open. A writer decides what to emit from
 /// the State, not from the store it is writing.

@@ -33,7 +33,7 @@ async fn world(name: &str) -> World {
     World {
         _scratch: scratch,
         server,
-        memory: DoltMemory::open(store.clone()),
+        memory: DoltMemory::open(store.clone()).journaled(),
         store,
         writer: Writer::default(),
     }
@@ -576,8 +576,8 @@ async fn a_declaration_the_rows_already_hold_still_reaches_the_state() {
     let mut world = world("entity-events-kind-held").await;
     let token = "stockkind";
     let keys = || vec![Field::new("witness", ValueType::Text)];
-    world
-        .memory
+    // **The seed's store is bare**: it writes its rows and emits nothing.
+    DoltMemory::open(world.store.clone())
         .declare_kind(token, Origin::Shipped, keys())
         .await
         .expect("seeded outside a job");
@@ -611,6 +611,61 @@ async fn a_declaration_the_rows_already_hold_still_reaches_the_state() {
         .read_claims(|state| state.declared(&ObjectId(token.into())).cloned());
     assert_eq!(held, rows, "the State holds the kind as the rows do");
     assert!(rows.is_some(), "the rows hold the kind");
+    world.writer.drain().await;
+    world.server.stop().await;
+}
+
+/// **A journaled store refuses an entity write that reaches it with no writer
+/// job**, and the refused write leaves no row: the transaction is dropped. The
+/// store the server serves is journaled, so no write of it is lost without a word.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_journaled_store_refuses_an_entity_write_with_no_writer_job() {
+    let mut world = world("entity-events-journaled-refuses").await;
+    let handle = id("person:homer");
+    let refused = world
+        .memory
+        .add_entity(NewEntity::new(handle.clone(), "Homer", "fixture"))
+        .await;
+    assert!(refused.is_err(), "the write went through with no job");
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM entity WHERE id = ?")
+        .bind(handle.as_str())
+        .fetch_one(&world.store)
+        .await
+        .expect("the count reads");
+    assert_eq!(rows, 0, "the refused write left a row");
+    world.writer.drain().await;
+    world.server.stop().await;
+}
+
+/// **A bare store writes the same entity and emits nothing**: it is what the
+/// boot passes, the seeds and the direct-store cases use, and the log stays as
+/// it was.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_bare_store_commits_an_entity_write_and_emits_nothing() {
+    let mut world = world("entity-events-bare-commits").await;
+    let handle = id("person:homer");
+    DoltMemory::open(world.store.clone())
+        .add_entity(NewEntity::new(handle.clone(), "Homer", "fixture"))
+        .await
+        .expect("a bare store takes the write")
+        .written()
+        .expect("not blocked");
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM entity WHERE id = ?")
+        .bind(handle.as_str())
+        .fetch_one(&world.store)
+        .await
+        .expect("the count reads");
+    assert_eq!(rows, 1, "the bare store did not commit");
+    let members: usize = world
+        .writer
+        .shared_log(&world.store)
+        .read_from(jojobot_domain::log::Position(0), 100)
+        .await
+        .expect("the log reads")
+        .iter()
+        .map(|batch| batch.members().len())
+        .sum();
+    assert_eq!(members, 0, "the bare store put something in the log");
     world.writer.drain().await;
     world.server.stop().await;
 }

@@ -18,6 +18,31 @@ use jojobot_domain::memory::types::DeclaredType;
 use super::import_rows::{maybe, text};
 use super::*;
 
+/// **Whether a store takes part in the event log**, asked once by each emitter.
+/// A bare store (a boot pass, a seed, a direct-store case) writes its rows and
+/// emits nothing. A journaled store (the one the server serves) emits into the
+/// writer job's batch and **refuses** a write that reaches it with no job: the
+/// error is `emit`'s, and the caller drops the transaction, so the write leaves
+/// nothing behind. Nothing is skipped silently.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Journal {
+    Bare,
+    Journaled,
+}
+
+impl Journal {
+    /// Whether the emitter goes on; the error is the refusal of a journaled store
+    /// that was written with no writer job.
+    fn takes_part(self) -> Result<bool, MemoryError> {
+        match self {
+            Journal::Bare => Ok(false),
+            Journal::Journaled => crate::writer::sql::emit(Vec::new())
+                .map(|()| true)
+                .map_err(store),
+        }
+    }
+}
+
 /// What a writer did to the row, and so which events follow.
 pub(super) enum Change<'a> {
     /// The row did not exist before: the object is created and its handle bound.
@@ -35,11 +60,10 @@ pub(super) async fn emit_object_write(
     entity: &EntityId,
     change: Change<'_>,
     clock: &Clock,
+    journal: Journal,
     session: Option<&str>,
 ) -> Result<(), MemoryError> {
-    // **Outside a writer job there is no batch to join**: the writes the one
-    // writer serves are the log's, and a boot pass on the bare store never emits.
-    if !crate::writer::sql::in_writer_job() {
+    if !journal.takes_part()? {
         return Ok(());
     }
     let Some(row) = sqlx::query(
@@ -117,15 +141,20 @@ pub(super) async fn emit_object_write(
 /// **Emit `TypeDeclared` when `declared` differs from the declaration the State
 /// holds for its name.** A declaration the State already holds adds no event, so
 /// a seed run over a log that holds the shipped types leaves the log as it was.
-/// Outside a writer job, or before the seam is open, nothing is emitted.
+/// A bare store emits nothing; a journaled one refuses a write with no writer job,
+/// and one whose writer has not opened the claims state.
 pub(super) fn emit_type_declared(
     declared: &DeclaredType,
     clock: &Clock,
+    journal: Journal,
     session: Option<&str>,
 ) -> Result<(), MemoryError> {
+    if !journal.takes_part()? {
+        return Ok(());
+    }
     let kind = ObjectId(declared.name.clone());
     let Some(held) = crate::writer::sql::read_claims(|state| state.declared(&kind).cloned()) else {
-        return Ok(());
+        return Err(store(not_open()));
     };
     let events = type_declaration_events(
         held.as_ref(),
@@ -162,16 +191,20 @@ pub(super) async fn commit_kind_write(
 }
 
 /// **Emit the withdrawal of the kind's declaration** the domain chooses, with the
-/// declaration the State holds. Outside a writer job, or before the seam is open,
-/// nothing is emitted.
+/// declaration the State holds. A bare store emits nothing; a journaled one refuses
+/// a write with no writer job, and one whose writer has not opened the claims state.
 pub(super) fn emit_type_withdrawn(
     token: &str,
     clock: &Clock,
+    journal: Journal,
     session: Option<&str>,
 ) -> Result<(), MemoryError> {
+    if !journal.takes_part()? {
+        return Ok(());
+    }
     let kind = ObjectId(token.to_string());
     let Some(held) = crate::writer::sql::read_claims(|state| state.declared(&kind).cloned()) else {
-        return Ok(());
+        return Err(store(not_open()));
     };
     let events = type_withdrawal_events(
         &kind,
@@ -183,4 +216,11 @@ pub(super) fn emit_type_withdrawn(
         return Ok(());
     }
     crate::writer::sql::emit(events).map_err(store)
+}
+
+/// The refusal of a journaled store whose writer has not opened the claims state.
+fn not_open() -> sqlx::Error {
+    sqlx::Error::Protocol(
+        "a journaled store was written before its writer opened the claims state".into(),
+    )
 }
