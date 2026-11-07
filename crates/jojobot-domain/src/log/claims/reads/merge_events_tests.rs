@@ -220,8 +220,13 @@ fn a_merge_event_names_the_survivor_its_event_named() {
         ]
     );
     assert_eq!(
-        pairs(state.merge_events(Some(&handle("person:beta")))).len(),
-        2,
+        pairs(state.merge_events(Some(&handle("person:beta")))),
+        pairs(state.merge_events(None)),
         "beta is a side of both merges"
+    );
+    assert_eq!(
+        pairs(state.merge_events(Some(&handle("person:gamma")))),
+        vec![("person:beta".to_string(), "person:gamma".to_string())],
+        "gamma is a side of the merge that named it, and not of the one that named beta"
     );
 }
