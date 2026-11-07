@@ -417,16 +417,41 @@ pub async fn ledger_events(
 /// makes the batch's id, so one database can hold several planted members. The
 /// answer is the position the member took.
 pub async fn plant_foreign_member(pool: &sqlx::MySqlPool, name: &str) -> u64 {
-    use jojobot_domain::log::{BatchId, Position, SealedBatch};
     use jojobot_domain::teaching::events::{RunId, TeachingEvent};
+    let member = crate::teaching_log::codec::encode(&TeachingEvent::Cleared {
+        run: RunId("homer".into()),
+    });
+    plant_member(pool, name, member).await
+}
+
+/// **Append a member of the ledger's own family whose kind this build does not
+/// know**, as a later build would have written it. The ledger's replay refuses a
+/// log that holds one. The answer is the position the member took.
+pub async fn plant_unknown_ledger_member(pool: &sqlx::MySqlPool, name: &str) -> u64 {
+    let member = serde_json::to_vec(&jojobot_domain::log::Event {
+        event_kind: "LedgerSomethingNew".to_string(),
+        meaning_version: 1,
+        actor: None,
+        run: None,
+        session_card: None,
+        request: None,
+        part: None,
+        occurred_at: None,
+        written_at: None,
+        imported_source_time: None,
+        payload: serde_json::json!({}),
+    })
+    .expect("an envelope");
+    plant_member(pool, name, member).await
+}
+
+async fn plant_member(pool: &sqlx::MySqlPool, name: &str, member: Vec<u8>) -> u64 {
+    use jojobot_domain::log::{BatchId, Position, SealedBatch};
     let log = crate::dolt_log::DoltLog::open(pool.clone())
         .await
         .expect("the log opens");
     let mut tx = pool.begin().await.expect("a transaction");
     let head = log.head_in(&mut tx).await.expect("the head");
-    let member = crate::teaching_log::codec::encode(&TeachingEvent::Cleared {
-        run: RunId("homer".into()),
-    });
     let batch = SealedBatch::seal(
         BatchId(format!("foreign:{name}")),
         Position(head),

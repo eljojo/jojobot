@@ -2209,6 +2209,54 @@ async fn a_restart_over_old_rows_and_other_families_imports_nothing_again() {
     server.stop().await;
 }
 
+/// **A log that holds a kind of the ledger's own family this build does not know
+/// stops the writer.** A later build wrote it; this build cannot read what the log
+/// holds, so it must not serve a ledger that has it wrong. The first write is
+/// refused and nothing is appended behind the unknown member.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_unknown_kind_of_the_ledgers_own_family_stops_the_first_write() {
+    let dir = jojobot_adapters::testing::scratch_path("jojobot-requests-unknown");
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    let _scratch = Scratch(dir.clone());
+    let mut server = Dolt::start(&dir, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&server, "requests_unknown")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
+        .await
+        .expect("the kinds are seeded");
+    let plain = DoltMemory::open(pool.clone());
+    let milhouse = thing(&plain, "person:milhouse", "Milhouse").await;
+    thing(&plain, "bot:sigma", "Sigma").await;
+    let planted = jojobot_adapters::testing::plant_unknown_ledger_member(&pool, "future").await;
+
+    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
+    let _ledger = DoltRequests::new(pool.clone()).with_writer(memory.writer());
+    let (stored, _) = captured(
+        &memory,
+        request("bot:sigma", "first"),
+        claim_about(&milhouse, "wears glasses"),
+    )
+    .await;
+    assert!(
+        !stored,
+        "the write is refused over a log this build cannot read"
+    );
+    let behind: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM event_log WHERE first_position IS NOT NULL AND first_position > ?",
+    )
+    .bind(planted)
+    .fetch_one(&pool)
+    .await
+    .expect("the batches behind the unknown member");
+    assert_eq!(behind, 0, "nothing was appended behind the unknown member");
+
+    server.stop().await;
+}
+
 /// **A restart recognises the ids spent by mail, memory and session writes from
 /// the log alone.** The second writer replays the log; the old tables hold no
 /// row of these writes, and the repeat of each is found.
