@@ -185,6 +185,25 @@ pub async fn a_folded_row_takes_neither_prose_nor_an_edit<M: Memory>(store: &M) 
             if attempted == spare.as_str() && into == kept.as_str()),
         "update_entity names the survivor: {refused:?}"
     );
+    // **The edit composed with a claim takes the same road**: it is refused for the
+    // folded row before the claim is judged, and the claim is not written.
+    let refused = store
+        .update_entity_with_claim(
+            &spare,
+            renamed.clone(),
+            NewFact::about(
+                spare.clone(),
+                "a claim on a forwarding row",
+                date(2026, 10, 16),
+            ),
+        )
+        .await
+        .expect_err("a folded row takes no edit with a claim either");
+    assert!(
+        matches!(&refused, MemoryError::AlreadyMerged { attempted, into }
+            if attempted == spare.as_str() && into == kept.as_str()),
+        "update_entity_with_claim names the survivor: {refused:?}"
+    );
     // The row is as the fold left it.
     assert!(
         !store.has_prose(&spare).await.expect("has_prose reads"),
