@@ -247,6 +247,52 @@ async fn a_rolled_back_transaction_leaves_neither_rows_nor_batch() {
     server.stop().await;
 }
 
+/// **A refused companion row rolls back the staged batch with it.** The next
+/// transaction can stage at the same head and publish only its committed batch.
+#[tokio::test]
+async fn a_staged_batch_rolls_back_when_a_companion_row_is_refused() {
+    let (_scratch, mut server, pool, log) = fixture().await;
+    sqlx::query("CREATE TABLE stage_companion (id INT PRIMARY KEY)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let lost = batch("refused-companion", 0, &[b"lost"]);
+    let mut tx = pool.begin().await.unwrap();
+    let staged = log.stage(&mut tx, Position(0), &lost).await.unwrap();
+    sqlx::query("INSERT INTO stage_companion (id) VALUES (1)")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    let refused = sqlx::query("INSERT INTO stage_companion (id) VALUES (1)")
+        .execute(&mut *tx)
+        .await
+        .expect_err("the companion row repeats a primary key");
+    assert_eq!(
+        refused
+            .as_database_error()
+            .and_then(|e| e.code())
+            .as_deref(),
+        Some("23000"),
+        "a real duplicate-key refusal: {refused}"
+    );
+    tx.rollback().await.unwrap();
+    drop(staged);
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM stage_companion")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(rows, 0);
+    assert!(
+        log.read_from(Position(0), 10).await.unwrap().is_empty(),
+        "the refused transaction published no batch"
+    );
+    let kept = batch("after-refused-companion", 0, &[b"kept"]);
+    appended(&log, &pool, Position(0), &kept).await;
+    assert_eq!(log.read_from(Position(0), 10).await.unwrap(), [kept]);
+    drop(log);
+    server.stop().await;
+}
+
 /// **A read inside a recovery's fence uses the reader that fence opened, and no
 /// other.** A closed reader makes the read fail, so the read cannot have used
 /// the log's own connection; a live one answers; and with no fence in scope the
