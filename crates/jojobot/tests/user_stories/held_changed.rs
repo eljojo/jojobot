@@ -614,6 +614,17 @@ async fn a_search_hit_on_a_thing_already_recalled_comes_back_as_its_handle() {
         .await
         .json();
     assert!(whole.get("held_collapsed").is_none(), "{whole}");
+    // **The positive of the same read**: Homer is in the answer, whole, with his
+    // claim, so a search that returns nothing does not pass.
+    let homer = whole["results"]
+        .as_array()
+        .and_then(|hits| hits.iter().find(|hit| hit["id"] == "person:homer"))
+        .unwrap_or_else(|| panic!("no hit on Homer in the whole read: {whole}"));
+    assert!(
+        homer.as_object().is_some_and(|keys| keys.len() > 2),
+        "Homer comes back with more than his handle: {homer}"
+    );
+    assert!(whole.to_string().contains("likes donuts"), "{whole}");
     story.finish().await;
 }
 
