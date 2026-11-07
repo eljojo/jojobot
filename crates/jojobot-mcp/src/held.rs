@@ -288,7 +288,41 @@ pub(crate) fn without_notice(result: &mut CallToolResult) {
 /// ([`Jojobot::held_messages`]). Every version and every notice of a message in
 /// that answer is taken from here, so no message is read twice.
 #[derive(Default)]
-pub(crate) struct HeldMessages(std::collections::HashMap<String, Message>);
+pub(crate) struct HeldMessages(
+    std::collections::HashMap<String, Message>,
+    /// **Who stands under whom, read once for the answer**: the held pass asks it
+    /// of every held parent, and the default `children` lists the whole inventory
+    /// on each call.
+    tokio::sync::OnceCell<std::collections::HashMap<EntityId, Vec<EntityId>>>,
+);
+
+impl HeldMessages {
+    /// The children of every parent, archived ones too, a thing folded into
+    /// another being a child of nothing. A listing that cannot be read is an
+    /// empty index: nothing is counted under anything.
+    async fn parents(
+        &self,
+        memory: &dyn jojobot_domain::memory::Memory,
+    ) -> &std::collections::HashMap<EntityId, Vec<EntityId>> {
+        self.1
+            .get_or_init(|| async {
+                let mut index: std::collections::HashMap<EntityId, Vec<EntityId>> =
+                    Default::default();
+                if let Ok(all) = memory.list_entities(None).await {
+                    for entity in all.iter().filter(|e| e.merged_into.is_none()) {
+                        if let Some(parent) = &entity.parent {
+                            index
+                                .entry(parent.clone())
+                                .or_default()
+                                .push(entity.id.clone());
+                        }
+                    }
+                }
+                index
+            })
+            .await
+    }
+}
 
 impl Jojobot {
     /// Recall knows a claim's subject and home; an address alone only names its home.
@@ -337,6 +371,7 @@ impl Jojobot {
                     .into_iter()
                     .map(|message| (message.id.0.clone(), message))
                     .collect(),
+                Default::default(),
             ),
             Err(e) => {
                 tracing::warn!(error = %e, "held messages could not be read; their held versions stay");
@@ -405,24 +440,22 @@ impl Jojobot {
     /// directly under it, and all of them at any depth. The counts a read of a
     /// parent carries move when any of them is added, archived or taken away, with
     /// no write to the parent, so they are both counted in its version and read
-    /// as sources of it. An unreadable branch counts as none.
-    async fn below(&self, handle: &str) -> (usize, Vec<EntityId>) {
-        let direct = self
-            .memory
-            .children(&EntityId(handle.to_string()))
-            .await
-            .unwrap_or_default();
+    /// as sources of it. Read from the index of the answer, which is built once.
+    async fn below(&self, handle: &str, messages: &HeldMessages) -> (usize, Vec<EntityId>) {
+        let index = messages.parents(&*self.memory).await;
+        let direct = index.get(&EntityId(handle.to_string())).map_or(0, Vec::len);
         let mut all: std::collections::BTreeSet<EntityId> = Default::default();
-        let mut queue = direct.clone();
+        let mut queue: Vec<&EntityId> = index
+            .get(&EntityId(handle.to_string()))
+            .into_iter()
+            .flatten()
+            .collect();
         while let Some(next) = queue.pop() {
-            if !all.insert(next.clone()) {
-                continue;
-            }
-            if let Ok(under) = self.memory.children(&next).await {
-                queue.extend(under);
+            if all.insert(next.clone()) {
+                queue.extend(index.get(next).into_iter().flatten());
             }
         }
-        (direct.len(), all.into_iter().collect())
+        (direct, all.into_iter().collect())
     }
 
     /// **How a held thing stands now**, or `None` when it cannot be read (a
@@ -437,7 +470,7 @@ impl Jojobot {
                     .await
                     .inspect_err(|e| unread(what, e))
                     .ok()?;
-                let (direct, below) = self.below(handle).await;
+                let (direct, below) = self.below(handle, messages).await;
                 Some(Version::Entity {
                     own: ages.newest,
                     around: self.around(handle, &below).await,
@@ -453,7 +486,9 @@ impl Jojobot {
                     .ok()?;
                 let last = chain.last()?;
                 // **A claim reads the standing of the claim it was derived from**:
-                // taking the source back changes what the derived claim says.
+                // taking the source back changes what the derived claim says. A
+                // source that cannot be read stands as none, so a failed read is
+                // a change and the claim is served whole, never hidden.
                 let source = match &last.derived_from {
                     Some(from) => self
                         .memory
@@ -1319,10 +1354,71 @@ mod tests {
             .archive_entity(&EntityId::person("work:sigma"), "done with it", None)
             .await
             .expect("the child is archived");
-        assert_ne!(
-            version().await,
-            with_child,
-            "a child taken away from the parent"
+        let archived = version().await;
+        assert_ne!(archived, with_child, "a child taken away from the parent");
+        let Version::Entity { children, .. } = archived else {
+            panic!("an entity has an entity version");
+        };
+        assert_eq!(
+            children,
+            (1, 1),
+            "an archived child still stands under its parent in the count"
+        );
+    }
+
+    /// **What stands under a parent is read in one pass, not once for each thing
+    /// under it.** The default `children` lists every entity, so a walk that asks
+    /// it for each descendant reads the whole inventory that many times on every
+    /// answer. The listings a parent's version costs beyond a leaf's are the same
+    /// whatever stands under it.
+    #[tokio::test]
+    async fn the_version_of_a_parent_reads_the_inventory_once_whatever_stands_under_it() {
+        use jojobot_domain::mailbox::testing::InMemoryMailboxes;
+        use jojobot_domain::memory::testing::InMemoryMemory;
+        use jojobot_domain::session::testing::InMemorySessions;
+        use jojobot_domain::teaching::testing::InMemoryTeachings;
+        let store = Arc::new(InMemoryMemory::seeded());
+        let jojobot = Jojobot::new(
+            store.clone(),
+            Arc::new(SpySearch::default()),
+            Arc::new(InMemoryMailboxes::knowing_any_owner()),
+            Arc::new(InMemorySessions::new()),
+            Arc::new(InMemoryTeachings::new()),
+            seeded_registry(),
+        );
+        ensure(&jojobot, "project:atlas").await;
+        ensure(&jojobot, "thing:kettle").await;
+        let mut parent = EntityId::person("project:atlas");
+        for slug in [
+            "alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta",
+        ] {
+            let child = EntityId::person(format!("work:{slug}"));
+            store
+                .add_entity(NewEntity {
+                    parent: Some(parent.clone()),
+                    ..NewEntity::new(child.clone(), slug, "fixture")
+                })
+                .await
+                .expect("the child is created");
+            parent = child;
+        }
+        let listings_of = |handle: &'static str| {
+            let jojobot = &jojobot;
+            let store = &store;
+            async move {
+                let before = store.listings();
+                jojobot
+                    .version_of(&Held::Entity(handle.into()), &HeldMessages::default())
+                    .await
+                    .expect("a version");
+                store.listings() - before
+            }
+        };
+        let leaf = listings_of("thing:kettle").await;
+        let parent = listings_of("project:atlas").await;
+        assert!(
+            parent <= leaf + 1,
+            "a parent with eight levels under it cost {parent} listings, a leaf {leaf}"
         );
     }
 

@@ -37,6 +37,7 @@ impl Jojobot {
             mail.into_iter()
                 .map(|message| (message.id.0.clone(), message))
                 .collect(),
+            Default::default(),
         );
         let mut current = Vec::with_capacity(wanted.len());
         let mut notices = Vec::new();
