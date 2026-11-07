@@ -183,3 +183,45 @@ fn an_unmapped_claim_names_the_merge_that_left_it() {
         .collect();
     assert_eq!(left, vec![("person:beta#f1".to_string(), 2)]);
 }
+
+/// **A merge event names the survivor its event named**, not the end of the chain
+/// the survivor was folded into since. The import orders marks by entity row, so
+/// the mark that folds B into C can arrive before the mark that folds A into B.
+/// The store holds A's merge under B, and the State serves it under B.
+#[test]
+fn a_merge_event_names_the_survivor_its_event_named() {
+    let merged = |folded: &str, survivor: &str| {
+        plain(ClaimEvent::ObjectsMerged {
+            folded: object(folded),
+            survivor: object(survivor),
+            records: Vec::new(),
+            writes: Vec::new(),
+        })
+    };
+    let state = state_of(
+        made("k1", "person:alpha")
+            .into_iter()
+            .chain(made("k2", "person:beta"))
+            .chain(made("k3", "person:gamma"))
+            .map(plain)
+            .chain([merged("k2", "k3"), merged("k1", "k2")]),
+    );
+    let pairs = |events: Vec<MergeEvent>| -> Vec<(String, String)> {
+        events
+            .into_iter()
+            .map(|event| (event.folded.0, event.survivor.0))
+            .collect()
+    };
+    assert_eq!(
+        pairs(state.merge_events(None)),
+        vec![
+            ("person:beta".to_string(), "person:gamma".to_string()),
+            ("person:alpha".to_string(), "person:beta".to_string()),
+        ]
+    );
+    assert_eq!(
+        pairs(state.merge_events(Some(&handle("person:beta")))).len(),
+        2,
+        "beta is a side of both merges"
+    );
+}

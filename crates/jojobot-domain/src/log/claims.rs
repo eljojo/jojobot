@@ -635,6 +635,9 @@ impl State {
         // already folded elsewhere arrives before the mark that folded that thing when
         // the import orders marks by entity row, and everything filed under the middle
         // thing would be unreachable: reads look under the end of the chain only.
+        // The merge log keeps the survivor the event named: the store's merge
+        // event does, and a later fold of that survivor does not rewrite it.
+        let named = survivor;
         let survivor = &self.survivor(survivor).clone();
         self.index_before_merge(records);
         self.redirects.insert(folded.clone(), survivor.clone());
@@ -661,7 +664,7 @@ impl State {
         if let Some((at, run)) = counted {
             self.merge_log.push(MergeEntry {
                 folded: folded.clone(),
-                survivor: survivor.clone(),
+                survivor: named.clone(),
                 at,
                 run,
                 relabelled,
