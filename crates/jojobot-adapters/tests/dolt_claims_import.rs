@@ -1376,8 +1376,9 @@ async fn claims_import_skips_a_home_that_only_key_writes_name() {
 }
 
 /// **Each table that files rows under a home can be the only one that names it.**
-/// One arm per table: a record no build supplies any more keeps rows in that table
-/// alone, and the import skips and names the home.
+/// One arm per table (`field_write` alone has a case of its own): a record no build
+/// supplies any more keeps rows in that table alone, and the import skips and names
+/// the home.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn claims_import_skips_a_home_that_one_table_alone_names() {
     for (kept, removed) in [
@@ -1388,6 +1389,10 @@ async fn claims_import_skips_a_home_that_one_table_alone_names() {
         (
             "fact_event_metadata",
             ["fact", "fact_write", "field_write", "field_link"].as_slice(),
+        ),
+        (
+            "field_link",
+            ["fact", "fact_write", "field_write"].as_slice(),
         ),
     ] {
         let (_scratch, mut server, pool) = store(&format!("claims-import-only-{kept}")).await;
@@ -1423,6 +1428,15 @@ async fn claims_import_skips_a_home_that_one_table_alone_names() {
             .execute(&pool)
             .await
             .expect("a metadata row");
+        }
+        if kept == "field_link" {
+            sqlx::query(
+                "INSERT INTO field_link (entity, `key`, ordinal, target) \
+                 VALUES ('view:loops', 'ruled_by', 1, 'person:homer')",
+            )
+            .execute(&pool)
+            .await
+            .expect("a link row");
         }
 
         let imported = import_claims_once(&Writer::default(), &pool, &Provisions::default(), at())

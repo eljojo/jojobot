@@ -544,9 +544,12 @@ impl DoltMemory {
         }
         // The same hand-removal can leave rows under a home with no claim row left,
         // so every table that files rows under a home names its absent homes.
+        // `fact_event_ref` and `fact_stands_for` are not here: their rows are read
+        // only through a claim's head, so an orphan row of theirs is never a finding.
         for (table, column) in [
             ("fact_write", "entity"),
             ("field_write", "entity"),
+            ("field_link", "entity"),
             ("fact_event_metadata", "fact_home"),
         ] {
             let homes: Vec<String> = sqlx::query_scalar(AssertSqlSafe(format!(
@@ -830,6 +833,9 @@ impl DoltMemory {
         }
         // A link no write names is a finding, not a dropped row.
         for ((entity, key, ordinal), _) in targets {
+            if read.skipped.contains_key(&entity) {
+                continue;
+            }
             read.findings.push(Finding {
                 table: "field_link",
                 row: format!("{entity}/{key}#{ordinal}"),
