@@ -14,6 +14,16 @@
 /// convenient.** A handle of that kind that names somebody belongs on
 /// [`crate::ROSTER`], where the bar shows it, or nowhere.
 pub const ORDINARY: &[&str] = &[
+    // The things the upgrade gate's old-shape cases make and plant (the fixture
+    // names a store the deployed build filled); they name nobody.
+    "bot:gate-heir",
+    "bot:gate-thinker",
+    "thing:gate-fern",
+    "thing:gate-fine",
+    "thing:gate-kettle",
+    "thing:gate-pointer",
+    "thing:gate-shadow-off",
+    "topic:gate-ordinances",
     // A numbered queue of work items, filed under a queue named for a greek
     // letter. They name nobody.
     "work:alpha-queue",

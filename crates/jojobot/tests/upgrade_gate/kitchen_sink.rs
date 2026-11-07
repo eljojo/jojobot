@@ -43,7 +43,12 @@ struct Planted {
     retained_merges: MergeRows,
 }
 
-async fn entity(pool: &sqlx::MySqlPool, handle: &str, badge: &str, parent: Option<&str>) {
+pub(super) async fn entity(
+    pool: &sqlx::MySqlPool,
+    handle: &str,
+    badge: &str,
+    parent: Option<&str>,
+) {
     let (kind, name) = handle.split_once(':').expect("a handle");
     sqlx::query(
         "INSERT INTO entity (id, kind, name, source, parent, boot, prose, badge)
@@ -59,7 +64,7 @@ async fn entity(pool: &sqlx::MySqlPool, handle: &str, badge: &str, parent: Optio
     .expect("a kitchen-sink entity");
 }
 
-async fn record(pool: &sqlx::MySqlPool, badge: &str, content: &str) {
+pub(super) async fn record(pool: &sqlx::MySqlPool, badge: &str, content: &str) {
     record_id(pool, badge, "f1", content).await;
 }
 
@@ -89,7 +94,13 @@ async fn record_id(pool: &sqlx::MySqlPool, badge: &str, id: &str, content: &str)
     .expect("the record's first write");
 }
 
-async fn field(pool: &sqlx::MySqlPool, badge: &str, key: &str, value: &str, class: &str) {
+pub(super) async fn field(
+    pool: &sqlx::MySqlPool,
+    badge: &str,
+    key: &str,
+    value: &str,
+    class: &str,
+) {
     sqlx::query(
         "INSERT INTO field_write (entity, `key`, ordinal, value, fact_id, write_class, written_at)
          VALUES (?, ?, 1, ?, 'f1', ?, '2026-10-08T14:02:10Z')",
@@ -103,7 +114,7 @@ async fn field(pool: &sqlx::MySqlPool, badge: &str, key: &str, value: &str, clas
     .expect("the planted field");
 }
 
-async fn badge(pool: &sqlx::MySqlPool, handle: &str) -> String {
+pub(super) async fn badge(pool: &sqlx::MySqlPool, handle: &str) -> String {
     sqlx::query_scalar("SELECT COALESCE(badge, id) FROM entity WHERE id = ?")
         .bind(handle)
         .fetch_one(pool)
