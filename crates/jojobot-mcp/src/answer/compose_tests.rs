@@ -716,3 +716,34 @@ fn a_smaller_limit_serves_a_subset_of_a_shared_slot() {
         larger = smaller;
     }
 }
+
+/// A layer outside the budget is served over the limit, counts toward it, and so
+/// crowds out a bounded layer, which is named. The answer is not over budget:
+/// its core and its account fit.
+#[test]
+fn a_layer_outside_the_budget_ships_over_the_limit_and_crowds_out_a_suggestion() {
+    let layers = || {
+        vec![
+            teaching_note("taught_note", Tier::Low, &"taught ".repeat(30)).outside_the_budget(),
+            sized("hint", Kind::Suggestion, Tier::High, 30),
+        ]
+    };
+    let composed = run(layers(), 100, &[]);
+    assert_eq!(
+        composed.served["teaching"],
+        json!(["taught ".repeat(30)]),
+        "{}",
+        composed.served
+    );
+    assert_eq!(left(&composed), ["hint"], "{}", composed.served);
+    assert_eq!(composed.over_budget, None, "{}", composed.served);
+    assert!(
+        composed.served.get(OVER_BUDGET_KEY).is_none(),
+        "{}",
+        composed.served
+    );
+
+    // With room for both, the suggestion ships beside the note.
+    let roomy = run(layers(), 1000, &[]);
+    assert_eq!(names(&roomy), ["hint", "teaching"], "{}", roomy.served);
+}

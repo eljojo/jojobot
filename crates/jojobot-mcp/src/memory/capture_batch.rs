@@ -1079,6 +1079,13 @@ mod tests {
         let (jojobot, _) = handler_with_ledger();
         ensure(&jojobot, "list:homer-chores").await;
         ensure(&jojobot, "person:marge").await;
+        // The session's first-contact teaching is outside the budget and crowds
+        // a suggestion out of a receipt; an earlier capture says it, so the batch
+        // under test carries the note and nothing else.
+        jojobot
+            .capture(Parameters(capture_args("person:marge", "plays go")))
+            .await
+            .expect("the first capture answers");
 
         let first = json_of(
             &jojobot

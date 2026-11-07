@@ -2,7 +2,9 @@
 //! write.** The receipt's facts (what landed, what was not stored, what changed)
 //! are its core and always ship. Every advisory part a capture adds is a named
 //! layer here, and the composer decides which ship: at most one suggestion,
-//! ranked. Teaching notes ride one array in ranked order.
+//! ranked, inside the bot's budget. A teaching note is outside that budget, so
+//! a receipt whose core and teaching pass it ships both and drops the
+//! suggestion. Teaching notes ride one array in ranked order.
 
 use std::borrow::Cow;
 use std::collections::BTreeSet;
@@ -11,7 +13,7 @@ use serde_json::Value;
 
 use super::possible_subject::PossibleSubject;
 use super::unlocks::OwedUnlock;
-use crate::answer::compose::{Answer, Composed, Kind, Layer, Tier, compose_within};
+use crate::answer::compose::{Answer, Budget, Composed, Kind, Layer, Tier, compose_within};
 use crate::{Jojobot, caller::Caller};
 
 /// **A teaching note a capture would add, not yet spent.** Its gate has held;
@@ -222,8 +224,9 @@ const RETURNED_BY: &str = "recall";
 
 /// **The finished receipt, composed**: its core whole, the one top-ranked
 /// suggestion and the teaching notes in ranked order. Every other suggestion is
-/// dropped without trace. No ceiling applies yet, so only the one-suggestion
-/// rule acts. Teaching already in the core ships first and unranked, as every
+/// dropped without trace. The bot's setting picks the budget and the suggestion
+/// is what it bounds: a teaching note is said once a session, its ledger bounds
+/// it, and it ships whatever the budget says. Teaching already in the core ships first and unranked, as every
 /// other verb's does.
 fn compose_receipt(body: Value, notes: &[TeachingNote]) -> Composed {
     let Value::Object(mut core) = body else {
@@ -247,13 +250,14 @@ fn compose_receipt(body: Value, notes: &[TeachingNote]) -> Composed {
         )
         .taught_once(note.domain.clone())
         .in_slot(TEACHING_SLOT)
+        .outside_the_budget()
     }));
     let mut composed = if layers.is_empty() {
         Composed::of(Value::Object(core))
     } else {
         compose_within(
             &Answer::new(Value::Object(core), layers),
-            usize::MAX,
+            Budget::of_setting(crate::write_receipts::saving()).limit(),
             &BTreeSet::new(),
         )
     };
@@ -653,5 +657,53 @@ mod tests {
             .await;
         assert!(served.get("possible_subject_note").is_none(), "{served}");
         assert_eq!(served["hint"], "a hint", "{served}");
+    }
+
+    /// **A first capture whose core and teaching pass the budget keeps its
+    /// teaching and carries no suggestion**: the budget bounds the suggestion,
+    /// which drops and is named, and the teaching ships and is spent.
+    #[tokio::test]
+    async fn a_receipt_over_the_budget_keeps_its_teaching_and_drops_the_suggestion() {
+        let jojobot = handler();
+        let caller = the_caller();
+        let served = jojobot
+            .own_capture_receipt(
+                json!({
+                    "address": "thing:delta#f1",
+                    "padding": "x".repeat(2300),
+                    "hint": "a hint"
+                }),
+                &caller,
+                false,
+                &[],
+                vec![note(
+                    "teaching:one",
+                    "owner-test:one",
+                    &"taught ".repeat(30),
+                    Tier::High,
+                )],
+            )
+            .await;
+        assert_eq!(
+            served["teaching"],
+            json!(["taught ".repeat(30)]),
+            "the teaching ships over the budget: {served}"
+        );
+        assert!(
+            served.get("hint").is_none(),
+            "the suggestion is what the budget drops: {served}"
+        );
+        assert!(
+            served["left_out"].to_string().contains("hint"),
+            "and it is named: {served}"
+        );
+        assert!(
+            served.get("over_budget").is_none(),
+            "the core and the account fit: {served}"
+        );
+        assert!(
+            !jojobot.untaught("owner-test:one", &caller).await,
+            "the teaching that shipped is spent"
+        );
     }
 }

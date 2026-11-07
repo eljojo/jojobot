@@ -57,6 +57,10 @@ pub(crate) struct Layer {
     /// layers that share a slot ride one array under it, in ranked order. The
     /// name stays unique and is what an omission names.
     pub(crate) slot: Option<&'static str>,
+    /// Said once a session and bounded by its ledger, so the limit never drops
+    /// it. It still counts toward the limit, which is why it can crowd out a
+    /// layer that the limit does bound.
+    pub(crate) outside_budget: bool,
 }
 
 impl Layer {
@@ -77,7 +81,14 @@ impl Layer {
             returned_by,
             body,
             slot: None,
+            outside_budget: false,
         }
+    }
+
+    /// Serve the layer whatever the limit says; see [`Layer::outside_budget`].
+    pub(crate) fn outside_the_budget(mut self) -> Self {
+        self.outside_budget = true;
+        self
     }
 
     /// Serve the layer inside the array under `slot`. Its cost is measured as
@@ -292,7 +303,9 @@ pub(crate) fn compose_within(answer: &Answer, limit: usize, taught: &BTreeSet<&s
         }
         _ => true,
     });
-    let fillable = ranked.len();
+    // A layer outside the budget always ships and is charged; the limit bounds
+    // the rest, which the prefix below fills.
+    let fillable = ranked.iter().filter(|layer| !layer.outside_budget).count();
 
     // The fill is a prefix of the eligible ranking, and the account of the
     // rest is paid for inside the limit (table: prefix_fill). The largest
@@ -304,8 +317,10 @@ pub(crate) fn compose_within(answer: &Answer, limit: usize, taught: &BTreeSet<&s
         let mut taken = 0;
         let mut layers_cost = 0;
         for layer in &ranked {
-            if taken < k {
-                taken += 1;
+            if layer.outside_budget || taken < k {
+                if !layer.outside_budget {
+                    taken += 1;
+                }
                 layers_cost += layer.cost;
                 match layer.slot {
                     Some(slot) => served
@@ -341,12 +356,17 @@ pub(crate) fn compose_within(answer: &Answer, limit: usize, taught: &BTreeSet<&s
         if let Some(account) = served.get(LEFT_OUT_KEY) {
             bare.insert(LEFT_OUT_KEY.to_string(), account.clone());
         }
-        let len = super::served_len(&Value::Object(bare)) + layers_cost;
-        (Value::Object(served), left_out, len)
+        let bare_len = super::served_len(&Value::Object(bare));
+        (
+            Value::Object(served),
+            left_out,
+            bare_len + layers_cost,
+            bare_len,
+        )
     };
     for k in (0..=fillable).rev() {
         for form in Form::RICHEST_FIRST {
-            let (served, left_out, len) = attempt(k, form);
+            let (served, left_out, len, _) = attempt(k, form);
             if len <= limit {
                 return Composed {
                     served,
@@ -361,9 +381,23 @@ pub(crate) fn compose_within(answer: &Answer, limit: usize, taught: &BTreeSet<&s
             }
         }
     }
+    // Only layers outside the budget overshoot: the core and the account fit, so
+    // serve them with everything bounded left out and name no overshoot
+    // (table: outside_the_budget).
+    for form in Form::RICHEST_FIRST {
+        let (served, left_out, _, bare_len) = attempt(0, form);
+        if bare_len <= limit {
+            return Composed {
+                served,
+                left_out,
+                form,
+                over_budget: None,
+            };
+        }
+    }
     // Not even the floor fits: serve it anyway and say how big it is
     // (table: core_over_budget).
-    let (mut served, left_out, floor) = attempt(0, Form::Floor);
+    let (mut served, left_out, floor, _) = attempt(0, Form::Floor);
     if let Value::Object(served) = &mut served {
         served.insert(OVER_BUDGET_KEY.to_string(), json!(floor));
     }
