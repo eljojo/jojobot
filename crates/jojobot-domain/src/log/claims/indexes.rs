@@ -493,16 +493,20 @@ impl State {
         out
     }
 
-    /// **The write that holds a key now**: the newest, by ordinal, among the
-    /// writes that reach the thing from an active claim. A key a clear holds
-    /// points at none, so a clear is not returned. The one owner of that choice,
-    /// for the link maps and for the scan.
+    /// **The write that holds a key now**, decided as the fold of the fields
+    /// decides it: the writes that reach the thing from an active claim, in
+    /// ordinal order. A write takes the key; a clear takes it off only when the
+    /// clearing claim is the one holding it (a stored clear, `Removed`, takes it off
+    /// whichever claim held it), and otherwise withdraws nothing the
+    /// thing holds. A key a clear holds points at none, so no clear is returned,
+    /// and an older write does not return. The one owner of that choice, for the
+    /// link maps and for the scan.
     pub(super) fn holding_write<'a>(
         &'a self,
         stream: &'a [super::Write],
     ) -> Option<&'a super::Write> {
         // The stream is kept in arrival order; the ordinal says which is newest.
-        stream
+        let mut reaching: Vec<&super::Write> = stream
             .iter()
             .filter(|write| {
                 memory::reaches_the_thing(write.class)
@@ -511,8 +515,23 @@ impl State {
                         .get(&write.record)
                         .is_some_and(|record| record.claim.status == FactStatus::Active)
             })
-            .max_by_key(|write| write.ordinal)
-            .filter(|write| !matches!(write.write, FieldValue::Clear | FieldValue::Removed))
+            .collect();
+        reaching.sort_by_key(|write| write.ordinal);
+        let mut holder: Option<&super::Write> = None;
+        for write in reaching {
+            match write.write {
+                // A stored clear took the key off the thing whichever claim held it
+                // (rule 677).
+                FieldValue::Removed => holder = None,
+                FieldValue::Clear => {
+                    if holder.is_some_and(|held| held.record == write.record) {
+                        holder = None;
+                    }
+                }
+                FieldValue::Set(_) => holder = Some(write),
+            }
+        }
+        holder
     }
 
     /// The merge survivors of some objects, each once, in the order first met.

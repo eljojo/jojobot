@@ -1078,6 +1078,66 @@ fn next_event(dice: &mut Dice, state: &State, made: &mut usize) -> ClaimEvent {
     }
 }
 
+/// A write of `owner` on `s` by `record_id`, pointing at `target`.
+fn points(record_id: &str, ordinal: u64, target: &str) -> ClaimEvent {
+    ClaimEvent::FieldWritten {
+        record: record(record_id),
+        subject: object("o0"),
+        key: key("owner"),
+        ordinal,
+        class: crate::memory::WriteClass::Sets,
+        write: FieldValue::Set(target.to_string()),
+        targets: vec![object(target)],
+    }
+}
+
+/// **A clear takes the links off the thing only when the clearing claim holds
+/// the key**, as the fold of the fields decides it. Two claims write `owner`, the
+/// older naming `o1` and the newer `o2`; the older then clears. The newer still
+/// holds the key, so the thing still points at `o2` and nothing resurrects `o1`.
+/// Control: the newer claim clearing takes the key, and the link, off the thing.
+#[test]
+fn a_clear_by_a_claim_that_does_not_hold_the_key_keeps_the_links() {
+    let setup = || {
+        vec![
+            thing("o0", None),
+            thing("o1", None),
+            thing("o2", None),
+            created("r1", claim("f1", "o0", "c", 1)),
+            points("r1", 1, "o1"),
+            created("r2", claim("f2", "o0", "c", 1)),
+            points("r2", 2, "o2"),
+        ]
+    };
+    let mut older_clears = setup();
+    older_clears.push(clear("r1", "o0", "owner", 3));
+    let kept = state(&older_clears);
+    assert_eq!(
+        kept.links_from(&object("o0")),
+        BTreeSet::from([object("o2")]),
+        "the newer claim still holds the key"
+    );
+    assert_eq!(
+        kept.links_into(&object("o2")),
+        BTreeSet::from([object("o0")])
+    );
+    assert!(kept.links_into(&object("o1")).is_empty(), "o1 is not back");
+    assert_eq!(
+        links_from_by_scan(&kept, &object("o0")),
+        kept.links_from(&object("o0"))
+    );
+
+    let mut holder_clears = setup();
+    holder_clears.push(clear("r2", "o0", "owner", 3));
+    let taken = state(&holder_clears);
+    assert!(taken.links_from(&object("o0")).is_empty());
+    assert!(taken.links_into(&object("o2")).is_empty());
+    assert!(
+        taken.links_into(&object("o1")).is_empty(),
+        "no resurrection"
+    );
+}
+
 /// **What a thing points at, read by scanning every stream of the state**: the
 /// frozen targets of the newest write of each key, among the writes that reach
 /// the thing and sit in an active claim, a cleared key pointing at none.
@@ -1088,7 +1148,9 @@ fn links_from_by_scan(state: &State, subject: &ObjectId) -> BTreeSet<ObjectId> {
         if held != subject {
             continue;
         }
-        let newest = stream
+        // The fold of the fields: a clear takes the key off only when the
+        // clearing claim holds it.
+        let mut ordered: Vec<_> = stream
             .iter()
             .filter(|write| {
                 crate::memory::reaches_the_thing(write.class)
@@ -1097,10 +1159,23 @@ fn links_from_by_scan(state: &State, subject: &ObjectId) -> BTreeSet<ObjectId> {
                         .get(&write.record)
                         .is_some_and(|record| record.claim.status == FactStatus::Active)
             })
-            .max_by_key(|write| write.ordinal);
-        if let Some(write) = newest
-            && write.write != FieldValue::Clear
-        {
+            .collect();
+        ordered.sort_by_key(|write| write.ordinal);
+        let mut newest = None;
+        for write in ordered {
+            match write.write {
+                FieldValue::Set(_) => newest = Some(write),
+                FieldValue::Removed => newest = None,
+                FieldValue::Clear => {
+                    if newest
+                        .is_some_and(|holding: &super::super::Write| holding.record == write.record)
+                    {
+                        newest = None;
+                    }
+                }
+            }
+        }
+        if let Some(write) = newest {
             out.extend(
                 write
                     .targets

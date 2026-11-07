@@ -477,8 +477,8 @@ fn links_follow_the_holding_write() {
         BTreeSet::from([object("gamma")])
     );
 
-    events.push(created("r2", claim("f2", "alpha", "b", 2)));
-    events.push(clear("r2", "alpha", "friend", 2));
+    // The claim that holds the key clears it.
+    events.push(clear("r1", "alpha", "friend", 2));
     let state = replay(&events);
     assert!(state.links_into(&object("gamma")).is_empty());
 }
