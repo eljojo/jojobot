@@ -1771,10 +1771,14 @@ pub struct Session {
 }
 
 impl Session {
-    /// **This session deliberately reads what it holds again, in full.** A story
-    /// that re-reads one unchanged thing to see its body (it asserts inside the
-    /// body, not on the handle) takes this; the reads of a verb that publishes
-    /// `reship` then send `reship: true` unless the story names `reship` itself.
+    /// **This session reads what it holds again, in full.** A story that
+    /// re-reads one unchanged thing to see its body (it asserts inside the body,
+    /// not on the handle) takes this; the reads of a verb that publishes `reship`
+    /// then send `reship: true` unless the story names `reship` itself.
+    ///
+    /// **Unjudged.** The stories that take it today took it because they went red
+    /// once the client stopped sending `reship` by default. None was read and
+    /// judged to re-read its body on purpose; a follow-up has to judge them.
     pub fn asking_whole(mut self) -> Self {
         self.whole = true;
         self
