@@ -41,6 +41,21 @@ fn refuse_forged(text: &[&str]) -> Result<(), SessionError> {
     }
 }
 
+/// **The text as the chronology reads it back once it is stored.** A mention in
+/// it is resolved on the way in and rendered on the way out, so a handle that
+/// names nothing reads back as `@handle (no such handle)` and a handle renamed
+/// since reads back as the new one: the words come back different from the words
+/// sent. A caller that must recognise an entry it wrote compares with this, made
+/// of the two steps [`Mentioning`] takes on a write and on a read.
+pub async fn as_read(memory: &dyn Memory, text: &str) -> Result<String, SessionError> {
+    let store = |e: crate::memory::MemoryError| SessionError::Store(e.to_string());
+    let for_write = mention::roster_for(memory, &[text]).await.map_err(store)?;
+    let stored =
+        mention::resolved(text, &for_write.known).map_err(|_| SessionError::KindsNeverLoaded)?;
+    let for_read = mention::render_roster(memory).await.map_err(store)?;
+    Ok(mention::rendered(&stored, &for_read))
+}
+
 /// Wraps any [`Sessions`] so a handle written into a session's focus or its
 /// chronology is stored as the permanent id and served as the handle the
 /// thing wears today — **and so is `bot` itself**, the same rule applied to

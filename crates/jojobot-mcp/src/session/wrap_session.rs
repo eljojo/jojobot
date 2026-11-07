@@ -137,7 +137,17 @@ impl Jojobot {
         // the same derivation, which is the only form the two can meet in.
         // Either way, `None` adds no field, rather than one that repeats the
         // entry it sits on.
-        let closing_focus = if focus.is_empty() || display_line(&story) == focus {
+        // **The story as the chronology will read it back**: the entry and the
+        // derived focus come back through the mention wrapper, which renders a
+        // handle that names nothing or one renamed since as other words. A story
+        // is the same story told whichever way it is spelled.
+        let story_as_read = jojobot_domain::session::mention::as_read(&*self.memory, &story)
+            .await
+            .unwrap_or_else(|_| story.clone());
+        let closing_focus = if focus.is_empty()
+            || display_line(&story) == focus
+            || display_line(&story_as_read) == focus
+        {
             None
         } else {
             Some(focus)
@@ -155,7 +165,7 @@ impl Jojobot {
                 .entries
                 .iter()
                 .rev()
-                .find(|e| e.closing && !e.is_auto() && e.text == story)
+                .find(|e| e.closing && !e.is_auto() && (e.text == story || e.text == story_as_read))
                 .cloned(),
             // Not fatal: an unreadable session fails the append below, in that
             // verb's own words rather than this guard's.
@@ -2511,6 +2521,52 @@ mod tests {
                 .entries
                 .iter()
                 .filter(|e| e.text.contains(story))
+                .count(),
+            1,
+            "the story is told once in the chronology: {:?}",
+            live[0].entries
+        );
+    }
+
+    /// **A retry tells a story that names nothing once.** The sessions port is
+    /// wrapped in the mention wrapper, as the served stack wraps it, so a handle
+    /// that names nothing reads back as `@thing:omega (no such handle)` and is
+    /// not equal to the story as it was sent. The guard looked for the story as
+    /// sent, did not find it, and told it a second time.
+    #[tokio::test]
+    async fn a_wrap_retried_over_a_mention_that_names_nothing_tells_the_story_once() {
+        use super::super::testing::refusing_close_mentioned;
+        let (jojobot, store, _memory, sid) = refusing_close_mentioned().await;
+        journal_entry(&jojobot, &sid, "read the hand-off").await;
+
+        let story = "looked at @thing:omega and found nothing";
+        let wrap = || {
+            jojobot.wrap_session(Parameters(WrapSessionArgs {
+                story: story.into(),
+                sid: sid.clone(),
+            }))
+        };
+        assert!(
+            wrap().await.is_err(),
+            "the close refused, so the wrap failed"
+        );
+
+        store.allow_close();
+        let second = json_of(&wrap().await.expect("the retry must land"));
+        assert_eq!(second["session"]["state"], "wrapped");
+
+        // Read through the wrapped port: the run is stored under its bot's
+        // badge, which the bare store is not asked by handle.
+        let live = jojobot
+            .sessions
+            .sessions_of(&EntityId("bot:gamma".into()))
+            .await
+            .expect("list ok");
+        assert_eq!(
+            live[0]
+                .entries
+                .iter()
+                .filter(|e| e.closing && e.text.contains("found nothing"))
                 .count(),
             1,
             "the story is told once in the chronology: {:?}",

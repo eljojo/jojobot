@@ -232,6 +232,32 @@ pub(crate) async fn refusing_close() -> (Jojobot, Arc<RefusingClose>, Arc<InMemo
     (jojobot, store, memory, sid)
 }
 
+/// [`refusing_close`] with the sessions port wrapped in the mention wrapper, as
+/// the served stack wraps it: a handle written into an entry is resolved on the
+/// way in and rendered on the way out, so the chronology reads back differently
+/// from what was sent. The store handle is the bare one beneath, to read what is
+/// stored and to let the close through.
+pub(crate) async fn refusing_close_mentioned()
+-> (Jojobot, Arc<RefusingClose>, Arc<InMemoryMemory>, String) {
+    let store = Arc::new(RefusingClose::new());
+    let memory = Arc::new(InMemoryMemory::booted());
+    let mentioned = Arc::new(jojobot_domain::session::mention::Mentioning::new(
+        store.clone(),
+        memory.clone(),
+    ));
+    let jojobot = Jojobot::new(
+        memory.clone(),
+        Arc::new(SpySearch::default()),
+        Arc::new(InMemoryMailboxes::knowing_any_owner()),
+        mentioned,
+        Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
+        crate::harness::seeded_registry(),
+    );
+    make_bot(&jojobot, "gamma").await;
+    let sid = booted(&jojobot, "gamma").await;
+    (jojobot, store, memory, sid)
+}
+
 /// **A session store whose `set_focus` fails while `append` works** — the
 /// exact half-success a journal call met in production, and the only failure
 /// on this surface that leaves the caller holding a committed write behind an
