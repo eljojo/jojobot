@@ -126,6 +126,141 @@ async fn refused_claimed_edit(drop_thought: bool) {
     assert_eq!(store.fields(&subject).await.unwrap()["colour"], "green");
 }
 
+/// **A role with a claim and a renewal that fills its heartbeat home**, as
+/// `(bot, role, claim moment, renewal moment)`. The claimant is `delta`; the
+/// renewal is five minutes after the claim.
+async fn a_renewed_role(
+    store: &InMemoryMemory,
+) -> (EntityId, EntityId, jiff::Timestamp, jiff::Timestamp) {
+    use crate::memory::testing::contract::LeaseHeartbeat;
+    use crate::session::{ROLE_CLAIMED_AT, ROLE_HOLDER, RoleMove, RoleMoveKind};
+    let bot = thing(store, "bot:contract-role-lease-composite", "Composite").await;
+    let role = EntityId("role:contract-lease-composite".to_string());
+    store
+        .add_entity(NewEntity {
+            parent: Some(bot.clone()),
+            ..NewEntity::new(role.clone(), "contract-lease-composite", "fixture")
+        })
+        .await
+        .expect("add")
+        .written()
+        .expect("not blocked");
+    let t0 = crate::session::testing::contract::epoch() + jiff::SignedDuration::from_secs(60);
+    let held = |who: &str, at: jiff::Timestamp| -> std::collections::BTreeMap<String, String> {
+        [
+            (ROLE_HOLDER.to_string(), who.to_string()),
+            (ROLE_CLAIMED_AT.to_string(), at.to_string()),
+        ]
+        .into()
+    };
+    let fields = held("delta", t0);
+    let claimed = store
+        .capture(NewFact {
+            derived: fields.keys().cloned().collect(),
+            fields,
+            ..NewFact::about(role.clone(), "delta claims the role", date(2026, 7, 1))
+        })
+        .await
+        .expect("capture")
+        .written()
+        .expect("not blocked");
+    let renewed_at = t0 + jiff::SignedDuration::from_mins(5);
+    let fields = held("delta", renewed_at);
+    store
+        .update_fact(
+            &claimed.address(),
+            FactPatch {
+                derived: fields.keys().cloned().collect(),
+                fields,
+                role_move: Some(RoleMove {
+                    kind: RoleMoveKind::Renew,
+                    role: "contract-lease-composite".to_string(),
+                    claimant: "delta".to_string(),
+                }),
+                ..FactPatch::default()
+            },
+            &bot,
+        )
+        .await
+        .expect("the renewal lands")
+        .written()
+        .expect("not blocked");
+    assert_eq!(
+        store.heartbeat_of(&role).await,
+        Some(renewed_at.to_string())
+    );
+    (bot, role, t0, renewed_at)
+}
+
+/// The takeover of a lapsed lease by `echo`, as a claim on the role.
+fn a_takeover(role: &EntityId, after: jiff::Timestamp) -> NewFact {
+    use crate::session::{ROLE_CLAIMED_AT, ROLE_HOLDER};
+    let fields: std::collections::BTreeMap<String, String> = [
+        (ROLE_HOLDER.to_string(), "echo".to_string()),
+        (
+            ROLE_CLAIMED_AT.to_string(),
+            (after + crate::session::LEASE_FRESHNESS + jiff::SignedDuration::from_mins(1))
+                .to_string(),
+        ),
+    ]
+    .into();
+    NewFact {
+        derived: fields.keys().cloned().collect(),
+        fields,
+        ..NewFact::about(role.clone(), "echo takes the role", date(2026, 7, 1))
+    }
+}
+
+/// `act` under the request id every call of this helper shares, so the second
+/// call finds the id spent.
+async fn under_a_spent_id<T>(act: impl std::future::Future<Output = T>) -> T {
+    use crate::request::{Request, RequestId, Scope, armed, digest_of, within};
+    let scope = Scope::new(Request {
+        bot: EntityId("bot:sigma".into()),
+        id: RequestId::parse("lease-composite-1").unwrap(),
+        verb: "update_entity".into(),
+        digest: digest_of("{}"),
+    });
+    within(scope, armed(act)).await
+}
+
+/// **An edit and a claim whose request id was already spent leave the heartbeat
+/// home as it was.** The claim is a takeover of a lapsed lease: the capture
+/// empties the home, and the spend that follows is refused, so the act is taken
+/// back as the real store's one transaction is.
+#[tokio::test]
+async fn a_claimed_edit_refused_at_the_spend_leaves_the_heartbeat_home_as_it_was() {
+    use crate::memory::testing::contract::LeaseHeartbeat;
+    let store =
+        InMemoryMemory::booted().with_requests(crate::request::testing::InMemoryRequests::new());
+    let (_, role, _, renewed_at) = a_renewed_role(&store).await;
+    let patch = |name: &str| EntityPatch {
+        name: Some(name.into()),
+        ..Default::default()
+    };
+    let note = NewFact::about(role.clone(), "a note beside the edit", date(2026, 7, 1));
+    under_a_spent_id(store.update_entity_with_claim(&role, patch("First"), note))
+        .await
+        .expect("the first act lands")
+        .written()
+        .expect("not blocked");
+    let folded = store.fields(&role).await.unwrap();
+    let refused = under_a_spent_id(store.update_entity_with_claim(
+        &role,
+        patch("Second"),
+        a_takeover(&role, renewed_at),
+    ))
+    .await
+    .unwrap_err();
+    assert!(matches!(refused, MemoryError::Conflict), "{refused:?}");
+    assert_eq!(store.fields(&role).await.unwrap(), folded);
+    assert_eq!(
+        store.heartbeat_of(&role).await,
+        Some(renewed_at.to_string()),
+        "a refused act leaves the home as it was"
+    );
+}
+
 #[tokio::test]
 async fn claimed_edit_rollback_leaves_no_claim_after_a_spent_request() {
     refused_claimed_edit(false).await;

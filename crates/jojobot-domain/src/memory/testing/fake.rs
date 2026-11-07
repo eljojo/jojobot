@@ -2104,6 +2104,20 @@ impl InMemoryMemory {
         }
     }
 
+    /// **The heartbeat home as it stands**, kept by every act that writes the lease
+    /// and may be taken back.
+    fn heartbeats_now(&self) -> std::collections::BTreeMap<EntityId, String> {
+        self.lease_heartbeats
+            .lock()
+            .expect("fake mutex poisoned")
+            .clone()
+    }
+
+    /// Put the heartbeat home back as [`Self::heartbeats_now`] kept it.
+    fn put_heartbeats_back(&self, before: &std::collections::BTreeMap<EntityId, String>) {
+        *self.lease_heartbeats.lock().expect("fake mutex poisoned") = before.clone();
+    }
+
     /// **What a write of a role's `claimed_at` does to the heartbeat home.** A
     /// renewal, plain or carrying other keys, keeps its moment there. A claim and a
     /// release write the field and clear the home, so the row never holds a
@@ -2405,7 +2419,9 @@ impl Memory for InMemoryMemory {
                 });
             }
         };
+        let heartbeats_before = self.heartbeats_now();
         let take_back = || {
+            self.put_heartbeats_back(&heartbeats_before);
             *self.entities.lock().expect("fake mutex poisoned") = entities_before.clone();
             *self.badges.lock().expect("fake mutex poisoned") = badges_before.clone();
             *self.facts.lock().expect("fake mutex poisoned") = facts_before.clone();
@@ -2517,7 +2533,9 @@ impl Memory for InMemoryMemory {
                 });
             }
         };
+        let heartbeats_before = self.heartbeats_now();
         let take_back = || {
+            self.put_heartbeats_back(&heartbeats_before);
             *self.entities.lock().expect("fake mutex poisoned") = entities_before.clone();
             *self.facts.lock().expect("fake mutex poisoned") = facts_before.clone();
             *self.writes.lock().expect("fake mutex poisoned") = writes_before.clone();
@@ -2573,16 +2591,12 @@ impl Memory for InMemoryMemory {
             .lock()
             .expect("fake mutex poisoned")
             .clone();
-        let heartbeats_before = self
-            .lease_heartbeats
-            .lock()
-            .expect("fake mutex poisoned")
-            .clone();
+        let heartbeats_before = self.heartbeats_now();
         let take_back = || {
+            self.put_heartbeats_back(&heartbeats_before);
             *self.facts.lock().expect("fake mutex poisoned") = facts_before.clone();
             *self.writes.lock().expect("fake mutex poisoned") = writes_before.clone();
             *self.claim_writes.lock().expect("fake mutex poisoned") = claim_writes_before.clone();
-            *self.lease_heartbeats.lock().expect("fake mutex poisoned") = heartbeats_before.clone();
             *self.world_cache.lock().expect("fake mutex poisoned") = None;
         };
         let edited = match self.update_fact(address, patch, caller).await? {
@@ -2656,7 +2670,9 @@ impl Memory for InMemoryMemory {
             .lock()
             .expect("fake mutex poisoned")
             .clone();
+        let heartbeats_before = self.heartbeats_now();
         let take_back = || {
+            self.put_heartbeats_back(&heartbeats_before);
             *self.facts.lock().expect("fake mutex poisoned") = facts_before.clone();
             *self.writes.lock().expect("fake mutex poisoned") = writes_before.clone();
             *self.claim_writes.lock().expect("fake mutex poisoned") = claim_writes_before.clone();
@@ -5016,7 +5032,9 @@ impl Memory for InMemoryMemory {
             .lock()
             .expect("fake mutex poisoned")
             .clone();
+        let heartbeats_before = self.heartbeats_now();
         let take_back = || {
+            self.put_heartbeats_back(&heartbeats_before);
             *self.entities.lock().expect("fake mutex poisoned") = entities_before.clone();
             *self.facts.lock().expect("fake mutex poisoned") = facts_before.clone();
             *self.writes.lock().expect("fake mutex poisoned") = writes_before.clone();
