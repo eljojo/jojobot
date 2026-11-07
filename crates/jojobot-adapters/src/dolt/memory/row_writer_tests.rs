@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use jiff::civil::date;
 use jojobot_domain::actor::Actor;
+use jojobot_domain::clock::Clock;
 use jojobot_domain::log::claims::ClaimSize;
 use jojobot_domain::log::claims::job::{CaptureJob, within};
 use jojobot_domain::memory::{
@@ -39,7 +40,9 @@ async fn world(name: &str) -> World {
     World {
         _scratch: scratch,
         server,
-        memory: DoltMemory::open(store.clone()),
+        memory: DoltMemory::open(store.clone())
+            .on_clock(Clock::stating(date(2026, 4, 22)))
+            .journaled(),
         store,
         writer: Writer::default(),
     }
@@ -95,6 +98,11 @@ impl World {
         through_the_job: bool,
         actor: Actor,
     ) -> jojobot_domain::memory::Fact {
+        // The old route learns its writer from the fact; the job route, from the actor.
+        let mut fact = fact;
+        if let Actor::Bot(bot) = &actor {
+            fact.written_by_bot = Some(bot.clone());
+        }
         let memory = self.memory.clone();
         let work = self.writer.run(async move { memory.capture(fact).await });
         let written = match through_the_job {
@@ -117,7 +125,12 @@ impl World {
         let columns = |names: &[&str]| {
             names
                 .iter()
-                .map(|name| format!("COALESCE(CAST(`{name}` AS CHAR), '~')"))
+                .map(|name| match name.strip_prefix("day:") {
+                    // A moment column is compared by its day: the stated clock
+                    // advances in real time, so two stores differ within the day.
+                    Some(name) => format!("COALESCE(LEFT(CAST(`{name}` AS CHAR), 10), '~')"),
+                    None => format!("COALESCE(CAST(`{name}` AS CHAR), '~')"),
+                })
                 .collect::<Vec<_>>()
                 .join(", ")
         };
@@ -166,6 +179,7 @@ impl World {
                     "receipt",
                     "app_stamp",
                     "bot",
+                    "day:written_at",
                 ],
                 "entity, fact_id, ordinal",
             ),
@@ -195,6 +209,7 @@ impl World {
                     "fact_id",
                     "write_class",
                     "fact_write_ordinal",
+                    "day:written_at",
                 ],
                 "entity, `key`, ordinal",
             ),
@@ -289,6 +304,24 @@ async fn run(world: &World, through_the_job: bool) {
     world
         .capture_as(ledger, through_the_job, Actor::System("jojobot".into()))
         .await;
+
+    // A key taken off a thing: the write stores no value, and the link row goes.
+    let mut clear = NewFact::about(
+        id("person:homer"),
+        "a claim that takes a key off",
+        date(2026, 4, 22),
+    );
+    clear.fields = [("friend".to_string(), String::new())].into();
+    clear.sets = ["friend".to_string()].into();
+    world.capture(clear, through_the_job).await;
+
+    // A claim written by a bot: the writer column and the stamp of its call.
+    let mut by_a_bot = NewFact::about(id("person:bart"), "a claim a bot wrote", date(2026, 4, 22));
+    by_a_bot.fields = [("mood".to_string(), "down".to_string())].into();
+    by_a_bot.sets = ["mood".to_string()].into();
+    world
+        .capture_as(by_a_bot, through_the_job, Actor::Bot(id("bot:lisa")))
+        .await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -313,6 +346,17 @@ async fn a_capture_through_the_job_leaves_the_rows_the_old_route_leaves() {
         "the bot holds the same fields through either route"
     );
     assert!(old_rows.iter().any(|row| row.starts_with("fact: ")));
+    let only = |rows: &[String], other: &[String]| {
+        rows.iter()
+            .filter(|row| !other.contains(row))
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        (only(&new_rows, &old_rows), only(&old_rows, &new_rows)),
+        (Vec::<String>::new(), Vec::<String>::new()),
+        "the rows only the job route left, and the rows only the old route left"
+    );
     assert_eq!(
         new_rows, old_rows,
         "the rows of the job route are the rows of the old route"
