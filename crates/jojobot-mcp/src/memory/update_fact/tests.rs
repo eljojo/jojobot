@@ -315,6 +315,59 @@ async fn an_update_says_what_it_replaced_and_what_it_left_alone() {
     );
 }
 
+/// **A key cleared and set again in one call is replaced, not withdrawn.** The
+/// claim ends up carrying the new value, so the receipt does not say the claim no
+/// longer carries the key. Control: the same clear alone does say it.
+#[tokio::test]
+async fn a_key_cleared_and_set_again_in_one_call_is_not_reported_as_taken_off() {
+    let jojobot = handler();
+    let first = capture_ok(
+        &jojobot,
+        CaptureArgs {
+            sets: Some(
+                [("mood".to_string(), "delighted".to_string())]
+                    .into_iter()
+                    .collect(),
+            ),
+            ..capture_args("person:alpha", "said the kiln was lit")
+        },
+    )
+    .await;
+    let address = address_of(&first);
+
+    let replaced = update_ok(
+        &jojobot,
+        UpdateFactArgs {
+            clear_fields: Some(vec!["mood".into()]),
+            sets: Some(
+                [("mood".to_string(), "furious".to_string())]
+                    .into_iter()
+                    .collect(),
+            ),
+            ..update_args(&address)
+        },
+    )
+    .await;
+    let line = postcondition_line(&replaced);
+    assert!(
+        !line.contains("no longer carries") && !line.contains("withdrawn"),
+        "the claim carries the new value, so no key was taken off it: {replaced}",
+    );
+
+    let cleared = update_ok(
+        &jojobot,
+        UpdateFactArgs {
+            clear_fields: Some(vec!["mood".into()]),
+            ..update_args(&address)
+        },
+    )
+    .await;
+    assert!(
+        postcondition_line(&cleared).contains("no longer carries"),
+        "a clear alone still says what it took off: {cleared}",
+    );
+}
+
 /// The postcondition line of a receipt, which every write carries.
 fn postcondition_line(body: &serde_json::Value) -> String {
     body["postcondition"]

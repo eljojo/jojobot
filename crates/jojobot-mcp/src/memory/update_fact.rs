@@ -1274,10 +1274,17 @@ impl Jojobot {
                          that edit is refused if the claim has been written since"
                     );
                 }
+                // **A key cleared and set again in this call is replaced, not
+                // taken off**, so the receipt of what a clear took off leaves it out.
+                let taken_off: Vec<String> = cleared
+                    .iter()
+                    .filter(|key| !patch_fields.contains_key(*key))
+                    .cloned()
+                    .collect();
                 let mut line = self
                     .what_an_update_left_standing(
                         &fact,
-                        &cleared,
+                        &taken_off,
                         held_before.as_ref(),
                         keep,
                         &mut body,

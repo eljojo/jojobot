@@ -1,4 +1,4 @@
-title: A clear sent to an older claim leaves the newer value on the thing
+title: clear_fields succeeds on a claim that no longer backs the key and leaves the newer value
 for: roles that take a key off a thing with clear_fields on update_fact
 reach_for_it_when: you sent clear_fields to a claim that carries the key and were refused before, or you rely on the refusal to learn which claim backs a key
 miss: A bot that relied on the refusal of a clear sent to the wrong claim will not get one. The clear now lands, and the key may still be on the thing.
