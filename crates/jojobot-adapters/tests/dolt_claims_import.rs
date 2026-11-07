@@ -1261,3 +1261,116 @@ async fn claims_import_holds_a_declared_type_as_the_store_serves_it() {
 
     server.stop().await;
 }
+
+/// **A thing whose row was removed by hand is skipped whatever rows it left.** The
+/// entity row of one thing is deleted. `removed_beside` names more tables whose
+/// rows under it are deleted too, so the case can leave the thing's key writes and
+/// entity writes with no claim row at all. The import must finish, name the home,
+/// and import the thing beside it.
+async fn a_hand_removed_thing_is_skipped(label: &str, removed_beside: &[&str]) {
+    let (_scratch, mut server, pool) = store(label).await;
+    let memory = DoltMemory::open(pool.clone());
+    let marge = thing(&memory, "person:marge", "Marge").await;
+    let mut mood = NewFact::about(marge.clone(), "is calm", date(2026, 9, 1));
+    mood.provenance = Provenance::Testimony;
+    mood.fields.insert("mood".to_string(), "calm".to_string());
+    mood.sets.insert("mood".to_string());
+    memory
+        .capture(mood)
+        .await
+        .expect("capture")
+        .written()
+        .expect("not blocked");
+    let homer = thing(&memory, "person:homer", "Homer").await;
+    say(&memory, &homer, "likes donuts").await;
+
+    sqlx::query("DELETE FROM entity WHERE id = 'person:marge'")
+        .execute(&pool)
+        .await
+        .expect("the entity row goes");
+    for table in removed_beside {
+        let statement = format!("DELETE FROM {table} WHERE entity = 'person:marge'");
+        sqlx::query(sqlx::AssertSqlSafe(statement))
+            .execute(&pool)
+            .await
+            .expect("the rows go");
+    }
+
+    let imported = import_claims_once(&Writer::default(), &pool, &Provisions::default(), at())
+        .await
+        .expect("a thing removed by hand is skipped, not refused");
+    let Imported::Done { skipped_homes, .. } = imported else {
+        panic!("the import ran: {imported:?}");
+    };
+    assert!(
+        skipped_homes.iter().any(|(home, _)| home == "person:marge"),
+        "the removed home is named: {skipped_homes:?}"
+    );
+    let held = logged(&pool).await;
+    assert!(
+        held.iter().any(|event| matches!(
+            &event.payload,
+            ClaimEvent::RecordCreated { claim, .. } if claim.content == "likes donuts"
+        )),
+        "the claims of the thing beside it imported: {held:?}"
+    );
+
+    server.stop().await;
+}
+
+/// The removed thing still has its claim rows and its entity writes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn claims_import_skips_a_hand_removed_thing_that_left_its_entity_writes() {
+    a_hand_removed_thing_is_skipped("claims-import-removed-writes", &[]).await;
+}
+
+/// The removed thing has left only its key writes and entity writes: no claim row,
+/// no write of a claim.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn claims_import_skips_a_hand_removed_thing_that_left_only_key_writes() {
+    a_hand_removed_thing_is_skipped("claims-import-removed-key-writes", &["fact", "fact_write"])
+        .await;
+}
+
+/// A record no build supplies any more has no entity row and no entity write. Its
+/// claim rows were removed by hand and its key writes remain: they are the only
+/// rows that name the home.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn claims_import_skips_a_home_that_only_key_writes_name() {
+    let (_scratch, mut server, pool) = store("claims-import-key-writes-only").await;
+    let memory = DoltMemory::open(pool.clone()).knowing(supplied_view("view:loops"));
+    let loops = EntityId("view:loops".to_string());
+    let mut mood = NewFact::about(loops.clone(), "is read", date(2026, 9, 1));
+    mood.provenance = Provenance::Testimony;
+    mood.fields.insert("mood".to_string(), "calm".to_string());
+    mood.sets.insert("mood".to_string());
+    memory
+        .capture(mood)
+        .await
+        .expect("capture")
+        .written()
+        .expect("not blocked");
+    let homer = thing(&memory, "person:homer", "Homer").await;
+    say(&memory, &homer, "likes donuts").await;
+    for table in ["fact", "fact_write"] {
+        let statement = format!("DELETE FROM {table} WHERE entity = 'view:loops'");
+        sqlx::query(sqlx::AssertSqlSafe(statement))
+            .execute(&pool)
+            .await
+            .expect("the rows go");
+    }
+
+    let imported = import_claims_once(&Writer::default(), &pool, &Provisions::default(), at())
+        .await
+        .expect("key writes under a home nothing holds are skipped, not refused");
+    let Imported::Done { skipped_homes, .. } = imported else {
+        panic!("the import ran: {imported:?}");
+    };
+    assert_eq!(
+        skipped_homes,
+        vec![("view:loops".to_string(), 0)],
+        "the home is named with no claim left"
+    );
+
+    server.stop().await;
+}

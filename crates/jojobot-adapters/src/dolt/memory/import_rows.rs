@@ -415,6 +415,12 @@ impl DoltMemory {
             let mut owners = owners
                 .remove(&(filed_under.clone(), ordinal))
                 .unwrap_or_default();
+            // A row filed under a name no key holds, which no history reads, is the
+            // write of a thing removed by hand: skipped like its claims.
+            if owners.is_empty() && matches!(read.keys.placed(&filed_under), Placed::Absent) {
+                read.skipped.entry(filed_under).or_default();
+                continue;
+            }
             if owners.len() != 1 {
                 read.findings.push(Finding {
                     table: "entity_write",
@@ -529,6 +535,25 @@ impl DoltMemory {
             // Only an absent home is skipped; an ambiguous one is refused by name.
             if matches!(read.keys.placed(&stored), Placed::Absent) {
                 *read.skipped.entry(stored).or_default() += 1;
+            }
+        }
+        // The same hand-removal can leave rows under a home with no claim row left,
+        // so every table that files rows under a home names its absent homes.
+        for (table, column) in [
+            ("fact_write", "entity"),
+            ("field_write", "entity"),
+            ("fact_event_metadata", "fact_home"),
+        ] {
+            let homes: Vec<String> = sqlx::query_scalar(AssertSqlSafe(format!(
+                "SELECT DISTINCT {column} FROM {table}"
+            )))
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(store)?;
+            for stored in homes {
+                if matches!(read.keys.placed(&stored), Placed::Absent) {
+                    read.skipped.entry(stored).or_default();
+                }
             }
         }
         // The references and the mark a claim holds NOW sit in two tables of their
