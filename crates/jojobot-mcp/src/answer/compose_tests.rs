@@ -630,3 +630,79 @@ fn the_served_spellings_of_the_account_are_pinned() {
     assert!(served.contains_key("left_out"));
     assert!(served.contains_key("over_budget"));
 }
+
+/// A note whose text is `text`, served inside the `teaching` array.
+fn teaching_note(name: &'static str, tier: Tier, text: &str) -> Layer {
+    Layer::new(name, Kind::Note, tier, "recall", json!(text)).in_slot("teaching")
+}
+
+/// Layers that share a slot ride one array under its key, in ranked order, and
+/// the account names each by its own name (rule 4 of the receipt owner's
+/// architect ruling: one layer per text).
+#[test]
+fn notes_sharing_a_slot_ride_one_array_in_ranked_order() {
+    let layers = || {
+        vec![
+            teaching_note("note_low", Tier::Low, &"low note ".repeat(20)),
+            teaching_note("note_high", Tier::High, "high note"),
+        ]
+    };
+    let both = run(layers(), 1000, &[]);
+    assert_eq!(names(&both), ["teaching"], "{}", both.served);
+    assert_eq!(
+        both.served["teaching"],
+        json!(["high note", "low note ".repeat(20)]),
+        "{}",
+        both.served
+    );
+    assert!(left(&both).is_empty(), "{}", both.served);
+
+    // Room for one: the higher tier ships, the other is named under its own name.
+    let one_cost = layers()[1].cost;
+    let one = run(layers(), one_cost + full(&["note_low"]), &[]);
+    assert_eq!(
+        one.served["teaching"],
+        json!(["high note"]),
+        "{}",
+        one.served
+    );
+    assert_eq!(left(&one), ["note_low"], "{}", one.served);
+}
+
+/// The subset property holds across a shared slot: a smaller limit serves a
+/// subset of what a larger one serves.
+#[test]
+fn a_smaller_limit_serves_a_subset_of_a_shared_slot() {
+    let layers = || {
+        vec![
+            teaching_note("a", Tier::High, "first note"),
+            teaching_note("b", Tier::Medium, "second note, a little longer"),
+            teaching_note("c", Tier::Low, "third note"),
+        ]
+    };
+    let served_at = |room: usize| -> Vec<String> {
+        let composed = run(layers(), room, &[]);
+        composed
+            .served
+            .get("teaching")
+            .and_then(Value::as_array)
+            .map(|notes| {
+                notes
+                    .iter()
+                    .map(|note| note.as_str().expect("a note").to_string())
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    // Walking the room down from a roomy limit, what is served only shrinks.
+    let mut larger = served_at(1000);
+    assert_eq!(larger.len(), 3, "{larger:?}");
+    for room in (0..400).rev() {
+        let smaller = served_at(room);
+        assert!(
+            smaller.iter().all(|note| larger.contains(note)),
+            "room {room} served {smaller:?}, not a subset of {larger:?}"
+        );
+        larger = smaller;
+    }
+}

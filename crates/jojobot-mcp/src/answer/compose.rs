@@ -53,6 +53,10 @@ pub(crate) struct Layer {
     /// The call that returns the layer when it is left out.
     pub(crate) returned_by: &'static str,
     pub(crate) body: Value,
+    /// The key the layer is served under, when it is not its own name: Note
+    /// layers that share a slot ride one array under it, in ranked order. The
+    /// name stays unique and is what an omission names.
+    pub(crate) slot: Option<&'static str>,
 }
 
 impl Layer {
@@ -72,7 +76,17 @@ impl Layer {
             domain: None,
             returned_by,
             body,
+            slot: None,
         }
+    }
+
+    /// Serve the layer inside the array under `slot`. Its cost is measured as
+    /// the layer alone in that array, which counts the slot's key once for every
+    /// layer, so a fill never serves over its limit.
+    pub(crate) fn in_slot(mut self, slot: &'static str) -> Self {
+        self.slot = Some(slot);
+        self.cost = super::served_len(&json!({ slot: [self.body.clone()] }));
+        self
     }
 
     pub(crate) fn taught_once(mut self, domain: &'static str) -> Self {
@@ -103,6 +117,14 @@ impl Answer {
                 "layer name {} is held twice",
                 layer.name
             );
+        }
+        for layer in &layers {
+            if let Some(slot) = layer.slot {
+                assert!(
+                    !core.contains_key(slot) && !names.contains(slot),
+                    "slot {slot} is held by a core key or a layer name"
+                );
+            }
         }
         assert!(
             [LEFT_OUT_KEY, OVER_BUDGET_KEY]
@@ -268,7 +290,17 @@ pub(crate) fn compose_within(answer: &Answer, limit: usize, taught: &BTreeSet<&s
             if taken < k {
                 taken += 1;
                 layers_cost += layer.cost;
-                served.insert(layer.name.to_string(), layer.body.clone());
+                match layer.slot {
+                    Some(slot) => served
+                        .entry(slot.to_string())
+                        .or_insert_with(|| Value::Array(Vec::new()))
+                        .as_array_mut()
+                        .expect("a slot holds an array")
+                        .push(layer.body.clone()),
+                    None => {
+                        served.insert(layer.name.to_string(), layer.body.clone());
+                    }
+                }
             } else {
                 left_out.push(LeftOut {
                     layer: layer.name,
