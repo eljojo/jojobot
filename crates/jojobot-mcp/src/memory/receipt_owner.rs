@@ -84,6 +84,9 @@ const SUGGESTIONS: [(&str, Tier); 3] = [
 ];
 
 /// The call that returns a left-out suggestion's ground: the thing it is about.
+/// **Ground, not the suggestion itself**: `recall` does not return a hint or an
+/// unlocks block, it returns the thing and its claims that the suggestion is
+/// about, which is what a bot reads to judge the suggestion for itself.
 const RETURNED_BY: &str = "recall";
 
 /// Takes the finished receipt and returns what is served: its core whole, and
