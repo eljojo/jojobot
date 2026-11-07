@@ -398,6 +398,28 @@ fn a_killed_build_leaves_the_marker_with_build_metrics_on_and_off() {
     let _ = fs::remove_dir_all(root);
 }
 
+/// **The signal handlers are installed before the command is released.** The
+/// command waits on a pipe until the guard writes to it, so a TERM that comes
+/// before the write is harmless only when the handler is already there: the guard
+/// would otherwise die by the default action and leave the released command
+/// running. The order is pinned by the position of the two statements.
+#[test]
+fn the_guard_installs_its_handlers_before_it_releases_the_command() {
+    let script =
+        fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/build-guard"))
+            .unwrap();
+    let handlers = script
+        .find("signal.signal(number, forward)")
+        .expect("the handlers are installed");
+    let release = script
+        .find("os.write(release, b\"go\\n\")")
+        .expect("the command is released");
+    assert!(
+        handlers < release,
+        "the handlers are installed after the command is released"
+    );
+}
+
 fn is_running(pid: &str) -> bool {
     Command::new("kill")
         .args(["-0", pid])

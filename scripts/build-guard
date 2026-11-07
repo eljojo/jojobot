@@ -160,20 +160,11 @@ def main(command):
     child = subprocess.Popen(["sh", "-c", 'read go <&$0 || exit 1; exec "$@"', str(ready), *command],
                              pass_fds=(ready,), start_new_session=True)
     os.close(ready)
-    try:
-        marker.write_text(json.dumps({"pid": os.getpid(), "pgid": child.pid,
-                                      "start": start_time(child.pid), "units": units}))
-    except OSError as why:
-        os.close(release)
-        child.wait()
-        print(f"build guard: the marker could not be written, so nothing was started: {why}",
-              file=sys.stderr)
-        return 2
-    os.write(release, b"go\n")
-    os.close(release)
     # The command runs in a session of its own, so a signal to this process (from
     # `timeout` or a terminal) never reaches it. Pass TERM down to its group, then
-    # wait for the group to end before this process does.
+    # wait for the group to end before this process does. The handlers are in place
+    # before the command is released: a signal in the gap would otherwise kill this
+    # process by the default action and leave the released command running.
     told, told_at = [], []
 
     def forward(number, _frame):
@@ -187,6 +178,18 @@ def main(command):
 
     for number in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(number, forward)
+    try:
+        marker.write_text(json.dumps({"pid": os.getpid(), "pgid": child.pid,
+                                      "start": start_time(child.pid), "units": units}))
+    except OSError as why:
+        os.close(release)
+        child.wait()
+        print(f"build guard: the marker could not be written, so nothing was started: {why}",
+              file=sys.stderr)
+        return 2
+    if not told:  # a signal before the release has already ended the waiting command
+        os.write(release, b"go\n")
+    os.close(release)
     # The wait is bounded once a signal is told: a leader that ignores TERM must not
     # keep the guard, and the kill that follows the grace, from running.
     while (code := child.poll()) is None:
