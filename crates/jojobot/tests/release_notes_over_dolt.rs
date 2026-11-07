@@ -39,9 +39,19 @@ async fn a_real_store() -> (Dolt, sqlx::MySqlPool, std::path::PathBuf) {
 
 /// What a start wires over the store: the memory and the mailboxes, opened anew.
 fn a_start(pool: &sqlx::MySqlPool) -> (Arc<dyn Memory>, Arc<dyn Mailboxes>) {
-    let memory: Arc<dyn Memory> = Arc::new(DoltMemory::open(pool.clone()));
+    // **As a start wires it**: the store takes part in the log, and every rail
+    // shares the one writer that serves it, so its writes run in that writer's job
+    // and the mail ledger reaches the same log.
+    let writer = jojobot_adapters::writer::Writer::default();
+    let memory: Arc<dyn Memory> = Arc::new(
+        jojobot_adapters::fold::Folded::new(Arc::new(DoltMemory::open(pool.clone()).journaled()))
+            .with_writer(writer.clone()),
+    );
     let owners = Arc::new(MemoryOwners::new(memory.clone()));
-    let mailboxes: Arc<dyn Mailboxes> = Arc::new(DoltMailboxes::open(pool.clone(), owners));
+    let bare_mail: Arc<dyn Mailboxes> =
+        Arc::new(DoltMailboxes::open(pool.clone(), owners).with_writer(writer.clone()));
+    let mailboxes: Arc<dyn Mailboxes> =
+        Arc::new(jojobot_adapters::fold::mail::FoldedMailboxes::new(bare_mail).with_writer(writer));
     (memory, mailboxes)
 }
 
