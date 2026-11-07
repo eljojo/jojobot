@@ -1907,3 +1907,44 @@ fn chained_supplied_renames_in_one_build_keep_every_binding() {
         "a second pass appends nothing"
     );
 }
+
+/// **A supplied record a later build stops supplying keeps its log identity for
+/// life.** The import saw the record and a claim on it. A later list lacks the
+/// record: the reconcile appends nothing, the handle still resolves to the supply
+/// identity, and the claim's home is unchanged. Withdrawal changes what supplies
+/// a record, not what it is.
+#[test]
+fn a_withdrawn_supplied_record_keeps_its_identity_binding_and_claims() {
+    let home = supply_identity("view:loops");
+    // The claim is filed under the supply identity, as the reader files a claim
+    // written on a supplied record.
+    let mut claim_row = fact(&home.0, "f1", vec![write_of(1, "read on Mondays", None, 1)]);
+    claim_row.head.home = home.clone();
+    for write in &mut claim_row.writes {
+        write.claim.home = home.clone();
+    }
+    let held = imported(&Rows {
+        supplied: vec![supplied("view:loops")],
+        facts: vec![claim_row],
+        ..Default::default()
+    });
+    let state = State::replay(&held);
+    assert_eq!(state.resolve("view:loops"), Some(&home));
+    let later: Vec<SuppliedRow> = Vec::new();
+    assert!(
+        reconcile_supply_list(&state, &later, day()).is_empty(),
+        "a record missing from the list appends nothing"
+    );
+    assert_eq!(
+        state.resolve("view:loops"),
+        Some(&home),
+        "the binding stays"
+    );
+    let claims = state.active_records(&home);
+    assert_eq!(claims.len(), 1, "the claim stays on the record");
+    assert_eq!(
+        state.record(claims[0]).map(|held| held.claim.home.clone()),
+        Some(home),
+        "the claim's home is the supply identity"
+    );
+}
