@@ -4564,17 +4564,50 @@ impl DoltMemory {
                 .get(key.trim())
                 .copied()
                 .unwrap_or(jojobot_domain::memory::WriteClass::Own);
+            Self::insert_field_write(
+                tx,
+                entity,
+                fact,
+                (&key, ordinal),
+                &value,
+                &moment,
+                class,
+                claim_write,
+            )
+            .await?;
+            if let Some(emitting) = &emitting {
+                Self::emit_key_write(tx, emitting, &moment, &key, ordinal, class, &value).await?;
+            }
+        }
+        Ok(())
+    }
+
+    /// **One key write and the link rows under it, at the place it is given.**
+    /// Allocates nothing and emits nothing: [`Self::append_writes`] counts the
+    /// place, a row writer is handed it.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) async fn insert_field_write(
+        tx: &mut Transaction<'_, MySql>,
+        entity: &EntityId,
+        fact: &FactId,
+        (key, ordinal): (&str, i64),
+        value: &Option<String>,
+        moment: &str,
+        class: jojobot_domain::memory::WriteClass,
+        claim_write: i64,
+    ) -> Result<(), MemoryError> {
+        {
             sqlx::query(
                 "INSERT INTO field_write (entity, `key`, ordinal, value, fact_id, written_at, write_class,
                                          fact_write_ordinal)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(entity.as_str())
-            .bind(&key)
+            .bind(key)
             .bind(ordinal)
             .bind(value.as_deref())
             .bind(fact.as_str())
-            .bind(&moment)
+            .bind(moment)
             .bind(class.as_token())
             // **The write of the claim that carried this key**, appended in the
             // same act: the one row that says who wrote the value and in which run.
@@ -4582,23 +4615,20 @@ impl DoltMemory {
             .execute(&mut **tx)
             .await
             .map_err(store)?;
-            if let Some(value) = &value {
+            if let Some(value) = value {
                 for target in jojobot_domain::memory::field_link_targets(value) {
                     sqlx::query(
                         "INSERT INTO field_link (entity, `key`, ordinal, target)
                          VALUES (?, ?, ?, ?)",
                     )
                     .bind(entity.as_str())
-                    .bind(&key)
+                    .bind(key)
                     .bind(ordinal)
                     .bind(&target)
                     .execute(&mut **tx)
                     .await
                     .map_err(store)?;
                 }
-            }
-            if let Some(emitting) = &emitting {
-                Self::emit_key_write(tx, emitting, &moment, &key, ordinal, class, &value).await?;
             }
         }
         Ok(())
@@ -4651,6 +4681,20 @@ impl DoltMemory {
         session: Option<&str>,
         bot: Option<&EntityId>,
     ) -> Result<i64, MemoryError> {
+        Self::write_fact_row(tx, fact).await?;
+        let ordinal = Self::append_fact_write(tx, fact, clock, session, bot).await?;
+        Self::emit_claim_write(tx, fact, ordinal).await?;
+        Ok(ordinal)
+    }
+
+    /// **The rows of a claim as it now stands**: the claim, the refs under it and
+    /// the claims it stands for, replacing whatever was there under the same
+    /// address. It allocates nothing, refuses nothing and emits nothing: the half
+    /// of a write that a row writer calls with what a decision already settled.
+    pub(super) async fn write_fact_row(
+        tx: &mut Transaction<'_, MySql>,
+        fact: &Fact,
+    ) -> Result<(), MemoryError> {
         sqlx::query(
             "REPLACE INTO fact (entity, id, content, details, provenance, standing, status,
                                 recorded_at, happened_at, happened_through, edge_shape,
@@ -4728,9 +4772,7 @@ impl DoltMemory {
             .await
             .map_err(store)?;
         }
-        let ordinal = Self::append_fact_write(tx, fact, clock, session, bot).await?;
-        Self::emit_claim_write(tx, fact, ordinal, self.journal()).await?;
-        Ok(ordinal)
+        Ok(())
     }
 
     /// **Keep this write of the claim, beside the row it just rewrote.**
@@ -4768,6 +4810,21 @@ impl DoltMemory {
         )
         .await
         .map_err(store)?;
+        Self::insert_fact_write(tx, fact, ordinal, &clock.now().to_string(), session, bot).await?;
+        Ok(ordinal)
+    }
+
+    /// **One kept write of a claim, at the place it is given and the moment it is
+    /// given.** Allocates nothing: [`Self::append_fact_write`] counts the place, a
+    /// row writer is handed it.
+    pub(super) async fn insert_fact_write(
+        tx: &mut Transaction<'_, MySql>,
+        fact: &Fact,
+        ordinal: i64,
+        written_at: &str,
+        session: Option<&str>,
+        bot: Option<&EntityId>,
+    ) -> Result<(), MemoryError> {
         sqlx::query(
             "INSERT INTO fact_write (entity, fact_id, ordinal, content, details, provenance,
                                      standing, status, recorded_at, happened_at,
@@ -4799,7 +4856,7 @@ impl DoltMemory {
         // above, never re-stamped; this is the moment this write happened —
         // on the server's own clock, which is not the wall clock on an
         // instance acting out a day.
-        .bind(clock.now().to_string())
+        .bind(written_at)
         .bind(session)
         // **What the claim pointed at and stood for at this write**, kept
         // because the tables behind a current read keep the newest set only.
@@ -4811,7 +4868,7 @@ impl DoltMemory {
         .execute(&mut **tx)
         .await
         .map_err(store)?;
-        Ok(ordinal)
+        Ok(())
     }
 
     /// **Each named claim's own last write moment, inside the ongoing
