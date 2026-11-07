@@ -4,8 +4,8 @@ use jiff::Timestamp;
 
 use super::*;
 use crate::app::{AppId, AppStamp};
-use crate::log::claims::State;
 use crate::log::claims::tests::{body, claim, key, object};
+use crate::log::claims::{Revision, State};
 use crate::memory::merge;
 use crate::memory::types::DeclaredType;
 use crate::memory::{FactId, FactStatus, KeyWrite, RETRACTS};
@@ -364,6 +364,129 @@ fn a_head_that_differs_from_its_last_write_rides_on_that_write() {
     assert_eq!(claim.content, "edited in the row");
     assert_eq!(last.run, Some(RunId("run-b".into())));
     assert_eq!(last.imported_source_time, at(2));
+}
+
+/// **What a head can differ by in the stored rows.** The store versions the whole
+/// claim on every write (rule 201), so an edit or a status change is a write and
+/// leaves the head equal to it. A head differs from its newest write where the
+/// head is read from other places than the write: the references and the mark sit
+/// in tables of their own that a write made before their columns existed does not
+/// fill. The case below replays into a State and compares the claim history with
+/// the write bodies: the history holds the head, differs from the newest write body
+/// in that one field only, and keeps the write's own actor, run and moment.
+fn history_of<'a>(state: &'a State, home: &str, local: &str) -> &'a [Revision] {
+    state.claim_history(&record_id(&object(home), local))
+}
+
+fn assert_history_follows_writes(
+    rows: &Rows,
+    home: &str,
+    local: &str,
+    differing: fn(&mut ClaimBody),
+) {
+    let state = state_of(rows);
+    let fact = rows
+        .facts
+        .iter()
+        .find(|f| f.home == object(home) && f.local == local)
+        .expect("the claim is in the rows");
+    let history = history_of(&state, home, local);
+    assert_eq!(
+        history.len(),
+        fact.writes.len(),
+        "one revision for each write"
+    );
+    let mut newest_body = fact.writes.last().unwrap().claim.clone();
+    // The control: the head and the newest write differ before anything is
+    // normalised, or the comparison below would pass over two equal bodies.
+    assert_ne!(
+        fact.head, newest_body,
+        "the head differs from its newest write"
+    );
+    for (revision, write) in history.iter().zip(&fact.writes) {
+        assert_eq!(
+            revision.written_at, write.written_at,
+            "the write's own moment"
+        );
+        assert_eq!(
+            revision.run,
+            write.run.clone().map(RunId),
+            "the write's own run"
+        );
+    }
+    for (revision, write) in history.iter().zip(&fact.writes).take(history.len() - 1) {
+        assert_eq!(
+            revision.claim, write.claim,
+            "an earlier write keeps its body"
+        );
+    }
+    // The newest entry is the head, and it differs from the newest write body in
+    // the one field the test names, nowhere else.
+    let newest = history.last().unwrap();
+    assert_eq!(newest.claim, fact.head);
+    let mut folded = newest.claim.clone();
+    differing(&mut folded);
+    differing(&mut newest_body);
+    assert_eq!(
+        folded, newest_body,
+        "only the named field differs from the write"
+    );
+}
+
+#[test]
+fn a_head_that_holds_the_references_its_write_lacks_keeps_the_write_attribution() {
+    let mut row = fact(
+        "k1",
+        "f1",
+        vec![
+            write_of(1, "first", Some("run-a"), 1),
+            write_of(2, "second", Some("run-b"), 2),
+        ],
+    );
+    row.head.refs = vec![object("k1")];
+    row.head.stands_for = Vec::new();
+    let rows = Rows {
+        entities: vec![entity("k1", "person:homer")],
+        facts: vec![row],
+        ..Rows::default()
+    };
+    assert_history_follows_writes(&rows, "k1", "f1", |c| {
+        c.refs = Vec::new();
+        c.stands_for = Vec::new();
+    });
+}
+
+#[test]
+fn a_head_equal_to_its_last_write_adds_no_event_and_no_body() {
+    let row = fact("k1", "f1", vec![write_of(1, "same", Some("run-a"), 1)]);
+    let rows = Rows {
+        entities: vec![entity("k1", "person:homer")],
+        facts: vec![row],
+        ..Rows::default()
+    };
+    let state = state_of(&rows);
+    assert_eq!(history_of(&state, "k1", "f1").len(), 1);
+    assert_eq!(history_of(&state, "k1", "f1")[0].claim.content, "same");
+}
+
+#[test]
+fn a_head_that_differs_from_the_only_write_creates_the_claim_with_the_head() {
+    let mut row = fact("k1", "f1", vec![write_of(1, "written", Some("run-a"), 1)]);
+    row.head.refs = vec![object("k1")];
+    let events = imported(&Rows {
+        entities: vec![entity("k1", "person:homer")],
+        facts: vec![row],
+        ..Rows::default()
+    });
+    let created: Vec<_> = events
+        .iter()
+        .filter_map(|e| match &e.payload {
+            ClaimEvent::RecordCreated { claim, .. } if claim.content == "written" => Some(claim),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(created.len(), 1);
+    assert_eq!(created[0].refs, vec![object("k1")], "the head's references");
 }
 
 /// A cleared key leaves the thing without it, and the clear stays a write.
