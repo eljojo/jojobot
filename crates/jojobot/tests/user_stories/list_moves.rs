@@ -333,7 +333,7 @@ async fn a_new_entry_cannot_be_put_behind_a_done_entry() {
 #[tokio::test]
 async fn another_session_moves_an_entry_without_touching_its_words() {
     let story = Story::begin("bot:gamma").await;
-    let writer = story.session().await.asking_whole();
+    let writer = story.session().await;
     a_driving_rotation(&writer, "rotation", json!({"tick": "back"})).await;
     let homer = add_entry(&writer, "list:rotation", "Homer", None).await;
     add_entry(&writer, "list:rotation", "Bart", None).await;
@@ -341,7 +341,7 @@ async fn another_session_moves_an_entry_without_touching_its_words() {
         .call("capture", ticking("list:rotation", &homer, "done"))
         .await;
 
-    let mover = story.session_in("UTC", Some("new")).await.asking_whole();
+    let mover = story.session_in("UTC", Some("new")).await;
     moving(&mover, &homer, "first").await;
     assert_eq!(read_back(&mover, "list:rotation").await, ["Homer", "Bart"]);
 

@@ -563,7 +563,7 @@ async fn a_quarantine_reason_that_names_a_thing_follows_it_through_a_rename() {
 #[tokio::test]
 async fn a_link_under_a_key_nobody_declared_follows_its_target_through_a_rename() {
     let story = Story::begin("bot:gamma").await;
-    let s = story.session().await.asking_whole();
+    let s = story.session().await;
 
     s.add("work:sigma", "The First Job").await;
     s.add("thing:handcart", "The Handcart").await;
