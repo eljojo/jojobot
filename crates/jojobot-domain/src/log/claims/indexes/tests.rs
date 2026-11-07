@@ -1138,6 +1138,61 @@ fn a_clear_by_a_claim_that_does_not_hold_the_key_keeps_the_links() {
     );
 }
 
+/// **A stored removal takes the key off the thing whichever claim held it**
+/// (rule 677), and the value, the backing and the links agree on it. Two claims
+/// write `owner`; the older then has a removal stored. Control: a live clear by
+/// the same older claim leaves the newer claim holding all three.
+#[test]
+fn a_stored_removal_by_a_claim_that_does_not_hold_the_key_takes_all_three_off() {
+    let setup = || {
+        vec![
+            thing("o0", None),
+            thing("o1", None),
+            thing("o2", None),
+            created("r1", claim("f1", "o0", "c", 1)),
+            points("r1", 1, "o1"),
+            created("r2", claim("f2", "o0", "c", 1)),
+            points("r2", 2, "o2"),
+        ]
+    };
+    let removal = ClaimEvent::FieldRemoved {
+        record: record("r1"),
+        subject: object("o0"),
+        key: key("owner"),
+        ordinal: 3,
+        class: crate::memory::WriteClass::Sets,
+        targets: Vec::new(),
+    };
+    let mut stored = setup();
+    stored.push(removal);
+    let removed = state(&stored);
+    assert!(
+        !removed.fields(&object("o0"), &[]).contains_key("owner"),
+        "the value is off the thing"
+    );
+    assert!(
+        !removed.backing(&object("o0"), &[]).contains_key("owner"),
+        "no claim backs a key the thing does not hold"
+    );
+    assert!(removed.links_from(&object("o0")).is_empty());
+    assert!(removed.links_into(&object("o2")).is_empty());
+
+    let mut live = setup();
+    live.push(clear("r1", "o0", "owner", 3));
+    let kept = state(&live);
+    assert_eq!(
+        kept.fields(&object("o0"), &[])
+            .get("owner")
+            .map(String::as_str),
+        Some("o2")
+    );
+    assert!(kept.backing(&object("o0"), &[]).contains_key("owner"));
+    assert_eq!(
+        kept.links_from(&object("o0")),
+        BTreeSet::from([object("o2")])
+    );
+}
+
 /// **What a thing points at, read by scanning every stream of the state**: the
 /// frozen targets of the newest write of each key, among the writes that reach
 /// the thing and sit in an active claim, a cleared key pointing at none.

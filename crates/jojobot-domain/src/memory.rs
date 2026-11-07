@@ -4000,7 +4000,6 @@ pub fn stood_after(
             .unwrap_or(0)
             + 1;
         next.push(KeyWrite {
-            removed: false,
             key,
             ordinal,
             value,
@@ -4084,7 +4083,6 @@ pub fn stood_after_record(
             .unwrap_or(0)
             + 1;
         next.push(KeyWrite {
-            removed: false,
             key: key.clone(),
             ordinal,
             value: Some(value.clone()),
@@ -4894,11 +4892,6 @@ pub struct KeyWrite {
     pub ordinal: u64,
     /// What the write put there; `None` says it took the key off.
     pub value: Option<String>,
-    /// **The key left the thing with this write, whichever claim held it**: a clear
-    /// the store kept from before a clear by a claim that did not hold the key was
-    /// refused (rule 677). A plain clear (`value` `None`, this false) is one claim's
-    /// write and takes the key off only when that claim holds it.
-    pub removed: bool,
     /// The record that carried it, local to the thing — what lets a write about
     /// to change that record's standing be found ([`stood_after`]).
     pub fact: FactId,
@@ -5133,7 +5126,6 @@ fn fold(
             // of its own, the newest word on the key, and takes the key off.
             if types::fold_of(&write.key, declared) == types::Fold::Newest
                 && write.value.is_none()
-                && !write.removed
                 && holders.get(write.key.as_str()) != Some(&&write.fact)
             {
                 continue;

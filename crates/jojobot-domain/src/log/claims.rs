@@ -728,12 +728,16 @@ impl State {
                 continue;
             };
             out.push(KeyWrite {
-                removed: matches!(write.write, FieldValue::Removed),
                 key: key.0.clone(),
                 ordinal: write.ordinal,
                 value: match &write.write {
                     FieldValue::Set(value) => Some(value.clone()),
-                    FieldValue::Clear | FieldValue::Removed => None,
+                    FieldValue::Clear => None,
+                    // **A stored removal took the key off whichever claim held the
+                    // value**, so it is a blank write of its own: the one reading
+                    // of a blank that the fields, the backing and the links all
+                    // share, and not an event about the one claim.
+                    FieldValue::Removed => Some(String::new()),
                 },
                 fact: FactId(record.claim.label.clone()),
                 status: record.claim.status,

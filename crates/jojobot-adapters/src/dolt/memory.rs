@@ -3893,7 +3893,6 @@ impl DoltMemory {
             claim_mark.as_ref(),
         );
         Ok(Some(KeyWrite {
-            removed: false,
             recorded_by: by.recorded_by,
             writer: by.writer,
             run: by.run,
