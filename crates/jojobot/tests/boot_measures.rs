@@ -1047,6 +1047,10 @@ async fn prepare(state: &Scratch, plan: Plan, events: u64) -> Size {
         .expect("the store comes up with no binary over it");
     let pool = store.pool().clone();
     let writer = Writer::default();
+    // **The log of the grown store holds the claims the boot imported**, and a
+    // declared type that points at a kind decodes only in a process that holds the
+    // kind set. The binary loads it at boot; this process loads it here.
+    jojobot_domain::memory::kinds::load_shipped();
     let log = WriterLog::open(pool.clone(), writer.clone())
         .await
         .expect("the log opens");
