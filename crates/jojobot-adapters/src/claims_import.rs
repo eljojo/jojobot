@@ -239,6 +239,7 @@ pub async fn reconcile_supply_list_once(
     supplied: &Provisions,
     shipped: &[DeclaredType],
     at: Timestamp,
+    day: jiff::civil::Date,
 ) -> Result<usize, ClaimsImportError> {
     refuse_two_records_with_one_first_handle(supplied)?;
     let shipped = shipped.to_vec();
@@ -246,7 +247,7 @@ pub async fn reconcile_supply_list_once(
     let owner = writer.clone();
     let supplied = crate::dolt::memory::import_rows::supplied_rows(supplied);
     writer
-        .run(async move { reconcile_in_job(&owner, &pool, supplied, shipped, at).await })
+        .run(async move { reconcile_in_job(&owner, &pool, supplied, shipped, at, day).await })
         .await
 }
 
@@ -256,6 +257,7 @@ async fn reconcile_in_job(
     supplied: Vec<jojobot_domain::log::claims::import::SuppliedRow>,
     shipped: Vec<DeclaredType>,
     at: Timestamp,
+    day: jiff::civil::Date,
 ) -> Result<usize, ClaimsImportError> {
     let log = writer.shared_log(pool);
     let mut tx = pool
@@ -287,11 +289,8 @@ async fn reconcile_in_job(
     }
     // **One step**: the records the build supplies, and the kinds and types it ships.
     let state = jojobot_domain::log::claims::State::replay(held.iter());
-    let mut events = jojobot_domain::log::claims::import::reconcile_supply_list(
-        &state,
-        &supplied,
-        at.to_zoned(jiff::tz::TimeZone::UTC).date(),
-    );
+    let mut events =
+        jojobot_domain::log::claims::import::reconcile_supply_list(&state, &supplied, day);
     events.extend(
         jojobot_domain::log::claims::import::reconcile_shipped_declarations(&state, &shipped),
     );

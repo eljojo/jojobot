@@ -1094,6 +1094,7 @@ pub async fn boot_store_observed(
             &supplied,
             &shipped_declarations(),
             clock.now(),
+            the_day_of_this_boot(seed_memory.as_ref(), &clock).await,
         ),
     )
     .await

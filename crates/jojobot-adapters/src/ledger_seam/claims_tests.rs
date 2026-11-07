@@ -223,6 +223,7 @@ async fn a_seam_opened_before_the_reconcile_knows_the_declaration_it_appended() 
         &provisions,
         &shipped,
         at,
+        jiff::civil::date(2023, 11, 14),
     )
     .await
     .expect("the reconcile runs");

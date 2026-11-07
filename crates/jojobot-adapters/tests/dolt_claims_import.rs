@@ -106,6 +106,12 @@ async fn expected(pool: &sqlx::MySqlPool) -> Vec<Event<ClaimEvent>> {
         .collect()
 }
 
+/// The run's own day. `at()` is 08:00 UTC on the 15th of January 2027, so the day
+/// before it is one no UTC reading of that clock gives.
+fn the_day() -> jiff::civil::Date {
+    date(2027, 1, 14)
+}
+
 fn at() -> Timestamp {
     Timestamp::from_second(1_800_000_000).expect("a moment")
 }
@@ -786,7 +792,7 @@ async fn claims_reconcile_appends_the_new_record_and_then_nothing() {
     };
     let after_import = batches(pool.clone()).await;
     assert_eq!(
-        reconcile_supply_list_once(&Writer::default(), &pool, &first, &[], at())
+        reconcile_supply_list_once(&Writer::default(), &pool, &first, &[], at(), the_day())
             .await
             .expect("reconcile runs"),
         0,
@@ -796,7 +802,7 @@ async fn claims_reconcile_appends_the_new_record_and_then_nothing() {
 
     let later = supplied_views(&["view:loops", "view:board"]);
     assert_eq!(
-        reconcile_supply_list_once(&Writer::default(), &pool, &later, &[], at())
+        reconcile_supply_list_once(&Writer::default(), &pool, &later, &[], at(), the_day())
             .await
             .expect("reconcile runs"),
         2,
@@ -808,7 +814,7 @@ async fn claims_reconcile_appends_the_new_record_and_then_nothing() {
         "in one batch"
     );
     assert_eq!(
-        reconcile_supply_list_once(&Writer::default(), &pool, &later, &[], at())
+        reconcile_supply_list_once(&Writer::default(), &pool, &later, &[], at(), the_day())
             .await
             .expect("reconcile runs"),
         0,
@@ -955,9 +961,24 @@ async fn claims_reconcile_moves_a_renamed_record_and_refuses_two_with_one_first_
             })
             .collect(),
     );
-    reconcile_supply_list_once(&Writer::default(), &pool, &renamed, &[], at())
+    reconcile_supply_list_once(&Writer::default(), &pool, &renamed, &[], at(), the_day())
         .await
         .expect("the rename reconciles");
+    let retired_on: Vec<_> = logged(&pool)
+        .await
+        .iter()
+        .filter_map(|event| match &event.payload {
+            ClaimEvent::AddressRetired { address, day, .. } if address == "view:loops" => {
+                Some(*day)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        retired_on,
+        vec![the_day()],
+        "the rename retires the old spelling on the run's day, not on the clock's UTC day"
+    );
     let state = State::replay(logged(&pool).await.iter());
     let identity = jojobot_domain::log::claims::import::supply_identity("view:loops");
     assert_eq!(state.resolve("view:board"), Some(&identity));
@@ -977,9 +998,10 @@ async fn claims_reconcile_moves_a_renamed_record_and_refuses_two_with_one_first_
             })
             .collect(),
     );
-    let refused = reconcile_supply_list_once(&Writer::default(), &pool, &twice, &[], at())
-        .await
-        .expect_err("two records with one first handle are refused");
+    let refused =
+        reconcile_supply_list_once(&Writer::default(), &pool, &twice, &[], at(), the_day())
+            .await
+            .expect_err("two records with one first handle are refused");
     assert!(
         matches!(&refused, ClaimsImportError::Unmappable(why) if why.contains("first supplied under")),
         "{refused:?}"
@@ -1130,6 +1152,7 @@ async fn claims_reconcile_declares_a_shipped_kind_the_build_changed() {
                 &Provisions::default(),
                 &list,
                 at(),
+                the_day(),
             )
             .await
             .expect("reconcile runs")
