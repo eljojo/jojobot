@@ -545,6 +545,11 @@ impl State {
         if self.survivor(survivor) == self.survivor(folded) {
             return;
         }
+        // **The survivor is the end of its own chain.** A mark that folds into a thing
+        // already folded elsewhere arrives before the mark that folded that thing when
+        // the import orders marks by entity row, and everything filed under the middle
+        // thing would be unreachable: reads look under the end of the chain only.
+        let survivor = &self.survivor(survivor).clone();
         self.index_before_merge(records);
         self.redirects.insert(folded.clone(), survivor.clone());
         let mut under = self.folded_under.remove(folded).unwrap_or_default();

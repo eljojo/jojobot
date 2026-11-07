@@ -730,3 +730,40 @@ fn a_withdrawn_declaration_leaves_the_kind_with_none() {
     }));
     assert_eq!(state.declarations_of(&pet).len(), 1);
 }
+
+/// **A chain of folds keeps every folded thing's data under the last survivor, in
+/// whichever order the marks arrive.** A legacy chain A into B and B into C comes
+/// from marks that carry no order, and the import applies them in the order of the
+/// entity rows. The control is the chain in time order.
+#[test]
+fn a_chain_of_folds_reaches_the_last_survivor_in_either_order() {
+    let redirected = |folded: &str, survivor: &str| ClaimEvent::ObjectRedirected {
+        folded: object(folded),
+        survivor: object(survivor),
+    };
+    let things = ["a", "b", "c"].map(|name| {
+        [
+            created(
+                &format!("r-{name}"),
+                claim(&format!("f-{name}"), name, "says", 1),
+            ),
+            write(&format!("r-{name}"), name, &format!("key-{name}"), 1, name),
+        ]
+    });
+    let all = map(&[("key-a", "a"), ("key-b", "b"), ("key-c", "c")]);
+    for (label, order) in [
+        ("time order", [redirected("a", "b"), redirected("b", "c")]),
+        (
+            "reverse order",
+            [redirected("b", "c"), redirected("a", "b")],
+        ),
+    ] {
+        let events: Vec<ClaimEvent> = things.iter().flatten().cloned().chain(order).collect();
+        let state = replay(&events);
+        assert_eq!(
+            held(&state, "c"),
+            all,
+            "{label}: the last survivor holds all three"
+        );
+    }
+}
