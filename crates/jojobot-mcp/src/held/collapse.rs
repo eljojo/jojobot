@@ -494,6 +494,7 @@ mod tests {
         Version::Entity {
             own: jiff::Timestamp::from_second(day as i64 * 86_400).ok(),
             around: None,
+            children: (0, 0),
         }
     }
 

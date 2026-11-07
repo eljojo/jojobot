@@ -355,9 +355,9 @@ impl Jojobot {
     /// that cannot be read adds nothing, as an unreadable version is no change.
     /// A plan reads the day and a walk reads every claim that names the thing,
     /// which no version follows, so [`collapse`] never withholds them.
-    async fn around(&self, handle: &str) -> Option<Timestamp> {
+    async fn around(&self, handle: &str, below: &[EntityId]) -> Option<Timestamp> {
         let id = EntityId(handle.to_string());
-        let mut sources: std::collections::BTreeSet<EntityId> = Default::default();
+        let mut sources: std::collections::BTreeSet<EntityId> = below.iter().cloned().collect();
         let fields = self.memory.fields(&id).await.ok()?;
         for value in fields.values() {
             sources.extend(jojobot_domain::memory::handles_in_value(value));
@@ -401,6 +401,30 @@ impl Jojobot {
         newest
     }
 
+    /// **The things that stand under an entity, archived ones too**: how many are
+    /// directly under it, and all of them at any depth. The counts a read of a
+    /// parent carries move when any of them is added, archived or taken away, with
+    /// no write to the parent, so they are both counted in its version and read
+    /// as sources of it. An unreadable branch counts as none.
+    async fn below(&self, handle: &str) -> (usize, Vec<EntityId>) {
+        let direct = self
+            .memory
+            .children(&EntityId(handle.to_string()))
+            .await
+            .unwrap_or_default();
+        let mut all: std::collections::BTreeSet<EntityId> = Default::default();
+        let mut queue = direct.clone();
+        while let Some(next) = queue.pop() {
+            if !all.insert(next.clone()) {
+                continue;
+            }
+            if let Ok(under) = self.memory.children(&next).await {
+                queue.extend(under);
+            }
+        }
+        (direct.len(), all.into_iter().collect())
+    }
+
     /// **How a held thing stands now**, or `None` when it cannot be read (a
     /// thing that is gone, a store that cannot answer): a version nobody can read
     /// is no change. A message stands as `messages` read it.
@@ -413,9 +437,11 @@ impl Jojobot {
                     .await
                     .inspect_err(|e| unread(what, e))
                     .ok()?;
+                let (direct, below) = self.below(handle).await;
                 Some(Version::Entity {
                     own: ages.newest,
-                    around: self.around(handle).await,
+                    around: self.around(handle, &below).await,
+                    children: (direct, below.len()),
                 })
             }
             Held::Claim(address) => {
@@ -426,9 +452,24 @@ impl Jojobot {
                     .inspect_err(|e| unread(what, e))
                     .ok()?;
                 let last = chain.last()?;
+                // **A claim reads the standing of the claim it was derived from**:
+                // taking the source back changes what the derived claim says.
+                let source = match &last.derived_from {
+                    Some(from) => self
+                        .memory
+                        .claim_history(from)
+                        .await
+                        .ok()
+                        .and_then(|chain| {
+                            let last = chain.last()?;
+                            Some((chain.len(), format!("{:?}", last.status).to_lowercase()))
+                        }),
+                    None => None,
+                };
                 Some(Version::Claim {
                     writes: chain.len(),
                     status: format!("{:?}", last.status).to_lowercase(),
+                    source,
                 })
             }
             Held::Message(id) => {
@@ -1187,6 +1228,101 @@ mod tests {
             version(&jojobot, "person:lisa").await,
             lisa,
             "the held block reads the records that point at the thing"
+        );
+    }
+
+    /// **A claim's version follows the claim it was derived from.** A claim built
+    /// on another reads that claim's standing, so taking the source back changes
+    /// what the derived claim says with no write to the derived claim.
+    #[tokio::test]
+    async fn a_claims_version_moves_when_the_claim_it_derives_from_does() {
+        let jojobot = handler();
+        ensure(&jojobot, "person:homer").await;
+        ensure(&jojobot, "bot:sigma").await;
+        let source =
+            capture_ok(&jojobot, capture_args("person:homer", "likes donuts")).await["address"]
+                .as_str()
+                .expect("an address")
+                .to_string();
+        let derived = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                derived_from: Some(source.clone()),
+                ..capture_args("person:homer", "so he is often at the diner")
+            },
+        )
+        .await["address"]
+            .as_str()
+            .expect("an address")
+            .to_string();
+        let held = Held::Claim(derived);
+        let version = || async {
+            jojobot
+                .version_of(&held, &HeldMessages::default())
+                .await
+                .expect("a written claim has a version")
+        };
+        let before = version().await;
+
+        ensure(&jojobot, "person:lisa").await;
+        capture_ok(&jojobot, capture_args("person:lisa", "plays the saxophone")).await;
+        assert_eq!(version().await, before, "an unrelated write moves nothing");
+
+        jojobot
+            .memory
+            .retract(
+                &FactAddress::parse(&source).expect("an address"),
+                Some("never true"),
+                jiff::civil::date(2026, 9, 2),
+                &EntityId::person("bot:sigma"),
+                None,
+            )
+            .await
+            .expect("the source is taken back");
+        assert_ne!(
+            version().await,
+            before,
+            "the derived claim reads its source's standing"
+        );
+    }
+
+    /// **A parent's version follows its children.** The children count a read
+    /// of the parent carries moves when a child is added or taken away, with no
+    /// write to the parent.
+    #[tokio::test]
+    async fn a_parents_version_moves_when_a_child_is_added_or_archived() {
+        let jojobot = handler();
+        ensure(&jojobot, "project:atlas").await;
+        capture_ok(&jojobot, capture_args("project:atlas", "is the campaign")).await;
+        let held = Held::Entity("project:atlas".into());
+        let version = || async {
+            jojobot
+                .version_of(&held, &HeldMessages::default())
+                .await
+                .expect("a written project has a version")
+        };
+        let before = version().await;
+
+        jojobot
+            .memory
+            .add_entity(NewEntity {
+                parent: Some(EntityId::person("project:atlas")),
+                ..NewEntity::new(EntityId::person("work:sigma"), "sigma", "fixture")
+            })
+            .await
+            .expect("the child is created");
+        let with_child = version().await;
+        assert_ne!(with_child, before, "a child added to the parent");
+
+        jojobot
+            .memory
+            .archive_entity(&EntityId::person("work:sigma"), "done with it", None)
+            .await
+            .expect("the child is archived");
+        assert_ne!(
+            version().await,
+            with_child,
+            "a child taken away from the parent"
         );
     }
 

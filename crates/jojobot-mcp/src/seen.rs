@@ -66,9 +66,18 @@ pub(crate) enum Version {
     Entity {
         own: Option<jiff::Timestamp>,
         around: Option<jiff::Timestamp>,
+        /// How many things stand directly under it, and how many stand anywhere
+        /// under it: the counts a read of a parent carries, which moving a child
+        /// changes with no write to the parent.
+        children: (usize, usize),
     },
-    /// How many times the claim was written, and its status.
-    Claim { writes: usize, status: String },
+    /// How many times the claim was written, and its status. `source` is the same
+    /// of the claim it was derived from, which it reads the standing of.
+    Claim {
+        writes: usize,
+        status: String,
+        source: Option<(usize, String)>,
+    },
     /// The state the message was in.
     Message(String),
 }
