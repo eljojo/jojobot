@@ -184,6 +184,9 @@ jobs:
     runs-on: nix-x86_64
     timeout-minutes: 60
     steps:
+      - name: Runner cleanup
+        run: |
+          [ -z "${JOJOBOT_PRE_JOB:-}" ] || "$JOJOBOT_PRE_JOB"
       - name: Level
         run: |
           echo "level: boundary; workflow jobs: $BAR_WORKFLOW_JOBS; left to boundary: none"

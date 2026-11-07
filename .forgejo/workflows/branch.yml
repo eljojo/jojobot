@@ -180,6 +180,9 @@ jobs:
     runs-on: nix
     timeout-minutes: 60
     steps:
+      - name: Runner cleanup
+        run: |
+          [ -z "${JOJOBOT_PRE_JOB:-}" ] || "$JOJOBOT_PRE_JOB"
       - name: Level
         run: |
           echo "level: report; selection: pending; left to boundary: $BAR_BOUNDARY_LEFT"
