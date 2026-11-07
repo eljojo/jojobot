@@ -46,8 +46,12 @@ async fn world(name: &str) -> World {
 }
 
 fn job() -> CaptureJob {
+    job_as(Actor::Operator)
+}
+
+fn job_as(actor: Actor) -> CaptureJob {
     CaptureJob::new(
-        &Actor::Operator,
+        &actor,
         None,
         Arc::new(|_, _| {
             Some(ClaimSize {
@@ -80,10 +84,21 @@ impl World {
 
     /// Capture `fact`, by the old route or through a capture job.
     async fn capture(&self, fact: NewFact, through_the_job: bool) -> jojobot_domain::memory::Fact {
+        self.capture_as(fact, through_the_job, Actor::Operator)
+            .await
+    }
+
+    /// The same, as `actor`: the engine's own captures run under the system.
+    async fn capture_as(
+        &self,
+        fact: NewFact,
+        through_the_job: bool,
+        actor: Actor,
+    ) -> jojobot_domain::memory::Fact {
         let memory = self.memory.clone();
         let work = self.writer.run(async move { memory.capture(fact).await });
         let written = match through_the_job {
-            true => within(job(), work).await,
+            true => within(job_as(actor), work).await,
             false => work.await,
         };
         match written.expect("capture") {
@@ -209,6 +224,8 @@ impl World {
                 out.push(format!("{table}: {line}"));
             }
         }
+        // The tables are ordered by the random keys; the comparison is of the rows.
+        out.sort();
         out
     }
 }
@@ -251,6 +268,27 @@ async fn run(world: &World, through_the_job: bool) {
     second.fields = [("mood".to_string(), "up".to_string())].into();
     second.sets = ["mood".to_string()].into();
     world.capture(second, through_the_job).await;
+
+    // The engine's own record on a bot: a ledger key set on the thing and the
+    // engine's mark on the claim.
+    world.add("bot:lisa", "Lisa").await;
+    let mut ledger = NewFact::about(
+        id("bot:lisa"),
+        "jojobot keeps here the release notes this bot has been told.",
+        date(2026, 4, 21),
+    );
+    ledger.fields = [
+        ("engine_record".to_string(), "release_notes".to_string()),
+        (
+            "release_notes_told".to_string(),
+            "a-note, b-note".to_string(),
+        ),
+    ]
+    .into();
+    ledger.sets = ["release_notes_told".to_string()].into();
+    world
+        .capture_as(ledger, through_the_job, Actor::System("jojobot".into()))
+        .await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -260,6 +298,20 @@ async fn a_capture_through_the_job_leaves_the_rows_the_old_route_leaves() {
     run(&old, false).await;
     run(&new, true).await;
     let (old_rows, new_rows) = (old.rows().await, new.rows().await);
+    let folded = |world: &World| {
+        let memory = world.memory.clone();
+        async move {
+            memory
+                .fields(&id("bot:lisa"))
+                .await
+                .expect("the fold reads")
+        }
+    };
+    assert_eq!(
+        folded(&new).await,
+        folded(&old).await,
+        "the bot holds the same fields through either route"
+    );
     assert!(old_rows.iter().any(|row| row.starts_with("fact: ")));
     assert_eq!(
         new_rows, old_rows,
