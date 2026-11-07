@@ -211,6 +211,12 @@ impl Seam {
         if self.lock().behind {
             self.catch_up().await?;
         }
+        // **A batch the state cannot apply never reaches the log.** Boot replays
+        // the log and nothing takes an event back out of it.
+        self.lock()
+            .state
+            .check(&events)
+            .map_err(|error| LedgerError::Refused(error.to_string()))?;
         let head = self.log.head_in(tx).await.map_err(refused)?;
         let batch = Self::seal(head, &events, at)?;
         let staged = self

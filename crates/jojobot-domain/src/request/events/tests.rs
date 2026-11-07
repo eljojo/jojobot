@@ -572,3 +572,76 @@ fn ledger_events_keep_an_id_for_the_window_and_not_one_second_longer() {
         Some(2)
     );
 }
+
+/// **The check answers as an apply on a copy would.** A batch is fine when every
+/// part a completion names is held already or committed earlier in the same
+/// batch, whether by its own event or by an imported row, and it is refused
+/// when the part is missing or comes after the completion.
+#[test]
+fn a_batch_check_agrees_with_applying_the_batch_to_a_copy() {
+    let completion = || LedgerEvent::RequestCompleted {
+        commit: commit(1),
+        required_parts: vec!["entity".into()],
+    };
+    let entity = || LedgerEvent::RequestPartCommitted(part("entity"));
+    let imported = || LedgerEvent::Imported {
+        row: LegacyRow::RequestPart {
+            bot_key: ObjectId("homer".into()),
+            request_id: RequestId("alpha".into()),
+            part: "entity".into(),
+            verb: "capture".into(),
+            args_digest: "digest-alpha".into(),
+            landed: "entity".into(),
+            note: None,
+            written_at: at(0),
+        },
+        generation: 1,
+    };
+    let mut holding = State::default();
+    holding.apply(&entity()).unwrap();
+    let table: [(&str, State, Vec<LedgerEvent>, bool); 7] = [
+        ("an empty batch", State::default(), vec![], true),
+        (
+            "a completion whose part is held",
+            holding.clone(),
+            vec![completion()],
+            true,
+        ),
+        (
+            "a completion whose part is missing",
+            State::default(),
+            vec![completion()],
+            false,
+        ),
+        (
+            "the part comes first in the batch",
+            State::default(),
+            vec![entity(), completion()],
+            true,
+        ),
+        (
+            "the part comes after the completion",
+            State::default(),
+            vec![completion(), entity()],
+            false,
+        ),
+        (
+            "an imported row commits the part first",
+            State::default(),
+            vec![imported(), completion()],
+            true,
+        ),
+        (
+            "a commit with nothing to complete",
+            State::default(),
+            vec![LedgerEvent::RequestCommitted(commit(1))],
+            true,
+        ),
+    ];
+    for (name, state, batch, fine) in table {
+        let mut copy = state.clone();
+        let applied = batch.iter().try_for_each(|event| copy.apply(event));
+        assert_eq!(applied.is_ok(), fine, "{name}: the oracle");
+        assert_eq!(state.check(&batch).is_ok(), fine, "{name}: the check");
+    }
+}

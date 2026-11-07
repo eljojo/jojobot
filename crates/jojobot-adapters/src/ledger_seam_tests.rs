@@ -38,6 +38,81 @@ fn commit(id: &str) -> Commit {
     }
 }
 
+/// **A batch the state cannot apply never reaches the log.** Boot replays the log
+/// and nothing takes an event back out of it, so a completion that names a part
+/// nobody committed is refused, and the log and the held state stay as they were.
+/// A completion whose part rides in the same batch is not refused.
+#[tokio::test]
+async fn a_batch_the_state_cannot_apply_never_reaches_the_log() {
+    use jojobot_domain::request::Recorded;
+    use jojobot_domain::request::events::Part;
+    let scratch = Scratch::new("ledger-seam-unappliable");
+    let mut server = Dolt::start(&scratch.0, free_port()).await.unwrap();
+    let pool = migrated_database(&server, "alpha").await.unwrap();
+    let writer = Writer::default();
+    let sql_pool = sql::Pool::from(pool.clone());
+    let job_writer = writer.clone();
+    let log_pool = pool.clone();
+    writer
+        .run(async move {
+            let seam = Seam::open(&job_writer, &sql_pool).await.unwrap();
+            let refused = seam
+                .append_event_batch(
+                    &sql_pool,
+                    vec![LedgerEvent::RequestCompleted {
+                        commit: commit("one"),
+                        required_parts: vec!["entity".into()],
+                    }],
+                    at(1),
+                )
+                .await;
+            assert!(
+                matches!(refused, Err(crate::ledger_log::LedgerError::Refused(_))),
+                "{refused:?}"
+            );
+            let batches: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM event_log WHERE first_position IS NOT NULL",
+            )
+            .fetch_one(&log_pool)
+            .await
+            .unwrap();
+            assert_eq!(batches, 0, "the refused batch is not in the log");
+            assert!(
+                seam.read(|state| state
+                    .lookup(&actor(), &RequestId("one".into()), at(2))
+                    .is_none()),
+                "the held state does not hold it"
+            );
+
+            let part = Part {
+                request: commit("two").request,
+                name: "entity".into(),
+                recorded: Recorded {
+                    landed: "entity".into(),
+                    note: None,
+                },
+                written_at: at(0),
+                expires_at: at(100_000),
+            };
+            seam.append_event_batch(
+                &sql_pool,
+                vec![
+                    LedgerEvent::RequestPartCommitted(part),
+                    LedgerEvent::RequestCompleted {
+                        commit: commit("two"),
+                        required_parts: vec!["entity".into()],
+                    },
+                ],
+                at(3),
+            )
+            .await
+            .expect("a completion whose part rides in the same batch is applied");
+        })
+        .await;
+    drop(writer);
+    server.stop().await;
+}
+
 /// **A commit whose answer is lost is settled by the next write's stage.** The
 /// store commits the first batch and the caller is told it does not know. The seam
 /// is then behind the log; the next write reads the tail before it stages, so it

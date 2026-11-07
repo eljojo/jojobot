@@ -272,6 +272,55 @@ impl State {
         Ok(())
     }
 
+    /// **Whether a batch would apply, answered without copying the state.** The
+    /// one thing that fails an apply is a completion that names a part nobody
+    /// committed, so the check holds the parts the batch itself commits before it
+    /// and looks the rest up. Every batch a writer makes is stamped by one write,
+    /// so the check does not model one event evicting the generation another
+    /// completes; the apply that follows a commit still reports such a case.
+    pub fn check(&self, events: &[LedgerEvent]) -> Result<(), MissingPart> {
+        let mut added: std::collections::HashSet<(ObjectId, RequestId, u64, String)> =
+            std::collections::HashSet::new();
+        let slot = |key: &RequestKey, name: &str| {
+            (
+                key.actor.clone(),
+                key.id.clone(),
+                key.generation,
+                name.to_string(),
+            )
+        };
+        for event in events {
+            let projected;
+            let event = match event {
+                LedgerEvent::Imported { row, generation } => {
+                    projected = row.projection(*generation);
+                    &projected
+                }
+                other => other,
+            };
+            match event {
+                LedgerEvent::RequestPartCommitted(part) => {
+                    added.insert(slot(&part.request.key, &part.name));
+                }
+                LedgerEvent::RequestCompleted {
+                    commit,
+                    required_parts,
+                } => {
+                    for name in required_parts {
+                        let held = self
+                            .request(&commit.request.key)
+                            .is_some_and(|held| held.parts.contains_key(name));
+                        if !held && !added.contains(&slot(&commit.request.key, name)) {
+                            return Err(MissingPart);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
     /// Change one generation, keeping the horizon index in step with it.
     fn edit(&mut self, key: &RequestKey, change: impl FnOnce(&mut RequestProjection)) {
         let held = self
