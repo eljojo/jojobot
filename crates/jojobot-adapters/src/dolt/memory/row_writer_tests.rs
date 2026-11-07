@@ -450,6 +450,35 @@ async fn a_former_handle_in_an_edge_a_ref_or_a_field_is_answered_as_the_old_rout
     new.server.stop().await;
 }
 
+/// **A change of a bot request's spec is numbered in the rows the job route
+/// writes**: the generation the admitted batch carries is a key write on the
+/// thing, in the same transaction as the act.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_spec_change_through_the_job_leaves_its_generation_in_the_rows() {
+    let mut world = world("row-writer-generation").await;
+    world.add("bot-request:alpha", "Alpha").await;
+    let spec = |desired: &str| {
+        let mut fact = NewFact::about(id("bot-request:alpha"), "a spec", date(2026, 4, 19));
+        fact.fields = [("desired".to_string(), desired.to_string())].into();
+        fact.sets = ["desired".to_string()].into();
+        fact
+    };
+    world.capture(spec("running"), true).await;
+    world.capture(spec("running"), true).await;
+    world.capture(spec("stopped"), true).await;
+    let numbers: Vec<(String, String)> = sqlx::query_as(
+        "SELECT value, fact_id FROM field_write WHERE `key` = 'generation' ORDER BY ordinal",
+    )
+    .fetch_all(&world.store)
+    .await
+    .expect("the generation rows read");
+    // The first spec is generation 1; the same spec again makes none; a changed one
+    // makes the next.
+    let values: Vec<&str> = numbers.iter().map(|(value, _)| value.as_str()).collect();
+    assert_eq!(values, ["1", "2"], "{numbers:?}");
+    world.server.stop().await;
+}
+
 /// **A label a rewrite changes on a claim the job route wrote is changed in the
 /// State**: the seats a starred rule holds are counted there.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -499,6 +528,60 @@ async fn a_rewrite_unstars_a_claim_the_job_route_starred() {
         "the unstarred rule left its seat"
     );
     world.server.stop().await;
+}
+
+/// A room of one thought: the second thought joins by giving the first up, so
+/// the job route revises a claim it did not create.
+async fn run_a_thought_into_a_full_room(world: &World, through_the_job: bool) {
+    for (handle, name) in [
+        ("person:homer", "Homer"),
+        ("person:marge", "Marge"),
+        ("person:bart", "Bart"),
+    ] {
+        world.add(handle, name).await;
+    }
+    let mut capacity = NewFact::about(id("person:homer"), "the room holds one", date(2026, 4, 19));
+    capacity.fields = [("thought_capacity".to_string(), "1".to_string())].into();
+    capacity.sets = ["thought_capacity".to_string()].into();
+    world.capture(capacity, through_the_job).await;
+    let thought = |about: &str, content: &str| {
+        let mut fact = NewFact::about(id("person:homer"), content, date(2026, 4, 20));
+        fact.edge = Some(Edge {
+            shape: EdgeShape::Connection,
+            object: id(about),
+        });
+        fact
+    };
+    let first = world
+        .capture(
+            thought("person:marge", "the first thought"),
+            through_the_job,
+        )
+        .await;
+    let mut second = thought("person:bart", "the second thought");
+    second.drop = Some(first.address());
+    second.drop_because = Some("it no longer earns its slot".to_string());
+    world.capture(second, through_the_job).await;
+}
+
+/// **A thought that gives another up leaves the rows the old route leaves**: the
+/// archive of the given-up claim is a revision the job route writes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_thought_given_up_for_a_room_leaves_the_same_rows_through_the_job() {
+    let mut old = world("row-writer-room-old").await;
+    let mut new = world("row-writer-room-new").await;
+    run_a_thought_into_a_full_room(&old, false).await;
+    run_a_thought_into_a_full_room(&new, true).await;
+    let (old_rows, new_rows) = (old.rows().await, new.rows().await);
+    assert!(
+        old_rows
+            .iter()
+            .any(|row| row.starts_with("fact: ") && row.contains("archived")),
+        "the first thought is given up: {old_rows:?}"
+    );
+    assert_eq!(new_rows, old_rows);
+    old.server.stop().await;
+    new.server.stop().await;
 }
 
 /// **A claim decided over the State is read back by the row readers and edited by
