@@ -107,7 +107,7 @@ impl Default for Writer {
 
 impl Writer {
     #[cfg(test)]
-    async fn fence_contended(&self) {
+    pub(crate) async fn fence_contended(&self) {
         self.0.contended.notified().await;
     }
 

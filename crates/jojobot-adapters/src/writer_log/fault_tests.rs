@@ -51,7 +51,6 @@ struct NativeGate {
     finished: Notify,
     early_read: AtomicBool,
     killed: AtomicBool,
-    waiting: Notify,
 }
 
 fn error_packet(message: &str) -> Vec<u8> {
@@ -127,12 +126,6 @@ async fn serve(
         let command = bytes[4];
         if command == 0x16 {
             kill_statement = text.starts_with("KILL CONNECTION");
-            if text == "SELECT GET_LOCK(?, ?)"
-                && plan.kills.load(Ordering::SeqCst) > 0
-                && let Some(native) = &plan.native
-            {
-                native.waiting.notify_one();
-            }
         }
         if command == 0x17 && kill_statement {
             kill_reply.store(true, Ordering::SeqCst);
@@ -450,7 +443,6 @@ async fn teaching_native_gate(release_before_receipt: bool) {
         finished: Notify::new(),
         early_read: AtomicBool::new(false),
         killed: AtomicBool::new(false),
-        waiting: Notify::new(),
     });
     let plan = Arc::new(Plan {
         native: Some(native.clone()),
@@ -507,7 +499,7 @@ async fn teaching_native_gate(release_before_receipt: bool) {
     .await
     .expect("Dolt acknowledged recovery's KILL before the old command ended");
     tokio::select! {
-        () = native.waiting.notified() => {},
+        () = writer.fence_contended() => {},
         answer = &mut caller => panic!("the receipt returned without waiting on the old connection: {answer:?}"),
         () = tokio::time::sleep(std::time::Duration::from_secs(5)) => panic!("recovery never requested the native fence wait"),
     }
@@ -521,10 +513,7 @@ async fn teaching_native_gate(release_before_receipt: bool) {
     assert!(writer.rail_uncertain("event-log"));
     assert_eq!(writer.recovery_counts().recovered, 0);
     assert!(teachings.has_contact(&control, "claims").await.unwrap());
-    assert!(matches!(
-        teachings.has_contact(&pending, "claims").await,
-        Ok(false) | Err(TeachingError::Indeterminate)
-    ));
+    assert!(!teachings.has_contact(&pending, "claims").await.unwrap());
     let during: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM event_log")
         .fetch_one(&store)
         .await
@@ -546,7 +535,9 @@ async fn teaching_native_gate(release_before_receipt: bool) {
     );
     if !release_before_receipt {
         assert!(writer.rail_uncertain("event-log"));
-        assert!(writer.recovery_counts().failed > 0);
+        // The native append tries once; teaching's four eager tail reads each
+        // retry that same still-held fence before returning its receipt.
+        assert_eq!(writer.recovery_counts().failed, 5);
         assert_eq!(writer.recovery_counts().recovered, 0);
         let commits = native.commits.load(Ordering::SeqCst);
         assert!(teachings.first_contact(&next, "claims", at).await.is_err());
@@ -582,6 +573,23 @@ async fn teaching_native_gate(release_before_receipt: bool) {
         "recovery read the log before the old server command ended"
     );
     let replay = LoggedTeachings::open(log, &[]).await.unwrap();
+    let after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM event_log")
+        .fetch_one(&store)
+        .await
+        .unwrap();
+    let next_batches = i64::from(!release_before_receipt);
+    assert!((before + next_batches..=before + next_batches + 1).contains(&after));
+    let pending_committed = after == before + next_batches + 1;
+    assert!(replay.has_contact(&control, "claims").await.unwrap());
+    assert_eq!(
+        replay.has_contact(&next, "claims").await.unwrap(),
+        !release_before_receipt
+    );
+    assert_eq!(
+        replay.has_contact(&pending, "claims").await.unwrap(),
+        pending_committed,
+        "the pending mark follows the native transaction's persisted outcome"
+    );
     assert_eq!(
         teachings.has_contact(&pending, "claims").await.unwrap(),
         replay.has_contact(&pending, "claims").await.unwrap()

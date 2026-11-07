@@ -22,7 +22,7 @@ use jojobot_adapters::fold::Folded;
 use jojobot_adapters::provisioned::Provisioned;
 use jojobot_adapters::search::{IndexedMemory, Retrieval};
 use jojobot_adapters::teaching_log::LoggedTeachings;
-use jojobot_adapters::testing::{Scratch, free_port, migrated_database, start_unhurried};
+use jojobot_adapters::testing::{Scratch, free_port, migrated_database};
 use jojobot_adapters::writer::Writer;
 use jojobot_adapters::writer_log::WriterLog;
 use jojobot_domain::mailbox::testing::contract as mailboxes;
