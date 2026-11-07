@@ -326,7 +326,7 @@ impl Seam {
         if !claims.is_empty() {
             self.settle_claims().await?;
         }
-        let claims = self.numbered(claims);
+        let claims = self.numbered(claims, at);
         let claims: Vec<Event<ClaimEvent>> = claims
             .iter()
             .map(|event| {
@@ -408,18 +408,19 @@ impl Seam {
     /// number is made, for every writer: the batch is complete here and not yet
     /// applied, so the State still holds the spec as it was. A caller never sends
     /// the number.
-    fn numbered(&self, mut claims: Vec<Event<ClaimEvent>>) -> Vec<Event<ClaimEvent>> {
+    fn numbered(
+        &self,
+        mut claims: Vec<Event<ClaimEvent>>,
+        at: Timestamp,
+    ) -> Vec<Event<ClaimEvent>> {
         let Some(envelope) = claims.first().cloned() else {
             return claims;
         };
         let held = self.lock();
         let payloads: Vec<ClaimEvent> = claims.iter().map(|event| event.payload.clone()).collect();
         let declared = held.claims.declared_types();
-        let day = envelope
-            .written_at
-            .unwrap_or_else(Timestamp::now)
-            .to_zoned(jiff::tz::TimeZone::UTC)
-            .date();
+        // **The day is the server's moment of the batch**, never the wall clock.
+        let day = at.to_zoned(jiff::tz::TimeZone::UTC).date();
         for payload in held.claims.generation_events(
             &payloads,
             &declared,

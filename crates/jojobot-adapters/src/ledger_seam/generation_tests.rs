@@ -197,6 +197,42 @@ async fn a_withdrawal_numbers_the_spec_on_a_live_claim() {
     server.stop().await;
 }
 
+/// **The claim that carries a withdrawal's number is dated by the server's moment
+/// of the batch**, the one the seam is staged at, and never by the wall clock: an
+/// instance acting out a day dates what it writes by that day.
+#[tokio::test]
+async fn the_companion_claim_of_a_withdrawal_is_dated_by_the_stated_day() {
+    let scratch = Scratch::new("seam-generation-stated-day");
+    let mut server = Dolt::start(&scratch.0, free_port()).await.unwrap();
+    let store = migrated_database(&server, "alpha").await.unwrap();
+    let pool = sql::Pool::from(store.clone());
+    let writer = Writer::default();
+    let seam = {
+        let (opener, pool) = (writer.clone(), pool.clone());
+        writer
+            .run(async move { opener.ensure_seam(&pool).await })
+            .await
+            .expect("the seam opens")
+    };
+    stage(&writer, &pool, &seam, requests()).await;
+    stage(&writer, &pool, &seam, spec("r1", "f1", "k1", 1, "running")).await;
+    // The withdrawal carries no moment of its own: the day comes from the batch.
+    let mut withdrawal = archive("r1", "f1", "k1");
+    for event in &mut withdrawal {
+        event.written_at = None;
+    }
+    stage(&writer, &pool, &seam, withdrawal).await;
+
+    let dated = seam.read_claims(|state| {
+        let located = state.claim_at("bot-request:alpha#f2")?;
+        state.fact(&located.record).map(|fact| fact.recorded_at)
+    });
+    // `at(1)` of these cases is a day in November 2023.
+    assert_eq!(dated, Some(date(2023, 11, 14)));
+    writer.drain().await;
+    server.stop().await;
+}
+
 /// **A request made in the batch that sets its spec is numbered by its handle**,
 /// the spelling the batch binds, and not by the display name it is created under.
 #[tokio::test]
