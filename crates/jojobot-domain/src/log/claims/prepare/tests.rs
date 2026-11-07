@@ -29,6 +29,9 @@ fn thing(id: &str) -> Vec<ClaimEvent> {
 
 /// Two homes and a claim on `alpha`; `ref-key` is a declared reference.
 fn world() -> (State, Vec<DeclaredType>) {
+    // An edge check on a handle asks the process's kind set, which a case run
+    // alone has not loaded.
+    crate::memory::kinds::load_shipped();
     let events = [
         thing("alpha"),
         thing("beta"),
@@ -632,6 +635,9 @@ fn app(name: &str) -> AppId {
 /// `bound` is bound to the app `bart-ci` and owns the key `state`; `free` is
 /// bound to nobody.
 fn bound_world() -> (State, Vec<DeclaredType>) {
+    // An edge check on a handle asks the process's kind set, which a case run
+    // alone has not loaded.
+    crate::memory::kinds::load_shipped();
     let mut events = [thing("bound"), thing("free")].concat();
     events[0] = ClaimEvent::ObjectCreated {
         object: object("bound"),
