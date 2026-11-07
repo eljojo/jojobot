@@ -188,7 +188,10 @@ def main(command):
               file=sys.stderr)
         return 2
     if not told:  # a signal before the release has already ended the waiting command
-        os.write(release, b"go\n")
+        try:
+            os.write(release, b"go\n")
+        except BrokenPipeError:
+            pass  # a signal in this gap ended the waiting command; the wait below reads it
     os.close(release)
     # The wait is bounded once a signal is told: a leader that ignores TERM must not
     # keep the guard, and the kill that follows the grace, from running.
