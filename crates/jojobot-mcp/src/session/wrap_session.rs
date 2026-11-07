@@ -137,17 +137,16 @@ impl Jojobot {
         // the same derivation, which is the only form the two can meet in.
         // Either way, `None` adds no field, rather than one that repeats the
         // entry it sits on.
-        // **The story as the chronology will read it back**: the entry and the
-        // derived focus come back through the mention wrapper, which renders a
-        // handle that names nothing or one renamed since as other words. A story
-        // is the same story told whichever way it is spelled.
+        // **The story as the chronology will read it back**: the entry comes back
+        // through the mention wrapper, which renders a handle that names nothing
+        // as other words. A story is the same story told whichever way it is
+        // spelled. A read that fails (kinds not loaded, a store error) falls back
+        // to the story as sent, and the guard below then compares as it did
+        // before this existed.
         let story_as_read = jojobot_domain::session::mention::as_read(&*self.memory, &story)
             .await
             .unwrap_or_else(|_| story.clone());
-        let closing_focus = if focus.is_empty()
-            || display_line(&story) == focus
-            || display_line(&story_as_read) == focus
-        {
+        let closing_focus = if focus.is_empty() || display_line(&story) == focus {
             None
         } else {
             Some(focus)
