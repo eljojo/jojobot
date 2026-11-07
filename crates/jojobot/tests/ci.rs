@@ -452,7 +452,7 @@ fn every_job_runs_the_runner_pre_job_first() {
                     ]
                     .as_slice()
                 ),
-                "{} {job} must run the unconditional runner cleanup first: {first:?}",
+                "{} {job} must run the runner cleanup hook first: {first:?}",
                 path.display(),
             );
         }
