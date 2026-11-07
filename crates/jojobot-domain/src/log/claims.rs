@@ -613,6 +613,16 @@ impl State {
             .collect()
     }
 
+    /// Every name the State holds a declaration for.
+    pub fn declared_names(&self) -> impl Iterator<Item = &ObjectId> {
+        self.declarations.keys()
+    }
+
+    /// Whether any object, archived or not, is of this kind.
+    pub fn holds_object_of_kind(&self, kind: &ObjectId) -> bool {
+        self.objects.values().any(|object| object.kind.0 == kind.0)
+    }
+
     /// Every declaration of a kind, oldest first.
     pub fn declarations_of(&self, kind: &ObjectId) -> &[DeclaredType] {
         self.declarations.get(kind).map_or(&[], Vec::as_slice)

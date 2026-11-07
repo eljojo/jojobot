@@ -29,7 +29,7 @@ use super::{
 use crate::actor::Actor;
 use crate::log::{Event, ObjectId, RecordId, RunId};
 use crate::memory::merge::{self, MergeStep, ServedWrite};
-use crate::memory::types::DeclaredType;
+use crate::memory::types::{DeclaredType, Origin};
 use crate::memory::write_origin::{self, WriteOrigin};
 use crate::memory::{EntityId, WriteClass};
 
@@ -317,6 +317,44 @@ pub fn reconcile_shipped_declarations(
             })
         })
         .collect()
+}
+
+/// **What a later boot takes back of the declarations the build stopped shipping.**
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Withdrawals {
+    /// One `TypeWithdrawn` for each declaration the build shipped once and no
+    /// longer ships, whose kind no object wears.
+    pub events: Vec<Event<ClaimEvent>>,
+    /// The kinds the build no longer ships that an object still wears. They are
+    /// not withdrawn, so no object is left with a kind nothing declares (rule 508);
+    /// the boot names each.
+    pub held_back: Vec<ObjectId>,
+}
+
+/// **The declarations the State holds that the build shipped once and now does not.**
+/// A declaration in force whose origin is the software's and whose name the list
+/// does not carry is withdrawn, unless an object wears the kind. `ships` is every name
+/// the build ships, kept apart from the declarations the reconcile compares, so a
+/// list that leaves a shipped name out of that comparison never reads as the build
+/// having dropped it. A declaration a caller made is never the build's to take back.
+pub fn reconcile_removed_declarations(state: &State, ships: &[String]) -> Withdrawals {
+    let mut withdrawals = Withdrawals::default();
+    for kind in state.declared_names() {
+        let ours = state
+            .declared(kind)
+            .is_some_and(|declaration| declaration.origin == Origin::Shipped);
+        if !ours || ships.contains(&kind.0) {
+            continue;
+        }
+        if state.holds_object_of_kind(kind) {
+            withdrawals.held_back.push(kind.clone());
+        } else {
+            withdrawals
+                .events
+                .push(plain(ClaimEvent::TypeWithdrawn { kind: kind.clone() }));
+        }
+    }
+    withdrawals
 }
 
 /// **The identity an adopted handle has in the log.** Deterministic from the

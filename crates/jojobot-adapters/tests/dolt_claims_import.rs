@@ -106,6 +106,14 @@ async fn expected(pool: &sqlx::MySqlPool) -> Vec<Event<ClaimEvent>> {
         .collect()
 }
 
+/// The names a list of declarations carries: what a build ships, for a list that
+/// is also the build's whole shipped set.
+fn names_of(list: &[jojobot_domain::memory::types::DeclaredType]) -> Vec<String> {
+    list.iter()
+        .map(|declaration| declaration.name.clone())
+        .collect()
+}
+
 /// The run's own day. `at()` is 08:00 UTC on the 15th of January 2027, so the day
 /// before it is one no UTC reading of that clock gives.
 fn the_day() -> jiff::civil::Date {
@@ -792,7 +800,7 @@ async fn claims_reconcile_appends_the_new_record_and_then_nothing() {
     };
     let after_import = batches(pool.clone()).await;
     assert_eq!(
-        reconcile_supply_list_once(&Writer::default(), &pool, &first, &[], at(), the_day())
+        reconcile_supply_list_once(&Writer::default(), &pool, &first, &[], &[], at(), the_day())
             .await
             .expect("reconcile runs"),
         0,
@@ -802,7 +810,7 @@ async fn claims_reconcile_appends_the_new_record_and_then_nothing() {
 
     let later = supplied_views(&["view:loops", "view:board"]);
     assert_eq!(
-        reconcile_supply_list_once(&Writer::default(), &pool, &later, &[], at(), the_day())
+        reconcile_supply_list_once(&Writer::default(), &pool, &later, &[], &[], at(), the_day())
             .await
             .expect("reconcile runs"),
         2,
@@ -814,7 +822,7 @@ async fn claims_reconcile_appends_the_new_record_and_then_nothing() {
         "in one batch"
     );
     assert_eq!(
-        reconcile_supply_list_once(&Writer::default(), &pool, &later, &[], at(), the_day())
+        reconcile_supply_list_once(&Writer::default(), &pool, &later, &[], &[], at(), the_day())
             .await
             .expect("reconcile runs"),
         0,
@@ -1122,9 +1130,17 @@ async fn claims_reconcile_moves_a_renamed_record_and_refuses_two_with_one_first_
             })
             .collect(),
     );
-    reconcile_supply_list_once(&Writer::default(), &pool, &renamed, &[], at(), the_day())
-        .await
-        .expect("the rename reconciles");
+    reconcile_supply_list_once(
+        &Writer::default(),
+        &pool,
+        &renamed,
+        &[],
+        &[],
+        at(),
+        the_day(),
+    )
+    .await
+    .expect("the rename reconciles");
     let retired_on: Vec<_> = logged(&pool)
         .await
         .iter()
@@ -1160,7 +1176,7 @@ async fn claims_reconcile_moves_a_renamed_record_and_refuses_two_with_one_first_
             .collect(),
     );
     let refused =
-        reconcile_supply_list_once(&Writer::default(), &pool, &twice, &[], at(), the_day())
+        reconcile_supply_list_once(&Writer::default(), &pool, &twice, &[], &[], at(), the_day())
             .await
             .expect_err("two records with one first handle are refused");
     assert!(
@@ -1312,6 +1328,7 @@ async fn claims_reconcile_declares_a_shipped_kind_the_build_changed() {
                 &pool,
                 &Provisions::default(),
                 &list,
+                &names_of(&list),
                 at(),
                 the_day(),
             )
@@ -1695,6 +1712,126 @@ async fn claims_import_holds_the_keys_the_store_serves_over_an_older_account() {
         state.declared(&jojobot_domain::log::ObjectId("sketch".to_string())),
         Some(wanted),
         "the State answers sketch as the store does"
+    );
+
+    server.stop().await;
+}
+
+/// **A kind a later build stops shipping is taken back, and only that kind.** An
+/// earlier build shipped `dobro` and `person`; the build now ships neither. The
+/// reconcile withdraws `dobro`, whose kind no object wears, and keeps `person`,
+/// which Homer wears (a kind with an object is never left undeclared), and keeps
+/// `sketch`, a type a caller declared and no build ships. A second run appends
+/// nothing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn claims_reconcile_withdraws_a_shipped_kind_the_build_stopped_shipping() {
+    use jojobot_adapters::claims_import::reconcile_supply_list_once;
+    use jojobot_domain::log::ObjectId;
+    use jojobot_domain::memory::types::{DeclaredType, Field, ValueType};
+    let (_scratch, mut server, pool) = store("claims-reconcile-removed-kind").await;
+    let memory = DoltMemory::open(pool.clone());
+    thing(&memory, "person:homer", "Homer").await;
+    memory
+        .declare_type(
+            DeclaredType::new("sketch", vec![Field::new("mood", ValueType::Text)]),
+            None,
+        )
+        .await
+        .expect("a caller's type");
+    import_claims_once(&Writer::default(), &pool, &Provisions::default(), at())
+        .await
+        .expect("the import runs");
+    let dobro = DeclaredType::shipped("dobro", vec![Field::new("strings", ValueType::Text)]);
+    let earlier: Vec<DeclaredType> = jojobot_domain::memory::kinds::shipped_declarations()
+        .into_iter()
+        .chain([dobro])
+        .collect();
+    let now: Vec<DeclaredType> = earlier
+        .iter()
+        .filter(|declaration| declaration.name != "dobro" && declaration.name != "person")
+        .cloned()
+        .collect();
+    let run = |list: Vec<DeclaredType>| {
+        let pool = pool.clone();
+        async move {
+            reconcile_supply_list_once(
+                &Writer::default(),
+                &pool,
+                &Provisions::default(),
+                &list,
+                &names_of(&list),
+                at(),
+                the_day(),
+            )
+            .await
+            .expect("reconcile runs")
+        }
+    };
+    run(earlier).await;
+    let withdrawn = run(now.clone()).await;
+    assert_eq!(withdrawn, 1, "only the kind nothing wears is withdrawn");
+    let state = State::replay(logged(&pool).await.iter());
+    assert_eq!(
+        state.declared(&ObjectId("dobro".into())),
+        None,
+        "the kind the build dropped is no longer declared"
+    );
+    assert!(
+        state.declared(&ObjectId("person".into())).is_some(),
+        "a kind an object wears stays declared"
+    );
+    assert!(
+        state.declared(&ObjectId("sketch".into())).is_some(),
+        "a caller's declaration is never the build's to take back"
+    );
+    assert_eq!(run(now).await, 0, "a second run appends nothing");
+
+    server.stop().await;
+}
+
+/// **A name the build ships is not withdrawn because the list compared leaves it
+/// out.** The reconcile is handed the declarations to compare and, apart from them,
+/// every name the build ships. A shipped kind missing from the compared list stays
+/// declared; the same kind missing from the shipped names goes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn claims_reconcile_keeps_a_shipped_name_the_compared_list_leaves_out() {
+    use jojobot_adapters::claims_import::reconcile_supply_list_once;
+    use jojobot_domain::log::ObjectId;
+    use jojobot_domain::memory::types::{DeclaredType, Field, ValueType};
+    let (_scratch, mut server, pool) = store("claims-reconcile-ships-apart").await;
+    import_claims_once(&Writer::default(), &pool, &Provisions::default(), at())
+        .await
+        .expect("the import runs");
+    let dobro = DeclaredType::shipped("dobro", vec![Field::new("strings", ValueType::Text)]);
+    let list = vec![dobro];
+    let run = |compared: Vec<DeclaredType>, ships: Vec<String>| {
+        let pool = pool.clone();
+        async move {
+            reconcile_supply_list_once(
+                &Writer::default(),
+                &pool,
+                &Provisions::default(),
+                &compared,
+                &ships,
+                at(),
+                the_day(),
+            )
+            .await
+            .expect("reconcile runs")
+        }
+    };
+    run(list.clone(), names_of(&list)).await;
+    let kept = run(Vec::new(), names_of(&list)).await;
+    assert_eq!(kept, 0, "the build ships it, so nothing is withdrawn");
+    let state = State::replay(logged(&pool).await.iter());
+    assert!(
+        state.declared(&ObjectId("dobro".into())).is_some(),
+        "the declaration stays"
+    );
+    assert_eq!(
+        run(Vec::new(), Vec::new()).await,
+        1,
+        "a name the build does not ship goes"
     );
 
     server.stop().await;

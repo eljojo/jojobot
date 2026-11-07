@@ -236,16 +236,19 @@ pub async fn reconcile_supply_list_once(
     pool: &MySqlPool,
     supplied: &Provisions,
     shipped: &[DeclaredType],
+    ships: &[String],
     at: Timestamp,
     day: jiff::civil::Date,
 ) -> Result<usize, ClaimsImportError> {
     refuse_two_records_with_one_first_handle(supplied)?;
-    let shipped = shipped.to_vec();
+    let (shipped, ships) = (shipped.to_vec(), ships.to_vec());
     let pool = sql::Pool::from(pool.clone());
     let owner = writer.clone();
     let supplied = crate::dolt::memory::import_rows::supplied_rows(supplied);
     writer
-        .run(async move { reconcile_in_job(&owner, &pool, supplied, shipped, at, day).await })
+        .run(
+            async move { reconcile_in_job(&owner, &pool, supplied, shipped, ships, at, day).await },
+        )
         .await
 }
 
@@ -254,6 +257,7 @@ async fn reconcile_in_job(
     pool: &sql::Pool,
     supplied: Vec<jojobot_domain::log::claims::import::SuppliedRow>,
     shipped: Vec<DeclaredType>,
+    ships: Vec<String>,
     at: Timestamp,
     day: jiff::civil::Date,
 ) -> Result<usize, ClaimsImportError> {
@@ -292,6 +296,17 @@ async fn reconcile_in_job(
     events.extend(
         jojobot_domain::log::claims::import::reconcile_shipped_declarations(&state, &shipped),
     );
+    let removed =
+        jojobot_domain::log::claims::import::reconcile_removed_declarations(&state, &ships);
+    // Info, not warn: a kind an object wears stays declared on every boot, and the
+    // upgrade gate fails a boot on any warning.
+    for kind in &removed.held_back {
+        tracing::info!(
+            kind = %kind.0,
+            "the build no longer ships this kind and objects still wear it, so its declaration stays"
+        );
+    }
+    events.extend(removed.events);
     if events.is_empty() {
         return Ok(0);
     }

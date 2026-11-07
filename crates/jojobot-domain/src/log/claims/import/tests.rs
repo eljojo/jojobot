@@ -2191,3 +2191,59 @@ fn a_changed_shipped_declaration_is_declared_again_and_an_unchanged_one_is_not()
         "a second pass appends nothing"
     );
 }
+
+/// **Only a declaration the software shipped, and the build no longer ships, is
+/// withdrawn.** A shipped type is withdrawn as a shipped kind is (the rule reads
+/// declarations, not kinds). A declaration with a key a caller added goes whole
+/// with it, silently. A caller's own declaration stays. A name the build ships is
+/// kept even when the declarations the reconcile compares leave it out: `ships`
+/// is the build's names, apart from that list.
+#[test]
+fn a_withdrawal_reads_the_build_s_names_apart_from_the_declarations_compared() {
+    let caller = DeclaredType::new(
+        "sketch",
+        vec![crate::memory::types::Field::new(
+            "mood",
+            crate::memory::types::ValueType::Text,
+        )],
+    );
+    let held: Vec<Event<ClaimEvent>> = [
+        shipped_declaration("runs-out", &["runs_out"]),
+        shipped_declaration("pledge", &["witness", "date"]),
+        shipped_declaration("kept", &["a_key"]),
+        caller,
+    ]
+    .into_iter()
+    .map(|declaration| {
+        plain(ClaimEvent::TypeDeclared {
+            kind: object(&declaration.name),
+            declaration,
+        })
+    })
+    .collect();
+    let state = State::replay(&held);
+    let ships = vec!["kept".to_string()];
+    let gone = reconcile_removed_declarations(&state, &ships);
+    let mut withdrawn: Vec<&str> = gone
+        .events
+        .iter()
+        .filter_map(|event| match &event.payload {
+            ClaimEvent::TypeWithdrawn { kind } => Some(kind.0.as_str()),
+            _ => None,
+        })
+        .collect();
+    withdrawn.sort_unstable();
+    assert_eq!(
+        withdrawn,
+        ["pledge", "runs-out"],
+        "a shipped type and a kind with a caller's key go; the caller's own and the shipped stay"
+    );
+    assert!(gone.held_back.is_empty(), "no object wears them");
+    let all = ["kept", "pledge", "runs-out"].map(String::from);
+    assert!(
+        reconcile_removed_declarations(&state, &all)
+            .events
+            .is_empty(),
+        "a name the build ships is never withdrawn, whatever list the reconcile compared"
+    );
+}

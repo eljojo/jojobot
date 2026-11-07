@@ -1384,6 +1384,7 @@ pub async fn reconcile_claims_supply(
         &effective_shipped_declarations(memory).await.map_err(|e| {
             jojobot_adapters::claims_import::ClaimsImportError::Store(e.to_string())
         })?,
+        &shipped_names(),
         clock.now(),
         the_day_of_this_boot(memory, clock).await,
     )
@@ -1409,6 +1410,17 @@ async fn effective_shipped_declarations(
         .into_iter()
         .filter(|declaration| names.contains(&declaration.name))
         .collect())
+}
+
+/// **Every name this build ships**, kinds and types, kept apart from the list the
+/// reconcile compares so a shipped name left out of that comparison is never read
+/// as a name the build dropped.
+fn shipped_names() -> Vec<String> {
+    jojobot_domain::memory::kinds::shipped_declarations()
+        .into_iter()
+        .chain(jojobot_mcp::seed::shipped_types())
+        .map(|declaration| declaration.name)
+        .collect()
 }
 
 /// **Every kind and type this build ships**, as the claims reconcile compares them
