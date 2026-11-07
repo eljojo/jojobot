@@ -278,7 +278,7 @@ fn compose_receipt(body: Value, notes: &[TeachingNote]) -> Composed {
 mod tests {
     use super::TeachingNote;
     use crate::CaptureArgs;
-    use crate::answer::compose::Tier;
+    use crate::answer::compose::{LEAN_LIMIT, Tier};
     use crate::harness::*;
     use crate::memory::testing::*;
     use crate::memory::unlocks::OwedUnlock;
@@ -423,6 +423,7 @@ mod tests {
         ensure(&jojobot, "document:alpha").await;
         make_bot(&jojobot, "gamma").await;
         let sid = booted(&jojobot, "gamma").await;
+        after_the_first_contact_teaching(&jojobot, &sid).await;
         let receipt = json_of(
             &jojobot
                 .capture(Parameters(CaptureArgs {
@@ -459,6 +460,7 @@ mod tests {
         ensure(&jojobot, "work:atlas-root").await;
         make_bot(&jojobot, "gamma").await;
         let sid = booted(&jojobot, "gamma").await;
+        after_the_first_contact_teaching(&jojobot, &sid).await;
         let receipt = json_of(
             &jojobot
                 .capture(Parameters(CaptureArgs {
@@ -477,6 +479,19 @@ mod tests {
             receipt["possible_subject_note"].is_string(),
             "the suggestion ships beside it: {receipt}"
         );
+    }
+
+    /// A session's first-contact teaching is outside the budget and crowds a
+    /// suggestion out of its first receipts; an earlier capture says it, so the
+    /// write under test is left with the suggestion and the facts.
+    async fn after_the_first_contact_teaching(jojobot: &crate::Jojobot, sid: &str) {
+        jojobot
+            .capture(Parameters(CaptureArgs {
+                sid: Some(sid.to_string()),
+                ..capture_args("thing:the-furnace", "keeps the house warm")
+            }))
+            .await
+            .expect("the first capture answers");
     }
 
     fn note(name: &'static str, domain: &'static str, text: &str, tier: Tier) -> TeachingNote {
@@ -670,7 +685,7 @@ mod tests {
             .own_capture_receipt(
                 json!({
                     "address": "thing:delta#f1",
-                    "padding": "x".repeat(2300),
+                    "padding": "x".repeat(LEAN_LIMIT - 200),
                     "hint": "a hint"
                 }),
                 &caller,
@@ -705,5 +720,33 @@ mod tests {
             !jojobot.untaught("owner-test:one", &caller).await,
             "the teaching that shipped is spent"
         );
+    }
+
+    /// **A token-saving bot's receipt is composed at the strict limit.** Single
+    /// writes are compacted afterwards, but a batch is not, so the owner's own
+    /// answer is what the bot reads: the suggestion drops and is named, and a
+    /// core over the limit says so with `over_budget`, the size of what is left.
+    #[tokio::test]
+    async fn a_token_saving_receipt_is_composed_at_the_strict_limit() {
+        let jojobot = handler();
+        let served = crate::write_receipts::TOKEN_SAVING
+            .scope(
+                Some(crate::settings::TokenSaving::on()),
+                jojobot.own_capture_receipt(
+                    json!({
+                        "address": "thing:delta#f1",
+                        "padding": "x".repeat(300),
+                        "hint": "a hint"
+                    }),
+                    &the_caller(),
+                    false,
+                    &[],
+                    Vec::new(),
+                ),
+            )
+            .await;
+        assert!(served.get("hint").is_none(), "{served}");
+        assert!(served["left_out"].to_string().contains("hint"), "{served}");
+        assert!(served["over_budget"].as_u64().is_some(), "{served}");
     }
 }
