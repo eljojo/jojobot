@@ -134,7 +134,7 @@ impl World {
                 .collect::<Vec<_>>()
                 .join(", ")
         };
-        let tables: [(&str, &[&str], &str); 6] = [
+        let tables: [(&str, &[&str], &str); 7] = [
             (
                 "fact",
                 &[
@@ -220,6 +220,7 @@ impl World {
                 &["entity", "key", "ordinal", "target"],
                 "entity, `key`, ordinal",
             ),
+            ("role_lease_heartbeat", &["role", "moment"], "role"),
         ];
         let mut out = Vec::new();
         for (table, names, order) in tables {
@@ -305,6 +306,32 @@ async fn run(world: &World, through_the_job: bool) {
     ledger.sets = ["release_notes_told".to_string()].into();
     world
         .capture_as(ledger, through_the_job, Actor::System("jojobot".into()))
+        .await;
+
+    // A role that holds a heartbeat row and no claim takes its first claim, as the
+    // engine writes it: the claim writes the key and clears the heartbeat home, so
+    // the row never holds a previous claimant's moment.
+    world.add("role:delta", "Delta").await;
+    // The heartbeat home is keyed as the store files the role object.
+    let filed: String = sqlx::query_scalar("SELECT COALESCE(badge, id) FROM entity WHERE id = ?")
+        .bind("role:delta")
+        .fetch_one(&world.store)
+        .await
+        .expect("the role is filed");
+    sqlx::query("INSERT INTO role_lease_heartbeat (role, moment, written_at) VALUES (?, ?, ?)")
+        .bind(filed)
+        .bind("2026-04-21T10:00:00Z")
+        .bind("2026-04-21T10:00:00Z")
+        .execute(&world.store)
+        .await
+        .expect("a heartbeat is held");
+    let claimed_at = jojobot_domain::session::ROLE_CLAIMED_AT.to_string();
+    let mut claimed = NewFact::about(id("role:delta"), "the seat is claimed", date(2026, 4, 22));
+    claimed.fields = [(claimed_at.clone(), "2026-04-22T10:00:00Z".to_string())].into();
+    claimed.sets = [claimed_at.clone()].into();
+    claimed.derived = [claimed_at].into();
+    world
+        .capture_as(claimed, through_the_job, Actor::System("jojobot".into()))
         .await;
 
     // A key taken off a thing: the write stores no value, and the link row goes.
