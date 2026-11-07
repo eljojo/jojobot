@@ -874,7 +874,8 @@ impl DoltMemory {
 
     /// **Every account of a declaration**, each key decoded by the same reader the
     /// roster's rows are. The account keeps neither the origin nor the rule of the
-    /// declaration, so they read as a caller's and none.
+    /// declaration, so they read as a caller's and none; the declaration the store
+    /// serves is added after them where it differs.
     async fn type_write_rows(
         tx: &mut Transaction<'_, MySql>,
         rows: &mut Rows,
@@ -911,6 +912,37 @@ impl DoltMemory {
                     origin: Origin::Declared,
                     ..DeclaredType::new(&name, fields)
                 },
+            });
+        }
+        // **The store serves a caller's declaration from `type_field`**, which holds
+        // the rule the account lacks, and holds a type declared before the account
+        // existed. One that differs from the newest account, or has none, is
+        // imported as a later declaration, so the newest in force is the served one.
+        let served = sqlx::query(
+            "SELECT type_name, key_name, holds, folds, origin, required, one_of, must \
+             FROM type_field ORDER BY type_name, ordinal",
+        )
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(store)?;
+        // A shipped declaration is the build's to declare, and the reconcile does.
+        for declaration in super::gather_types(&served)? {
+            if declaration.origin != Origin::Declared {
+                continue;
+            }
+            let newest = rows
+                .type_writes
+                .iter()
+                .filter(|held| held.declaration.name == declaration.name)
+                .max_by_key(|held| held.ordinal);
+            if newest.is_some_and(|held| held.declaration == declaration) {
+                continue;
+            }
+            rows.type_writes.push(TypeWriteRow {
+                ordinal: newest.map_or(1, |held| held.ordinal + 1),
+                session: None,
+                written_at: None,
+                declaration,
             });
         }
         Ok(())

@@ -1202,3 +1202,62 @@ async fn claims_reconcile_declares_a_shipped_kind_the_build_changed() {
 
     server.stop().await;
 }
+
+/// **The import holds the declaration the store serves, rule included.** A caller
+/// declares a type with a `must` rule; `type_write` keeps neither the rule nor the
+/// origin. A second type has no `type_write` row at all, as a type declared before
+/// that table existed. The State the import replays to answers both as the store
+/// does.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn claims_import_holds_a_declared_type_as_the_store_serves_it() {
+    use jojobot_domain::memory::types::{Field, ValueType};
+    let (_scratch, mut server, pool) = store("claims-import-declared-type").await;
+    let memory = DoltMemory::open(pool.clone());
+    for name in ["sketch", "doodle"] {
+        let mut declared = jojobot_domain::memory::types::DeclaredType::new(
+            name,
+            vec![Field::new("mood", ValueType::Text)],
+        );
+        if name == "sketch" {
+            declared = declared.with_must("mood");
+        }
+        memory
+            .declare_type(declared, None)
+            .await
+            .expect("the declaration lands");
+    }
+    sqlx::query("DELETE FROM type_write WHERE name = 'doodle'")
+        .execute(&pool)
+        .await
+        .expect("the account goes");
+
+    let imported = import_claims_once(&Writer::default(), &pool, &Provisions::default(), at())
+        .await
+        .expect("the import runs");
+    assert!(matches!(imported, Imported::Done { .. }), "{imported:?}");
+
+    let state = State::replay(logged(&pool).await.iter());
+    let served = memory
+        .declared_types()
+        .await
+        .expect("the store serves types");
+    for name in ["sketch", "doodle"] {
+        let wanted = served
+            .iter()
+            .find(|declared| declared.name == name)
+            .expect("the store serves the type");
+        assert_eq!(
+            state.declared(&jojobot_domain::log::ObjectId(name.to_string())),
+            Some(wanted),
+            "the State answers {name} as the store does"
+        );
+    }
+    assert!(
+        served
+            .iter()
+            .any(|declared| declared.name == "sketch" && declared.must.is_some()),
+        "the case holds a rule to lose"
+    );
+
+    server.stop().await;
+}
