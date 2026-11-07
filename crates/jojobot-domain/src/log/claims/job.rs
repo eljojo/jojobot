@@ -11,8 +11,9 @@
 //! The two parts only the answer's layer can compute, the size of a claim as a
 //! read serves it and the weight of a boot, are passed in.
 //!
-//! A capture that reaches the store with no job fails: the store never falls
-//! back to a door of its own.
+//! A capture that reaches the store with no job is decided by the store's old
+//! route, which has a door of its own. TEMPORARY(9.3.8): that route goes when
+//! every caller of a capture carries a job, and then a capture with no job fails.
 
 use std::future::Future;
 use std::sync::Arc;

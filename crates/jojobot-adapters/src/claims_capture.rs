@@ -186,8 +186,8 @@ pub(crate) async fn admit(
 
 /// **Decide the capture of `fact` with the job its call carries**: the door is
 /// filled from the held State, the sizes are rendered from it, and the claim is
-/// written under a fresh record. A call with no job fails; the store has no door
-/// of its own.
+/// written under a fresh record. This function is only called with a job:
+/// `Memory::capture` sends a call with none to the old route until 9.3.8.
 pub(crate) async fn admit_fact(
     seam: &Arc<Seam>,
     fact: &NewFact,
