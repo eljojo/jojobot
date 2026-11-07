@@ -10,7 +10,7 @@
 //!
 //! The store is the one the last deployed build recorded (`UPGRADE_FIXTURE_DIR`,
 //! as for the upgrade gate), booted once by the binary under test, with [`EVENTS`]
-//! teaching events appended to its log beside their legacy rows, so a boot that
+//! teaching events appended to its log, so a boot that
 //! replays the log has real work to do. It is built here and never committed
 //! (rule 661). Each case appends its numbers and the server's own timed boot steps
 //! to `target/bar/boot-measures.log`, with the counts of things, messages and log
@@ -24,12 +24,11 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use jojobot_adapters::dolt::Dolt;
-use jojobot_adapters::dolt::teaching::RowChange;
 use jojobot_adapters::log_snapshot::take_snapshot;
 use jojobot_adapters::testing::{Scratch, free_port};
 use jojobot_adapters::writer::Writer;
 use jojobot_adapters::writer_log::WriterLog;
-use jojobot_domain::log::{BatchId, Position, SealedBatch};
+use jojobot_domain::log::{BatchId, LogStore, Position, SealedBatch};
 use jojobot_domain::teaching::events::{RunId, TeachingEvent};
 
 /// The release's boot promise.
@@ -1009,7 +1008,7 @@ struct Size {
     events: u64,
 }
 
-fn batch(id: &str, head: Position, first: u64, count: u64) -> (SealedBatch, Vec<RowChange>) {
+fn batch(id: &str, head: Position, first: u64, count: u64) -> SealedBatch {
     let at = jiff::Timestamp::from_second(1_700_000_000).unwrap();
     let members = (first..first + count)
         .map(|n| {
@@ -1020,17 +1019,7 @@ fn batch(id: &str, head: Position, first: u64, count: u64) -> (SealedBatch, Vec<
             })
         })
         .collect();
-    let rows = (first..first + count)
-        .map(|n| RowChange::Record {
-            sid: format!("r{n:06}"),
-            domain: "claims".into(),
-            taught_at: at,
-        })
-        .collect();
-    (
-        SealedBatch::seal(BatchId(id.into()), head, at, 1, members).unwrap(),
-        rows,
-    )
+    SealedBatch::seal(BatchId(id.into()), head, at, 1, members).unwrap()
 }
 
 /// What a case does to the log's snapshot.
@@ -1075,15 +1064,13 @@ async fn prepare(state: &Scratch, plan: Plan, events: u64) -> Size {
     let half = (events / PER_BATCH) / 2;
     let mut head = log.head().expect("the log holds a head");
     for n in 0..events / PER_BATCH {
-        let (sealed, rows) = batch(
+        let sealed = batch(
             &format!("measure-{n}"),
             head,
             1_000_000 + n * PER_BATCH,
             PER_BATCH,
         );
-        log.append_with_rows(head, &sealed, rows)
-            .await
-            .expect("the batch lands");
+        log.append(head, &sealed).await.expect("the batch lands");
         head = sealed.range().last;
         if matches!(plan, Plan::Stale) && n + 1 == half {
             take_snapshot(&log, jiff::Timestamp::now())
