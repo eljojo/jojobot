@@ -6,7 +6,7 @@ narrows: true
 
 ## What you can now do
 
-`update_entity` and the prose writes of `set_charter` and `put_document` refuse a handle that was folded into another thing. The refusal names the survivor. Before, these writes changed the forwarding row and nothing a reader sees. Archive, restore and rename already refused such a handle.
+`update_entity` and the page write of `set_charter` refuse a handle that was folded into another thing. The refusal names the survivor. Before, these writes changed the forwarding row and nothing a reader sees. Archive, restore and rename already refused such a handle.
 
 ## Example
 
