@@ -1088,13 +1088,13 @@ pub async fn boot_store_observed(
     // nothing when the list is unchanged. A failure stops the boot, as the import's.
     match timed(
         "claims-reconcile",
-        reconcile_claims_supply(
+        Box::pin(reconcile_claims_supply(
             &folded.writer(),
             &store,
             &supplied,
             seed_memory.as_ref(),
             &clock,
-        ),
+        )),
     )
     .await
     {

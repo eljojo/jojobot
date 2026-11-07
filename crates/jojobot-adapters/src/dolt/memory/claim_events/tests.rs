@@ -944,6 +944,18 @@ async fn a_journaled_store_refuses_a_claim_write_with_no_writer_job() {
 async fn a_bare_store_commits_a_claim_write_and_emits_nothing() {
     let (_scratch, mut server, _journaled, writer, pool) = world("claim-events-bare-commits").await;
     let homer = EntityId("person:homer".into());
+    let members_in_the_log = || async {
+        writer
+            .shared_log(&pool)
+            .read_from(Position(0), 100)
+            .await
+            .expect("the log reads")
+            .iter()
+            .map(|batch| batch.members().len())
+            .sum::<usize>()
+    };
+    // The world opened with an import; the bare write adds nothing to it.
+    let before = members_in_the_log().await;
     DoltMemory::open(pool.clone())
         .capture(NewFact::about(homer, "likes donuts", date(2026, 9, 1)))
         .await
@@ -955,15 +967,11 @@ async fn a_bare_store_commits_a_claim_write_and_emits_nothing() {
         .await
         .expect("the count reads");
     assert_eq!(rows, 1, "the bare store did not commit");
-    let members: usize = writer
-        .shared_log(&pool)
-        .read_from(Position(0), 100)
-        .await
-        .expect("the log reads")
-        .iter()
-        .map(|batch| batch.members().len())
-        .sum();
-    assert_eq!(members, 0, "the bare store put something in the log");
+    assert_eq!(
+        members_in_the_log().await,
+        before,
+        "the bare store put something in the log"
+    );
     writer.drain().await;
     server.stop().await;
 }
