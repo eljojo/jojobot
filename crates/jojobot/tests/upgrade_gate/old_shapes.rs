@@ -130,6 +130,18 @@ async fn a_boot_with_the_teaching_shadow_off_keeps_the_marks_and_serves_the_ledg
         logged.iter().any(|mark| mark.sid.as_str() == sid),
         "recorded at {git_ref}: the log did not take the mark of the run that was taught: {logged:?}"
     );
+    // **What tells the shadow off from the shadow on**: the legacy rows are no
+    // longer kept, so the run just taught has a mark in the log and none in the
+    // rows. With the shadow on, the same run would be in both. The once-in-a-run
+    // check above holds either way; this one does not.
+    let rows = jojobot_adapters::dolt::teaching::DoltTeachings::open(store.pool().clone())
+        .marks()
+        .await
+        .expect("the teaching rows read back");
+    assert!(
+        rows.iter().all(|mark| mark.sid.as_str() != sid),
+        "recorded at {git_ref}: the legacy rows were kept current with the shadow off: {rows:?}"
+    );
     store.stop().await;
     drop(scratch);
 }
@@ -514,6 +526,16 @@ async fn a_numbered_address_in_an_old_field_value_is_marked_once_and_the_second_
     );
     let after_first = dump_store(&state_dir).await;
 
+    // **A bare second boot, as every other dump comparison in this file is**: a
+    // read through the surface is attributed and writes, so the read comes in a
+    // third boot after the dumps are taken.
+    let second = boot_current_expecting(&state_dir, store_port, &git_ref, Some(0), &[]).await;
+    second.stop().await;
+    assert_eq!(
+        after_first,
+        dump_store(&state_dir).await,
+        "recorded at {git_ref}: the second boot changed the store the first boot marked"
+    );
     let second = boot_current_expecting(&state_dir, store_port, &git_ref, Some(0), &[]).await;
     let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", second.http_port))
         .await
@@ -525,11 +547,6 @@ async fn a_numbered_address_in_an_old_field_value_is_marked_once_and_the_second_
     );
     surface.finish().await;
     second.stop().await;
-    assert_eq!(
-        after_first,
-        dump_store(&state_dir).await,
-        "recorded at {git_ref}: the second boot changed the store the first boot marked"
-    );
     drop(scratch);
 }
 
@@ -698,8 +715,103 @@ async fn a_boot_that_stamps_a_due_day_before_the_teaching_ledger_opens_leaves_bo
         "recorded at {git_ref}: the due-days pass did not write before the serving line: {:?}",
         booted.log
     );
+    // **Before the images are filled**, which the boot does after it opens the
+    // teaching ledger: a pass moved behind that point stamps after the ledger is
+    // open, and this line is the first the boot logs from there.
+    let held = booted
+        .log
+        .iter()
+        .position(|line| line.contains("fold: every run is held in memory"));
+    assert!(
+        held.is_some() && stamped < held,
+        "recorded at {git_ref}: the due-days pass did not write before the teaching ledger \
+         opened and the images were filled: {:?}",
+        booted.log
+    );
     booted.stop().await;
     assert_the_ledger_ends_whole(&state_dir, &git_ref).await;
     assert_the_teaching_marks_equal_the_rows(&state_dir, store_port, &git_ref).await;
+    drop(scratch);
+}
+
+/// ── (f) A run closed twice ──────────────────────────────────────────────────
+/// **A run offers its wrap code once.** The first wrap hands back a code, the
+/// code reopens the run for one last change, and the second wrap, which carries
+/// the same story, hands back none and ends the window: the spent code reopens
+/// nothing. The head's check of a retry reads the run's own record of closes, and
+/// this holds the surface half of it on a store the deployed build filled, beside
+/// that build's runs. The retry after a close whose key could not be ended needs
+/// a store that fails on cue, and the unit cases of `wrap_session` hold it.
+#[tokio::test]
+async fn a_run_closed_twice_offers_its_wrap_code_once_on_the_head() {
+    let Restored {
+        scratch,
+        state_dir,
+        store_port,
+        git_ref,
+        ..
+    } = restore_the_fixture("closed-twice").await;
+    let booted = boot_current(&state_dir, store_port, &git_ref).await;
+    let (surface, sid) = as_the_assistant(&booted, &git_ref).await;
+    let fail = |what: &str, body: &str| -> ! {
+        panic!("recorded at {git_ref}: {what} did not hold: {body}")
+    };
+    let started = surface
+        .call(
+            "journal",
+            json!({"entry": "a run the gate closes twice", "sid": sid}),
+        )
+        .await;
+    if started.contains("\"status\":\"blocked\"") {
+        fail("the first beat", &started);
+    }
+    let story = "the gate's run is done";
+    let first = parsed(
+        "the first wrap",
+        &git_ref,
+        &surface
+            .call("wrap_session", json!({"story": story, "sid": sid}))
+            .await,
+    );
+    let Some(code) = first["wrap_code"].as_str() else {
+        fail("the first wrap handing back a code", &first.to_string());
+    };
+    let reopened = parsed(
+        "reopening the run with its code",
+        &git_ref,
+        &surface
+            .call(
+                "start_here",
+                json!({"bot": "assistant", "resume": code, "brief": true}),
+            )
+            .await,
+    );
+    let Some(reopened_sid) = reopened["session"]["sid"].as_str() else {
+        fail("the code reopening the run", &reopened.to_string());
+    };
+    let second = parsed(
+        "the second wrap",
+        &git_ref,
+        &surface
+            .call("wrap_session", json!({"story": story, "sid": reopened_sid}))
+            .await,
+    );
+    if second["status"] == "blocked" || !second["wrap_code"].is_null() {
+        fail(
+            "the second wrap landing without a new code",
+            &second.to_string(),
+        );
+    }
+    let spent = surface
+        .call(
+            "start_here",
+            json!({"bot": "assistant", "resume": code, "brief": true}),
+        )
+        .await;
+    if spent.contains(reopened_sid) {
+        fail("the spent code reopening nothing", &spent);
+    }
+    surface.finish().await;
+    booted.stop().await;
     drop(scratch);
 }
