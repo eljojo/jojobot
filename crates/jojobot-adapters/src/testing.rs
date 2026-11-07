@@ -411,6 +411,36 @@ pub async fn ledger_events(
     events
 }
 
+/// **Append a member of another family behind whatever the log holds**, as that
+/// family's writer would: one teaching event in a batch of its own. A case that
+/// wants the ledger's replay to cross a member it does not read calls this.
+pub async fn plant_foreign_member(pool: &sqlx::MySqlPool) {
+    use jojobot_domain::log::{BatchId, Position, SealedBatch};
+    use jojobot_domain::teaching::events::{RunId, TeachingEvent};
+    let log = crate::dolt_log::DoltLog::open(pool.clone())
+        .await
+        .expect("the log opens");
+    let mut tx = pool.begin().await.expect("a transaction");
+    let head = log.head_in(&mut tx).await.expect("the head");
+    let member = crate::teaching_log::codec::encode(&TeachingEvent::Cleared {
+        run: RunId("homer".into()),
+    });
+    let batch = SealedBatch::seal(
+        BatchId("foreign:planted".into()),
+        Position(head),
+        jiff::Timestamp::now(),
+        1,
+        vec![member],
+    )
+    .expect("a batch");
+    let staged = log
+        .stage(&mut tx, Position(head), &batch)
+        .await
+        .expect("the batch is staged");
+    tx.commit().await.expect("the batch commits");
+    staged.committed();
+}
+
 /// **Every claims event the store's log holds, oldest first.** A case that wants
 /// to know what the claims import wrote reads the log with this.
 pub async fn claims_events(

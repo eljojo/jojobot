@@ -2117,6 +2117,95 @@ async fn the_entry_of_a_beat_and_the_focus_it_moves_are_two_parts_in_the_real_st
     server.stop().await;
 }
 
+/// **A restart over a store that holds old rows and ledger events imports nothing
+/// again, and reads past the members of another family.** The first process
+/// imports the old rows and writes; the log then also holds events of the claims
+/// family. The second process replays the log through the ledger, which applies
+/// its own events and skips the others, and finds the log already holds a ledger
+/// event, so it does not import the old rows a second time.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_restart_over_old_rows_and_other_families_imports_nothing_again() {
+    use jojobot_domain::request::events::LedgerEvent;
+    let dir = jojobot_adapters::testing::scratch_path("jojobot-requests-reopen");
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    let _scratch = Scratch(dir.clone());
+    let mut server = Dolt::start(&dir, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&server, "requests_reopen")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
+        .await
+        .expect("the kinds are seeded");
+    let plain = DoltMemory::open(pool.clone());
+    let milhouse = thing(&plain, "person:milhouse", "Milhouse").await;
+    thing(&plain, "bot:sigma", "Sigma").await;
+    sqlx::query(
+        "INSERT INTO app_write (app_id, event_key, digest, landed, written_at) \
+         VALUES ('springfield-ci', 'a1', 'd', '{}', '2999-01-01T00:00:00.000000000Z')",
+    )
+    .execute(&pool)
+    .await
+    .expect("an app row");
+    {
+        let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
+        let _ledger = DoltRequests::new(pool.clone()).with_writer(memory.writer());
+        let (stored, _) = captured(
+            &memory,
+            request("bot:sigma", "first"),
+            claim_about(&milhouse, "wears glasses"),
+        )
+        .await;
+        assert!(stored, "the first process writes");
+    }
+    let imports = |events: &[LedgerEvent]| {
+        events
+            .iter()
+            .filter(|event| matches!(event, LedgerEvent::Imported { .. }))
+            .count()
+    };
+    // A member of another family lands between the two processes, ahead of the
+    // ledger events the second process will write.
+    jojobot_adapters::testing::plant_foreign_member(&pool).await;
+    let before = jojobot_adapters::testing::ledger_events(&pool).await;
+    assert_eq!(
+        imports(&before),
+        1,
+        "the first process imported the one old row"
+    );
+    let positions: i64 = sqlx::query_scalar(
+        "SELECT CAST(MAX(last_position) AS SIGNED) FROM event_log WHERE first_position IS NOT NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("the head");
+    assert!(
+        positions > before.len() as i64,
+        "the log holds members of another family, so the replay has something to skip"
+    );
+
+    // A new process holds nothing and replays the log.
+    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
+    let _ledger = DoltRequests::new(pool.clone()).with_writer(memory.writer());
+    let (stored, _) = captured(
+        &memory,
+        request("bot:sigma", "second"),
+        claim_about(&milhouse, "wears glasses"),
+    )
+    .await;
+    assert!(stored, "the second process writes");
+    let after = jojobot_adapters::testing::ledger_events(&pool).await;
+    assert_eq!(
+        imports(&after),
+        1,
+        "the old row is not imported a second time"
+    );
+
+    server.stop().await;
+}
+
 /// **A restart recognises the ids spent by mail, memory and session writes from
 /// the log alone.** The second writer replays the log; the old tables hold no
 /// row of these writes, and the repeat of each is found.
