@@ -263,7 +263,7 @@ impl DoltLog {
             .bind(batch.range().first.0)
             .bind(batch.range().last.0)
             .bind(&bytes)
-            .execute(&mut **tx)
+            .execute(&self.0.pool)
             .await
             .map_err(failed)?;
         Ok(Staged {
