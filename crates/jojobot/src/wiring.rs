@@ -1067,9 +1067,11 @@ pub async fn boot_store_observed(
                 );
             }
             // **Each pointer that names nothing**, imported as written: the deployed
-            // boot logged such a value and served, and so does this one.
+            // boot logged such a value and served, and so does this one. Info, like
+            // the skipped homes: the upgrade gate fails a boot on any warning, and
+            // this is a state the import tolerates, not a fault.
             for pointer in &dangling_pointers {
-                tracing::warn!(
+                tracing::info!(
                     table = pointer.table,
                     row = %pointer.row,
                     column = %pointer.column,
