@@ -853,6 +853,9 @@ fn pointing_at_created(mut claim: ClaimBody, served: &HashMap<RecordId, RecordId
 }
 
 /// One event for each write of a claim, each in the envelope of its own write.
+/// **The newest write carries the claim's head**: a head the row holds that no
+/// write explains rides on that event, so the claim has as many revisions as the
+/// store counts writes and its newest-write moment is that write's own.
 fn claim_events(fact: &FactRow, served: &HashMap<RecordId, RecordId>) -> Vec<Event<ClaimEvent>> {
     let record = record_id(&fact.home, &fact.local);
     let mut writes: Vec<&FactWriteRow> = fact.writes.iter().collect();
@@ -860,10 +863,9 @@ fn claim_events(fact: &FactRow, served: &HashMap<RecordId, RecordId>) -> Vec<Eve
     let mut out = Vec::new();
     for (at, write) in writes.iter().enumerate() {
         let by = write_origin::written_by(Some(origin_of(write)), write.claim.app.as_ref());
-        let (record, claim) = (
-            record.clone(),
-            pointing_at_created(write.claim.clone(), served),
-        );
+        let newest = at + 1 == writes.len();
+        let body = if newest { &fact.head } else { &write.claim };
+        let (record, claim) = (record.clone(), pointing_at_created(body.clone(), served));
         out.push(envelope(
             by.writer,
             by.run,
@@ -875,16 +877,11 @@ fn claim_events(fact: &FactRow, served: &HashMap<RecordId, RecordId>) -> Vec<Eve
             },
         ));
     }
-    match writes.last() {
-        None => out.push(plain(ClaimEvent::RecordCreated {
+    if writes.is_empty() {
+        out.push(plain(ClaimEvent::RecordCreated {
             record,
             claim: pointing_at_created(fact.head.clone(), served),
-        })),
-        Some(last) if last.claim != fact.head => out.push(plain(ClaimEvent::RecordRevised {
-            record,
-            claim: pointing_at_created(fact.head.clone(), served),
-        })),
-        Some(_) => {}
+        }));
     }
     out
 }

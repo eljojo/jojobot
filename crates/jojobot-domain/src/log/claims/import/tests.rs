@@ -328,19 +328,42 @@ fn a_claim_with_no_stored_writes_is_imported_as_one_record_holding_its_head() {
     assert_eq!(created(&written), ["only"]);
 }
 
-/// A head row that no write explains arrives as one more revision with no stamp.
+/// **A head row that no write explains rides on the last write's event.** The
+/// claim has as many revisions as the store counts writes, and its newest write
+/// keeps the moment and the run of that write.
 #[test]
-fn a_head_that_differs_from_its_last_write_is_one_unstamped_revision() {
-    let mut row = fact("k1", "f1", vec![write_of(1, "written", Some("run-a"), 1)]);
+fn a_head_that_differs_from_its_last_write_rides_on_that_write() {
+    let mut row = fact(
+        "k1",
+        "f1",
+        vec![
+            write_of(1, "first", Some("run-a"), 1),
+            write_of(2, "written", Some("run-b"), 2),
+        ],
+    );
     row.head.content = "edited in the row".into();
     let events = imported(&Rows {
         entities: vec![entity("k1", "person:homer")],
         facts: vec![row],
         ..Rows::default()
     });
-    let last = events.last().unwrap();
-    assert!(matches!(last.payload, ClaimEvent::RecordRevised { .. }));
-    assert_eq!((last.imported_source_time, last.run.clone()), (None, None));
+    let claim_events: Vec<_> = events
+        .iter()
+        .filter(|e| {
+            matches!(
+                e.payload,
+                ClaimEvent::RecordCreated { .. } | ClaimEvent::RecordRevised { .. }
+            )
+        })
+        .collect();
+    assert_eq!(claim_events.len(), 2, "one event for each write");
+    let last = claim_events[1];
+    let ClaimEvent::RecordRevised { claim, .. } = &last.payload else {
+        panic!("the second write revises: {:?}", last.payload);
+    };
+    assert_eq!(claim.content, "edited in the row");
+    assert_eq!(last.run, Some(RunId("run-b".into())));
+    assert_eq!(last.imported_source_time, at(2));
 }
 
 /// A cleared key leaves the thing without it, and the clear stays a write.
