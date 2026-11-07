@@ -5,7 +5,7 @@ miss: A bot that reads the first entry of a capture receipt's teaching for one p
 
 ## What you can now do
 
-Each teaching note on a capture receipt ranks by how much the writer needs it. A note about a field that shadows an argument comes first. Then come the notes on the subject, on the direction of an edge and on a check-in's date. The claims note and the offers of a skill come last. The first capture of a session now lists the subject note ahead of the claims note. A note is spent only when the receipt serves it, so a note a receipt did not serve is offered again by a later write.
+Each teaching note on a capture receipt ranks by how much the writer needs it. A note about a field that shadows an argument comes first. Then come the notes on the subject, on the direction of an edge and on a check-in's date, in no fixed order among them. The claims note and the offers of a skill come last. The first capture of a session now lists the subject note ahead of the claims note. A note is spent only when the receipt serves it, so a note a receipt did not serve is offered again by a later write.
 
 ## Example
 

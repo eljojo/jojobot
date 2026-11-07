@@ -12,7 +12,7 @@
 
 ## Rationed, because every line is paid for
 
-**At most one suggestion per write.** When several apply they are ranked and only the first is said; the rest are dropped, not queued. A receipt that lists everything it noticed is a receipt the writer learns to skip, and then the one that mattered is skipped too. A teaching note is not a suggestion: a note the budget drops spends nothing, so a later write offers it again, and it is told once it ships.
+**At most one suggestion per write.** When several apply they are ranked and only the first is said; the rest are dropped for this write, not queued: a later write that earns them says them again. A receipt that lists everything it noticed is a receipt the writer learns to skip, and then the one that mattered is skipped too. A teaching note is not a suggestion: a note the budget drops spends nothing, so a later write offers it again, and it is told once it ships.
 
 **Only with high confidence, and silent otherwise.** A false suggestion costs the writer a read and costs jojobot its credibility. Silence is the common answer and the right one.
 

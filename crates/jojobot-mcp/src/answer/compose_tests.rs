@@ -694,6 +694,16 @@ fn a_smaller_limit_serves_a_subset_of_a_shared_slot() {
             })
             .unwrap_or_default()
     };
+    // A room between the two ends serves some of the notes, not all, not none.
+    let mid = (0..400)
+        .map(served_at)
+        .find(|notes| notes.len() == 1)
+        .expect("some room serves exactly one note");
+    assert_eq!(
+        mid,
+        ["first note"],
+        "the best-ranked note is the one served"
+    );
     // Walking the room down from a roomy limit, what is served only shrinks.
     let mut larger = served_at(1000);
     assert_eq!(larger.len(), 3, "{larger:?}");
