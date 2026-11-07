@@ -2168,24 +2168,13 @@ async fn a_restart_over_old_rows_and_other_families_imports_nothing_again() {
     };
     // A member of another family lands between the two processes, ahead of the
     // ledger events the second process will write.
-    jojobot_adapters::testing::plant_foreign_member(&pool).await;
+    let planted = jojobot_adapters::testing::plant_foreign_member(&pool, "restart").await;
     let before = jojobot_adapters::testing::ledger_events(&pool).await;
     assert_eq!(
         imports(&before),
         1,
         "the first process imported the one old row"
     );
-    let positions: i64 = sqlx::query_scalar(
-        "SELECT CAST(MAX(last_position) AS SIGNED) FROM event_log WHERE first_position IS NOT NULL",
-    )
-    .fetch_one(&pool)
-    .await
-    .expect("the head");
-    assert!(
-        positions > before.len() as i64,
-        "the log holds members of another family, so the replay has something to skip"
-    );
-
     // A new process holds nothing and replays the log.
     let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
     let _ledger = DoltRequests::new(pool.clone()).with_writer(memory.writer());
@@ -2201,6 +2190,20 @@ async fn a_restart_over_old_rows_and_other_families_imports_nothing_again() {
         imports(&after),
         1,
         "the old row is not imported a second time"
+    );
+    // The second process's own write sits behind the planted member, so its
+    // replay had to read past that member to find the ledger's head.
+    let behind: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM event_log WHERE first_position IS NOT NULL AND first_position > ?",
+    )
+    .bind(planted)
+    .fetch_one(&pool)
+    .await
+    .expect("the batches behind the planted member");
+    assert!(behind >= 1, "a write landed behind the planted member");
+    assert!(
+        after.len() > before.len(),
+        "the second process wrote a ledger event of its own"
     );
 
     server.stop().await;

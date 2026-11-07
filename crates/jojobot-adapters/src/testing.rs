@@ -413,8 +413,10 @@ pub async fn ledger_events(
 
 /// **Append a member of another family behind whatever the log holds**, as that
 /// family's writer would: one teaching event in a batch of its own. A case that
-/// wants the ledger's replay to cross a member it does not read calls this.
-pub async fn plant_foreign_member(pool: &sqlx::MySqlPool) {
+/// wants the ledger's replay to cross a member it does not read calls this. `name`
+/// makes the batch's id, so one database can hold several planted members. The
+/// answer is the position the member took.
+pub async fn plant_foreign_member(pool: &sqlx::MySqlPool, name: &str) -> u64 {
     use jojobot_domain::log::{BatchId, Position, SealedBatch};
     use jojobot_domain::teaching::events::{RunId, TeachingEvent};
     let log = crate::dolt_log::DoltLog::open(pool.clone())
@@ -426,7 +428,7 @@ pub async fn plant_foreign_member(pool: &sqlx::MySqlPool) {
         run: RunId("homer".into()),
     });
     let batch = SealedBatch::seal(
-        BatchId("foreign:planted".into()),
+        BatchId(format!("foreign:{name}")),
         Position(head),
         jiff::Timestamp::now(),
         1,
@@ -439,6 +441,7 @@ pub async fn plant_foreign_member(pool: &sqlx::MySqlPool) {
         .expect("the batch is staged");
     tx.commit().await.expect("the batch commits");
     staged.committed();
+    batch.range().first.0
 }
 
 /// **Every claims event the store's log holds, oldest first.** A case that wants
