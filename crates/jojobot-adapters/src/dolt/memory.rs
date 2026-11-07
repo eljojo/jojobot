@@ -372,6 +372,11 @@ impl DoltMemory {
             .store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
+    /// Whether this store, or any clone of it, takes part in the event log.
+    pub fn is_journaled(&self) -> bool {
+        self.journaled.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
     fn journal(&self) -> entity_events::Journal {
         if self.journaled.load(std::sync::atomic::Ordering::SeqCst) {
             entity_events::Journal::Journaled

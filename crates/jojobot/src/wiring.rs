@@ -1109,6 +1109,13 @@ pub async fn boot_store_observed(
     // the repairs, the import and the reconcile, which write rows and emit nothing
     // of their own, and before anything serves.
     bare_memory.start_journaling();
+    // **The door: a boot that serves a bare store stops.** A bare store writes rows
+    // and emits no event, so every write served would leave the log short without a
+    // word.
+    anyhow::ensure!(
+        bare_memory.is_journaled(),
+        "the store about to be served is not journaled, so its writes would leave no event"
+    );
 
     Ok(Booted {
         store,

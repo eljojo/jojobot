@@ -78,7 +78,12 @@ async fn an_entity_added_through_the_real_binary_has_its_event_in_the_log() {
             .filter(|event| event.contains("ClaimsObjectCreated"))
             .collect::<Vec<String>>()
     };
-    let before = created_events().await.len();
+    // The event names the object by its badge and carries the name it was added with.
+    let names_it = |event: &String| event.contains(r#""name":"Ned Flanders""#);
+    assert!(
+        !created_events().await.iter().any(names_it),
+        "an object event names the thing before it is added"
+    );
 
     surface
         .must(
@@ -94,8 +99,9 @@ async fn an_entity_added_through_the_real_binary_has_its_event_in_the_log() {
     surface.finish().await;
     child.start_kill().expect("the binary stops");
     child.wait().await.expect("the binary is reaped");
-    assert!(
-        logged.len() > before,
-        "the write reached the store and left no object event in the log: {logged:?}"
+    assert_eq!(
+        logged.iter().filter(|event| names_it(event)).count(),
+        1,
+        "the write left no object event for the thing it added: {logged:?}"
     );
 }
