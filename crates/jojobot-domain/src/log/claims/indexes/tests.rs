@@ -1193,43 +1193,65 @@ fn a_stored_removal_by_a_claim_that_does_not_hold_the_key_takes_all_three_off() 
     );
 }
 
-/// **A stored removal is no empty value.** A view declaration key such as
-/// `selects` holds a blank as a value (rule 751), so a removal that arrived as a
-/// blank would leave the key on the thing and backed. The removal takes it off;
-/// an explicit empty write of the same key stays held.
+/// **A stored removal is no empty value, and it does not need to be the holder's.**
+/// A view declaration key such as `selects` and a key a declared type holds as a
+/// list both keep a blank as a value (rule 751), so a removal that arrived as a
+/// blank would leave the key on the thing and backed. Two claims write each key;
+/// the older, which does not hold it, has a removal stored, and the key leaves the
+/// thing. An explicit empty write of the same key stays held.
 #[test]
 fn a_stored_removal_of_a_key_that_holds_blanks_takes_it_off_and_an_empty_write_does_not() {
-    let setup = || {
-        vec![
-            thing("o0", None),
-            created("r1", claim("f1", "o0", "c", 1)),
-            write("r1", "o0", "selects", 1, "kind"),
-        ]
-    };
-    let mut removed = setup();
-    removed.push(ClaimEvent::FieldRemoved {
-        record: record("r1"),
-        subject: object("o0"),
-        key: key("selects"),
-        ordinal: 2,
-        class: crate::memory::WriteClass::Sets,
-        targets: Vec::new(),
-    });
-    let gone = state(&removed);
-    assert!(!gone.fields(&object("o0"), &[]).contains_key("selects"));
-    assert!(!gone.backing(&object("o0"), &[]).contains_key("selects"));
+    use crate::memory::types::{DeclaredType, Field, Origin, ValueType};
+    let declared = [DeclaredType {
+        name: "thing".into(),
+        fields: vec![Field::listing("friends", ValueType::Text)],
+        origin: Origin::Declared,
+        must: None,
+    }];
+    for name in ["selects", "friends"] {
+        let setup = || {
+            vec![
+                thing("o0", None),
+                created("r1", claim("f1", "o0", "c", 1)),
+                write("r1", "o0", name, 1, "kind"),
+                created("r2", claim("f2", "o0", "c", 1)),
+                write("r2", "o0", name, 2, "other"),
+            ]
+        };
+        let mut removed = setup();
+        removed.push(ClaimEvent::FieldRemoved {
+            record: record("r1"),
+            subject: object("o0"),
+            key: key(name),
+            ordinal: 3,
+            class: crate::memory::WriteClass::Sets,
+            targets: Vec::new(),
+        });
+        let gone = state(&removed);
+        assert!(
+            !gone.fields(&object("o0"), &declared).contains_key(name),
+            "{name}: a removal by the claim that does not hold it takes it off"
+        );
+        assert!(
+            !gone.backing(&object("o0"), &declared).contains_key(name),
+            "{name}: no claim backs it"
+        );
 
-    let mut emptied = setup();
-    emptied.push(write("r1", "o0", "selects", 2, ""));
-    let held = state(&emptied);
-    assert_eq!(
-        held.fields(&object("o0"), &[])
-            .get("selects")
-            .map(String::as_str),
-        Some(""),
-        "an explicit empty write is a value"
-    );
-    assert!(held.backing(&object("o0"), &[]).contains_key("selects"));
+        let mut emptied = setup();
+        emptied.push(write("r2", "o0", name, 3, ""));
+        let held = state(&emptied);
+        assert_eq!(
+            held.fields(&object("o0"), &declared)
+                .get(name)
+                .map(String::as_str),
+            Some(""),
+            "{name}: an explicit empty write is a value"
+        );
+        assert!(
+            held.backing(&object("o0"), &declared).contains_key(name),
+            "{name}: and the writer backs it"
+        );
+    }
 }
 
 /// **What a thing points at, read by scanning every stream of the state**: the

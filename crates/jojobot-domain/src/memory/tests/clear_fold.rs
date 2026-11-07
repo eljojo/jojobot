@@ -111,3 +111,31 @@ fn a_blank_written_by_a_new_claim_takes_the_key_off_the_thing() {
     assert!(folded_fields(&writes, &[]).is_empty());
     assert!(folded_backing(&writes, &[]).is_empty());
 }
+
+/// **A removal that a claim's edit passes through still takes the key off.**
+/// `stood_after` copies every held write before it appends the patch; a copy that
+/// reset the removal flag would read a stored removal as a clear by a claim that
+/// does not hold the key, and the key would stay.
+#[test]
+fn a_stored_removal_keeps_its_flag_through_the_edit_guard() {
+    let writes = [
+        by("f1", "mood", 1, Some("content")),
+        by("f2", "mood", 2, Some("queasy")),
+        KeyWrite {
+            removed: true,
+            ..by("f1", "mood", 3, None)
+        },
+    ];
+    assert!(folded_fields(&writes, &[]).is_empty());
+    let after = stood_after(
+        &writes,
+        &thought("f9", "thing:kettle"),
+        &FactPatch::default(),
+        &BTreeMap::new(),
+        &[],
+    );
+    assert!(
+        after.is_empty(),
+        "the removal still took the key off: {after:?}"
+    );
+}

@@ -3981,7 +3981,6 @@ pub fn stood_after(
     let mut next: Vec<KeyWrite> = writes
         .iter()
         .map(|write| KeyWrite {
-            removed: false,
             status: if write.fact == edited.id {
                 edited.status
             } else {
