@@ -1556,6 +1556,25 @@ mod tests {
         }
     }
 
+    /// **A clear on a non-backing claim now succeeds.** The correction to the
+    /// earlier refusal must ship as a note, since the call no longer explains
+    /// itself by refusing.
+    #[test]
+    fn clear_fields_has_a_note_for_a_claim_that_no_longer_backs_the_key() {
+        let matching: Vec<_> = SHIPPED
+            .iter()
+            .filter(|(id, _)| *id == "a-clear-sent-to-an-older-claim-leaves-the-newer-value")
+            .collect();
+        assert_eq!(matching.len(), 1, "the clear correction ships exactly once");
+        let (id, text) = matching[0];
+        let note = parse(id, text).expect("the clear correction reads");
+        assert!(
+            note.title.contains("clear_fields"),
+            "the title names the call"
+        );
+        assert!(!note.narrows, "the formerly refused clear now succeeds");
+    }
+
     /// **Every shipped note is sent under a subject the mail takes**, alone and
     /// with all the others: a subject the mail refuses would fail the post at
     /// every start, and no bot would ever be told.
