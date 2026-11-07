@@ -197,7 +197,9 @@ async fn a_seam_opened_before_the_reconcile_knows_the_declaration_it_appended() 
     use jojobot_domain::memory::types::{DeclaredType, Field, ValueType};
     let scratch = Scratch::new("seam-follows-reconcile");
     let mut server = Dolt::start(&scratch.0, free_port()).await.unwrap();
-    let store = migrated_database(&server, "alpha").await.unwrap();
+    let store = crate::testing::migrated_database(&server, "alpha")
+        .await
+        .unwrap();
     jojobot_domain::memory::kinds::seed(&crate::dolt::memory::DoltMemory::open(store.clone()))
         .await
         .expect("the kinds are seeded");

@@ -128,9 +128,9 @@ impl WriterLog {
         let this = self.clone();
         let batch = batch.clone();
         let appended = self
-            .job(Box::pin(async move {
-                this.append_in_job(head, &batch).await
-            }))
+            .job(Box::pin(
+                async move { this.append_in_job(head, &batch).await },
+            ))
             .await;
         match appended {
             // The contract answers an unknown commit as a value, not an error.
