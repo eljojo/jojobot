@@ -258,6 +258,9 @@ mod charter_changed;
 mod declare_type_needs_a_session;
 #[path = "user_stories/folded_mail_texts.rs"]
 mod folded_mail_texts;
+/// "I kept editing the old handle after the two things were put together."
+#[path = "user_stories/folded_row_writes.rs"]
+mod folded_row_writes;
 /// "If the person changes in the meantime, show me what's updated."
 #[path = "user_stories/held_changed.rs"]
 mod held_changed;

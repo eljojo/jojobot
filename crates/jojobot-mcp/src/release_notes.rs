@@ -77,6 +77,10 @@ pub(crate) const SHIPPED: &[(&str, &str)] = &[
         ),
     ),
     (
+        "a-folded-thing-takes-no-edit-and-no-page",
+        include_str!("../release-notes/deploy-9.3.3/a-folded-thing-takes-no-edit-and-no-page.md"),
+    ),
+    (
         "a-numbered-mention-that-names-nothing-is-kept-as-written",
         include_str!(
             "../release-notes/deploy-9.3.3/a-numbered-mention-that-names-nothing-is-kept-as-written.md"
