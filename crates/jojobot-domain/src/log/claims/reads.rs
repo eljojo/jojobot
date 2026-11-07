@@ -135,37 +135,43 @@ impl State {
         let Some(located) = self.claim_at(&format!("{}#{}", source.home.0, source.local.0)) else {
             return Vec::new();
         };
-        let mut facts: Vec<memory::Fact> = self
+        let mut facts: Vec<(&str, memory::Fact)> = self
             .records_built_on(&located.record)
             .into_iter()
             .filter(|record| self.has_served_address(record))
-            .filter_map(|record| self.fact(record))
+            .filter_map(|record| Some((self.filed_under(record)?, self.fact(record)?)))
             .collect();
-        facts.sort_by(|a, b| {
-            (a.home.as_str(), a.id.as_str()).cmp(&(b.home.as_str(), b.id.as_str()))
-        });
-        facts
+        facts.sort_by(|a, b| (a.0, a.1.id.as_str()).cmp(&(b.0, b.1.id.as_str())));
+        facts.into_iter().map(|(_, fact)| fact).collect()
     }
 
     /// **Which records point at a thing through a field**, whatever key they
-    /// used, of every status, holders in the order of their handles.
+    /// used, of every status, holders in the order of their keys.
     pub fn referring(&self, target: &EntityId) -> Vec<memory::Fact> {
         let Some(object) = self.resolve(&target.0) else {
             return Vec::new();
         };
-        let mut facts: Vec<memory::Fact> = self
+        let mut facts: Vec<(&str, memory::Fact)> = self
             .records_naming(object)
             .into_iter()
             .filter(|record| self.has_served_address(record))
-            .filter_map(|record| self.fact(record))
+            .filter_map(|record| Some((self.filed_under(record)?, self.fact(record)?)))
             .collect();
-        // The holders in the order of their handles, and a holder's claims in the
-        // order it serves them.
+        // The holders in the order of the key their records are filed under, and a
+        // holder's claims in the order it serves them.
         facts.sort_by(|a, b| {
-            memory::referring_holder_order(a.home.as_str(), b.home.as_str())
-                .then_with(|| a.id.as_str().cmp(b.id.as_str()))
+            memory::referring_holder_order(a.0, b.0)
+                .then_with(|| a.1.id.as_str().cmp(b.1.id.as_str()))
         });
-        facts
+        facts.into_iter().map(|(_, fact)| fact).collect()
+    }
+
+    /// **The key a claim's records are filed under**: its home, which a rename
+    /// does not change. A holder's records stand at this key as they are served.
+    fn filed_under(&self, record: &RecordId) -> Option<&str> {
+        self.records
+            .get(record)
+            .map(|held| held.claim.home.0.as_str())
     }
 
     /// The thing a handle names, when the handle is the one it answers to now.
