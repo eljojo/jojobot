@@ -58,6 +58,7 @@ use sqlx::{AssertSqlSafe, MySql, MySqlPool, Row, Transaction};
 
 use super::ids::{self, Draw};
 use super::{ordinal, requests::commit_native};
+use jojobot_domain::log::claims::type_change::effective_kind_declaration;
 
 pub use adopt::AdoptionReport;
 
@@ -7295,6 +7296,7 @@ impl Memory for DoltMemory {
         // **Whether the store holds anything different afterwards**, for a fold
         // that keeps a copy of it: the row, a displaced caller's type or a key.
         let mut changed = false;
+        let mut effective: Option<DeclaredType> = None;
         if !(origin == Origin::Declared && held_origin == Some(Origin::Shipped)) {
             changed |= held.as_deref() != Some(origin.as_token());
             sqlx::query("REPLACE INTO kind (token, origin) VALUES (?, ?)")
@@ -7382,12 +7384,27 @@ impl Memory for DoltMemory {
                     None => held_rows.iter().find(|held| held.0 == row.key).cloned(),
                 })
                 .collect();
+            // **What the kind holds once this lands**, built from the plan and the
+            // keys it keeps, which a store with no writer job has no use for and a
+            // boot before the kinds are loaded cannot read.
+            if crate::writer::sql::in_writer_job() {
+                let held_fields = held_rows
+                    .iter()
+                    .map(|(key, holds, folds, held_origin, required, one_of)| {
+                        field_of_cells(key, holds, folds, *required, one_of.as_deref())
+                            .map(|field| (field, read_origin(held_origin)))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                effective = effective_kind_declaration(token, Some(&plan), &held_fields);
+            }
             if planned == held_rows {
                 // The keys are as they will be: nothing is written for them.
                 if origin == Origin::Declared {
                     append_type_write(&mut tx, token, &declared.fields, None, &self.clock).await?;
                 }
-                entity_events::emit_type_declared(&declared, &self.clock, None)?;
+                if let Some(effective) = &effective {
+                    entity_events::emit_type_declared(effective, &self.clock, None)?;
+                }
                 entity_events::commit_kind_write(tx, token, &self.clock).await?;
                 return Ok(changed);
             }
@@ -7463,7 +7480,9 @@ impl Memory for DoltMemory {
         if origin == Origin::Declared {
             append_type_write(&mut tx, token, &declared.fields, None, &self.clock).await?;
         }
-        entity_events::emit_type_declared(&declared, &self.clock, None)?;
+        if let Some(effective) = &effective {
+            entity_events::emit_type_declared(effective, &self.clock, None)?;
+        }
         entity_events::commit_kind_write(tx, token, &self.clock).await?;
         Ok(changed)
     }

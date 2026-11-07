@@ -484,3 +484,37 @@ async fn a_reclaim_leaves_the_state_as_the_rows_hold_the_type() {
     world.writer.drain().await;
     world.server.stop().await;
 }
+
+/// **After a caller adds a key to a shipped kind, the State holds the kind's whole
+/// key list as the rows do.** The declaration is built from what the rows keep once
+/// the plan has landed, not from the keys the caller sent: a caller's key beside
+/// the build's own is one declaration of two keys.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_key_added_to_a_shipped_kind_is_held_with_the_keys_the_kind_keeps() {
+    use jojobot_domain::memory::types::{Field, Origin, ValueType};
+
+    let mut world = world("entity-events-kind-keys").await;
+    let token = "stockkind";
+    for (origin, key) in [(Origin::Shipped, "witness"), (Origin::Declared, "date")] {
+        let (memory, fields) = (world.memory.clone(), vec![Field::new(key, ValueType::Text)]);
+        world
+            .job(async move { memory.declare_kind(token, origin, fields).await })
+            .await
+            .expect("declared");
+    }
+    let rows = world
+        .memory
+        .declared_types()
+        .await
+        .expect("the rows read")
+        .into_iter()
+        .find(|declared| declared.name == token);
+    let held = world
+        .writer
+        .seam()
+        .expect("the seam is open")
+        .read_claims(|state| state.declared(&ObjectId(token.into())).cloned());
+    assert_eq!(held, rows, "the State holds the kind as the rows do");
+    world.writer.drain().await;
+    world.server.stop().await;
+}

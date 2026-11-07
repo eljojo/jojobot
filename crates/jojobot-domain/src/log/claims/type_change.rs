@@ -8,7 +8,7 @@ use jiff::Timestamp;
 use super::ClaimEvent;
 use super::import::live;
 use crate::log::{Event, ObjectId};
-use crate::memory::types::DeclaredType;
+use crate::memory::types::{DeclaredType, Field, KindKeysPlan, Origin};
 
 /// The events of declaring `declared` when the State holds `held` for its name:
 /// none when the State already holds exactly this declaration, so a seed run
@@ -31,6 +31,37 @@ pub fn type_declaration_events(
         at,
         run,
     )]
+}
+
+/// **The declaration a kind holds once a declaration of its keys has landed**, as the
+/// store's rows hold it: the keys the plan writes, then the keys it keeps, each with
+/// the origin that owns it. `held` is every key the kind holds before, with its
+/// field; the plan's kept keys take their field from it. With no plan the kind is
+/// as it was. A kind with no key holds no declaration, which is none here.
+/// The type takes the origin of its first key, as the rows read back.
+pub fn effective_kind_declaration(
+    token: &str,
+    plan: Option<&KindKeysPlan>,
+    held: &[(Field, Origin)],
+) -> Option<DeclaredType> {
+    let rows: Vec<(Field, Origin)> = match plan {
+        None => held.to_vec(),
+        Some(plan) => plan
+            .rows
+            .iter()
+            .filter_map(|row| match &row.written {
+                Some(field) => Some((field.clone(), row.origin)),
+                None => held.iter().find(|(field, _)| field.key == row.key).cloned(),
+            })
+            .collect(),
+    };
+    let origin = rows.first()?.1;
+    Some(DeclaredType {
+        name: token.to_string(),
+        fields: rows.into_iter().map(|(field, _)| field).collect(),
+        origin,
+        must: None,
+    })
 }
 
 /// **The events of withdrawing the declaration of `kind`**, when the rows hold
@@ -56,6 +87,38 @@ pub fn type_withdrawal_events(
 mod tests {
     use super::*;
     use crate::memory::types::{Field, ValueType};
+
+    /// **A kind's declaration is the keys the plan leaves it, kept ones included**,
+    /// in the plan's order and with the origin of the first.
+    #[test]
+    fn a_kind_declaration_holds_the_written_and_the_kept_keys() {
+        use crate::memory::types::{HeldKindKey, PlannedKindKey, plan_kind_keys};
+
+        let witness = Field::new("witness", ValueType::Text);
+        let date = Field::new("date", ValueType::Text);
+        let held = vec![(witness.clone(), Origin::Shipped)];
+        let plan = plan_kind_keys(
+            "pledge",
+            Origin::Declared,
+            std::slice::from_ref(&date),
+            &[HeldKindKey {
+                key: "witness".into(),
+                origin: Origin::Shipped,
+            }],
+        )
+        .expect("a caller may add a key");
+        let _: &[PlannedKindKey] = &plan.rows;
+        let effective =
+            effective_kind_declaration("pledge", Some(&plan), &held).expect("the kind holds keys");
+        let keys: Vec<&str> = effective.fields.iter().map(|f| f.key.as_str()).collect();
+        assert_eq!(keys, ["witness", "date"]);
+        assert_eq!(effective.origin, Origin::Shipped);
+        assert!(effective_kind_declaration("pledge", None, &[]).is_none());
+        assert_eq!(
+            effective_kind_declaration("pledge", None, &held).map(|d| d.fields),
+            Some(vec![witness])
+        );
+    }
 
     /// A withdrawal is made only when the State holds a declaration, and it names
     /// the kind.
