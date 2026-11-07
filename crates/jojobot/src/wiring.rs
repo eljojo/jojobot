@@ -1051,6 +1051,7 @@ pub async fn boot_store_observed(
             events,
             empty_merge_numbers,
             skipped_homes,
+            dangling_pointers,
         }) => {
             tracing::info!(events, "imported today's claims into the event log");
             // **Named once, at info**: the numbers stay empty and are never
@@ -1063,6 +1064,17 @@ pub async fn boot_store_observed(
                     home = %home,
                     claims,
                     "the import skipped the claims of a handle nothing holds; they stay in the old tables"
+                );
+            }
+            // **Each pointer that names nothing**, imported as written: the deployed
+            // boot logged such a value and served, and so does this one.
+            for pointer in &dangling_pointers {
+                tracing::warn!(
+                    table = pointer.table,
+                    row = %pointer.row,
+                    column = %pointer.column,
+                    value = %pointer.value,
+                    "the import kept a pointer that names nothing the store holds, as written"
                 );
             }
             if !empty_merge_numbers.is_empty() {

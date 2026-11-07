@@ -46,6 +46,20 @@ pub struct ImportRead {
     /// that is no row, no former handle, no supplied record and no retired supplied
     /// handle, so the rows were removed by hand. They stay in the old tables.
     pub skipped_homes: Vec<(String, usize)>,
+    /// **Pointers that name nothing the store holds**, carried as written: the deployed
+    /// boot logs such a value and serves, so the import names it and goes on. A name
+    /// that more than one thing wore is a finding instead, because the import never
+    /// guesses which.
+    pub dangling_pointers: Vec<DanglingPointer>,
+}
+
+/// **One stored pointer that names nothing**, where it was read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DanglingPointer {
+    pub table: &'static str,
+    pub row: String,
+    pub column: String,
+    pub value: String,
 }
 
 /// **Which key a stored name stands for.** A name is a badge, an entity's id, or
@@ -108,6 +122,8 @@ struct Read {
     findings: Vec<Finding>,
     /// Homes whose claims are skipped, with their claim counts.
     skipped: BTreeMap<String, usize>,
+    /// Pointers at a name no key holds, kept as written.
+    dangling: Vec<DanglingPointer>,
 }
 
 impl Read {
@@ -119,6 +135,22 @@ impl Read {
             *self.skipped.entry(stored.to_string()).or_default() += claims;
         }
         absent
+    }
+
+    /// **The key a stored pointer stands for.** A pointer at a name no key holds is
+    /// carried as written and named in the report, as the deployed boot logs it and
+    /// serves; one at a name more than one thing wore stays a finding.
+    fn pointer(&mut self, table: &'static str, row: &str, column: &str, stored: &str) -> ObjectId {
+        if matches!(self.keys.placed(stored), Placed::Absent) {
+            self.dangling.push(DanglingPointer {
+                table,
+                row: row.to_string(),
+                column: column.to_string(),
+                value: stored.to_string(),
+            });
+            return ObjectId(stored.to_string());
+        }
+        self.key(table, row, column, stored)
     }
 
     /// **The key a stored name stands for**, or its stored spelling with a
@@ -249,6 +281,7 @@ impl DoltMemory {
             keys,
             findings: Vec::new(),
             skipped: BTreeMap::new(),
+            dangling: Vec::new(),
         };
         let mut rows = Rows {
             supplied: supplied_rows(&self.supplied),
@@ -360,6 +393,7 @@ impl DoltMemory {
             rows,
             findings: read.findings,
             skipped_homes: read.skipped.into_iter().collect(),
+            dangling_pointers: read.dangling,
         })
     }
 }
@@ -717,13 +751,13 @@ impl DoltMemory {
         let edge = match fact.edge {
             Some(edge) => Some((
                 edge.shape.to_string(),
-                read.key(table, at, "edge_object", edge.object.as_str()),
+                read.pointer(table, at, "edge_object", edge.object.as_str()),
             )),
             None => None,
         };
         let derived_from = match fact.derived_from {
             Some(from) => Some(record_id(
-                &read.key(table, at, "derived_from", from.home.as_str()),
+                &read.pointer(table, at, "derived_from", from.home.as_str()),
                 from.local.as_str(),
             )),
             None => None,
@@ -731,14 +765,14 @@ impl DoltMemory {
         let refs = fact
             .refs
             .iter()
-            .map(|named| read.key(table, at, "refs", named.as_str()))
+            .map(|named| read.pointer(table, at, "refs", named.as_str()))
             .collect();
         let stands_for = fact
             .stands_for
             .iter()
             .map(|named| {
                 record_id(
-                    &read.key(table, at, "stands_for", named.home.as_str()),
+                    &read.pointer(table, at, "stands_for", named.home.as_str()),
                     named.local.as_str(),
                 )
             })
@@ -809,7 +843,7 @@ impl DoltMemory {
                 .remove(&(stored.clone(), key.clone(), ordinal))
                 .unwrap_or_default()
                 .iter()
-                .map(|target| read.key("field_link", &at, "target", target))
+                .map(|target| read.pointer("field_link", &at, "target", target))
                 .collect();
             let home = read.key("field_write", &at, "entity", &stored);
             rows.field_writes.push(FieldWriteRow {

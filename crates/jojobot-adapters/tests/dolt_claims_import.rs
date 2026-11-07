@@ -935,6 +935,167 @@ async fn claims_import_refuses_a_claim_filed_under_a_handle_two_things_once_wore
     server.stop().await;
 }
 
+/// **A pointer that names nothing the store holds is imported as written and
+/// named.** The deployed boot logs such a value and serves, so the import does the
+/// same. Three live claims: one edge at a name nothing holds, one lineage at a
+/// removed home, one key write linking a name nothing holds. Each reads back with
+/// its pointer as stored, and the report names all three.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn claims_import_carries_a_pointer_at_a_name_nothing_holds_as_written() {
+    let (_scratch, mut server, pool) = store("claims-import-dangling-pointer").await;
+    let memory = DoltMemory::open(pool.clone());
+    let marge = thing(&memory, "person:marge", "Marge").await;
+    let bart = thing(&memory, "person:bart", "Bart").await;
+    let homer = thing(&memory, "person:homer", "Homer").await;
+    let mut friend = NewFact::about(marge.clone(), "has a friend", date(2026, 9, 1));
+    friend.provenance = Provenance::Testimony;
+    friend.edge = Some(jojobot_domain::memory::Edge::new(
+        jojobot_domain::memory::EdgeShape::About,
+        homer.clone(),
+    ));
+    memory
+        .capture(friend)
+        .await
+        .expect("capture")
+        .written()
+        .expect("not blocked");
+    say(&memory, &marge, "follows from another").await;
+    let mut spouse = NewFact::about(bart.clone(), "is married", date(2026, 9, 1));
+    spouse.provenance = Provenance::Testimony;
+    spouse
+        .fields
+        .insert("spouse".to_string(), "person:marge".to_string());
+    spouse.sets.insert("spouse".to_string());
+    memory
+        .capture(spouse)
+        .await
+        .expect("capture")
+        .written()
+        .expect("not blocked");
+    for statement in [
+        "UPDATE fact SET edge_object = 'person:ralph' WHERE content = 'has a friend'",
+        "UPDATE fact_write SET edge_object = 'person:ralph' WHERE content = 'has a friend'",
+        "UPDATE fact SET derived_from = 'view:loops', derived_from_id = 'f1' \
+         WHERE content = 'follows from another'",
+        "UPDATE fact_write SET derived_from = 'view:loops', derived_from_id = 'f1' \
+         WHERE content = 'follows from another'",
+        "UPDATE field_link SET target = 'person:moe'",
+    ] {
+        sqlx::query(statement)
+            .execute(&pool)
+            .await
+            .expect("the pointer is broken by hand");
+    }
+
+    let imported = import_claims_once(&Writer::default(), &pool, &Provisions::default(), at())
+        .await
+        .expect("a pointer at nothing does not stop the import");
+    let Imported::Done {
+        dangling_pointers, ..
+    } = imported
+    else {
+        panic!("the import ran: {imported:?}");
+    };
+    let mut named: Vec<(&str, &str)> = dangling_pointers
+        .iter()
+        .map(|pointer| (pointer.column.as_str(), pointer.value.as_str()))
+        .collect();
+    named.sort_unstable();
+    // A claim's head and its write each carry the pointer, and each is named.
+    named.dedup();
+    assert_eq!(
+        named,
+        [
+            ("derived_from", "view:loops"),
+            ("edge_object", "person:ralph"),
+            ("target", "person:moe")
+        ],
+        "the report names each pointer"
+    );
+    let held = logged(&pool).await;
+    assert!(
+        held.iter().any(|event| matches!(
+            &event.payload,
+            ClaimEvent::RecordCreated { claim, .. }
+                if claim.content == "has a friend"
+                    && claim.edge.as_ref().is_some_and(|(_, object)| object.0 == "person:ralph")
+        )),
+        "the edge reads back as stored: {held:?}"
+    );
+    assert!(
+        held.iter().any(|event| matches!(
+            &event.payload,
+            ClaimEvent::RecordCreated { claim, .. }
+                if claim.content == "follows from another"
+                    && claim.derived_from.as_ref().is_some_and(|from| from.0.contains("view:loops"))
+        )),
+        "the lineage reads back as stored: {held:?}"
+    );
+    assert!(
+        held.iter().any(|event| matches!(
+            &event.payload,
+            ClaimEvent::FieldWritten { targets, .. }
+                if targets.iter().any(|target| target.0 == "person:moe")
+        )),
+        "the link reads back as stored: {held:?}"
+    );
+
+    server.stop().await;
+}
+
+/// **A pointer at a name two things once wore still stops the import**, because
+/// the import never guesses which: the pair of the case above.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn claims_import_still_refuses_a_pointer_at_a_name_two_things_wore() {
+    let (_scratch, mut server, pool) = store("claims-import-ambiguous-pointer").await;
+    let memory = DoltMemory::open(pool.clone());
+    let marge = thing(&memory, "person:marge", "Marge").await;
+    let homer = thing(&memory, "person:homer", "Homer").await;
+    let badges: Vec<String> =
+        sqlx::query_scalar("SELECT badge FROM entity WHERE badge IS NOT NULL ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .expect("the badges read");
+    for (ordinal, badge) in badges.iter().take(2).enumerate() {
+        sqlx::query(
+            "INSERT INTO entity_former_handle (former_handle, badge, changed_at, ordinal)
+             VALUES ('person:milhouse', ?, '2026-10-01', ?)",
+        )
+        .bind(badge)
+        .bind(ordinal as i64 + 1)
+        .execute(&pool)
+        .await
+        .expect("a former handle two things wore");
+    }
+    let mut friend = NewFact::about(marge.clone(), "has a friend", date(2026, 9, 1));
+    friend.provenance = Provenance::Testimony;
+    friend.edge = Some(jojobot_domain::memory::Edge::new(
+        jojobot_domain::memory::EdgeShape::About,
+        homer.clone(),
+    ));
+    memory
+        .capture(friend)
+        .await
+        .expect("capture")
+        .written()
+        .expect("not blocked");
+    sqlx::query("UPDATE fact SET edge_object = 'person:milhouse' WHERE content = 'has a friend'")
+        .execute(&pool)
+        .await
+        .expect("the pointer is broken by hand");
+
+    let refused = import_claims_once(&Writer::default(), &pool, &Provisions::default(), at())
+        .await
+        .expect_err("an ambiguous pointer is refused");
+    let ClaimsImportError::Findings { rows, .. } = &refused else {
+        panic!("the ambiguity is named: {refused:?}");
+    };
+    assert!(rows.contains("more than one thing"), "{rows}");
+    assert!(logged(&pool).await.is_empty(), "nothing was appended");
+
+    server.stop().await;
+}
+
 /// **A renamed record keeps its identity through a real store, and two records
 /// cannot share a first handle.** The first build supplies `view:loops`; a later
 /// one supplies the same record as `view:board`, naming its first handle. One

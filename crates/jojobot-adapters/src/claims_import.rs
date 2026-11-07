@@ -41,6 +41,9 @@ pub enum Imported {
         /// Homes whose claims were skipped, each with its claim count. The rows
         /// stay in the old tables, and the boot names them.
         skipped_homes: Vec<(String, usize)>,
+        /// Pointers that name nothing the store holds, imported as written. The
+        /// boot names each.
+        dangling_pointers: Vec<crate::dolt::memory::import_rows::DanglingPointer>,
     },
     /// The log already held a claims event. Nothing was read or written.
     AlreadyDone,
@@ -196,6 +199,7 @@ async fn import_in_job(
                 events: mapped,
                 empty_merge_numbers,
                 skipped_homes: read.skipped_homes,
+                dangling_pointers: read.dangling_pointers,
             })
         }
         Err(error) => {
