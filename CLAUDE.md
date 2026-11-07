@@ -92,8 +92,9 @@ in doubt, it doesn't cross.
   in a line or two. Don't narrate the work to the user as you go; if something
   needs a decision mid-card, ask it as one crisp question.
 - Merging advances `main` only. **Deploy and push are the user's verbs** —
-  never deploy; never push unless asked. The one exception: a dev line pushes
-  its own branches to Forgejo (see "A dev line's git" below).
+  never deploy; never push unless asked. The exceptions: a dev line pushes
+  its own branches to Forgejo, and its release trunk fast-forward only by
+  section 4a of the line procedure (see "A dev line's git" below).
 
 ### Booting a session in this repo
 
@@ -331,7 +332,9 @@ A session here starts at jojobot, not at these files. The whole protocol:
   cites that branch run by id and sha. The full bar runs once per change, at
   the carry (rules 501, 622). **In CI a job that goes red stops its sibling
   jobs** (`scripts/stop-with-siblings`: exit 75, "stopped: <job> failed
-  first"), so a stopped job in a red run is unproven, never passed.
+  first"), so a stopped job in a red run is unproven, never passed. An
+  `own-crates` job, which runs only a branch's touched crates, is the
+  exception: its red stops no sibling.
 - **The size ratchet** (`size-ratchet.toml`, checked by `bar size`): a file over
   `cap` lines (5,000) is red and a new one is refused; over 2,000 is yellow and
   warns. **Any file may grow when the change honestly needs it, with the reason
@@ -341,9 +344,11 @@ A session here starts at jojobot, not at these files. The whole protocol:
   stands up a room sits behind a cargo feature, so the bar compiles and lints
   it and never runs it. `make rooms` runs every room but the year,
   `make room ROOM=<name>` runs one, and `make year` runs the year room. **Forgejo CI
-  runs them**: a push to a `devN-work` branch runs `make report` (the check,
-  less the slow jobs its recorded history lets go) and `make rooms` beside it,
-  so a defect where two cards meet shows at the dev's report, and a pull request to
+  runs them**: a push to a `devN-work` branch runs `static`, then `own-crates`
+  (the tests of the crates its diff touches), `make report` (the check, less
+  the slow jobs its recorded history lets go) and, only when the diff touches
+  a room's own files, `make rooms`, so a defect where two cards meet shows at
+  the dev's report only if a room file changed, and a pull request to
   `main` runs `static` and `build`, then `check`, `rooms` and `year` side by
   side — the three checks `main` requires, so renaming a job drops a requirement. Every run keeps
   `target/bar/*.log`. Release QA is `pull-request.yml` dispatched on the exact head with `release`
