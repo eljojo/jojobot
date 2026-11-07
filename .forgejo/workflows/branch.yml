@@ -180,9 +180,9 @@ jobs:
     runs-on: nix
     timeout-minutes: 60
     steps:
-      - name: Runner cleanup
+      - name: Level
         run: |
-          [ -z "${JOJOBOT_PRE_JOB:-}" ] || "$JOJOBOT_PRE_JOB"
+          echo "level: report; selection: pending; left to boundary: $BAR_BOUNDARY_LEFT"
       - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0

@@ -225,8 +225,11 @@ fn the_own_crates_job_runs_dev_on_push_without_waiting_for_another_job() {
 fn the_startup_static_gate_stops_expensive_jobs_before_they_start() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     for (workflow, dependents) in [
-        ("branch", &["report", "rooms"][..]),
-        ("pull-request", &["build", "nix-build", "flake-check"][..]),
+        ("branch", &["boot-store", "rooms"][..]),
+        (
+            "pull-request",
+            &["build", "boot-store", "nix-build", "flake-check"][..],
+        ),
     ] {
         let text =
             fs::read_to_string(root.join(format!(".forgejo/workflows/{workflow}.yml"))).unwrap();
@@ -254,9 +257,19 @@ fn the_startup_static_gate_stops_expensive_jobs_before_they_start() {
                 "{workflow}/{name}: {job}"
             );
         }
+        // **The jobs that read the boot store wait for it as well**: the report job
+        // on the branch, the check job on the pull request. The store job itself
+        // waits for static only, so a red static gate still stops it first.
+        if workflow == "branch" {
+            assert!(workflow_job(&text, "report").contains("    needs: [static, boot-store]"));
+        }
         if workflow == "pull-request" {
-            for name in ["check", "rooms", "year"] {
-                assert!(workflow_job(&text, name).contains("    needs: [static, build]"));
+            for (name, needs) in [
+                ("check", "    needs: [static, build, boot-store]"),
+                ("rooms", "    needs: [static, build]"),
+                ("year", "    needs: [static, build]"),
+            ] {
+                assert!(workflow_job(&text, name).contains(needs), "{name}");
             }
         }
         let dir = scratch();
@@ -375,7 +388,12 @@ fn ci_required_statuses_fail_when_static_did_not_succeed() {
                 .any(|line| line.starts_with("    if: ${{ always()")),
             "{name}: {job}"
         );
-        assert!(job.contains("    needs: [static, build]"), "{job}");
+        let needs = if name == "check" {
+            "    needs: [static, build, boot-store]"
+        } else {
+            "    needs: [static, build]"
+        };
+        assert!(job.contains(needs), "{job}");
         let step = workflow_step(&job, "Level");
         assert!(step.contains("${{ needs.static.result }}"), "{step}");
         assert!(step.contains("${{ needs.build.result }}"), "{step}");
@@ -388,7 +406,8 @@ fn ci_required_statuses_fail_when_static_did_not_succeed() {
         ] {
             let rendered = step
                 .replace("${{ needs.static.result }}", static_result)
-                .replace("${{ needs.build.result }}", build_result);
+                .replace("${{ needs.build.result }}", build_result)
+                .replace("${{ needs.boot-store.result }}", "success");
             let out = support::output_fenced(
                 Command::new("bash")
                     .args(["-euc", &rendered])
