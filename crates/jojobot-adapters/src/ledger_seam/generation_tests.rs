@@ -233,6 +233,51 @@ async fn the_companion_claim_of_a_withdrawal_is_dated_by_the_stated_day() {
     server.stop().await;
 }
 
+/// **A seam opened before the import knows what the import appended.** The mail
+/// rail opens the seam in the startup passes, and the import runs after them.
+#[tokio::test]
+async fn a_seam_opened_before_the_import_knows_the_things_the_import_appended() {
+    use jojobot_domain::memory::{EntityId, Memory, NewEntity};
+    let scratch = Scratch::new("seam-follows-import");
+    let mut server = Dolt::start(&scratch.0, free_port()).await.unwrap();
+    let store = migrated_database(&server, "alpha").await.unwrap();
+    jojobot_domain::memory::kinds::seed(&crate::dolt::memory::DoltMemory::open(store.clone()))
+        .await
+        .expect("the kinds are seeded");
+    let pool = sql::Pool::from(store.clone());
+    let writer = Writer::default();
+    let seam = {
+        let (opener, pool) = (writer.clone(), pool.clone());
+        writer
+            .run(async move { opener.ensure_seam(&pool).await })
+            .await
+            .expect("the seam opens")
+    };
+    // A row of the old tables, written by a bare store: it emits no event.
+    crate::dolt::memory::DoltMemory::open(store.clone())
+        .add_entity(NewEntity::new(
+            EntityId("person:homer".into()),
+            "Homer",
+            "fixture",
+        ))
+        .await
+        .expect("add")
+        .written()
+        .expect("not blocked");
+    crate::claims_import::import_claims_once(
+        &writer,
+        &store,
+        &jojobot_domain::memory::owned::Provisions::default(),
+        at(0),
+    )
+    .await
+    .expect("the import runs");
+    let known = seam.read_claims(|state| state.canonical_handle("person:homer"));
+    assert_eq!(known, Some(EntityId("person:homer".into())));
+    writer.drain().await;
+    server.stop().await;
+}
+
 /// **A request made in the batch that sets its spec is numbered by its handle**,
 /// the spelling the batch binds, and not by the display name it is created under.
 #[tokio::test]
