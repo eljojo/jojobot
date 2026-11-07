@@ -447,6 +447,9 @@ impl State {
                         written_at: event.imported_source_time.or(event.written_at),
                     },
                 );
+                if before.is_none() {
+                    self.note_origin(record, claim);
+                }
                 self.index_record(record, before.as_ref(), claim);
             }
             ClaimEvent::RecordRevised { record, claim } => {

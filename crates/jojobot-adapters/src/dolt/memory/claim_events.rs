@@ -122,13 +122,14 @@ impl DoltMemory {
         }))
     }
 
-    /// **The record a claim is held under**: the one the State holds under the
-    /// label when it holds one, because a claim the capture job decided is filed
-    /// under an id of its own; else the id the object and the label make.
+    /// **The record a claim is held under**, named by the object and the label the
+    /// store's rows file it under: the one the State made under that pair when it
+    /// holds one, because a claim the capture job decided is filed under an id of
+    /// its own; else the id the pair makes.
     fn record_named(object: &ObjectId, label: &str) -> jojobot_domain::log::RecordId {
         crate::writer::Writer::current()
             .and_then(|writer| writer.seam())
-            .and_then(|seam| seam.read_claims(|state| state.record_under(object, label)))
+            .and_then(|seam| seam.read_claims(|state| state.record_at_origin(object, label)))
             .unwrap_or_else(|| record_id(object, label))
     }
 

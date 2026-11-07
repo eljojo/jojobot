@@ -46,6 +46,11 @@ pub(super) struct Indexes {
     merges: u64,
     /// (home, label) to the claim that holds it.
     labels: BTreeMap<(ObjectId, String), RecordId>,
+    /// (home, label) the claim was CREATED under to the claim. A merge changes the
+    /// home and the label a claim is served under and never the pair it was filed
+    /// under in the store's rows, so this is the key of a write that names the claim
+    /// by its row.
+    origins: BTreeMap<(ObjectId, String), RecordId>,
     /// The claims homed on each object, whatever label they hold. A merge that
     /// retains two claims under one label leaves one slot in `labels` and both
     /// claims here.
@@ -254,12 +259,24 @@ impl State {
         self.handle_of(object)
     }
 
-    /// **The record an object holds under a label**, when it holds one.
-    pub fn record_under(&self, object: &ObjectId, label: &str) -> Option<RecordId> {
+    /// **The record created under a home and a label**, as the store's rows file it:
+    /// the home and the label of its first write, whatever a merge has since made
+    /// of the ones it is served under. The first record to have been made under
+    /// the pair answers.
+    pub fn record_at_origin(&self, home: &ObjectId, label: &str) -> Option<RecordId> {
         self.indexes
-            .labels
-            .get(&(self.survivor(object).clone(), label.to_string()))
+            .origins
+            .get(&(home.clone(), label.to_string()))
             .cloned()
+    }
+
+    /// Note where a record was created. Called once, when the first write of the
+    /// record is applied.
+    pub(super) fn note_origin(&mut self, record: &RecordId, claim: &ClaimBody) {
+        self.indexes
+            .origins
+            .entry((claim.home.clone(), claim.label.clone()))
+            .or_insert_with(|| record.clone());
     }
 
     /// **The claim an address names**: a spelling of the object, a `#`, and the

@@ -12,7 +12,7 @@ use jojobot_domain::clock::Clock;
 use jojobot_domain::log::claims::ClaimSize;
 use jojobot_domain::log::claims::job::{CaptureJob, within};
 use jojobot_domain::memory::{
-    Edge, EdgeShape, EntityId, FactAddress, Guarded, Memory, NewEntity, NewFact,
+    Edge, EdgeShape, EntityId, FactAddress, FactId, Guarded, Memory, NewEntity, NewFact,
 };
 use sqlx::Row;
 
@@ -611,6 +611,104 @@ async fn a_thought_given_up_for_a_room_leaves_the_same_rows_through_the_job() {
     assert_eq!(new_rows, old_rows);
     old.server.stop().await;
     new.server.stop().await;
+}
+
+/// **A rewrite of a claim a merge moved revises that claim and not the survivor's
+/// own**: the claim is named by the pair the store's rows file it under, and the
+/// survivor holds a different claim under the label the moved one is served by.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_rewrite_after_a_merge_revises_the_moved_claim_and_not_the_survivors() {
+    let mut world = world("row-writer-merged-rewrite").await;
+    world.add("person:homer", "Homer").await;
+    world.add("person:bart", "Bart").await;
+    let folded = world
+        .capture(
+            NewFact::about(
+                id("person:bart"),
+                "the folded thing's claim",
+                date(2026, 4, 19),
+            ),
+            true,
+        )
+        .await;
+    let own = world
+        .capture(
+            NewFact::about(
+                id("person:homer"),
+                "the survivor's own claim",
+                date(2026, 4, 19),
+            ),
+            true,
+        )
+        .await;
+    assert_eq!((folded.id.as_str(), own.id.as_str()), ("f1", "f1"));
+    let (memory, from, to) = (world.memory.clone(), id("person:bart"), id("person:homer"));
+    world
+        .writer
+        .run(async move {
+            memory
+                .merge(
+                    &from,
+                    &to,
+                    Some("filed twice"),
+                    date(2026, 4, 20),
+                    &id("person:homer"),
+                    None,
+                )
+                .await
+                .expect("the merge runs");
+        })
+        .await;
+    // Served now: the survivor's own claim is f1 and the moved one is f2.
+    let (memory, caller) = (world.memory.clone(), id("person:marge"));
+    world.add("person:marge", "Marge").await;
+    let moved = FactAddress::new(id("person:homer"), FactId("f2".into()));
+    world
+        .writer
+        .run(async move {
+            memory
+                .update_fact(
+                    &moved,
+                    jojobot_domain::memory::FactPatch {
+                        content: Some("the moved claim, rewritten".to_string()),
+                        ..Default::default()
+                    },
+                    &caller,
+                )
+                .await
+                .expect("the moved claim is rewritten")
+                .written()
+                .expect("not blocked");
+        })
+        .await;
+    let read = world
+        .memory
+        .recall(&id("person:homer"))
+        .await
+        .expect("the rows read");
+    let by_content: Vec<&str> = read.iter().map(|held| held.content.as_str()).collect();
+    assert!(
+        by_content.contains(&"the survivor's own claim"),
+        "the survivor's own claim is as it was: {by_content:?}"
+    );
+    let seam = world.writer.seam().expect("the seam is open");
+    let in_state: Vec<String> = seam.read_claims(|state| {
+        ["person:homer#f1", "person:homer#f2"]
+            .iter()
+            .filter_map(|address| state.claim_at(address))
+            .filter_map(|located| {
+                state
+                    .record(&located.record)
+                    .map(|r| r.claim.content.clone())
+            })
+            .collect()
+    });
+    assert_eq!(
+        in_state,
+        ["the survivor's own claim", "the moved claim, rewritten"],
+        "the State revised the moved claim and left the survivor's"
+    );
+    world.server.stop().await;
 }
 
 /// **A claim decided over the State is read back by the row readers and edited by

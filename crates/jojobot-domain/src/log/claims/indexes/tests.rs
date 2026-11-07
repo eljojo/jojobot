@@ -1308,6 +1308,19 @@ fn links_from_by_scan(state: &State, subject: &ObjectId) -> BTreeSet<ObjectId> {
 fn assert_indexes_equal_a_recomputation(state: &State, merges: u64, context: &str) {
     assert_eq!(state.highest_merge_number(), merges, "{context}: merges");
     let survivor = |name: &str| state.survivor(&object(name)).clone();
+    // The pair a claim was created under finds a claim made under that pair, however
+    // many merges have moved it since.
+    for (record, held) in &state.records {
+        let first = &held.history[0].claim;
+        let found = state.record_at_origin(&first.home, &first.label);
+        assert!(
+            found.as_ref().is_some_and(|found| {
+                let made = &state.records[found].history[0].claim;
+                (&made.home, &made.label) == (&first.home, &first.label)
+            }),
+            "{context}: {record:?} is found by the pair it was created under"
+        );
+    }
     for name in OBJECTS {
         for k in KEYS {
             let stream = state.streams.get(&(survivor(name), key(k)));
