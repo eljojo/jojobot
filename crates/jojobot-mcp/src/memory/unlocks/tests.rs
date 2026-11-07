@@ -251,6 +251,47 @@ async fn a_partly_matched_type_is_named_once_per_set_of_missing_keys_per_session
     );
 }
 
+/// **A step the receipt drops is not spent.** A write that also earns a
+/// possible-subject note ships that note and no `unlocks` block, because a
+/// receipt carries one suggestion. The session has been told nothing of the
+/// type, so a later write that lacks the same keys of the same type still gets
+/// the step.
+#[tokio::test]
+async fn a_type_step_the_receipt_drops_is_still_offered_to_the_next_write() {
+    let jojobot = handler();
+    declare_journey(&jojobot).await;
+    ensure(&jojobot, "thing:the-furnace").await;
+
+    let dropped = capture_sets(
+        &jojobot,
+        "thing:delta",
+        "The furnace's service is due in March",
+        &[("leaves_on", "2026-09-01"), ("returns_on", "2026-09-08")],
+    )
+    .await;
+    assert!(
+        dropped["possible_subject_note"].is_string(),
+        "the write earns the suggestion that outranks the block: {dropped}"
+    );
+    assert!(
+        dropped.get("unlocks").is_none(),
+        "the block is dropped: {dropped}"
+    );
+
+    let later = capture_sets(
+        &jojobot,
+        "thing:epsilon",
+        "away for a week",
+        &[("leaves_on", "2026-10-01"), ("returns_on", "2026-10-08")],
+    )
+    .await;
+    assert_eq!(
+        steps_for_type(&later, "journey").len(),
+        1,
+        "a step nobody was shown is still owed: {later}"
+    );
+}
+
 /// **A type held whole is silent**, and a thing that answers no type is too.
 #[tokio::test]
 async fn a_thing_that_holds_a_whole_type_or_matches_none_gets_no_block() {

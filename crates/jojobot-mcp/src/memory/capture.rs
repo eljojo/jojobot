@@ -1020,7 +1020,7 @@ impl Jojobot {
         self.note_depends_on_read(&fact, &caller, &mut body).await;
         self.note_possible_subject(&fact, &caller, &mut body).await;
         self.note_span_in_words(&fact, &caller, &mut body).await;
-        self.note_unlocks(&fact.subject, &caller, &mut body).await;
+        let owed_unlocks = self.offer_unlocks(&fact.subject, &caller, &mut body).await;
         self.note_unstars_without_a_summary(&fact, false, caller.sid.as_str(), &mut body);
         if self.first_contact(CLAIMS_DOMAIN, Some(&caller)).await {
             crate::answer::note_teaching(&mut body, CLAIMS_TEACHING);
@@ -1110,7 +1110,11 @@ impl Jojobot {
                 &crate::teaching::field_shadows_argument_teaching(shadowed, &owning_verb),
             );
         }
-        json_result(&self.own_capture_receipt(body, &caller, carry_hint).await)
+        json_result(
+            &self
+                .own_capture_receipt(body, &caller, carry_hint, &owed_unlocks)
+                .await,
+        )
     }
 }
 

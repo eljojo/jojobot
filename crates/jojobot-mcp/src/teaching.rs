@@ -644,6 +644,32 @@ impl Jojobot {
             }
         }
     }
+
+    /// **Whether [`Self::first_contact`] would answer `true` for this pair**,
+    /// without writing it: the small form teaches nothing, the ledger holds no row
+    /// for the pair, and a batch has not already found it. A caller that serves
+    /// the teaching only if a later choice keeps it asks here, then spends with
+    /// `first_contact` once the choice is made.
+    pub(crate) async fn untaught(&self, domain: &str, caller: &Caller) -> bool {
+        if crate::write_receipts::saving() {
+            return false;
+        }
+        if !matches!(
+            self.teachings.has_contact(&caller.sid, domain).await,
+            Ok(false)
+        ) {
+            return false;
+        }
+        BATCH_SPENDS
+            .try_with(|held| {
+                !held
+                    .lock()
+                    .expect("a batch's spends are poisoned")
+                    .iter()
+                    .any(|spent| spent == domain)
+            })
+            .unwrap_or(true)
+    }
 }
 
 #[cfg(test)]

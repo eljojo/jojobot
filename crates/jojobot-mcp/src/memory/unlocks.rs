@@ -168,6 +168,13 @@ pub(crate) fn type_steps(
         .collect()
 }
 
+/// **A type step put on a receipt and not yet spent**: the ledger key to spend
+/// when the step is served, and the sentence that names it in the block.
+pub(crate) struct OwedUnlock {
+    pub(crate) key: String,
+    pub(crate) sentence: String,
+}
+
 impl Jojobot {
     /// **Put the `unlocks` block on the receipt of a write that landed**, when
     /// there is something to say. A thing that lacks nothing it could answer
@@ -185,6 +192,33 @@ impl Jojobot {
         subject: &EntityId,
         caller: &Caller,
         body: &mut serde_json::Value,
+    ) {
+        self.put_unlocks(subject, caller, body, None).await;
+    }
+
+    /// **[`Self::note_unlocks`] that spends nothing.** The type steps it puts on
+    /// the receipt are returned, each with the ledger key it would spend, so the
+    /// caller spends them only if the receipt it serves still carries the block.
+    /// A receipt that carries one suggestion may drop it, and a step nobody was
+    /// shown must stay owed.
+    pub(crate) async fn offer_unlocks(
+        &self,
+        subject: &EntityId,
+        caller: &Caller,
+        body: &mut serde_json::Value,
+    ) -> Vec<OwedUnlock> {
+        let mut owed = Vec::new();
+        self.put_unlocks(subject, caller, body, Some(&mut owed))
+            .await;
+        owed
+    }
+
+    async fn put_unlocks(
+        &self,
+        subject: &EntityId,
+        caller: &Caller,
+        body: &mut serde_json::Value,
+        mut owed: Option<&mut Vec<OwedUnlock>>,
     ) {
         let Ok(fields) = self.memory.fields(subject).await else {
             return;
@@ -204,7 +238,20 @@ impl Jojobot {
                         step.add.join(",")
                     ),
                 );
-                if self.first_contact(&pair, Some(caller)).await {
+                let offered = match owed.as_deref_mut() {
+                    Some(owed) => {
+                        let untaught = self.untaught(&pair, caller).await;
+                        if untaught {
+                            owed.push(OwedUnlock {
+                                key: pair.clone(),
+                                sentence: step.unlocks.clone(),
+                            });
+                        }
+                        untaught
+                    }
+                    None => self.first_contact(&pair, Some(caller)).await,
+                };
+                if offered {
                     steps.push(step);
                 }
             }

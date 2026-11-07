@@ -8,34 +8,62 @@ use std::collections::BTreeSet;
 
 use serde_json::Value;
 
+use super::unlocks::OwedUnlock;
 use crate::answer::compose::{Answer, Kind, Layer, Tier, compose_within};
 use crate::{Jojobot, caller::Caller};
 
 impl Jojobot {
-    /// A dropped carry hint never spends its teaching. If another receipt already
-    /// claimed the domain, or its ledger write fails, choose again without it.
+    /// **What a capture receipt serves, and the teachings it spends for it.** A
+    /// dropped suggestion spends nothing: a carry hint spends its domain, and a
+    /// type step its ledger key, only if the receipt still carries them once the
+    /// composer has chosen. If another receipt claimed the teaching first, or its
+    /// ledger write fails, choose again without it.
     pub(crate) async fn own_capture_receipt(
         &self,
         mut body: Value,
         caller: &Caller,
         carry_hint: bool,
+        owed: &[OwedUnlock],
     ) -> Value {
-        if !carry_hint {
-            return own(body);
-        }
-        let served = own(body.clone());
-        if served.get("hint").is_none() {
-            return served;
-        }
-        if self
-            .first_contact(super::list_carry::PLAN_CARRY_DOMAIN, Some(caller))
-            .await
+        let mut served = own(body.clone());
+        if carry_hint
+            && served.get("hint").is_some()
+            && !self
+                .first_contact(super::list_carry::PLAN_CARRY_DOMAIN, Some(caller))
+                .await
         {
+            body.as_object_mut()
+                .expect("a capture receipt is an object")
+                .remove("hint");
+            served = own(body.clone());
+        }
+        if served.get("unlocks").is_none() || owed.is_empty() {
             return served;
         }
-        body.as_object_mut()
-            .expect("a capture receipt is an object")
-            .remove("hint");
+        let mut lost = Vec::new();
+        for step in owed {
+            if !self.first_contact(&step.key, Some(caller)).await {
+                lost.push(step.sentence.as_str());
+            }
+        }
+        if lost.is_empty() {
+            return served;
+        }
+        let steps = body
+            .get_mut("unlocks")
+            .and_then(|block| block.get_mut("steps"))
+            .and_then(Value::as_array_mut)
+            .expect("the served block came from the body");
+        steps.retain(|step| {
+            !step["unlocks"]
+                .as_str()
+                .is_some_and(|sentence| lost.contains(&sentence))
+        });
+        if steps.is_empty() {
+            body.as_object_mut()
+                .expect("a capture receipt is an object")
+                .remove("unlocks");
+        }
         own(body)
     }
 }
