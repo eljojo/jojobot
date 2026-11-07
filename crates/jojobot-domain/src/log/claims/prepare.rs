@@ -57,6 +57,10 @@ pub enum Route {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Door {
     pub actor: Actor,
+    // GAP: no stored row binds an object to an app until the object resource ships, so
+    // every door built outside a test leaves `owned_keys` empty and `owner_revoked`
+    // false, and the ownership row below cannot fire: work:q-2713. The app grant check
+    // at the verb stays the live check until then.
     pub owned_keys: BTreeSet<String>,
     pub owner_revoked: bool,
     /// The sizes the server measured for this request.
