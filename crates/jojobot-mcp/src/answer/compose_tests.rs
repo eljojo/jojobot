@@ -189,19 +189,19 @@ fn rule_3_at_most_one_suggestion_the_best_ranked_or_none() {
         Vec<&'static str>,
     );
     let rows: Vec<Row> = vec![
-        // two fit: only the higher tier ships
+        // two fit: only the higher tier ships, and the other is named
         (
             vec![("low", Tier::Low, 30), ("high", Tier::High, 30)],
             100,
             vec!["high"],
-            vec![],
+            vec!["low"],
         ),
-        // the best does not fit: none, though the other would
+        // the best does not fit: none, though the other would; both are named
         (
             vec![("high", Tier::High, 200), ("low", Tier::Low, 30)],
             40,
             vec![],
-            vec!["high"],
+            vec!["high", "low"],
         ),
         // one suggestion alone fits
         (vec![("only", Tier::Low, 30)], 30, vec!["only"], vec![]),
@@ -215,18 +215,22 @@ fn rule_3_at_most_one_suggestion_the_best_ranked_or_none() {
         assert_eq!(left(&composed), omitted, "{declared:?} room {room}");
         assert_eq!(names(&composed), expected, "{declared:?} room {room}");
     }
-    // A discarded suggestion neither names a return call nor takes budget.
+    // **A suggestion below the best is named, never silently dropped**: it
+    // takes no room to serve and the call that returns it rides in the account.
     let composed = run(
         vec![
             sized("best", Kind::Suggestion, Tier::High, 30),
             sized("second", Kind::Suggestion, Tier::Medium, 30),
             sized("detail", Kind::Detail, Tier::Low, 30),
         ],
-        60,
+        60 + full(&["second"]),
         &[],
     );
-    assert!(left(&composed).is_empty(), "{:?}", composed.left_out);
-    assert!(composed.served.get(LEFT_OUT_KEY).is_none());
+    assert_eq!(left(&composed), ["second"], "{:?}", composed.left_out);
+    assert_eq!(
+        composed.served[LEFT_OUT_KEY],
+        json!([{"layer": "second", "call": "recall"}])
+    );
     assert_eq!(names(&composed), ["best", "detail"]);
 }
 
@@ -260,9 +264,9 @@ fn a_taught_suggestion_is_silent_and_does_not_hide_a_fresh_suggestion() {
     assert!(left(&composed).is_empty());
     assert!(composed.served.get(LEFT_OUT_KEY).is_none());
 
-    let not_taught = run(layers(), 200, &["other"]);
+    let not_taught = run(layers(), 200 + full(&["fresh"]), &["other"]);
     assert_eq!(names(&not_taught), ["taught"]);
-    assert!(left(&not_taught).is_empty());
+    assert_eq!(left(&not_taught), ["fresh"]);
 }
 
 /// Rule 4. `taught_domain`: a taught once-per-session note vanishes, unlisted.

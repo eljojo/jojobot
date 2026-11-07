@@ -3,8 +3,9 @@
 //!
 //! An answer is a core and a list of named layers. The core is always served
 //! whole. Layers fill to the bot's budget by relevance, with suggestions after
-//! all other layers. Only the best suggestion is kept; the rest are dropped.
-//! Each kept layer left out is named once with the call that returns it.
+//! all other layers. Only the best suggestion is kept; the rest are never
+//! served and are named. Each layer left out is named once with the call that
+//! returns it.
 //! The account of what was left out is part of the answer and is counted
 //! inside the budget; when even the core and the bare names do not fit, the
 //! answer is served over budget and says so. A tighter budget only ever drops
@@ -240,11 +241,16 @@ pub(crate) fn compose_within(answer: &Answer, limit: usize, taught: &BTreeSet<&s
     // the sort is stable, so ties keep declared order (table: rank_order).
     ranked.sort_by_key(|layer| (layer.kind == Kind::Suggestion, layer.tier, layer.cost));
 
-    // Only the best-ranked suggestion may ship (table: one_suggestion);
-    // later ones are discarded before either filling or naming omissions.
+    // Only the best-ranked suggestion may ship (table: one_suggestion). The
+    // later ones never fill, but each is named in the account with the call that
+    // returns it: a bot that sees one suggestion can tell it was not the only one.
     let mut first_suggestion = true;
+    let mut below_the_best: Vec<&Layer> = Vec::new();
     ranked.retain(|layer| match layer.kind {
-        Kind::Suggestion => std::mem::replace(&mut first_suggestion, false),
+        Kind::Suggestion if !std::mem::replace(&mut first_suggestion, false) => {
+            below_the_best.push(layer);
+            false
+        }
         _ => true,
     });
     let fillable = ranked.len();
@@ -269,6 +275,12 @@ pub(crate) fn compose_within(answer: &Answer, limit: usize, taught: &BTreeSet<&s
                     call: layer.returned_by,
                 });
             }
+        }
+        for layer in &below_the_best {
+            left_out.push(LeftOut {
+                layer: layer.name,
+                call: layer.returned_by,
+            });
         }
         if !left_out.is_empty() {
             served.insert(LEFT_OUT_KEY.to_string(), account(&left_out, form));

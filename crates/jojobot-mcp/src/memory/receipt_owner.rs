@@ -2,7 +2,8 @@
 //! write.** The receipt's facts (what landed, what was not stored, what changed)
 //! are its core and always ship. Every advisory part a capture adds is a named
 //! layer here, and the composer decides which ship: at most one suggestion,
-//! ranked, the rest dropped.
+//! ranked, the rest never served and named in `left_out` with the call that
+//! returns them.
 
 use std::collections::BTreeSet;
 
@@ -86,8 +87,9 @@ const SUGGESTIONS: [(&str, Tier); 3] = [
 const RETURNED_BY: &str = "recall";
 
 /// Takes the finished receipt and returns what is served: its core whole, and
-/// the one top-ranked suggestion. Every other suggestion is dropped without a
-/// trace. No ceiling applies yet, so only the one-suggestion rule acts.
+/// the one top-ranked suggestion. Every other suggestion is named in `left_out`
+/// with the call that returns its ground. No ceiling applies yet, so only the
+/// one-suggestion rule acts.
 pub(crate) fn own(body: Value) -> Value {
     let Value::Object(mut core) = body else {
         return body;
@@ -234,7 +236,7 @@ mod tests {
     }
 
     /// **Two suggestions on one write: only the top-ranked ships, and the other
-    /// is dropped.** A heading written onto a document gets the
+    /// is named in `left_out` with the call that returns it.** A heading written onto a document gets the
     /// "this is a claim about the document" hint, and its words name a known
     /// thing, which gets the "possible subject" note. A wrong subject outranks a
     /// feature hint. The keys are the wire's own and nothing outside this
@@ -264,9 +266,10 @@ mod tests {
             receipt.get("hint").is_none(),
             "the lower suggestion does not: {receipt}"
         );
-        assert!(
-            receipt.get("left_out").is_none(),
-            "the dropped one is not named, since it consumed no budget: {receipt}"
+        assert_eq!(
+            receipt["left_out"],
+            json!([{"layer": "hint", "call": "recall"}]),
+            "the lower suggestion is named with the call that returns it: {receipt}"
         );
     }
 

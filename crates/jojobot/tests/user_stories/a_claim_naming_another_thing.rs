@@ -139,3 +139,45 @@ async fn a_receipt_names_another_known_thing_the_claims_words_name_once_a_sessio
 
     story.finish().await;
 }
+
+/// **A receipt that serves one suggestion says the other exists.** A heading
+/// written as a claim on a document earns the hint that read_document does not
+/// show it, and its words name a known thing, which earns the note about another
+/// possible subject. The receipt carries one of them. A bot that never saw the
+/// hint would otherwise have no way to know a second suggestion was dropped, so
+/// the receipt names it in `left_out` with the call that returns its ground.
+#[tokio::test]
+async fn a_receipt_that_serves_one_suggestion_names_the_one_it_did_not() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("thing:the-furnace", "The furnace").await;
+    s.add("document:alpha", "Alpha").await;
+
+    let filed = s
+        .call(
+            "capture",
+            json!({
+                "subject": "document:alpha",
+                "content": "# The furnace's service is due in March",
+                "provenance": "testimony",
+            }),
+        )
+        .await
+        .json();
+    assert!(
+        filed["possible_subject_note"].is_string(),
+        "the more urgent suggestion is served: {filed}"
+    );
+    assert!(
+        filed.get("hint").is_none(),
+        "the other is not served: {filed}"
+    );
+    let left_out = filed["left_out"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the receipt names what it left out: {filed}"));
+    assert_eq!(
+        left_out,
+        &[json!({"layer": "hint", "call": "recall"})],
+        "{filed}"
+    );
+}
