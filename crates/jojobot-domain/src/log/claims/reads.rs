@@ -178,7 +178,7 @@ impl State {
             stream.iter().map(|write| {
                 let value = match &write.write {
                     FieldValue::Set(value) => Some(value.as_str()),
-                    FieldValue::Clear => None,
+                    FieldValue::Clear | FieldValue::Removed => None,
                 };
                 (key.0.as_str(), value, write.record.clone())
             })
@@ -257,7 +257,7 @@ impl State {
             let carried = FactId(record.claim.label.clone());
             let value = match &write.write {
                 FieldValue::Set(value) => Some(value.clone()),
-                FieldValue::Clear => None,
+                FieldValue::Clear | FieldValue::Removed => None,
             };
             match &value {
                 Some(_) => {

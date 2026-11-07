@@ -253,8 +253,10 @@ pub struct DoltMemory {
     /// serves is [`journaled`](Self::journaled): its entity and type writers emit
     /// their claim events into the writer job's batch, and a write that reaches it
     /// with no job is refused. Every other store is bare: boot passes, seeds and
-    /// direct-store cases write their rows and emit nothing.
-    journaled: bool,
+    /// direct-store cases write their rows and emit nothing. **Shared across a
+    /// clone**, so the boot serves one store and turns the journal on for all of
+    /// its clones in one step, after the passes that rewrite rows.
+    journaled: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// **How an edit of a claim is committed by the caller that owns its
@@ -300,7 +302,7 @@ impl DoltMemory {
             supplied: Provisions::default(),
             clock: Clock::default(),
             warned: Default::default(),
-            journaled: false,
+            journaled: Default::default(),
         }
     }
 
@@ -357,13 +359,21 @@ impl DoltMemory {
     /// **This store, taking part in the event log.** By value, so the store the
     /// server serves is one made on purpose. See the field.
     #[must_use]
-    pub fn journaled(mut self) -> Self {
-        self.journaled = true;
+    pub fn journaled(self) -> Self {
+        self.start_journaling();
         self
     }
 
+    /// **Turn the journal on for this store and every clone of it.** The boot
+    /// calls it once, after the passes that rewrite rows and the claims import, and
+    /// before anything serves.
+    pub fn start_journaling(&self) {
+        self.journaled
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
     fn journal(&self) -> entity_events::Journal {
-        if self.journaled {
+        if self.journaled.load(std::sync::atomic::Ordering::SeqCst) {
             entity_events::Journal::Journaled
         } else {
             entity_events::Journal::Bare
@@ -404,7 +414,7 @@ impl DoltMemory {
             supplied: Provisions::default(),
             clock: Clock::default(),
             warned: Default::default(),
-            journaled: false,
+            journaled: Default::default(),
         }
     }
 
