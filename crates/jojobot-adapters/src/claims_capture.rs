@@ -105,7 +105,19 @@ pub(crate) async fn admit(
     let decided = seam.read_claims(|state| {
         let declared = state.declared_types();
         match prepare(state, &declared, &request) {
-            Ok(admitted) => Ok(admitted),
+            // **A capture that changes the spec of a bot request carries its number
+            // when it is admitted**, so the rows written for it include the number
+            // too. The seam leaves a batch alone that holds its own.
+            Ok(mut admitted) => {
+                let numbers = state.generation_events(
+                    &admitted,
+                    &declared,
+                    at.to_zoned(jiff::tz::TimeZone::UTC).date(),
+                    jojobot_domain::log::claims::job::fresh_record,
+                );
+                admitted.extend(numbers);
+                Ok(admitted)
+            }
             // **Answered from the State that refused**, before it can move.
             Err(refusal) => Err(refusal.declined(state)),
         }

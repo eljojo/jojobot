@@ -3072,7 +3072,7 @@ impl DoltMemory {
         job: jojobot_domain::log::claims::job::CaptureJob,
     ) -> Result<Guarded<Fact>, MemoryError> {
         use jojobot_domain::log::claims::{ClaimEvent, Declined};
-        let tx = self.pool.begin().await.map_err(store)?;
+        let mut tx = self.pool.begin().await.map_err(store)?;
         let seam = crate::writer::Writer::current()
             .and_then(|writer| writer.seam())
             .ok_or_else(|| {
@@ -3092,6 +3092,11 @@ impl DoltMemory {
                 }
                 Err(Declined::Refused(error)) => return Err(error),
             };
+        // **The rows are still read until the reads come from the State**, so the
+        // rows the events stand for are written in the same transaction.
+        // TEMPORARY(9.3.3): the reads move to the State and this goes with them.
+        self.write_admitted(&mut tx, &seam, &admitted.events)
+            .await?;
         let address = admitted
             .events
             .iter()
@@ -8364,10 +8369,13 @@ mod entity_events;
 #[cfg(test)]
 mod entity_events_tests;
 pub mod import_rows;
+#[cfg(test)]
+mod row_writer_tests;
 use boot_reads::trails_from;
 mod link_rule;
 mod numbered;
 mod repair;
+mod row_writer;
 mod scans;
 mod stale_claim;
 mod typed_guard;
