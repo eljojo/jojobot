@@ -2597,12 +2597,14 @@ impl Memory for InMemoryMemory {
             .lock()
             .expect("fake mutex poisoned")
             .clone();
+        let claims_before = self.claims.lock().expect("fake mutex poisoned").clone();
         let heartbeats_before = self.heartbeats_now();
         let take_back = || {
             self.put_heartbeats_back(&heartbeats_before);
             *self.facts.lock().expect("fake mutex poisoned") = facts_before.clone();
             *self.writes.lock().expect("fake mutex poisoned") = writes_before.clone();
             *self.claim_writes.lock().expect("fake mutex poisoned") = claim_writes_before.clone();
+            *self.claims.lock().expect("fake mutex poisoned") = claims_before.clone();
             *self.world_cache.lock().expect("fake mutex poisoned") = None;
         };
         let edited = match self.update_fact(address, patch, caller).await? {
@@ -2676,12 +2678,14 @@ impl Memory for InMemoryMemory {
             .lock()
             .expect("fake mutex poisoned")
             .clone();
+        let claims_before = self.claims.lock().expect("fake mutex poisoned").clone();
         let heartbeats_before = self.heartbeats_now();
         let take_back = || {
             self.put_heartbeats_back(&heartbeats_before);
             *self.facts.lock().expect("fake mutex poisoned") = facts_before.clone();
             *self.writes.lock().expect("fake mutex poisoned") = writes_before.clone();
             *self.claim_writes.lock().expect("fake mutex poisoned") = claim_writes_before.clone();
+            *self.claims.lock().expect("fake mutex poisoned") = claims_before.clone();
             *self.world_cache.lock().expect("fake mutex poisoned") = None;
         };
         let retraction = self.retract(address, reason, date, caller, session).await?;

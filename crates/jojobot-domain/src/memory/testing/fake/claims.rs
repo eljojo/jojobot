@@ -682,4 +682,87 @@ mod tests {
             );
         }
     }
+
+    /// **A composite the fake refuses leaves the claims State as it was**, as the
+    /// rows are put back: an edit or a retraction whose companion claim is
+    /// malformed is refused after its own events were applied, and the State never
+    /// holds a revision or a taking-back the store does not.
+    #[tokio::test]
+    async fn a_refused_composite_leaves_the_claims_state_as_it_was() {
+        let fake = InMemoryMemory::booted();
+        let homer = EntityId("person:homer".into());
+        fake.add_entity(NewEntity::new(homer.clone(), "Homer", "fixture"))
+            .await
+            .expect("add")
+            .written()
+            .expect("written");
+        let mut fact = NewFact::about(homer.clone(), "likes donuts", jiff::civil::date(2026, 9, 1));
+        fact.provenance = Provenance::Inference;
+        fact.fields = [("mood".to_string(), "calm".to_string())].into();
+        fact.sets = fact.fields.keys().cloned().collect();
+        let address = fake
+            .capture(fact)
+            .await
+            .expect("capture")
+            .written()
+            .expect("not blocked")
+            .address();
+        let lisa = EntityId("person:lisa".into());
+        fake.add_entity(NewEntity::new(lisa.clone(), "Lisa", "fixture"))
+            .await
+            .expect("add")
+            .written()
+            .expect("written");
+        let before = fake.read_claims(|state| state.clone());
+        // **About another thing than the claim edited**: refused only after the edit
+        // or the retraction was applied.
+        let malformed = || {
+            NewFact::about(
+                lisa.clone(),
+                "plays the saxophone",
+                jiff::civil::date(2026, 9, 2),
+            )
+        };
+
+        let refused = fake
+            .update_fact_with_claim(
+                &address,
+                FactPatch {
+                    fields: [("mood".to_string(), "angry".to_string())].into(),
+                    ..Default::default()
+                },
+                &homer,
+                malformed(),
+            )
+            .await;
+        assert!(
+            refused.is_err(),
+            "the companion about another thing refuses the edit"
+        );
+        assert_eq!(
+            fake.read_claims(|state| state.clone()),
+            before,
+            "the refused edit left its revision in the State"
+        );
+
+        let refused = fake
+            .retract_with_claim(
+                &address,
+                Some("never true"),
+                jiff::civil::date(2026, 9, 2),
+                &homer,
+                None,
+                malformed(),
+            )
+            .await;
+        assert!(
+            refused.is_err(),
+            "the companion about another thing refuses the retraction"
+        );
+        assert_eq!(
+            fake.read_claims(|state| state.clone()),
+            before,
+            "the refused retraction left its taking-back in the State"
+        );
+    }
 }
