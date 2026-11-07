@@ -3,19 +3,26 @@ use super::*;
 use jojobot_domain::log::claims::import::{self, Rows};
 use std::collections::BTreeSet;
 
-/// The rows of the recording, read by the one import reader. What it could not
-/// place is printed, so a run shows it beside the verdict.
+/// The rows of the recording, read by the one import reader and told what the
+/// build supplies, as the boot import is. The boot import stops on any finding,
+/// so the recording must read with none.
 async fn read_import_rows(pool: &sqlx::MySqlPool) -> Rows {
     let read = jojobot_adapters::dolt::memory::DoltMemory::open(pool.clone())
+        .knowing(jojobot_mcp::provisions())
         .import_rows()
         .await
         .expect("the recorded store reads");
-    for finding in &read.findings {
-        eprintln!(
-            "import finding: {} {}: {}",
-            finding.table, finding.row, finding.what
-        );
-    }
+    let findings: Vec<String> = read
+        .findings
+        .iter()
+        .map(|finding| format!("{} {}: {}", finding.table, finding.row, finding.what))
+        .collect();
+    assert!(
+        findings.is_empty(),
+        "the import reader could not place {} rows: {}",
+        findings.len(),
+        findings.join("; ")
+    );
     read.rows
 }
 
