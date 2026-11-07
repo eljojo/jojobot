@@ -1093,6 +1093,7 @@ pub async fn boot_store_observed(
             &folded.writer(),
             store.pool(),
             &supplied,
+            &shipped_declarations(),
             clock.now(),
         ),
     )
@@ -1297,6 +1298,14 @@ async fn the_day_of_this_boot(memory: &dyn Memory, clock: &Clock) -> jiff::civil
 }
 
 pub mod field_links;
+
+/// **Every kind and type this build ships**, as the claims reconcile compares them
+/// with the log: the kinds with the keys they carry, then the shipped types.
+fn shipped_declarations() -> Vec<jojobot_domain::memory::types::DeclaredType> {
+    let mut shipped = jojobot_domain::memory::kinds::shipped_declarations();
+    shipped.extend(jojobot_mcp::seed::shipped_types());
+    shipped
+}
 
 #[cfg(test)]
 mod tests {

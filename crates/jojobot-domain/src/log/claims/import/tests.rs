@@ -1948,3 +1948,54 @@ fn a_withdrawn_supplied_record_keeps_its_identity_binding_and_claims() {
         "the claim's home is the supply identity"
     );
 }
+
+fn shipped_declaration(name: &str, keys: &[&str]) -> DeclaredType {
+    use crate::memory::types::{Field, ValueType};
+    DeclaredType::shipped(
+        name,
+        keys.iter()
+            .map(|key| Field::new(key, ValueType::Text))
+            .collect(),
+    )
+}
+
+/// **A release that changes a shipped kind or type reaches the State.** The import
+/// saw the kind with the keys the earlier build shipped. The build now ships it
+/// with one more key: the reconcile appends the new declaration, so the newest in
+/// force is the build's. A declaration the log already holds appends nothing, and
+/// a type the log never saw is declared.
+#[test]
+fn a_changed_shipped_declaration_is_declared_again_and_an_unchanged_one_is_not() {
+    let mut held = imported(&Rows {
+        type_writes: vec![TypeWriteRow {
+            ordinal: 1,
+            session: None,
+            written_at: None,
+            declaration: shipped_declaration("person", &["mood"]),
+        }],
+        ..Default::default()
+    });
+    let unchanged = [shipped_declaration("person", &["mood"])];
+    assert!(
+        reconcile_shipped_declarations(&State::replay(&held), &unchanged).is_empty(),
+        "an unchanged declaration appends nothing"
+    );
+    let build = [
+        shipped_declaration("person", &["mood", "hat"]),
+        shipped_declaration("runs-out", &["runs_out"]),
+    ];
+    let added = reconcile_shipped_declarations(&State::replay(&held), &build);
+    assert_eq!(
+        added.len(),
+        2,
+        "the changed kind and the new type: {added:?}"
+    );
+    held.extend(added);
+    let state = State::replay(&held);
+    assert_eq!(state.declared(&object("person")), Some(&build[0]));
+    assert_eq!(state.declared(&object("runs-out")), Some(&build[1]));
+    assert!(
+        reconcile_shipped_declarations(&state, &build).is_empty(),
+        "a second pass appends nothing"
+    );
+}

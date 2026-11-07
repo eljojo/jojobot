@@ -17,6 +17,7 @@ use jiff::Timestamp;
 use jojobot_domain::log::claims::import::{import, import_completed, unexplained_merge_numbers};
 use jojobot_domain::log::{BatchId, Position, SealedBatch};
 use jojobot_domain::memory::owned::Provisions;
+use jojobot_domain::memory::types::DeclaredType;
 use sqlx::MySqlPool;
 
 use crate::claims_log::codec;
@@ -211,14 +212,16 @@ pub async fn reconcile_supply_list_once(
     writer: &Writer,
     pool: &MySqlPool,
     supplied: &Provisions,
+    shipped: &[DeclaredType],
     at: Timestamp,
 ) -> Result<usize, ClaimsImportError> {
     refuse_two_records_with_one_first_handle(supplied)?;
+    let shipped = shipped.to_vec();
     let pool = sql::Pool::from(pool.clone());
     let owner = writer.clone();
     let supplied = crate::dolt::memory::import_rows::supplied_rows(supplied);
     writer
-        .run(async move { reconcile_in_job(&owner, &pool, supplied, at).await })
+        .run(async move { reconcile_in_job(&owner, &pool, supplied, shipped, at).await })
         .await
 }
 
@@ -226,6 +229,7 @@ async fn reconcile_in_job(
     writer: &Writer,
     pool: &sql::Pool,
     supplied: Vec<jojobot_domain::log::claims::import::SuppliedRow>,
+    shipped: Vec<DeclaredType>,
     at: Timestamp,
 ) -> Result<usize, ClaimsImportError> {
     let log = writer.shared_log(pool);
@@ -256,10 +260,15 @@ async fn reconcile_in_job(
         }
         from = last;
     }
-    let events = jojobot_domain::log::claims::import::reconcile_supply_list(
-        &jojobot_domain::log::claims::State::replay(held.iter()),
+    // **One step**: the records the build supplies, and the kinds and types it ships.
+    let state = jojobot_domain::log::claims::State::replay(held.iter());
+    let mut events = jojobot_domain::log::claims::import::reconcile_supply_list(
+        &state,
         &supplied,
         at.to_zoned(jiff::tz::TimeZone::UTC).date(),
+    );
+    events.extend(
+        jojobot_domain::log::claims::import::reconcile_shipped_declarations(&state, &shipped),
     );
     if events.is_empty() {
         return Ok(0);

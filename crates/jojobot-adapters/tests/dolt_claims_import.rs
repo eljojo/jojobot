@@ -786,7 +786,7 @@ async fn claims_reconcile_appends_the_new_record_and_then_nothing() {
     };
     let after_import = batches(pool.clone()).await;
     assert_eq!(
-        reconcile_supply_list_once(&Writer::default(), &pool, &first, at())
+        reconcile_supply_list_once(&Writer::default(), &pool, &first, &[], at())
             .await
             .expect("reconcile runs"),
         0,
@@ -796,7 +796,7 @@ async fn claims_reconcile_appends_the_new_record_and_then_nothing() {
 
     let later = supplied_views(&["view:loops", "view:board"]);
     assert_eq!(
-        reconcile_supply_list_once(&Writer::default(), &pool, &later, at())
+        reconcile_supply_list_once(&Writer::default(), &pool, &later, &[], at())
             .await
             .expect("reconcile runs"),
         2,
@@ -808,7 +808,7 @@ async fn claims_reconcile_appends_the_new_record_and_then_nothing() {
         "in one batch"
     );
     assert_eq!(
-        reconcile_supply_list_once(&Writer::default(), &pool, &later, at())
+        reconcile_supply_list_once(&Writer::default(), &pool, &later, &[], at())
             .await
             .expect("reconcile runs"),
         0,
@@ -955,7 +955,7 @@ async fn claims_reconcile_moves_a_renamed_record_and_refuses_two_with_one_first_
             })
             .collect(),
     );
-    reconcile_supply_list_once(&Writer::default(), &pool, &renamed, at())
+    reconcile_supply_list_once(&Writer::default(), &pool, &renamed, &[], at())
         .await
         .expect("the rename reconciles");
     let state = State::replay(logged(&pool).await.iter());
@@ -977,7 +977,7 @@ async fn claims_reconcile_moves_a_renamed_record_and_refuses_two_with_one_first_
             })
             .collect(),
     );
-    let refused = reconcile_supply_list_once(&Writer::default(), &pool, &twice, at())
+    let refused = reconcile_supply_list_once(&Writer::default(), &pool, &twice, &[], at())
         .await
         .expect_err("two records with one first handle are refused");
     assert!(
@@ -1090,6 +1090,91 @@ async fn claims_import_places_a_handle_one_thing_left_twice_on_that_thing() {
             .len(),
         1,
         "the claim sits on the one thing that wore the handle"
+    );
+
+    server.stop().await;
+}
+
+/// **A release that changes a shipped kind reaches the State.** The import does
+/// not declare kinds; the reconcile does, the first time and when a build changes
+/// one. An earlier build's list declared `person` with another key. The build now
+/// ships it as `seed` writes it today: one reconcile appends only that kind's new
+/// declaration, the State's kind equals the build's, the import's marker stays
+/// before it, and the same list appends nothing the second time.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn claims_reconcile_declares_a_shipped_kind_the_build_changed() {
+    use jojobot_adapters::claims_import::reconcile_supply_list_once;
+    use jojobot_domain::memory::types::{DeclaredType, Field, ValueType};
+    let (_scratch, mut server, pool) = store("claims-reconcile-kinds").await;
+    import_claims_once(&Writer::default(), &pool, &Provisions::default(), at())
+        .await
+        .expect("the import runs");
+    let build = jojobot_domain::memory::kinds::shipped_declarations();
+    // The list an earlier build declared: the same kinds, `person` with another key.
+    let earlier: Vec<DeclaredType> = build
+        .iter()
+        .map(|declaration| {
+            if declaration.name == "person" {
+                DeclaredType::shipped("person", vec![Field::new("an_old_key", ValueType::Text)])
+            } else {
+                declaration.clone()
+            }
+        })
+        .collect();
+    let run = |list: Vec<DeclaredType>| {
+        let pool = pool.clone();
+        async move {
+            reconcile_supply_list_once(
+                &Writer::default(),
+                &pool,
+                &Provisions::default(),
+                &list,
+                at(),
+            )
+            .await
+            .expect("reconcile runs")
+        }
+    };
+    assert_eq!(
+        run(earlier.clone()).await,
+        build.len(),
+        "the first boot declares every shipped kind"
+    );
+    assert_eq!(run(earlier).await, 0, "the same list appends nothing");
+    assert_eq!(
+        run(build.clone()).await,
+        1,
+        "only the kind the build changed is declared again"
+    );
+    let held = logged(&pool).await;
+    let state = State::replay(held.iter());
+    let person = build
+        .iter()
+        .find(|declaration| declaration.name == "person")
+        .expect("person is shipped");
+    assert_eq!(
+        state.declared(&jojobot_domain::log::ObjectId("person".into())),
+        Some(person),
+        "the State's kind is the build's"
+    );
+    let ended = held
+        .iter()
+        .position(|event| matches!(event.payload, ClaimEvent::ImportCompleted { .. }))
+        .expect("the import ended");
+    let declared = held
+        .iter()
+        .rposition(
+            |event| matches!(&event.payload, ClaimEvent::TypeDeclared { kind, .. } if kind.0 == "person"),
+        )
+        .expect("the kind is declared");
+    assert!(
+        ended < declared,
+        "the import's marker stays before the new declaration"
+    );
+    assert_eq!(
+        run(build).await,
+        0,
+        "the build's list appends nothing again"
     );
 
     server.stop().await;

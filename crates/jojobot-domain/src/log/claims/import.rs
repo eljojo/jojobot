@@ -295,6 +295,30 @@ pub fn reconcile_supply_list(
     events
 }
 
+/// **The declarations a later boot appends so the State holds what the build ships.**
+/// A release can change a shipped kind or type, and no import runs for it. Each
+/// shipped declaration the State does not hold as it is, or does not hold at all,
+/// is declared again, so the newest in force is the build's. The shipped list is
+/// authoritative for the names it carries; a declaration already held appends
+/// nothing.
+pub fn reconcile_shipped_declarations(
+    state: &State,
+    shipped: &[DeclaredType],
+) -> Vec<Event<ClaimEvent>> {
+    shipped
+        .iter()
+        .filter(|declaration| {
+            state.declared(&ObjectId(declaration.name.clone())) != Some(*declaration)
+        })
+        .map(|declaration| {
+            plain(ClaimEvent::TypeDeclared {
+                kind: ObjectId(declaration.name.clone()),
+                declaration: declaration.clone(),
+            })
+        })
+        .collect()
+}
+
 /// **The identity an adopted handle has in the log.** Deterministic from the
 /// handle, and spelled with a `/` so that no badge, no handle and no supply
 /// identity can take it.

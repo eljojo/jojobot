@@ -765,6 +765,16 @@ pub async fn seed<M: super::Memory + ?Sized>(store: &M) -> Result<usize, super::
     Ok(held.len())
 }
 
+/// **The declaration of every kind this build ships**, as `seed` writes them: the
+/// kind's name and the keys it carries. The claims reconcile compares these with
+/// what the log holds.
+pub fn shipped_declarations() -> Vec<super::types::DeclaredType> {
+    SHIPPED
+        .iter()
+        .map(|token| super::types::DeclaredType::shipped(token, keys_of(token)))
+        .collect()
+}
+
 /// **Re-read the set from the store**, for a process that has just declared a
 /// kind and must be able to read a handle carrying it.
 ///
