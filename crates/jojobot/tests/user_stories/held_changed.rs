@@ -587,7 +587,10 @@ async fn a_notice_of_a_change_does_not_stand_for_the_changed_text() {
 async fn a_search_hit_on_a_thing_already_recalled_comes_back_as_its_handle() {
     let (story, otto, _other, _claim) = otto_holds_homer().await;
 
-    let found = otto.call("search", json!({"query": "homer"})).await.json();
+    let found = otto
+        .call("search", json!({"query": "homer", "reship": false}))
+        .await
+        .json();
     let hit = found["results"]
         .as_array()
         .and_then(|hits| {
