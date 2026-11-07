@@ -178,7 +178,14 @@ impl Jojobot {
     /// **The record measured beside a thing the caller supplies**, as the thing
     /// will read once the write has landed.
     fn measured_beside(&self, fact: &Fact, entity: &Entity, folded: Fold) -> Measured {
-        measure_record(fact, entity, folded, self.clock().now(), true)
+        // A claim written through a former spelling is served under the current
+        // handle, in its address and its subject, so it is measured as that.
+        let served = Fact {
+            home: entity.id.clone(),
+            subject: entity.id.clone(),
+            ..fact.clone()
+        };
+        measure_record(&served, entity, folded, self.clock().now(), true)
     }
 
     /// **The thing as a read serves it: its row and its folded fields**, in one
