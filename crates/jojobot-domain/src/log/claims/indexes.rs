@@ -519,17 +519,17 @@ impl State {
         reaching.sort_by_key(|write| write.ordinal);
         let mut holder: Option<&super::Write> = None;
         for write in reaching {
-            match write.write {
-                // A stored clear took the key off the thing whichever claim held it
-                // (rule 677).
-                FieldValue::Removed => holder = None,
-                FieldValue::Clear => {
-                    if holder.is_some_and(|held| held.record == write.record) {
-                        holder = None;
-                    }
-                }
-                FieldValue::Set(_) => holder = Some(write),
-            }
+            let effect = match write.write {
+                FieldValue::Set(_) => memory::KeyEffect::Sets,
+                FieldValue::Clear => memory::KeyEffect::Clears,
+                FieldValue::Removed => memory::KeyEffect::Removes,
+            };
+            let held = holder.map(|held| &held.record);
+            holder = match memory::holder_after(held, &write.record, effect) {
+                Some(_) if effect == memory::KeyEffect::Sets => Some(write),
+                Some(_) => holder,
+                None => None,
+            };
         }
         holder
     }

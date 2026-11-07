@@ -4988,11 +4988,15 @@ pub fn folded_backing(
             // the fold takes the key off. From any other claim it withdraws that
             // claim's write only, and the key stays backed.
             None => {
-                if write.value.is_some()
-                    || backing
-                        .get(&write.key)
-                        .is_some_and(|held: &FieldBacking| held.fact == write.fact)
-                {
+                let effect = if write.value.is_none() {
+                    KeyEffect::Clears
+                } else {
+                    KeyEffect::Removes
+                };
+                let held = backing
+                    .get(&write.key)
+                    .map(|held: &FieldBacking| &held.fact);
+                if holder_after(held, &write.fact, effect).is_none() {
                     backing.remove(&write.key);
                 }
             }
@@ -5029,6 +5033,32 @@ pub struct FieldAges {
     /// For each held key, the moment of the write holding its value. A key
     /// whose holding write carries no moment is absent.
     pub keys: BTreeMap<String, jiff::Timestamp>,
+}
+
+/// **What a write does to the claim holding a newest-wins key.**
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyEffect {
+    /// A write of a value: the writer holds the key.
+    Sets,
+    /// A clear, an event about the writer's own write: the key leaves the thing
+    /// only when the writer is the one holding it.
+    Clears,
+    /// A blank, and a stored removal (rule 677): the key leaves the thing
+    /// whichever claim held it.
+    Removes,
+}
+
+/// **Who holds a newest-wins key after one write, given who held it before.**
+///
+/// The one decision the fold of the fields, the backing and the link walk each
+/// take a holder from, so the three cannot disagree about which claim a key
+/// comes from (rule 498).
+pub fn holder_after<T: PartialEq>(held: Option<T>, writer: T, effect: KeyEffect) -> Option<T> {
+    match effect {
+        KeyEffect::Sets => Some(writer),
+        KeyEffect::Clears => held.filter(|held| *held != writer),
+        KeyEffect::Removes => None,
+    }
 }
 
 /// **A thing's fields: the newest write of each key on it.**
@@ -5124,11 +5154,16 @@ fn fold(
         let Some(value) = types::held_value(write, declared) else {
             // Only a clear is an event about its claim's write. A blank is a write
             // of its own, the newest word on the key, and takes the key off.
-            if types::fold_of(&write.key, declared) == types::Fold::Newest
-                && write.value.is_none()
-                && holders.get(write.key.as_str()) != Some(&&write.fact)
-            {
-                continue;
+            if types::fold_of(&write.key, declared) == types::Fold::Newest {
+                let effect = if write.value.is_none() {
+                    KeyEffect::Clears
+                } else {
+                    KeyEffect::Removes
+                };
+                let held = holders.get(write.key.as_str()).copied();
+                if holder_after(held, &write.fact, effect).is_some() {
+                    continue;
+                }
             }
             holders.remove(write.key.as_str());
             folded.remove(&write.key);
