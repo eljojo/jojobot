@@ -1,8 +1,5 @@
-use std::sync::Arc;
-
 use crate::dolt::Dolt;
 use crate::dolt_log::DoltLog;
-use crate::fold::shadow::Shadow;
 use crate::testing::{Scratch, free_port, migrated_database};
 use crate::writer::Writer;
 use jojobot_domain::log::Position;
@@ -26,10 +23,9 @@ async fn an_import_is_snapshotted_and_a_quiet_second_boot_is_not() {
         .unwrap();
 
     let writer = Writer::default();
-    let (teachings, snapshots) =
-        crate::teaching_log::serving_kept(&pool, Arc::new(Shadow::default()), writer.clone())
-            .await
-            .unwrap();
+    let (teachings, snapshots) = crate::teaching_log::serving_kept(&pool, writer.clone())
+        .await
+        .unwrap();
     let head = snapshots.head().expect("the log holds a head");
     assert!(head > Position(0), "the import appended its event");
     assert_eq!(snapshots.covered(), head, "the import is covered");
@@ -44,10 +40,9 @@ async fn an_import_is_snapshotted_and_a_quiet_second_boot_is_not() {
     drop(writer);
 
     let writer = Writer::default();
-    let (teachings, snapshots) =
-        crate::teaching_log::serving_kept(&pool, Arc::new(Shadow::default()), writer.clone())
-            .await
-            .unwrap();
+    let (teachings, snapshots) = crate::teaching_log::serving_kept(&pool, writer.clone())
+        .await
+        .unwrap();
     assert_eq!(
         snapshots.covered(),
         head,
