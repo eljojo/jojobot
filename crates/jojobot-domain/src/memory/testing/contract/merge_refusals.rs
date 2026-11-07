@@ -147,6 +147,70 @@ pub async fn a_parent_cannot_be_folded_into_its_own_descendant<M: Memory>(store:
         .expect("a parent folds into a thing beside it");
 }
 
+/// **A folded row takes neither a page nor an edit.** After a fold the row only
+/// forwards to the survivor, so a write on it is refused as archive, restore and
+/// rename refuse it: `AlreadyMerged`, naming the survivor, with the row left as
+/// the fold left it. **Paired**: the same two calls on the survivor land.
+pub async fn a_folded_row_takes_neither_prose_nor_an_edit<M: Memory>(store: &M) {
+    let kept = EntityId("person:contract-folded-write-beta".into());
+    let spare = EntityId("person:contract-folded-write-alpha".into());
+    for (handle, name) in [(&kept, "Keeper Of Writes"), (&spare, "Spare Of Writes")] {
+        add(
+            store,
+            NewEntity::new(handle.clone(), name, "contract-fixture"),
+        )
+        .await;
+    }
+    fold(store, &spare, &kept).await.expect("the spare folds");
+
+    let refused = store
+        .set_prose(&spare, "A page for a forwarding row.", None)
+        .await
+        .expect_err("a folded row takes no page");
+    assert!(
+        matches!(&refused, MemoryError::AlreadyMerged { attempted, into }
+            if attempted == spare.as_str() && into == kept.as_str()),
+        "set_prose names the survivor: {refused:?}"
+    );
+    let renamed = EntityPatch {
+        name: Some("Spare Of Writes Again".into()),
+        ..EntityPatch::default()
+    };
+    let refused = store
+        .update_entity(&spare, renamed.clone())
+        .await
+        .expect_err("a folded row takes no edit");
+    assert!(
+        matches!(&refused, MemoryError::AlreadyMerged { attempted, into }
+            if attempted == spare.as_str() && into == kept.as_str()),
+        "update_entity names the survivor: {refused:?}"
+    );
+    // The row is as the fold left it.
+    assert!(
+        !store.has_prose(&spare).await.expect("has_prose reads"),
+        "the refused page was not written"
+    );
+    let held = store.list_entities(None).await.expect("lists");
+    let row = held.iter().find(|e| e.id == spare).expect("the row stays");
+    assert_eq!(
+        row.name, "Spare Of Writes",
+        "the refused edit changed nothing"
+    );
+
+    // The survivor takes both.
+    store
+        .set_prose(&kept, "A page for the survivor.", None)
+        .await
+        .expect("the survivor takes a page");
+    assert!(store.has_prose(&kept).await.expect("has_prose reads"));
+    store
+        .update_entity(&kept, renamed)
+        .await
+        .expect("the survivor takes an edit")
+        .written()
+        .expect("not blocked");
+}
+
 /// **A fold that earns two refusals is refused for the first guard in the
 /// order**, in every store. The caller is the survivor, and the duplicate both
 /// carries a ceiling the caller may not take onto its own bot and sits above

@@ -2809,6 +2809,10 @@ impl Memory for InMemoryMemory {
                 nearest: self.nearest_for(handle, &entities),
             });
         };
+        // A forwarding row takes no edit, as it takes no archive, restore or rename.
+        if let Some(refused) = super::super::already_merged(handle, entity) {
+            return Err(refused);
+        }
         // Changing what an entity is CALLED is an entity-touching write, so it
         // faces the same gate — display name and aliases alike. Unconditional
         // on purpose: a patch that moves no label screens against nothing, so
@@ -5260,11 +5264,15 @@ impl Memory for InMemoryMemory {
         // Never creates: a handle that names nothing is a miss with its near
         // candidates, exactly as it is for every other verb here.
         let index = self.index();
-        if !index.iter().any(|e| &e.id == entity) {
+        let Some(row) = index.iter().find(|e| &e.id == entity) else {
             return Err(MemoryError::UnknownEntity {
                 attempted: entity.to_string(),
                 nearest: self.nearest_for(entity, &index),
             });
+        };
+        // A forwarding row takes no page, as it takes no archive, restore or rename.
+        if let Some(refused) = super::super::already_merged(entity, row) {
+            return Err(refused);
         }
         // Normalized here as the real store normalizes it, so the fake cannot
         // preserve whitespace a markdown round-trip would drop.

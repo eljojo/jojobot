@@ -3003,6 +3003,10 @@ impl DoltMemory {
                 nearest: self.nearest(tx, handle, &rows).await?,
             });
         };
+        // A forwarding row takes no edit, as it takes no archive, restore or rename.
+        if let Some(refused) = jojobot_domain::memory::already_merged(handle, &entity) {
+            return Err(refused);
+        }
         // **The screen alone reads the wider set** — rows plus what the build
         // supplies — so a rename that collides with a supplied record is
         // caught exactly as one against a stored record is.
@@ -7211,11 +7215,15 @@ impl Memory for DoltMemory {
         let index = self.index(&mut tx).await?;
         // Never creates: a handle that names nothing is a miss with its near
         // candidates, exactly as it is for every other verb here.
-        if !index.iter().any(|e| &e.id == entity) {
+        let Some(row) = index.iter().find(|e| &e.id == entity) else {
             return Err(MemoryError::UnknownEntity {
                 attempted: entity.to_string(),
                 nearest: self.nearest(&mut tx, entity, &index).await?,
             });
+        };
+        // A forwarding row takes no page, as it takes no archive, restore or rename.
+        if let Some(refused) = jojobot_domain::memory::already_merged(entity, row) {
+            return Err(refused);
         }
         let stored = normalize_prose(prose);
         sqlx::query("UPDATE entity SET prose = ? WHERE id = ?")

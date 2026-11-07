@@ -466,6 +466,8 @@ pub const ORDINARY: &[&str] = &[
     "org:contract-grandchild-one",
     "org:contract-parent-one",
     "org:contract-sibling-one",
+    "person:contract-folded-write-alpha",
+    "person:contract-folded-write-beta",
     "person:contract-refusal-alpha",
     "person:contract-refusal-beta",
     "person:contract-refusal-gamma",
