@@ -77,7 +77,7 @@ async fn recover<E: StoreError, L, F: Future<Output = Result<L, E>>>(
             );
         }
         Err(_) => {
-            writer.0.failed.fetch_add(1, Ordering::SeqCst);
+            writer.0.failed.fetch_add(2, Ordering::SeqCst);
             tracing::warn!(
                 rail,
                 "recovery failed; writes refuse and reads keep the last published image"
