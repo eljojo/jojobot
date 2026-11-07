@@ -63,6 +63,10 @@ pub(crate) const SHIPPED: &[(&str, &str)] = &[
         include_str!("../release-notes/deploy-9.3.3/a-bots-new-thing-sits-under-that-bot.md"),
     ),
     (
+        "a-capture-receipt-carries-one-suggestion",
+        include_str!("../release-notes/deploy-9.3.3/a-capture-receipt-carries-one-suggestion.md"),
+    ),
+    (
         "a-numbered-mention-that-names-nothing-is-kept-as-written",
         include_str!(
             "../release-notes/deploy-9.3.3/a-numbered-mention-that-names-nothing-is-kept-as-written.md"
