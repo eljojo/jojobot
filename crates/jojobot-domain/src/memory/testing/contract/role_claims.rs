@@ -1875,9 +1875,12 @@ pub async fn a_refused_companion_claim_leaves_the_heartbeat_home_as_it_was<
             claimant: "delta".to_string(),
         })
     };
+    // The control: the same act with a valid companion claim lands and moves
+    // the home and the folded moment, so a refusal that leaves them is a
+    // rollback and not an act that never ran.
     let kept_at = t0 + jiff::SignedDuration::from_mins(5);
-    store
-        .update_fact(
+    let landed = store
+        .update_fact_with_claim(
             &claimed.address(),
             computed_patch(FactPatch {
                 fields: role_fields("delta", kept_at),
@@ -1885,12 +1888,26 @@ pub async fn a_refused_companion_claim_leaves_the_heartbeat_home_as_it_was<
                 ..FactPatch::default()
             }),
             &seat.bot,
+            computed(NewFact::about(
+                seat.role.clone(),
+                "delta renews the role",
+                date(2026, 7, 1),
+            )),
         )
-        .await
-        .expect("the renewal lands");
+        .await;
+    assert!(
+        matches!(landed, Ok(Guarded::Written(_))),
+        "a renewal with a valid companion claim lands: {landed:?}"
+    );
     assert_eq!(
         home.heartbeat_of(&seat.role).await,
         Some(kept_at.to_string())
+    );
+    let fields_kept = folded_fields_of(store, &seat.role).await;
+    assert_eq!(
+        fields_kept.get(crate::session::ROLE_CLAIMED_AT),
+        Some(&kept_at.to_string()),
+        "the landed act moved the folded moment: {fields_kept:?}"
     );
 
     let nothing = FactAddress::new(
@@ -1920,6 +1937,11 @@ pub async fn a_refused_companion_claim_leaves_the_heartbeat_home_as_it_was<
         home.heartbeat_of(&seat.role).await,
         Some(kept_at.to_string()),
         "a refused companion claim leaves the home as it was"
+    );
+    assert_eq!(
+        folded_fields_of(store, &seat.role).await,
+        fields_kept,
+        "a refused companion claim leaves the lease fields as they were"
     );
 }
 
