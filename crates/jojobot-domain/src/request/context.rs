@@ -25,7 +25,10 @@ impl Context {
 
     /// Run under the claim and part that accompanied this write.
     pub async fn run<F: Future>(self, work: F) -> F::Output {
-        let work = crate::log::claims::job::carried(self.capture, work);
+        // Boxed so the wrapper holds a pointer and not a second copy of `work`: a
+        // future is held by value in debug builds, and a write's `work` can be large
+        // enough that one more copy overflows a 2 MiB test stack.
+        let work = Box::pin(crate::log::claims::job::carried(self.capture, work));
         let work = async {
             if self.armed {
                 ARMED.scope((), work).await
