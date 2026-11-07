@@ -290,7 +290,7 @@ async fn a_thought_stored_over_its_cap_is_read_and_edited_and_refuses_a_merge_wi
             .call(
                 "update_fact",
                 json!({"address": "bot:gate-thinker#f90",
-                       "details": "z".repeat(LONG_DETAILS), "sid": sid}),
+                       "details": "y".repeat(LONG_DETAILS), "sid": sid}),
             )
             .await,
     );
