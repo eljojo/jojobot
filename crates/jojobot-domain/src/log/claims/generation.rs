@@ -129,6 +129,7 @@ impl State {
                                     FieldValue::Set(value) => Some(value.clone()),
                                     FieldValue::Clear | FieldValue::Removed => None,
                                 },
+                                removed: matches!(write, FieldValue::Removed),
                                 fact: FactId(claim.label.clone()),
                                 status: claim.status,
                                 provenance: claim.provenance,

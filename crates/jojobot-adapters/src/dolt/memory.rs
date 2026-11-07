@@ -4689,7 +4689,7 @@ impl DoltMemory {
     ) -> Result<i64, MemoryError> {
         Self::write_fact_row(tx, fact).await?;
         let ordinal = Self::append_fact_write(tx, fact, clock, session, bot).await?;
-        Self::emit_claim_write(tx, fact, ordinal).await?;
+        Self::emit_claim_write(tx, fact, ordinal, self.journal()).await?;
         Ok(ordinal)
     }
 

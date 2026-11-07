@@ -1362,9 +1362,9 @@ pub async fn reconcile_claims_supply(
         writer,
         store.pool(),
         supplied,
-        &effective_shipped_declarations(memory)
-            .await
-            .map_err(|e| jojobot_adapters::claims_import::ClaimsImportError::Store(e.to_string()))?,
+        &effective_shipped_declarations(memory).await.map_err(|e| {
+            jojobot_adapters::claims_import::ClaimsImportError::Store(e.to_string())
+        })?,
         clock.now(),
         the_day_of_this_boot(memory, clock).await,
     )
