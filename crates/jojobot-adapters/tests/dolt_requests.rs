@@ -590,6 +590,15 @@ async fn a_large_old_ledger_and_an_unreadable_row_do_not_stop_the_first_write() 
     .execute(&pool)
     .await
     .expect("a row nobody can read");
+    // The control: a readable row in the same table as the unreadable one.
+    sqlx::query(
+        "INSERT INTO request_receipt (bot_key, request_id, verb, args_digest, landed, written_at) \
+         VALUES (?, 'readable', 'capture', 'd', '{}', '2999-01-01T00:00:00.000000000Z')",
+    )
+    .bind(&key)
+    .execute(&pool)
+    .await
+    .expect("a row that can be read");
 
     let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
     let _ledger = DoltRequests::new(pool.clone()).with_writer(memory.writer());
@@ -609,8 +618,8 @@ async fn a_large_old_ledger_and_an_unreadable_row_do_not_stop_the_first_write() 
         .filter(|event| matches!(event, LedgerEvent::Imported { .. }))
         .count();
     assert_eq!(
-        imported, 600,
-        "every readable row is imported, the garbled one is not"
+        imported, 601,
+        "every readable row is imported, the readable receipt beside the garbled one too"
     );
     let widest: i64 = sqlx::query_scalar(
         "SELECT CAST(MAX(last_position - first_position + 1) AS SIGNED) FROM event_log \
@@ -623,6 +632,93 @@ async fn a_large_old_ledger_and_an_unreadable_row_do_not_stop_the_first_write() 
         widest <= 256,
         "no batch holds more than 256 events, widest {widest}"
     );
+
+    server.stop().await;
+}
+
+/// **A failure in the middle of the import rolls the whole import back.** The
+/// store refuses the second batch, as a full disk or a lost connection would. The
+/// write is refused, the log holds no ledger event, and the next write, with the
+/// store healthy again, imports every row and lands. A import that committed the
+/// first batch before the second failed would leave the log holding some of the
+/// rows, and the once-only rule would then never import the rest.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_failure_in_the_middle_of_the_import_leaves_no_ledger_event_and_the_next_write_imports() {
+    use jojobot_domain::request::events::LedgerEvent;
+    let dir = jojobot_adapters::testing::scratch_path("jojobot-requests-middle");
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    let _scratch = Scratch(dir.clone());
+    let mut server = Dolt::start(&dir, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&server, "requests_middle")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
+        .await
+        .expect("the kinds are seeded");
+    let plain = DoltMemory::open(pool.clone());
+    let milhouse = thing(&plain, "person:milhouse", "Milhouse").await;
+    thing(&plain, "bot:sigma", "Sigma").await;
+    for n in 0..600 {
+        sqlx::query(
+            "INSERT INTO app_write (app_id, event_key, digest, landed, written_at) \
+             VALUES ('springfield-ci', ?, 'd', '{}', '2999-01-01T00:00:00.000000000Z')",
+        )
+        .bind(format!("a{n}"))
+        .execute(&pool)
+        .await
+        .expect("an app row");
+    }
+    // 600 events are three batches: 1..=256, 257..=512 and 513..=600. The store
+    // refuses the one that starts at 257.
+    sqlx::raw_sql(
+        "CREATE TRIGGER refuse_second_batch BEFORE INSERT ON event_log FOR EACH ROW \
+         BEGIN IF NEW.first_position = 257 THEN \
+         SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'the second batch is refused'; \
+         END IF; END",
+    )
+    .execute(&pool)
+    .await
+    .expect("the fault is armed");
+
+    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
+    let _ledger = DoltRequests::new(pool.clone()).with_writer(memory.writer());
+    let (stored, _) = captured(
+        &memory,
+        request("bot:sigma", "first"),
+        claim_about(&milhouse, "wears glasses"),
+    )
+    .await;
+    assert!(
+        !stored,
+        "the write is refused while the import cannot finish"
+    );
+    assert!(
+        jojobot_adapters::testing::ledger_events(&pool)
+            .await
+            .is_empty(),
+        "the failed import left no ledger event, not even the first batch"
+    );
+
+    sqlx::query("DROP TRIGGER refuse_second_batch")
+        .execute(&pool)
+        .await
+        .expect("the fault is cleared");
+    let (stored, _) = captured(
+        &memory,
+        request("bot:sigma", "second"),
+        claim_about(&milhouse, "wears glasses"),
+    )
+    .await;
+    assert!(stored, "the next write imports and lands");
+    let imported = jojobot_adapters::testing::ledger_events(&pool)
+        .await
+        .into_iter()
+        .filter(|event| matches!(event, LedgerEvent::Imported { .. }))
+        .count();
+    assert_eq!(imported, 600, "the retry imported every row");
 
     server.stop().await;
 }
