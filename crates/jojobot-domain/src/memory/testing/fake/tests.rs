@@ -261,6 +261,101 @@ async fn a_claimed_edit_refused_at_the_spend_leaves_the_heartbeat_home_as_it_was
     );
 }
 
+/// Spend the request id on a plain note about `role`, so the next act under
+/// [`under_a_spent_id`] is refused at its spend.
+async fn spend_the_id_on_a_note(store: &InMemoryMemory, role: &EntityId) {
+    under_a_spent_id(store.update_entity_with_claim(
+        role,
+        EntityPatch {
+            name: Some("Spent".into()),
+            ..Default::default()
+        },
+        NewFact::about(role.clone(), "a note that spends the id", date(2026, 7, 1)),
+    ))
+    .await
+    .expect("the first act lands")
+    .written()
+    .expect("not blocked");
+}
+
+/// **A retraction and a claim whose request id was already spent leave the
+/// heartbeat home as it was**, as the edit does.
+#[tokio::test]
+async fn a_claimed_retraction_refused_at_the_spend_leaves_the_heartbeat_home_as_it_was() {
+    use crate::memory::testing::contract::LeaseHeartbeat;
+    let store =
+        InMemoryMemory::booted().with_requests(crate::request::testing::InMemoryRequests::new());
+    let (bot, role, _, renewed_at) = a_renewed_role(&store).await;
+    let note = store
+        .capture(NewFact::about(
+            role.clone(),
+            "a note to retract",
+            date(2026, 7, 1),
+        ))
+        .await
+        .expect("capture")
+        .written()
+        .expect("not blocked");
+    spend_the_id_on_a_note(&store, &role).await;
+    let folded = store.fields(&role).await.unwrap();
+    let refused = under_a_spent_id(store.retract_with_claim(
+        &note.address(),
+        Some("taken back"),
+        date(2026, 7, 2),
+        &bot,
+        None,
+        a_takeover(&role, renewed_at),
+    ))
+    .await
+    .unwrap_err();
+    assert!(matches!(refused, MemoryError::Conflict), "{refused:?}");
+    assert_eq!(store.fields(&role).await.unwrap(), folded);
+    assert_eq!(
+        store.heartbeat_of(&role).await,
+        Some(renewed_at.to_string()),
+        "a refused act leaves the home as it was"
+    );
+}
+
+/// **A merge and a claim on the survivor whose request id was already spent
+/// leave the survivor's heartbeat home as it was.**
+#[tokio::test]
+async fn a_claimed_merge_refused_at_the_spend_leaves_the_heartbeat_home_as_it_was() {
+    use crate::memory::testing::contract::LeaseHeartbeat;
+    let store =
+        InMemoryMemory::booted().with_requests(crate::request::testing::InMemoryRequests::new());
+    let (bot, role, _, renewed_at) = a_renewed_role(&store).await;
+    let other = EntityId("role:theta".to_string());
+    store
+        .add_entity(NewEntity {
+            parent: Some(bot.clone()),
+            ..NewEntity::new(other.clone(), "Theta", "fixture")
+        })
+        .await
+        .expect("add")
+        .written()
+        .expect("not blocked");
+    spend_the_id_on_a_note(&store, &role).await;
+    let folded = store.fields(&role).await.unwrap();
+    let refused = under_a_spent_id(store.merge_with_claim(
+        &other,
+        &role,
+        Some("one role"),
+        date(2026, 7, 2),
+        &bot,
+        a_takeover(&role, renewed_at),
+    ))
+    .await
+    .unwrap_err();
+    assert!(matches!(refused, MemoryError::Conflict), "{refused:?}");
+    assert_eq!(store.fields(&role).await.unwrap(), folded);
+    assert_eq!(
+        store.heartbeat_of(&role).await,
+        Some(renewed_at.to_string()),
+        "a refused act leaves the home as it was"
+    );
+}
+
 #[tokio::test]
 async fn claimed_edit_rollback_leaves_no_claim_after_a_spent_request() {
     refused_claimed_edit(false).await;

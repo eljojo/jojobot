@@ -2419,9 +2419,9 @@ impl Memory for InMemoryMemory {
                 });
             }
         };
-        let heartbeats_before = self.heartbeats_now();
+        // **No heartbeat home to put back here**: every record of this act is about
+        // the thing it makes, which has no home before the act.
         let take_back = || {
-            self.put_heartbeats_back(&heartbeats_before);
             *self.entities.lock().expect("fake mutex poisoned") = entities_before.clone();
             *self.badges.lock().expect("fake mutex poisoned") = badges_before.clone();
             *self.facts.lock().expect("fake mutex poisoned") = facts_before.clone();
