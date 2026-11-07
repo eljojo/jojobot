@@ -115,7 +115,123 @@ mod tests {
     use crate::CaptureArgs;
     use crate::harness::*;
     use crate::memory::testing::*;
+    use crate::memory::unlocks::OwedUnlock;
     use rmcp::handler::server::wrapper::Parameters;
+    use serde_json::{Value, json};
+
+    fn the_caller() -> crate::caller::Caller {
+        crate::caller::Caller {
+            sid: crate::sid::Sid(TEST_RUN.into()),
+            bot: jojobot_domain::memory::EntityId("bot:gamma".into()),
+            card: None,
+            zone: None,
+            day: None,
+        }
+    }
+
+    /// A receipt that carries an `unlocks` block of the steps given, by sentence.
+    fn a_receipt_with_steps(sentences: &[&str]) -> Value {
+        let steps: Vec<Value> = sentences
+            .iter()
+            .map(
+                |sentence| json!({"type": "journey", "add": ["departs_from"], "unlocks": sentence}),
+            )
+            .collect();
+        json!({"address": "thing:delta#f1", "unlocks": {"holds": {"keys": 1, "records": 1}, "steps": steps}})
+    }
+
+    fn owed(key: &str, sentence: &str) -> OwedUnlock {
+        OwedUnlock {
+            key: key.into(),
+            sentence: sentence.into(),
+        }
+    }
+
+    /// **A step whose key another receipt spent first is taken out of the
+    /// block**, and the steps whose keys are still free ship and are spent. A
+    /// block left with no step goes with them.
+    #[tokio::test]
+    async fn a_step_another_receipt_spent_first_is_not_served() {
+        let jojobot = handler();
+        let caller = the_caller();
+        assert!(
+            jojobot
+                .first_contact("type-unlocks:taken", Some(&caller))
+                .await,
+            "the other receipt spends the key first"
+        );
+        let both = jojobot
+            .own_capture_receipt(
+                a_receipt_with_steps(&["taken step", "free step"]),
+                &caller,
+                false,
+                &[
+                    owed("type-unlocks:taken", "taken step"),
+                    owed("type-unlocks:free", "free step"),
+                ],
+            )
+            .await;
+        let steps = both["unlocks"]["steps"]
+            .as_array()
+            .expect("a block with a step");
+        assert_eq!(steps.len(), 1, "only the free step ships: {both}");
+        assert_eq!(steps[0]["unlocks"], "free step", "{both}");
+        assert!(
+            !jojobot
+                .first_contact("type-unlocks:free", Some(&caller))
+                .await,
+            "the step that shipped is spent"
+        );
+
+        let none = jojobot
+            .own_capture_receipt(
+                a_receipt_with_steps(&["taken step"]),
+                &caller,
+                false,
+                &[owed("type-unlocks:taken", "taken step")],
+            )
+            .await;
+        assert!(
+            none.get("unlocks").is_none(),
+            "a block with no step left is not served: {none}"
+        );
+    }
+
+    /// **A carry hint that is lost to another receipt lets the block ship, and
+    /// the block then spends its keys.** The hint outranks the block, so the
+    /// block is dropped while the hint stands; when the hint's spend fails the
+    /// receipt is chosen again without it.
+    #[tokio::test]
+    async fn a_lost_carry_hint_lets_the_block_ship_and_spend() {
+        let jojobot = handler();
+        let caller = the_caller();
+        assert!(
+            jojobot
+                .first_contact(crate::memory::list_carry::PLAN_CARRY_DOMAIN, Some(&caller))
+                .await,
+            "another receipt spent the carry teaching first"
+        );
+        let mut body = a_receipt_with_steps(&["step"]);
+        body["hint"] = json!("carry the open entries");
+        let served = jojobot
+            .own_capture_receipt(body, &caller, true, &[owed("type-unlocks:step", "step")])
+            .await;
+        assert!(
+            served.get("hint").is_none(),
+            "the lost hint is not served: {served}"
+        );
+        assert_eq!(
+            served["unlocks"]["steps"].as_array().map(Vec::len),
+            Some(1),
+            "the block ships once the hint is gone: {served}"
+        );
+        assert!(
+            !jojobot
+                .first_contact("type-unlocks:step", Some(&caller))
+                .await,
+            "the step that shipped is spent"
+        );
+    }
 
     /// **Two suggestions on one write: only the top-ranked ships, and the other
     /// is dropped.** A heading written onto a document gets the
