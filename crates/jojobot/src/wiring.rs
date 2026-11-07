@@ -1362,11 +1362,34 @@ pub async fn reconcile_claims_supply(
         writer,
         store.pool(),
         supplied,
-        &shipped_declarations(),
+        &effective_shipped_declarations(memory)
+            .await
+            .map_err(|e| jojobot_adapters::claims_import::ClaimsImportError::Store(e.to_string()))?,
         clock.now(),
         the_day_of_this_boot(memory, clock).await,
     )
     .await
+}
+
+/// **The declarations the store holds under the names this build ships.** The
+/// seed has already merged the build's keys with the keys a caller added, so the
+/// store's declaration is the one in force; the State is made to hold it, and a
+/// shipped name the store holds no declaration for is left alone.
+async fn effective_shipped_declarations(
+    memory: &dyn Memory,
+) -> anyhow::Result<Vec<jojobot_domain::memory::types::DeclaredType>> {
+    let names: std::collections::BTreeSet<String> = shipped_declarations()
+        .into_iter()
+        .map(|declaration| declaration.name)
+        .collect();
+    let held = memory
+        .declared_types()
+        .await
+        .map_err(|e| anyhow::anyhow!("the declarations the store holds could not be read: {e}"))?;
+    Ok(held
+        .into_iter()
+        .filter(|declaration| names.contains(&declaration.name))
+        .collect())
 }
 
 /// **Every kind and type this build ships**, as the claims reconcile compares them

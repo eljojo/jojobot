@@ -30,6 +30,7 @@ test-boot_failure
 test-boot_import_failure_names_the_step
 test-boot_imports_a_declaration_that_points_at_a_kind
 test-boot_imports_claims_after_the_repairs
+test-boot_keeps_a_key_a_caller_added_to_a_shipped_kind
 test-boot_logs_the_time_of_each_step
 test-boot_lowers_a_value_naming_a_supplied_record
 test-boot_reads_dolt
