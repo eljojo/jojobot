@@ -26,10 +26,9 @@ impl DoltMemory {
         tx: &mut Transaction<'_, MySql>,
         seam: &Arc<Seam>,
         events: &[Event<ClaimEvent>],
+        places: &BTreeMap<RecordId, i64>,
     ) -> Result<(), MemoryError> {
-        // The place each claim's write holds, and the label it is stored under,
-        // for the claims this batch writes.
-        let mut places: BTreeMap<RecordId, i64> = BTreeMap::new();
+        // The label each claim is stored under, for the claims this batch writes.
         let mut labels: BTreeMap<RecordId, String> = BTreeMap::new();
         for event in events {
             let session = event.run.as_ref().map(|run| run.0.as_str());
@@ -37,24 +36,27 @@ impl DoltMemory {
                 Some(Actor::Bot(bot)) => Some(self.stored_writer(tx, bot).await?),
                 _ => None,
             };
+            // **The moment is the decision's**: an event that carries none was not
+            // admitted by it, and no clock is asked here.
             let moment = event
                 .written_at
-                .map_or_else(|| self.clock.now().to_string(), |at| at.to_string());
+                .map(|at| at.to_string())
+                .ok_or_else(|| MemoryError::Store("an admitted event carries no moment".into()))?;
             match &event.payload {
                 ClaimEvent::RecordCreated { record, claim } => {
                     let fact = fact_of(seam, claim);
                     Self::write_fact_row(tx, &fact).await?;
-                    Self::insert_fact_write(tx, &fact, 1, &moment, session, bot.as_ref()).await?;
-                    places.insert(record.clone(), 1);
+                    let place = place_of(places, record)?;
+                    Self::insert_fact_write(tx, &fact, place, &moment, session, bot.as_ref())
+                        .await?;
                     labels.insert(record.clone(), claim.label.clone());
                 }
                 ClaimEvent::RecordRevised { record, claim } => {
-                    let place = held_writes(seam, record) + 1;
+                    let place = place_of(places, record)?;
                     let fact = fact_of(seam, claim);
                     Self::write_fact_row(tx, &fact).await?;
                     Self::insert_fact_write(tx, &fact, place, &moment, session, bot.as_ref())
                         .await?;
-                    places.insert(record.clone(), place);
                     labels.insert(record.clone(), claim.label.clone());
                 }
                 ClaimEvent::FieldWritten {
@@ -79,10 +81,7 @@ impl DoltMemory {
                                 ))
                             })?,
                     };
-                    let place = places
-                        .get(record)
-                        .copied()
-                        .unwrap_or_else(|| held_writes(seam, record));
+                    let place = place_of(places, record)?;
                     let value = match write {
                         FieldValue::Set(value) => Some(value.clone()),
                         FieldValue::Clear | FieldValue::Removed => None,
@@ -116,10 +115,14 @@ impl DoltMemory {
     }
 }
 
-/// How many writes the claim `record` holds in the State now.
-fn held_writes(seam: &Arc<Seam>, record: &RecordId) -> i64 {
-    seam.read_claims(|state| state.record(record).map(|held| held.history.len() as i64))
-        .unwrap_or(0)
+/// **The place the decision gave a claim's write.**
+fn place_of(places: &BTreeMap<RecordId, i64>, record: &RecordId) -> Result<i64, MemoryError> {
+    places.get(record).copied().ok_or_else(|| {
+        MemoryError::Store(format!(
+            "the decision gave no place to the claim {}",
+            record.0
+        ))
+    })
 }
 
 /// **A claim as the rows store it**: its thing and its pointers by the key each

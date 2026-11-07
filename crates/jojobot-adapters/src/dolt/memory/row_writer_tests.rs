@@ -340,3 +340,50 @@ async fn a_claim_decided_over_the_state_is_read_back_and_edited_through_the_rows
     );
     world.server.stop().await;
 }
+
+/// **The row writer writes what the decision admitted and takes nothing from a
+/// clock**: an event that carries no moment is refused, and one that carries it
+/// is written with that moment.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_row_writer_takes_the_moment_from_the_event_and_refuses_an_event_without_one() {
+    let mut world = world("row-writer-moment").await;
+    world.add("person:homer", "Homer").await;
+    let (memory, store) = (world.memory.clone(), world.store.clone());
+    let outcome = world
+        .writer
+        .run(async move {
+            let seam = crate::writer::Writer::current()
+                .and_then(|writer| writer.seam())
+                .expect("the job has a seam");
+            let fact = NewFact::about(id("person:homer"), "a claim", date(2026, 4, 19));
+            let admitted =
+                crate::claims_capture::admit_fact(&seam, &fact, &job(), jiff::Timestamp::now())
+                    .await
+                    .expect("the job decides")
+                    .expect("the capture is admitted");
+            let mut without = admitted.events.clone();
+            for event in &mut without {
+                event.written_at = None;
+            }
+            let mut tx = store.begin().await.expect("a transaction");
+            let refused = memory
+                .write_admitted(&mut tx, &seam, &without, &admitted.places)
+                .await;
+            let written = memory
+                .write_admitted(&mut tx, &seam, &admitted.events, &admitted.places)
+                .await;
+            (refused, written)
+        })
+        .await;
+    assert!(
+        outcome.0.is_err(),
+        "an event with no moment is refused: {:?}",
+        outcome.0
+    );
+    assert!(
+        outcome.1.is_ok(),
+        "the same events with their moment are written: {:?}",
+        outcome.1
+    );
+    world.server.stop().await;
+}

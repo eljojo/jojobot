@@ -57,6 +57,11 @@ pub(crate) struct Admission {
     pub record: RecordId,
     pub request: CaptureRequest,
     pub events: Vec<Event<ClaimEvent>>,
+    /// **The place each claim's write holds in the log of its claim**, worked out
+    /// from the State the decision was made on: the first write of a new claim,
+    /// the next one of a claim the batch revises. The rows take their places from
+    /// here and count nothing.
+    pub places: std::collections::BTreeMap<RecordId, i64>,
 }
 
 fn store(why: impl std::fmt::Display) -> MemoryError {
@@ -116,14 +121,34 @@ pub(crate) async fn admit(
                     jojobot_domain::log::claims::job::fresh_record,
                 );
                 admitted.extend(numbers);
-                Ok(admitted)
+                let held = |record: &RecordId| {
+                    state
+                        .record(record)
+                        .map_or(0, |held| held.history.len() as i64)
+                };
+                let mut places = std::collections::BTreeMap::new();
+                for payload in &admitted {
+                    match payload {
+                        ClaimEvent::RecordCreated { record, .. } => {
+                            places.insert(record.clone(), 1);
+                        }
+                        ClaimEvent::RecordRevised { record, .. } => {
+                            places.insert(record.clone(), held(record) + 1);
+                        }
+                        ClaimEvent::FieldWritten { record, .. } => {
+                            places.entry(record.clone()).or_insert_with(|| held(record));
+                        }
+                        _ => {}
+                    }
+                }
+                Ok((admitted, places))
             }
             // **Answered from the State that refused**, before it can move.
             Err(refusal) => Err(refusal.declined(state)),
         }
     });
-    let admitted = match decided {
-        Ok(admitted) => admitted,
+    let (admitted, places) = match decided {
+        Ok(decided) => decided,
         Err(refusal) => return Ok(Err(refusal)),
     };
     let events: Vec<Event<ClaimEvent>> = admitted
@@ -155,6 +180,7 @@ pub(crate) async fn admit(
         record: request.record.clone(),
         request,
         events,
+        places,
     }))
 }
 

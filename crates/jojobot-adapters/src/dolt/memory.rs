@@ -3094,8 +3094,9 @@ impl DoltMemory {
             };
         // **The rows are still read until the reads come from the State**, so the
         // rows the events stand for are written in the same transaction.
-        // TEMPORARY(9.3.3): the reads move to the State and this goes with them.
-        self.write_admitted(&mut tx, &seam, &admitted.events)
+        // TEMPORARY(9.3.8): the bots' read path is the claim rows' last reader, and
+        // this goes with it.
+        self.write_admitted(&mut tx, &seam, &admitted.events, &admitted.places)
             .await?;
         let address = admitted
             .events
