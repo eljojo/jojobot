@@ -637,6 +637,7 @@ async fn a_coordinators_room_crosses_a_boot_and_the_thought_nobody_touched_goes_
 
     // ── the second session: boot, read the room, follow each pointer ────────
     let (boot, second) = story.full_boot().await;
+    let second = second.asking_whole();
     assert_eq!(
         boot["identity"]["bot"]["id"], "bot:otto",
         "the fresh session is the same bot: {boot}"
@@ -694,6 +695,7 @@ async fn a_coordinators_room_crosses_a_boot_and_the_thought_nobody_touched_goes_
 
     // ── the third session: the quote has gone quiet ─────────────────────────
     let (_, third) = story.full_boot().await;
+    let third = third.asking_whole();
     third
         .call("journal", json!({"entry": "picked up the room again"}))
         .await;
