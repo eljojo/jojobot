@@ -392,6 +392,9 @@ pub struct Booted {
     /// The shadow the serving rails report their comparisons to, which the
     /// metrics listener reports.
     pub shadow: Arc<jojobot_adapters::fold::shadow::Shadow>,
+    /// **The snapshots of the event log**: the caller runs their loop while it
+    /// serves and ends it before the store stops, which takes the last snapshot.
+    pub snapshots: Arc<jojobot_adapters::snapshot_keeper::ServingSnapshots>,
 }
 
 /// **The fill a server makes before it serves**: the fold takes a full read of
@@ -896,9 +899,10 @@ pub async fn boot_store_observed(
     // **Teaching is served from the event log.** The log's connection holds the
     // one-writer lock, so a second process cannot start beside this one. The old
     // rows seed the first boot's one-way import.
-    let logged_teachings = jojobot_adapters::teaching_log::serving(store.pool(), folded.writer())
-        .await
-        .map_err(|e| anyhow::anyhow!("TEACHING LEDGER UNAVAILABLE — {e}"))?;
+    let (logged_teachings, snapshots) =
+        jojobot_adapters::teaching_log::serving_kept(store.pool(), folded.writer())
+            .await
+            .map_err(|e| anyhow::anyhow!("TEACHING LEDGER UNAVAILABLE — {e}"))?;
     let teachings: Arc<dyn Teachings> = observation.teachings(Arc::new(logged_teachings));
 
     // **Wrapped in the same decorators the story harness shares** — see this
@@ -1133,6 +1137,7 @@ pub async fn boot_store_observed(
         clock,
         writer: folded.writer(),
         shadow: folded.shadow(),
+        snapshots,
     })
 }
 

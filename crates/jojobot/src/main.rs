@@ -300,6 +300,14 @@ async fn run() -> anyhow::Result<()> {
         .await;
     });
 
+    // **The event log's snapshots are kept while this serves**, and the last one
+    // is taken when the stop token fires, after the drain. A snapshot is
+    // disposable: a miss costs the next boot some replay and nothing else.
+    let snapshots = {
+        let (snapshots, stop) = (booted.snapshots.clone(), ct.clone());
+        tokio::spawn(async move { snapshots.run(stop.cancelled_owned()).await })
+    };
+
     // **A stop drains before it cuts.** The signal closes the listener, so no new
     // call is taken, and the calls already running get up to
     // [`jojobot::SHUTDOWN_DRAIN`] to finish. Only then is the token cancelled,
@@ -351,18 +359,20 @@ async fn run() -> anyhow::Result<()> {
     // recovers what was sent from the mail history. **A push is delivered at least
     // once**: it is delivered before it is marked sent, so a cut between the two
     // delivers it again at the next start.
-    let (notes_ended, push_ended) = tokio::join!(
+    let (notes_ended, push_ended, snapshots_ended) = tokio::join!(
         jojobot::background::finish_or_abandon(notes, TASK_GRACE),
         async {
             match &runner {
                 Some(runner) => runner.stop_and_wait(TASK_GRACE).await,
                 None => None,
             }
-        }
+        },
+        jojobot::background::finish_or_abandon(snapshots, TASK_GRACE),
     );
     tracing::info!(
         ?notes_ended,
         ?push_ended,
+        ?snapshots_ended,
         "background tasks ended before the store stops"
     );
     // **The counts of the calls just answered are queued, not awaited, so they
