@@ -1116,8 +1116,9 @@ fn copy_of(state: &Scratch, name: &str) -> Scratch {
 
 /// **The boot of `run`, then the same boot again over `copy`**, both recorded,
 /// before either is judged. The first starts as soon as the template was copied;
-/// the second starts after the first has run and stopped, on a copy made before the
-/// first, so the disk and the runner are warm and the bytes are the same. **The
+/// the second starts once the first has answered, while the first process is still
+/// resident (the caller stops it), on a copy made before the first, so the files
+/// the second reads are the bytes the first read, and the page cache holds them. **The
 /// bounds bind the warm boot**, which is what a restart on the same host is; the
 /// cold boot is reported beside it and has no bar (the PM's ruling on the 20 s).
 fn measured_twice(case: &str, size: &Size, run: &mut Running, copy: Scratch) -> Duration {
