@@ -12,7 +12,7 @@ use jojobot_domain::memory::{EntityId, EntityPatch, Memory, NewEntity, Override}
 
 use super::DoltMemory;
 use crate::dolt::Dolt;
-use crate::testing::{Scratch, free_port, imported_database};
+use crate::testing::{Scratch, free_port, imported_database, migrated_database};
 use crate::writer::Writer;
 
 struct World {
@@ -24,9 +24,18 @@ struct World {
 }
 
 async fn world(name: &str) -> World {
+    world_over(name, true).await
+}
+
+/// A world over a database with a completed claims import, or without one for a
+/// case that runs the import itself.
+async fn world_over(name: &str, imported: bool) -> World {
     let scratch = Scratch::new(name);
     let server = Dolt::start(&scratch.0, free_port()).await.unwrap();
-    let store = imported_database(&server, "alpha").await.unwrap();
+    let store = match imported {
+        true => imported_database(&server, "alpha").await.unwrap(),
+        false => migrated_database(&server, "alpha").await.unwrap(),
+    };
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(store.clone()))
         .await
         .expect("the kinds are seeded");
@@ -359,7 +368,7 @@ async fn a_type_declaration_emits_only_when_it_differs_from_the_state() {
 async fn a_type_the_import_holds_is_declared_again_with_no_event() {
     use jojobot_domain::memory::types::{DeclaredType, Field, ValueType};
 
-    let mut world = world("entity-events-declare-imported").await;
+    let mut world = world_over("entity-events-declare-imported", false).await;
     let declaration = DeclaredType::new("pledge", vec![Field::new("witness", ValueType::Text)]);
     let pool = crate::writer::sql::Pool::from(world.store.clone());
     {
@@ -375,7 +384,7 @@ async fn a_type_the_import_holds_is_declared_again_with_no_event() {
         .declare_type(declaration.clone(), None)
         .await
         .expect("declared on the bare store");
-    crate::claims_import::import_claims_once(
+    let imported = crate::claims_import::import_claims_once(
         &world.writer,
         &world.store,
         &jojobot_domain::memory::owned::Provisions::default(),
@@ -383,6 +392,18 @@ async fn a_type_the_import_holds_is_declared_again_with_no_event() {
     )
     .await
     .expect("the import runs");
+    assert!(
+        matches!(imported, crate::claims_import::Imported::Done { .. }),
+        "the import ran and did not find an earlier one: {imported:?}"
+    );
+    let seam = world.writer.seam().expect("the seam is open");
+    assert!(
+        seam.read_claims(|state| state
+            .declared_types()
+            .iter()
+            .any(|held| held.name == "pledge")),
+        "the State holds the imported declaration before the repeat"
+    );
     let (memory, again) = (world.memory.clone(), declaration.clone());
     world
         .job(async move { memory.declare_type(again, None).await })
