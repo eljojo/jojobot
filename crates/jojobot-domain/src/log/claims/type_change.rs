@@ -120,6 +120,20 @@ mod tests {
         );
     }
 
+    /// **A declaration that names no keys holds no declaration**: the rows keep no
+    /// key for such a kind, so the State is to keep none, whether the plan has no
+    /// rows or there is no plan and nothing is held.
+    #[test]
+    fn a_declaration_naming_no_keys_holds_no_declaration() {
+        use crate::memory::types::plan_kind_keys;
+
+        let plan = plan_kind_keys("pledge", Origin::Declared, &[], &[])
+            .expect("a kind may be declared with no key");
+        assert!(plan.rows.is_empty());
+        assert!(effective_kind_declaration("pledge", Some(&plan), &[]).is_none());
+        assert!(effective_kind_declaration("pledge", None, &[]).is_none());
+    }
+
     /// A withdrawal is made only when the State holds a declaration, and it names
     /// the kind.
     #[test]
