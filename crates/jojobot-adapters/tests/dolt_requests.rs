@@ -582,9 +582,11 @@ async fn a_large_old_ledger_and_an_unreadable_row_do_not_stop_the_first_write() 
         .await
         .expect("an app row");
     }
+    // The unreadable stamp sorts BEFORE the readable one below, so a skip written
+    // as a stop would lose the readable row.
     sqlx::query(
         "INSERT INTO request_receipt (bot_key, request_id, verb, args_digest, landed, written_at) \
-         VALUES (?, 'garbled', 'capture', 'd', '{}', 'garbage')",
+         VALUES (?, 'garbled', 'capture', 'd', '{}', '0000-garbage')",
     )
     .bind(&key)
     .execute(&pool)
@@ -637,10 +639,10 @@ async fn a_large_old_ledger_and_an_unreadable_row_do_not_stop_the_first_write() 
 }
 
 /// **A failure in the middle of the import rolls the whole import back.** The
-/// store refuses the second batch, as a full disk or a lost connection would. The
+/// store refuses the last batch, as a full disk or a lost connection would. The
 /// write is refused, the log holds no ledger event, and the next write, with the
-/// store healthy again, imports every row and lands. A import that committed the
-/// first batch before the second failed would leave the log holding some of the
+/// store healthy again, imports every row and lands. An import that committed an
+/// earlier batch before the last failed would leave the log holding some of the
 /// rows, and the once-only rule would then never import the rest.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_failure_in_the_middle_of_the_import_leaves_no_ledger_event_and_the_next_write_imports() {
@@ -672,11 +674,12 @@ async fn a_failure_in_the_middle_of_the_import_leaves_no_ledger_event_and_the_ne
         .expect("an app row");
     }
     // 600 events are three batches: 1..=256, 257..=512 and 513..=600. The store
-    // refuses the one that starts at 257.
+    // refuses the LAST one, so the two before it are in flight when it fails, and
+    // an import that lets either of them out of the transaction is caught.
     sqlx::raw_sql(
-        "CREATE TRIGGER refuse_second_batch BEFORE INSERT ON event_log FOR EACH ROW \
-         BEGIN IF NEW.first_position = 257 THEN \
-         SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'the second batch is refused'; \
+        "CREATE TRIGGER refuse_last_batch BEFORE INSERT ON event_log FOR EACH ROW \
+         BEGIN IF NEW.first_position = 513 THEN \
+         SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'the last batch is refused'; \
          END IF; END",
     )
     .execute(&pool)
@@ -699,10 +702,10 @@ async fn a_failure_in_the_middle_of_the_import_leaves_no_ledger_event_and_the_ne
         jojobot_adapters::testing::ledger_events(&pool)
             .await
             .is_empty(),
-        "the failed import left no ledger event, not even the first batch"
+        "the failed import left no ledger event, not even an earlier batch"
     );
 
-    sqlx::query("DROP TRIGGER refuse_second_batch")
+    sqlx::query("DROP TRIGGER refuse_last_batch")
         .execute(&pool)
         .await
         .expect("the fault is cleared");
