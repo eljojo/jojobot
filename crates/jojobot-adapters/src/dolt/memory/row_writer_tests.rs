@@ -365,6 +365,91 @@ async fn a_capture_through_the_job_leaves_the_rows_the_old_route_leaves() {
     new.server.stop().await;
 }
 
+/// What each capture that names a thing by its former handle comes to: written,
+/// or blocked, and the rows of the claim tables after them.
+async fn answers_to_a_former_handle(world: &World, through_the_job: bool) -> Vec<String> {
+    for (handle, name) in [("person:homer", "Homer"), ("person:bart", "Bart")] {
+        world.add(handle, name).await;
+    }
+    let (memory, from, to) = (
+        world.memory.clone(),
+        id("person:bart"),
+        id("person:milhouse"),
+    );
+    world
+        .writer
+        .run(async move {
+            memory
+                .rename_entity(
+                    &from,
+                    &to,
+                    None,
+                    date(2026, 4, 20),
+                    Default::default(),
+                    None,
+                )
+                .await
+                .expect("the rename runs")
+                .written()
+                .expect("the rename is not blocked");
+        })
+        .await;
+    let mut edge = NewFact::about(
+        id("person:homer"),
+        "an edge to a former handle",
+        date(2026, 4, 21),
+    );
+    edge.edge = Some(Edge {
+        shape: EdgeShape::About,
+        object: id("person:bart"),
+    });
+    let mut cited = NewFact::about(
+        id("person:homer"),
+        "a ref to a former handle",
+        date(2026, 4, 21),
+    );
+    cited.refs = vec![id("person:bart")];
+    let mut field = NewFact::about(
+        id("person:homer"),
+        "a field naming a former handle",
+        date(2026, 4, 21),
+    );
+    field.fields = [("friend".to_string(), "person:bart".to_string())].into();
+    field.sets = ["friend".to_string()].into();
+    let mut answers = Vec::new();
+    for (label, fact) in [("edge", edge), ("ref", cited), ("field", field)] {
+        let memory = world.memory.clone();
+        let work = world.writer.run(async move { memory.capture(fact).await });
+        let answer = match through_the_job {
+            true => within(job(), work).await,
+            false => work.await,
+        };
+        answers.push(match answer {
+            Ok(Guarded::Written(_)) => format!("{label}: written"),
+            Ok(_) => format!("{label}: blocked"),
+            Err(error) => format!("{label}: error {error}"),
+        });
+    }
+    answers.extend(world.rows().await);
+    answers
+}
+
+/// **A capture naming a thing by a handle it wore before is answered by the job
+/// route as the old route answers it**, for an edge object, a ref and a field
+/// target: the same outcome and the same rows.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_former_handle_in_an_edge_a_ref_or_a_field_is_answered_as_the_old_route_answers() {
+    let mut old = world("row-writer-former-old").await;
+    let mut new = world("row-writer-former-new").await;
+    let (old_answers, new_answers) = (
+        answers_to_a_former_handle(&old, false).await,
+        answers_to_a_former_handle(&new, true).await,
+    );
+    assert_eq!(new_answers, old_answers);
+    old.server.stop().await;
+    new.server.stop().await;
+}
+
 /// **A claim decided over the State is read back by the row readers and edited by
 /// `update_fact`**, which finds its claim with a row read until the reads move.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
