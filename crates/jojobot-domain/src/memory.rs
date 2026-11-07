@@ -645,7 +645,8 @@ pub fn children_in<'a>(all: &'a [Entity], parent: &EntityId) -> Vec<&'a Entity> 
 
 /// **Who stands under whom, for every parent at once**, from an inventory already
 /// read. [`children_in`] asked of each parent: archived children stand and a thing
-/// folded into another stands under nothing, decided here and nowhere else.
+/// folded into another stands under nothing. The two decide it separately, one for a
+/// parent and one for all of them, and a case holds them equal.
 pub fn children_index(all: &[Entity]) -> std::collections::HashMap<EntityId, Vec<EntityId>> {
     let mut index: std::collections::HashMap<EntityId, Vec<EntityId>> = Default::default();
     for entity in all.iter().filter(|e| e.merged_into.is_none()) {

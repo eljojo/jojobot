@@ -1776,10 +1776,10 @@ impl Session {
     /// not on the handle) takes this; the reads of a verb that publishes `reship`
     /// then send `reship: true` unless the story names `reship` itself.
     ///
-    /// **Which stories take it is judged elsewhere**: they took it because they
-    /// went red once the client stopped sending `reship` by default, and
-    /// `work:q-933-judge-102-story-opt-ins` reads each and says which re-reads its
-    /// body on purpose and which can lose the opt-in.
+    /// **The stories that take it took it because they went red** once the client
+    /// stopped sending `reship` by default. Which of them re-reads its body on
+    /// purpose, and which can lose the opt-in, is the question of
+    /// `work:q-933-judge-102-story-opt-ins`.
     pub fn asking_whole(mut self) -> Self {
         self.whole = true;
         self
