@@ -199,7 +199,43 @@ async fn system_bodies(who: &str, reader: &Session, answer: &Value) -> Vec<Strin
         };
         bodies.push(body);
     }
+    // **A delivery names the messages it cannot fit under the ceiling** and does
+    // not carry them, so a start whose notes fill more messages than one answer
+    // holds is read to its end by id, as a bot reads it.
+    for id in left_out_ids(answer) {
+        let whole = reader
+            .call("read_message", json!({"message_id": id}))
+            .await
+            .json();
+        assert_eq!(
+            whole["sender"], "jojobot",
+            "from the system, not a bot: {whole}"
+        );
+        bodies.push(
+            whole["body"]
+                .as_str()
+                .unwrap_or_else(|| panic!("{who}'s left-out message has a body: {whole}"))
+                .to_string(),
+        );
+    }
     bodies
+}
+
+/// The ids a delivery names under `not_shown` instead of carrying the messages.
+fn left_out_ids(answer: &Value) -> Vec<Value> {
+    answer["not_shown"]["ids"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// Every message of a delivery by id: the ones it carries, then the ones it names.
+fn message_ids(answer: &Value) -> Vec<Value> {
+    delivered(answer)
+        .iter()
+        .map(|message| message["id"].clone())
+        .chain(left_out_ids(answer))
+        .collect()
 }
 
 /// The messages in a delivery, and the delivery's own answer for a failure to quote.
@@ -259,7 +295,7 @@ async fn a_bot_holds_messages_from_the_system_listing_what_shipped_and_who_to_as
     let later = story.restarted().await;
     let moe = later.as_bot("bot:moe").await;
     let first = moe.call("read_mailbox", json!({})).await.json();
-    let messages = delivered(&first);
+    let ids = message_ids(&first);
     let moes = system_bodies("Moe", &moe, &first).await;
     holds_every_shipped_note_once("Moe", &moes);
     for body in &moes {
@@ -274,13 +310,10 @@ async fn a_bot_holds_messages_from_the_system_listing_what_shipped_and_who_to_as
         .iter()
         .position(|body| body.contains("release-notes"))
         .expect("one of Moe's messages lists the release-notes note");
-    let note = &messages[at];
-    for message in messages {
-        moe.call(
-            "mark_processed",
-            json!({"message_id": message["id"], "notes": "read"}),
-        )
-        .await;
+    let note = json!({ "id": ids[at] });
+    for id in &ids {
+        moe.call("mark_processed", json!({"message_id": id, "notes": "read"}))
+            .await;
     }
 
     // ── Marge has no manager and so no line naming one; she is sent her own ──
@@ -342,7 +375,7 @@ async fn a_bot_holds_messages_from_the_system_listing_what_shipped_and_who_to_as
     let again = later.restarted().await;
     assert_eq!(
         box_as::counts_as(&again, "bot:moe").await,
-        (0, 0, messages.len()),
+        (0, 0, ids.len()),
         "Moe's notes are processed and nothing new arrived"
     );
     let after_two_starts = again.restarted().await;
