@@ -4,6 +4,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use super::{ObjectBody, ObjectVersion, Revision, State};
+use crate::actor::Actor;
 use crate::log::claims::ObjectSnapshot;
 use crate::log::{ObjectId, RecordId};
 use crate::memory::{
@@ -46,8 +47,12 @@ fn claim_write(state: &State, ordinal: usize, write: &Revision) -> ClaimWrite {
     ClaimWrite {
         ordinal,
         written_at: write.written_at,
-        session: None,
-        bot: None,
+        session: write.run.as_ref().map(|run| run.0.clone()),
+        bot: write
+            .actor
+            .as_ref()
+            .and_then(Actor::bot)
+            .map(|bot| served(state, &ObjectId(bot.0.clone()))),
         content: claim.content.clone(),
         details: claim.details.clone(),
         provenance: claim.provenance,
@@ -120,7 +125,7 @@ fn entity_version(state: &State, ordinal: usize, version: &ObjectVersion) -> Ent
         ordinal,
         thing: served(state, &version.thing),
         written_at: version.written_at,
-        session: None,
+        session: version.run.as_ref().map(|run| run.0.clone()),
         snapshot: Some(snapshot(state, &version.body)),
     }
 }
@@ -128,8 +133,8 @@ fn entity_version(state: &State, ordinal: usize, version: &ObjectVersion) -> Ent
 impl State {
     /// **The value parts of the thing stored under `object`**, in the shapes the
     /// port serves, from the State alone. `None` when the State holds no such
-    /// thing. The `session` and `bot` of a write are not in the State and are left
-    /// empty.
+    /// thing. The `session` of a write is the run on its envelope and its `bot` the
+    /// handle of the actor, both empty for a write whose envelope names neither.
     pub fn document_parts(
         &self,
         object: &ObjectId,
@@ -186,7 +191,7 @@ impl State {
                         ordinal: 0,
                         thing: served(self, thing),
                         written_at: write.source_time,
-                        session: None,
+                        session: write.run.as_ref().map(|run| run.0.clone()),
                         snapshot: write
                             .snapshot
                             .as_ref()

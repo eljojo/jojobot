@@ -2,7 +2,7 @@ use super::super::tests::{archived, body, claim, created, moment, object, record
 use super::super::{ClaimBody, ClaimEvent, MovedRecord, ObjectBody, State};
 use crate::actor::Actor;
 use crate::log::Event;
-use crate::memory::{FactStatus, Provenance};
+use crate::memory::{EntityId, FactId, FactStatus, Provenance};
 
 fn things() -> Vec<ClaimEvent> {
     ["work:alpha", "work:beta"]
@@ -146,5 +146,41 @@ fn the_histories_of_a_thing_are_those_of_the_claims_homed_on_it() {
         ids(&state, "work:beta"),
         ids(&state, "work:alpha"),
         "the folded thing answers as its survivor"
+    );
+}
+
+/// **A served write names the session and the bot the envelope names.** The bot
+/// is the handle it answers to now, the session is the run, and a write whose
+/// envelope names neither serves neither.
+#[test]
+fn a_served_write_names_the_session_and_the_bot_of_its_envelope() {
+    crate::memory::kinds::load_shipped();
+    let mut state = State::default();
+    for event in things() {
+        state.apply(&stamped(None, None, event));
+    }
+    state.apply(&under(
+        Some(Actor::Bot(EntityId("work:beta".into()))),
+        Some("run-a"),
+        created("r1", claim("f1", "work:alpha", "first", 3)),
+    ));
+    state.apply(&stamped(
+        None,
+        None,
+        revised("r1", "second", Provenance::Observation),
+    ));
+    let parts = state
+        .document_parts(&object("work:alpha"), &[])
+        .expect("the thing is held");
+    let writes = &parts.histories[&FactId("f1".into())];
+    assert_eq!(
+        writes
+            .iter()
+            .map(|write| (
+                write.session.as_deref(),
+                write.bot.as_ref().map(|b| b.0.as_str())
+            ))
+            .collect::<Vec<_>>(),
+        [(Some("run-a"), Some("work:beta")), (None, None)]
     );
 }
