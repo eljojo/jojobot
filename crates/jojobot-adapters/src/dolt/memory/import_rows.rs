@@ -205,10 +205,14 @@ impl DoltMemory {
             keys.by_id.insert(id, key);
         }
         for row in &former_rows {
-            keys.former
-                .entry(text(row, "former_handle")?)
-                .or_default()
-                .push(text(row, "badge")?);
+            // **A handle is ambiguous when two different things wore it.** One thing
+            // can leave a handle twice (it took the handle back and left again), and
+            // its history then holds the handle twice under one badge.
+            let owners = keys.former.entry(text(row, "former_handle")?).or_default();
+            let badge = text(row, "badge")?;
+            if !owners.contains(&badge) {
+                owners.push(badge);
+            }
         }
         // **A handle the build stopped supplying, with writes filed under its text
         // and no row**, by the one test the boot's adoption pass uses

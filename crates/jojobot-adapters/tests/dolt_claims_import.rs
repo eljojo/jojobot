@@ -1032,3 +1032,65 @@ async fn claims_import_places_a_current_supplied_name_before_a_former_one() {
 
     server.stop().await;
 }
+
+/// **A handle one thing left twice has one owner.** A thing wore `person:milhouse`,
+/// left it, took it back and left it again, so its history holds the former handle
+/// twice, both rows under one badge. A claim filed under that text belongs to that
+/// one thing: the import places it there and finds nothing ambiguous. The case with
+/// two different things stays refused (the case above).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn claims_import_places_a_handle_one_thing_left_twice_on_that_thing() {
+    let (_scratch, mut server, pool) = store("claims-import-left-twice").await;
+    let memory = DoltMemory::open(pool.clone());
+    thing(&memory, "person:homer", "Homer").await;
+    let badge: String = sqlx::query_scalar("SELECT badge FROM entity WHERE id = 'person:homer'")
+        .fetch_one(&pool)
+        .await
+        .expect("the thing wears a badge");
+    for ordinal in 1..=2_i64 {
+        sqlx::query(
+            "INSERT INTO entity_former_handle (former_handle, badge, changed_at, ordinal)
+             VALUES ('person:milhouse', ?, '2026-10-01', ?)",
+        )
+        .bind(&badge)
+        .bind(ordinal)
+        .execute(&pool)
+        .await
+        .expect("a former handle the one thing left twice");
+    }
+    for statement in [
+        "INSERT INTO fact (entity, id, content, details, provenance, standing, status,
+                           recorded_at, edge_shape, edge_object, event_kind, derived_from,
+                           derived_from_id, inserted_at, stale_after, happened_at,
+                           happened_through)
+         VALUES ('person:milhouse', 'f1', 'filed under the old text', NULL, 'testimony',
+                 'settled', 'active', '2026-10-08', NULL, NULL, NULL, NULL, NULL,
+                 '2026-10-08T14:02:10Z', NULL, NULL, NULL)",
+        "INSERT INTO fact_write (entity, fact_id, ordinal, content, details, provenance,
+                                standing, status, recorded_at, edge_shape, edge_object,
+                                derived_from, derived_from_id, inserted_at, stale_after,
+                                written_at, happened_at, happened_through, session)
+         VALUES ('person:milhouse', 'f1', 1, 'filed under the old text', NULL, 'testimony',
+                 'settled', 'active', '2026-10-08', NULL, NULL, NULL, NULL,
+                 '2026-10-08T14:02:10Z', NULL, '2026-10-08T14:02:10Z', NULL, NULL, NULL)",
+    ] {
+        sqlx::query(statement)
+            .execute(&pool)
+            .await
+            .expect("the claim lands");
+    }
+
+    import_claims_once(&Writer::default(), &pool, &Provisions::default(), at())
+        .await
+        .expect("a handle one thing left twice is placed, not refused");
+    let state = State::replay(logged(&pool).await.iter());
+    assert_eq!(
+        state
+            .active_records(&jojobot_domain::log::ObjectId(badge))
+            .len(),
+        1,
+        "the claim sits on the one thing that wore the handle"
+    );
+
+    server.stop().await;
+}
