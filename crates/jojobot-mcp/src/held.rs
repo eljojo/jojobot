@@ -1420,6 +1420,24 @@ mod tests {
             parent <= leaf + 1,
             "a parent with eight levels under it cost {parent} listings, a leaf {leaf}"
         );
+
+        // Two held parents in ONE answer share the index: the second reads
+        // nothing more than a leaf does.
+        ensure(&jojobot, "project:sigma").await;
+        let carrier = HeldMessages::default();
+        let mut cost = Vec::new();
+        for handle in ["project:atlas", "project:sigma"] {
+            let before = store.listings();
+            jojobot
+                .version_of(&Held::Entity(handle.into()), &carrier)
+                .await
+                .expect("a version");
+            cost.push(store.listings() - before);
+        }
+        assert!(
+            cost[1] < cost[0],
+            "the second parent of an answer built an index of its own: {cost:?}"
+        );
     }
 
     /// **A history read that fails once does not lose the notice.** Otto holds a
