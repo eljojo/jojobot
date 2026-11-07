@@ -24,6 +24,7 @@ pub(super) fn scan(doc_id: &str, entity: Option<Entity>, prose: &str, facts: Vec
             let ordinal = ordinals.entry(key.clone()).or_default();
             *ordinal += 1;
             writes.push(KeyWrite {
+                removed: false,
                 recorded_by: None,
                 writer: None,
                 run: None,

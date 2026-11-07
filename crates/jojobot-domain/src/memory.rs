@@ -3981,6 +3981,7 @@ pub fn stood_after(
     let mut next: Vec<KeyWrite> = writes
         .iter()
         .map(|write| KeyWrite {
+            removed: false,
             status: if write.fact == edited.id {
                 edited.status
             } else {
@@ -4000,6 +4001,7 @@ pub fn stood_after(
             .unwrap_or(0)
             + 1;
         next.push(KeyWrite {
+            removed: false,
             key,
             ordinal,
             value,
@@ -4083,6 +4085,7 @@ pub fn stood_after_record(
             .unwrap_or(0)
             + 1;
         next.push(KeyWrite {
+            removed: false,
             key: key.clone(),
             ordinal,
             value: Some(value.clone()),
@@ -4892,6 +4895,11 @@ pub struct KeyWrite {
     pub ordinal: u64,
     /// What the write put there; `None` says it took the key off.
     pub value: Option<String>,
+    /// **The key left the thing with this write, whichever claim held it**: a
+    /// stored clear from before a clear by a claim that did not hold the key was
+    /// refused (rule 677). It is no blank, because a blank is a value on a list
+    /// and on a view declaration key. `value` is `None` when this is true.
+    pub removed: bool,
     /// The record that carried it, local to the thing — what lets a write about
     /// to change that record's standing be found ([`stood_after`]).
     pub fact: FactId,
@@ -4988,11 +4996,7 @@ pub fn folded_backing(
             // the fold takes the key off. From any other claim it withdraws that
             // claim's write only, and the key stays backed.
             None => {
-                let effect = if write.value.is_none() {
-                    KeyEffect::Clears
-                } else {
-                    KeyEffect::Removes
-                };
+                let effect = key_effect(write);
                 let held = backing
                     .get(&write.key)
                     .map(|held: &FieldBacking| &held.fact);
@@ -5001,16 +5005,21 @@ pub fn folded_backing(
                 }
             }
             Some(_) => {
-                backing.insert(
-                    write.key.clone(),
-                    FieldBacking {
-                        recorded_by: write.recorded_by.clone(),
-                        fact: write.fact.clone(),
-                        provenance: write.provenance,
-                        standing: write.standing,
-                        note: write.note.clone(),
-                    },
-                );
+                let held = backing
+                    .get(&write.key)
+                    .map(|held: &FieldBacking| &held.fact);
+                if holder_after(held, &write.fact, KeyEffect::Sets).is_some() {
+                    backing.insert(
+                        write.key.clone(),
+                        FieldBacking {
+                            recorded_by: write.recorded_by.clone(),
+                            fact: write.fact.clone(),
+                            provenance: write.provenance,
+                            standing: write.standing,
+                            note: write.note.clone(),
+                        },
+                    );
+                }
             }
         }
     }
@@ -5058,6 +5067,17 @@ pub fn holder_after<T: PartialEq>(held: Option<T>, writer: T, effect: KeyEffect)
         KeyEffect::Sets => Some(writer),
         KeyEffect::Clears => held.filter(|held| *held != writer),
         KeyEffect::Removes => None,
+    }
+}
+
+/// What a write that holds no value does to the holder of its key: a stored
+/// removal and a blank take the key off whichever claim held it, and a clear
+/// does so only for the claim holding it.
+fn key_effect(write: &KeyWrite) -> KeyEffect {
+    if write.value.is_none() && !write.removed {
+        KeyEffect::Clears
+    } else {
+        KeyEffect::Removes
     }
 }
 
@@ -5155,11 +5175,7 @@ fn fold(
             // Only a clear is an event about its claim's write. A blank is a write
             // of its own, the newest word on the key, and takes the key off.
             if types::fold_of(&write.key, declared) == types::Fold::Newest {
-                let effect = if write.value.is_none() {
-                    KeyEffect::Clears
-                } else {
-                    KeyEffect::Removes
-                };
+                let effect = key_effect(write);
                 let held = holders.get(write.key.as_str()).copied();
                 if holder_after(held, &write.fact, effect).is_some() {
                     continue;
@@ -5173,7 +5189,10 @@ fn fold(
         };
         match types::fold_of(&write.key, declared) {
             types::Fold::Newest => {
-                holders.insert(write.key.as_str(), &write.fact);
+                let held = holders.get(write.key.as_str()).copied();
+                if let Some(holder) = holder_after(held, &write.fact, KeyEffect::Sets) {
+                    holders.insert(write.key.as_str(), holder);
+                }
                 folded.insert(write.key.clone(), value.clone());
                 moments.insert(write.key.clone(), write.written_at);
                 continue;

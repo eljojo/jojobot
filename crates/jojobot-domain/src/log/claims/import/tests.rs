@@ -973,6 +973,7 @@ fn stored_writes(rows: &Rows, thing: &str) -> Vec<KeyWrite> {
             .map(origin_of);
         let by = write_origin::written_by(origin, fact.head.app.as_ref());
         writes.push(KeyWrite {
+            removed: false,
             key: write.key.0.clone(),
             ordinal: write.ordinal,
             value: match &write.write {

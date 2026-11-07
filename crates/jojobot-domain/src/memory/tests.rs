@@ -1213,6 +1213,7 @@ fn resolve_handle_follows_a_rename_and_a_never_existed_handle_still_misses() {
 /// One write of a key, at the place in that key's history it took.
 fn wrote(key: &str, ordinal: u64, value: Option<&str>) -> KeyWrite {
     KeyWrite {
+        removed: false,
         recorded_by: None,
         writer: None,
         run: None,
@@ -1231,6 +1232,7 @@ fn wrote(key: &str, ordinal: u64, value: Option<&str>) -> KeyWrite {
 /// One write of a key that the store took in at `at`.
 fn wrote_at(key: &str, ordinal: u64, value: Option<&str>, at: &str) -> KeyWrite {
     KeyWrite {
+        removed: false,
         written_at: Some(at.parse().expect("a moment")),
         ..wrote(key, ordinal, value)
     }
@@ -1432,6 +1434,7 @@ fn a_folded_backing_carries_the_app_that_recorded_the_value() {
         received_at: "2026-10-18T12:00:00Z".into(),
     };
     let by_app = KeyWrite {
+        removed: false,
         recorded_by: Some(stamp.clone()),
         writer: None,
         run: None,
@@ -1596,6 +1599,7 @@ fn a_counter_passes_over_a_write_whose_record_no_longer_counts() {
         &[
             wrote("donuts", 1, Some("1")),
             KeyWrite {
+                removed: false,
                 status: FactStatus::Archived,
                 ..wrote("donuts", 2, Some("40"))
             },
