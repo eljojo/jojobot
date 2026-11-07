@@ -56,19 +56,22 @@ async fn captured(memory: &dyn Memory, request: Request, fact: NewFact) -> (bool
     (stored, scope.was_spent())
 }
 
-/// How many whole writes the ledger holds a commit for: one per request key.
+/// How many commit events the ledger holds, one for each time an id was spent.
+/// **Events, not distinct keys**: the log accepts a second event for one id, so a
+/// count of keys would keep every case that says one id stores one write green
+/// while the id was spent twice.
 async fn rows(pool: &sqlx::MySqlPool) -> i64 {
     use jojobot_domain::request::events::LedgerEvent;
-    let keys: std::collections::HashSet<_> = jojobot_adapters::testing::ledger_events(pool)
+    jojobot_adapters::testing::ledger_events(pool)
         .await
         .into_iter()
-        .filter_map(|event| match event {
-            LedgerEvent::RequestCommitted(commit) => Some(commit.request.key),
-            LedgerEvent::RequestCompleted { commit, .. } => Some(commit.request.key),
-            _ => None,
+        .filter(|event| {
+            matches!(
+                event,
+                LedgerEvent::RequestCommitted(_) | LedgerEvent::RequestCompleted { .. }
+            )
         })
-        .collect();
-    keys.len() as i64
+        .count() as i64
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
