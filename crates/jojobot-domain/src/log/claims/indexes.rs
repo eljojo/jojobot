@@ -153,10 +153,15 @@ impl State {
             .unwrap_or_default()
     }
 
-    /// **The handle an object answers to now**: a spelling of the form
-    /// `kind:slug` bound to it.
+    /// **The handle an object is served under now**: the one the survivor wore
+    /// itself, else a spelling of the form `kind:slug` bound to it or to anything
+    /// folded into it. The one choice every read makes, so a survivor is never
+    /// served under the handle of a thing folded into it.
     pub(super) fn handle_of(&self, object: &ObjectId) -> Option<crate::memory::EntityId> {
         let survivor = self.survivor(object);
+        if let Some(own) = self.own_handle_of(survivor) {
+            return Some(own);
+        }
         // The spellings bound to the object and to everything folded into it,
         // the first in address order: no scan of every address.
         std::iter::once(survivor)

@@ -1453,23 +1453,36 @@ fn assert_indexes_equal_a_recomputation(state: &State, merges: u64, context: &st
             }
         }
     }
-    // The handle an object answers to: the first `kind:slug` spelling bound to
-    // it or to anything folded into it, as a scan of every address finds it.
+    // The handle an object is served under: a `kind:slug` spelling bound to it or
+    // to anything folded into it, as a scan of every address finds them. The
+    // survivor's own handle wins when it wore one (`own_handle_of`, pinned by its
+    // own cases); otherwise it is the first of them in address order.
     for name in OBJECTS {
-        let want = state
+        let candidates: Vec<crate::memory::EntityId> = state
             .addresses
             .iter()
-            .find(|(address, bound)| {
+            .filter(|(address, bound)| {
                 state.survivor(bound) == &survivor(name)
                     && address.contains(':')
                     && !address.contains('#')
             })
-            .map(|(address, _)| crate::memory::EntityId(address.clone()));
-        assert_eq!(
-            state.handle_of(&object(name)),
-            want,
-            "{context}: handle of {name}"
-        );
+            .map(|(address, _)| crate::memory::EntityId(address.clone()))
+            .collect();
+        let got = state.handle_of(&object(name));
+        match state.own_handle_of(&survivor(name)) {
+            Some(own) => assert_eq!(got, Some(own), "{context}: handle of {name}"),
+            None => assert_eq!(
+                got,
+                candidates.first().cloned(),
+                "{context}: handle of {name}"
+            ),
+        }
+        if let Some(got) = got {
+            assert!(
+                candidates.contains(&got),
+                "{context}: handle of {name} is a spelling bound to it"
+            );
+        }
     }
     // Who points at a thing: the records whose newest write of some key names the
     // thing or anything folded into it, as a scan of every stream finds them.

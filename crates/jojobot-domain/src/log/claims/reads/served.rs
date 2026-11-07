@@ -14,8 +14,7 @@ impl State {
     /// **The handle an object is served under**: the one it wore itself, else the
     /// first of the handles that answer to it, else the id.
     fn served_handle(&self, object: &ObjectId) -> EntityId {
-        self.own_handle_of(self.survivor(object))
-            .or_else(|| self.handle_of(object))
+        self.handle_of(object)
             .unwrap_or_else(|| EntityId(object.0.clone()))
     }
 

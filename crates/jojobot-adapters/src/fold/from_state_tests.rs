@@ -155,8 +155,8 @@ async fn compare(merged: bool) {
     say(&memory, &krusty, "hosts a show", &[], 1).await;
     memory
         .merge(
-            &lisa,
             &bart,
+            &lisa,
             Some("filed twice"),
             date(2026, 9, 3),
             &EntityId("bot:sigma".into()),
@@ -210,7 +210,7 @@ async fn compare(merged: bool) {
     let mut differences: Vec<String> = Vec::new();
     for entity in listed
         .iter()
-        .filter(|e| e.merged_into.is_none() && (e.id.0 == "person:bart") == merged)
+        .filter(|e| e.merged_into.is_none() && (e.id.0 == "person:lisa") == merged)
     {
         let handle = &entity.id;
         let stored = Doc::load(&memory, handle).await.expect("the store reads");
