@@ -1040,6 +1040,7 @@ fn journal_and_mail_descriptions_keep_missing_numbers_unresolved() {
         ("amend_journal", "entry"),
         ("post_message", "body"),
         ("mark_processed", "notes"),
+        ("wrap_session", "story"),
     ] {
         let text = served_text(verb, Some(argument)).to_lowercase();
         let numbered: Vec<_> = text

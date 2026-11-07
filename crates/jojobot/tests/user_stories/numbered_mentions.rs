@@ -93,6 +93,26 @@ async fn a_journal_beat_naming_a_members_number_links_the_member() {
         .never_says(&format!("{PARKING} (no such handle)"));
 }
 
+/// **A wrap's story naming a number nobody holds lands and reads unresolved**,
+/// as a journal beat does: the story is the final entry of the chronology, and
+/// `wrap_session` does not screen a mention.
+#[tokio::test]
+async fn a_wrap_story_naming_a_number_nobody_holds_lands_and_reads_unresolved() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    ordinances(&s).await;
+
+    let wrapped = s
+        .call(
+            "wrap_session",
+            json!({"story": format!("looked for @{COLLECTION}/999 and found nothing")}),
+        )
+        .await;
+    wrapped
+        .says(&format!("{COLLECTION}/999 (no such handle)"))
+        .never_says("\"status\":\"blocked\"");
+}
+
 #[tokio::test]
 async fn a_document_section_naming_a_members_number_links_the_member_or_is_refused() {
     let story = Story::begin("bot:otto").await;
