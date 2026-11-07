@@ -197,6 +197,7 @@ async fn import_in_job(
     match sql::commit(tx).await {
         Ok(()) => {
             staged.committed();
+            seam_follows(writer).await?;
             Ok(Imported::Done {
                 events: mapped,
                 empty_merge_numbers,
@@ -210,6 +211,20 @@ async fn import_in_job(
             // read of the tail.
             Err(sql::store_error::<ClaimsImportError>(error))
         }
+    }
+}
+
+/// **A seam opened before this append takes the batch into its state.** The mail
+/// rail opens the writer's seam during the startup passes, before the import runs,
+/// and a state that never reads the import's batch cannot tell a capture that an
+/// imported thing exists.
+async fn seam_follows(writer: &Writer) -> Result<(), ClaimsImportError> {
+    match writer.seam() {
+        Some(seam) => seam
+            .catch_up()
+            .await
+            .map_err(|e| ClaimsImportError::Store(e.to_string())),
+        None => Ok(()),
     }
 }
 
@@ -305,6 +320,7 @@ async fn reconcile_in_job(
     match sql::commit(tx).await {
         Ok(()) => {
             staged.committed();
+            seam_follows(writer).await?;
             Ok(events.len())
         }
         Err(error) => {

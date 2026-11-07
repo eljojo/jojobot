@@ -136,3 +136,52 @@ async fn opening_the_seam_replays_the_claims_members_of_the_log() {
     writer.drain().await;
     server.stop().await;
 }
+
+/// **A seam opened before the import knows what the import appended.** The mail
+/// rail opens the seam in the startup passes, and the claims import runs after them.
+/// The import appends through the shared log and not through the seam, so the seam
+/// has to be told to read what the import wrote.
+#[tokio::test]
+async fn a_seam_opened_before_the_import_knows_the_things_the_import_appended() {
+    use jojobot_domain::memory::{EntityId, Memory, NewEntity};
+    let scratch = Scratch::new("seam-follows-import");
+    let mut server = Dolt::start(&scratch.0, free_port()).await.unwrap();
+    let store = migrated_database(&server, "alpha").await.unwrap();
+    jojobot_domain::memory::kinds::seed(&crate::dolt::memory::DoltMemory::open(store.clone()))
+        .await
+        .expect("the kinds are seeded");
+    let pool = crate::writer::sql::Pool::from(store.clone());
+    let writer = Writer::default();
+    let seam = {
+        let (opener, pool) = (writer.clone(), pool.clone());
+        writer
+            .run(async move { opener.ensure_seam(&pool).await })
+            .await
+            .expect("the seam opens")
+    };
+    // A row of the old tables, written by a bare store: it emits no event.
+    crate::dolt::memory::DoltMemory::open(store.clone())
+        .add_entity(NewEntity::new(
+            EntityId("person:homer".into()),
+            "Homer",
+            "fixture",
+        ))
+        .await
+        .expect("add")
+        .written()
+        .expect("not blocked");
+    crate::claims_import::import_claims_once(
+        &writer,
+        &store,
+        &jojobot_domain::memory::owned::Provisions::default(),
+        jiff::Timestamp::from_second(1_700_000_000).expect("a moment"),
+    )
+    .await
+    .expect("the import runs");
+    assert!(
+        seam.read_claims(|state| state.resolve("person:homer").is_some()),
+        "the seam reads the thing the import appended"
+    );
+    writer.drain().await;
+    server.stop().await;
+}

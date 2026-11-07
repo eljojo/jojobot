@@ -144,7 +144,7 @@ impl Seam {
     }
 
     /// Apply every committed batch after the position applied through.
-    async fn catch_up(&self) -> Result<(), LedgerError> {
+    pub(crate) async fn catch_up(&self) -> Result<(), LedgerError> {
         loop {
             let from = self.lock().applied;
             let batches = self

@@ -352,6 +352,69 @@ async fn a_type_declaration_emits_only_when_it_differs_from_the_state() {
     world.server.stop().await;
 }
 
+/// **A type the import already holds is declared again with no event.** The seam is
+/// open before the import runs, as the startup passes leave it, so the State only
+/// knows the import's type when the import has told the seam to read its batch.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_type_the_import_holds_is_declared_again_with_no_event() {
+    use jojobot_domain::memory::types::{DeclaredType, Field, ValueType};
+
+    let mut world = world("entity-events-declare-imported").await;
+    let declaration = DeclaredType::new("pledge", vec![Field::new("witness", ValueType::Text)]);
+    let pool = crate::writer::sql::Pool::from(world.store.clone());
+    {
+        let (opener, pool) = (world.writer.clone(), pool.clone());
+        world
+            .writer
+            .run(async move { opener.ensure_seam(&pool).await })
+            .await
+            .expect("the seam opens");
+    }
+    // A row of the old tables, written by a bare store: it emits no event.
+    DoltMemory::open(world.store.clone())
+        .declare_type(declaration.clone(), None)
+        .await
+        .expect("declared on the bare store");
+    crate::claims_import::import_claims_once(
+        &world.writer,
+        &world.store,
+        &jojobot_domain::memory::owned::Provisions::default(),
+        jiff::Timestamp::from_second(1_700_000_000).expect("a moment"),
+    )
+    .await
+    .expect("the import runs");
+    let (memory, again) = (world.memory.clone(), declaration.clone());
+    world
+        .job(async move { memory.declare_type(again, None).await })
+        .await
+        .expect("declared again through the served store");
+
+    // Counted in the log itself: the State folds a repeated declaration into one.
+    let declared: usize = world
+        .writer
+        .shared_log(&world.store)
+        .read_from(jojobot_domain::log::Position(0), 100)
+        .await
+        .expect("the log reads")
+        .iter()
+        .flat_map(|batch| batch.members().to_vec())
+        .filter_map(|member| crate::claims_log::codec::decode_own(&member).ok().flatten())
+        .filter(|event| {
+            matches!(
+                &event.payload,
+                jojobot_domain::log::claims::ClaimEvent::TypeDeclared { kind, .. }
+                    if kind == &ObjectId("pledge".into())
+            )
+        })
+        .count();
+    assert_eq!(
+        declared, 1,
+        "the import's declaration stands alone: the repeat emitted nothing"
+    );
+    world.writer.drain().await;
+    world.server.stop().await;
+}
+
 /// **A kind declaration emits `TypeDeclared` like a type declaration does**, and
 /// only when it differs from what the State holds: the same kind declared twice
 /// emits once. Reclaiming a shipped kind takes its keys away, and the State holds
