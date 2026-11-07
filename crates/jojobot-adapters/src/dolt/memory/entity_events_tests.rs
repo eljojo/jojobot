@@ -518,3 +518,99 @@ async fn a_key_added_to_a_shipped_kind_is_held_with_the_keys_the_kind_keeps() {
     world.writer.drain().await;
     world.server.stop().await;
 }
+
+/// **A kind declared with no keys emits nothing**: the rows keep no key for it, so
+/// the State is to hold no declaration, and the log gets no `TypeDeclared`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_kind_declared_with_no_keys_emits_nothing() {
+    use jojobot_domain::memory::types::Origin;
+
+    let mut world = world("entity-events-kind-no-keys").await;
+    let token = "emptykind";
+    {
+        let memory = world.memory.clone();
+        world
+            .job(async move {
+                memory
+                    .declare_kind(token, Origin::Declared, Vec::new())
+                    .await
+            })
+            .await
+            .expect("declared");
+    }
+    let held = world
+        .writer
+        .seam()
+        .expect("the seam is open")
+        .read_claims(|state| state.declared(&ObjectId(token.into())).cloned());
+    assert_eq!(held, None, "the State holds a declaration the rows do not");
+    let declared_in_log = world
+        .writer
+        .shared_log(&world.store)
+        .read_from(jojobot_domain::log::Position(0), 100)
+        .await
+        .expect("the log reads")
+        .iter()
+        .flat_map(|batch| batch.members().to_vec())
+        .filter_map(|member| crate::claims_log::codec::decode_own(&member).ok().flatten())
+        .filter(|event| {
+            matches!(
+                &event.payload,
+                jojobot_domain::log::claims::ClaimEvent::TypeDeclared { kind, .. } if kind.0 == token
+            )
+        })
+        .count();
+    assert_eq!(declared_in_log, 0, "a declaration without keys was emitted");
+    world.writer.drain().await;
+    world.server.stop().await;
+}
+
+/// **A declaration the rows already hold still brings the State to them.** The rows
+/// are written outside a writer job, as the boot seed writes them, so the State
+/// holds nothing; the same declaration made inside a job changes no row (the plan
+/// is the rows) and must still emit what the rows hold.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_declaration_the_rows_already_hold_still_reaches_the_state() {
+    use jojobot_domain::memory::types::{Field, Origin, ValueType};
+
+    let mut world = world("entity-events-kind-held").await;
+    let token = "stockkind";
+    let keys = || vec![Field::new("witness", ValueType::Text)];
+    world
+        .memory
+        .declare_kind(token, Origin::Shipped, keys())
+        .await
+        .expect("seeded outside a job");
+    let before = world
+        .writer
+        .seam()
+        .map(|seam| seam.read_claims(|state| state.declared(&ObjectId(token.into())).cloned()));
+    assert_ne!(
+        before.flatten().map(|declared| declared.fields.len()),
+        Some(1),
+        "the seed outside a job already reached the State"
+    );
+    {
+        let (memory, fields) = (world.memory.clone(), keys());
+        world
+            .job(async move { memory.declare_kind(token, Origin::Shipped, fields).await })
+            .await
+            .expect("declared again");
+    }
+    let rows = world
+        .memory
+        .declared_types()
+        .await
+        .expect("the rows read")
+        .into_iter()
+        .find(|declared| declared.name == token);
+    let held = world
+        .writer
+        .seam()
+        .expect("the seam is open")
+        .read_claims(|state| state.declared(&ObjectId(token.into())).cloned());
+    assert_eq!(held, rows, "the State holds the kind as the rows do");
+    assert!(rows.is_some(), "the rows hold the kind");
+    world.writer.drain().await;
+    world.server.stop().await;
+}
