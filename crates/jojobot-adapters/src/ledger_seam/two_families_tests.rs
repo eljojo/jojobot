@@ -8,7 +8,7 @@ use jojobot_domain::log::{Event, ObjectId, Position, RequestId, RunId};
 use jojobot_domain::request::events::{Commit, LedgerEvent, Request, RequestKey};
 
 use crate::dolt::Dolt;
-use crate::testing::{Scratch, free_port, migrated_database};
+use crate::testing::{Scratch, free_port, imported_database};
 use crate::writer::{Writer, sql};
 
 fn at(second: i64) -> Timestamp {
@@ -91,7 +91,7 @@ fn claims() -> Vec<Event<ClaimEvent>> {
 async fn a_batch_carries_both_families_and_the_seam_applies_both() {
     let scratch = Scratch::new("seam-two-families");
     let mut server = Dolt::start(&scratch.0, free_port()).await.unwrap();
-    let store = migrated_database(&server, "alpha").await.unwrap();
+    let store = imported_database(&server, "alpha").await.unwrap();
     let pool = sql::Pool::from(store.clone());
     let writer = Writer::default();
     let seam = {
@@ -122,13 +122,14 @@ async fn a_batch_carries_both_families_and_the_seam_applies_both() {
         .read_from(Position(0), 10)
         .await
         .unwrap();
-    assert_eq!(batches.len(), 1, "one batch for one transaction");
+    // The first batch is the import the database was opened with.
+    assert_eq!(batches.len(), 2, "one batch for one transaction");
     assert_eq!(
-        batches[0].members().len(),
+        batches[1].members().len(),
         3,
         "a ledger member and two claims"
     );
-    assert_eq!(batches[0].range().last, Position(3));
+    assert_eq!(batches[1].range().last, Position(4));
     assert!(
         seam.read(|state| state.lookup(&actor(), &id(), at(1)).is_some()),
         "the spent id answers from the ledgers"
@@ -170,7 +171,7 @@ async fn a_batch_carries_both_families_and_the_seam_applies_both() {
 async fn a_rolled_back_transaction_leaves_neither_family() {
     let scratch = Scratch::new("seam-rolled-back");
     let mut server = Dolt::start(&scratch.0, free_port()).await.unwrap();
-    let store = migrated_database(&server, "alpha").await.unwrap();
+    let store = imported_database(&server, "alpha").await.unwrap();
     let pool = sql::Pool::from(store.clone());
     let writer = Writer::default();
     let seam = {
@@ -200,7 +201,7 @@ async fn a_rolled_back_transaction_leaves_neither_family() {
     assert!(
         writer
             .shared_log(&store)
-            .read_from(Position(0), 10)
+            .read_from(Position(1), 10)
             .await
             .unwrap()
             .is_empty(),

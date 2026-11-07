@@ -18,7 +18,7 @@ use sqlx::Row;
 
 use super::DoltMemory;
 use crate::dolt::Dolt;
-use crate::testing::{Scratch, free_port, migrated_database};
+use crate::testing::{Scratch, free_port, imported_database};
 use crate::writer::Writer;
 
 struct World {
@@ -33,7 +33,7 @@ async fn world(name: &str) -> World {
     jojobot_domain::memory::kinds::load_shipped();
     let scratch = Scratch::new(name);
     let server = Dolt::start(&scratch.0, free_port()).await.unwrap();
-    let store = migrated_database(&server, "alpha").await.unwrap();
+    let store = imported_database(&server, "alpha").await.unwrap();
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(store.clone()))
         .await
         .expect("the kinds are seeded");

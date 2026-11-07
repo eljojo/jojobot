@@ -119,6 +119,29 @@ pub async fn migrated_database(
     store.database(name).await
 }
 
+/// [`migrated_database`] with the claims import done on it: the log holds a
+/// completed import, as the log of a started server does before anything is
+/// served. The seam refuses a claims event until the log holds one, so a case
+/// whose writes emit claims opens its database here. A case about the import
+/// itself keeps [`migrated_database`].
+pub async fn imported_database(
+    store: &crate::dolt::Dolt,
+    name: &str,
+) -> Result<sqlx::MySqlPool, crate::dolt::StartError> {
+    let pool = migrated_database(store, name).await?;
+    let writer = crate::writer::Writer::default();
+    crate::claims_import::import_claims_once(
+        &writer,
+        &pool,
+        &jojobot_domain::memory::owned::Provisions::default(),
+        jiff::Timestamp::from_second(1_700_000_000).expect("a moment"),
+    )
+    .await
+    .map_err(|e| crate::dolt::StartError::Spawn(e.to_string()))?;
+    writer.drain().await;
+    Ok(pool)
+}
+
 /// **The directory that holds this process's template, and no other
 /// process's.** Named for the process, so two runs on one machine never share
 /// one and a migration added between runs cannot meet a stale template.

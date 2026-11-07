@@ -9,7 +9,7 @@ use jojobot_domain::request::{self, Request, RequestId, Scope};
 
 use crate::dolt::Dolt;
 use crate::dolt::memory::DoltMemory;
-use crate::testing::{Scratch, free_port, migrated_database};
+use crate::testing::{Scratch, free_port, imported_database};
 use crate::writer::Writer;
 
 fn scope(id: &str) -> std::sync::Arc<Scope> {
@@ -26,7 +26,7 @@ fn scope(id: &str) -> std::sync::Arc<Scope> {
 async fn world(name: &str) -> (Scratch, Dolt, DoltMemory, Writer, sqlx::MySqlPool) {
     let scratch = Scratch::new(name);
     let server = Dolt::start(&scratch.0, free_port()).await.unwrap();
-    let pool = migrated_database(&server, "alpha").await.unwrap();
+    let pool = imported_database(&server, "alpha").await.unwrap();
     let memory = DoltMemory::open(pool.clone());
     jojobot_domain::memory::kinds::seed(&memory)
         .await
@@ -180,7 +180,8 @@ async fn a_claim_rewritten_is_one_record_revised_in_the_state() {
         .read_from(Position(0), 10)
         .await
         .unwrap();
-    assert_eq!(batches.len(), 2, "one batch for each request");
+    // The first batch is the import the world opened with.
+    assert_eq!(batches.len(), 3, "one batch for each request");
     writer.drain().await;
     server.stop().await;
 }

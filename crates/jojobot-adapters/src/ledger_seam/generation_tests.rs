@@ -10,7 +10,7 @@ use jojobot_domain::memory::{FactStatus, Provenance, Standing, WriteClass};
 
 use super::Seam;
 use crate::dolt::Dolt;
-use crate::testing::{Scratch, free_port, migrated_database};
+use crate::testing::{Scratch, free_port, imported_database};
 use crate::writer::{Writer, sql};
 
 fn at(second: i64) -> Timestamp {
@@ -172,7 +172,7 @@ async fn numbers(writer: &Writer, store: &sqlx::MySqlPool) -> Vec<(String, Strin
 async fn a_withdrawal_numbers_the_spec_on_a_live_claim() {
     let scratch = Scratch::new("seam-generation-withdrawal");
     let mut server = Dolt::start(&scratch.0, free_port()).await.unwrap();
-    let store = migrated_database(&server, "alpha").await.unwrap();
+    let store = imported_database(&server, "alpha").await.unwrap();
     let pool = sql::Pool::from(store.clone());
     let writer = Writer::default();
     let seam = {
@@ -204,7 +204,7 @@ async fn a_withdrawal_numbers_the_spec_on_a_live_claim() {
 async fn the_companion_claim_of_a_withdrawal_is_dated_by_the_stated_day() {
     let scratch = Scratch::new("seam-generation-stated-day");
     let mut server = Dolt::start(&scratch.0, free_port()).await.unwrap();
-    let store = migrated_database(&server, "alpha").await.unwrap();
+    let store = imported_database(&server, "alpha").await.unwrap();
     let pool = sql::Pool::from(store.clone());
     let writer = Writer::default();
     let seam = {
@@ -240,7 +240,9 @@ async fn a_seam_opened_before_the_import_knows_the_things_the_import_appended() 
     use jojobot_domain::memory::{EntityId, Memory, NewEntity};
     let scratch = Scratch::new("seam-follows-import");
     let mut server = Dolt::start(&scratch.0, free_port()).await.unwrap();
-    let store = migrated_database(&server, "alpha").await.unwrap();
+    let store = crate::testing::migrated_database(&server, "alpha")
+        .await
+        .unwrap();
     jojobot_domain::memory::kinds::seed(&crate::dolt::memory::DoltMemory::open(store.clone()))
         .await
         .expect("the kinds are seeded");
@@ -284,7 +286,7 @@ async fn a_seam_opened_before_the_import_knows_the_things_the_import_appended() 
 async fn a_request_made_in_the_same_batch_is_known_by_its_handle() {
     let scratch = Scratch::new("seam-generation-same-batch");
     let mut server = Dolt::start(&scratch.0, free_port()).await.unwrap();
-    let store = migrated_database(&server, "alpha").await.unwrap();
+    let store = imported_database(&server, "alpha").await.unwrap();
     let pool = sql::Pool::from(store.clone());
     let writer = Writer::default();
     let seam = {
@@ -331,7 +333,7 @@ async fn a_request_made_in_the_same_batch_is_known_by_its_handle() {
 async fn the_seam_numbers_the_requests_a_batch_changes() {
     let scratch = Scratch::new("seam-generation");
     let mut server = Dolt::start(&scratch.0, free_port()).await.unwrap();
-    let store = migrated_database(&server, "alpha").await.unwrap();
+    let store = imported_database(&server, "alpha").await.unwrap();
     let pool = sql::Pool::from(store.clone());
     let writer = Writer::default();
     let seam = {

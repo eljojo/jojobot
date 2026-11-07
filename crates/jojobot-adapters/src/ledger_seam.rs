@@ -340,8 +340,6 @@ impl Seam {
     /// **Stage the claims import as one batch in `tx`**, under the id the seam
     /// reads as a completed import once it commits. The one way a claims event
     /// reaches a log that holds none.
-    // The claims import of card e calls this; until it lands only the seam's cases do.
-    #[allow(dead_code)]
     pub(crate) async fn stage_import(
         self: &Arc<Self>,
         tx: &mut Transaction<'_, MySql>,
@@ -380,7 +378,11 @@ impl Seam {
                 ));
             }
         }
-        let claims = self.numbered(claims, at);
+        // The import carries the numbers its rows held, and none is made for it.
+        let claims = match import {
+            true => claims,
+            false => self.numbered(claims, at),
+        };
         let claims: Vec<Event<ClaimEvent>> = claims
             .iter()
             .map(|event| {

@@ -6,7 +6,7 @@ use jojobot_domain::log::claims::{ClaimEvent, KindId, ObjectBody};
 use jojobot_domain::log::{Event, LogStore, ObjectId, RunId};
 
 use crate::dolt::Dolt;
-use crate::testing::{Scratch, free_port, migrated_database};
+use crate::testing::{Scratch, free_port, imported_database};
 use crate::writer::Writer;
 use crate::writer_log::WriterLog;
 
@@ -63,7 +63,7 @@ async fn opening_the_seam_replays_the_claims_members_of_the_log() {
     use jojobot_domain::teaching::events::{RunId as TeachingRun, TeachingEvent};
     let scratch = Scratch::new("seam-claims");
     let mut server = Dolt::start(&scratch.0, free_port()).await.unwrap();
-    let store = migrated_database(&server, "alpha").await.unwrap();
+    let store = imported_database(&server, "alpha").await.unwrap();
 
     // **The log is seeded by a writer of its own.** A writer opens its seam at its
     // first transaction, and a seam does not see a batch appended after it by
@@ -146,7 +146,9 @@ async fn a_seam_opened_before_the_import_knows_the_things_the_import_appended() 
     use jojobot_domain::memory::{EntityId, Memory, NewEntity};
     let scratch = Scratch::new("seam-follows-import");
     let mut server = Dolt::start(&scratch.0, free_port()).await.unwrap();
-    let store = migrated_database(&server, "alpha").await.unwrap();
+    let store = crate::testing::migrated_database(&server, "alpha")
+        .await
+        .unwrap();
     jojobot_domain::memory::kinds::seed(&crate::dolt::memory::DoltMemory::open(store.clone()))
         .await
         .expect("the kinds are seeded");

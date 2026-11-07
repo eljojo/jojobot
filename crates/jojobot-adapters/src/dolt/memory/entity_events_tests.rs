@@ -12,7 +12,7 @@ use jojobot_domain::memory::{EntityId, EntityPatch, Memory, NewEntity, Override}
 
 use super::DoltMemory;
 use crate::dolt::Dolt;
-use crate::testing::{Scratch, free_port, migrated_database};
+use crate::testing::{Scratch, free_port, imported_database};
 use crate::writer::Writer;
 
 struct World {
@@ -26,7 +26,7 @@ struct World {
 async fn world(name: &str) -> World {
     let scratch = Scratch::new(name);
     let server = Dolt::start(&scratch.0, free_port()).await.unwrap();
-    let store = migrated_database(&server, "alpha").await.unwrap();
+    let store = imported_database(&server, "alpha").await.unwrap();
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(store.clone()))
         .await
         .expect("the kinds are seeded");
@@ -216,7 +216,7 @@ async fn a_boot_row_repair_emits_no_claims_event() {
     let members: usize = world
         .writer
         .shared_log(&world.store)
-        .read_from(jojobot_domain::log::Position(0), 100)
+        .read_from(jojobot_domain::log::Position(1), 100)
         .await
         .expect("the log reads")
         .iter()
@@ -722,7 +722,7 @@ async fn a_bare_store_commits_an_entity_write_and_emits_nothing() {
     let members: usize = world
         .writer
         .shared_log(&world.store)
-        .read_from(jojobot_domain::log::Position(0), 100)
+        .read_from(jojobot_domain::log::Position(1), 100)
         .await
         .expect("the log reads")
         .iter()

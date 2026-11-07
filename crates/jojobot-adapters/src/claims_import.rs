@@ -174,30 +174,24 @@ async fn import_in_job(
     let mapped = events.len();
     let mut events = events;
     events.push(import_completed(mapped));
-    let members: Vec<Vec<u8>> = events.iter().map(codec::encode).collect();
-
+    // **The seam stages the import**, under the id it reads as a completed import:
+    // until the log holds one, the seam refuses every other claims event.
+    let seam = writer
+        .ensure_seam(pool)
+        .await
+        .map_err(|e| ClaimsImportError::Store(e.to_string()))?;
     let mut tx = pool
         .writer()
         .begin()
         .await
         .map_err(|e| ClaimsImportError::Store(e.to_string()))?;
-    let head = log.head_in(&mut tx).await.map_err(log_failed)?;
-    let batch = SealedBatch::seal(
-        BatchId(format!("claims-import:{head}")),
-        Position(head),
-        at,
-        REPRESENTATION_VERSION,
-        members,
-    )
-    .map_err(log_failed)?;
-    let staged = log
-        .stage(&mut tx, Position(head), &batch)
+    let staged = seam
+        .stage_import(&mut tx, events, at)
         .await
-        .map_err(log_failed)?;
+        .map_err(|e| ClaimsImportError::Log(e.to_string()))?;
     match sql::commit(tx).await {
         Ok(()) => {
             staged.committed();
-            seam_follows(writer).await?;
             Ok(Imported::Done {
                 events: mapped,
                 empty_merge_numbers,

@@ -14,7 +14,7 @@ use jojobot_adapters::dolt::mailboxes::DoltMailboxes;
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::owners::MemoryOwners;
-use jojobot_adapters::testing::{free_port, migrated_database, start_unhurried};
+use jojobot_adapters::testing::{free_port, imported_database, start_unhurried};
 use jojobot_domain::clock::Clock;
 use jojobot_domain::mailbox::{MailboxName, Mailboxes, Message, NewMessage};
 use jojobot_domain::memory::{EntityId, Memory, NewEntity, NewFact};
@@ -27,7 +27,7 @@ async fn a_real_store() -> (Dolt, sqlx::MySqlPool, std::path::PathBuf) {
     let store = start_unhurried(&dir, free_port())
         .await
         .expect("the store comes up");
-    let pool = migrated_database(&store, "notes")
+    let pool = imported_database(&store, "notes")
         .await
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");

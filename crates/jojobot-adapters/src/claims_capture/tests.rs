@@ -23,7 +23,7 @@ use jojobot_domain::memory::{
 use super::{Admission, admit};
 use crate::dolt::Dolt;
 use crate::dolt::requests;
-use crate::testing::{Scratch, free_port, migrated_database};
+use crate::testing::{Scratch, free_port, imported_database};
 use crate::writer::{Writer, sql};
 
 fn at() -> Timestamp {
@@ -192,7 +192,7 @@ async fn world(name: &str) -> (Scratch, Dolt, sqlx::MySqlPool, sql::Pool, Writer
     jojobot_domain::memory::kinds::load_shipped();
     let scratch = Scratch::new(name);
     let server = Dolt::start(&scratch.0, free_port()).await.unwrap();
-    let store = migrated_database(&server, "alpha").await.unwrap();
+    let store = imported_database(&server, "alpha").await.unwrap();
     let pool = sql::Pool::from(store.clone());
     let seeding = Writer::default();
     {
@@ -264,7 +264,7 @@ async fn an_admitted_capture_is_sealed_and_the_state_answers_it() {
 
     let batches = writer
         .shared_log(&store)
-        .read_from(Position(7), 10)
+        .read_from(Position(8), 10)
         .await
         .unwrap();
     assert_eq!(batches.len(), 1, "one batch for the one transaction");
@@ -395,7 +395,7 @@ async fn a_refused_capture_leaves_nothing() {
     assert!(
         writer
             .shared_log(&store)
-            .read_from(Position(7), 10)
+            .read_from(Position(8), 10)
             .await
             .unwrap()
             .is_empty(),
@@ -688,7 +688,7 @@ async fn a_star_that_makes_the_boot_too_heavy_is_refused_and_writes_nothing() {
     assert!(
         writer
             .shared_log(&store)
-            .read_from(Position(7), 10)
+            .read_from(Position(8), 10)
             .await
             .unwrap()
             .is_empty(),

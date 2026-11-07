@@ -11,7 +11,7 @@ use jojobot_domain::request::{self, Request, RequestId, Scope};
 
 use crate::dolt::Dolt;
 use crate::dolt::requests;
-use crate::testing::{Scratch, free_port, migrated_database};
+use crate::testing::{Scratch, free_port, imported_database};
 use crate::writer::{Writer, sql};
 
 fn homer() -> ObjectId {
@@ -59,7 +59,7 @@ fn scope() -> std::sync::Arc<Scope> {
 async fn store_with_homer(name: &str) -> (Scratch, Dolt, sqlx::MySqlPool, sql::Pool, Writer) {
     let scratch = Scratch::new(name);
     let server = Dolt::start(&scratch.0, free_port()).await.unwrap();
-    let store = migrated_database(&server, "alpha").await.unwrap();
+    let store = imported_database(&server, "alpha").await.unwrap();
     sqlx::query(
         "INSERT INTO entity (id, kind, name, source, boot, prose) \
          VALUES ('person:homer', 'person', 'Homer', 'fixture', 'on-demand', '')",
@@ -102,13 +102,14 @@ async fn a_commit_seals_the_emitted_claims_with_the_requests_ledger_event() {
         .read_from(Position(0), 10)
         .await
         .unwrap();
-    assert_eq!(batches.len(), 1, "one batch for one transaction");
+    // The first batch is the import the database was opened with.
+    assert_eq!(batches.len(), 2, "one batch for one transaction");
     assert_eq!(
-        batches[0].members().len(),
+        batches[1].members().len(),
         2,
         "the ledger member and the emitted claims event"
     );
-    assert_eq!(batches[0].range().last, Position(2));
+    assert_eq!(batches[1].range().last, Position(3));
     let seam = writer.seam().expect("the seam opened with the first begin");
     assert!(
         seam.read_claims(|state| state.object(&homer()).is_some()),
@@ -143,8 +144,8 @@ async fn a_commit_with_no_request_id_seals_the_claims_alone() {
         .read_from(Position(0), 10)
         .await
         .unwrap();
-    assert_eq!(batches.len(), 1);
-    assert_eq!(batches[0].members().len(), 1);
+    assert_eq!(batches.len(), 2);
+    assert_eq!(batches[1].members().len(), 1);
     writer.drain().await;
     server.stop().await;
 }
@@ -182,9 +183,9 @@ async fn events_emitted_in_a_rolled_back_transaction_are_not_sealed_by_the_next(
         .read_from(Position(0), 10)
         .await
         .unwrap();
-    assert_eq!(batches.len(), 1);
+    assert_eq!(batches.len(), 2);
     assert_eq!(
-        batches[0].members().len(),
+        batches[1].members().len(),
         1,
         "the ledger member alone: the rolled-back claims are gone"
     );
