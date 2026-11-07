@@ -504,7 +504,7 @@ async fn a_stranger_may_not_rename_or_retype_a_role_object_and_the_owner_may() {
     let s = story.session().await.asking_whole();
     s.add("bot:marge", "Marge").await;
     s.add("bot:bart", "Bart").await;
-    let bart = story.as_bot("bot:bart").await.asking_whole();
+    let bart = story.as_bot("bot:bart").await;
     let (claimed, _) = story
         .call(
             "start_here",
@@ -529,7 +529,7 @@ async fn a_stranger_may_not_rename_or_retype_a_role_object_and_the_owner_may() {
             .says("\"parent\":\"bot:marge\"");
     }
 
-    let marge = story.as_bot("bot:marge").await.asking_whole();
+    let marge = story.as_bot("bot:marge").await;
     marge
         .call(
             "rename_entity",

@@ -333,7 +333,7 @@ async fn a_reason_naming_a_members_number_follows_it_through_a_rename() {
                "sets": {"thought_capacity": "1"}}),
     )
     .await;
-    let gamma = story.as_bot("bot:gamma").await.asking_whole();
+    let gamma = story.as_bot("bot:gamma").await;
     s.add("thing:jukebox", "The Jukebox").await;
     s.add("thing:battery", "The Battery").await;
     let first = gamma

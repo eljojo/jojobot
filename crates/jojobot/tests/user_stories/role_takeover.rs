@@ -111,7 +111,7 @@ async fn the_operators_code_takes_a_live_role_and_the_old_run_reads_abandoned_by
     an_instance_with_an_operator(&s).await;
     s.add("bot:gamma", "Gamma").await;
 
-    let bystander = story.as_bot("bot:gamma").await.asking_whole();
+    let bystander = story.as_bot("bot:gamma").await;
     bystander
         .call("journal", json!({"entry": "idle", "focus": "x"}))
         .await;

@@ -26,7 +26,7 @@ async fn a_reader_with_three_addresses_reads_what_each_says_now_in_one_call() {
     let story = Story::begin("bot:otto").await;
 
     // ── Spring · two things, and one claim written three times ────────────────
-    let spring = story.session_on("2026-04-14", None).await.asking_whole();
+    let spring = story.session_on("2026-04-14", None).await;
     spring
         .add("org:springfield-town-council", "Springfield Town Council")
         .await;

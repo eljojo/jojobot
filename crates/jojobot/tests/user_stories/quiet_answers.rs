@@ -69,7 +69,7 @@ async fn the_ordinary_answers_of_the_ordinary_verbs_carry_no_null_keys() {
 #[tokio::test]
 async fn a_session_that_reads_first_is_taught_on_its_first_read_of_a_claim() {
     let story = Story::begin("bot:otto").await;
-    let writer = story.session().await.asking_whole();
+    let writer = story.session().await;
     writer.add("person:lisa", "Lisa").await;
     writer.fact("person:lisa", "likes the diner").await;
     writer.add("bot:sigma", "Sigma").await;

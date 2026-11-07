@@ -37,7 +37,7 @@ async fn gamma_and_marge(story: &Story) -> (Session, Session) {
             json!({"bot": "gamma", "brief": true, "claim": "gamma"}),
         )
         .await;
-    let marge = story.as_bot("bot:marge").await.asking_whole();
+    let marge = story.as_bot("bot:marge").await;
     (gamma.expect("gamma boots").asking_whole(), marge)
 }
 

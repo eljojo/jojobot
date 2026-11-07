@@ -222,7 +222,7 @@ async fn a_run_still_needs_the_operators_word_to_make_its_own_guess_testimony() 
 #[tokio::test]
 async fn a_later_run_still_rewrites_an_earlier_runs_inference_in_place() {
     let story = Story::begin("bot:gamma").await;
-    let first = story.session().await.asking_whole();
+    let first = story.session().await;
     first.add("thing:handcart", "The Handcart").await;
     let guess = first
         .call(

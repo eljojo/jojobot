@@ -70,7 +70,7 @@ async fn the_asking_skills_calls_do_what_the_skill_says() {
 
     // ── a view with one thing added ─────────────────────────────────────────
     s.add("bot:delta", "Delta").await;
-    let delta = story.as_bot("bot:delta").await.asking_whole();
+    let delta = story.as_bot("bot:delta").await;
     delta
         .call(
             "set_charter",

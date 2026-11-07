@@ -23,7 +23,7 @@ async fn a_hedged_claim_and_a_guess_no_longer_read_the_same() {
     let story = Story::begin("bot:otto").await;
 
     // ── session 1 · the two places ──────────────────────────────────────────
-    let s = story.session().await.asking_whole();
+    let s = story.session().await;
 
     s.add("place:leftorium", "The Leftorium Diner").await;
     s.add("place:moes", "Moe's").await;
@@ -31,7 +31,7 @@ async fn a_hedged_claim_and_a_guess_no_longer_read_the_same() {
     s.wrap("standing up the two places").await;
 
     // ── session 2 · both things, in one breath ──────────────────────────────
-    let s = story.session().await.asking_whole();
+    let s = story.session().await;
 
     // Settled and first hand.
     let breakfast = s
@@ -46,7 +46,7 @@ async fn a_hedged_claim_and_a_guess_no_longer_read_the_same() {
         .await;
 
     // ── session 3 · a session works a third claim out of the first two ──────
-    let s = story.session().await.asking_whole();
+    let s = story.session().await;
 
     // Genuinely derived: it follows from the hedged closing time and from the
     // settled breakfast hours, and nobody said it.
@@ -163,7 +163,7 @@ async fn a_hedged_claim_and_a_guess_no_longer_read_the_same() {
         .await;
 
     // ── session 6 · "no, scratch that, I was wrong" ─────────────────────────
-    let s = story.session().await.asking_whole();
+    let s = story.session().await;
 
     // A week on, the operator went on a Sunday and it was open. The claim they
     // settled is theirs and an earlier session wrote it, so it is archived and

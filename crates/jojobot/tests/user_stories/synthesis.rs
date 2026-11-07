@@ -114,7 +114,7 @@ async fn one_summary_stands_for_three_separate_notes() {
         .await;
 
     // ── a later session asks who is actually vouching for the sizing ────────
-    let s2 = story.session().await.asking_whole();
+    let s2 = story.session().await;
 
     // Two more claims, holding the same field under different provenance —
     // one the operator said, one the assistant worked out.
