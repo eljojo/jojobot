@@ -587,10 +587,17 @@ async fn a_notice_of_a_change_does_not_stand_for_the_changed_text() {
 async fn a_search_hit_on_a_thing_already_recalled_comes_back_as_its_handle() {
     let (story, otto, _other, _claim) = otto_holds_homer().await;
 
-    let found = otto
+    // **No `reship` key, as a default session sends it**; the explicit `false`
+    // below must read the same.
+    let found = otto.call("search", json!({"query": "homer"})).await.json();
+    let explicit = otto
         .call("search", json!({"query": "homer", "reship": false}))
         .await
         .json();
+    assert_eq!(
+        found["results"], explicit["results"],
+        "no key and false are one read: {found} {explicit}"
+    );
     let hit = found["results"]
         .as_array()
         .and_then(|hits| {
