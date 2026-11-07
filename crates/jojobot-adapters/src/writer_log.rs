@@ -10,7 +10,6 @@
 
 use std::future::Future;
 
-use crate::dolt::teaching::RowChange;
 use crate::dolt_log::DoltLog;
 use crate::writer::{Writer, recovery::guarded, sql};
 use jojobot_domain::log::*;
@@ -85,12 +84,7 @@ impl WriterLog {
         }
     }
 
-    async fn append_in_job(
-        &self,
-        head: Position,
-        batch: &SealedBatch,
-        rows: &[RowChange],
-    ) -> Result<Append, LogError> {
+    async fn append_in_job(&self, head: Position, batch: &SealedBatch) -> Result<Append, LogError> {
         let mut tx = self
             .pool
             .begin()
@@ -113,15 +107,6 @@ impl WriterLog {
             };
         }
         let staged = self.log.stage(&mut tx, head, batch).await?;
-        for change in rows {
-            if change.apply(&mut tx).await.is_err() {
-                // Nothing is committed before COMMIT, whether the server refused
-                // the change or the connection was lost: the whole transaction
-                // rolls back and the head stays where it was.
-                let _ = tx.rollback().await;
-                return Ok(Append::DefinitelyNotCommitted);
-            }
-        }
         match sql::commit(tx).await {
             Ok(()) => {
                 staged.committed();
@@ -141,20 +126,11 @@ mod fault_tests;
 mod tests;
 
 impl WriterLog {
-    /// **Append a batch and the changes of the legacy rows as one transaction.**
-    /// A change that fails rolls the whole transaction back and answers
-    /// `DefinitelyNotCommitted`. The legacy rows of a family that has not left
-    /// the old path use this, so the rows and the events never disagree.
-    pub async fn append_with_rows(
-        &self,
-        head: Position,
-        batch: &SealedBatch,
-        rows: Vec<RowChange>,
-    ) -> Result<Append, LogError> {
+    async fn append_batch(&self, head: Position, batch: &SealedBatch) -> Result<Append, LogError> {
         let this = self.clone();
         let batch = batch.clone();
         let appended = self
-            .job(async move { this.append_in_job(head, &batch, &rows).await })
+            .job(async move { this.append_in_job(head, &batch).await })
             .await;
         match appended {
             // The contract answers an unknown commit as a value, not an error.
@@ -172,7 +148,7 @@ impl LogStore for WriterLog {
     }
 
     async fn append(&self, head: Position, batch: &SealedBatch) -> Result<Append, LogError> {
-        self.append_with_rows(head, batch, Vec::new()).await
+        self.append_batch(head, batch).await
     }
 
     async fn read_from(

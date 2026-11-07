@@ -891,8 +891,7 @@ pub async fn boot_store_observed(
     let requests_pool = store.pool().clone();
     // **Teaching is served from the event log.** The log's connection holds the
     // one-writer lock, so a second process cannot start beside this one. The old
-    // rows seed the first boot's import and, with the teachings shadow on, are
-    // kept current and compared.
+    // rows seed the first boot's one-way import.
     let logged_teachings = jojobot_adapters::teaching_log::serving(store.pool(), folded.writer())
         .await
         .map_err(|e| anyhow::anyhow!("TEACHING LEDGER UNAVAILABLE — {e}"))?;

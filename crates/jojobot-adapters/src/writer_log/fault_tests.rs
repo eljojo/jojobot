@@ -154,22 +154,6 @@ async fn serve(
                 .await?;
             continue;
         }
-        if command == 0x16 && text.contains("INSERT INTO session_teaching") {
-            let armed = plan
-                .fault
-                .lock()
-                .unwrap()
-                .take_if(|f| matches!(f, Fault::BetweenMembers))
-                .is_some();
-            if armed {
-                to_client
-                    .lock()
-                    .await
-                    .write_all(&error_packet("refused row"))
-                    .await?;
-                continue;
-            }
-        }
         if command == 0x16 && text.starts_with("KILL CONNECTION") {
             plan.kills.fetch_add(1, Ordering::SeqCst);
         }
@@ -320,15 +304,6 @@ impl LogStore for Faulted {
         let fault = *self.plan.fault.lock().unwrap();
         let _release = matches!(fault, Some(Fault::CancelledAcknowledgement))
             .then(|| ReleaseOnDrop(self.plan.clone()));
-        if matches!(fault, Some(Fault::BetweenMembers)) {
-            // The batch has a second member: a legacy row, which the proxy refuses.
-            let row = RowChange::Record {
-                sid: "homer".into(),
-                domain: "claims".into(),
-                taught_at: "2026-01-01T00:00:00Z".parse().unwrap(),
-            };
-            return self.log().append_with_rows(head, batch, vec![row]).await;
-        }
         self.log().append(head, batch).await
     }
     async fn read_from(
@@ -397,7 +372,6 @@ macro_rules! case {
 }
 
 case!(
-    partial_batch_is_invisible,
     absence_without_a_terminal_fence_is_uncertain,
     a_fenced_abort_leaves_the_same_head,
     restart_excludes_a_late_predecessor,

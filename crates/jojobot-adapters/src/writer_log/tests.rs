@@ -410,122 +410,13 @@ async fn a_position_another_writer_took_is_refused_by_the_store() {
     server.stop().await;
 }
 
-fn recorded_row(sid: &str) -> RowChange {
-    RowChange::Record {
-        sid: sid.into(),
-        domain: "claims".into(),
-        taught_at: "2026-01-01T00:00:00Z".parse().unwrap(),
-    }
-}
-
-async fn rows_of(pool: &sqlx::MySqlPool, sid: &str) -> i64 {
-    sqlx::query_scalar("SELECT COUNT(*) FROM session_teaching WHERE sid = ?")
-        .bind(sid)
-        .fetch_one(pool)
-        .await
-        .unwrap()
-}
-
-/// **A change of the legacy rows commits with its batch.** The row and the
-/// batch are both there after one append.
-#[tokio::test]
-async fn a_row_change_commits_with_its_batch() {
-    let (_scratch, mut server, pool, log, writer) = fixture().await;
-    let next = batch("rows", 0, &[b"a"]);
-    assert_eq!(
-        log.append_with_rows(Position(0), &next, vec![recorded_row("homer")])
-            .await
-            .unwrap(),
-        Append::Committed(next.range())
-    );
-    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM session_teaching WHERE sid = 'homer'")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(rows, 1);
-    assert_eq!(log.read_from(Position(0), 10).await.unwrap(), [next]);
-    drop(log);
-    writer.drain().await;
-    server.stop().await;
-}
-
-/// **Forgetting a run takes every one of its rows, in the batch's own commit**,
-/// and leaves the rows of another run.
-#[tokio::test]
-async fn a_forget_row_change_takes_all_the_rows_of_its_run() {
-    let (_scratch, mut server, pool, log, writer) = fixture().await;
-    let first = batch("rows-1", 0, &[b"a"]);
-    let other_domain = RowChange::Record {
-        sid: "homer".into(),
-        domain: "mail".into(),
-        taught_at: "2026-01-01T00:00:00Z".parse().unwrap(),
-    };
-    log.append_with_rows(
-        Position(0),
-        &first,
-        vec![recorded_row("homer"), other_domain, recorded_row("lisa")],
-    )
-    .await
-    .unwrap();
-    let second = batch("rows-2", 1, &[b"b"]);
-    assert_eq!(
-        log.append_with_rows(
-            Position(1),
-            &second,
-            vec![RowChange::Forget {
-                sid: "homer".into()
-            }]
-        )
-        .await
-        .unwrap(),
-        Append::Committed(second.range())
-    );
-    assert_eq!(rows_of(&pool, "homer").await, 0);
-    assert_eq!(rows_of(&pool, "lisa").await, 1);
-    drop(log);
-    writer.drain().await;
-    server.stop().await;
-}
-
-/// **A change the server refuses leaves neither the row nor the batch**, and
-/// the log takes the next append at the same head. The second change repeats
-/// the first row's key, which the table refuses.
-#[tokio::test]
-async fn a_refused_row_change_leaves_no_batch() {
-    let (_scratch, mut server, pool, log, writer) = fixture().await;
-    let next = batch("refused", 0, &[b"a"]);
-    assert_eq!(
-        log.append_with_rows(
-            Position(0),
-            &next,
-            vec![recorded_row("marge"), recorded_row("marge")]
-        )
-        .await
-        .unwrap(),
-        Append::DefinitelyNotCommitted
-    );
-    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM session_teaching WHERE sid = 'marge'")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(rows, 0);
-    assert!(log.read_from(Position(0), 10).await.unwrap().is_empty());
-    assert_eq!(
-        log.append(Position(0), &next).await.unwrap(),
-        Append::Committed(next.range())
-    );
-    drop(log);
-    writer.drain().await;
-    server.stop().await;
-}
-
 /// **The import reads every mark with its own taught_at**, including a run with
 /// no session card.
 #[tokio::test]
 async fn the_marks_come_back_with_their_times() {
     let (_scratch, mut server, pool, log, writer) = fixture().await;
-    let next = batch("marks", 0, &[b"a"]);
-    log.append_with_rows(Position(0), &next, vec![recorded_row("homer")])
+    sqlx::query("INSERT INTO session_teaching (sid, domain, taught_at) VALUES ('homer', 'claims', '2026-01-01T00:00:00Z')")
+        .execute(&pool)
         .await
         .unwrap();
     let marks = crate::teaching_log::import_marks(&pool).await.unwrap();
