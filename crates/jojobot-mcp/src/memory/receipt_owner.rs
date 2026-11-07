@@ -2,33 +2,78 @@
 //! write.** The receipt's facts (what landed, what was not stored, what changed)
 //! are its core and always ship. Every advisory part a capture adds is a named
 //! layer here, and the composer decides which ship: at most one suggestion,
-//! ranked, the rest never served and named in `left_out` with the call that
-//! returns them.
+//! ranked. Teaching notes ride one array in ranked order.
 
+use std::borrow::Cow;
 use std::collections::BTreeSet;
 
 use serde_json::Value;
 
 use super::unlocks::OwedUnlock;
-use crate::answer::compose::{Answer, Kind, Layer, Tier, compose_within};
+use crate::answer::compose::{Answer, Composed, Kind, Layer, Tier, compose_within};
 use crate::{Jojobot, caller::Caller};
 
+/// **A teaching note a capture would add, not yet spent.** Its gate has held;
+/// whether it ships is the composer's choice, and its domain is spent only if
+/// it does.
+pub(crate) struct TeachingNote {
+    /// The name an omission gives it.
+    pub(crate) name: &'static str,
+    /// The ledger domain spent when the note is served.
+    pub(crate) domain: Cow<'static, str>,
+    pub(crate) text: String,
+    pub(crate) tier: Tier,
+}
+
+impl TeachingNote {
+    pub(crate) fn new(
+        name: &'static str,
+        domain: impl Into<Cow<'static, str>>,
+        text: impl Into<String>,
+        tier: Tier,
+    ) -> Self {
+        TeachingNote {
+            name,
+            domain: domain.into(),
+            text: text.into(),
+            tier,
+        }
+    }
+}
+
+/// The key the teaching notes ride under, as every other verb serves them.
+const TEACHING_SLOT: &str = "teaching";
+
 impl Jojobot {
+    /// **The skill offers an act makes, as teaching notes**: one per skill, the
+    /// least urgent kind, each spent under its own domain only if served.
+    pub(crate) async fn skill_offer_notes(
+        &self,
+        act: crate::orientation::skills::Act,
+        caller: &Caller,
+        notes: &mut Vec<TeachingNote>,
+    ) {
+        for (skill, domain, line) in self.skill_offers_for(act, caller).await {
+            notes.push(TeachingNote::new(skill, domain, line, Tier::Low));
+        }
+    }
+
     /// **What a capture receipt serves, and the teachings it spends for it.** A
-    /// dropped suggestion spends nothing: a carry hint spends its domain, and a
-    /// type step its ledger key, only if the receipt still carries them once the
-    /// composer has chosen. If another receipt claimed the teaching first, or its
-    /// ledger write fails, choose again without it.
+    /// dropped part spends nothing: a carry hint spends its domain, a type step
+    /// its ledger key and a teaching note its domain only if the receipt still
+    /// carries them once the composer has chosen. If another receipt claimed the
+    /// teaching first, or its ledger write fails, choose again without it.
     pub(crate) async fn own_capture_receipt(
         &self,
         mut body: Value,
         caller: &Caller,
         carry_hint: bool,
         owed: &[OwedUnlock],
+        mut notes: Vec<TeachingNote>,
     ) -> Value {
-        let mut served = own(body.clone());
+        let mut served = compose_receipt(body.clone(), &notes);
         if carry_hint
-            && served.get("hint").is_some()
+            && served.served.get("hint").is_some()
             && !self
                 .first_contact(super::list_carry::PLAN_CARRY_DOMAIN, Some(caller))
                 .await
@@ -36,36 +81,64 @@ impl Jojobot {
             body.as_object_mut()
                 .expect("a capture receipt is an object")
                 .remove("hint");
-            served = own(body.clone());
+            served = compose_receipt(body.clone(), &notes);
         }
-        if served.get("unlocks").is_none() || owed.is_empty() {
-            return served;
-        }
-        let mut lost = Vec::new();
-        for step in owed {
-            if !self.first_contact(&step.key, Some(caller)).await {
-                lost.push(step.sentence.as_str());
+        if served.served.get("unlocks").is_some() && !owed.is_empty() {
+            let mut lost = Vec::new();
+            for step in owed {
+                if !self.first_contact(&step.key, Some(caller)).await {
+                    lost.push(step.sentence.as_str());
+                }
+            }
+            if !lost.is_empty() {
+                let steps = body
+                    .get_mut("unlocks")
+                    .and_then(|block| block.get_mut("steps"))
+                    .and_then(Value::as_array_mut)
+                    .expect("the served block came from the body");
+                steps.retain(|step| {
+                    !step["unlocks"]
+                        .as_str()
+                        .is_some_and(|sentence| lost.contains(&sentence))
+                });
+                if steps.is_empty() {
+                    body.as_object_mut()
+                        .expect("a capture receipt is an object")
+                        .remove("unlocks");
+                }
+                served = compose_receipt(body.clone(), &notes);
             }
         }
-        if lost.is_empty() {
-            return served;
+        // A note spends its domain once. One that lost the race to another
+        // receipt is taken out and the receipt is composed again; a note that
+        // already spent stays, since a smaller set never drops a served layer.
+        let mut spent: BTreeSet<String> = BTreeSet::new();
+        loop {
+            let left: BTreeSet<&str> = served
+                .left_out
+                .iter()
+                .map(|omitted| omitted.layer)
+                .collect();
+            let mut lost: Option<usize> = None;
+            for (at, note) in notes.iter().enumerate() {
+                if left.contains(note.name) || spent.contains(note.domain.as_ref()) {
+                    continue;
+                }
+                if self.first_contact(&note.domain, Some(caller)).await {
+                    spent.insert(note.domain.to_string());
+                } else {
+                    lost = Some(at);
+                    break;
+                }
+            }
+            match lost {
+                None => return served.served,
+                Some(at) => {
+                    notes.remove(at);
+                    served = compose_receipt(body.clone(), &notes);
+                }
+            }
         }
-        let steps = body
-            .get_mut("unlocks")
-            .and_then(|block| block.get_mut("steps"))
-            .and_then(Value::as_array_mut)
-            .expect("the served block came from the body");
-        steps.retain(|step| {
-            !step["unlocks"]
-                .as_str()
-                .is_some_and(|sentence| lost.contains(&sentence))
-        });
-        if steps.is_empty() {
-            body.as_object_mut()
-                .expect("a capture receipt is an object")
-                .remove("unlocks");
-        }
-        own(body)
     }
 }
 
@@ -89,35 +162,61 @@ const SUGGESTIONS: [(&str, Tier); 3] = [
 /// about, which is what a bot reads to judge the suggestion for itself.
 const RETURNED_BY: &str = "recall";
 
-/// Takes the finished receipt and returns what is served: its core whole, and
-/// the one top-ranked suggestion. Every other suggestion is named in `left_out`
-/// with the call that returns its ground. No ceiling applies yet, so only the
-/// one-suggestion rule acts.
-pub(crate) fn own(body: Value) -> Value {
+/// **The finished receipt, composed**: its core whole, the one top-ranked
+/// suggestion and the teaching notes in ranked order. Every other suggestion is
+/// dropped without trace. No ceiling applies yet, so only the one-suggestion
+/// rule acts. Teaching already in the core ships first and unranked, as every
+/// other verb's does.
+fn compose_receipt(body: Value, notes: &[TeachingNote]) -> Composed {
     let Value::Object(mut core) = body else {
-        return body;
+        return Composed::of(body);
     };
-    let layers: Vec<Layer> = SUGGESTIONS
+    let held = core.remove(TEACHING_SLOT);
+    let mut layers: Vec<Layer> = SUGGESTIONS
         .iter()
         .filter_map(|(key, tier)| {
             let held = core.remove(*key)?;
             Some(Layer::new(key, Kind::Suggestion, *tier, RETURNED_BY, held))
         })
         .collect();
-    if layers.is_empty() {
-        return Value::Object(core);
+    layers.extend(notes.iter().map(|note| {
+        Layer::new(
+            note.name,
+            Kind::Note,
+            note.tier,
+            RETURNED_BY,
+            Value::String(note.text.clone()),
+        )
+        .taught_once(note.domain.clone())
+        .in_slot(TEACHING_SLOT)
+    }));
+    let mut composed = if layers.is_empty() {
+        Composed::of(Value::Object(core))
+    } else {
+        compose_within(
+            &Answer::new(Value::Object(core), layers),
+            usize::MAX,
+            &BTreeSet::new(),
+        )
+    };
+    if let (Some(Value::Array(held)), Value::Object(served)) = (held, &mut composed.served) {
+        let shipped = served
+            .remove(TEACHING_SLOT)
+            .and_then(|notes| notes.as_array().cloned())
+            .unwrap_or_default();
+        served.insert(
+            TEACHING_SLOT.to_string(),
+            Value::Array(held.into_iter().chain(shipped).collect()),
+        );
     }
-    compose_within(
-        &Answer::new(Value::Object(core), layers),
-        usize::MAX,
-        &BTreeSet::new(),
-    )
-    .served
+    composed
 }
 
 #[cfg(test)]
 mod tests {
+    use super::TeachingNote;
     use crate::CaptureArgs;
+    use crate::answer::compose::Tier;
     use crate::harness::*;
     use crate::memory::testing::*;
     use crate::memory::unlocks::OwedUnlock;
@@ -174,6 +273,7 @@ mod tests {
                     owed("type-unlocks:taken", "taken step"),
                     owed("type-unlocks:free", "free step"),
                 ],
+                Vec::new(),
             )
             .await;
         let steps = both["unlocks"]["steps"]
@@ -194,6 +294,7 @@ mod tests {
                 &caller,
                 false,
                 &[owed("type-unlocks:taken", "taken step")],
+                Vec::new(),
             )
             .await;
         assert!(
@@ -219,7 +320,13 @@ mod tests {
         let mut body = a_receipt_with_steps(&["step"]);
         body["hint"] = json!("carry the open entries");
         let served = jojobot
-            .own_capture_receipt(body, &caller, true, &[owed("type-unlocks:step", "step")])
+            .own_capture_receipt(
+                body,
+                &caller,
+                true,
+                &[owed("type-unlocks:step", "step")],
+                Vec::new(),
+            )
             .await;
         assert!(
             served.get("hint").is_none(),
@@ -304,6 +411,104 @@ mod tests {
         assert!(
             receipt["possible_subject_note"].is_string(),
             "the suggestion ships beside it: {receipt}"
+        );
+    }
+
+    fn note(name: &'static str, domain: &'static str, text: &str, tier: Tier) -> TeachingNote {
+        TeachingNote::new(name, domain, text, tier)
+    }
+
+    /// **A teaching note ships in the one `teaching` array, ranked by tier, and
+    /// its domain is spent by the receipt that served it**: the next receipt
+    /// finds it taught.
+    #[tokio::test]
+    async fn a_teaching_note_ships_ranked_and_is_spent_by_the_receipt_that_served_it() {
+        let jojobot = handler();
+        let caller = the_caller();
+        let served = jojobot
+            .own_capture_receipt(
+                json!({"address": "thing:delta#f1"}),
+                &caller,
+                false,
+                &[],
+                vec![
+                    note("teaching:low", "owner-test:low", "low note", Tier::Low),
+                    note("teaching:high", "owner-test:high", "high note", Tier::High),
+                ],
+            )
+            .await;
+        assert_eq!(
+            served["teaching"],
+            json!(["high note", "low note"]),
+            "{served}"
+        );
+        for domain in ["owner-test:low", "owner-test:high"] {
+            assert!(
+                !jojobot.untaught(domain, &caller).await,
+                "{domain} is spent by the receipt that served it"
+            );
+        }
+    }
+
+    /// **A note whose domain another receipt spent first is not served**, and
+    /// the note beside it still is, and is spent.
+    #[tokio::test]
+    async fn a_note_another_receipt_spent_first_is_not_served() {
+        let jojobot = handler();
+        let caller = the_caller();
+        assert!(
+            jojobot
+                .first_contact("owner-test:taken", Some(&caller))
+                .await,
+            "the other receipt spends the domain first"
+        );
+        let served = jojobot
+            .own_capture_receipt(
+                json!({"address": "thing:delta#f1"}),
+                &caller,
+                false,
+                &[],
+                vec![
+                    note(
+                        "teaching:taken",
+                        "owner-test:taken",
+                        "taken note",
+                        Tier::High,
+                    ),
+                    note("teaching:free", "owner-test:free", "free note", Tier::Low),
+                ],
+            )
+            .await;
+        assert_eq!(served["teaching"], json!(["free note"]), "{served}");
+        assert!(
+            !jojobot.untaught("owner-test:free", &caller).await,
+            "the note that shipped is spent"
+        );
+    }
+
+    /// **Teaching another part of the receipt already carries ships first**,
+    /// ahead of the ranked notes, and is not ranked itself.
+    #[tokio::test]
+    async fn teaching_already_in_the_receipt_ships_ahead_of_the_ranked_notes() {
+        let jojobot = handler();
+        let served = jojobot
+            .own_capture_receipt(
+                json!({"address": "thing:delta#f1", "teaching": ["already there"]}),
+                &the_caller(),
+                false,
+                &[],
+                vec![note(
+                    "teaching:one",
+                    "owner-test:one",
+                    "ranked note",
+                    Tier::High,
+                )],
+            )
+            .await;
+        assert_eq!(
+            served["teaching"],
+            json!(["already there", "ranked note"]),
+            "{served}"
         );
     }
 }

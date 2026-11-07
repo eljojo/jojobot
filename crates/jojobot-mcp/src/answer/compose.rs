@@ -49,7 +49,7 @@ pub(crate) struct Layer {
     pub(crate) cost: usize,
     /// A once-per-session layer names its teaching domain; a session already
     /// taught that domain does not see the layer, nor an omission for it.
-    pub(crate) domain: Option<&'static str>,
+    pub(crate) domain: Option<std::borrow::Cow<'static, str>>,
     /// The call that returns the layer when it is left out.
     pub(crate) returned_by: &'static str,
     pub(crate) body: Value,
@@ -89,8 +89,8 @@ impl Layer {
         self
     }
 
-    pub(crate) fn taught_once(mut self, domain: &'static str) -> Self {
-        self.domain = Some(domain);
+    pub(crate) fn taught_once(mut self, domain: impl Into<std::borrow::Cow<'static, str>>) -> Self {
+        self.domain = Some(domain.into());
         self
     }
 }
@@ -245,6 +245,18 @@ pub(crate) struct Composed {
     pub(crate) over_budget: Option<usize>,
 }
 
+impl Composed {
+    /// An answer with nothing to compose: served as it is, nothing left out.
+    pub(crate) fn of(served: Value) -> Self {
+        Composed {
+            served,
+            left_out: Vec::new(),
+            form: Form::Full,
+            over_budget: None,
+        }
+    }
+}
+
 pub fn compose(answer: &Answer, budget: Budget, taught: &BTreeSet<&str>) -> Composed {
     compose_within(answer, budget.limit(), taught)
 }
@@ -256,7 +268,12 @@ pub(crate) fn compose_within(answer: &Answer, limit: usize, taught: &BTreeSet<&s
     let mut ranked: Vec<&Layer> = answer
         .layers
         .iter()
-        .filter(|layer| layer.domain.is_none_or(|domain| !taught.contains(domain)))
+        .filter(|layer| {
+            layer
+                .domain
+                .as_deref()
+                .is_none_or(|domain| !taught.contains(domain))
+        })
         .collect();
     // Suggestions are dropped before notes and details, so fill them last.
     // Within each group, tier first, then the cheaper layer;

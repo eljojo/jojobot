@@ -567,6 +567,25 @@ impl Jojobot {
         let Some(caller) = caller else {
             return;
         };
+        for (_, offered, line) in self.skill_offers_for(act, caller).await {
+            if self.first_contact(&offered, Some(caller)).await {
+                crate::answer::note_teaching(body, line);
+            }
+        }
+    }
+
+    /// **The skill offers this act would make, none of them spent**: for each
+    /// skill that covers the act, its name, the ledger domain its offer is
+    /// spent under, and its line. A skill the session has read, or whose offer
+    /// it already holds, is not here. A caller that serves an offer only if a
+    /// later choice keeps it spends the domain with [`Self::first_contact`]
+    /// afterwards.
+    pub(crate) async fn skill_offers_for(
+        &self,
+        act: crate::orientation::skills::Act,
+        caller: &Caller,
+    ) -> Vec<(&'static str, String, &'static str)> {
+        let mut offers = Vec::new();
         for skill in self.skills {
             if !crate::orientation::skills::is_listed_for(skill, Some(&caller.bot)) {
                 continue;
@@ -588,10 +607,11 @@ impl Jojobot {
                 }
             }
             let offered = format!("{SKILL_OFFERED_PREFIX}{}", skill.name);
-            if self.first_contact(&offered, Some(caller)).await {
-                crate::answer::note_teaching(body, line);
+            if self.untaught(&offered, caller).await {
+                offers.push((skill.name, offered, *line));
             }
         }
+        offers
     }
 
     /// Whether this call is the first time `domain` has reached this
@@ -1954,8 +1974,9 @@ mod tests {
         let first = capture_as(&jojobot, &sid, capture_args("alpha", "plays go")).await;
         assert_eq!(
             first["teaching"],
-            serde_json::json!([CLAIMS_TEACHING, CLAIM_SUBJECT_TEACHING]),
-            "the first call ever touches both domains at once and both survive: {first}"
+            serde_json::json!([CLAIM_SUBJECT_TEACHING, CLAIMS_TEACHING]),
+            "the first call ever touches both domains at once and both survive, the \
+             subject note ahead of the general one by its tier: {first}"
         );
 
         let second = capture_as(&jojobot, &sid, capture_args("alpha", "also plays chess")).await;

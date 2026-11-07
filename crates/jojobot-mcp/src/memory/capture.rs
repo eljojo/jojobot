@@ -12,7 +12,9 @@ use jojobot_domain::attention;
 use jojobot_domain::memory::graph;
 
 use super::clauses::{happened_at_clause, stale_after_clause};
+use super::receipt_owner::TeachingNote;
 use super::*;
+use crate::answer::compose::Tier;
 use crate::session::session_declined;
 use crate::teaching::{
     CHECK_IN_DATE_TEACHING, CLAIM_DIRECTION_DOMAIN, CLAIM_DIRECTION_TEACHING, CLAIM_SUBJECT_DOMAIN,
@@ -1023,23 +1025,34 @@ impl Jojobot {
         self.note_span_in_words(&fact, &caller, &mut body).await;
         let owed_unlocks = self.offer_unlocks(&fact.subject, &caller, &mut body).await;
         self.note_unstars_without_a_summary(&fact, false, caller.sid.as_str(), &mut body);
-        if self.first_contact(CLAIMS_DOMAIN, Some(&caller)).await {
-            crate::answer::note_teaching(&mut body, CLAIMS_TEACHING);
+        // **Every teaching note is a candidate and none is spent here**: its
+        // gate is checked and its domain is only peeked at. The owner serves
+        // the ones its budget keeps and spends exactly those.
+        let mut notes: Vec<TeachingNote> = Vec::new();
+        if self.untaught(CLAIMS_DOMAIN, &caller).await {
+            notes.push(TeachingNote::new(
+                "teaching:claims",
+                CLAIMS_DOMAIN,
+                CLAIMS_TEACHING,
+                Tier::Low,
+            ));
         }
-        if self
-            .first_contact(CLAIM_SUBJECT_DOMAIN, Some(&caller))
-            .await
-        {
-            crate::answer::note_teaching(&mut body, CLAIM_SUBJECT_TEACHING);
+        if self.untaught(CLAIM_SUBJECT_DOMAIN, &caller).await {
+            notes.push(TeachingNote::new(
+                "teaching:claim_subject",
+                CLAIM_SUBJECT_DOMAIN,
+                CLAIM_SUBJECT_TEACHING,
+                Tier::Medium,
+            ));
         }
         // **Gated on the subject's kind, never on the capture.** A
         // write about a person or a thing has nothing to do with a
         // project's work, so it must not spend this domain's one line.
         if crate::teaching::is_project_work(fact.subject.kind()) {
-            self.offer_skills_for(
+            self.skill_offer_notes(
                 crate::orientation::skills::Act::ProjectWrite,
-                Some(&caller),
-                &mut body,
+                &caller,
+                &mut notes,
             )
             .await;
         }
@@ -1047,48 +1060,46 @@ impl Jojobot {
         // rhythm written about without recording a turn of it is not
         // the act the skill covers.
         if checked_in {
-            self.offer_skills_for(
+            self.skill_offer_notes(
                 crate::orientation::skills::Act::CheckIn,
-                Some(&caller),
-                &mut body,
+                &caller,
+                &mut notes,
             )
             .await;
         }
         // **Gated on the edge, not the capture.** A claim naming no
         // other entity has no side to get wrong, so a plain capture
         // must not spend this domain's one teaching.
-        if fact.edge.is_some()
-            && self
-                .first_contact(CLAIM_DIRECTION_DOMAIN, Some(&caller))
-                .await
-        {
-            crate::answer::note_teaching(&mut body, CLAIM_DIRECTION_TEACHING);
+        if fact.edge.is_some() && self.untaught(CLAIM_DIRECTION_DOMAIN, &caller).await {
+            notes.push(TeachingNote::new(
+                "teaching:claim_direction",
+                CLAIM_DIRECTION_DOMAIN,
+                CLAIM_DIRECTION_TEACHING,
+                Tier::Medium,
+            ));
         }
         // **Shares its domain with `add_entity`'s rhythm-history
         // teaching, deliberately.** Both state that a check-in's own
         // `recorded_at` is what the schedule counts from; sharing the
         // row means whichever site reaches a session first is the one
         // that tells it, never both — see `RHYTHM_HISTORY_DOMAIN`.
-        if check_in_dates_disagree
-            && self
-                .first_contact(RHYTHM_HISTORY_DOMAIN, Some(&caller))
-                .await
-        {
-            crate::answer::note_teaching(&mut body, CHECK_IN_DATE_TEACHING);
+        if check_in_dates_disagree && self.untaught(RHYTHM_HISTORY_DOMAIN, &caller).await {
+            notes.push(TeachingNote::new(
+                "teaching:check_in_date",
+                RHYTHM_HISTORY_DOMAIN,
+                CHECK_IN_DATE_TEACHING,
+                Tier::Medium,
+            ));
         }
-        // **Checked before the gate, never after** — `first_contact`
-        // has a side effect, and spending this domain's one teaching
-        // on a call that did not shadow anything would silence the
-        // call that actually does. The schema lookup is skipped
-        // entirely when no fields were sent, which is most calls.
+        // **Only keys the subject's kind leaves undeclared** — a key
+        // the kind declares is its own column, never a shadow. The schema
+        // lookup is skipped entirely when no fields were sent, which is
+        // most calls.
         //
         // **Against the UNION of both verbs' arguments, never
         // capture's alone.** The motivating case is exactly a
         // capture carrying `status`, an argument only update_fact
         // has — checking capture's own schema alone would miss it.
-        //
-        // **Only keys the subject's kind leaves undeclared** — a key
-        // the kind declares is its own column, never a shadow.
         let undeclared_keys =
             crate::teaching::keys_the_kind_leaves_undeclared(fact.subject.kind(), &sent_field_keys);
         if !undeclared_keys.is_empty()
@@ -1102,18 +1113,18 @@ impl Jojobot {
                 "update_fact",
                 &update_fact_properties,
             )
-            && self
-                .first_contact(FIELD_SHADOWS_ARGUMENT_DOMAIN, Some(&caller))
-                .await
+            && self.untaught(FIELD_SHADOWS_ARGUMENT_DOMAIN, &caller).await
         {
-            crate::answer::note_teaching(
-                &mut body,
-                &crate::teaching::field_shadows_argument_teaching(shadowed, &owning_verb),
-            );
+            notes.push(TeachingNote::new(
+                "teaching:field_shadows_argument",
+                FIELD_SHADOWS_ARGUMENT_DOMAIN,
+                crate::teaching::field_shadows_argument_teaching(shadowed, &owning_verb),
+                Tier::High,
+            ));
         }
         json_result(
             &self
-                .own_capture_receipt(body, &caller, carry_hint, &owed_unlocks)
+                .own_capture_receipt(body, &caller, carry_hint, &owed_unlocks, notes)
                 .await,
         )
     }
