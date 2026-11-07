@@ -1117,8 +1117,9 @@ fn copy_of(state: &Scratch, name: &str) -> Scratch {
 /// **The boot of `run`, then the same boot again over `copy`**, both recorded,
 /// before either is judged. The first starts as soon as the template was copied;
 /// the second starts after the first has run and stopped, on a copy made before the
-/// first, so the disk and the runner are warm and the bytes are the same. The
-/// bounds are asserted on the first boot only.
+/// first, so the disk and the runner are warm and the bytes are the same. **The
+/// bounds bind the warm boot**, which is what a restart on the same host is; the
+/// cold boot is reported beside it and has no bar (the PM's ruling on the 20 s).
 fn measured_twice(case: &str, size: &Size, run: &mut Running, copy: Scratch) -> Duration {
     let first = measure(case, size, run);
     let mut again = spawn(copy);
@@ -1131,8 +1132,8 @@ fn measured_twice(case: &str, size: &Size, run: &mut Running, copy: Scratch) -> 
         first.peak,
         second.peak
     ));
-    assert_bounds(case, &first);
-    first.took
+    assert_bounds(&format!("{case} (warm boot)"), &second);
+    second.took
 }
 
 #[derive(Clone, Copy)]
