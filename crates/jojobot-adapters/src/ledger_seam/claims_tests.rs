@@ -185,3 +185,52 @@ async fn a_seam_opened_before_the_import_knows_the_things_the_import_appended() 
     writer.drain().await;
     server.stop().await;
 }
+
+/// **A seam opened before the supply reconcile knows what the reconcile appended.**
+/// The reconcile appends through the shared log like the import, so the seam has to
+/// be told to read its batch. The build ships a type the log does not hold yet, and
+/// the reconcile declares it.
+#[tokio::test]
+async fn a_seam_opened_before_the_reconcile_knows_the_declaration_it_appended() {
+    use jojobot_domain::memory::types::{DeclaredType, Field, ValueType};
+    let scratch = Scratch::new("seam-follows-reconcile");
+    let mut server = Dolt::start(&scratch.0, free_port()).await.unwrap();
+    let store = migrated_database(&server, "alpha").await.unwrap();
+    jojobot_domain::memory::kinds::seed(&crate::dolt::memory::DoltMemory::open(store.clone()))
+        .await
+        .expect("the kinds are seeded");
+    let pool = crate::writer::sql::Pool::from(store.clone());
+    let writer = Writer::default();
+    let seam = {
+        let (opener, pool) = (writer.clone(), pool.clone());
+        writer
+            .run(async move { opener.ensure_seam(&pool).await })
+            .await
+            .expect("the seam opens")
+    };
+    let at = jiff::Timestamp::from_second(1_700_000_000).expect("a moment");
+    let provisions = jojobot_domain::memory::owned::Provisions::default();
+    crate::claims_import::import_claims_once(&writer, &store, &provisions, at)
+        .await
+        .expect("the import runs");
+    let shipped = [DeclaredType::new(
+        "pledge",
+        vec![Field::new("witness", ValueType::Text)],
+    )];
+    let events = crate::claims_import::reconcile_supply_list_once(
+        &writer,
+        &store,
+        &provisions,
+        &shipped,
+        at,
+    )
+    .await
+    .expect("the reconcile runs");
+    assert!(events > 0, "the reconcile declared the shipped type");
+    assert!(
+        seam.read_claims(|state| state.declared(&ObjectId("pledge".into())).is_some()),
+        "the seam reads the declaration the reconcile appended"
+    );
+    writer.drain().await;
+    server.stop().await;
+}
