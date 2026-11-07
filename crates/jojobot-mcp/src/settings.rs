@@ -32,6 +32,15 @@ impl Jojobot {
 }
 
 impl TokenSaving {
+    /// The setting a caller who turned token saving on is served under.
+    #[cfg(test)]
+    pub(crate) fn on() -> Self {
+        Self {
+            on: true,
+            readable: true,
+        }
+    }
+
     pub(crate) fn explain(&self, body: &mut serde_json::Value) {
         if !self.readable {
             body["token_saving"] = serde_json::json!({

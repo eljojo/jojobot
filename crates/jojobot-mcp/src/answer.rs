@@ -620,6 +620,8 @@ impl Jojobot {
             self.add_held_changed(answered, sid).await;
             self.receipt_notes_once(answered, sid).await;
         }
+        // A compacted write receipt skipped the held pass that takes these off.
+        crate::held::take_call_marks(answered);
         // Before the answer is counted and before it moves: what is charged to
         // the session and what ships are the same text.
         strip_nulls_from(answered);

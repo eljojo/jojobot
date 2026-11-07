@@ -72,6 +72,26 @@ pub(crate) fn mark_call(answered: &mut CallToolResponse, verb: &str, reship: boo
     }
 }
 
+/// **Take the marks [`mark_call`] put on an answer off it**, for whichever way
+/// the answer leaves. The held pass takes them in the usual path, and a compacted
+/// write receipt skips that pass; this is the one place that leaves none on an
+/// answer a client reads.
+pub(crate) fn take_call_marks(answered: &mut CallToolResponse) {
+    let CallToolResponse::Complete(result) = answered else {
+        return;
+    };
+    let Some(meta) = result.meta.as_mut() else {
+        return;
+    };
+    #[cfg(any(test, feature = "testing"))]
+    meta.0.remove(VERB);
+    meta.0.remove(RESHIP);
+    meta.0.remove(COLLAPSIBLE);
+    if meta.0.is_empty() {
+        result.meta = None;
+    }
+}
+
 /// Only successful token-saving searches carry this mark; refusals keep guidance.
 pub(crate) fn token_saving_search(mut result: CallToolResult, enabled: bool) -> CallToolResult {
     if enabled {
@@ -1236,6 +1256,39 @@ mod tests {
             "the edit is told on the answer after the failed read: {told}"
         );
         assert_eq!(told[HELD_CHANGED][0]["claim"], "edited", "{told}");
+    }
+
+    /// **The marks `mark_call` puts on an answer are off it when it leaves, on
+    /// the compact write-receipt path too.** Lean mode compacts a write receipt
+    /// and skips the held pass that used to take the marks off, so the verb mark
+    /// of a testing build stayed on the answer a client reads.
+    #[tokio::test]
+    async fn a_compacted_write_receipt_carries_no_collapse_mark() {
+        let jojobot = handler();
+        let mut receipt = answered(serde_json::json!({"id": "person:homer", "status": "ok"}));
+        mark_call(&mut receipt, "capture", false);
+        crate::write_receipts::TOKEN_SAVING
+            .scope(
+                Some(crate::settings::TokenSaving::on()),
+                jojobot.finish_unshaped(&mut receipt, None),
+            )
+            .await;
+        let CallToolResponse::Complete(result) = &receipt else {
+            panic!("a completed call");
+        };
+        assert_eq!(
+            body_in(&receipt),
+            serde_json::json!({"id": "person:homer"}),
+            "the receipt was compacted"
+        );
+        assert!(
+            result
+                .meta
+                .as_ref()
+                .is_none_or(|meta| !meta.0.keys().any(|key| key.starts_with("jojobot/"))),
+            "no jojobot mark is left on the answer: {:?}",
+            result.meta
+        );
     }
 
     fn answered(body: Value) -> CallToolResponse {
