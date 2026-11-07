@@ -759,6 +759,64 @@ fn a_redeclared_type_keeps_its_history_and_the_newest_is_in_force() {
     assert!(state.declarations_of(&object("toy")).is_empty());
 }
 
+/// **A spelling the object gave up still stands for it**, and answers with the
+/// handle it wears now; one that was never worn answers with nothing, and a
+/// spelling that is current again wins over the one that gave it up.
+#[test]
+fn a_former_spelling_stands_for_the_handle_the_thing_wears_now() {
+    memory::kinds::load_shipped();
+    let mut state = State::default();
+    for event in [
+        ClaimEvent::ObjectCreated {
+            object: object("k1"),
+            body: body("thing", "Alpha"),
+        },
+        ClaimEvent::AddressBound {
+            object: object("k1"),
+            address: "thing:beta".into(),
+        },
+        ClaimEvent::AddressRetired {
+            object: object("k1"),
+            address: "thing:beta".into(),
+            day: day(2),
+        },
+        ClaimEvent::AddressBound {
+            object: object("k1"),
+            address: "thing:alpha".into(),
+        },
+    ] {
+        apply(&mut state, &event);
+    }
+    fn handle(state: &State, spelling: &str) -> Option<String> {
+        state.canonical_handle(spelling).map(|handle| handle.0)
+    }
+    assert_eq!(handle(&state, "thing:beta").as_deref(), Some("thing:alpha"));
+    assert_eq!(
+        handle(&state, "thing:alpha").as_deref(),
+        Some("thing:alpha")
+    );
+    assert_eq!(handle(&state, "thing:gamma"), None);
+    apply(
+        &mut state,
+        &ClaimEvent::ObjectCreated {
+            object: object("k2"),
+            body: body("thing", "Other"),
+        },
+    );
+    apply(
+        &mut state,
+        &ClaimEvent::AddressBound {
+            object: object("k2"),
+            address: "thing:beta".into(),
+        },
+    );
+    assert_eq!(
+        handle(&state, "thing:beta").as_deref(),
+        Some("thing:beta"),
+        "a spelling worn again by another thing is that thing's"
+    );
+}
+
 /// A withdrawn declaration leaves the kind with none, and only that kind; a kind
 /// declared again afterwards is held again.
 #[test]

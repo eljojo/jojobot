@@ -133,9 +133,15 @@ impl Jojobot {
         new: &NewFact,
         now: jiff::Timestamp,
     ) -> Option<jojobot_domain::log::claims::ClaimSize> {
-        let (entity, folded, held) =
-            state.thing_as_read(&new.subject.0, &state.declared_types())?;
-        let fact = prospective_fact(new, held + 1, Some(widest_stamp(now)));
+        // **The record is served under the handle the thing wears now**, whichever
+        // spelling the caller typed, so it is read and measured wearing that one.
+        let subject = state.canonical_handle(&new.subject.0)?;
+        let (entity, folded, held) = state.thing_as_read(&subject.0, &state.declared_types())?;
+        let served = NewFact {
+            subject,
+            ..new.clone()
+        };
+        let fact = prospective_fact(&served, held + 1, Some(widest_stamp(now)));
         let measured = measure_record(&fact, &entity, folded, now, true);
         Some(jojobot_domain::log::claims::ClaimSize {
             size: measured.size,

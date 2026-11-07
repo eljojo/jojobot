@@ -242,6 +242,18 @@ impl State {
             .collect()
     }
 
+    /// **The handle a spelling stands for now**, whether the object answers to it
+    /// or gave it up: a spelling it answers to wins, then one it gave up, and a
+    /// merged object's follows it to its survivor. `None` for a spelling no object
+    /// ever wore.
+    pub fn canonical_handle(&self, spelling: &str) -> Option<crate::memory::EntityId> {
+        let object = match self.resolve(spelling) {
+            Some(object) => object,
+            None => self.survivor(self.retired_addresses.get(spelling)?),
+        };
+        self.handle_of(object)
+    }
+
     /// **The claim an address names**: a spelling of the object, a `#`, and the
     /// label the claim is served under. The spelling may be one the object
     /// answers to now or one it gave up, and a merged object's follows it to its

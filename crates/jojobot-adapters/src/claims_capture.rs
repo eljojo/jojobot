@@ -167,6 +167,16 @@ pub(crate) async fn admit_fact(
     admit(
         seam,
         Box::new(move |state, declared| {
+            // **The request is about the thing under the handle it wears now**, so
+            // a caller that typed a former spelling is judged as one that typed the
+            // current one.
+            let subject = state
+                .canonical_handle(&fact.subject.0)
+                .unwrap_or_else(|| fact.subject.clone());
+            let fact = &NewFact {
+                subject,
+                ..fact.clone()
+            };
             let door = door(state, declared, fact)?;
             // The engine's own records carry keys a verb is refused.
             let route = match door.actor {

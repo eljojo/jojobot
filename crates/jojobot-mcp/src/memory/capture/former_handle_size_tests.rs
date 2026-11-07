@@ -209,3 +209,73 @@ async fn a_claim_is_measured_from_the_state_as_the_store_measures_it() {
         assert_eq!(measured.row, None);
     }
 }
+
+/// **A claim through a former handle shorter than the current one is measured as
+/// the record the State will serve**, under the current handle: the address and
+/// the subject of the served record are spelt with it, so a measure that kept the
+/// short spelling understates the record and admits one that is over its room.
+#[tokio::test]
+async fn a_claim_through_a_shorter_former_handle_is_measured_under_the_current_one() {
+    use jojobot_domain::log::claims::{ClaimEvent, KindId, ObjectBody, State};
+    use jojobot_domain::log::{Event, ObjectId};
+
+    let jojobot = handler();
+    let envelope = |payload| Event {
+        event_kind: String::new(),
+        meaning_version: 1,
+        actor: None,
+        run: None,
+        session_card: None,
+        request: None,
+        part: None,
+        occurred_at: None,
+        written_at: None,
+        imported_source_time: None,
+        payload,
+    };
+    let state = State::replay(&[
+        envelope(ClaimEvent::ObjectCreated {
+            object: ObjectId("k1".into()),
+            body: ObjectBody {
+                kind: KindId("person".into()),
+                parent: None,
+                name: "Alpha".into(),
+                source: "fixture".into(),
+                aliases: Vec::new(),
+                boot: None,
+                metadata: Default::default(),
+                archived: false,
+                bound_to: None,
+            },
+        }),
+        envelope(ClaimEvent::AddressBound {
+            object: ObjectId("k1".into()),
+            address: "person:beta".into(),
+        }),
+        envelope(ClaimEvent::AddressRetired {
+            object: ObjectId("k1".into()),
+            address: "person:beta".into(),
+            day: jiff::civil::date(2026, 4, 20),
+        }),
+        envelope(ClaimEvent::AddressBound {
+            object: ObjectId("k1".into()),
+            address: "person:alpha".into(),
+        }),
+    ]);
+    let now = jojobot.clock().now();
+    let about = |subject: &str| {
+        NewFact::about(
+            EntityId(subject.into()),
+            "a claim",
+            jiff::civil::date(2026, 4, 19),
+        )
+    };
+    let through_current = Jojobot::measure_new_claim(&state, &about("person:alpha"), now)
+        .expect("the State holds the thing");
+    let through_former = Jojobot::measure_new_claim(&state, &about("person:beta"), now)
+        .expect("the State resolves the former handle");
+    assert_eq!(
+        through_former.size, through_current.size,
+        "the record is served under the current handle, whichever the caller typed"
+    );
+}

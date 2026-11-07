@@ -331,6 +331,56 @@ async fn a_reopened_seam_serves_the_moment_a_claim_was_inserted() {
     server.stop().await;
 }
 
+/// **A capture through a spelling the thing gave up is a capture of the thing**,
+/// written under the handle it wears now: the caller typed a former handle and the
+/// record is served under the current one.
+#[tokio::test]
+async fn a_capture_through_a_former_handle_is_written_under_the_current_one() {
+    let (_scratch, mut server, store, pool, writer) = world("capture-job-former").await;
+    {
+        let (opener, pool) = (writer.clone(), pool.clone());
+        writer
+            .run(async move {
+                let seam = opener.ensure_seam(&pool).await.unwrap();
+                let mut tx = pool.writer().begin().await.unwrap();
+                let renamed = vec![
+                    envelope(ClaimEvent::AddressRetired {
+                        object: homer(),
+                        address: "person:homer".into(),
+                        day: date(2026, 4, 20),
+                    }),
+                    envelope(ClaimEvent::AddressBound {
+                        object: homer(),
+                        address: "person:marge".into(),
+                    }),
+                ];
+                let pending = seam
+                    .stage_with(&mut tx, Vec::new(), renamed, at())
+                    .await
+                    .unwrap();
+                sql::commit(tx).await.unwrap();
+                pending.committed();
+            })
+            .await;
+    }
+    let memory = Arc::new(crate::dolt::memory::DoltMemory::open(store.clone()));
+    let fact = NewFact::about(
+        EntityId("person:homer".into()),
+        "typed under the old handle",
+        date(2026, 4, 19),
+    );
+    let written = within(job(), writer.run(async move { memory.capture(fact).await })).await;
+    let Ok(Guarded::Written(fact)) = written else {
+        panic!("a former handle is admitted: {written:?}");
+    };
+    assert_eq!(
+        fact.home.0, "person:marge",
+        "served under the current handle"
+    );
+    writer.drain().await;
+    server.stop().await;
+}
+
 /// **A refused capture leaves nothing**: no event in the log, no record held.
 #[tokio::test]
 async fn a_refused_capture_leaves_nothing() {
