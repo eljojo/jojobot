@@ -537,6 +537,16 @@ async fn a_thing_the_session_holds_unchanged_comes_back_as_its_handle() {
 /// the names in `foldedNames` change. The read after it must name Maggie and not
 /// be Lisa's handle alone. The read before it is required to be the handle, so the
 /// collapse is live and the whole read after the merge is the merge's doing.
+///
+/// **Its watched red is the testing build's collapse guard, not its own
+/// assertions.** The one component that moves Lisa's version on a merge is the
+/// account claim the merge writes on the survivor (it counts as a change of her
+/// through `review::counts_as_a_change`). Sabotage that mover, so
+/// `review::ledger_records` also takes the engine record `merge` for a ledger
+/// and the account stops counting, and the version no longer moves: the read after
+/// the merge would be a stub of a text Otto never received, and `assert_received`
+/// in the collapse refuses it on Lisa's stale part before any assertion below
+/// runs. Nobody counts the assertions below as watched.
 #[tokio::test]
 async fn a_second_merge_into_a_held_thing_comes_back_whole_without_a_new_part() {
     let story = Story::begin("bot:otto").await;
