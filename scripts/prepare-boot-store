@@ -25,6 +25,10 @@ import time
 # come on top. A waiter holds out longer than the build it waits for.
 BUILD_TIMEOUT = 3600
 LOCK_TIMEOUT = BUILD_TIMEOUT + 300
+# What the recorder compiles: the boot_measures test of `jojobot`, the crates it
+# links, and the files those crates embed from outside `src`. A crate it does not
+# link is not an input; UNLINKED_CRATES names those, so a crate added later has
+# to be weighed (a test holds both lists to the checkout).
 GROWER_INPUTS = (
     "scripts/prepare-boot-store",
     "crates/jojobot/tests/boot_measures.rs",
@@ -33,13 +37,32 @@ GROWER_INPUTS = (
     "rust-toolchain.toml",
     "flake.nix",
     "flake.lock",
-    "crates/*/Cargo.toml",
-    "crates/*/build.rs",
-    "crates/*/src/**/*",
-    "crates/*/data/**/*",
+    "crates/jojobot/Cargo.toml",
+    "crates/jojobot/src/**/*",
+    "crates/jojobot-adapters/Cargo.toml",
+    "crates/jojobot-adapters/build.rs",
+    "crates/jojobot-adapters/src/**/*",
     "crates/jojobot-adapters/migrations/*.sql",
+    "crates/jojobot-domain/Cargo.toml",
+    "crates/jojobot-domain/src/**/*",
+    "crates/jojobot-domain/data/**/*",
+    "crates/jojobot-exercise/Cargo.toml",
+    "crates/jojobot-exercise/src/**/*",
+    "crates/jojobot-forward/Cargo.toml",
+    "crates/jojobot-forward/src/**/*",
+    "crates/jojobot-mcp/Cargo.toml",
+    "crates/jojobot-mcp/build.rs",
+    "crates/jojobot-mcp/src/**/*",
     "crates/jojobot-mcp/release-notes/**/*.md",
+    "crates/jojobot-mcp/served-texts/**/*",
+    "crates/jojobot-ports/Cargo.toml",
+    "crates/jojobot-ports/src/**/*",
+    "crates/jojobot-query-api/Cargo.toml",
+    "crates/jojobot-query-api/src/**/*",
+    "crates/jojobot-ui/Cargo.toml",
+    "crates/jojobot-ui/src/**/*",
 )
+UNLINKED_CRATES = ("jojobot-bar", "jojobot-roster")
 FILES = ("doltdump.sql", "grown.txt", "dump.sha256", "key.txt")
 
 
@@ -59,8 +82,14 @@ def grower_digest():
     digest = hashlib.sha256()
     # Sorted paths make additions, removals and renames inputs too, independently
     # of filesystem enumeration order. A file matched twice is hashed only once.
-    paths = {path for pattern in GROWER_INPUTS
-             for path in Path(".").glob(pattern) if path.is_file()}
+    paths = set()
+    for pattern in GROWER_INPUTS:
+        found = {path for path in Path(".").glob(pattern) if path.is_file()}
+        # A pattern that finds nothing names a path that was renamed or removed,
+        # and the key would drop it without a word.
+        if not found:
+            raise SystemExit(f"boot store refused: input pattern matches nothing: {pattern}")
+        paths |= found
     for path in sorted(paths):
         digest.update(path.as_posix().encode() + b"\0")
         digest.update(path.read_bytes())

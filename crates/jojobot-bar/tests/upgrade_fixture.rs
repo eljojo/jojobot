@@ -339,8 +339,9 @@ fn boot_store_cache_key_follows_recording_inputs() {
             .args([
                 "-c",
                 r#"
-import os, pathlib, runpy, sys, tempfile
-digest = runpy.run_path(sys.argv[1])['grower_digest']
+import os, pathlib, runpy, shutil, sys, tempfile
+script = runpy.run_path(sys.argv[1])
+digest = script['grower_digest']
 # Keep the fixture commit fixed: these are inputs of the current recorder.
 inputs = [
     'crates/jojobot-adapters/migrations/0124_field_write_live_clear.sql',
@@ -349,19 +350,32 @@ inputs = [
     'crates/jojobot-adapters/src/dolt/migrate.rs',
     'crates/jojobot-mcp/release-notes/deploy-9.3.3/alpha.md',
     'crates/jojobot/src/main.rs',
-    'crates/jojobot/build.rs',
+    'crates/jojobot-adapters/build.rs',
     'crates/jojobot-exercise/Cargo.toml',
-    'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml',
+    'crates/jojobot-mcp/served-texts/tools.md',
+    'crates/jojobot-domain/data/nicknames.txt',
+    'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'flake.nix', 'flake.lock',
     'scripts/prepare-boot-store',
     'crates/jojobot/tests/boot_measures.rs',
 ]
 with tempfile.TemporaryDirectory() as directory:
     os.chdir(directory)
+    # Every pattern finds one file, so a tree is complete when none is refused.
+    for pattern in script['GROWER_INPUTS']:
+        inputs.append(pattern.replace('**/*', 'sub/file.txt').replace('*', 'x'))
     for name in inputs:
         path = pathlib.Path(name)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text('original\n')
     baseline = digest()
+    # Crates the recorder does not link are not inputs: they change on most slices.
+    for name in ('crates/jojobot-bar/src/lib.rs', 'crates/jojobot-roster/src/lib.rs'):
+        path = pathlib.Path(name)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('unlinked\n')
+        assert digest() == baseline, f'an unlinked crate invalidated the cache: {name}'
+        path.write_text('edited unlinked\n')
+        assert digest() == baseline, f'an unlinked crate edit invalidated the cache: {name}'
     unused = pathlib.Path('pm/feature-briefs/alpha.md')
     unused.parent.mkdir(parents=True)
     unused.write_text('unrelated document\n')
@@ -381,10 +395,51 @@ with tempfile.TemporaryDirectory() as directory:
     removed = pathlib.Path(inputs[0])
     removed.unlink()
     assert digest() != baseline, 'cache key ignored a removed migration'
+    # A pattern that finds nothing is refused: the directory it names was renamed.
+    shutil.rmtree('crates/jojobot-mcp/release-notes')
+    try:
+        digest()
+    except SystemExit as refused:
+        assert 'release-notes' in str(refused), refused
+    else:
+        raise AssertionError('a pattern that matches nothing was accepted')
 print('recording input edits, migration additions/removals, and unused document control checked')
 "#,
             ])
             .arg(script),
+    )
+    .unwrap();
+    assert!(
+        out.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// The cases above run on a made-up tree, which cannot say that a pattern still
+/// names a path of THIS checkout, or that a crate added later was weighed.
+#[test]
+fn boot_store_cache_key_patterns_all_match_the_checkout() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let out = support::output_fenced(
+        Command::new("python3")
+            .args([
+                "-c",
+                r#"
+import pathlib, runpy, sys
+script = runpy.run_path(sys.argv[1])
+script['grower_digest']()
+named = {pattern.split('/')[1] for pattern in script['GROWER_INPUTS'] if pattern.startswith('crates/')}
+unlinked = set(script['UNLINKED_CRATES'])
+assert not named & unlinked, f'a crate is both an input and unlinked: {named & unlinked}'
+unweighed = {p.name for p in pathlib.Path('crates').iterdir() if p.is_dir()} - named - unlinked
+assert not unweighed, f'a crate is neither an input nor named unlinked: {unweighed}'
+print('every pattern matches, every crate is weighed')
+"#,
+            ])
+            .arg(root.join("scripts/prepare-boot-store"))
+            .current_dir(&root),
     )
     .unwrap();
     assert!(
