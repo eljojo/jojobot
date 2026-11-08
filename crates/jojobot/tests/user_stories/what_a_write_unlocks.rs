@@ -178,6 +178,7 @@ async fn a_schedule_is_offered_only_where_a_check_in_can_follow() {
 async fn a_write_says_what_the_thing_could_answer_with_one_more_key() {
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
+    s.past_first_contact().await;
 
     s.add("thing:the-air-filter", "The air filter").await;
     s.add_under(

@@ -2247,6 +2247,19 @@ impl Session {
         .await;
     }
 
+    /// **Spends this session's first-contact teaching with an earlier capture.**
+    /// That teaching is outside the receipt's budget and crowds a suggestion out
+    /// of a session's first receipts, so a story about a suggestion starts here.
+    pub async fn past_first_contact(&self) {
+        self.add("thing:kettle", "The kettle").await;
+        self.call(
+            "capture",
+            json!({"subject": "thing:kettle", "provenance": "testimony",
+                   "content": "keeps the water hot"}),
+        )
+        .await;
+    }
+
     /// **The same creation, over a near-miss the guard surfaces.** The token
     /// that lifts it rides the refusal's own advice rather than a field of its
     /// own (rule 68), so this reads it out of the prose exactly as a real

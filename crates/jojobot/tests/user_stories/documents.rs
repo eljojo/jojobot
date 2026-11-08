@@ -1696,6 +1696,7 @@ async fn a_heading_captured_onto_a_document_points_to_put_document() {
     };
     let story = Story::begin("bot:gamma").await;
     let session = story.session().await;
+    session.past_first_contact().await;
     session.add("document:homer", "Fryer manual").await;
     session
         .call(

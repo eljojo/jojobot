@@ -15,6 +15,7 @@ use super::dsl::Story;
 async fn a_receipt_names_another_known_thing_the_claims_words_name_once_a_session() {
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
+    s.past_first_contact().await;
     s.add("thing:the-furnace", "The furnace").await;
     s.add("thing:the-air-filter", "The air filter").await;
     s.add("org:mr-plow", "Mr. Plow").await;
@@ -150,6 +151,7 @@ async fn a_receipt_names_another_known_thing_the_claims_words_name_once_a_sessio
 async fn a_receipt_that_serves_one_suggestion_names_the_one_it_did_not() {
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
+    s.past_first_contact().await;
     s.add("thing:the-furnace", "The furnace").await;
     s.add("document:alpha", "Alpha").await;
 

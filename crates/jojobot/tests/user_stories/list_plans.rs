@@ -509,6 +509,7 @@ async fn a_batch_that_ticks_every_open_entry_of_a_plan_does_not_teach_the_carry(
 async fn a_session_is_taught_the_carry_once_and_a_fresh_session_is_taught_again() {
     let story = Story::begin_pretending_it_is("bot:gamma", TODAY).await;
     let s = story.session().await;
+    s.past_first_contact().await;
     let at = three_entries(&s, Some("2026-W43")).await;
     add_entry(&s, "list:errands", "sweep", None).await;
 
@@ -523,6 +524,14 @@ async fn a_session_is_taught_the_carry_once_and_a_fresh_session_is_taught_again(
 
     // A second boot of one bot is offered its stopped run; `new` starts another.
     let other = story.session_on(TODAY, Some("new")).await;
+    // The kettle exists now: this session says its own first contact on it.
+    other
+        .call(
+            "capture",
+            json!({"subject": "thing:kettle", "provenance": "testimony",
+                   "content": "keeps the water hot"}),
+        )
+        .await;
     let third = tick_one(&other, &at[2]).await;
     assert!(the_line(&third).contains("derived_from"), "{}", third.raw());
     story.finish().await;

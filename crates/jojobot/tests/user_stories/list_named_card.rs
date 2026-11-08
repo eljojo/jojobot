@@ -66,6 +66,7 @@ async fn a_step_naming_one_card_reads_back_with_the_cards_state() {
 async fn a_step_naming_two_cards_draws_none_and_an_object_wins() {
     let story = Story::begin("bot:gamma").await;
     let s = story.session().await;
+    s.past_first_contact().await;
     a_list_on_the_trip(&s, "checklist", json!({"tick": "sink"})).await;
     work(&s, "pour-the-slab", "now").await;
     work(&s, "frame-the-walls", "next").await;
@@ -107,6 +108,7 @@ async fn a_step_naming_two_cards_draws_none_and_an_object_wins() {
 async fn a_second_hint_keeps_the_first() {
     let story = Story::begin("bot:gamma").await;
     let s = story.session().await;
+    s.past_first_contact().await;
     a_list_on_the_trip(&s, "checklist", json!({"tick": "sink"})).await;
     work(&s, "pour-the-slab", "now").await;
     work(&s, "frame-the-walls", "next").await;
