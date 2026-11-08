@@ -134,7 +134,19 @@ pub(super) async fn emit_object_write(
             day,
         },
     };
-    let events = entity_change_events(&row, change, clock.now(), session.map(str::to_string));
+    // **The moment is the stamp the write's own version row took**, so the State
+    // and the store date one write alike. A caller appends that row first.
+    let stamped: Option<String> = sqlx::query_scalar(
+        "SELECT written_at FROM entity_write WHERE entity = ? ORDER BY ordinal DESC LIMIT 1",
+    )
+    .bind(entity.as_str())
+    .fetch_optional(&mut **tx)
+    .await
+    .map_err(store)?;
+    let at = stamped
+        .and_then(|stamp| stamp.parse::<jiff::Timestamp>().ok())
+        .unwrap_or_else(|| clock.now());
+    let events = entity_change_events(&row, change, at, session.map(str::to_string));
     crate::writer::sql::emit(events).map_err(store)
 }
 
