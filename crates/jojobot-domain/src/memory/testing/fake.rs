@@ -240,10 +240,6 @@ pub struct InMemoryMemory {
     /// The human half of each entity's doc, keyed by handle — replaced whole by
     /// `set_prose`, exactly as the real store replaces the region.
     prose: Mutex<std::collections::HashMap<EntityId, String>>,
-    /// **The claims State the entity writers emit into**, built by the domain's
-    /// own event choice (`entity_change_events`) and applied by `State::apply`,
-    /// as the seam applies it. The fake writes no event of its own.
-    claims: Mutex<crate::log::claims::State>,
     /// **The badge each entity wears**, minted when it is created and never
     /// changed after.
     ///
@@ -745,7 +741,6 @@ impl InMemoryMemory {
         origin: crate::memory::types::Origin,
         fields: Vec<crate::memory::types::Field>,
     ) -> Result<(), MemoryError> {
-        use crate::memory::types::DeclaredType;
         // **Naming no keys is not taking every key away**, and neither half of
         // the sentence may write over the other's — the real store holds both
         // lines, so the double does too.
@@ -803,26 +798,25 @@ impl InMemoryMemory {
             })
             .collect();
         let plan = crate::memory::types::plan_kind_keys(token, origin, &fields, &held)?;
+        // **The declaration the kind holds afterwards is the shared rule's answer**,
+        // the one the real store emits, from the keys held before and the plan.
+        let held_fields: Vec<(crate::memory::types::Field, crate::memory::types::Origin)> = prior
+            .iter()
+            .zip(&held)
+            .map(|(field, held)| (field.clone(), held.origin))
+            .collect();
+        let effective = crate::log::claims::type_change::effective_kind_declaration(
+            token,
+            Some(&plan),
+            &held_fields,
+        )
+        .expect("a declaration that names keys leaves the kind holding them");
         origins.retain(|(kind, _), _| kind != token);
         for row in &plan.rows {
             origins.insert((token.to_string(), row.key.clone()), row.origin);
         }
-        let first = plan.rows.first().map_or(origin, |row| row.origin);
-        let planned: Vec<crate::memory::types::Field> = plan
-            .rows
-            .into_iter()
-            .filter_map(|row| {
-                row.written
-                    .or_else(|| prior.iter().find(|field| field.key == row.key).cloned())
-            })
-            .collect();
         types.retain(|held| held.name != token);
-        types.push(DeclaredType {
-            name: token.to_string(),
-            origin: first,
-            fields: planned,
-            must: None,
-        });
+        types.push(effective);
         self.kind_keys.lock().unwrap().insert(token.to_string());
         Ok(())
     }
