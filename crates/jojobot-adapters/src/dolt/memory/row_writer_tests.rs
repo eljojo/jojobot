@@ -778,6 +778,131 @@ async fn a_rewrite_after_a_merge_revises_the_moved_claim_and_not_the_survivors()
     world.server.stop().await;
 }
 
+/// A capture after a merge uses the merged stream's next place. A later merge
+/// must identify that write by the same place when it emits its moves.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_job_capture_after_a_merge_keeps_the_rows_and_replay_in_agreement() {
+    use jojobot_domain::log::claims::{KeyId, State, import::import};
+
+    let mut world = world("row-writer-merged-ordinal").await;
+    for (handle, name) in [
+        ("person:bart", "Bart"),
+        ("person:homer", "Homer"),
+        ("person:marge", "Marge"),
+    ] {
+        world.add(handle, name).await;
+    }
+    let fact = |handle: &str, value: &str| {
+        let mut fact = NewFact::about(id(handle), "a key write", date(2026, 4, 19));
+        fact.fields = [("k".to_string(), value.to_string())].into();
+        fact.sets = ["k".to_string()].into();
+        fact
+    };
+    for value in ["a1", "a2", "a3"] {
+        world.capture(fact("person:bart", value), true).await;
+    }
+    world.capture(fact("person:homer", "b1"), true).await;
+    let merge = |from: &str, to: &str| {
+        let (memory, from, to) = (world.memory.clone(), id(from), id(to));
+        world.writer.run(async move {
+            memory
+                .merge(
+                    &from,
+                    &to,
+                    Some("filed twice"),
+                    date(2026, 4, 20),
+                    &id("person:homer"),
+                    None,
+                )
+                .await
+                .expect("the merge runs");
+        })
+    };
+    merge("person:bart", "person:homer").await;
+    let seam = world.writer.seam().expect("the seam is open");
+    assert_eq!(
+        seam.read_claims(|state| state.next_ordinal(
+            state.resolve("person:homer").expect("the survivor"),
+            &KeyId("k".into()),
+        )),
+        5,
+        "the folded three writes precede the survivor's next write"
+    );
+    let written = world.capture(fact("person:homer", "after"), true).await;
+    let mut tx = world.store.begin().await.expect("read the stored write");
+    let (home, _) = world
+        .memory
+        .resolve(&mut tx, &id("person:homer"))
+        .await
+        .expect("resolve the survivor")
+        .expect("the survivor exists");
+    let ordinal: i64 = sqlx::query_scalar(
+        "SELECT ordinal FROM field_write WHERE entity = ? AND fact_id = ? AND `key` = 'k'",
+    )
+    .bind(home.as_str())
+    .bind(written.id.as_str())
+    .fetch_one(&mut *tx)
+    .await
+    .expect("the job wrote its field row");
+    tx.rollback().await.expect("finish the read");
+    assert_eq!(ordinal, 5, "the job stores the merged stream's place");
+
+    let values = |history: Vec<jojobot_domain::memory::FieldWrite>| {
+        history
+            .into_iter()
+            .map(|write| write.value)
+            .collect::<Vec<_>>()
+    };
+    let state_values = |state: &State, handle: &str| {
+        values(
+            state
+                .key_trails(state.resolve(handle).expect("the survivor resolves"))
+                .history
+                .remove("k")
+                .expect("the key has a history"),
+        )
+    };
+    let before = values(
+        world
+            .memory
+            .history(&id("person:homer"), "k")
+            .await
+            .unwrap(),
+    );
+    assert_eq!(
+        before,
+        ["a1", "a2", "a3", "b1", "after"].map(|v| Some(v.into()))
+    );
+    assert_eq!(
+        seam.read_claims(|state| state_values(state, "person:homer")),
+        before
+    );
+
+    world.capture(fact("person:marge", "c1"), true).await;
+    merge("person:homer", "person:marge").await;
+    let rows = values(
+        world
+            .memory
+            .history(&id("person:marge"), "k")
+            .await
+            .unwrap(),
+    );
+    assert_eq!(
+        rows,
+        ["a1", "a2", "a3", "b1", "after", "c1"].map(|v| Some(v.into()))
+    );
+    assert_eq!(
+        seam.read_claims(|state| state_values(state, "person:marge")),
+        rows
+    );
+    let read = world.memory.import_rows().await.expect("the rows import");
+    assert!(read.findings.is_empty(), "{:?}", read.findings);
+    let events = import(&read.rows).expect("the merged rows map to events");
+    let imported = State::replay(&events);
+    assert_eq!(state_values(&imported, "person:marge"), rows);
+    world.server.stop().await;
+}
+
 /// **A claim decided over the State is read back by the row readers and edited by
 /// `update_fact`**, which finds its claim with a row read until the reads move.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
