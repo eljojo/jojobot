@@ -1620,10 +1620,49 @@ mod tests {
         assert!(matches!(hits.as_slice(), [Hit::Session { session, .. }] if session == &run.id));
     }
 
+    /// Whether `now` is within five minutes of a midnight in UTC or in either zone
+    /// the cases choose from.
+    fn near_a_day_boundary(now: jiff::Timestamp) -> bool {
+        const MARGIN: i64 = 300;
+        ["UTC", "Pacific/Kiritimati", "Pacific/Pago_Pago"]
+            .into_iter()
+            .any(|name| {
+                let zone = jiff::tz::TimeZone::get(name).expect("a zone this build resolves");
+                let local = now.to_zoned(zone);
+                let into_the_day = i64::from(local.hour()) * 3600
+                    + i64::from(local.minute()) * 60
+                    + i64::from(local.second());
+                !(MARGIN..=86_400 - MARGIN).contains(&into_the_day)
+            })
+    }
+
+    /// **The helper keeps off the turn of a day**: just either side of a midnight in
+    /// UTC, in the zone fourteen hours ahead and in the one eleven behind it waits,
+    /// and in mid-morning UTC it does not.
+    #[test]
+    fn a_zone_case_keeps_off_the_turn_of_a_day() {
+        let at = |text: &str| text.parse::<jiff::Timestamp>().expect("a moment");
+        for (when, near, why) in [
+            ("2026-11-08T23:58:00Z", true, "UTC midnight, before"),
+            ("2026-11-08T00:01:00Z", true, "UTC midnight, after"),
+            ("2026-11-08T10:02:00Z", true, "the zone ahead turns"),
+            ("2026-11-08T11:03:00Z", true, "the zone behind turns"),
+            ("2026-11-08T05:30:00Z", false, "mid-morning UTC"),
+        ] {
+            assert_eq!(near_a_day_boundary(at(when)), near, "{why}");
+        }
+    }
+
     /// **The zone that is a different day from UTC right now**, chosen at run time:
     /// one zone fourteen hours ahead and one eleven behind cannot both share
     /// UTC's day at any moment.
     fn a_zone_on_another_day_than_utc() -> (&'static str, jiff::civil::Date) {
+        // **Not within five minutes of a midnight in any of the three zones**: the
+        // case reads the clock again after this, and a day that turned between the
+        // two readings would give the case two days to compare.
+        while near_a_day_boundary(jiff::Timestamp::now()) {
+            std::thread::sleep(std::time::Duration::from_secs(5));
+        }
         let now = jiff::Timestamp::now();
         let utc = now.to_zoned(jiff::tz::TimeZone::UTC).date();
         ["Pacific/Kiritimati", "Pacific/Pago_Pago"]
