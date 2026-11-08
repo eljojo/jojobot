@@ -163,6 +163,10 @@ pub struct InMemoryMemory {
     /// choose among, so a lookup that chooses among everything pays for all of
     /// them; this is how a case sees how many it paid for.
     record_reads: std::sync::atomic::AtomicUsize,
+    /// **How many captures reached [`Memory::capture`] with no capture job in
+    /// scope.** The real store decides such a capture by its old route; a verb
+    /// that writes twice and scopes a job round one write only is seen here.
+    captures_without_a_job: std::sync::atomic::AtomicUsize,
     /// **How many times one thing's ages have been read**, through
     /// [`Memory::field_ages`]. A walk reads them once for every object it serves;
     /// a read that serves an object twice reads them twice, and this is how a
@@ -381,6 +385,13 @@ impl InMemoryMemory {
     /// delta across the call it is checking.
     pub fn record_reads(&self) -> usize {
         self.record_reads.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// How many captures arrived with no capture job in scope. A caller measures
+    /// a delta across the call it is checking.
+    pub fn captures_without_a_job(&self) -> usize {
+        self.captures_without_a_job
+            .load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// How many times one thing's ages have been read. A caller measures a delta
@@ -3202,6 +3213,22 @@ impl Memory for InMemoryMemory {
     }
 
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
+        if crate::log::claims::job::current().is_none() {
+            self.captures_without_a_job
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        } else if let Some(key) = fact.fields.keys().map(|key| key.trim()).find(|key| {
+            // **A verb's capture decided over a job is decided by the claims decider**,
+            // which refuses a key jojobot writes unless the verb marked it as
+            // computed. Only the two keys a verb computes are asked here; the keys of
+            // the routes that write the other server-written keys are not this
+            // decider's refusal.
+            (*key == crate::attention::DUE_ON || *key == crate::memory::capacity::ENGINE_RECORD)
+                && !fact.derived.iter().any(|computed| computed.trim() == *key)
+        }) {
+            return Err(MemoryError::InvalidFact(format!(
+                "bad claim: '{key}' is written by jojobot, not by a caller"
+            )));
+        }
         // Same guards the real adapter applies, so the fake can't drift.
         validate_new_fact_in(&self.own_kinds(), &fact)?;
         // **The receipt is judged after the fields**, in the order the real store

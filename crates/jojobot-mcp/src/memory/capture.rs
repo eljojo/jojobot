@@ -1787,7 +1787,13 @@ impl Jojobot {
         };
         let schedule_behind = if let (Some(schedule), Some(author)) = (&schedule, actor.bot()) {
             match self
-                .write_check_in_schedule(&captured, schedule, author, by_session)
+                .write_check_in_schedule(
+                    &captured,
+                    schedule,
+                    author,
+                    by_session,
+                    std::sync::Arc::clone(&reads),
+                )
                 .await
             {
                 Ok(behind) => behind,
@@ -1893,7 +1899,13 @@ impl Jojobot {
         };
         let schedule_behind = if let Some(schedule) = &schedule {
             match self
-                .write_check_in_schedule(&fact, schedule, &caller.bot, Some(caller.sid.as_str()))
+                .write_check_in_schedule(
+                    &fact,
+                    schedule,
+                    &caller.bot,
+                    Some(caller.sid.as_str()),
+                    std::sync::Arc::default(),
+                )
                 .await
             {
                 Ok(behind) => behind,

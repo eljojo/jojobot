@@ -460,6 +460,39 @@ async fn a_testimony_check_in_keeps_its_word_and_derives_only_the_schedule() {
     a_check_in_keeps_its_backing("testimony").await;
 }
 
+/// **Both records of a check-in are decided over a capture job.** The claim and
+/// the schedule record it computes are two captures of one call; a store decides
+/// a capture that carries no job by its old route, so the second must not arrive
+/// bare.
+#[tokio::test]
+async fn both_records_of_a_check_in_capture_carry_a_job() {
+    let memory = std::sync::Arc::new(jojobot_domain::memory::testing::InMemoryMemory::seeded());
+    let jojobot = handler_over(std::sync::Arc::clone(&memory));
+    a_weekly_rhythm(&jojobot, "descale", "2026-08-01", "check_in_date").await;
+    let bare_before = memory.captures_without_a_job();
+    capture_ok(
+        &jojobot,
+        CaptureArgs {
+            check_in: Some("ran".into()),
+            recorded_at: Some("2026-08-10".into()),
+            ..capture_args("rhythm:descale", "the turn was completed")
+        },
+    )
+    .await;
+    assert_eq!(
+        memory.captures_without_a_job(),
+        bare_before,
+        "the schedule record of the check-in was captured with no job"
+    );
+    // **Decided over a job, the schedule record still lands**: the decider refuses
+    // a key jojobot writes unless the verb marked it computed.
+    let held = fields_of(&jojobot, "rhythm:descale").await;
+    assert_eq!(
+        held["counts_from"], "2026-08-10",
+        "the schedule moved: {held}"
+    );
+}
+
 /// **A schedule jojobot worked out is not something the user said.**
 ///
 /// Its computed dates live on a separate derived record; neither its

@@ -53,13 +53,20 @@ impl Jojobot {
         schedule: &Schedule,
         author: &EntityId,
         by_session: Option<&str>,
+        reads: std::sync::Arc<super::reads_left::ReadsLeft>,
     ) -> Result<Option<jojobot_domain::memory::search::Behind>, MemoryError> {
         let mut fields = schedule.fields.clone();
-        let derived = fields.keys().cloned().collect();
         fields.insert(
             jojobot_domain::memory::capacity::ENGINE_RECORD.to_string(),
             "check_in_schedule".to_string(),
         );
+        // **Every key of this record is computed**, the engine mark with the rest: the
+        // decider refuses a key jojobot writes unless the verb says it computed it.
+        let derived = fields.keys().cloned().collect();
+        // **The schedule record is decided over a capture job, as the claim is**:
+        // a capture with no job is decided by the store's old route, and one call
+        // would be judged by two deciders.
+        let job = self.capture_job(&jojobot_domain::actor::Actor::Bot(author.clone()), reads);
         let write = self.memory.capture(NewFact {
             provenance: Provenance::Inference,
             derived_from: Some(source.address()),
@@ -74,6 +81,7 @@ impl Jojobot {
                 source.recorded_at,
             )
         });
+        let write = jojobot_domain::log::claims::job::within(job, write);
         match request::part("check_in_schedule", None, write).await {
             request::Part::Ran(Ok(Guarded::Written(_))) | request::Part::Recorded(_) => Ok(None),
             request::Part::Ran(Err(MemoryError::FoldBehind {
