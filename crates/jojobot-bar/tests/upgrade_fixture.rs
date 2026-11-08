@@ -330,3 +330,67 @@ sys.exit(1 if bad else 0)
     );
     assert!(said.contains("wrong answers: []"), "{said}");
 }
+
+#[test]
+fn boot_store_cache_key_follows_recording_inputs() {
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/prepare-boot-store");
+    let out = support::output_fenced(
+        Command::new("python3")
+            .args([
+                "-c",
+                r#"
+import os, pathlib, runpy, sys, tempfile
+digest = runpy.run_path(sys.argv[1])['grower_digest']
+# Keep the fixture commit fixed: these are inputs of the current recorder.
+inputs = [
+    'crates/jojobot-adapters/migrations/0124_field_write_live_clear.sql',
+    'crates/jojobot-exercise/src/surface.rs',
+    'crates/jojobot-exercise/src/room/seed.rs',
+    'crates/jojobot-adapters/src/dolt/migrate.rs',
+    'crates/jojobot-mcp/release-notes/deploy-9.3.3/alpha.md',
+    'crates/jojobot/src/main.rs',
+    'crates/jojobot/build.rs',
+    'crates/jojobot-exercise/Cargo.toml',
+    'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml',
+    'scripts/prepare-boot-store',
+    'crates/jojobot/tests/boot_measures.rs',
+]
+with tempfile.TemporaryDirectory() as directory:
+    os.chdir(directory)
+    for name in inputs:
+        path = pathlib.Path(name)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('original\n')
+    baseline = digest()
+    unused = pathlib.Path('pm/feature-briefs/alpha.md')
+    unused.parent.mkdir(parents=True)
+    unused.write_text('unrelated document\n')
+    assert digest() == baseline, 'an unused document invalidated the cache'
+    unused.write_text('edited unrelated document\n')
+    assert digest() == baseline, 'an unused document edit invalidated the cache'
+    for name in inputs:
+        path = pathlib.Path(name)
+        path.write_text('changed\n')
+        assert digest() != baseline, f'cache key ignored {name}'
+        path.write_text('original\n')
+        assert digest() == baseline, f'cache key is unstable after restoring {name}'
+    added = pathlib.Path('crates/jojobot-adapters/migrations/9999_alpha.sql')
+    added.write_text('new migration\n')
+    assert digest() != baseline, 'cache key ignored an added migration'
+    added.unlink()
+    removed = pathlib.Path(inputs[0])
+    removed.unlink()
+    assert digest() != baseline, 'cache key ignored a removed migration'
+print('recording input edits, migration additions/removals, and unused document control checked')
+"#,
+            ])
+            .arg(script),
+    )
+    .unwrap();
+    assert!(
+        out.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+}

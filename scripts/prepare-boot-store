@@ -6,9 +6,9 @@ the server's tools takes about half an hour. This script grows it on a cache mis
 and copies the cached dump into BOOT_STORE_DIR on every run, so the cases only
 restore it.
 
-The cache key is the digest of what the grower reads (the boot_measures test file
-and this script) beside the commit of the upgrade fixture it starts from. A change to
-either records again; a cache miss records, it never skips the cases.
+The cache key covers the recorder, the workspace sources and embedded inputs it
+compiles, and the toolchain, beside the commit of the upgrade fixture it starts
+from. A change to an input records again; a cache miss never skips the cases.
 """
 import fcntl
 import hashlib
@@ -28,6 +28,17 @@ LOCK_TIMEOUT = BUILD_TIMEOUT + 300
 GROWER_INPUTS = (
     "scripts/prepare-boot-store",
     "crates/jojobot/tests/boot_measures.rs",
+    "Cargo.toml",
+    "Cargo.lock",
+    "rust-toolchain.toml",
+    "flake.nix",
+    "flake.lock",
+    "crates/*/Cargo.toml",
+    "crates/*/build.rs",
+    "crates/*/src/**/*",
+    "crates/*/data/**/*",
+    "crates/jojobot-adapters/migrations/*.sql",
+    "crates/jojobot-mcp/release-notes/**/*.md",
 )
 FILES = ("doltdump.sql", "grown.txt", "dump.sha256", "key.txt")
 
@@ -46,10 +57,13 @@ def lock_cache(lock):
 
 def grower_digest():
     digest = hashlib.sha256()
-    for name in GROWER_INPUTS:
-        path = Path(name)
-        digest.update(name.encode() + b"\0")
-        digest.update(path.read_bytes() if path.is_file() else b"missing")
+    # Sorted paths make additions, removals and renames inputs too, independently
+    # of filesystem enumeration order. A file matched twice is hashed only once.
+    paths = {path for pattern in GROWER_INPUTS
+             for path in Path(".").glob(pattern) if path.is_file()}
+    for path in sorted(paths):
+        digest.update(path.as_posix().encode() + b"\0")
+        digest.update(path.read_bytes())
         digest.update(b"\0")
     return digest.hexdigest()[:16]
 
