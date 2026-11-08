@@ -3213,21 +3213,32 @@ impl Memory for InMemoryMemory {
     }
 
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
-        if crate::log::claims::job::current().is_none() {
-            self.captures_without_a_job
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        } else if let Some(key) = fact.fields.keys().map(|key| key.trim()).find(|key| {
+        match crate::log::claims::job::current() {
+            None => {
+                self.captures_without_a_job
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
             // **A verb's capture decided over a job is decided by the claims decider**,
             // which refuses a key jojobot writes unless the verb marked it as
-            // computed. Only the two keys a verb computes are asked here; the keys of
+            // computed. The engine's own captures take the engine route, which does
+            // not ask. Only the two keys a verb computes are asked here; the keys of
             // the routes that write the other server-written keys are not this
             // decider's refusal.
-            (*key == crate::attention::DUE_ON || *key == crate::memory::capacity::ENGINE_RECORD)
-                && !fact.derived.iter().any(|computed| computed.trim() == *key)
-        }) {
-            return Err(MemoryError::InvalidFact(format!(
-                "bad claim: '{key}' is written by jojobot, not by a caller"
-            )));
+            Some(job) => {
+                let by_the_engine = (job.door)(&crate::log::claims::State::default(), &[], &fact)
+                    .is_ok_and(|door| matches!(door.actor, crate::actor::Actor::System(_)));
+                if !by_the_engine
+                    && let Some(key) = fact.fields.keys().map(|key| key.trim()).find(|key| {
+                        (*key == crate::attention::DUE_ON
+                            || *key == crate::memory::capacity::ENGINE_RECORD)
+                            && !fact.derived.iter().any(|computed| computed.trim() == *key)
+                    })
+                {
+                    return Err(MemoryError::InvalidFact(format!(
+                        "bad claim: '{key}' is written by jojobot, not by a caller"
+                    )));
+                }
+            }
         }
         // Same guards the real adapter applies, so the fake can't drift.
         validate_new_fact_in(&self.own_kinds(), &fact)?;
