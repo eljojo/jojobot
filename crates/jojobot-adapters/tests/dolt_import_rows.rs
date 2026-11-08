@@ -700,6 +700,64 @@ async fn every_stored_row_is_read_and_the_legacy_shapes_read_as_stored() {
     server.stop().await;
 }
 
+/// **A key write whose claim no row holds is skipped and named with its count**,
+/// and the rows left map through the import. The write stays in the store: the
+/// reader leaves it out of the rows and says so, so a boot goes on. **Paired**: the
+/// write of a claim that is held is read with it.
+#[tokio::test]
+async fn a_key_write_whose_claim_no_row_holds_is_skipped_and_named() {
+    let scratch = Scratch::new("import-orphan-write");
+    let mut server = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&server, "orphanwrite")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    let memory = DoltMemory::open(pool.clone());
+    jojobot_domain::memory::kinds::seed(&memory)
+        .await
+        .expect("the kinds are seeded");
+    let homer = thing(&memory, "person:homer", "Homer").await;
+    say(&memory, &homer, "eats donuts", &[("mood", "happy")], 1).await;
+    let badge: String = sqlx::query_scalar("SELECT badge FROM entity WHERE id = ?")
+        .bind(homer.as_str())
+        .fetch_one(&pool)
+        .await
+        .expect("the thing wears a badge");
+    sqlx::query(
+        "INSERT INTO field_write (entity, `key`, ordinal, value, fact_id, written_at, write_class)
+         VALUES (?, 'mood', 9, 'wary', 'f99', '2026-10-09T09:00:00Z', 'sets')",
+    )
+    .bind(&badge)
+    .execute(&pool)
+    .await
+    .expect("the write lands");
+
+    let read = memory.import_rows().await.expect("the reader reads");
+    let named: Vec<(&str, String)> = read
+        .findings
+        .iter()
+        .map(|one| (one.table, one.row.clone()))
+        .collect();
+    assert_eq!(
+        named,
+        [("field_write", format!("{badge}/mood#9"))],
+        "the orphan is named, and nothing else is: {:?}",
+        read.findings
+    );
+    assert!(
+        read.rows.field_writes.iter().all(|w| w.fact_local != "f99"),
+        "the write is left out of the rows"
+    );
+    assert!(
+        read.rows.field_writes.iter().any(|w| w.fact_local == "f1"),
+        "the write of a held claim is read"
+    );
+    import::import(&read.rows).expect("the rows left map through the import");
+    server.stop().await;
+}
+
 /// A legacy write names its run by the public sid, and that run still names
 /// its bot when the write has no bot column. Reused sids follow the same
 /// active/newest/lowest-id rule as the store's key-history read.

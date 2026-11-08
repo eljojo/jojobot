@@ -368,6 +368,32 @@ impl DoltMemory {
 
         Self::claim_rows(tx, &mut read, &mut rows).await?;
         Self::field_write_rows(tx, &mut read, &mut rows).await?;
+        // **A key write whose claim no row holds is skipped and named with its
+        // count**, never given a claim of its own. The rows stay in the store, and
+        // the import refuses what reaches it here (rule 796: a boot goes on).
+        let claims: HashSet<(&ObjectId, &str)> = rows
+            .facts
+            .iter()
+            .map(|fact| (&fact.home, fact.local.as_str()))
+            .collect();
+        let mut orphaned: Vec<String> = Vec::new();
+        rows.field_writes.retain(|write| {
+            let held = claims.contains(&(&write.fact_home, write.fact_local.as_str()));
+            if !held {
+                orphaned.push(format!(
+                    "{}/{}#{}",
+                    write.entity.0, write.key.0, write.ordinal
+                ));
+            }
+            held
+        });
+        if let Some(first) = orphaned.first() {
+            read.findings.push(Finding {
+                table: "field_write",
+                row: first.clone(),
+                what: format!("{} key writes name a claim no row holds", orphaned.len()),
+            });
+        }
         Self::merge_rows(tx, &mut read, &mut rows).await?;
         Self::type_write_rows(tx, &mut rows).await?;
 
