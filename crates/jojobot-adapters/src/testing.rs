@@ -129,17 +129,27 @@ pub async fn imported_database(
     name: &str,
 ) -> Result<sqlx::MySqlPool, crate::dolt::StartError> {
     let pool = migrated_database(store, name).await?;
+    try_import_claims(&pool)
+        .await
+        .map_err(|e| crate::dolt::StartError::Spawn(e.to_string()))?;
+    Ok(pool)
+}
+
+/// The claims import on a pool, on a writer of its own that is drained before it
+/// returns. The one recipe [`imported_database`] and [`import_claims_now`] share.
+async fn try_import_claims(
+    pool: &sqlx::MySqlPool,
+) -> Result<(), crate::claims_import::ClaimsImportError> {
     let writer = crate::writer::Writer::default();
     crate::claims_import::import_claims_once(
         &writer,
-        &pool,
+        pool,
         &jojobot_domain::memory::owned::Provisions::default(),
         jiff::Timestamp::from_second(1_700_000_000).expect("a moment"),
     )
-    .await
-    .map_err(|e| crate::dolt::StartError::Spawn(e.to_string()))?;
+    .await?;
     writer.drain().await;
-    Ok(pool)
+    Ok(())
 }
 
 /// **The claims import, done on a database now**, for a case that seeds rows
@@ -150,16 +160,9 @@ pub async fn imported_database(
 /// before the call is imported, and what it writes to the rows after the call, with
 /// no writer to emit events, the State never holds.
 pub async fn import_claims_now(pool: &sqlx::MySqlPool) {
-    let writer = crate::writer::Writer::default();
-    crate::claims_import::import_claims_once(
-        &writer,
-        pool,
-        &jojobot_domain::memory::owned::Provisions::default(),
-        jiff::Timestamp::from_second(1_700_000_000).expect("a moment"),
-    )
-    .await
-    .expect("the claims import runs");
-    writer.drain().await;
+    try_import_claims(pool)
+        .await
+        .expect("the claims import runs");
 }
 
 /// **The directory that holds this process's template, and no other
