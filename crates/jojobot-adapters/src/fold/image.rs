@@ -1266,29 +1266,16 @@ pub type Wrote = Vec<(FactId, Vec<String>)>;
 type ReferringPatch = (EntityId, Vec<(String, Vec<Fact>)>);
 
 /// **`referring_to` of each name, read from the claims State.** The names the
-/// store would refuse are skipped, as [`ask_referring`] skips them. `None` when a
-/// name belongs to a thing a merge touched, whose holders the State does not yet
-/// serve as the store does: TEMPORARY(9.3.3), owner
-/// card `q-933-import-places-moved-claim-under-own-identity`.
+/// store would refuse are skipped, as [`ask_referring`] skips them.
 pub(super) fn referring_in(
     state: &jojobot_domain::log::claims::State,
     names: &[String],
-) -> Option<Vec<(String, Vec<Fact>)>> {
-    let asked: Vec<&String> = names
+) -> Vec<(String, Vec<Fact>)> {
+    names
         .iter()
         .filter(|name| jojobot_domain::memory::validate_subject(&EntityId((*name).clone())).is_ok())
-        .collect();
-    let merged = asked.iter().any(|name| {
-        state
-            .resolve(name)
-            .is_some_and(|object| state.was_merged(object))
-    });
-    (!merged).then(|| {
-        asked
-            .into_iter()
-            .map(|name| (name.clone(), state.referring(&EntityId(name.clone()))))
-            .collect()
-    })
+        .map(|name| (name.clone(), state.referring(&EntityId(name.clone()))))
+        .collect()
 }
 
 /// **`referring_to` of each name, asked of the store**, a few at a time. A name

@@ -176,17 +176,18 @@ impl State {
         // holder's claims in the order it serves them.
         facts.sort_by(|a, b| {
             memory::referring_holder_order(a.0, b.0)
-                .then_with(|| a.1.id.as_str().cmp(b.1.id.as_str()))
+                .then_with(|| memory::claim_label_order(a.1.id.as_str(), b.1.id.as_str()))
         });
         facts.into_iter().map(|(_, fact)| fact).collect()
     }
 
-    /// **The key a claim's records are filed under**: its home, which a rename
-    /// does not change. A holder's records stand at this key as they are served.
+    /// **The key a claim's records are filed under as they are served**: its
+    /// home, which a rename does not change, and the survivor's when a merge
+    /// folded the home away. A holder's records stand at this key.
     fn filed_under(&self, record: &RecordId) -> Option<&str> {
         self.records
             .get(record)
-            .map(|held| held.claim.home.0.as_str())
+            .map(|held| self.survivor(&held.claim.home).0.as_str())
     }
 
     /// The thing a handle names, when the handle is the one it answers to now.

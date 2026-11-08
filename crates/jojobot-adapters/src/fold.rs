@@ -353,11 +353,11 @@ impl Folded {
         // from the claims State this write has just changed.** A State that cannot
         // be had fails the refresh ([`Folded::without_state`]). Three things are
         // read from the store, each a named decline and not a missing State:
-        // - a thing a merge touched: TEMPORARY(9.3.3), owner card
-        //   `q-933-import-places-moved-claim-under-own-identity`, the survivor's
-        //   document waits on the import placing a moved claim under its own
-        //   identity
-        //   (`a_merge_survivors_document_read_from_the_state_is_the_document_the_store_reads`);
+        // - a thing a merge touched: TEMPORARY(9.3.4), owner card
+        //   `q-934-merge-version-row-in-state`, the merge's own row. The store
+        //   lists that row as a version of the folded handle and the State holds
+        //   no version for it yet, so the entity history of a merge survivor and
+        //   the document of a folded handle come from the store;
         // - a role: its lease renewals are heartbeats kept off the log, so the State
         //   does not hold what a read of it serves: TEMPORARY(9.3.4), owner card
         //   `q-933-d-s4-lease-home`;
@@ -433,8 +433,10 @@ impl Folded {
                 })
                 .unwrap_or_default();
             let held = if in_state {
-                self.claims(|state| image::referring_in(state, &names))
-                    .map_err(Self::without_state)?
+                Some(
+                    self.claims(|state| image::referring_in(state, &names))
+                        .map_err(Self::without_state)?,
+                )
             } else {
                 None
             };
