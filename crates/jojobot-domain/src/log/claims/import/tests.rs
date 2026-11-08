@@ -607,6 +607,73 @@ fn merged_pair() -> Rows {
     merged_pair_as_the_store_leaves_it()
 }
 
+/// **A merge told only by a mark fills the first hole, and a hole nothing
+/// explains stays empty where the store left it.** The store kept merges 1, 3 and
+/// 5. Merge 1 folded Marge into Lisa and moved her claim onto Lisa under a new
+/// label. A mark with no row says Lisa was folded into Homer, and it fills number
+/// 2, the first hole. Nothing explains number 4. Every old handle resolves to the
+/// last survivor, the State counts 5, the claim the mark left unmapped names merge
+/// 2, and number 4 is named as unexplained.
+#[test]
+fn a_mark_fills_the_first_hole_and_a_hole_nothing_explains_stays_empty() {
+    crate::memory::kinds::load_shipped();
+    let folded = |key: &str, handle: &str, into: &str| {
+        let mut row = entity(key, handle);
+        row.merged_into = Some(object(into));
+        row
+    };
+    let merge = |no: i64, folded: &str, survivor: &str, claims: Vec<(String, String)>| MergeRow {
+        no,
+        folded: object(folded),
+        survivor: object(survivor),
+        merged_at: at(no * 10).expect("a moment"),
+        session: None,
+        claims,
+    };
+    let mut moved = write_of(1, "moved by the first merge", None, 1);
+    moved.claim.home = object("k2");
+    let rows = Rows {
+        entities: vec![
+            folded("k2", "person:marge", "k3"),
+            folded("k3", "person:lisa", "k4"),
+            entity("k4", "person:homer"),
+            folded("k5", "person:bart", "k4"),
+            folded("k6", "person:maggie", "k4"),
+        ],
+        facts: vec![fact("k2", "f1", vec![moved])],
+        merges: vec![
+            merge(1, "k2", "k3", vec![("f1".into(), "f9".into())]),
+            merge(3, "k5", "k4", Vec::new()),
+            merge(5, "k6", "k4", Vec::new()),
+        ],
+        ..Rows::default()
+    };
+    assert_eq!(
+        unexplained_merge_numbers(&rows).expect("the numbers are readable"),
+        vec![4],
+        "number 4 has no merge and no mark"
+    );
+    let state = state_of(&rows);
+    assert_eq!(state.highest_merge_number(), 5);
+    for handle in [
+        "person:marge",
+        "person:lisa",
+        "person:bart",
+        "person:maggie",
+    ] {
+        assert_eq!(state.resolve(handle), Some(&object("k4")), "{handle}");
+    }
+    let scan = state
+        .document_scan(&object("k4"), &[])
+        .expect("the last survivor");
+    let left: Vec<(String, u64)> = scan
+        .unmapped
+        .iter()
+        .map(|claim| (claim.address.to_string(), claim.merge_no))
+        .collect();
+    assert_eq!(left, vec![("person:lisa#f9".to_string(), 2)]);
+}
+
 /// **The merge numbers the store holds stay where it holds them, gaps included.**
 /// The store kept merges 1 and 3 and nothing under 2. The claim the first merge
 /// left unmapped names merge 1, and the State's count is 3: the empty number sits
