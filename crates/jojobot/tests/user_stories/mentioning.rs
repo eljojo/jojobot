@@ -21,6 +21,7 @@ use super::dsl::Story;
 #[tokio::test]
 async fn a_session_writes_handles_into_a_sentence_and_reads_them_all_back() {
     let story = Story::begin("bot:gamma").await;
+    // Searches the claims again after a recall served them, unchanged, and wants the hits whole.
     let s = story.session().await.asking_whole();
 
     s.add("person:milhouse", "Milhouse").await;
@@ -842,7 +843,7 @@ async fn a_renamed_bots_outbox_still_lists_the_mail_it_sent_under_its_old_handle
 #[tokio::test]
 async fn search_finds_a_claim_by_the_renamed_things_new_handle_and_not_the_old_one() {
     let story = Story::begin("bot:gamma").await;
-    let s = story.session().await.asking_whole();
+    let s = story.session().await;
 
     s.add("place:shelbyvile", "Shelbyville").await;
     s.add("person:milhouse", "Milhouse").await;
@@ -902,7 +903,7 @@ async fn search_finds_a_claim_by_the_renamed_things_new_handle_and_not_the_old_o
 #[tokio::test]
 async fn search_follows_a_rename_into_a_claim_that_mentions_the_thing_only_in_its_details() {
     let story = Story::begin("bot:gamma").await;
-    let s = story.session().await.asking_whole();
+    let s = story.session().await;
 
     s.add("place:shelbyvile", "Shelbyville").await;
     s.add("person:homer", "Homer").await;

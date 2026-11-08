@@ -305,7 +305,7 @@ async fn an_investigation_keeps_what_it_ruled_out() {
     s.wrap("wrote down what it is not").await;
 
     // ── session 6 · state that was true this morning ────────────────────────
-    // Reads a thing again, unchanged since served, and wants its body; the story is red without this.
+    // Reads machine:upsilon again, unchanged since served, and wants its claim (upsilon#f1) in the answer.
     let s = story.session().await.asking_whole();
 
     // The shelf life goes on the record, under a key, and the day is one that

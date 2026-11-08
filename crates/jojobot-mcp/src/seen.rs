@@ -73,9 +73,9 @@ pub(crate) enum Version {
     },
     /// How many times the claim was written, and its status. `source` is the same
     /// of the claim it was derived from, which it reads the standing of. `around`
-    /// is the newest moment of anything the claim's served fields link to: a
-    /// target renamed since is served under its new name with no write to the
-    /// claim. `None` when the claim links to nothing.
+    /// is the newest moment of anything the claim names in its served words, note,
+    /// edge, refs and field values: a target renamed since is served under its new
+    /// name with no write to the claim. `None` when the claim names nothing.
     Claim {
         writes: usize,
         status: String,

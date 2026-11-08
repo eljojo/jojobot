@@ -448,32 +448,26 @@ impl Jojobot {
         newest
     }
 
-    /// **The newest moment of anything a claim's served fields link to.** What a
-    /// value links to is what its stored marks say, served under the names the
-    /// targets answer to now (rule 646), so a target renamed since the claim was
-    /// served changes the claim's words with no write to it.
-    async fn claim_around(
-        &self,
-        address: &str,
-        last: &jojobot_domain::memory::ClaimWrite,
-    ) -> Option<Timestamp> {
+    /// **The newest moment of anything a claim names**, in its served words and
+    /// note, its edge, its refs and its field values. What it names is served
+    /// under the name the target answers to now (rule 646), so a target renamed
+    /// since the claim was served changes the claim's words with no write to it.
+    /// The words are read as a reader is served them: a stored mark parses as no
+    /// handle.
+    async fn claim_around(&self, address: &str) -> Option<Timestamp> {
         let address = FactAddress::parse(address).ok()?;
         let facts = self.memory.recall(&address.home).await.ok()?;
         let fact = facts.into_iter().find(|fact| fact.address() == address)?;
-        // **Everything the claim serves under a target's current handle**: the
-        // marks of its field values, its edge, its refs, and the handles in its
-        // words and in its note. The newest write of the claim says the words, the
-        // note and the edge; the record says the fields, their marks and the refs.
         let mut sources: std::collections::BTreeSet<EntityId> =
             fact.field_links.values().flatten().cloned().collect();
         for value in fact.fields.values() {
             sources.extend(jojobot_domain::memory::handles_in_value(value));
         }
         sources.extend(fact.refs.iter().cloned());
-        sources.extend(last.edge.iter().map(|edge| edge.object.clone()));
+        sources.extend(fact.edge.iter().map(|edge| edge.object.clone()));
         let (in_words, in_note) = jojobot_domain::memory::mention::followable_words(
-            &last.content,
-            last.details.as_deref(),
+            &fact.content,
+            fact.details.as_deref(),
         );
         sources.extend(
             in_words
@@ -488,6 +482,26 @@ impl Jojobot {
             }
         }
         newest
+    }
+
+    /// **The version to hold for a thing that moved without being served.** A
+    /// claim's `around` and `source` are worked out from other things, so a move
+    /// of theirs hands the session no new words, and the session holds the version
+    /// it was served: the claim is served again on its next read. A search hit
+    /// carries its words under a key every rendering carries, which no received
+    /// part guards, so the version is the only guard it has.
+    fn held_after_moving(was: &Version, now: Version) -> Version {
+        match (was, now) {
+            (Version::Claim { source, around, .. }, Version::Claim { writes, status, .. }) => {
+                Version::Claim {
+                    writes,
+                    status,
+                    source: source.clone(),
+                    around: *around,
+                }
+            }
+            (_, now) => now,
+        }
     }
 
     /// **The things that stand under an entity, archived ones too**: how many are
@@ -559,7 +573,7 @@ impl Jojobot {
                     writes: chain.len(),
                     status: format!("{:?}", last.status).to_lowercase(),
                     source,
-                    around: self.claim_around(address, last).await,
+                    around: self.claim_around(address).await,
                 })
             }
             Held::Message(id) => {
@@ -658,9 +672,9 @@ impl Jojobot {
             match self.what_changed(what, was, &now, &me).await {
                 Changed::Told(notice) => {
                     told.push((what.clone(), notice));
-                    moved.push((what.clone(), now));
+                    moved.push((what.clone(), Self::held_after_moving(was, now)));
                 }
-                Changed::Own => moved.push((what.clone(), now)),
+                Changed::Own => moved.push((what.clone(), Self::held_after_moving(was, now))),
                 // The version stays, so the next answer reads again.
                 Changed::Unread => {}
             }

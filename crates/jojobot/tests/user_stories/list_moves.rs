@@ -341,7 +341,7 @@ async fn another_session_moves_an_entry_without_touching_its_words() {
         .call("capture", ticking("list:rotation", &homer, "done"))
         .await;
 
-    // Reads the list again, unchanged since the move, and wants its entries; the story is red without this.
+    // The mover reads list:rotation again after its move, unchanged since served, and wants the entries.
     let mover = story.session_in("UTC", Some("new")).await.asking_whole();
     moving(&mover, &homer, "first").await;
     assert_eq!(read_back(&mover, "list:rotation").await, ["Homer", "Bart"]);

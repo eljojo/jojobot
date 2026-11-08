@@ -355,7 +355,7 @@ async fn a_coordinator_runs_the_build_and_is_asked_why() {
         .await;
 
     // ── session 6 · a second slice, and who is carrying what ────────────────
-    // Reads a thing again, unchanged since served, and wants its body; the story is red without this.
+    // Reads the shipped identity's page (bot:assistant) a second time, unchanged since the first, and wants its words.
     let s = story.session().await.asking_whole();
 
     s.add("bot:delta", "Delta").await;
