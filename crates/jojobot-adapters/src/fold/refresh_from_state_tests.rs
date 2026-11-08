@@ -42,60 +42,55 @@ async fn a_fold_refreshed_from_the_state_agrees_with_one_filled_anew() {
     }
 }
 
-/// **A rename reads the store for nothing but the rename.** The patch after it
-/// takes the listing, the rename history, the merge events, the renamed thing's
-/// document and the holders of its names from the claims State. The image
-/// carries the rename, which a read after it shows.
+/// **A record the build supplies is refreshed after a claim as the store serves
+/// it.** It has no stored row, so the State may not know it by the handle; the
+/// fold then reads the store, and what it serves equals a fold filled anew.
 #[tokio::test]
-async fn a_rename_patches_the_image_from_the_claims_state() {
-    let (folded, counted, _store) = folded_over_a_counted_fake().await;
-    let beta = EntityId::person("person:beta");
-    for (id, name) in [(alpha(), "Alpha"), (beta.clone(), "Beta")] {
-        folded
-            .add_entity(NewEntity::new(id, name, "user-named"))
-            .await
-            .expect("add ok")
-            .written()
-            .expect("not blocked");
-    }
+async fn a_claim_about_a_supplied_record_is_served_as_the_store_serves_it() {
+    use jojobot_domain::memory::owned::{Provision, Provisions};
+    use jojobot_domain::memory::{Entity, EntityKind};
+    let id = EntityId("view:loops".into());
+    let record = Provision::record(
+        Entity {
+            folded_names: Vec::new(),
+            id: id.clone(),
+            kind: EntityKind::VIEW,
+            name: "The shipped board".into(),
+            aliases: Vec::new(),
+            source: "jojobot".into(),
+            crm: None,
+            parent: None,
+            boot: Default::default(),
+            merged_into: None,
+            badge: None,
+            archived: None,
+        },
+        std::collections::BTreeMap::new(),
+    );
+    // The shipped stack: the fold over the layer that supplies the record.
+    let supplied = Provisions::new(vec![record]);
+    let store = Arc::new(crate::provisioned::Provisioned::new(
+        InMemoryMemory::booted().knowing(supplied.clone()),
+        supplied,
+    ));
+    let folded = Folded::new(store.clone());
+    folded.rebuild().await.expect("the fold loads");
     folded
-        .capture(NewFact::about(
-            beta.clone(),
-            "knows alpha",
-            date(2026, 9, 1),
-        ))
+        .capture(NewFact::about(id.clone(), "is pinned", date(2026, 9, 1)))
         .await
         .expect("capture ok")
         .written()
         .expect("not blocked");
-    let gamma = EntityId::person("person:gamma");
-    counted.reset();
-    folded
-        .rename_entity(
-            &alpha(),
-            &gamma,
-            None,
-            date(2026, 9, 2),
-            jojobot_domain::memory::Override::default(),
-            None,
-        )
-        .await
-        .expect("rename ok")
-        .written()
-        .expect("not blocked");
-    let seen = counted.seen();
-    assert_eq!(
-        seen.keys().copied().collect::<Vec<_>>(),
-        ["rename_entity"],
-        "the patch read the store: {seen:?}"
-    );
-    counted.reset();
-    let listed = folded.list_entities(None).await.expect("list ok");
-    assert_eq!(counted.calls(), 0, "the listing reached the store");
+    let fresh = Folded::new(store.clone());
+    fresh.rebuild().await.expect("the fold loads again");
+    let served = folded.recall(&id).await.expect("recall ok");
     assert!(
-        listed.iter().any(|entity| entity.id == gamma),
-        "the image carries the rename: {listed:?}"
+        served.iter().any(|fact| fact.content == "is pinned"),
+        "the fold carries the claim: {served:?}"
     );
+    if let Some(differs) = crate::fold_agreement::disagreement(&folded, &fresh).await {
+        panic!("the fold differs from one filled anew\n{differs}");
+    }
 }
 
 /// **A role's document is read from the store after a write**, because a lease

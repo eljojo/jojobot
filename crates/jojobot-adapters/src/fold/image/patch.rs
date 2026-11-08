@@ -203,58 +203,26 @@ impl Folded {
             .iter()
             .flat_map(|(held, read)| [held.clone(), read.clone()])
             .collect();
-        // **The State answers when it can**: the listing, the rename history, the
-        // merge events and the touched documents are read from the claims State.
-        // The store is read when the State cannot answer, and when a document to
-        // read was touched by a merge: TEMPORARY(9.3.3), owner
-        // card `q-933-import-places-moved-claim-under-own-identity`, as in the refresh of a write
-        // (`refresh_listing_inner`).
-        let from_state = self
-            .claims(|state| {
-                let declared = state.declared_types();
-                let mut docs = Vec::with_capacity(plan.touched.len());
-                for (_, read) in &plan.touched {
-                    let object = state.resolve(&read.0)?;
-                    if state.was_merged(object) || state.holds_a_lease(object) {
-                        return None;
-                    }
-                    docs.push(Doc::from_state(state, object, &declared)?);
-                }
-                Some((
-                    state.listing(),
-                    state.former_handles(),
-                    state.merge_events(None),
-                    docs,
-                ))
-            })
-            .flatten();
-        let in_state = from_state.is_some();
-        let (entities, former, events, docs) = match from_state {
-            Some(read) => read,
-            None => {
-                let entities = self.inner.list_entities(None).await?;
-                let former = self.inner.former_handles().await?;
-                let events = self.inner.merge_events(None).await?;
-                let mut docs = Vec::with_capacity(plan.touched.len());
-                let width = self.inner.read_width().max(1);
-                let mut pending = plan.touched.iter();
-                loop {
-                    let mut batch = tokio::task::JoinSet::new();
-                    for (_, read) in pending.by_ref().take(width) {
-                        let inner = self.inner.clone();
-                        let read = read.clone();
-                        batch.spawn(async move { Doc::load(&*inner, &read).await });
-                    }
-                    if batch.is_empty() {
-                        break;
-                    }
-                    while let Some(done) = batch.join_next().await {
-                        docs.push(done.map_err(|e| MemoryError::Store(e.to_string()))??);
-                    }
-                }
-                (entities, former, events, docs)
+        let entities = self.inner.list_entities(None).await?;
+        let former = self.inner.former_handles().await?;
+        let events = self.inner.merge_events(None).await?;
+        let mut docs = Vec::with_capacity(plan.touched.len());
+        let width = self.inner.read_width().max(1);
+        let mut pending = plan.touched.iter();
+        loop {
+            let mut batch = tokio::task::JoinSet::new();
+            for (_, read) in pending.by_ref().take(width) {
+                let inner = self.inner.clone();
+                let read = read.clone();
+                batch.spawn(async move { Doc::load(&*inner, &read).await });
             }
-        };
+            if batch.is_empty() {
+                break;
+            }
+            while let Some(done) = batch.join_next().await {
+                docs.push(done.map_err(|e| MemoryError::Store(e.to_string()))??);
+            }
+        }
         let mut names = old_names;
         names.extend(plan.names);
         if let Some(reread) = self.held(|image| image.names_in(&docs.iter().collect::<Vec<_>>())) {
@@ -262,14 +230,7 @@ impl Folded {
         }
         names.sort();
         names.dedup();
-        let held = in_state
-            .then(|| self.claims(|state| super::referring_in(state, &names)))
-            .flatten()
-            .flatten();
-        let asked = match held {
-            Some(asked) => asked,
-            None => ask_referring(&self.inner, names.clone()).await?,
-        };
+        let asked = ask_referring(&self.inner, names.clone()).await?;
         let reads = Reads {
             entities,
             former,
