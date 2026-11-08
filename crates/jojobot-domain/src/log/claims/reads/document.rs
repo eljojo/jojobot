@@ -37,7 +37,7 @@ fn served(state: &State, object: &ObjectId) -> EntityId {
 fn address_of(state: &State, record: &RecordId) -> Option<FactAddress> {
     let Some(write) = state.claim_history(record).last() else {
         // A record the State does not hold is served at the address it was filed under.
-        return super::filed_address(record);
+        return state.filed_address(record);
     };
     let claim = &write.claim;
     Some(FactAddress::new(

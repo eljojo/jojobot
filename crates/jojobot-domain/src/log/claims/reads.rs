@@ -18,19 +18,6 @@ use crate::memory::{
     WriteClass, types::DeclaredType,
 };
 
-/// **The address a claim is served at when the State does not hold its record.** A
-/// claim the import carried as written points at a record nothing holds, by the
-/// id it was filed under: the home the claim was filed on and its local id. The
-/// local id has no `/` in it, so the last one splits them. An id that is not of
-/// that shape is no address.
-fn filed_address(record: &RecordId) -> Option<FactAddress> {
-    let (home, local) = record.0.rsplit_once('/')?;
-    Some(FactAddress::new(
-        EntityId(home.to_string()),
-        FactId(local.to_string()),
-    ))
-}
-
 // **How many streams the reads have looked at on this thread**, so a case can
 // say a read costs the streams of its own thing and not the size of the State.
 #[cfg(test)]
@@ -39,6 +26,21 @@ thread_local! {
 }
 
 impl State {
+    /// **The address a claim is served at when the State does not hold its record.** A
+    /// claim the import carried as written points at a record nothing holds, by the
+    /// id it was filed under: the home the claim was filed on and its local id. The
+    /// local id has no `/` in it, so the last one splits them. The home is served
+    /// under the handle its object wears now when the State holds that object, as
+    /// the store serves a stored home, and as filed when it holds none. An id that
+    /// is not of that shape is no address.
+    fn filed_address(&self, record: &RecordId) -> Option<FactAddress> {
+        let (home, local) = record.0.rsplit_once('/')?;
+        let home = self
+            .handle_of(&ObjectId(home.to_string()))
+            .unwrap_or_else(|| EntityId(home.to_string()));
+        Some(FactAddress::new(home, FactId(local.to_string())))
+    }
+
     /// **One thing as the guard and the measure read it**: the handle it answers
     /// to now, its names and its parent as a handle. `None` for a thing folded
     /// into another, which is served by its survivor, and for a thing with no
@@ -337,7 +339,7 @@ impl State {
                 self.handle_of(&held.claim.home)?,
                 FactId(held.claim.label.clone()),
             )),
-            None => filed_address(source),
+            None => self.filed_address(source),
         };
         let mut fields = BTreeMap::new();
         let mut sets = std::collections::BTreeSet::new();
