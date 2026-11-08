@@ -449,3 +449,62 @@ print('every pattern matches, every crate is weighed')
         String::from_utf8_lossy(&out.stderr)
     );
 }
+
+#[test]
+fn boot_store_recording_uses_the_deployed_fixture_binary_lifetime() {
+    let dir = std::env::temp_dir().join(jojobot_bar::scratch::name("jojobot-boot-recorder"));
+    for folder in ["scripts", "bin", "fixture", "output"] {
+        fs::create_dir_all(dir.join(folder)).unwrap();
+    }
+    fs::write(dir.join("fixture/ref.txt"), "a".repeat(40)).unwrap();
+    support::write_executable(&dir.join("bin/cargo"), "#!/bin/sh\nexit 91\n");
+    support::write_executable(
+        &dir.join("scripts/refresh-upgrade-fixture"),
+        r#"#!/bin/sh
+set -eu
+test "$1" = "$(cat "$UPGRADE_FIXTURE_DIR/ref.txt")"
+test "$2" = "$BOOT_STORE_DIR"
+echo deployed > "$BOOT_STORE_DIR/recorded"
+"#,
+    );
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/prepare-boot-store");
+    let out = support::output_fenced(
+        Command::new("python3")
+            .args(["-c", "import pathlib,runpy,sys; runpy.run_path(sys.argv[1])['record'](pathlib.Path(sys.argv[2]))"])
+            .arg(script)
+            .arg(dir.join("output"))
+            .current_dir(&dir)
+            .env("UPGRADE_FIXTURE_DIR", dir.join("fixture"))
+            .env("PATH", format!("{}:{}", dir.join("bin").display(), std::env::var("PATH").unwrap())),
+    ).unwrap();
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(
+        fs::read_to_string(dir.join("output/recorded")).unwrap(),
+        "deployed\n"
+    );
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn boot_store_cache_key_follows_the_deployed_recorder() {
+    let dir = std::env::temp_dir().join(jojobot_bar::scratch::name("jojobot-boot-key"));
+    let input = "scripts/refresh-upgrade-fixture";
+    for name in [
+        "scripts/prepare-boot-store",
+        "crates/jojobot/tests/boot_measures.rs",
+        input,
+    ] {
+        fs::create_dir_all(dir.join(name).parent().unwrap()).unwrap();
+        fs::write(dir.join(name), "before\n").unwrap();
+    }
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/prepare-boot-store");
+    let out = support::output_fenced(
+        Command::new("python3")
+            .args(["-c", "import pathlib,runpy,sys; digest=runpy.run_path(sys.argv[1])['grower_digest']; before=digest(); pathlib.Path(sys.argv[2]).write_text('after\\n'); assert before != digest(), 'changed deployed recorder reused the grown store'"])
+            .arg(script)
+            .arg(input)
+            .current_dir(&dir),
+    ).unwrap();
+    assert!(out.status.success(), "{out:?}");
+    fs::remove_dir_all(dir).unwrap();
+}

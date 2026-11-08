@@ -121,11 +121,7 @@ def complete(directory, key):
 def record(directory):
     env = dict(os.environ, BOOT_STORE_DIR=str(directory))
     command = [
-        "cargo", "test", "-p", "jojobot",
-        "--features=jojobot/room-harness", "--features=jojobot-mcp/room-harness",
-        "--features=jojobot-domain/room-harness",
-        "--test", "boot_measures", "--locked",
-        "--", "--ignored", "--nocapture", "record_the_grown_store",
+        "scripts/refresh-upgrade-fixture", upgrade_fixture_commit(), str(directory),
     ]
     with subprocess.Popen(command, env=env, start_new_session=True) as build:
         try:

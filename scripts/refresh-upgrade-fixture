@@ -10,6 +10,7 @@
 # The ref is built in a DETACHED worktree, so
 # this script never moves this checkout's HEAD and never creates a branch.
 # The worktree is removed on exit, success or failure alike.
+# With BOOT_STORE_DIR set, grow the prepared UPGRADE_FIXTURE_DIR into it instead.
 set -euo pipefail
 
 if [ "${GITHUB_ACTIONS:-}" != true ]; then
@@ -67,6 +68,17 @@ fi
 
 echo "recording the fixture from $BINARY ($RESOLVED)"
 cd "$REPO_ROOT"
-UPGRADE_FIXTURE_BINARY="$BINARY" UPGRADE_FIXTURE_REF="$RESOLVED" \
-    UPGRADE_FIXTURE_DIR="$FIXTURE_DIR" \
-    nix develop -c cargo test -p jojobot --test record_upgrade_fixture -- --ignored --nocapture
+if [ -n "${BOOT_STORE_DIR:-}" ]; then
+    # The grower must finish before this deployed executable is removed. The
+    # prepared upgrade fixture stays its input; BOOT_STORE_DIR is its output.
+    for case in restored_claims_state_hold_the_same_history record_the_grown_store; do
+        UPGRADE_FIXTURE_BINARY="$BINARY" UPGRADE_FIXTURE_REF="$RESOLVED" \
+            nix develop -c cargo test -p jojobot --test boot_measures --locked \
+            --features=jojobot/room-harness --features=jojobot-mcp/room-harness \
+            --features=jojobot-domain/room-harness -- --ignored --nocapture "$case"
+    done
+else
+    UPGRADE_FIXTURE_BINARY="$BINARY" UPGRADE_FIXTURE_REF="$RESOLVED" \
+        UPGRADE_FIXTURE_DIR="$FIXTURE_DIR" \
+        nix develop -c cargo test -p jojobot --test record_upgrade_fixture -- --ignored --nocapture
+fi

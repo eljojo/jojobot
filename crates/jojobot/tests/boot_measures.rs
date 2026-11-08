@@ -142,11 +142,22 @@ impl Drop for Running {
 
 /// Start the real binary over `state` and return at once.
 fn spawn(state: Scratch) -> Running {
+    spawn_binary(state, env!("CARGO_BIN_EXE_jojobot"), 0)
+}
+
+fn recording(state: Scratch) -> Running {
+    let binary = std::env::var("UPGRADE_FIXTURE_BINARY")
+        .expect("the recording runs while the deployed binary is available");
+    // Older builds log the configured port instead of the bound port.
+    spawn_binary(state, &binary, free_port())
+}
+
+fn spawn_binary(state: Scratch, binary: &str, http_port: u16) -> Running {
     let boot_turn = ONE_BOOT
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let stderr = state.0.join("server.stderr");
-    let mut child = Command::new(env!("CARGO_BIN_EXE_jojobot"))
+    let mut child = Command::new(binary)
         .env_clear()
         .env(
             "PATH",
@@ -154,7 +165,7 @@ fn spawn(state: Scratch) -> Running {
         )
         .env("STATE_DIRECTORY", &state.0)
         .env("JOJOBOT_STORE_PORT", free_port().to_string())
-        .env("JOJOBOT_BIND", "127.0.0.1:0")
+        .env("JOJOBOT_BIND", format!("127.0.0.1:{http_port}"))
         .env("JOJOBOT_ALLOW_NO_AUTH", "1")
         .env("RUST_LOG", "info")
         .process_group(0)
@@ -440,8 +451,8 @@ fn split_sql_statements(dump: &str) -> Vec<String> {
 }
 
 /// **A recorded store** replayed into a store of this case's own and then booted
-/// once by the binary under test, so its migrations and imports are done before
-/// anything is measured. `source` names the variable that holds its directory:
+/// once by the binary under test before a measurement. When growing, the deployed
+/// binary records rows so the head's import follows scaling. `source` names its directory:
 /// the cases read the grown store CI cached (`BOOT_STORE_DIR`), and the recorder
 /// that makes that store starts from the one the last deployed build recorded
 /// (`UPGRADE_FIXTURE_DIR`, as for the upgrade gate) and grows it when `growing`.
@@ -449,6 +460,10 @@ fn split_sql_statements(dump: &str) -> Vec<String> {
 async fn restore_into(name: &str, source: &str, growing: bool) -> Scratch {
     let fixture = std::env::var(source)
         .unwrap_or_else(|_| panic!("CI supplies {source}, the store this case starts from"));
+    restore_dump(name, &fixture, growing).await
+}
+
+async fn restore_dump(name: &str, fixture: &str, growing: bool) -> Scratch {
     // **A relative path is the workspace root's**, as the upgrade gate reads it: a
     // test runs from its own crate's directory, and CI names the directory
     // `target/upgrade-fixture`.
@@ -479,7 +494,11 @@ async fn restore_into(name: &str, source: &str, growing: bool) -> Scratch {
             .unwrap_or_else(|e| panic!("replaying the recording failed on:\n{statement}\n{e}"));
     }
     store.stop().await;
-    let mut first = spawn(state);
+    let mut first = if growing {
+        recording(state)
+    } else {
+        spawn(state)
+    };
     first.first_answer();
     if growing {
         grow(first.http_port).await;
@@ -525,11 +544,24 @@ async fn record_the_grown_store() {
         "the recorder writes to an absolute directory"
     );
     let grown = restore_into("jojobot-measure-recorder", "UPGRADE_FIXTURE_DIR", true).await;
-    let mut store = Dolt::start(&grown.0.join("db"), free_port())
-        .await
-        .expect("the store comes up with no binary over it");
+    let mut store = scaling_store(&grown).await;
     let counts = scale_to_production(store.pool()).await;
     store.stop().await;
+    dump_grown_store(&grown, &out, &counts);
+}
+
+async fn scaling_store(state: &Scratch) -> Dolt {
+    let store = Dolt::start(&state.0.join("db"), free_port())
+        .await
+        .expect("the store comes up with no binary over it");
+    // Bring rows to the head schema without booting its claims import.
+    jojobot_adapters::dolt::migrate::run(store.pool())
+        .await
+        .expect("the current migrations run before scaling");
+    store
+}
+
+fn dump_grown_store(grown: &Scratch, out: &std::path::Path, counts: &str) {
     let database = grown.0.join("db").join("jojobot");
     assert!(
         database.join(".dolt").is_dir(),
@@ -550,7 +582,7 @@ async fn record_the_grown_store() {
         "dolt dump failed: {}",
         String::from_utf8_lossy(&dump.stderr)
     );
-    std::fs::create_dir_all(&out).expect("the output directory");
+    std::fs::create_dir_all(out).expect("the output directory");
     std::fs::copy(database.join("doltdump.sql"), out.join("doltdump.sql"))
         .expect("the dump is copied");
     std::fs::write(out.join("grown.txt"), format!("{counts}\n"))
@@ -607,6 +639,33 @@ async fn count_of(pool: &sqlx::MySqlPool, what: &str) -> i64 {
 /// brings its writes and its field writes, a longer history brings later ordinals
 /// of the same claim, and the counters are scaled. Returns what the store holds.
 async fn scale_to_production(pool: &sqlx::MySqlPool) -> String {
+    scale_to(
+        pool,
+        &Scale {
+            things: PRODUCTION_THINGS,
+            messages: PRODUCTION_MESSAGES,
+            claims: PRODUCTION_CLAIMS,
+            fact_writes: PRODUCTION_FACT_WRITES,
+            field_writes: PRODUCTION_FIELD_WRITES,
+            tool_calls: PRODUCTION_TOOL_CALLS,
+            run_calls: PRODUCTION_RUN_CALLS,
+        },
+    )
+    .await
+}
+
+/// Counts are inputs so the recorder's SQL path can also be checked with a small seed.
+struct Scale {
+    things: i64,
+    messages: i64,
+    claims: i64,
+    fact_writes: i64,
+    field_writes: i64,
+    tool_calls: i64,
+    run_calls: i64,
+}
+
+async fn scale_to(pool: &sqlx::MySqlPool, target: &Scale) -> String {
     // **The claims this recorder wrote are found by their content**, which does not
     // depend on how the store spells an entity or a claim id. A copy gets an `x`
     // and its round after the id, and no id the server makes holds an `x`, so a
@@ -627,7 +686,7 @@ async fn scale_to_production(pool: &sqlx::MySqlPool) -> String {
     )
     .await;
     let message_rounds =
-        (PRODUCTION_MESSAGES - count_of(pool, "(SELECT COUNT(*) FROM message)").await + held - 1)
+        (target.messages - count_of(pool, "(SELECT COUNT(*) FROM message)").await + held - 1)
             / held;
     for round in 1..=message_rounds {
         let by = round * 1_000_000;
@@ -678,7 +737,7 @@ async fn scale_to_production(pool: &sqlx::MySqlPool) -> String {
             .collect();
         panic!("the store holds none of the claims the recorder wrote; some it holds: {seen:?}");
     }
-    let claim_rounds = (PRODUCTION_CLAIMS + claims / 2) / claims - 1;
+    let claim_rounds = (target.claims + claims / 2) / claims - 1;
     for round in 1..=claim_rounds {
         copy_rows(
             pool,
@@ -714,7 +773,7 @@ async fn scale_to_production(pool: &sqlx::MySqlPool) -> String {
         &format!("(SELECT COUNT(*) FROM fact_write WHERE {})", write_original),
     )
     .await;
-    let history_rounds = ((PRODUCTION_FACT_WRITES - writes + originals - 1) / originals).max(0);
+    let history_rounds = ((target.fact_writes - writes + originals - 1) / originals).max(0);
     for round in 1..=history_rounds {
         copy_rows(
             pool,
@@ -727,8 +786,8 @@ async fn scale_to_production(pool: &sqlx::MySqlPool) -> String {
 
     // **Counters** are scaled, not copied: what they hold is a sum.
     for (table, target) in [
-        ("tool_call_count", PRODUCTION_TOOL_CALLS),
-        ("run_call_count", PRODUCTION_RUN_CALLS),
+        ("tool_call_count", target.tool_calls),
+        ("run_call_count", target.run_calls),
     ] {
         let sum = count_of(
             pool,
@@ -762,13 +821,13 @@ async fn scale_to_production(pool: &sqlx::MySqlPool) -> String {
     let run_calls = count_of(pool, "(SELECT COALESCE(SUM(calls), 0) FROM run_call_count)").await;
     // A tenth under the instance's count is a store that was not scaled.
     for (what, have, want) in [
-        ("entities", things, PRODUCTION_THINGS),
-        ("messages", messages, PRODUCTION_MESSAGES),
-        ("claims", claims, PRODUCTION_CLAIMS),
-        ("fact writes", fact_writes, PRODUCTION_FACT_WRITES),
-        ("field writes", field_writes, PRODUCTION_FIELD_WRITES),
-        ("tool calls", tool_calls, PRODUCTION_TOOL_CALLS),
-        ("run calls", run_calls, PRODUCTION_RUN_CALLS),
+        ("entities", things, target.things),
+        ("messages", messages, target.messages),
+        ("claims", claims, target.claims),
+        ("fact writes", fact_writes, target.fact_writes),
+        ("field writes", field_writes, target.field_writes),
+        ("tool calls", tool_calls, target.tool_calls),
+        ("run calls", run_calls, target.run_calls),
     ] {
         assert!(
             have * 10 >= want * 9,
@@ -778,6 +837,252 @@ async fn scale_to_production(pool: &sqlx::MySqlPool) -> String {
     format!(
         "entities={things} claims={claims} fact_writes={fact_writes} field_writes={field_writes} messages={messages} sessions={sessions} tool_calls={tool_calls} run_calls={run_calls}"
     )
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "run through scripts/prepare-boot-store with the deployed binary"]
+async fn scaled_claim_rows_and_the_restored_claims_state_hold_the_same_history() {
+    compare_grown_claims(true).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "run through scripts/prepare-boot-store with the deployed binary"]
+async fn the_unscaled_seed_and_its_restored_claims_state_hold_the_same_history() {
+    compare_grown_claims(false).await;
+}
+
+fn claims_counts(batches: &[SealedBatch]) -> (usize, usize) {
+    use jojobot_domain::log::claims::ClaimEvent;
+
+    let mut records = 0;
+    let mut imports = 0;
+    for member in batches.iter().flat_map(|batch| batch.members()) {
+        if let Some(event) = jojobot_adapters::claims_log::codec::decode_own(member)
+            .expect("the claims event decodes")
+        {
+            records += usize::from(matches!(event.payload, ClaimEvent::RecordCreated { .. }));
+            imports += usize::from(matches!(event.payload, ClaimEvent::ImportCompleted { .. }));
+        }
+    }
+    (records, imports)
+}
+
+async fn compare_grown_claims(scaled: bool) {
+    use jojobot_adapters::claims_log::LoggedClaims;
+    use jojobot_adapters::dolt::memory::DoltMemory;
+    use jojobot_domain::memory::{EntityId, Memory};
+    use jojobot_exercise::surface::Surface;
+    use serde_json::json;
+    use std::sync::Arc;
+
+    let mut running = recording(Scratch::new("grown-claims-seed"));
+    running.first_answer();
+    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", running.http_port))
+        .await
+        .expect("the seed connects");
+    let boot = surface
+        .must(
+            "start_here",
+            json!({"bot": "assistant", "resume": "new", "brief": true}),
+        )
+        .await
+        .expect("the seed boots");
+    let sid = boot["session"]["sid"]
+        .as_str()
+        .expect("the seed has a session");
+    surface
+        .must(
+            "add_entity",
+            json!({
+                "kind": "thing", "handle": "kettle", "name": "Kettle",
+                "source": "user-named", "sid": sid,
+            }),
+        )
+        .await
+        .expect("the seed thing is written");
+    surface
+        .must(
+            "capture",
+            json!({
+                "subject": "thing:kettle",
+                "content": "Load kettle sits on shelf 1 of aisle 1",
+                "sets": {"load_key_0": "shelf 1"}, "sid": sid,
+            }),
+        )
+        .await
+        .expect("the seed claim is written");
+    surface
+        .must(
+            "post_message",
+            json!({"to": "assistant", "body": "The kettle sits on shelf 1", "sid": sid}),
+        )
+        .await
+        .expect("the recorder has a message seed");
+    surface.finish().await;
+    let seed = running.stopped().0;
+    let mut store = scaling_store(&seed).await;
+    let writer = Writer::default();
+    let seed_log = WriterLog::open(store.pool().clone(), writer.clone())
+        .await
+        .expect("the seed log opens");
+    let head = seed_log.head().expect("the seed log holds its head");
+    assert_eq!(
+        claims_counts(&seed_log.read_from(Position(0), 100_000).await.unwrap()),
+        (0, 0),
+        "the deployed recorder leaves claims for the first head boot"
+    );
+    let other_family = batch("grown-claims-control", head, 1_000_000, 1);
+    seed_log
+        .append(head, &other_family)
+        .await
+        .expect("the other family has a marker");
+    drop(seed_log);
+    writer.drain().await;
+    drop(writer);
+    let counts = if scaled {
+        let target = Scale {
+            things: 1,
+            messages: count_of(store.pool(), "(SELECT COUNT(*) FROM message)").await,
+            claims: 2,
+            fact_writes: count_of(store.pool(), "(SELECT COUNT(*) FROM fact_write)").await + 2,
+            field_writes: 2,
+            tool_calls: 1,
+            run_calls: 1,
+        };
+        scale_to(store.pool(), &target).await
+    } else {
+        "unscaled tool-written seed".to_string()
+    };
+    store.stop().await;
+    let recording = seed.0.join("recording");
+    dump_grown_store(&seed, &recording, &counts);
+    let restored = restore_dump("grown-claims-restored", recording.to_str().unwrap(), false).await;
+    let mut store = Dolt::start(&restored.0.join("db"), free_port())
+        .await
+        .expect("the restored store opens");
+    let pool = store.pool().clone();
+    let memory = DoltMemory::open(pool.clone()).knowing(jojobot_mcp::provisions());
+    let entity = EntityId("thing:kettle".into());
+    let facts = memory.recall(&entity).await.expect("the row claims read");
+    let mut facts: Vec<_> = facts
+        .iter()
+        .filter(|fact| fact.content.starts_with("Load kettle sits on shelf"))
+        .collect();
+    assert_eq!(
+        facts.len(),
+        if scaled { 2 } else { 1 },
+        "the SQL path made the seed's copies"
+    );
+    assert_eq!(facts.iter().any(|fact| fact.id.0.ends_with("x1")), scaled);
+    facts.sort_by_key(|fact| !fact.id.0.ends_with("x1"));
+    jojobot_domain::memory::kinds::load_shipped();
+    let log = WriterLog::open(pool.clone(), Writer::default())
+        .await
+        .expect("the restored log opens");
+    let batches = log
+        .read_from(Position(0), 100_000)
+        .await
+        .expect("the restored events read");
+    let imported = claims_counts(&batches);
+    assert_eq!(
+        imported,
+        (
+            count_of(&pool, "(SELECT COUNT(*) FROM fact)").await as usize,
+            1
+        ),
+        "the first head boot imports the complete grown population once"
+    );
+    for member in other_family.members() {
+        assert_eq!(
+            batches
+                .iter()
+                .flat_map(|batch| batch.members())
+                .filter(|held| *held == member)
+                .count(),
+            1,
+            "scaling claims preserves the other family's event exactly once"
+        );
+    }
+    let held = LoggedClaims::open(Arc::new(log))
+        .await
+        .expect("the claims family opens")
+        .state()
+        .await;
+    let addresses: Vec<_> = facts
+        .iter()
+        .map(|fact| fact.address().to_string())
+        .collect();
+    for fact in facts {
+        let address = fact.address();
+        let located = held
+            .claim_at(&address.to_string())
+            .unwrap_or_else(|| panic!("the restored claims State omitted copied row {address}"));
+        assert_eq!(held.fact(&located.record).unwrap().content, fact.content);
+        let history = memory
+            .claim_history(&address)
+            .await
+            .expect("the row history reads");
+        assert!(!history.is_empty());
+        assert_eq!(
+            held.claim_history(&located.record).len(),
+            history.len(),
+            "{address}: every revision reaches the held State"
+        );
+        if !fact.id.0.ends_with("x1") {
+            assert_eq!(
+                history.len(),
+                if scaled { 2 } else { 1 },
+                "the scaler extends the original claim's history"
+            );
+        }
+    }
+    let object = held
+        .resolve("thing:kettle")
+        .expect("the held thing resolves");
+    let rows = memory
+        .history(&entity, "load_key_0")
+        .await
+        .expect("the row key history reads");
+    assert_eq!(rows.len(), if scaled { 2 } else { 1 });
+    let mut state_rows = held
+        .key_trails(object)
+        .history
+        .remove("load_key_0")
+        .expect("the held key has its history");
+    // State trails use permanent homes; the row port serves their current handles.
+    for write in &mut state_rows {
+        write.fact.home = held
+            .handle(&jojobot_domain::log::ObjectId(write.fact.home.0.clone()))
+            .expect("a history home has its served handle");
+    }
+    assert_eq!(
+        state_rows, rows,
+        "the copied key writes reach the held State"
+    );
+    store.stop().await;
+    let mut second = spawn(restored);
+    second.first_answer();
+    let restored = second.stopped().0;
+    let mut store = Dolt::start(&restored.0.join("db"), free_port())
+        .await
+        .expect("the replayed store opens");
+    let log = WriterLog::open(store.pool().clone(), Writer::default())
+        .await
+        .expect("the replayed log opens");
+    assert_eq!(
+        claims_counts(&log.read_from(Position(0), 100_000).await.unwrap()),
+        imported,
+        "the second head boot replays without importing again"
+    );
+    let replayed = LoggedClaims::open(Arc::new(log))
+        .await
+        .unwrap()
+        .state()
+        .await;
+    for address in addresses {
+        assert!(replayed.claim_at(&address).is_some(), "{address}");
+    }
+    store.stop().await;
 }
 
 /// **Write the rows of the grown store through the server's own front door.** The
