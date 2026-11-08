@@ -384,9 +384,10 @@ impl DoltMemory {
             .iter()
             .map(|at| key_write_name(&rows.field_writes[*at]))
             .collect();
+        let dropped: HashSet<usize> = orphaned.into_iter().collect();
         let mut at = 0usize;
         rows.field_writes.retain(|_| {
-            let kept = !orphaned.contains(&at);
+            let kept = !dropped.contains(&at);
             at += 1;
             kept
         });

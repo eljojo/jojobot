@@ -542,7 +542,9 @@ fn fact_rows(rows: &Rows) -> HashMap<(&ObjectId, &str), &FactRow> {
 /// its own address; else, for a claim a merge physically moved (a store made before
 /// `merge_event` existed), the row filed where the merge put the claim: the
 /// survivor and the label the merge gave it. A write neither finds belongs to no
-/// claim, and the import never makes one for it.
+/// claim, and the import never makes one for it. **A write of a claim no merge maps
+/// is not placed at all** ([`placed_by_merges`] leaves it out, as it leaves the
+/// claim), so the survivor's own claim under the same label cannot take it.
 fn claim_row_of<'a>(
     facts: &HashMap<(&ObjectId, &str), &'a FactRow>,
     write: &FieldWriteRow,

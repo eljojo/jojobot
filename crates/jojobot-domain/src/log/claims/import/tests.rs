@@ -594,6 +594,44 @@ fn a_write_of_a_claim_a_merge_moved_is_placed_on_the_row_the_merge_put_it_at() {
     );
 }
 
+/// **A write of a claim no merge maps is not placed on the survivor's claim of the
+/// same label.** Labels are per thing, so the folded thing and the survivor can each
+/// hold an `f1`. A write of the folded thing's `f1` whose claim row is gone is left
+/// out by the merge, as the claim is, and the survivor's own `f1` is another claim
+/// that does not take it. Nothing is made up: the import goes on and the survivor's
+/// claim carries only its own write.
+#[test]
+fn a_write_of_a_claim_no_merge_maps_is_not_placed_on_a_survivors_claim_of_that_label() {
+    let mut own = write_of(1, "ours", None, 1);
+    own.claim.home = object("k2");
+    let rows = Rows {
+        entities: vec![entity("k1", "person:homer"), entity("k2", "person:marge")],
+        facts: vec![fact("k2", "f1", vec![own])],
+        field_writes: vec![set("k1", "mood", 1, "calm", "f1", Some(1))],
+        merges: vec![MergeRow {
+            no: 1,
+            folded: object("k1"),
+            survivor: object("k2"),
+            merged_at: at(10).unwrap(),
+            session: None,
+            claims: Vec::new(),
+        }],
+        ..Rows::default()
+    };
+    assert!(
+        unexplained_key_writes(&rows).is_empty(),
+        "the merge leaves the write out with its claim, so it is no orphan to name"
+    );
+    let events = imported(&rows);
+    assert!(
+        events.iter().all(|event| !matches!(
+            &event.payload,
+            ClaimEvent::FieldWritten { key, .. } if key.0 == "mood"
+        )),
+        "the survivor's f1 did not take the folded thing's write: {events:?}"
+    );
+}
+
 /// **A key write whose claim no row holds is named with its count, and no claim
 /// is made up for it.** The import used to give such a write a record under the
 /// thing it landed on, a record nothing created. It now refuses by name, and the

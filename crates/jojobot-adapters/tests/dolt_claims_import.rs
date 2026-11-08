@@ -2000,6 +2000,31 @@ async fn claims_import_goes_on_over_a_key_write_whose_claim_no_row_holds() {
         1,
         "only the write of the held claim entered the log: {written:?}"
     );
+
+    // **The value the thing serves, read both ways: the rule is that a value no
+    // claim backs is not a fact, so the State drops the orphan.** The orphan write
+    // is the newest of its key (ordinal 9 against the held write's 1), so a build
+    // that served it would show `wary`. Neither does: the State drops it by rule,
+    // and the store's own read reaches a key's writes through a join on the claim
+    // row (`writes_stored_at`), so a write with no claim row is not in what it
+    // serves either. If that join ever stops dropping it, the first assertion fails
+    // and names the old rows as the side that moved.
+    let served_by_the_store = memory
+        .fields(&homer)
+        .await
+        .expect("the store serves fields");
+    let state = State::replay(held.iter());
+    let served_by_the_state = state.fields(&jojobot_domain::log::ObjectId(badge.clone()), &[]);
+    assert_eq!(
+        served_by_the_store.get("mood").map(String::as_str),
+        Some("happy"),
+        "the deployed build does not fold a write that has no claim row"
+    );
+    assert_eq!(
+        served_by_the_state.get("mood"),
+        served_by_the_store.get("mood"),
+        "the State serves what the store served: skipping the write moves no value"
+    );
     server.stop().await;
 }
 
