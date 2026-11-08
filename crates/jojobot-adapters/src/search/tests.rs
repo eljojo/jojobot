@@ -579,17 +579,21 @@ async fn a_rename_reaches_its_holders_without_a_scan_of_the_store() {
 /// finds the holders and the old one does not.
 #[tokio::test]
 async fn a_rename_reaches_the_words_that_mention_the_renamed_thing() {
-    // **Through the layer that renders a mention as a handle**, as the server
-    // wires it: the index scans what a reader sees, and the bare fake renders
-    // no mention.
+    // **Mentions resolve above the fold and below the index**, as the server wires
+    // it (wiring.rs): the fold holds the text as stored, the layer over it renders
+    // a mention as a handle, and the index scans what a reader sees.
     let fake = Arc::new(InMemoryMemory::booted());
+    let folded = Arc::new(crate::fold::Folded::new(fake.clone()));
     let store = Arc::new(
-        IndexedMemory::new(Arc::new(jojobot_domain::memory::mention::Mentioning::new(
-            fake.clone(),
-        )))
+        IndexedMemory::with_writer(
+            Arc::new(jojobot_domain::memory::mention::Mentioning::new(
+                folded.clone(),
+            )),
+            folded.writer(),
+        )
         .expect("index opens"),
     );
-    store.state().rebuild().await.expect("the fold loads");
+    folded.rebuild().await.expect("the fold loads");
     store.rebuild().await.expect("the boot scan reads");
     // The half the binary wires (wiring.rs) sits in front of the index.
     let retrieval = Retrieval::new(store.index(), vec![store.clone()]);

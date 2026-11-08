@@ -93,6 +93,38 @@ async fn a_claim_about_a_supplied_record_is_served_as_the_store_serves_it() {
     }
 }
 
+/// **A page written onto a thing is served by the refreshed fold as a fold filled
+/// anew serves it**: the prose the State holds is the prose the store holds.
+#[tokio::test]
+async fn a_prose_write_is_served_as_a_fold_filled_anew_serves_it() {
+    let store = Arc::new(InMemoryMemory::booted());
+    let folded = Folded::new(store.clone());
+    folded.rebuild().await.expect("the fold loads");
+    folded
+        .add_entity(NewEntity::new(alpha(), "Alpha", "user-named"))
+        .await
+        .expect("add ok")
+        .written()
+        .expect("not blocked");
+    folded
+        .set_prose(&alpha(), "walks the quokka at dawn", None)
+        .await
+        .expect("prose lands");
+    let fresh = Folded::new(store.clone());
+    fresh.rebuild().await.expect("the fold loads again");
+    let served = folded.scan_entity(&alpha()).await.expect("scan ok");
+    let anew = fresh.scan_entity(&alpha()).await.expect("scan ok");
+    assert_eq!(
+        served.as_ref().map(|doc| doc.prose.clone()),
+        anew.as_ref().map(|doc| doc.prose.clone()),
+        "the prose differs between the refreshed fold and a fold filled anew"
+    );
+    assert_eq!(
+        served.map(|doc| doc.prose).as_deref(),
+        Some("walks the quokka at dawn")
+    );
+}
+
 /// **A role's document is read from the store after a write**, because a lease
 /// renewal is a heartbeat kept off the log, which the State does not hold. The
 /// case that renews a lease and reads it back is the upgrade gate's
