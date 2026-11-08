@@ -342,6 +342,9 @@ struct Retirement {
 /// that made it and each claim's label before and after.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct MergeEntry {
+    /// **The number the merge holds**, counting the numbers the store left empty
+    /// before it: the number the store holds it under.
+    number: u64,
     folded: ObjectId,
     survivor: ObjectId,
     at: Option<Timestamp>,
@@ -672,7 +675,10 @@ impl State {
             }
         }
         if let Some((at, run)) = counted {
+            // The counter advances after this entry is logged, so the merge holds
+            // the number after the latest.
             self.merge_log.push(MergeEntry {
+                number: self.highest_merge_number() + 1,
                 folded: folded.clone(),
                 survivor: named.clone(),
                 at,

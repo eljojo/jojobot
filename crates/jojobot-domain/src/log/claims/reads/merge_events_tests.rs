@@ -184,6 +184,43 @@ fn an_unmapped_claim_names_the_merge_that_left_it() {
     assert_eq!(left, vec![("person:beta#f1".to_string(), 2)]);
 }
 
+/// **The number a merge holds counts the numbers the store left empty.** Two
+/// numbers the store never filled come before the merge, so the merge holds the
+/// third, and the unmapped claim it left names that one, not its place among the
+/// merges the State holds.
+#[test]
+fn an_unmapped_claim_names_its_merge_by_number_after_numbers_left_empty() {
+    let state = state_of(
+        made("k1", "person:alpha")
+            .into_iter()
+            .chain(made("k2", "person:beta"))
+            .map(plain)
+            .chain([
+                plain(ClaimEvent::MergeNumbersLeftEmpty { count: 2 }),
+                plain(ClaimEvent::RecordCreated {
+                    record: record("k2/f1"),
+                    claim: super::super::tests::claim("f1", "k2", "left behind", 1),
+                }),
+                plain(ClaimEvent::ObjectsMerged {
+                    folded: object("k2"),
+                    survivor: object("k1"),
+                    records: Vec::new(),
+                    writes: Vec::new(),
+                }),
+            ]),
+    );
+    assert_eq!(state.highest_merge_number(), 3);
+    let scan = state
+        .document_scan(&object("k1"), &[])
+        .expect("the survivor");
+    let left: Vec<(String, u64)> = scan
+        .unmapped
+        .iter()
+        .map(|claim| (claim.address.to_string(), claim.merge_no))
+        .collect();
+    assert_eq!(left, vec![("person:beta#f1".to_string(), 3)]);
+}
+
 /// **A merge event names the survivor its event named**, not the end of the chain
 /// the survivor was folded into since. The import orders marks by entity row, so
 /// the mark that folds B into C can arrive before the mark that folds A into B.

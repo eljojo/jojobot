@@ -44,8 +44,8 @@ impl State {
                     merge_no: self
                         .merge_log
                         .iter()
-                        .position(|entry| &entry.folded == home)
-                        .map_or(0, |at| at as u64 + 1),
+                        .find(|entry| &entry.folded == home)
+                        .map_or(0, |entry| entry.number),
                 }
             })
             .collect();
