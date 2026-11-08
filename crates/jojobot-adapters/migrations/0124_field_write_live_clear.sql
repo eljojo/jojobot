@@ -1,0 +1,13 @@
+-- Which meaning a write of no value carries.
+--
+-- **A row of no value holds one of two clears.** Before the refusal of a clear by
+-- a claim that did not hold the key, any clear took the key off the thing, so
+-- such a row means the key left the thing (rule 677). A clear written since then
+-- is one claim's write and takes the key off only when that claim holds it. The
+-- column says which: 1 is the live clear, only a live write sets it, and 0 is
+-- the removal.
+--
+-- **Every existing row is 0**, which is what the default gives each of them in
+-- this one statement: a row written before the column kept the meaning it had.
+-- Nothing is rewritten. The column means nothing on a row that holds a value.
+ALTER TABLE field_write ADD COLUMN live_clear TINYINT(1) NOT NULL DEFAULT 0;

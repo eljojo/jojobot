@@ -157,7 +157,7 @@ impl DoltMemory {
         for chunk in plain.chunks(IN_LIST) {
             let marks = vec!["?"; chunk.len()].join(", ");
             let sql = format!(
-                "SELECT w.entity, w.`key`, w.ordinal, w.value, w.fact_id, w.write_class, w.written_at,
+                "SELECT w.entity, w.`key`, w.ordinal, w.value, w.fact_id, w.write_class, w.live_clear, w.written_at,
                         f.status, f.provenance, f.standing, f.details, f.app_stamp, {}
                  FROM field_write w
                  JOIN fact f ON f.entity = w.entity AND f.id = w.fact_id
@@ -220,7 +220,7 @@ impl DoltMemory {
         for chunk in plain.chunks(IN_LIST) {
             let marks = vec!["?"; chunk.len()].join(", ");
             let sql = format!(
-                "SELECT w.entity, w.`key`, w.ordinal, w.value, w.fact_id, w.write_class, w.written_at,
+                "SELECT w.entity, w.`key`, w.ordinal, w.value, w.fact_id, w.write_class, w.live_clear, w.written_at,
                         f.status, f.provenance, f.standing, f.details, f.app_stamp, {}
                  FROM field_write w
                  JOIN fact f ON f.entity = w.entity AND f.id = w.fact_id

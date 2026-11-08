@@ -67,6 +67,7 @@ deaths_beyond_the_last_release!(
     session_agent => "0121_session_agent",
     session_agent_history_index => "0122_session_agent_history_index",
     session_agent_index => "0123_session_agent_index",
+    field_write_live_clear => "0124_field_write_live_clear",
 );
 
 #[tokio::test]

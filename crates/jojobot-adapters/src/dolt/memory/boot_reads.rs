@@ -366,7 +366,7 @@ impl DoltBootReader {
         keys: Option<&[String]>,
     ) -> Result<HashMap<String, Vec<KeyWrite>>, MemoryError> {
         let mut query = sqlx::QueryBuilder::<MySql>::new(
-            "SELECT w.entity, w.`key`, w.ordinal, w.value, w.fact_id, w.write_class, \
+            "SELECT w.entity, w.`key`, w.ordinal, w.value, w.fact_id, w.write_class, w.live_clear, \
                     w.written_at, f.status, f.provenance, f.standing, f.details, f.app_stamp, ",
         );
         query.push(super::write_origin::ORIGIN_COLUMNS);

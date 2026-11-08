@@ -96,6 +96,7 @@ impl DoltMemory {
                         &moment,
                         *class,
                         place,
+                        matches!(write, FieldValue::Clear),
                     )
                     .await?;
                     // A role's claim of its seat rides the heartbeat home, as the

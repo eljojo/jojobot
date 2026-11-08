@@ -164,6 +164,7 @@ const ALL_VERSIONS: &[&str] = &[
     "0121_session_agent",
     "0122_session_agent_history_index",
     "0123_session_agent_index",
+    "0124_field_write_live_clear",
 ];
 
 /// **The versions a start on a fresh store records and does not issue.** An

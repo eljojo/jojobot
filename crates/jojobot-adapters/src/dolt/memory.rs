@@ -3891,7 +3891,7 @@ impl DoltMemory {
             .chain(steps.iter().map(|step| step.folded.clone()))
         {
             let rows = sqlx::query(AssertSqlSafe(format!(
-                "SELECT w.`key`, w.ordinal, w.value, w.fact_id, w.write_class, w.written_at,
+                "SELECT w.`key`, w.ordinal, w.value, w.fact_id, w.write_class, w.live_clear, w.written_at,
                             {} FROM field_write w {} WHERE w.entity = ? ORDER BY w.ordinal",
                 write_origin::ORIGIN_COLUMNS,
                 write_origin::origin_joins(),
@@ -3956,14 +3956,18 @@ impl DoltMemory {
             write_origin::origin_of(row)?,
             claim_mark.as_ref(),
         );
+        let value: Option<String> = row.try_get("value").map_err(store)?;
         Ok(Some(KeyWrite {
-            removed: false,
+            // **A row of no value is a stored removal unless the row writer marked
+            // it a live clear** (migration 0124), the one reading of a stored clear
+            // that the claims import also takes (rule 498).
+            removed: value.is_none() && !row.try_get::<bool, _>("live_clear").map_err(store)?,
             recorded_by: by.recorded_by,
             writer: by.writer,
             run: by.run,
             key: row.try_get("key").map_err(store)?,
             ordinal: row.try_get::<i64, _>("ordinal").map_err(store)? as u64,
-            value: row.try_get("value").map_err(store)?,
+            value,
             fact: FactId(row.try_get::<String, _>("fact_id").map_err(store)?),
             // Read as tolerantly as a record's own status is read, and for
             // the same reason: a token this build does not know must not
@@ -4005,7 +4009,7 @@ impl DoltMemory {
         entity: &EntityId,
     ) -> Result<Vec<KeyWrite>, MemoryError> {
         let rows = sqlx::query(AssertSqlSafe(format!(
-            "SELECT w.`key`, w.ordinal, w.value, w.fact_id, w.write_class, w.written_at,
+            "SELECT w.`key`, w.ordinal, w.value, w.fact_id, w.write_class, w.live_clear, w.written_at,
                      f.status, f.provenance, f.standing, f.details, f.app_stamp, {}
              FROM field_write w
              JOIN fact f ON f.entity = w.entity AND f.id = w.fact_id
@@ -4585,6 +4589,7 @@ impl DoltMemory {
                 &moment,
                 class,
                 claim_write,
+                value.is_none(),
             )
             .await?;
             if let Some(emitting) = &emitting {
@@ -4607,12 +4612,13 @@ impl DoltMemory {
         moment: &str,
         class: jojobot_domain::memory::WriteClass,
         claim_write: i64,
+        live_clear: bool,
     ) -> Result<(), MemoryError> {
         {
             sqlx::query(
                 "INSERT INTO field_write (entity, `key`, ordinal, value, fact_id, written_at, write_class,
-                                         fact_write_ordinal)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                                         fact_write_ordinal, live_clear)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(entity.as_str())
             .bind(key)
@@ -4624,6 +4630,9 @@ impl DoltMemory {
             // **The write of the claim that carried this key**, appended in the
             // same act: the one row that says who wrote the value and in which run.
             .bind(claim_write)
+            // **A clear written now is one claim's write**, and a stored removal
+            // is the default of the column: the row says which it is.
+            .bind(live_clear)
             .execute(&mut **tx)
             .await
             .map_err(store)?;
