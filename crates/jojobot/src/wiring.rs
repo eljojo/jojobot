@@ -783,6 +783,10 @@ pub async fn boot_store_observed(
     let (folded, indexed) =
         assemble_memory_with(observation.memory(resolved), Some(boot_reader)).await?;
     fill_memory(&folded, &indexed).await;
+    // **The repair passes below write before the claims import**, when the log
+    // holds no State, so a refresh after such a write reads the store until the
+    // import is done. TEMPORARY(9.3.8): with the passes.
+    folded.before_the_import(true);
 
     // **The ports mail and sessions are served from.** Rows in the SQL store,
     // both over the one pool.
@@ -1101,6 +1105,9 @@ pub async fn boot_store_observed(
             anyhow::bail!("{line}");
         }
     }
+
+    // The log holds the State now: a refresh reads it.
+    folded.before_the_import(false);
 
     // **A later boot binds the records a new build supplies**, directly after the
     // import: the difference between the supply list and the log, in one batch, and

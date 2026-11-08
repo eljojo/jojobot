@@ -76,6 +76,11 @@ pub struct Folded {
     /// failed, or a refresh that failed, leaves no image, and this is what tells
     /// the next write to fill it again.
     wanted: Arc<AtomicBool>,
+    /// **Set while the boot's repair passes write, before the claims import.** The
+    /// log holds no State then, so a refresh after such a write reads the store, as
+    /// every refresh did. TEMPORARY(9.3.8): the passes go when their data is read
+    /// from the log.
+    before_the_import: Arc<AtomicBool>,
     /// **How many times the image has changed**, bumped under the same lock
     /// that installs the change, so a reader that sees a number sees at least the
     /// state it counts. It is the change signal search reads ([`write_summary`]),
@@ -118,11 +123,19 @@ impl Folded {
             boot_reader: None,
             image: Arc::new(RwLock::new(None)),
             wanted: Arc::new(AtomicBool::new(false)),
+            before_the_import: Arc::new(AtomicBool::new(false)),
             generation: Arc::new(AtomicU64::new(0)),
             shadow: Arc::new(shadow::Shadow::default()),
             #[cfg(any(test, feature = "testing"))]
             fact_edit: Arc::new(std::sync::Mutex::new(None)),
         }
+    }
+
+    /// Say whether the boot's repair passes are writing, before the claims import
+    /// has filled the State: a refresh after a write then reads the store. Set once
+    /// the fold is filled and cleared once the import is done.
+    pub fn before_the_import(&self, yes: bool) {
+        self.before_the_import.store(yes, Ordering::SeqCst);
     }
 
     /// **Run `read` on the claims State**: the State of the store beneath, which a
@@ -351,14 +364,19 @@ impl Folded {
         // - a record the State does not know, which is a record the build supplies
         //   and the overlay serves: TEMPORARY(9.3.5), until supplied records are
         //   supplied events.
-        let stated = self.claims(|state| {
-            let object = state.resolve(&handle.0)?;
-            if state.was_merged(object) || state.holds_a_lease(object) {
-                return None;
-            }
-            let doc = Doc::from_state(state, object, &state.declared_types())?;
-            Some((relist.then(|| state.listing()), doc))
-        });
+        let before_the_import = self.before_the_import.load(Ordering::SeqCst);
+        let stated = if before_the_import {
+            Ok(None)
+        } else {
+            self.claims(|state| {
+                let object = state.resolve(&handle.0)?;
+                if state.was_merged(object) || state.holds_a_lease(object) {
+                    return None;
+                }
+                let doc = Doc::from_state(state, object, &state.declared_types())?;
+                Some((relist.then(|| state.listing()), doc))
+            })
+        };
         let read = async {
             let (entities, doc, in_state) = match stated {
                 Err(unseen) => return Err(Self::without_state(unseen)),

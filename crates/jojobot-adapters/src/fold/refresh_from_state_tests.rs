@@ -93,6 +93,44 @@ async fn a_claim_about_a_supplied_record_is_served_as_the_store_serves_it() {
     }
 }
 
+/// A store that lends no claims State, as the store is at boot before the claims
+/// import.
+struct LendsNothing(Arc<InMemoryMemory>);
+
+#[jojobot_domain::forward(jojobot_domain::forward_memory, via = 0)]
+impl Memory for LendsNothing {
+    fn claims_lender(&self) -> Option<Arc<dyn jojobot_domain::log::claims::ClaimsLender>> {
+        None
+    }
+}
+
+/// **Before the claims import a write refreshes the fold from the store.** The
+/// boot's repair passes write then, when the log holds no State; the refresh reads
+/// the store, as it did, and the image carries the write.
+#[tokio::test]
+async fn a_write_before_the_import_refreshes_the_fold_from_the_store() {
+    let folded = Folded::new(Arc::new(LendsNothing(Arc::new(InMemoryMemory::booted()))));
+    folded.rebuild().await.expect("the fold loads");
+    folded.before_the_import(true);
+    folded
+        .add_entity(NewEntity::new(alpha(), "Alpha", "user-named"))
+        .await
+        .expect("add ok")
+        .written()
+        .expect("not blocked");
+    folded
+        .capture(NewFact::about(alpha(), "is early", date(2026, 9, 1)))
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("not blocked");
+    let served = folded.recall(&alpha()).await.expect("recall ok");
+    assert!(
+        served.iter().any(|fact| fact.content == "is early"),
+        "the image carries the write: {served:?}"
+    );
+}
+
 /// **An entity write keeps the records the build supplies in the listing.** The
 /// State's listing leaves them out, so the relist after the write must carry them
 /// over from the image, or the supplied view is unknown to the fold.
