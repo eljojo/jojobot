@@ -1159,7 +1159,6 @@ async fn an_id_is_a_repeat_only_while_it_is_kept() {
     );
 
     // ── and a different write under the same id writes ──────────────────────
-    jojobot_adapters::testing::import_claims_now(&pool).await;
     let later = Folded::new(Arc::new(
         DoltMemory::open(pool.clone()).journaled().on_clock(at(4)),
     ))
@@ -2208,7 +2207,6 @@ async fn a_restart_over_old_rows_and_other_families_imports_nothing_again() {
         "the first process imported the one old row"
     );
     // A new process holds nothing and replays the log.
-    jojobot_adapters::testing::import_claims_now(&pool).await;
     let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone()).journaled()));
     let _ledger = DoltRequests::new(pool.clone()).with_writer(memory.writer());
     let (stored, _) = captured(
@@ -2331,7 +2329,6 @@ async fn a_restart_recognises_spent_ids_from_the_log_alone() {
     assert_eq!(legacy, 0, "the write left no row in the old table");
 
     // A new writer is a new process: it holds nothing and replays the log.
-    jojobot_adapters::testing::import_claims_now(&pool).await;
     let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone()).journaled()));
     let ledger = DoltRequests::new(pool.clone()).with_writer(memory.writer());
     let held = ledger
@@ -2469,7 +2466,6 @@ async fn a_restart_recognises_the_ids_of_a_memory_a_mail_and_a_session_write() {
     );
 
     // A new process: every rail anew, nothing held, the log replayed.
-    jojobot_adapters::testing::import_claims_now(&pool).await;
     let (memory, mail, sessions, ledger) = rails(&pool);
     let bot = EntityId("bot:sigma".into());
     for (verb, id) in [
