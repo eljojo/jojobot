@@ -2414,6 +2414,7 @@ impl Memory for InMemoryMemory {
             .lock()
             .expect("fake mutex poisoned")
             .clone();
+        let claims_before = self.claims.lock().expect("fake mutex poisoned").clone();
         let entity = match self.add_entity(new).await? {
             Guarded::Written(entity) => entity,
             Guarded::Blocked {
@@ -2434,6 +2435,7 @@ impl Memory for InMemoryMemory {
             *self.facts.lock().expect("fake mutex poisoned") = facts_before.clone();
             *self.writes.lock().expect("fake mutex poisoned") = writes_before.clone();
             *self.claim_writes.lock().expect("fake mutex poisoned") = claim_writes_before.clone();
+            *self.claims.lock().expect("fake mutex poisoned") = claims_before.clone();
             *self.entity_writes.lock().expect("fake mutex poisoned") = entity_writes_before.clone();
             *self.entity_versions.lock().expect("fake mutex poisoned") =
                 entity_versions_before.clone();
@@ -2528,6 +2530,7 @@ impl Memory for InMemoryMemory {
             .lock()
             .expect("fake mutex poisoned")
             .clone();
+        let claims_before = self.claims.lock().expect("fake mutex poisoned").clone();
         let entity = match self.update_entity(handle, patch).await? {
             Guarded::Written(entity) => entity,
             Guarded::Blocked {
@@ -2547,6 +2550,7 @@ impl Memory for InMemoryMemory {
             *self.facts.lock().expect("fake mutex poisoned") = facts_before.clone();
             *self.writes.lock().expect("fake mutex poisoned") = writes_before.clone();
             *self.claim_writes.lock().expect("fake mutex poisoned") = claim_writes_before.clone();
+            *self.claims.lock().expect("fake mutex poisoned") = claims_before.clone();
             *self.entity_writes.lock().expect("fake mutex poisoned") = entity_writes_before.clone();
             *self.entity_versions.lock().expect("fake mutex poisoned") =
                 entity_versions_before.clone();
@@ -5052,6 +5056,7 @@ impl Memory for InMemoryMemory {
             .lock()
             .expect("fake mutex poisoned")
             .clone();
+        let claims_before = self.claims.lock().expect("fake mutex poisoned").clone();
         let heartbeats_before = self.heartbeats_now();
         let take_back = || {
             self.put_heartbeats_back(&heartbeats_before);
@@ -5059,6 +5064,7 @@ impl Memory for InMemoryMemory {
             *self.facts.lock().expect("fake mutex poisoned") = facts_before.clone();
             *self.writes.lock().expect("fake mutex poisoned") = writes_before.clone();
             *self.claim_writes.lock().expect("fake mutex poisoned") = claim_writes_before.clone();
+            *self.claims.lock().expect("fake mutex poisoned") = claims_before.clone();
             *self.entity_writes.lock().expect("fake mutex poisoned") = entity_writes_before.clone();
             *self.merges.lock().expect("fake mutex poisoned") = merges_before.clone();
             *self.entity_versions.lock().expect("fake mutex poisoned") = versions_before.clone();

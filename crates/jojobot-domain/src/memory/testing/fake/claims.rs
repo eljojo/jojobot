@@ -764,5 +764,95 @@ mod tests {
             before,
             "the refused retraction left its taking-back in the State"
         );
+
+        let mut changed = Vec::new();
+        for operation in ["add", "update_entity", "merge"] {
+            use crate::request::{Request, RequestId, Scope, armed, digest_of, within};
+            let fake = InMemoryMemory::booted()
+                .with_requests(crate::request::testing::InMemoryRequests::new());
+            for (who, name) in [(&homer, "Homer"), (&lisa, "Lisa")] {
+                fake.add_entity(NewEntity::new(who.clone(), name, "fixture"))
+                    .await
+                    .unwrap()
+                    .written()
+                    .unwrap();
+            }
+            let scope = || {
+                Scope::new(Request {
+                    bot: EntityId("bot:sigma".into()),
+                    id: RequestId::parse("composite-rollback").unwrap(),
+                    verb: operation.into(),
+                    digest: digest_of("{}"),
+                })
+            };
+            within(
+                scope(),
+                armed(fake.capture(NewFact::about(
+                    homer.clone(),
+                    "a note that spends the id",
+                    jiff::civil::date(2026, 9, 2),
+                ))),
+            )
+            .await
+            .unwrap()
+            .written()
+            .unwrap();
+            let before = fake.read_claims(Clone::clone);
+            // The spent id refuses the act after its companion claim emitted.
+            let companion = |subject| {
+                NewFact::about(subject, "a companion claim", jiff::civil::date(2026, 9, 2))
+            };
+            let refused = within(
+                scope(),
+                armed(async {
+                    match operation {
+                        "add" => {
+                            let bart = EntityId("person:bart".into());
+                            fake.add_entity_with_first_claim(
+                                NewEntity::new(bart.clone(), "Bart", "fixture"),
+                                companion(bart),
+                            )
+                            .await
+                            .map(|_| ())
+                        }
+                        "update_entity" => fake
+                            .update_entity_with_claim(
+                                &homer,
+                                EntityPatch {
+                                    name: Some("Homer Simpson".into()),
+                                    ..Default::default()
+                                },
+                                companion(homer.clone()),
+                            )
+                            .await
+                            .map(|_| ()),
+                        "merge" => fake
+                            .merge_with_claim(
+                                &lisa,
+                                &homer,
+                                Some("filed twice"),
+                                jiff::civil::date(2026, 9, 2),
+                                &homer,
+                                companion(homer.clone()),
+                            )
+                            .await
+                            .map(|_| ()),
+                        _ => unreachable!(),
+                    }
+                }),
+            )
+            .await;
+            assert!(
+                matches!(refused, Err(MemoryError::Conflict)),
+                "{operation}: {refused:?}"
+            );
+            if fake.read_claims(Clone::clone) != before {
+                changed.push(operation);
+            }
+        }
+        assert!(
+            changed.is_empty(),
+            "refused composites changed the State: {changed:?}"
+        );
     }
 }
