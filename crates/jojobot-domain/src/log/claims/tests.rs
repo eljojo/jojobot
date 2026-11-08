@@ -408,6 +408,41 @@ fn a_merge_renumbers_the_survivors_writes_it_places_a_folded_write_before() {
     assert_eq!(held(&state, "alpha"), map(&[("mood", "steady")]));
 }
 
+/// **The pair a claim was created under finds that claim after a merge moved it**,
+/// and the survivor's own claim under the label the moved one is now served by is
+/// found by its own pair. The expected records are the ones the events name, not
+/// ones read back from the State.
+#[test]
+fn a_merge_moves_the_label_a_claim_is_served_by_and_not_the_pair_it_was_created_under() {
+    let events = vec![
+        created("r1", claim("f1", "alpha", "the survivor's own", 1)),
+        created("r2", claim("f1", "beta", "the folded thing's", 2)),
+        ClaimEvent::ObjectsMerged {
+            folded: object("beta"),
+            survivor: object("alpha"),
+            records: vec![MovedRecord {
+                record: record("r2"),
+                label: "f2".into(),
+            }],
+            writes: Vec::new(),
+        },
+    ];
+    let state = replay(&events);
+    // Served: the moved claim now wears f2 on the survivor.
+    assert_eq!(state.record(&record("r2")).unwrap().claim.label, "f2");
+    // Created under: each pair finds the claim made under it.
+    assert_eq!(
+        state.record_at_origin(&object("alpha"), "f1"),
+        Some(record("r1"))
+    );
+    assert_eq!(
+        state.record_at_origin(&object("beta"), "f1"),
+        Some(record("r2"))
+    );
+    // No claim was ever created under the label the merge handed out.
+    assert_eq!(state.record_at_origin(&object("alpha"), "f2"), None);
+}
+
 /// **A merge that would close a loop of redirects changes nothing**: a self-merge
 /// and a merge of an object into one that already folded into it both leave
 /// every read answering, and the first merge still stands.
