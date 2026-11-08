@@ -1088,9 +1088,10 @@ pub async fn boot_store_observed(
             // **Key writes whose claim no row holds**, skipped: the old tables keep
             // them, and the deployed build served such a store, so the boot goes on.
             // Info, like the homes: a state the import tolerates, not a fault.
-            // **Each skipped write is named** (thing, key and place), up to a bound:
-            // a write that is the newest of its key changes the value the thing
-            // serves, so the line says which ones.
+            // **Each write the reader skipped is named** (thing, key and place), up
+            // to a bound, so a reader of the log can find it in the old table. A
+            // write of a claim a merge did not map is left out with the claim and is
+            // not among them. The words are the constant the upgrade gate reads.
             if !skipped_key_writes.is_empty() {
                 const NAMED: usize = 20;
                 let mut keys = skipped_key_writes
@@ -1105,7 +1106,7 @@ pub async fn boot_store_observed(
                 tracing::info!(
                     count = skipped_key_writes.len(),
                     keys = %keys,
-                    "the import skipped key writes whose claim no row holds; they stay in the old tables"
+                    "the import {SKIPPED_KEY_WRITES_LINE}; they stay in the old tables"
                 );
             }
             if !empty_merge_numbers.is_empty() {
@@ -1364,6 +1365,12 @@ async fn the_day_of_this_boot(memory: &dyn Memory, clock: &Clock) -> jiff::civil
 }
 
 pub mod field_links;
+
+/// **The words of the boot line that names the key writes the import skipped**, a
+/// write of a claim no row holds. The boot logs them and the upgrade gate reads
+/// them, from this one constant, so the gate cannot watch words the boot no longer
+/// says.
+pub const SKIPPED_KEY_WRITES_LINE: &str = "skipped key writes whose claim no row holds";
 
 /// **What the boot says when the claims import stops**, for the log and for the
 /// error, so the two cannot differ. A failure to reach the store says the next

@@ -15,6 +15,7 @@ use jojobot_adapters::writer::Writer;
 use jojobot_domain::log::Event;
 use jojobot_domain::log::claims::import::import;
 use jojobot_domain::log::claims::{ClaimEvent, State};
+use jojobot_domain::memory::boot_reader::BootReader;
 use jojobot_domain::memory::owned::{Provision, Provisions};
 use jojobot_domain::memory::{
     Entity, EntityId, EntityKind, Memory, NewEntity, NewFact, Provenance,
@@ -1941,16 +1942,16 @@ async fn claims_import_carries_a_reference_and_a_mark_at_names_nothing_holds() {
     server.stop().await;
 }
 
-/// **A key write whose claim no row holds does not refuse the boot.** The boot
-/// calls `import_claims_once`, which refuses a store on any finding, so the write
-/// is no finding: it is left out of the rows, named in the answer with its place,
-/// and the rest imports. The write stays in the old table. **Paired**: the write
-/// of the claim that is held reaches the log.
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn claims_import_goes_on_over_a_key_write_whose_claim_no_row_holds() {
-    let (_scratch, mut server, pool) = store("claims-import-orphan-write").await;
-    let memory = DoltMemory::open(pool.clone());
-    let homer = thing(&memory, "person:homer", "Homer").await;
+/// **A thing that holds one claim, with two key writes no claim row holds.** The
+/// held claim sets `mood` to `happy`. One orphan write is on that key and is the
+/// newest of it, at a moment far ahead of every other (so a read that counts it
+/// shows); the other is on `hair`, a key no held write names. Returns the badge the
+/// thing is filed under.
+async fn homer_with_two_orphan_writes(
+    memory: &DoltMemory,
+    pool: &sqlx::MySqlPool,
+) -> (EntityId, String) {
+    let homer = thing(memory, "person:homer", "Homer").await;
     let mut fact = NewFact::about(homer.clone(), "eats donuts", date(2026, 9, 1));
     fact.provenance = Provenance::Testimony;
     fact.fields = [("mood".to_string(), "happy".to_string())]
@@ -1965,17 +1966,37 @@ async fn claims_import_goes_on_over_a_key_write_whose_claim_no_row_holds() {
         .expect("not blocked");
     let badge: String = sqlx::query_scalar("SELECT badge FROM entity WHERE id = ?")
         .bind(homer.as_str())
-        .fetch_one(&pool)
+        .fetch_one(pool)
         .await
         .expect("the thing wears a badge");
-    sqlx::query(
-        "INSERT INTO field_write (entity, `key`, ordinal, value, fact_id, written_at, write_class)
-         VALUES (?, 'mood', 9, 'wary', 'f99', '2026-10-09T09:00:00Z', 'sets')",
-    )
-    .bind(&badge)
-    .execute(&pool)
-    .await
-    .expect("the write lands");
+    for (key, ordinal, value, claim) in [("mood", 9, "wary", "f99"), ("hair", 3, "blue", "f98")] {
+        sqlx::query(
+            "INSERT INTO field_write (entity, `key`, ordinal, value, fact_id, written_at, write_class)
+             VALUES (?, ?, ?, ?, ?, '2099-01-01T00:00:00Z', 'sets')",
+        )
+        .bind(&badge)
+        .bind(key)
+        .bind(ordinal)
+        .bind(value)
+        .bind(claim)
+        .execute(pool)
+        .await
+        .expect("the write lands");
+    }
+    (homer, badge)
+}
+
+/// **A key write whose claim no row holds does not refuse the boot.** The boot
+/// calls `import_claims_once`, which refuses a store on any finding, so the write
+/// is no finding: it is left out of the rows, named in the answer with its place,
+/// and the rest imports. The write stays in the old table. **Paired**: the write
+/// of the claim that is held reaches the log. One orphan is on a key with a held
+/// write and one is on a key without, and both are named.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn claims_import_goes_on_over_a_key_write_whose_claim_no_row_holds() {
+    let (_scratch, mut server, pool) = store("claims-import-orphan-write").await;
+    let memory = DoltMemory::open(pool.clone());
+    let (homer, badge) = homer_with_two_orphan_writes(&memory, &pool).await;
 
     let imported = import_claims_once(&Writer::default(), &pool, &Provisions::default(), at())
         .await
@@ -1986,7 +2007,13 @@ async fn claims_import_goes_on_over_a_key_write_whose_claim_no_row_holds() {
     else {
         panic!("the import ran: {imported:?}");
     };
-    assert_eq!(skipped_key_writes, [format!("{badge}/mood#9")]);
+    let mut named = skipped_key_writes.clone();
+    named.sort();
+    assert_eq!(
+        named,
+        [format!("{badge}/hair#3"), format!("{badge}/mood#9")],
+        "both orphans are named: the one on a key with a held write and the one on a key without"
+    );
     let held = logged(&pool).await;
     let written: Vec<_> = held
         .iter()
@@ -2005,10 +2032,12 @@ async fn claims_import_goes_on_over_a_key_write_whose_claim_no_row_holds() {
     // claim backs is not a fact, so the State drops the orphan.** The orphan write
     // is the newest of its key (ordinal 9 against the held write's 1), so a build
     // that served it would show `wary`. Neither does: the State drops it by rule,
-    // and the store's own read reaches a key's writes through a join on the claim
-    // row (`writes_stored_at`), so a write with no claim row is not in what it
-    // serves either. If that join ever stops dropping it, the first assertion fails
-    // and names the old rows as the side that moved.
+    // and the store's own read of the served value reaches a key's writes through a
+    // join on the claim row (`writes_stored_at`), so a write with no claim row is
+    // not part of the VALUE it serves. This says nothing of the store's ages and
+    // history, which still list the orphan (the next case). If that join ever stops
+    // dropping it, the first assertion fails and names the old rows as the side
+    // that moved.
     let served_by_the_store = memory
         .fields(&homer)
         .await
@@ -2024,6 +2053,113 @@ async fn claims_import_goes_on_over_a_key_write_whose_claim_no_row_holds() {
         served_by_the_state.get("mood"),
         served_by_the_store.get("mood"),
         "the State serves what the store served: skipping the write moves no value"
+    );
+    assert!(
+        !served_by_the_store.contains_key("hair") && !served_by_the_state.contains_key("hair"),
+        "an orphan on a key no held write names serves nothing, in either"
+    );
+    server.stop().await;
+}
+
+/// **Over a key write with no claim, the store and the State agree on the history
+/// of a key and differ on the ages of the thing. The difference is known, and the
+/// State is the side that is right**: a value no claim backs is not a fact. The
+/// history of a key (`history`, `key_trails` and the boot reader's
+/// `key_trails_many`) reads the writes without a join, but drops a write whose
+/// claim row it cannot find, so it lists what the State lists. The ages
+/// (`field_ages`, through `newest_change`, and the boot reader's `field_ages_many`)
+/// read `field_write` and count the write's moment as a change of the thing, and the
+/// State's `newest_change` does not. The orphan is placed at a moment far ahead of
+/// every other, so the ages show it. When the store's ages drop the orphan too, the
+/// last assertions fail and the case is rewritten to say they agree.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn claims_import_agrees_with_the_stores_history_and_differs_on_its_ages_over_a_key_write_with_no_claim()
+ {
+    let (_scratch, mut server, pool) = store("claims-import-orphan-history").await;
+    let memory = DoltMemory::open(pool.clone());
+    let (homer, badge) = homer_with_two_orphan_writes(&memory, &pool).await;
+    import_claims_once(&Writer::default(), &pool, &Provisions::default(), at())
+        .await
+        .expect("a write with no claim does not refuse the boot");
+    let state = State::replay(logged(&pool).await.iter());
+    let object = jojobot_domain::log::ObjectId(badge);
+
+    // What each read path of the store returns for the thing, next to the State.
+    let ahead: jiff::Timestamp = "2099-01-01T00:00:00Z".parse().expect("a moment");
+    let reader = memory.boot_reader();
+    let count = |trails: &jojobot_domain::memory::KeyTrails, key: &str| {
+        trails.history.get(key).map_or(0, Vec::len)
+    };
+    let own_trails = memory.key_trails(&homer).await.expect("the trails read");
+    let bulk_trails = reader
+        .key_trails_many(std::slice::from_ref(&homer))
+        .await
+        .expect("the bulk trails read")
+        .remove(&homer)
+        .expect("the bulk read answers for the thing");
+    let state_trails = state.key_trails(&object);
+    let observed = vec![
+        (
+            "history mood",
+            memory.history(&homer, "mood").await.expect("history").len(),
+        ),
+        (
+            "history hair",
+            memory.history(&homer, "hair").await.expect("history").len(),
+        ),
+        ("key_trails mood", count(&own_trails, "mood")),
+        ("key_trails hair", count(&own_trails, "hair")),
+        ("key_trails_many mood", count(&bulk_trails, "mood")),
+        ("key_trails_many hair", count(&bulk_trails, "hair")),
+        ("state trails mood", count(&state_trails, "mood")),
+        ("state trails hair", count(&state_trails, "hair")),
+        (
+            "field_ages counts the orphan",
+            usize::from(memory.field_ages(&homer).await.expect("ages").newest == Some(ahead)),
+        ),
+        (
+            "field_ages_many counts the orphan",
+            usize::from(
+                reader
+                    .field_ages_many(std::slice::from_ref(&homer))
+                    .await
+                    .expect("bulk ages")
+                    .get(&homer)
+                    .and_then(|ages| ages.newest)
+                    == Some(ahead),
+            ),
+        ),
+        (
+            "state ages count the orphan",
+            usize::from(state.newest_change(&object) == Some(ahead)),
+        ),
+    ];
+    // The history of a key: the store and the State list the held write and not the
+    // orphan, and a key only an orphan names has no history in either.
+    assert_eq!(
+        observed[..8],
+        [
+            ("history mood", 1),
+            ("history hair", 0),
+            ("key_trails mood", 1),
+            ("key_trails hair", 0),
+            ("key_trails_many mood", 1),
+            ("key_trails_many hair", 0),
+            ("state trails mood", 1),
+            ("state trails hair", 0),
+        ],
+        "the history of a key agrees: the orphan is in none of them"
+    );
+    // The ages: both of the store's reads count the orphan's moment, the State's does
+    // not. A known difference, with the State right.
+    assert_eq!(
+        observed[8..],
+        [
+            ("field_ages counts the orphan", 1),
+            ("field_ages_many counts the orphan", 1),
+            ("state ages count the orphan", 0),
+        ],
+        "the store's ages count a write no claim backs and the State's do not"
     );
     server.stop().await;
 }

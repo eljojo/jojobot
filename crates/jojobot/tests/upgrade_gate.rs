@@ -56,21 +56,10 @@ async fn the_last_deployed_store_recorded_three_days_earlier_reads_back() {
 type Link = (String, String, i64, String);
 const WARNING_THE_GATE_CAUSES: &str = "AUTH DISABLED";
 
-/// **The boot line that names the key writes the import skipped**, spelled as the
-/// boot logs it. It is an info line, so the check for warnings and errors cannot see
-/// it, and a skipped write can be the newest of its key: a deployed fixture that
-/// holds one changes the value a thing serves. A rename of the line in the boot
-/// leaves this check watching nothing, so the case below holds the spelling.
-const SKIPPED_KEY_WRITES_LINE: &str = "skipped key writes whose claim no row holds";
-
-/// The words the gate looks for are the words the boot logs.
-#[test]
-fn the_boot_logs_the_skipped_key_writes_in_the_words_the_gate_reads() {
-    assert!(
-        include_str!("../src/wiring.rs").contains(SKIPPED_KEY_WRITES_LINE),
-        "the boot no longer logs `{SKIPPED_KEY_WRITES_LINE}`, so the gate would watch nothing"
-    );
-}
+/// **The boot line that names the key writes the import skipped.** It is an info
+/// line, so the check for warnings and errors cannot see it. The words are the
+/// constant the boot's own log call uses, so a rename moves both.
+use jojobot::wiring::SKIPPED_KEY_WRITES_LINE;
 
 const FOLD_HOLDER: &str = "person:upgrade-fixture-person";
 
@@ -1214,7 +1203,11 @@ async fn boot_current_with(
     );
     // **A store the last deployed build recorded holds no key write without a
     // claim.** The import skips such a write and says so at info, which no check
-    // for warnings reads; the gate reads it here, on every fixture it boots.
+    // for warnings reads; the gate reads it here, on every fixture it boots. The old
+    // tables keep the write and the State drops it, so a fixture that holds one
+    // shows a difference in the history and ages of its thing. **This assertion has
+    // not been seen to fail**: no fixture the gate boots holds such a write, and the
+    // case that plants one boots no binary.
     let skipped: Vec<&String> = seen
         .iter()
         .filter(|line| line.contains(SKIPPED_KEY_WRITES_LINE))
@@ -1222,7 +1215,7 @@ async fn boot_current_with(
     assert!(
         skipped.is_empty(),
         "the boot of a store recorded at {git_ref} skipped key writes whose claim no row \
-         holds, which can change a value a thing serves: {skipped:?}"
+         holds, which the old tables keep and the State drops: {skipped:?}"
     );
     assert!(
         recorded_r1::recorded_r1_counts_match(&seen, &expected_r1),
