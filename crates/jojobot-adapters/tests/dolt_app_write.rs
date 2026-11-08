@@ -42,7 +42,8 @@ async fn dolt_satisfies_the_app_contract_when_folded() {
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
     booted(&pool).await;
-    let folded = Folded::new(Arc::new(DoltMemory::open(pool)));
+    jojobot_adapters::testing::import_claims_now(&pool).await;
+    let folded = Folded::new(Arc::new(DoltMemory::open(pool).journaled()));
     folded.rebuild().await.expect("the image fills");
 
     memory::run_all_app(&folded).await;
@@ -103,9 +104,10 @@ async fn an_attempt_sent_again_after_a_restart_writes_once() {
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
     booted(&pool).await;
+    jojobot_adapters::testing::import_claims_now(&pool).await;
     let thread = EntityId("thread:deploys-alpha".into());
     let first_receipt = {
-        let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
+        let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone()).journaled()));
         memory
             .add_entity(NewEntity::new(thread.clone(), "Deploys Alpha", "fixture"))
             .await
@@ -122,7 +124,7 @@ async fn an_attempt_sent_again_after_a_restart_writes_once() {
     };
 
     // A new writer is a new process: it holds nothing and replays the log.
-    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
+    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone()).journaled()));
     let again = memory
         .record_app_event(event_for("restart-1"))
         .await
@@ -169,7 +171,10 @@ async fn calls_racing_on_one_attempt_land_one_event() {
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
     booted(&pool).await;
-    let memory = Arc::new(Folded::new(Arc::new(DoltMemory::open(pool.clone()))));
+    jojobot_adapters::testing::import_claims_now(&pool).await;
+    let memory = Arc::new(Folded::new(Arc::new(
+        DoltMemory::open(pool.clone()).journaled(),
+    )));
     let thread = EntityId("thread:deploys-alpha".into());
     memory
         .add_entity(NewEntity::new(thread.clone(), "Deploys Alpha", "fixture"))

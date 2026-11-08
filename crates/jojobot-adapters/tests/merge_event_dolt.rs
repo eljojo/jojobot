@@ -58,7 +58,8 @@ async fn a_merge_made_before_events_were_kept_reads_as_it_always_did() {
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
         .await
         .expect("the kinds are seeded");
-    let store = Arc::new(DoltMemory::open(pool.clone()));
+    jojobot_adapters::testing::import_claims_now(&pool).await;
+    let store = Arc::new(DoltMemory::open(pool.clone()).journaled());
     let counted = Arc::new(Counted::new(store.clone()));
     let folded = Folded::new(counted.clone());
     folded.rebuild().await.expect("the fold loads");
@@ -167,7 +168,8 @@ async fn the_writes_of_an_unmapped_claim_are_read_from_the_image_over_the_real_s
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
         .await
         .expect("the kinds are seeded");
-    let store = Arc::new(DoltMemory::open(pool.clone()));
+    jojobot_adapters::testing::import_claims_now(&pool).await;
+    let store = Arc::new(DoltMemory::open(pool.clone()).journaled());
     let counted = Arc::new(Counted::new(store.clone()));
     let folded = Folded::new(counted.clone());
     folded.rebuild().await.expect("the fold loads");

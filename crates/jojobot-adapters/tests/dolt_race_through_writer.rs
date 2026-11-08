@@ -77,10 +77,11 @@ async fn the_race() {
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
         .await
         .expect("the kinds are seeded");
+    jojobot_adapters::testing::import_claims_now(&pool).await;
 
     let writer = Writer::default();
     let door = Arc::new(Rendezvous {
-        inner: Arc::new(DoltMemory::open(pool)),
+        inner: Arc::new(DoltMemory::open(pool).journaled()),
         armed: AtomicBool::new(false),
         meet: Barrier::new(2),
         inside: AtomicUsize::new(0),

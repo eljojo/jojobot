@@ -29,8 +29,9 @@ async fn a_claim_of_the_folded_thing_is_found_under_the_survivor_in_the_real_sto
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
         .await
         .expect("the kinds are seeded");
+    jojobot_adapters::testing::import_claims_now(&pool).await;
     let indexed = Arc::new(
-        IndexedMemory::new(Arc::new(DoltMemory::open(pool.clone())))
+        IndexedMemory::new(Arc::new(DoltMemory::open(pool.clone()).journaled()))
             .expect("the search index opens"),
     );
     indexed.rebuild().await.expect("the boot scan reads");

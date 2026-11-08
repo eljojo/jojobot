@@ -107,7 +107,8 @@ jojobot_domain::contract_parts!(tokio::test(flavor = "multi_thread", worker_thre
 async fn folded_contract_part(part: usize) {
     let expected = memory::part_share(memory::case_count(), part);
     one_part_of_the_contract("memory_folded", part, expected, move |pool| async move {
-        let folded = Folded::new(Arc::new(DoltMemory::open(pool)));
+        jojobot_adapters::testing::import_claims_now(&pool).await;
+        let folded = Folded::new(Arc::new(DoltMemory::open(pool).journaled()));
         folded.rebuild().await.expect("the image fills");
         memory::run_part(&folded, part, memory::PARTS).await
     })
@@ -223,8 +224,10 @@ jojobot_domain::contract_parts!(tokio::test(flavor = "multi_thread", worker_thre
 async fn indexed_contract_part(part: usize) {
     let expected = memory::searchable_part_share(part);
     one_part_of_the_contract("memory-indexed", part, expected, move |pool| async move {
+        jojobot_adapters::testing::import_claims_now(&pool).await;
         let indexed = Arc::new(
-            IndexedMemory::new(Arc::new(DoltMemory::open(pool))).expect("the search index opens"),
+            IndexedMemory::new(Arc::new(DoltMemory::open(pool).journaled()))
+                .expect("the search index opens"),
         );
         // The fold holds its image and no half refreshes before an answer, so a
         // part reads what the writer's delivery left in the index.

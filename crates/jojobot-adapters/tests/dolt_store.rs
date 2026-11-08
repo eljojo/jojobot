@@ -2055,7 +2055,8 @@ async fn dolt_satisfies_the_stands_for_contract_when_folded() {
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
     booted(&pool).await;
-    let folded = Folded::new(Arc::new(DoltMemory::open(pool)));
+    jojobot_adapters::testing::import_claims_now(&pool).await;
+    let folded = Folded::new(Arc::new(DoltMemory::open(pool).journaled()));
     folded.rebuild().await.expect("the image fills");
 
     memory::run_all_stands_for(&folded).await;
@@ -2095,7 +2096,8 @@ async fn dolt_satisfies_the_record_capacity_contract_when_folded() {
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
     booted(&pool).await;
-    let folded = Folded::new(Arc::new(DoltMemory::open(pool)));
+    jojobot_adapters::testing::import_claims_now(&pool).await;
+    let folded = Folded::new(Arc::new(DoltMemory::open(pool).journaled()));
     folded.rebuild().await.expect("the image fills");
 
     memory::run_all_record_capacity(&folded).await;
@@ -2136,7 +2138,8 @@ async fn dolt_satisfies_the_receipt_contract_when_folded() {
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
     booted(&pool).await;
-    let folded = Folded::new(Arc::new(DoltMemory::open(pool)));
+    jojobot_adapters::testing::import_claims_now(&pool).await;
+    let folded = Folded::new(Arc::new(DoltMemory::open(pool).journaled()));
     folded.rebuild().await.expect("the image fills");
 
     memory::run_all_receipt(&folded).await;
@@ -2296,7 +2299,8 @@ async fn dolt_satisfies_the_numbered_collection_contract_when_folded() {
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
     booted(&pool).await;
-    let folded = Folded::new(Arc::new(DoltMemory::open(pool)));
+    jojobot_adapters::testing::import_claims_now(&pool).await;
+    let folded = Folded::new(Arc::new(DoltMemory::open(pool).journaled()));
     folded.rebuild().await.expect("the image fills");
 
     memory::run_all_numbered(&folded).await;
@@ -2321,7 +2325,8 @@ async fn two_writes_of_one_number_at_once_land_one_and_refuse_the_other_naming_i
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
     booted(&pool).await;
-    let folded = Arc::new(Folded::new(Arc::new(DoltMemory::open(pool))));
+    jojobot_adapters::testing::import_claims_now(&pool).await;
+    let folded = Arc::new(Folded::new(Arc::new(DoltMemory::open(pool).journaled())));
     folded.rebuild().await.expect("the image fills");
 
     let collection = EntityId("topic:contract-ordinances-race".into());

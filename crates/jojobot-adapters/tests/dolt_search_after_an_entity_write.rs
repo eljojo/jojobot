@@ -104,6 +104,7 @@ async fn a_search_after_an_edit_a_rename_an_archive_a_restore_or_prose_costs_wha
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
         .await
         .expect("the kinds are seeded");
+    jojobot_adapters::testing::import_claims_now(&pool).await;
 
     let _counting =
         tracing::subscriber::set_default(tracing_subscriber::registry().with(CountStatements));
@@ -113,7 +114,9 @@ async fn a_search_after_an_edit_a_rename_an_archive_a_restore_or_prose_costs_wha
     // a handle, and the index.
     let supplied = the_shipped_view();
     let provisioned: Arc<dyn Memory> = Arc::new(Provisioned::new(
-        DoltMemory::open(pool.clone()).knowing(supplied.clone()),
+        DoltMemory::open(pool.clone())
+            .journaled()
+            .knowing(supplied.clone()),
         supplied,
     ));
     let indexed = Arc::new(

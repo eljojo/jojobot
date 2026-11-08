@@ -244,7 +244,8 @@ async fn request_ids_that_differ_only_in_case_are_two_in_the_real_ledger() {
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
         .await
         .expect("the kinds are seeded");
-    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
+    jojobot_adapters::testing::import_claims_now(&pool).await;
+    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone()).journaled()));
     let ledger = DoltRequests::new(pool.clone()).with_writer(memory.writer());
     let subject = EntityId("thing:kettle".into());
     memory

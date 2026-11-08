@@ -123,6 +123,7 @@ async fn a_search_after_a_write_costs_what_a_search_after_none_costs() {
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
         .await
         .expect("the kinds are seeded");
+    jojobot_adapters::testing::import_claims_now(&pool).await;
 
     // The sink the store installs is global and quiet; the count is scoped to
     // this thread, which is the one the whole case runs on.
@@ -130,7 +131,7 @@ async fn a_search_after_a_write_costs_what_a_search_after_none_costs() {
         tracing::subscriber::set_default(tracing_subscriber::registry().with(CountStatements));
 
     let indexed = Arc::new(
-        IndexedMemory::new(Arc::new(DoltMemory::open(pool.clone())))
+        IndexedMemory::new(Arc::new(DoltMemory::open(pool.clone()).journaled()))
             .expect("the search index opens"),
     );
     indexed.state().rebuild().await.expect("the fold loads");

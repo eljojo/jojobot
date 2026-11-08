@@ -142,6 +142,26 @@ pub async fn imported_database(
     Ok(pool)
 }
 
+/// **The claims import, done on a database now**, for a case that seeds rows
+/// first and then builds a fold over the store. The fold refreshes from the claims
+/// State after a write, and the State holds what the log holds: the writer opens
+/// its seam on the first write and replays the log, import included. A case calls
+/// this after it has seeded and before the fold's first write; what it writes
+/// before the call is imported, and what it writes to the rows after the call, with
+/// no writer to emit events, the State never holds.
+pub async fn import_claims_now(pool: &sqlx::MySqlPool) {
+    let writer = crate::writer::Writer::default();
+    crate::claims_import::import_claims_once(
+        &writer,
+        pool,
+        &jojobot_domain::memory::owned::Provisions::default(),
+        jiff::Timestamp::from_second(1_700_000_000).expect("a moment"),
+    )
+    .await
+    .expect("the claims import runs");
+    writer.drain().await;
+}
+
 /// **The directory that holds this process's template, and no other
 /// process's.** Named for the process, so two runs on one machine never share
 /// one and a migration added between runs cannot meet a stale template.

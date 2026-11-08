@@ -52,7 +52,8 @@ async fn loaded(pool: sqlx::MySqlPool) -> (Arc<DoltMemory>, Arc<Counted>, Folded
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
         .await
         .expect("the kinds are seeded");
-    let store = Arc::new(DoltMemory::open(pool));
+    jojobot_adapters::testing::import_claims_now(&pool).await;
+    let store = Arc::new(DoltMemory::open(pool).journaled());
     let counted = Arc::new(Counted::new(store.clone()));
     let folded = Folded::new(counted.clone());
     folded.rebuild().await.expect("the fold loads");

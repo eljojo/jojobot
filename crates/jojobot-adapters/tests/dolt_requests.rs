@@ -89,7 +89,8 @@ async fn a_capture_spends_its_id_with_the_claim_and_a_second_one_stores_nothing(
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
         .await
         .expect("the kinds are seeded");
-    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
+    jojobot_adapters::testing::import_claims_now(&pool).await;
+    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone()).journaled()));
     let ledger = DoltRequests::new(pool.clone()).with_writer(memory.writer());
 
     let milhouse = thing(&memory, "person:milhouse", "Milhouse").await;
@@ -227,7 +228,8 @@ async fn every_covered_write_spends_its_id_with_its_own_commit() {
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
         .await
         .expect("the kinds are seeded");
-    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
+    jojobot_adapters::testing::import_claims_now(&pool).await;
+    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone()).journaled()));
     let mail = FoldedMailboxes::new(Arc::new(
         DoltMailboxes::open(pool.clone(), Arc::new(AnyOwner)).with_writer(memory.writer()),
     ))
@@ -470,7 +472,8 @@ async fn a_spent_id_follows_the_bot_through_a_rename_and_is_not_inherited_by_a_n
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
         .await
         .expect("the kinds are seeded");
-    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
+    jojobot_adapters::testing::import_claims_now(&pool).await;
+    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone()).journaled()));
     let ledger = DoltRequests::new(pool.clone()).with_writer(memory.writer());
     let milhouse = thing(&memory, "person:milhouse", "Milhouse").await;
     let sigma = thing(&memory, "bot:sigma", "Sigma").await;
@@ -605,7 +608,8 @@ async fn a_large_old_ledger_and_an_unreadable_row_do_not_stop_the_first_write() 
     .await
     .expect("a row that can be read");
 
-    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
+    jojobot_adapters::testing::import_claims_now(&pool).await;
+    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone()).journaled()));
     let _ledger = DoltRequests::new(pool.clone()).with_writer(memory.writer());
     let (stored, _) = captured(
         &memory,
@@ -689,7 +693,8 @@ async fn a_failure_in_the_middle_of_the_import_leaves_no_ledger_event_and_the_ne
     .await
     .expect("the fault is armed");
 
-    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
+    jojobot_adapters::testing::import_claims_now(&pool).await;
+    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone()).journaled()));
     let _ledger = DoltRequests::new(pool.clone()).with_writer(memory.writer());
     let (stored, _) = captured(
         &memory,
@@ -791,7 +796,8 @@ async fn the_old_ledger_rows_are_imported_once_and_read_from_the_log() {
     .await
     .expect("an app row");
 
-    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
+    jojobot_adapters::testing::import_claims_now(&pool).await;
+    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone()).journaled()));
     let ledger = DoltRequests::new(pool.clone()).with_writer(memory.writer());
     let bot = EntityId("bot:sigma".into());
     let id = |text: &str| RequestId::parse(text).expect("a good id");
@@ -849,7 +855,10 @@ async fn two_calls_under_one_id_at_the_same_moment_store_one_write() {
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
         .await
         .expect("the kinds are seeded");
-    let memory = Arc::new(Folded::new(Arc::new(DoltMemory::open(pool.clone()))));
+    jojobot_adapters::testing::import_claims_now(&pool).await;
+    let memory = Arc::new(Folded::new(Arc::new(
+        DoltMemory::open(pool.clone()).journaled(),
+    )));
     let milhouse = thing(memory.as_ref(), "person:milhouse", "Milhouse").await;
     thing(memory.as_ref(), "bot:sigma", "Sigma").await;
 
@@ -909,7 +918,10 @@ async fn the_calls_that_lose_a_race_under_one_id_are_told_to_send_it_again() {
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
         .await
         .expect("the kinds are seeded");
-    let memory = Arc::new(Folded::new(Arc::new(DoltMemory::open(pool.clone()))));
+    jojobot_adapters::testing::import_claims_now(&pool).await;
+    let memory = Arc::new(Folded::new(Arc::new(
+        DoltMemory::open(pool.clone()).journaled(),
+    )));
     let ledger = DoltRequests::new(pool.clone()).with_writer(memory.writer());
     let milhouse = thing(memory.as_ref(), "person:milhouse", "Milhouse").await;
     thing(memory.as_ref(), "bot:sigma", "Sigma").await;
@@ -1009,7 +1021,10 @@ async fn a_call_that_loses_at_the_commit_under_one_id_is_told_to_send_it_again()
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
         .await
         .expect("the kinds are seeded");
-    let memory = Arc::new(Folded::new(Arc::new(DoltMemory::open(pool.clone()))));
+    jojobot_adapters::testing::import_claims_now(&pool).await;
+    let memory = Arc::new(Folded::new(Arc::new(
+        DoltMemory::open(pool.clone()).journaled(),
+    )));
     let milhouse = thing(memory.as_ref(), "person:milhouse", "Milhouse").await;
     thing(memory.as_ref(), "bot:sigma", "Sigma").await;
 
@@ -1098,7 +1113,10 @@ async fn an_id_is_a_repeat_only_while_it_is_kept() {
                 .unwrap(),
         )
     };
-    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone()).on_clock(at(0))));
+    jojobot_adapters::testing::import_claims_now(&pool).await;
+    let memory = Folded::new(Arc::new(
+        DoltMemory::open(pool.clone()).journaled().on_clock(at(0)),
+    ));
     let writer = memory.writer();
     let milhouse = thing(&memory, "person:milhouse", "Milhouse").await;
     thing(&memory, "bot:sigma", "Sigma").await;
@@ -1142,8 +1160,11 @@ async fn an_id_is_a_repeat_only_while_it_is_kept() {
     );
 
     // ── and a different write under the same id writes ──────────────────────
-    let later = Folded::new(Arc::new(DoltMemory::open(pool.clone()).on_clock(at(4))))
-        .with_writer(writer.clone());
+    jojobot_adapters::testing::import_claims_now(&pool).await;
+    let later = Folded::new(Arc::new(
+        DoltMemory::open(pool.clone()).journaled().on_clock(at(4)),
+    ))
+    .with_writer(writer.clone());
     assert_eq!(
         captured(
             &later,
@@ -1194,7 +1215,8 @@ async fn two_ids_that_differ_only_in_case_are_two_ids_in_the_ledger() {
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
         .await
         .expect("the kinds are seeded");
-    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
+    jojobot_adapters::testing::import_claims_now(&pool).await;
+    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone()).journaled()));
     let ledger = DoltRequests::new(pool.clone()).with_writer(memory.writer());
     let milhouse = thing(&memory, "person:milhouse", "Milhouse").await;
     thing(&memory, "bot:sigma", "Sigma").await;
@@ -1266,7 +1288,8 @@ async fn a_handle_two_bots_have_worn_belongs_to_the_newer_one_in_the_ledger() {
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
         .await
         .expect("the kinds are seeded");
-    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
+    jojobot_adapters::testing::import_claims_now(&pool).await;
+    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone()).journaled()));
     let ledger = DoltRequests::new(pool.clone()).with_writer(memory.writer());
     let milhouse = thing(&memory, "person:milhouse", "Milhouse").await;
 
@@ -1375,7 +1398,8 @@ async fn a_claim_that_fails_before_it_inserts_leaves_the_request_for_the_next_co
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
         .await
         .expect("the kinds are seeded");
-    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
+    jojobot_adapters::testing::import_claims_now(&pool).await;
+    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone()).journaled()));
     let milhouse = thing(&memory, "person:milhouse", "Milhouse").await;
     thing(&memory, "bot:sigma", "Sigma").await;
 
@@ -1438,7 +1462,8 @@ async fn two_merges_under_one_id_leave_one_event() {
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
         .await
         .expect("the kinds are seeded");
-    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
+    jojobot_adapters::testing::import_claims_now(&pool).await;
+    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone()).journaled()));
     let survivor = thing(&memory, "person:lisa", "Lisa").await;
     let first = thing(&memory, "person:nelson", "Nelson").await;
     let second = thing(&memory, "person:milhouse", "Milhouse").await;
@@ -1516,7 +1541,8 @@ async fn each_part_is_stored_with_its_own_row_and_the_id_is_spent_when_the_verb_
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
         .await
         .expect("the kinds are seeded");
-    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
+    jojobot_adapters::testing::import_claims_now(&pool).await;
+    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone()).journaled()));
     let ledger = DoltRequests::new(pool.clone()).with_writer(memory.writer());
 
     let milhouse = thing(&memory, "person:milhouse", "Milhouse").await;
@@ -1655,7 +1681,8 @@ async fn the_note_of_a_charter_change_is_a_part_of_its_own_in_the_real_store() {
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
         .await
         .expect("the kinds are seeded");
-    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
+    jojobot_adapters::testing::import_claims_now(&pool).await;
+    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone()).journaled()));
     let sessions = FoldedSessions::new(
         Arc::new(DoltSessions::open(pool.clone()).with_writer(memory.writer())),
         jojobot_domain::session::history::WriteStamp::new(),
@@ -1762,7 +1789,8 @@ async fn a_restore_as_a_part_keeps_what_it_cleared_for_the_claim_that_records_it
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
         .await
         .expect("the kinds are seeded");
-    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
+    jojobot_adapters::testing::import_claims_now(&pool).await;
+    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone()).journaled()));
     let ledger = DoltRequests::new(pool.clone()).with_writer(memory.writer());
     let milhouse = thing(&memory, "person:milhouse", "Milhouse").await;
     thing(&memory, "bot:sigma", "Sigma").await;
@@ -1810,7 +1838,8 @@ async fn a_rename_and_the_move_of_its_box_are_two_parts_in_the_real_store() {
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
         .await
         .expect("the kinds are seeded");
-    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
+    jojobot_adapters::testing::import_claims_now(&pool).await;
+    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone()).journaled()));
     let mail = FoldedMailboxes::new(Arc::new(
         DoltMailboxes::open(pool.clone(), Arc::new(AnyOwner)).with_writer(memory.writer()),
     ))
@@ -1882,7 +1911,8 @@ async fn a_bot_and_its_box_are_two_parts_and_a_box_another_call_opened_is_not_op
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
         .await
         .expect("the kinds are seeded");
-    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
+    jojobot_adapters::testing::import_claims_now(&pool).await;
+    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone()).journaled()));
     let mail = FoldedMailboxes::new(Arc::new(
         DoltMailboxes::open(pool.clone(), Arc::new(AnyOwner)).with_writer(memory.writer()),
     ))
@@ -1961,7 +1991,8 @@ async fn the_mail_a_post_took_for_its_sender_is_kept_with_the_part_that_took_it(
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
         .await
         .expect("the kinds are seeded");
-    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
+    jojobot_adapters::testing::import_claims_now(&pool).await;
+    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone()).journaled()));
     let mail = FoldedMailboxes::new(Arc::new(
         DoltMailboxes::open(pool.clone(), Arc::new(AnyOwner)).with_writer(memory.writer()),
     ))
@@ -2035,7 +2066,8 @@ async fn the_entry_of_a_beat_and_the_focus_it_moves_are_two_parts_in_the_real_st
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
         .await
         .expect("the kinds are seeded");
-    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
+    jojobot_adapters::testing::import_claims_now(&pool).await;
+    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone()).journaled()));
     let sessions = FoldedSessions::new(
         Arc::new(DoltSessions::open(pool.clone()).with_writer(memory.writer())),
         jojobot_domain::session::history::WriteStamp::new(),
@@ -2150,7 +2182,8 @@ async fn a_restart_over_old_rows_and_other_families_imports_nothing_again() {
     .await
     .expect("an app row");
     {
-        let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
+        jojobot_adapters::testing::import_claims_now(&pool).await;
+        let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone()).journaled()));
         let _ledger = DoltRequests::new(pool.clone()).with_writer(memory.writer());
         let (stored, _) = captured(
             &memory,
@@ -2176,7 +2209,8 @@ async fn a_restart_over_old_rows_and_other_families_imports_nothing_again() {
         "the first process imported the one old row"
     );
     // A new process holds nothing and replays the log.
-    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
+    jojobot_adapters::testing::import_claims_now(&pool).await;
+    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone()).journaled()));
     let _ledger = DoltRequests::new(pool.clone()).with_writer(memory.writer());
     let (stored, _) = captured(
         &memory,
@@ -2233,7 +2267,8 @@ async fn an_unknown_kind_of_the_ledgers_own_family_stops_the_first_write() {
     thing(&plain, "bot:sigma", "Sigma").await;
     let planted = jojobot_adapters::testing::plant_unknown_ledger_member(&pool, "future").await;
 
-    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
+    jojobot_adapters::testing::import_claims_now(&pool).await;
+    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone()).journaled()));
     let _ledger = DoltRequests::new(pool.clone()).with_writer(memory.writer());
     let (stored, _) = captured(
         &memory,
@@ -2277,7 +2312,8 @@ async fn a_restart_recognises_spent_ids_from_the_log_alone() {
         .expect("the kinds are seeded");
     let first = request("bot:sigma", "r1");
     {
-        let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
+        jojobot_adapters::testing::import_claims_now(&pool).await;
+        let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone()).journaled()));
         let milhouse = thing(&memory, "person:milhouse", "Milhouse").await;
         thing(&memory, "bot:sigma", "Sigma").await;
         assert_eq!(
@@ -2297,7 +2333,8 @@ async fn a_restart_recognises_spent_ids_from_the_log_alone() {
     assert_eq!(legacy, 0, "the write left no row in the old table");
 
     // A new writer is a new process: it holds nothing and replays the log.
-    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
+    jojobot_adapters::testing::import_claims_now(&pool).await;
+    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone()).journaled()));
     let ledger = DoltRequests::new(pool.clone()).with_writer(memory.writer());
     let held = ledger
         .lookup(&first.bot, &first.id)
@@ -2336,7 +2373,7 @@ async fn a_restart_recognises_the_ids_of_a_memory_a_mail_and_a_session_write() {
         .await
         .expect("the kinds are seeded");
     let rails = |pool: &sqlx::MySqlPool| {
-        let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
+        let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone()).journaled()));
         let mail = FoldedMailboxes::new(Arc::new(
             DoltMailboxes::open(pool.clone(), Arc::new(AnyOwner)).with_writer(memory.writer()),
         ))
@@ -2366,6 +2403,7 @@ async fn a_restart_recognises_the_ids_of_a_memory_a_mail_and_a_session_write() {
     let run;
     let milhouse;
     {
+        jojobot_adapters::testing::import_claims_now(&pool).await;
         let (memory, mail, sessions, ledger) = rails(&pool);
         milhouse = thing(&memory, "person:milhouse", "Milhouse").await;
         thing(&memory, "bot:sigma", "Sigma").await;
@@ -2433,6 +2471,7 @@ async fn a_restart_recognises_the_ids_of_a_memory_a_mail_and_a_session_write() {
     );
 
     // A new process: every rail anew, nothing held, the log replayed.
+    jojobot_adapters::testing::import_claims_now(&pool).await;
     let (memory, mail, sessions, ledger) = rails(&pool);
     let bot = EntityId("bot:sigma".into());
     for (verb, id) in [

@@ -219,9 +219,12 @@ async fn a_capture_through_the_fold_costs_no_more_for_a_thing_of_48_claims() {
     }
 
     // The stack the server serves through, store to index.
+    jojobot_adapters::testing::import_claims_now(&counter).await;
     let supplied = Provisions::new(Vec::new());
     let provisioned: Arc<dyn Memory> = Arc::new(Provisioned::new(
-        DoltMemory::open(counter.clone()).knowing(supplied.clone()),
+        DoltMemory::open(counter.clone())
+            .journaled()
+            .knowing(supplied.clone()),
         supplied,
     ));
     let folded = Arc::new(Folded::new(provisioned));
@@ -305,9 +308,12 @@ async fn the_fold_lists_who_points_at_a_name_as_a_full_ask_does_after_each_claim
     put(&bare, claim(&sibling, &owner, 0, None)).await;
     let first = put(&bare, claim(&subject, &owner, 1, None)).await;
 
+    jojobot_adapters::testing::import_claims_now(&counter).await;
     let supplied = Provisions::new(Vec::new());
     let provisioned: Arc<dyn Memory> = Arc::new(Provisioned::new(
-        DoltMemory::open(counter.clone()).knowing(supplied.clone()),
+        DoltMemory::open(counter.clone())
+            .journaled()
+            .knowing(supplied.clone()),
         supplied,
     ));
     let folded = Arc::new(Folded::new(provisioned.clone()));
@@ -329,7 +335,14 @@ async fn the_fold_lists_who_points_at_a_name_as_a_full_ask_does_after_each_claim
     };
     held("after the fill").await;
 
-    let second = put(folded.as_ref(), claim(&subject, &owner, 2, None)).await;
+    // **A capture the server serves carries a job from the verb layer**, and a
+    // capture with none is a row write that emits no claims event, which the State
+    // the fold refreshes from never learns of. So the capture runs inside one.
+    let second = jojobot_domain::log::claims::job::within(
+        jojobot_domain::log::claims::job::test_job(&jojobot_domain::actor::Actor::Operator),
+        put(folded.as_ref(), claim(&subject, &owner, 2, None)),
+    )
+    .await;
     held("after a capture").await;
 
     // The claim stops naming the owner and names the other bot.
