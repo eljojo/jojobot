@@ -263,6 +263,23 @@ fn a_missing_record_is_served_under_the_handle_its_home_wears_now() {
         None,
         ClaimEvent::AddressBound {
             object: object("k9"),
+            address: "work:epsilon".to_string(),
+        },
+    ));
+    state.apply(&stamped(
+        None,
+        None,
+        ClaimEvent::AddressRetired {
+            object: object("k9"),
+            address: "work:epsilon".to_string(),
+            day: jiff::civil::date(2026, 4, 1),
+        },
+    ));
+    state.apply(&stamped(
+        None,
+        None,
+        ClaimEvent::AddressBound {
+            object: object("k9"),
             address: "work:gamma".to_string(),
         },
     ));
@@ -322,12 +339,10 @@ fn a_missing_record_of_a_supplied_home_is_served_under_its_handle() {
             },
         ),
     ));
+    let served = FactAddress::new(EntityId("work:delta".into()), FactId("f3".into()));
     let fact = state.fact(&record("work:alpha/f2")).unwrap();
-    assert_eq!(
-        fact.derived_from,
-        Some(FactAddress::new(
-            EntityId("work:delta".into()),
-            FactId("f3".into())
-        ))
-    );
+    assert_eq!(fact.derived_from, Some(served.clone()), "the current fact");
+    let parts = state.document_parts(&object("work:alpha"), &[]).unwrap();
+    let write = parts.histories[&FactId("f2".into())].last().unwrap();
+    assert_eq!(write.derived_from, Some(served), "the history");
 }
