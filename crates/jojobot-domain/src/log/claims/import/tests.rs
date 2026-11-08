@@ -632,6 +632,12 @@ fn a_mark_fills_the_first_hole_and_a_hole_nothing_explains_stays_empty() {
     };
     let mut moved = write_of(1, "moved by the first merge", None, 1);
     moved.claim.home = object("k2");
+    // A claim each of the later merges left under the thing it folded.
+    let left_by = |key: &str, words: &str| {
+        let mut write = write_of(1, words, None, 1);
+        write.claim.home = object(key);
+        fact(key, "f1", vec![write])
+    };
     let rows = Rows {
         entities: vec![
             folded("k2", "person:marge", "k3"),
@@ -640,7 +646,11 @@ fn a_mark_fills_the_first_hole_and_a_hole_nothing_explains_stays_empty() {
             folded("k5", "person:bart", "k4"),
             folded("k6", "person:maggie", "k4"),
         ],
-        facts: vec![fact("k2", "f1", vec![moved])],
+        facts: vec![
+            fact("k2", "f1", vec![moved]),
+            left_by("k5", "left by merge 3"),
+            left_by("k6", "left by merge 5"),
+        ],
         merges: vec![
             merge(1, "k2", "k3", vec![("f1".into(), "f9".into())]),
             merge(3, "k5", "k4", Vec::new()),
@@ -666,12 +676,22 @@ fn a_mark_fills_the_first_hole_and_a_hole_nothing_explains_stays_empty() {
     let scan = state
         .document_scan(&object("k4"), &[])
         .expect("the last survivor");
-    let left: Vec<(String, u64)> = scan
+    let mut left: Vec<(String, u64)> = scan
         .unmapped
         .iter()
         .map(|claim| (claim.address.to_string(), claim.merge_no))
         .collect();
-    assert_eq!(left, vec![("person:lisa#f9".to_string(), 2)]);
+    left.sort_by_key(|(_, merge_no)| *merge_no);
+    // The merges either side of the empty number 4 keep the numbers the store
+    // gave them, 3 and 5, so an empty number told before merge 3 would show here.
+    assert_eq!(
+        left,
+        vec![
+            ("person:lisa#f9".to_string(), 2),
+            ("person:bart#f1".to_string(), 3),
+            ("person:maggie#f1".to_string(), 5),
+        ]
+    );
 }
 
 /// **The merge numbers the store holds stay where it holds them, gaps included.**
