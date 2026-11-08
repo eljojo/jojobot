@@ -1065,7 +1065,9 @@ async fn a_start_that_sends_a_note_leaves_a_reviewed_bot_reviewed() {
 async fn a_bot_is_never_left_without_the_record_of_what_it_was_told() {
     for failing in ["entity", "box"] {
         let story = Story::begin("bot:otto").await;
-        let s = story.session().await;
+        // `held` and `told_ids` make the same keys-only recall with no write
+        // between, so the second must be served whole, not as a handle.
+        let s = story.session().await.asking_whole();
         let call = json!({"kind": "bot", "handle": "gamma", "name": "Gamma",
                           "source": "user-named", "request_id": "make-gamma"});
         story.fails_the_next_commit_of(failing);
