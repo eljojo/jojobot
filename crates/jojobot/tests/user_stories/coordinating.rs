@@ -14,8 +14,7 @@ async fn a_coordinator_runs_the_build_and_is_asked_why() {
     let story = Story::begin("bot:otto").await;
 
     // ── session 1 · the board the work happens on ───────────────────────────
-    // Reads the same unchanged thing again and wants its body each time.
-    let s = story.session().await.asking_whole();
+    let s = story.session().await;
 
     s.add("project:jojobot-server", "The Server Build").await;
     // The implementer is a bot like any other, and its box opens with it —
@@ -50,7 +49,7 @@ async fn a_coordinator_runs_the_build_and_is_asked_why() {
     s.wrap("stood up the board").await;
 
     // ── session 2 · a defect found by a session doing something else ────────
-    let s = story.session().await.asking_whole();
+    let s = story.session().await;
 
     // What it touched and how it was found are fields and `refs`, not prose:
     // the record carries them as values a later session can read.
@@ -84,7 +83,7 @@ async fn a_coordinator_runs_the_build_and_is_asked_why() {
         .await;
 
     // ── session 3 · a decision, with the operator's own words as the receipt ─
-    let s = story.session().await.asking_whole();
+    let s = story.session().await;
 
     let ruling = s
         .fact(
@@ -108,7 +107,7 @@ async fn a_coordinator_runs_the_build_and_is_asked_why() {
     s.wrap("recorded the ruling").await;
 
     // ── session 4 · work goes out, and comes back ───────────────────────────
-    let s = story.session().await.asking_whole();
+    let s = story.session().await;
 
     let dispatched = s
         .post(
@@ -121,7 +120,7 @@ async fn a_coordinator_runs_the_build_and_is_asked_why() {
     s.wrap("dispatched the slice").await;
 
     // The implementer, on its own connection, which never met the coordinator.
-    let g = story.as_bot("bot:gamma").await.asking_whole();
+    let g = story.as_bot("bot:gamma").await;
 
     // Polling is how a session finds out whether anything is waiting. It
     // reports the counts and takes delivery of nothing, which is why the
@@ -239,7 +238,7 @@ async fn a_coordinator_runs_the_build_and_is_asked_why() {
     // The round trip completes across three sessions that never shared a
     // connection. The report is findable without opening the box, and taking
     // delivery of the one message the hit names leaves the rest of it alone.
-    let s = story.session().await.asking_whole();
+    let s = story.session().await;
     s.find_including_mail("Shipped it")
         .await
         .says(&format!("\"id\":\"{report}\""))
@@ -356,6 +355,7 @@ async fn a_coordinator_runs_the_build_and_is_asked_why() {
         .await;
 
     // ── session 6 · a second slice, and who is carrying what ────────────────
+    // Reads a thing again, unchanged since served, and wants its body; the story is red without this.
     let s = story.session().await.asking_whole();
 
     s.add("bot:delta", "Delta").await;
@@ -448,7 +448,7 @@ async fn a_coordinator_runs_the_build_and_is_asked_why() {
     s.wrap("two slices out").await;
 
     // ── session 7 · the next coordinator picks it up ────────────────────────
-    let s = story.session().await.asking_whole();
+    let s = story.session().await;
 
     // Everything the earlier sessions wrote is here for a session that was not
     // there for any of it and was told nothing.
