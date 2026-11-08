@@ -1088,10 +1088,23 @@ pub async fn boot_store_observed(
             // **Key writes whose claim no row holds**, skipped: the old tables keep
             // them, and the deployed build served such a store, so the boot goes on.
             // Info, like the homes: a state the import tolerates, not a fault.
-            if let Some(first) = skipped_key_writes.first() {
+            // **Each skipped write is named** (thing, key and place), up to a bound:
+            // a write that is the newest of its key changes the value the thing
+            // serves, so the line says which ones.
+            if !skipped_key_writes.is_empty() {
+                const NAMED: usize = 20;
+                let mut keys = skipped_key_writes
+                    .iter()
+                    .take(NAMED)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                if skipped_key_writes.len() > NAMED {
+                    keys.push_str(&format!(", and {} more", skipped_key_writes.len() - NAMED));
+                }
                 tracing::info!(
                     count = skipped_key_writes.len(),
-                    first = %first,
+                    keys = %keys,
                     "the import skipped key writes whose claim no row holds; they stay in the old tables"
                 );
             }
