@@ -14,7 +14,6 @@ impl InMemoryMemory {
     pub(super) fn docs_of(&self, rows: Vec<Entity>) -> Vec<search::DocScan> {
         let facts = self.facts_view();
         let prose = self.prose.lock().expect("fake mutex poisoned").clone();
-        let badges = self.badges.lock().expect("fake mutex poisoned").clone();
         let resolution = self.resolution();
         rows.into_iter()
             .map(|entity| {
@@ -35,9 +34,11 @@ impl InMemoryMemory {
                 let field_links = self.marked_links_in(&resolution, &fields);
                 self.compose_reference_fields_in(&resolution, &mut fields);
                 search::DocScan {
-                    doc_id: badges
-                        .get(&entity.id)
-                        .cloned()
+                    // The badge the row wears, which a rename keeps; a row with
+                    // none is filed under its handle.
+                    doc_id: entity
+                        .badge
+                        .clone()
                         .unwrap_or_else(|| entity.id.to_string()),
                     title: entity.name.clone(),
                     prose: prose.get(&entity.id).cloned().unwrap_or_default(),

@@ -147,7 +147,7 @@ pub struct InMemoryMemory {
     run_bots: Option<std::sync::Arc<dyn crate::session::RunBots>>,
     /// **The claims State the fake's writes apply their events to**, so it
     /// answers what the fake answers for a thing a write touched.
-    claims: Mutex<crate::log::claims::State>,
+    claims: std::sync::Arc<Mutex<crate::log::claims::State>>,
     entities: Mutex<Vec<Entity>>,
     /// **How many times the whole listing has been asked for**, through
     /// [`Memory::list_entities`]. The real store builds every entity's row on
@@ -1742,7 +1742,16 @@ impl InMemoryMemory {
         // of one record's write are one act, so none is a later change than
         // another. The review stamp rides such a write and reads as reviewed only
         // if it is not earlier than the keys beside it.
-        let moment = self.clock().now();
+        // The moment of the claim write the act appended, when there is one.
+        let moment = self
+            .claim_writes
+            .lock()
+            .expect("fake mutex poisoned")
+            .iter()
+            .filter(|(held, id, _)| *held == at.home && *id == at.local)
+            .max_by_key(|(_, _, write)| write.ordinal)
+            .and_then(|(_, _, write)| write.written_at)
+            .unwrap_or_else(|| self.clock().now());
         // **The claim write this act just appended**, which carries every key of
         // the act: the newest write of the claim under the key it is stored at.
         let origin = self.newest_claim_write_origin(&at);
@@ -2248,6 +2257,12 @@ struct StoredWrite {
 
 #[async_trait::async_trait]
 impl Memory for InMemoryMemory {
+    /// **The fake's State is lent as it stands**: the same emitters feed it, and
+    /// no log lets it fall behind.
+    fn claims_lender(&self) -> Option<std::sync::Arc<dyn crate::log::claims::ClaimsLender>> {
+        Some(self.claims.clone())
+    }
+
     fn image_field(&self, entity: &EntityId, key: &str) -> Option<Option<String>> {
         Some(
             self.key_of(entity)
@@ -3866,6 +3881,23 @@ impl Memory for InMemoryMemory {
         Ok(held)
     }
 
+    /// **The marker is the claims State's count of the writes behind the thing**,
+    /// as the store counts them: the writes of its claims and of its own row.
+    async fn fields_versioned(
+        &self,
+        entity: &EntityId,
+    ) -> Result<(std::collections::BTreeMap<String, String>, u64), MemoryError> {
+        let fields = self.fields(entity).await?;
+        // A thing folded into another answers the default marker: in the State its
+        // marker would move with every write of its survivor, where the store
+        // counts the rows filed under the folded thing's own key.
+        if self.is_folded_key(&self.key_of(entity)?) {
+            return Ok((fields, 0));
+        }
+        let key = self.object_key(entity);
+        Ok((fields, self.read_claims(|state| state.write_marker(&key))))
+    }
+
     async fn field_ages(&self, entity: &EntityId) -> Result<super::super::FieldAges, MemoryError> {
         self.age_reads
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -4004,7 +4036,12 @@ impl Memory for InMemoryMemory {
                 if let Some(snapshot) = &mut version.snapshot {
                     for pointer in [&mut snapshot.parent, &mut snapshot.merged_into] {
                         if let Some(stored) = pointer.take() {
-                            *pointer = Some(self.current_handle(&stored));
+                            // A pointer kept as a handle is followed through the
+                            // renames since, as a key is.
+                            *pointer = Some(
+                                self.resolve(&stored)
+                                    .map_or_else(|| self.current_handle(&stored), |(_, now)| now),
+                            );
                         }
                     }
                 }

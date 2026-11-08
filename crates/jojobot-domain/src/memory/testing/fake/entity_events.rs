@@ -75,12 +75,19 @@ impl InMemoryMemory {
             merged_into: None,
             taken_in: None,
         };
-        let events = entity_change_events(
-            &decoded,
-            change,
-            self.clock().now(),
-            session.map(str::to_string),
-        );
+        // **The moment the write stamped the row**, which is the moment of its
+        // event: the store has one moment for both.
+        let stamped = EntityId(row.badge.clone().unwrap_or_else(|| row.id.to_string()));
+        let at = self
+            .entity_writes
+            .lock()
+            .expect("fake mutex poisoned")
+            .iter()
+            .rev()
+            .find(|(held, _)| held == &stamped)
+            .map(|(_, at)| *at)
+            .unwrap_or_else(|| self.clock().now());
+        let events = entity_change_events(&decoded, change, at, session.map(str::to_string));
         let mut claims = self.claims.lock().expect("fake mutex poisoned");
         for event in &events {
             claims.apply(event);
