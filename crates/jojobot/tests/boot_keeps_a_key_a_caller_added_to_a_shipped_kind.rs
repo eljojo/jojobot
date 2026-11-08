@@ -81,6 +81,36 @@ async fn a_boot_keeps_a_key_a_caller_added_to_a_shipped_kind() {
         "the newest declaration keeps the caller's key: {held:?}"
     );
 
+    // **A second boot appends nothing.** The reconcile of the next boot compares the
+    // State the log gives with the declarations the store holds under the shipped
+    // names; when the store's declaration is shaped or ordered differently from the
+    // State's, every boot would append one. Run that same comparison now.
+    let events = jojobot_adapters::testing::claims_events(booted.store.pool()).await;
+    let state = jojobot_domain::log::claims::State::replay(events.iter());
+    let shipped: std::collections::BTreeSet<String> = kinds::shipped_declarations()
+        .into_iter()
+        .chain(jojobot_mcp::seed::shipped_types())
+        .map(|declaration| declaration.name)
+        .collect();
+    let held: Vec<_> = booted
+        .served
+        .declared_types()
+        .await
+        .expect("the store reads its declarations")
+        .into_iter()
+        .filter(|declaration| shipped.contains(&declaration.name))
+        .collect();
+    assert!(
+        !held.is_empty(),
+        "the store holds declarations under the shipped names"
+    );
+    let again = jojobot_domain::log::claims::import::reconcile_shipped_declarations(&state, &held);
+    assert!(
+        again.is_empty(),
+        "a second boot would append {} declarations: {again:?}",
+        again.len()
+    );
+
     let mut store = booted.store;
     store.stop().await;
     drop(scratch);
