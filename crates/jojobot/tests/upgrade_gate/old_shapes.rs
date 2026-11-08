@@ -35,6 +35,76 @@ async fn as_the_assistant(booted: &Booted, git_ref: &str) -> (Surface, String) {
     (surface, sid)
 }
 
+/// A teaching delivered on the restored store stays spent after a restart.
+/// Another note may have been deferred by the receipt budget; it may still ship.
+#[tokio::test]
+async fn a_run_on_the_restored_store_is_not_taught_the_same_note_after_a_restart() {
+    let Restored {
+        scratch,
+        state_dir,
+        store_port,
+        git_ref,
+        ..
+    } = restore_the_fixture("teaching-once").await;
+    let first = boot_current(&state_dir, store_port, &git_ref).await;
+    let (surface, sid) = as_the_assistant(&first, &git_ref).await;
+    let made = parsed(
+        "the thing to write about",
+        &git_ref,
+        &surface
+            .call(
+                "add_entity",
+                json!({"kind": "thing", "handle": "gate-pointer", "name": "Gate Pointer",
+                       "source": "test", "sid": sid}),
+            )
+            .await,
+    );
+    assert_eq!(made["id"], "thing:gate-pointer", "{made}");
+    let one = parsed(
+        "the first claim",
+        &git_ref,
+        &surface
+            .call(
+                "capture",
+                json!({"subject": "thing:gate-pointer", "content": "the first claim", "sid": sid}),
+            )
+            .await,
+    );
+    assert_ne!(one["status"], "blocked", "{one}");
+    let taught = one["teaching"]
+        .as_array()
+        .filter(|notes| !notes.is_empty())
+        .expect("the first capture delivered a teaching")
+        .clone();
+    surface.finish().await;
+    first.stop().await;
+
+    let second = boot_current_expecting(&state_dir, store_port, &git_ref, Some(0), &[]).await;
+    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", second.http_port))
+        .await
+        .expect("the restarted head");
+    let two = parsed(
+        "the second claim in the same run",
+        &git_ref,
+        &surface
+            .call(
+                "capture",
+                json!({"subject": "thing:gate-pointer", "content": "the second claim", "sid": sid}),
+            )
+            .await,
+    );
+    assert_ne!(two["status"], "blocked", "{two}");
+    for note in two["teaching"].as_array().into_iter().flatten() {
+        assert!(
+            !taught.contains(note),
+            "the restored store taught the same run twice: {one} {two}"
+        );
+    }
+    surface.finish().await;
+    second.stop().await;
+    drop(scratch);
+}
+
 /// ── (d) A thought stored over its cap ───────────────────────────────────────
 const LONG_DETAILS: usize = 400;
 
