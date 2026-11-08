@@ -892,6 +892,38 @@ fn an_address_names_a_claim_and_its_home() {
             ],
             ask: vec![("thing:alpha#f5", at("a1", "beta"))],
         },
+        Row {
+            name: "a claim a merge did not list does not take the survivor's label",
+            events: vec![
+                bound("alpha", "thing:alpha"),
+                bound("beta", "thing:beta"),
+                created("a1", claim("f1", "alpha", "c", 1)),
+                created("a2", claim("f2", "alpha", "c", 2)),
+                created("b1", claim("f1", "beta", "c", 1)),
+                merged("beta", "alpha", &[], &[]),
+            ],
+            ask: vec![
+                ("thing:alpha#f1", at("a1", "alpha")),
+                ("thing:alpha#f2", at("a2", "alpha")),
+                ("thing:beta#f1", at("a1", "alpha")),
+            ],
+        },
+        Row {
+            name: "a mapped claim and a survivor's claim both stay served beside an unlisted one",
+            events: vec![
+                bound("alpha", "thing:alpha"),
+                bound("beta", "thing:beta"),
+                created("a1", claim("f1", "alpha", "c", 1)),
+                created("b1", claim("f1", "beta", "c", 1)),
+                created("b2", claim("f2", "beta", "c", 2)),
+                merged("beta", "alpha", &[("b1", "f3")], &[]),
+            ],
+            ask: vec![
+                ("thing:alpha#f1", at("a1", "alpha")),
+                ("thing:alpha#f3", at("b1", "alpha")),
+                ("thing:alpha#f2", at("b2", "alpha")),
+            ],
+        },
     ];
     for row in rows {
         let state = state(&row.events);

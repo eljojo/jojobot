@@ -629,8 +629,14 @@ impl State {
             .take_while(|(home, _)| home == folded)
             .collect();
         for at in labels {
+            // A claim the merge did not list keeps the label it had, but a
+            // label the survivor already serves stays the survivor's own: the
+            // unlisted claim is reached through its home, not through the address.
             if let Some(record) = self.indexes.labels.remove(&at) {
-                self.indexes.labels.insert((survivor.clone(), at.1), record);
+                self.indexes
+                    .labels
+                    .entry((survivor.clone(), at.1))
+                    .or_insert(record);
             }
         }
         // Every claim still homed on the folded object, mapped or not, is the
