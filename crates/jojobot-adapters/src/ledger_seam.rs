@@ -608,7 +608,9 @@ impl Seam {
         read: &mut dyn FnMut(&jojobot_domain::log::claims::State),
     ) -> bool {
         let held = self.lock();
-        if held.claims_unreadable.is_some() || !held.claims_import {
+        // A commit whose outcome was not known may have left the State without the
+        // write: it then answers with the document from before it.
+        if held.behind || held.claims_unreadable.is_some() || !held.claims_import {
             return false;
         }
         read(&held.claims);

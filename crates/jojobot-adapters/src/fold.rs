@@ -86,9 +86,6 @@ pub struct Folded {
     /// The projection families whose reads are computed two ways and compared
     /// ([`shadow`]); none unless the configuration names one.
     shadow: Arc<shadow::Shadow>,
-    /// **Where a refresh reads the claims State from** when this is set; else the
-    /// seam of the shared writer, once it holds one ([`Folded::claims`]).
-    claims_view: Option<Arc<dyn claims_view::ClaimsView>>,
     /// Told the address of the next selected fact edit, before it queues for the
     /// writer.
     #[cfg(any(test, feature = "testing"))]
@@ -113,22 +110,16 @@ impl Folded {
             wanted: Arc::new(AtomicBool::new(false)),
             generation: Arc::new(AtomicU64::new(0)),
             shadow: Arc::new(shadow::Shadow::default()),
-            claims_view: None,
             #[cfg(any(test, feature = "testing"))]
             fact_edit: Arc::new(std::sync::Mutex::new(None)),
         }
     }
 
-    /// **Read the claims State from `view`** instead of the shared writer's seam.
-    /// A store with no seam (a fake) lends its State this way.
-    pub fn with_claims_view(mut self, view: Arc<dyn claims_view::ClaimsView>) -> Self {
-        self.claims_view = Some(view);
-        self
-    }
-
-    /// **Run `read` on the claims State when it can answer**, from the view this
-    /// holds or else the shared writer's seam. `None` sends the read to the store.
+    /// **Run `read` on the claims State when it can answer**: the State of the
+    /// store beneath, which a fake keeps and lends, else the seam of the shared
+    /// writer, once it holds one. `None` sends the read to the store.
     fn claims<T>(&self, read: impl FnOnce(&jojobot_domain::log::claims::State) -> T) -> Option<T> {
+        use jojobot_domain::log::claims::ClaimsLender;
         let mut read = Some(read);
         let mut out = None;
         let mut take = |state: &jojobot_domain::log::claims::State| {
@@ -136,9 +127,9 @@ impl Folded {
                 out = Some(read(state));
             }
         };
-        let answered = match (&self.claims_view, self.writer.seam()) {
-            (Some(view), _) => view.read(&mut take),
-            (None, Some(seam)) => claims_view::ClaimsView::read(&*seam, &mut take),
+        let answered = match (self.inner.claims_lender(), self.writer.seam()) {
+            (Some(lender), _) => lender.lend(&mut take),
+            (None, Some(seam)) => seam.lend(&mut take),
             (None, None) => false,
         };
         answered.then_some(out).flatten()
@@ -308,13 +299,17 @@ impl Folded {
         // **The State answers when it can**: the thing's document, and the listing
         // after an entity write, are built from the claims State this write has
         // just changed. The store is read when the State cannot answer, and for a
-        // thing a merge touched: TEMPORARY(9.3.8), the survivor's document waits
-        // on the import placing a moved claim under its own identity
+        // thing a merge touched: TEMPORARY(9.3.3), owner
+        // card `q-933-import-places-moved-claim-under-own-identity`, the survivor's document waits on the
+        // import placing a moved claim under its own identity
         // (`a_merge_survivors_document_read_from_the_state_is_the_document_the_store_reads`).
         let from_state = self
             .claims(|state| {
                 let object = state.resolve(&handle.0)?;
-                if state.was_merged(object) {
+                // A role's lease renewals are heartbeats kept off the log, so the
+                // State does not hold what a read of it serves: TEMPORARY(9.3.3),
+                // until the heartbeat home is read through the State.
+                if state.was_merged(object) || state.holds_a_lease(object) {
                     return None;
                 }
                 let doc = Doc::from_state(state, object, &state.declared_types())?;
@@ -1314,6 +1309,10 @@ impl Memory for Folded {
     /// **Straight through**: the width of a read is the inner store's.
     fn read_width(&self) -> usize {
         self.inner.read_width()
+    }
+    /// **Straight through**: the State is the inner store's.
+    fn claims_lender(&self) -> Option<Arc<dyn jojobot_domain::log::claims::ClaimsLender>> {
+        self.inner.claims_lender()
     }
     /// **Answered from the image**, which holds each bot's records with their
     /// edges. The store's own check inside a ceiling write is its own and does

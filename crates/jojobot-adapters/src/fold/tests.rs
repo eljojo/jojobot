@@ -1573,6 +1573,11 @@ struct CountsReferring(Arc<InMemoryMemory>, Arc<std::sync::atomic::AtomicUsize>)
 
 #[jojobot_domain::forward(jojobot_domain::forward_memory, via = 0)]
 impl Memory for CountsReferring {
+    /// **No State is lent**, so the fold asks this store for the holders: the
+    /// cases here are about which names it asks for.
+    fn claims_lender(&self) -> Option<Arc<dyn jojobot_domain::log::claims::ClaimsLender>> {
+        None
+    }
     async fn referring_to(&self, target: &EntityId) -> Result<Vec<Fact>, MemoryError> {
         self.1.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         self.0.referring_to(target).await

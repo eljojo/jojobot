@@ -1258,7 +1258,7 @@ type ReferringPatch = (EntityId, Vec<(String, Vec<Fact>)>);
 /// store would refuse are skipped, as [`ask_referring`] skips them. `None` when a
 /// name belongs to a thing a merge touched, whose holders the State does not yet
 /// serve as the store does: TEMPORARY(9.3.3), owner
-/// `@work:q-933-boot-passes-import`.
+/// card `q-933-import-places-moved-claim-under-own-identity`.
 pub(super) fn referring_in(
     state: &jojobot_domain::log::claims::State,
     names: &[String],

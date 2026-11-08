@@ -15,7 +15,7 @@ fn alpha() -> EntityId {
 async fn folded_over_a_counted_fake() -> (Folded, Arc<Counted>, Arc<InMemoryMemory>) {
     let store = Arc::new(InMemoryMemory::booted());
     let counted = Arc::new(Counted::new(store.clone()));
-    let folded = Folded::new(counted.clone()).with_claims_view(store.clone());
+    let folded = Folded::new(counted.clone());
     folded.rebuild().await.expect("an empty store fills");
     (folded, counted, store)
 }
@@ -28,7 +28,7 @@ async fn folded_over_a_counted_fake() -> (Folded, Arc<Counted>, Arc<InMemoryMemo
 async fn a_fold_refreshed_from_the_state_agrees_with_one_filled_anew() {
     for seed in 1..=40u64 {
         let store = Arc::new(InMemoryMemory::booted());
-        let folded = Folded::new(store.clone()).with_claims_view(store.clone());
+        let folded = Folded::new(store.clone());
         folded.rebuild().await.expect("the fold loads");
         let trace = crate::fold_agreement::run_sequence(seed, 40, &folded).await;
         let fresh = Folded::new(store.clone());
@@ -95,6 +95,34 @@ async fn a_rename_patches_the_image_from_the_claims_state() {
     assert!(
         listed.iter().any(|entity| entity.id == gamma),
         "the image carries the rename: {listed:?}"
+    );
+}
+
+/// **A role's document is read from the store after a write**, because a lease
+/// renewal is a heartbeat kept off the log, which the State does not hold. The
+/// case that renews a lease and reads it back is the upgrade gate's
+/// `appended-lease-tail`.
+#[tokio::test]
+async fn a_claim_write_on_a_role_reads_its_document_from_the_store() {
+    let (folded, counted, _store) = folded_over_a_counted_fake().await;
+    let role = EntityId("role:sigma".into());
+    folded
+        .add_entity(NewEntity::new(role.clone(), "Sigma", "user-named"))
+        .await
+        .expect("add ok")
+        .written()
+        .expect("not blocked");
+    counted.reset();
+    folded
+        .capture(NewFact::about(role, "holds the lease", date(2026, 9, 1)))
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("not blocked");
+    let seen = counted.seen();
+    assert!(
+        seen.contains_key("scan_entity"),
+        "the document of a role was not read from the store: {seen:?}"
     );
 }
 

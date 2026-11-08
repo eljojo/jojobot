@@ -206,15 +206,16 @@ impl Folded {
         // **The State answers when it can**: the listing, the rename history, the
         // merge events and the touched documents are read from the claims State.
         // The store is read when the State cannot answer, and when a document to
-        // read was touched by a merge: TEMPORARY(9.3.8), as in the refresh of a
-        // write (`refresh_listing_inner`).
+        // read was touched by a merge: TEMPORARY(9.3.3), owner
+        // card `q-933-import-places-moved-claim-under-own-identity`, as in the refresh of a write
+        // (`refresh_listing_inner`).
         let from_state = self
             .claims(|state| {
                 let declared = state.declared_types();
                 let mut docs = Vec::with_capacity(plan.touched.len());
                 for (_, read) in &plan.touched {
                     let object = state.resolve(&read.0)?;
-                    if state.was_merged(object) {
+                    if state.was_merged(object) || state.holds_a_lease(object) {
                         return None;
                     }
                     docs.push(Doc::from_state(state, object, &declared)?);
