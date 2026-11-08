@@ -647,7 +647,13 @@ impl Summary {
     }
 
     pub fn render(&self) -> String {
-        let verdict = if self.green { "GREEN" } else { "RED" };
+        let verdict = if !self.green {
+            "RED"
+        } else if !levels::boundary_jobs(&self.lines.join("\n")).is_empty() {
+            "GREEN-PARTIAL"
+        } else {
+            "GREEN"
+        };
         let mut out = format!("verdict: {verdict}\n");
         for line in &self.lines {
             out.push_str(line);

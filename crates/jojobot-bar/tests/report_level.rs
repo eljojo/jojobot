@@ -277,6 +277,19 @@ fn a_seeded_history_moves_exactly_the_jobs_the_rule_names() {
     let report = bar(&dir, &["report"]);
     assert!(report.success, "{}", report.stdout);
     let ran = sorted(report.jobs);
+    assert!(
+        report.stdout.contains("verdict: GREEN-PARTIAL"),
+        "{}",
+        report.stdout
+    );
+    let value: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(dir.join("target/bar/verdict-report.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(value["overall"], "green-partial");
+    assert_eq!(value["not_run"], 0);
+    assert_eq!(value["left_to_boundary"], 1);
+    assert_eq!(value["boundary_jobs"], serde_json::json!(["test-alpha"]));
     assert_eq!(ran.len(), 4, "one job leaves: {ran:?}");
     assert!(
         !ran.iter().any(|j| j.contains("--test alpha")),

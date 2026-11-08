@@ -36,7 +36,7 @@ address, and it is the number a line writes into `ci_run`. The FORGE ID is the d
 runs by it. A run is named `run #NUMBER (forge id ID)`. It never reads a number out of a URL:
 the record carries the run number.
 
-Exit code: 0 the run succeeded (every job green), 1 it failed and a job's block
+Exit code: 0 the run succeeded (GREEN-PARTIAL names jobs left to the boundary), 1 it failed and a job's block
 says RED, or it failed and nothing else is known, 2 it was cancelled or skipped
 (a cancelled run that no newer run replaced says "cancelled; no newer run found"),
 3 no run ended before the timeout, 4 the branch or commit names nothing, 5 it
@@ -212,6 +212,17 @@ RUNNER_LOST = (
 )
 
 
+def boundary_jobs(text):
+    """The report's reserved jobs, including logs written before partial verdicts."""
+    jobs = set()
+    for line in text.splitlines():
+        line = re.sub(r"^\d{4}-\d\d-\d\dT[\d:.]+Z ", "", line)
+        if line.startswith("level:") and "left to the boundary: " in line:
+            left = line.split("left to the boundary: ", 1)[1].split(";", 1)[0]
+            jobs.update(job.strip() for job in left.split(",") if job.strip() not in {"", "none"})
+    return jobs
+
+
 def classify(text):
     """**How one job's log ended, in one place.** Returns ("block", lines) when the log holds
     the bar's verdict block, from the `verdict:` line to the `log:` line that ends it, both the
@@ -221,7 +232,10 @@ def classify(text):
     start = next((i for i, l in enumerate(lines) if l.startswith("verdict:")), None)
     end = next((i for i, l in enumerate(lines) if l.startswith("log:")), None)
     if start is not None and end is not None and end >= start:
-        return "block", lines[start : end + 1]
+        block = lines[start : end + 1]
+        if block[0] == "verdict: GREEN" and boundary_jobs("\n".join(block)):
+            block[0] = "verdict: GREEN-PARTIAL"
+        return "block", block
     died = next((l for l in lines if any(lost in l for lost in RUNNER_LOST)), None)
     if died is not None:
         return "died", died.strip()
@@ -263,7 +277,7 @@ def report(run):
             continue
         if kind == "block":
             print("\n".join(found))
-            red = red or found[0] != "verdict: GREEN"
+            red = red or found[0] not in {"verdict: GREEN", "verdict: GREEN-PARTIAL"}
         elif kind == "died":
             print(f"RUNNER DIED: {found}")
             died = True

@@ -257,6 +257,26 @@ pub fn report_line(plan: &Plan, total: usize) -> String {
     )
 }
 
+/// Jobs reserved for the boundary, as named by the report's level line.
+pub fn boundary_jobs(text: &str) -> Vec<String> {
+    let mut jobs = Vec::new();
+    for line in text
+        .lines()
+        .filter(|line| line.trim_start().starts_with("level:"))
+    {
+        let Some((_, rest)) = line.split_once("left to the boundary: ") else {
+            continue;
+        };
+        for job in rest.split(';').next().unwrap_or_default().split(',') {
+            let job = job.trim();
+            if !job.is_empty() && job != "none" && !jobs.iter().any(|held| held == job) {
+                jobs.push(job.to_string());
+            }
+        }
+    }
+    jobs
+}
+
 /// **The report level's jobs**, from the listed jobs and the history. A job
 /// leaves only when it is not in [`ALWAYS_RUN`], its history makes it
 /// [`Standing::Eligible`], and `slow` says its runs are costly enough to be

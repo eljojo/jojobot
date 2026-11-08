@@ -25,6 +25,7 @@ use crate::suite_counts;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Overall {
     Green,
+    GreenPartial,
     Red,
     Infra,
     NoVerdict,
@@ -34,6 +35,7 @@ impl Overall {
     pub fn word(self) -> &'static str {
         match self {
             Overall::Green => "green",
+            Overall::GreenPartial => "green-partial",
             Overall::Red => "red",
             Overall::Infra => "infra",
             Overall::NoVerdict => "no-verdict",
@@ -178,6 +180,8 @@ pub struct Verdict {
     pub passed: usize,
     /// Jobs the bar did not run or killed because an earlier job was red.
     pub not_run: usize,
+    /// Jobs the report's history reserved for the boundary, independently of a red.
+    pub boundary_jobs: Vec<String>,
     /// The red suites only, in the order the run printed them.
     pub red: Vec<Suite>,
     /// The phases of the job, other than the tests, that failed: the lint, the
@@ -396,6 +400,7 @@ impl Suite {
 /// **Turn a test run's text and its exit status into the verdict.** `not_run`
 /// is how many jobs the bar left out because an earlier one was red.
 pub fn read(text: &str, exit_ok: bool, not_run: usize) -> Verdict {
+    let boundary_jobs = crate::levels::boundary_jobs(text);
     let parsed = parse(text);
     let counted = parsed.test_verdict();
     let mut suites: Vec<Suite> = parsed.records.iter().map(Suite::of).collect();
@@ -454,6 +459,8 @@ pub fn read(text: &str, exit_ok: bool, not_run: usize) -> Verdict {
         Overall::Red
     } else if counted.suites == 0 {
         Overall::NoVerdict
+    } else if !boundary_jobs.is_empty() {
+        Overall::GreenPartial
     } else {
         Overall::Green
     };
@@ -468,6 +475,7 @@ pub fn read(text: &str, exit_ok: bool, not_run: usize) -> Verdict {
         suites_total: counted.suites,
         passed: counted.passed,
         not_run,
+        boundary_jobs,
         red,
         failed_phases: Vec::new(),
     }
@@ -485,6 +493,8 @@ pub fn to_json(verdict: &Verdict, head_sha: &str, job: &str) -> Value {
         "suites_total": verdict.suites_total,
         "passed": verdict.passed,
         "not_run": verdict.not_run,
+        "left_to_boundary": verdict.boundary_jobs.len(),
+        "boundary_jobs": verdict.boundary_jobs,
         "failed_phases": verdict.failed_phases,
         "red_suites": verdict.red.iter().map(|suite| json!({
             "name": suite.name,
@@ -556,7 +566,7 @@ fn overall_with(overall: Overall, failed_phases: &[String]) -> Overall {
         .iter()
         .any(|phase| !SPOKEN_FOR.contains(&phase.as_str()));
     match overall {
-        Overall::Green | Overall::Infra if outside => Overall::Red,
+        Overall::Green | Overall::GreenPartial | Overall::Infra if outside => Overall::Red,
         other => other,
     }
 }
@@ -592,9 +602,16 @@ pub fn settle(summary: &mut crate::Summary) {
         return;
     };
     let phases = summary.failed_phases();
+    let levels = summary
+        .lines
+        .iter()
+        .filter(|line| line.starts_with("level:"))
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("\n");
     match write(
         &input.job,
-        &input.text,
+        &format!("{levels}\n{}", input.text),
         input.exit_ok,
         input.not_run,
         phases,
@@ -626,6 +643,34 @@ mod tests {
 
     fn names(verdict: &Verdict) -> Vec<&str> {
         verdict.red.iter().map(|s| s.name.as_str()).collect()
+    }
+
+    #[test]
+    fn boundary_omissions_make_both_verdicts_partial_without_changing_not_run() {
+        let fixture = include_str!("../tests/fixtures/wait-run-green-job.txt");
+        let level = fixture
+            .lines()
+            .find(|line| line.contains("level:"))
+            .unwrap();
+        let level = level.split_once("level: ok — ").unwrap().1;
+        let mut summary = crate::Summary::new();
+        summary.phase_ok("level", level);
+        let text = format!("level: {level}\n{GREEN}");
+        let value = to_json(&read(&text, true, 3), "head", "report");
+        assert_eq!(value["overall"], "green-partial");
+        assert_eq!(value["not_run"], 3);
+        assert_eq!(value["left_to_boundary"], 8);
+        assert_eq!(value["boundary_jobs"].as_array().unwrap().len(), 8);
+        assert_eq!(value["boundary_jobs"][1], "lib-jojobot-adapters");
+        assert_eq!(
+            summary.render().lines().next(),
+            Some("verdict: GREEN-PARTIAL")
+        );
+
+        let complete = text.replace(level, "report, 92 of 92 jobs, left to the boundary: none");
+        assert_eq!(read(&complete, true, 0).overall, Overall::Green);
+        summary.phase_failed("lint", "see log");
+        assert_eq!(summary.render().lines().next(), Some("verdict: RED"));
     }
 
     /// **Every red suite is named, not the first.** The capture holds three red

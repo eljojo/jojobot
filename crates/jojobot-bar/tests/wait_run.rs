@@ -238,6 +238,164 @@ fn trunk_gate(id: u64, status: &str) -> Value {
 }
 
 #[test]
+fn boundary_omissions_are_partial_when_read_from_an_older_green_log() {
+    let mut old = two_jobs(
+        "wait-run-green-job.txt",
+        "wait-run-green-job.txt",
+        "success",
+    );
+    for (_, log) in &mut old.runs {
+        *log = log.replace("GREEN-PARTIAL", "GREEN");
+    }
+    for (_, _, _, log) in &mut old.more_jobs {
+        *log = log.replace("GREEN-PARTIAL", "GREEN");
+    }
+    let standing = stand(old);
+    let (code, out, err) = wait(&standing, &["dev9-2647-work"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(
+        out.lines()
+            .filter(|line| *line == "verdict: GREEN-PARTIAL")
+            .count(),
+        2,
+        "{out}"
+    );
+    assert!(out.contains("lib-jojobot-adapters"), "{out}");
+    let standing = stand(two_jobs(
+        "verdict-disk-full.txt",
+        "verdict-disk-full.txt",
+        "success",
+    ));
+    let (code, out, err) = wait(&standing, &["dev9-2647-work"]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert_eq!(
+        out.lines().filter(|line| *line == "verdict: GREEN").count(),
+        2,
+        "{out}"
+    );
+}
+
+#[test]
+fn boundary_omissions_refuse_touched_crates_until_the_same_head_has_covering_proof() {
+    let dir = std::env::temp_dir().join(jojobot_bar::scratch::name("jojobot-boundary-proof"));
+    std::fs::create_dir_all(dir.join("crates/jojobot-adapters/src")).unwrap();
+    std::fs::create_dir_all(dir.join("crates/jojobot-adapters/tests")).unwrap();
+    let git = |args: &[&str]| {
+        let out = Command::new("git")
+            .args([
+                "-c",
+                "user.name=Case",
+                "-c",
+                "user.email=case@example.invalid",
+            ])
+            .args(args)
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{out:?}");
+        String::from_utf8(out.stdout).unwrap().trim().to_string()
+    };
+    git(&["init", "-q"]);
+    std::fs::write(
+        dir.join("crates/jojobot-adapters/Cargo.toml"),
+        "[package]\nname = \"jojobot-adapters\"\n",
+    )
+    .unwrap();
+    git(&["add", "crates/jojobot-adapters/Cargo.toml"]);
+    std::fs::write(
+        dir.join("crates/jojobot-adapters/tests/dolt_store.rs"),
+        "// integration target\n",
+    )
+    .unwrap();
+    git(&["add", "crates/jojobot-adapters/tests/dolt_store.rs"]);
+    git(&["commit", "-qm", "base"]);
+    let base = git(&["rev-parse", "HEAD"]);
+    std::fs::write(
+        dir.join("crates/jojobot-adapters/src/lib.rs"),
+        "// changed\n",
+    )
+    .unwrap();
+    git(&["add", "crates/jojobot-adapters/src/lib.rs"]);
+    git(&["commit", "-qm", "change"]);
+    let head = git(&["rev-parse", "HEAD"]);
+    let partial = include_str!("fixtures/wait-run-green-job.txt");
+    for covering in [
+        "none",
+        "pull-request.yml",
+        "targeted.yml",
+        "wrong-crate",
+        "wrong-sha",
+        "unrelated-omission",
+        "integration-omission",
+    ] {
+        let mut branch = run(102, "dev-case-work", &head, "success");
+        branch["workflow_id"] = json!("branch.yml");
+        let mut gate = trunk_gate(101, "success");
+        gate["commit_sha"] = json!(base);
+        let branch_log = if covering == "unrelated-omission" {
+            partial
+                .replace("lib-jojobot-adapters, ", "")
+                .replace("test-dolt_store, ", "")
+        } else if covering == "integration-omission" {
+            partial.replace("lib-jojobot-adapters, ", "")
+        } else {
+            partial.to_string()
+        };
+        let mut runs = vec![(branch, branch_log), (gate, String::new())];
+        if !["none", "unrelated-omission", "integration-omission"].contains(&covering) {
+            let mut proof = run(
+                103,
+                "proof",
+                if covering == "wrong-sha" {
+                    &base
+                } else {
+                    &head
+                },
+                "success",
+            );
+            proof["workflow_id"] = json!(if covering == "pull-request.yml" {
+                covering
+            } else {
+                "targeted.yml"
+            });
+            let log = if covering == "pull-request.yml" {
+                "level: boundary, 92 jobs\nverdict: GREEN\nlog: target/bar/check.log\n".to_string()
+            } else {
+                format!(
+                    "level: boundary, narrow {}, FILTER=the_case; 1 runnable cases; left to full boundary: other tests\nverdict: GREEN\nlog: target/bar/narrow.log\n",
+                    if covering == "wrong-crate" {
+                        "jojobot-domain"
+                    } else {
+                        "jojobot-adapters"
+                    }
+                )
+            };
+            runs.insert(0, (proof, log));
+        }
+        let standing = stand(Forge {
+            branches: vec![("em-carry", base.clone())],
+            runs,
+            ..Default::default()
+        });
+        let (code, output) = landing_in(&standing, json!({}), Some(&dir));
+        let refused =
+            ["none", "wrong-crate", "wrong-sha", "integration-omission"].contains(&covering);
+        assert_eq!(code, i32::from(refused), "{covering}: {output}");
+        if refused {
+            assert!(
+                output.contains(if covering == "integration-omission" {
+                    "test-dolt_store"
+                } else {
+                    "lib-jojobot-adapters"
+                }),
+                "{output}"
+            );
+        }
+    }
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn landing_gate_sha_ref_verdict_matches_the_tip_or_an_unchanged_ancestor() {
     let dir = std::env::temp_dir().join(jojobot_bar::scratch::name("jojobot-landing-sha"));
     std::fs::create_dir_all(&dir).unwrap();
@@ -344,7 +502,7 @@ fn landing_gate_uses_the_newest_finished_verdict_without_waiting() {
                 output.contains(number) && output.contains(RED_SHA),
                 "{output}"
             );
-            assert_eq!(standing.asked_for("/actions/runs?"), 1);
+            assert_eq!(standing.asked_for("/actions/runs?"), 2);
         }
     }
 }
@@ -525,7 +683,7 @@ fn landing_gate_uses_the_last_finished_verdict_across_different_shas() {
             let (code, output) = landing(&standing);
             assert_eq!(code, i32::from(status == "failure"), "{output}");
             assert!(output.contains(sha), "{output}");
-            assert_eq!(standing.asked_for("head_sha="), 0);
+            assert_eq!(standing.asked_for("head_sha="), 1);
         }
     }
 }
