@@ -350,6 +350,19 @@ impl jojobot_domain::memory::Memory for Blindable {
                 "the store cannot be read".into(),
             ));
         }
+        // **A damaged record fails the read that holds it**, and the whole-corpus
+        // read holds every record: the image cannot be filled, and a read of the
+        // kind goes to the store, which names the record it cannot read.
+        if self
+            .damaged
+            .lock()
+            .expect("the damage is not poisoned")
+            .is_some()
+        {
+            return Err(jojobot_domain::memory::MemoryError::Store(
+                "a record cannot be read".into(),
+            ));
+        }
         self.inner.scan().await
     }
 

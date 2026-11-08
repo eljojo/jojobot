@@ -24,9 +24,12 @@ async fn a_recall_over_a_kind_names_the_card_it_cannot_read_and_serves_the_rest(
     );
     assert!(whole.get("unreadable").is_none(), "{whole}");
 
-    // ── a second card is written while its record cannot be read back ───────
-    store.damages_the_record_of("work:sigma");
+    // ── a second card is written, its record is damaged, and the server reads
+    // the store again, as a restart does: the image follows a write from the
+    // claims State, so only a read of the store meets a record that cannot be read
     s.add("work:sigma", "Paint the fence").await;
+    store.damages_the_record_of("work:sigma");
+    story.the_store_changed_underneath().await;
     let short = s.call("recall", json!({"kind": "work"})).await.json();
     let handles: Vec<&str> = short["objects"]
         .as_array()
