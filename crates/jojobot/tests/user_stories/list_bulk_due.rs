@@ -63,7 +63,8 @@ fn ending(list: &str, id: &str) -> Value {
 #[tokio::test]
 async fn a_batch_whose_ending_step_fails_names_every_item_landed_and_a_resend_finishes_it() {
     let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    // Reads the list a third time, unchanged since the second, and wants its entries.
+    let s = story.session().await.asking_whole();
     a_list_on_the_trip(
         &s,
         "homer-chores",
@@ -152,7 +153,8 @@ async fn a_batch_whose_ending_step_fails_names_every_item_landed_and_a_resend_fi
 #[tokio::test]
 async fn a_cut_batch_that_ends_what_a_list_owes_is_finished_by_the_same_call_each_item_once() {
     let story = Story::begin("bot:gamma").await;
-    let s = story.session().await;
+    // Reads the list a third time, unchanged since the second, and wants its entries.
+    let s = story.session().await.asking_whole();
     a_list_on_the_trip(
         &s,
         "homer-chores",
