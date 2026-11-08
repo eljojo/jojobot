@@ -248,10 +248,15 @@ impl Pool {
         // **The ledgers open before the first transaction of a job begins**, never
         // inside one: the writer holds one connection, and the open writes.
         if let Some(writer) = Writer::current() {
-            writer
+            let seam = writer
                 .ensure_seam(self)
                 .await
                 .map_err(|e| sqlx::Error::Protocol(e.to_string()))?;
+            if seam.behind() {
+                seam.settle()
+                    .await
+                    .map_err(|e| sqlx::Error::Protocol(e.to_string()))?;
+            }
         }
         self.writer().begin().await
     }

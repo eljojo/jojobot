@@ -371,6 +371,202 @@ macro_rules! case {
     )+};
 }
 
+#[derive(Clone, Copy)]
+enum DeclarationChange {
+    Repeat,
+    Rewrite,
+    Withdraw,
+}
+
+/// The next declaration is decided before any verification read can settle the
+/// seam. The lost commit is held inside the same native gate as the log faults.
+async fn declaration_after_unknown_commit(change: DeclarationChange) {
+    use crate::dolt::memory::DoltMemory;
+    use jojobot_domain::log::claims::{State, import::import};
+    use jojobot_domain::memory::Memory;
+    use jojobot_domain::memory::types::{DeclaredType, Field, Origin, ValueType};
+
+    let declaration = |name: &str, key: &str| DeclaredType {
+        name: name.into(),
+        fields: vec![Field::new(key, ValueType::Text)],
+        origin: Origin::Declared,
+        must: None,
+    };
+    let scratch = Scratch::new("declaration-native-recovery");
+    let mut server = Dolt::start(&scratch.0, free_port()).await.unwrap();
+    let store = crate::testing::imported_database(&server, "alpha")
+        .await
+        .unwrap();
+    let native = Arc::new(NativeGate {
+        observer: store.clone(),
+        armed: AtomicBool::new(false),
+        old_id: std::sync::atomic::AtomicU64::new(0),
+        commits: std::sync::atomic::AtomicUsize::new(0),
+        finished: Notify::new(),
+        early_read: AtomicBool::new(false),
+        killed: AtomicBool::new(false),
+    });
+    let plan = Arc::new(Plan {
+        native: Some(native.clone()),
+        ..Plan::default()
+    });
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let upstream = store.connect_options().get_port();
+    let proxy = tokio::spawn({
+        let plan = plan.clone();
+        async move {
+            while let Ok((client, _)) = listener.accept().await {
+                tokio::spawn(serve(client, upstream, plan.clone()));
+            }
+        }
+    });
+    let source =
+        MySqlPoolOptions::new().connect_lazy_with((*store.connect_options()).clone().port(port));
+    let (log, writer) = Faulted::open(store.clone(), port).await.unwrap();
+    let log = Arc::new(log);
+    let memory = Arc::new(DoltMemory::open(source).journaled());
+    let control = declaration("beta", "hat");
+    {
+        let (memory, control) = (memory.clone(), control.clone());
+        writer
+            .run(async move {
+                Box::pin(memory.declare_type(control, None)).await.unwrap();
+                if !matches!(change, DeclarationChange::Withdraw) {
+                    Box::pin(memory.declare_type(declaration("alpha", "mood"), None))
+                        .await
+                        .unwrap();
+                }
+            })
+            .await;
+    }
+    let seam = writer.seam().unwrap();
+    let count_before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM event_log")
+        .fetch_one(&store)
+        .await
+        .unwrap();
+
+    if !matches!(change, DeclarationChange::Repeat) {
+        let mut gate = store.acquire().await.unwrap();
+        let locked: Option<i64> = sqlx::query_scalar("SELECT GET_LOCK('alpha-gate', 0)")
+            .fetch_one(&mut *gate)
+            .await
+            .unwrap();
+        assert_eq!(locked, Some(1));
+        native.armed.store(true, Ordering::SeqCst);
+        let mut lost = tokio::spawn({
+            let (memory, writer) = (memory.clone(), writer.clone());
+            async move {
+                writer
+                    .run(async move {
+                        if matches!(change, DeclarationChange::Withdraw) {
+                            Box::pin(memory.declare_kind(
+                                "alpha",
+                                Origin::Shipped,
+                                vec![Field::new("donuts", ValueType::Text)],
+                            ))
+                            .await
+                            .map(|_| ())
+                        } else {
+                            Box::pin(memory.declare_type(declaration("alpha", "donuts"), None))
+                                .await
+                                .map(|_| ())
+                        }
+                    })
+                    .await
+            }
+        });
+        tokio::select! {
+            () = writer.fence_contended() => {},
+            answer = &mut lost => panic!("the native fault did not hold COMMIT: {answer:?}"),
+            () = tokio::time::sleep(std::time::Duration::from_secs(10)) => panic!("the native fence was not reached"),
+        }
+        sqlx::query("SELECT RELEASE_LOCK('alpha-gate')")
+            .execute(&mut *gate)
+            .await
+            .unwrap();
+        assert!(lost.await.unwrap().is_err(), "the commit reply was lost");
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            native.finished.notified(),
+        )
+        .await
+        .expect("the server finished the native commit");
+        let persisted: String =
+            sqlx::query_scalar("SELECT key_name FROM type_field WHERE type_name = 'alpha' LIMIT 1")
+                .fetch_one(&store)
+                .await
+                .unwrap();
+        assert_eq!(persisted, "donuts", "the unknown commit actually landed");
+        assert!(seam.behind(), "the fixture left the held State behind");
+    }
+
+    {
+        let memory = memory.clone();
+        writer
+            .run(async move {
+                if matches!(change, DeclarationChange::Withdraw) {
+                    Box::pin(memory.reclaim_kind("alpha")).await.unwrap();
+                } else {
+                    Box::pin(memory.declare_type(declaration("alpha", "mood"), None))
+                        .await
+                        .unwrap();
+                }
+            })
+            .await;
+    }
+    // Capture the held value before opening the replay, which uses a writer job.
+    let held = seam.read_claims(Clone::clone);
+    let read = DoltMemory::open(store.clone()).import_rows().await.unwrap();
+    assert!(read.findings.is_empty(), "{:?}", read.findings);
+    let imported = State::replay(import(&read.rows).unwrap().iter());
+    let replay = crate::claims_log::LoggedClaims::open(log)
+        .await
+        .unwrap()
+        .state()
+        .await;
+    for name in ["alpha", "beta"] {
+        let key = ObjectId(name.into());
+        assert_eq!(held.declared(&key), imported.declared(&key), "held {name}");
+        assert_eq!(replay.declared(&key), imported.declared(&key), "log {name}");
+    }
+    assert_eq!(held.declared(&ObjectId("beta".into())), Some(&control));
+    if matches!(change, DeclarationChange::Repeat) {
+        let count_after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM event_log")
+            .fetch_one(&store)
+            .await
+            .unwrap();
+        assert_eq!(
+            count_after, count_before,
+            "a repeated declaration adds no event"
+        );
+    }
+    drop(memory);
+    writer.drain().await;
+    proxy.abort();
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn declaration_recovery_precedes_redeclaring_the_old_type() {
+    Box::pin(declaration_after_unknown_commit(DeclarationChange::Rewrite)).await;
+}
+
+#[tokio::test]
+async fn declaration_recovery_precedes_withdrawing_an_unknown_kind() {
+    Box::pin(declaration_after_unknown_commit(
+        DeclarationChange::Withdraw,
+    ))
+    .await;
+}
+
+#[tokio::test]
+async fn declaration_recovery_keeps_a_repeat_without_an_event() {
+    Box::pin(declaration_after_unknown_commit(DeclarationChange::Repeat)).await;
+}
+
 case!(
     absence_without_a_terminal_fence_is_uncertain,
     a_fenced_abort_leaves_the_same_head,
