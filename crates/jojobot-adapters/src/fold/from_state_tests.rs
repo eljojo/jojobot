@@ -149,6 +149,11 @@ async fn compare(merged: bool) {
     )
     .await;
     say(&memory, &krusty, "hosts a show", &[], 1).await;
+    // **Ten claims on one thing**, so the labels run past f9 and a listing by the
+    // text of the label (f10 before f2) differs from one by its number.
+    for count in 3..=12 {
+        say(&memory, &homer, &format!("remark {count}"), &[], 4).await;
+    }
     memory
         .merge(
             &bart,

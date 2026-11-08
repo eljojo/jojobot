@@ -1271,7 +1271,11 @@ impl InMemoryMemory {
         if self.merges.lock().expect("fake mutex poisoned").is_empty() {
             return self.facts.lock().expect("fake mutex poisoned").clone();
         }
-        self.world().facts.clone()
+        // **In the order the store lists a thing's claims**: a claim a merge moved
+        // sits among the survivor's own by the label the merge gave it.
+        let mut facts = self.world().facts.clone();
+        crate::memory::claims_in_label_order(&mut facts);
+        facts
     }
 
     /// The claim writes as served.

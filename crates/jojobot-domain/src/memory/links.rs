@@ -240,6 +240,20 @@ pub fn referring_holder_order(a: &str, b: &str) -> std::cmp::Ordering {
     a.cmp(b)
 }
 
+/// **The order a thing's claims are listed in, stated once.** By the number in
+/// each claim's label, so `f2` comes before `f10`; a label with no number follows
+/// by its text. A claim a merge moved sits among the survivor's own by the label
+/// the merge gave it, and not by when it was made.
+pub fn claims_in_label_order(facts: &mut [super::Fact]) {
+    facts.sort_by(|a, b| claim_label_order(a.id.as_str(), b.id.as_str()));
+}
+
+/// The order of two claim labels: by number, then by text.
+pub fn claim_label_order(a: &str, b: &str) -> std::cmp::Ordering {
+    let number = |label: &str| super::numbered::whole_number(label.trim_start_matches('f'));
+    (number(a).is_none(), number(a), a).cmp(&(number(b).is_none(), number(b), b))
+}
+
 /// **The holders of a list of who points at a name, once each and in that
 /// order**, for a store that has found them in the order of its own index.
 pub fn referring_holders(mut holders: Vec<EntityId>) -> Vec<EntityId> {

@@ -1109,6 +1109,7 @@ impl BootReader for DoltBootReader {
             if !whole {
                 continue;
             }
+            jojobot_domain::memory::claims_in_label_order(&mut facts);
             answered.insert(
                 thing.clone(),
                 DocScan {

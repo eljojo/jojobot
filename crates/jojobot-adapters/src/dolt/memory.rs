@@ -1626,6 +1626,7 @@ impl DoltMemory {
         let mut facts = self.claims_stored_at(tx, entity).await?;
         let folded = Self::keys_folded_into(tx, entity).await?;
         if folded.is_empty() {
+            jojobot_domain::memory::claims_in_label_order(&mut facts);
             return Ok(facts);
         }
         let handle = self.current_handle(tx, entity).await?;
@@ -1647,7 +1648,7 @@ impl DoltMemory {
                 facts.push(fact);
             }
         }
-        facts.sort_by(|a, b| a.id.as_str().cmp(b.id.as_str()));
+        jojobot_domain::memory::claims_in_label_order(&mut facts);
         Ok(facts)
     }
 
