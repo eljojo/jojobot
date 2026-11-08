@@ -1316,6 +1316,13 @@ async fn the_logged_marks(pool: &sqlx::MySqlPool) -> Vec<jojobot_adapters::teach
     use jojobot_adapters::{writer::Writer, writer_log::WriterLog};
     use jojobot_domain::log::{LogStore, Position};
     use jojobot_domain::teaching::events::TeachingEvent;
+    // The served child loaded its own catalog. This process decodes the whole
+    // log too, including claims declarations whose reference fields name kinds.
+    jojobot_domain::memory::kinds::reload(&jojobot_adapters::dolt::memory::DoltMemory::open(
+        pool.clone(),
+    ))
+    .await
+    .expect("the log reader loads the restored store's kinds");
     let log = WriterLog::open(pool.clone(), Writer::default())
         .await
         .expect("the event log opens");
