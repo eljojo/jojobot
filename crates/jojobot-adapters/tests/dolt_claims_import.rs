@@ -1484,3 +1484,57 @@ async fn claims_import_still_refuses_a_link_row_on_a_live_home_with_no_key_write
 
     server.stop().await;
 }
+
+/// **A served declaration whose keys differ from the newest account is imported,
+/// though no rule differs.** A caller declares `sketch` with one key, then with two;
+/// the account of the second is gone, so the newest account holds one key and the
+/// store serves two. The State the import replays to answers the two.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn claims_import_holds_the_keys_the_store_serves_over_an_older_account() {
+    use jojobot_domain::memory::types::{DeclaredType, Field, ValueType};
+    let (_scratch, mut server, pool) = store("claims-import-older-account").await;
+    let memory = DoltMemory::open(pool.clone());
+    for keys in [&["mood"][..], &["mood", "hat"][..]] {
+        memory
+            .declare_type(
+                DeclaredType::new(
+                    "sketch",
+                    keys.iter()
+                        .map(|key| Field::new(key, ValueType::Text))
+                        .collect(),
+                ),
+                None,
+            )
+            .await
+            .expect("the declaration lands");
+    }
+    sqlx::query(
+        "DELETE FROM type_write WHERE name = 'sketch' \
+         AND ordinal = (SELECT m FROM (SELECT MAX(ordinal) AS m FROM type_write \
+         WHERE name = 'sketch') newest)",
+    )
+    .execute(&pool)
+    .await
+    .expect("the newest account goes");
+
+    import_claims_once(&Writer::default(), &pool, &Provisions::default(), at())
+        .await
+        .expect("the import runs");
+    let state = State::replay(logged(&pool).await.iter());
+    let served = memory
+        .declared_types()
+        .await
+        .expect("the store serves types");
+    let wanted = served
+        .iter()
+        .find(|declared| declared.name == "sketch")
+        .expect("the store serves the type");
+    assert_eq!(wanted.fields.len(), 2, "the case holds two served keys");
+    assert_eq!(
+        state.declared(&jojobot_domain::log::ObjectId("sketch".to_string())),
+        Some(wanted),
+        "the State answers sketch as the store does"
+    );
+
+    server.stop().await;
+}
