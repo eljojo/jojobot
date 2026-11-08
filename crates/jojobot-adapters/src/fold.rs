@@ -307,8 +307,9 @@ impl Folded {
             .claims(|state| {
                 let object = state.resolve(&handle.0)?;
                 // A role's lease renewals are heartbeats kept off the log, so the
-                // State does not hold what a read of it serves: TEMPORARY(9.3.3),
-                // until the heartbeat home is read through the State.
+                // State does not hold what a read of it serves: TEMPORARY(9.3.4),
+                // owner card `q-933-d-s4-lease-home`, until the lease home is read
+                // through the State.
                 if state.was_merged(object) || state.holds_a_lease(object) {
                     return None;
                 }
