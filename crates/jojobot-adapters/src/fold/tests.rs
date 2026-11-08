@@ -1304,6 +1304,100 @@ async fn a_write_completes_while_the_stores_versioned_read_is_stalled() {
     );
 }
 
+/// A store whose first capture waits at its door until it is released, so a
+/// second write can try to pass it.
+struct HoldsFirstCapture {
+    inner: Arc<InMemoryMemory>,
+    first: std::sync::atomic::AtomicBool,
+    stalled: Arc<tokio::sync::Notify>,
+    released: Arc<tokio::sync::Notify>,
+}
+
+#[jojobot_domain::forward(jojobot_domain::forward_memory, via = inner)]
+impl Memory for HoldsFirstCapture {
+    async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
+        if self.first.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            self.stalled.notify_one();
+            self.released.notified().await;
+        }
+        self.inner.capture(fact).await
+    }
+}
+
+/// **Two writes reach the State, and so the image, in the order they reached the
+/// store.** A writes `due_on = A` and is held inside the store. B tries to write
+/// `due_on = B` meanwhile. B waits for A's whole write and refresh; if it ran
+/// through, the refresh of A could land after B's and the image would serve the
+/// earlier value for ever. The store, the State and the image end at B.
+#[tokio::test]
+async fn a_second_write_waits_for_the_first_and_the_image_ends_at_the_later_value() {
+    let inner = Arc::new(InMemoryMemory::booted());
+    inner
+        .add_entity(NewEntity::new(alpha(), "Alpha", "user-named"))
+        .await
+        .expect("add ok")
+        .written()
+        .expect("not blocked");
+    let stalled = Arc::new(tokio::sync::Notify::new());
+    let released = Arc::new(tokio::sync::Notify::new());
+    let double = Arc::new(HoldsFirstCapture {
+        inner: inner.clone(),
+        first: std::sync::atomic::AtomicBool::new(false),
+        stalled: stalled.clone(),
+        released: released.clone(),
+    });
+    let folded = Arc::new(Folded::new(double.clone()));
+    folded.rebuild().await.expect("the image fills");
+    double
+        .first
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let write = |value: &'static str, day: i8| {
+        let folded = folded.clone();
+        tokio::spawn(async move {
+            folded
+                .capture(jojobot_domain::memory::testing::contract::state(NewFact {
+                    fields: BTreeMap::from([("due_on".to_string(), value.to_string())]),
+                    ..NewFact::about(alpha(), format!("{value} writes"), date(2026, 9, day))
+                }))
+                .await
+        })
+    };
+    let a = write("A", 1);
+    stalled.notified().await;
+    let b = write("B", 2);
+    for _ in 0..50 {
+        tokio::task::yield_now().await;
+    }
+    assert!(!b.is_finished(), "B ran through while A was held");
+    assert_eq!(
+        inner
+            .fields(&alpha())
+            .await
+            .expect("fields ok")
+            .get("due_on"),
+        None,
+        "B has not reached the store while A holds the door"
+    );
+    released.notify_one();
+    for task in [a, b] {
+        task.await
+            .expect("the task did not panic")
+            .expect("capture ok")
+            .written()
+            .expect("not blocked");
+    }
+    for (who, fields) in [
+        ("the image", folded.fields(&alpha()).await),
+        ("the store", inner.fields(&alpha()).await),
+    ] {
+        assert_eq!(
+            fields.expect("fields ok").get("due_on"),
+            Some(&"B".to_string()),
+            "{who} ends at the later write"
+        );
+    }
+}
+
 /// **Declaring a fold changes what already-cached writes answer, not
 /// only writes made afterwards.** `folded_fields` interprets a thing's
 /// existing writes against the CURRENT declarations every time it runs;
