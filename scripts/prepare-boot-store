@@ -31,6 +31,7 @@ LOCK_TIMEOUT = BUILD_TIMEOUT + 300
 # to be weighed (a test holds both lists to the checkout).
 GROWER_INPUTS = (
     "scripts/prepare-boot-store",
+    "scripts/refresh-upgrade-fixture",
     "crates/jojobot/tests/boot_measures.rs",
     "Cargo.toml",
     "Cargo.lock",

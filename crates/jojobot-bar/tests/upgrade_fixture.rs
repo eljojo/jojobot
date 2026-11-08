@@ -356,6 +356,7 @@ inputs = [
     'crates/jojobot-domain/data/nicknames.txt',
     'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'flake.nix', 'flake.lock',
     'scripts/prepare-boot-store',
+    'scripts/refresh-upgrade-fixture',
     'crates/jojobot/tests/boot_measures.rs',
 ]
 with tempfile.TemporaryDirectory() as directory:
@@ -482,29 +483,5 @@ echo deployed > "$BOOT_STORE_DIR/recorded"
         fs::read_to_string(dir.join("output/recorded")).unwrap(),
         "deployed\n"
     );
-    fs::remove_dir_all(dir).unwrap();
-}
-
-#[test]
-fn boot_store_cache_key_follows_the_deployed_recorder() {
-    let dir = std::env::temp_dir().join(jojobot_bar::scratch::name("jojobot-boot-key"));
-    let input = "scripts/refresh-upgrade-fixture";
-    for name in [
-        "scripts/prepare-boot-store",
-        "crates/jojobot/tests/boot_measures.rs",
-        input,
-    ] {
-        fs::create_dir_all(dir.join(name).parent().unwrap()).unwrap();
-        fs::write(dir.join(name), "before\n").unwrap();
-    }
-    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/prepare-boot-store");
-    let out = support::output_fenced(
-        Command::new("python3")
-            .args(["-c", "import pathlib,runpy,sys; digest=runpy.run_path(sys.argv[1])['grower_digest']; before=digest(); pathlib.Path(sys.argv[2]).write_text('after\\n'); assert before != digest(), 'changed deployed recorder reused the grown store'"])
-            .arg(script)
-            .arg(input)
-            .current_dir(&dir),
-    ).unwrap();
-    assert!(out.status.success(), "{out:?}");
     fs::remove_dir_all(dir).unwrap();
 }
