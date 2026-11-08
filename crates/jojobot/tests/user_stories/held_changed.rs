@@ -479,9 +479,22 @@ async fn a_claim_another_session_wrote_before_this_one_did_is_named() {
 #[tokio::test]
 async fn a_thing_the_session_holds_unchanged_comes_back_as_its_handle() {
     let (story, otto, other, claim) = otto_holds_homer().await;
-    let ask = json!({"subject": "person:homer", "facts": true, "reship": false});
+    // **No `reship` key, as a default session sends it**; the explicit `false`
+    // below must read the same.
+    let ask = json!({"subject": "person:homer", "facts": true});
 
     let again = otto.call("recall", ask.clone()).await.json();
+    let explicit = otto
+        .call(
+            "recall",
+            json!({"subject": "person:homer", "facts": true, "reship": false}),
+        )
+        .await
+        .json();
+    assert_eq!(
+        again["objects"], explicit["objects"],
+        "no key and false are one read: {again} {explicit}"
+    );
     assert_eq!(
         again["objects"][0],
         json!({"id": "person:homer", "held": "unchanged since served"}),
@@ -526,7 +539,8 @@ async fn a_listing_the_session_holds_unchanged_collapses_and_reship_lists_it_who
     let story = Story::begin("bot:otto").await;
     let otto = story.session().await;
     otto.add("person:homer", "Homer").await;
-    let ask = json!({"kind": "person", "reship": false});
+    // **No `reship` key, as a default session sends it.**
+    let ask = json!({"kind": "person"});
 
     let first = otto.call("list_entities", ask.clone()).await.json();
     assert!(first.to_string().contains("Homer"), "{first}");
@@ -568,10 +582,7 @@ async fn a_notice_of_a_change_does_not_stand_for_the_changed_text() {
     );
 
     let read = otto
-        .call(
-            "recall",
-            json!({"subject": "person:homer", "facts": true, "reship": false}),
-        )
+        .call("recall", json!({"subject": "person:homer", "facts": true}))
         .await
         .json();
     assert!(read.to_string().contains("likes donuts and beer"), "{read}");
