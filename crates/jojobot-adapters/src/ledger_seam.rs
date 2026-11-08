@@ -406,7 +406,13 @@ impl Seam {
         // not need it and goes on.
         if !claims.is_empty() {
             self.settle_claims().await?;
-            if !self.lock().claims_import {
+            // **The import is known from its event as well as its batch id**: a state
+            // that did not replay the batch still holds the event.
+            let imported = {
+                let held = self.lock();
+                held.claims_import || held.claims.import_completed()
+            };
+            if !imported {
                 return Err(LedgerError::Refused(
                     "the log holds no completed claims import, so no claims event is staged".into(),
                 ));

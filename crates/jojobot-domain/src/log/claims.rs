@@ -403,6 +403,10 @@ pub struct State {
     retirements: Vec<Retirement>,
     duplicate_handle_bindings: u64,
     last_duplicate_handle_binding_at: Option<Timestamp>,
+    /// The log this state was built from holds a completed claims import: an
+    /// `ImportCompleted` event was applied. It travels with the state, so a state
+    /// that starts from a snapshot covering the import still knows.
+    import_completed: bool,
     indexes: indexes::Indexes,
 }
 
@@ -495,7 +499,7 @@ impl State {
                 self.merge(folded, survivor, &[], &[], None)
             }
             ClaimEvent::MergeNumbersLeftEmpty { count } => self.leave_merge_numbers_empty(*count),
-            ClaimEvent::ImportCompleted { .. } => {}
+            ClaimEvent::ImportCompleted { .. } => self.import_completed = true,
             ClaimEvent::RecordCreated { record, claim } => {
                 let before = self.records.get(record).map(|held| held.claim.clone());
                 self.records.insert(
@@ -653,6 +657,12 @@ impl State {
     /// **The handle an object answers to now**, when it has one.
     pub fn handle(&self, object: &ObjectId) -> Option<crate::memory::EntityId> {
         self.handle_of(object)
+    }
+
+    /// **Whether the log this state was built from holds a completed claims
+    /// import.**
+    pub fn import_completed(&self) -> bool {
+        self.import_completed
     }
 
     /// **The declaration of a kind in force now**: the newest one.

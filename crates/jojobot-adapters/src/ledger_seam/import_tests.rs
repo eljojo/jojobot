@@ -462,3 +462,58 @@ async fn a_claims_import_fault_between_batches_leaves_no_claims_event() {
     writer.drain().await;
     server.stop().await;
 }
+
+/// **The seam knows the import from its event and not only from the id of its
+/// batch.** The log here holds an `ImportCompleted` event in a batch of another
+/// id, as a state read from a snapshot that covers the import would; a seam opened
+/// over it stages a claims event.
+#[tokio::test]
+async fn the_seam_knows_the_import_from_its_event() {
+    let scratch = Scratch::new("seam-import-event");
+    let mut server = Dolt::start(&scratch.0, free_port()).await.unwrap();
+    let store = migrated_database(&server, "alpha").await.unwrap();
+    let pool = sql::Pool::from(store.clone());
+    let seeding = Writer::default();
+    let seam = opened(&seeding, &pool).await;
+    {
+        let (seam, pool) = (seam.clone(), pool.clone());
+        seeding
+            .run(async move {
+                let mut tx = pool.writer().begin().await.unwrap();
+                let head = seam.log.head_in(&mut tx).await.unwrap();
+                let marker = jojobot_domain::log::claims::import::import_completed(0);
+                let batch = Seam::seal(head, &[], &[marker], at(0), None).unwrap();
+                let staged = seam
+                    .log
+                    .stage(&mut tx, Position(head), &batch)
+                    .await
+                    .unwrap();
+                sql::commit(tx).await.unwrap();
+                staged.committed();
+            })
+            .await;
+    }
+    // One writer holds the store's fence at a time, so the first lets it go.
+    seeding.drain().await;
+    drop(seam);
+    drop(seeding);
+    // A seam of its own replays that log: no batch carries the import's id.
+    let reading = Writer::default();
+    let reopened = opened(&reading, &pool).await;
+    assert!(reopened.read_claims(|state| state.import_completed()));
+    let staged_over_it = staged(
+        &reading,
+        &pool,
+        &reopened,
+        Vec::new(),
+        thing("k1", "person:homer"),
+        false,
+    )
+    .await;
+    assert!(
+        staged_over_it.is_ok(),
+        "a claims event is staged over a log that holds the import's event: {staged_over_it:?}"
+    );
+    reading.drain().await;
+    server.stop().await;
+}

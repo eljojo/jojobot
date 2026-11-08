@@ -443,6 +443,19 @@ fn a_merge_moves_the_label_a_claim_is_served_by_and_not_the_pair_it_was_created_
     assert_eq!(state.record_at_origin(&object("alpha"), "f2"), None);
 }
 
+/// **A state knows the log it was built from holds a completed import** from the
+/// `ImportCompleted` event alone, so one that starts from a snapshot covering the
+/// import knows it without the batch.
+#[test]
+fn a_state_holds_that_the_import_completed_from_its_event() {
+    let completed = ClaimEvent::ImportCompleted { events: 0 };
+    assert!(replay([&completed]).import_completed());
+    let mut applied = replay(&[created("r1", claim("f1", "alpha", "a", 1))]);
+    assert!(!applied.import_completed());
+    apply(&mut applied, &completed);
+    assert!(applied.import_completed());
+}
+
 /// **A merge that would close a loop of redirects changes nothing**: a self-merge
 /// and a merge of an object into one that already folded into it both leave
 /// every read answering, and the first merge still stands.
