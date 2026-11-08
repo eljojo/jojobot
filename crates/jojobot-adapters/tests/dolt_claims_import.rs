@@ -1047,6 +1047,36 @@ async fn claims_import_carries_a_pointer_at_a_name_nothing_holds_as_written() {
         )),
         "the link reads back as stored: {held:?}"
     );
+    // The State the log replays to serves the lineage as the store's own read does.
+    let state = State::replay(held.iter());
+    let record = held
+        .iter()
+        .find_map(|event| match &event.payload {
+            ClaimEvent::RecordCreated { record, claim }
+                if claim.content == "follows from another" =>
+            {
+                Some(record.clone())
+            }
+            _ => None,
+        })
+        .expect("the claim was imported");
+    let from_the_store = memory
+        .recall(&marge)
+        .await
+        .expect("the store reads the claims")
+        .into_iter()
+        .find(|fact| fact.content == "follows from another")
+        .expect("the store serves the claim")
+        .derived_from;
+    assert!(from_the_store.is_some(), "the store serves the lineage");
+    assert_eq!(
+        state
+            .fact(&record)
+            .expect("the State serves it")
+            .derived_from,
+        from_the_store,
+        "the State serves the lineage the store serves"
+    );
 
     server.stop().await;
 }

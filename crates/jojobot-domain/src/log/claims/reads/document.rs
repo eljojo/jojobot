@@ -35,7 +35,11 @@ fn served(state: &State, object: &ObjectId) -> EntityId {
 
 /// **The address a claim is served at now**: the handle of its home and its label.
 fn address_of(state: &State, record: &RecordId) -> Option<FactAddress> {
-    let claim = &state.claim_history(record).last()?.claim;
+    let Some(write) = state.claim_history(record).last() else {
+        // A record the State does not hold is served at the address it was filed under.
+        return super::filed_address(record);
+    };
+    let claim = &write.claim;
     Some(FactAddress::new(
         served(state, &claim.home),
         FactId(claim.label.clone()),

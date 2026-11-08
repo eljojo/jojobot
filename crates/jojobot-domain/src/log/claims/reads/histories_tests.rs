@@ -2,7 +2,7 @@ use super::super::tests::{archived, body, claim, created, moment, object, record
 use super::super::{ClaimBody, ClaimEvent, MovedRecord, ObjectBody, State};
 use crate::actor::Actor;
 use crate::log::Event;
-use crate::memory::{EntityId, FactId, FactStatus, Provenance};
+use crate::memory::{EntityId, FactAddress, FactId, FactStatus, Provenance};
 
 fn things() -> Vec<ClaimEvent> {
     ["work:alpha", "work:beta"]
@@ -182,5 +182,59 @@ fn a_served_write_names_the_session_and_the_bot_of_its_envelope() {
             ))
             .collect::<Vec<_>>(),
         [(Some("run-a"), Some("work:beta")), (None, None)]
+    );
+}
+
+/// **A claim keeps the lineage and the mark the import kept, when the claim they
+/// name is not in the State.** The import carries a pointer at a record nothing
+/// holds as the record id it was filed under. The current claim and its history
+/// serve it at the home and the local id that id names; a source the State holds
+/// is still served at the handle and the label it wears now.
+#[test]
+fn a_claim_serves_the_lineage_and_mark_of_a_record_the_state_does_not_hold() {
+    let mut state = State::default();
+    for event in things() {
+        state.apply(&stamped(None, None, event));
+    }
+    state.apply(&stamped(
+        None,
+        None,
+        created("src", claim("f1", "work:beta", "the source", 1)),
+    ));
+    state.apply(&stamped(
+        None,
+        None,
+        created(
+            "work:alpha/f2",
+            ClaimBody {
+                derived_from: Some(record("view:loops/f1")),
+                stands_for: vec![record("src"), record("person:moe/f9")],
+                ..claim("f2", "work:alpha", "follows from nothing held", 2)
+            },
+        ),
+    ));
+    let missing = FactAddress::new(EntityId("view:loops".into()), FactId("f1".into()));
+    let held = FactAddress::new(EntityId("work:beta".into()), FactId("f1".into()));
+    let gone = FactAddress::new(EntityId("person:moe".into()), FactId("f9".into()));
+
+    let fact = state.fact(&record("work:alpha/f2")).unwrap();
+    assert_eq!(fact.derived_from, Some(missing.clone()), "the lineage");
+    assert_eq!(
+        fact.stands_for,
+        [held.clone(), gone.clone()],
+        "the mark: a held source at its handle, a missing one as filed"
+    );
+
+    let parts = state.document_parts(&object("work:alpha"), &[]).unwrap();
+    let write = parts.histories[&FactId("f2".into())].last().unwrap();
+    assert_eq!(
+        write.derived_from,
+        Some(missing),
+        "the lineage in the history"
+    );
+    assert_eq!(
+        write.stands_for.as_deref(),
+        Some([held, gone].as_slice()),
+        "the mark in the history"
     );
 }
