@@ -83,9 +83,20 @@ impl State {
                 _ => None,
             })
             .collect();
+        // **A retract is not numbered**: its rows hold the claim taken back and the
+        // account beside it, and no number. The account is the write of `retracts`.
+        let retracting: Vec<&ObjectId> = pending
+            .iter()
+            .filter_map(|event| match event {
+                ClaimEvent::FieldWritten { subject, key, .. } if key.0 == memory::RETRACTS => {
+                    Some(self.survivor(subject))
+                }
+                _ => None,
+            })
+            .collect();
         touched
             .into_iter()
-            .filter(|(object, _)| !numbered.contains(&object))
+            .filter(|(object, _)| !numbered.contains(&object) && !retracting.contains(&object))
             .filter_map(|(object, record)| {
                 let handle = self
                     .handle_of(&object)
