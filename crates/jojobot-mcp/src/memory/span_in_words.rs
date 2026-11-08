@@ -8,7 +8,9 @@
 //! the two keys, once a session. **Nothing is inferred and nothing is written:**
 //! the words are only read to decide whether to say it.
 
+use super::receipt_owner::TeachingNote;
 use super::*;
+use crate::answer::compose::Tier;
 use crate::teaching::{SPAN_IN_WORDS_DOMAIN, SPAN_IN_WORDS_TEACHING};
 
 const MONTHS: [&str; 12] = [
@@ -156,29 +158,31 @@ pub(crate) fn names_a_span(text: &str) -> bool {
 }
 
 impl Jojobot {
-    /// **Teach the span keys on a claim whose words give a span and that sent
-    /// neither.** Asked before the ledger row is spent, because spending is a side
-    /// effect and a write that gave no span must not use up the session's one line.
-    // TEMPORARY(9.3.3): off the composer, capture.
-    pub(crate) async fn note_span_in_words(
+    /// **The span teaching for a claim whose words give a span and that sent
+    /// neither key, as a candidate.** The domain is only peeked at: the receipt
+    /// owner spends it if the note ships, so a write that gave no span, or a
+    /// receipt that drops the note, never uses up the session's one line.
+    pub(crate) async fn span_in_words_note(
         &self,
         fact: &Fact,
         caller: &Caller,
-        body: &mut serde_json::Value,
-    ) {
+    ) -> Option<TeachingNote> {
         if fact.happened_at.is_some() || fact.happened_through.is_some() {
-            return;
+            return None;
         }
         let mut text = fact.content.clone();
         if let Some(details) = &fact.details {
             text.push('\n');
             text.push_str(details);
         }
-        if !names_a_span(&text) {
-            return;
+        if !names_a_span(&text) || !self.untaught(SPAN_IN_WORDS_DOMAIN, caller).await {
+            return None;
         }
-        if self.first_contact(SPAN_IN_WORDS_DOMAIN, Some(caller)).await {
-            crate::answer::note_teaching(body, SPAN_IN_WORDS_TEACHING);
-        }
+        Some(TeachingNote::new(
+            "teaching:span_in_words",
+            SPAN_IN_WORDS_DOMAIN,
+            SPAN_IN_WORDS_TEACHING,
+            Tier::Medium,
+        ))
     }
 }

@@ -1030,13 +1030,13 @@ impl Jojobot {
         {
             object.insert("possible_subject_note".into(), possible.note().into());
         }
-        self.note_span_in_words(&fact, &caller, &mut body).await;
         let owed_unlocks = self.offer_unlocks(&fact.subject, &caller, &mut body).await;
         self.note_unstars_without_a_summary(&fact, false, caller.sid.as_str(), &mut body);
         // **Every teaching note is a candidate and none is spent here**: its
         // gate is checked and its domain is only peeked at. The owner serves
         // the ones its budget keeps and spends exactly those.
         let mut notes: Vec<TeachingNote> = Vec::new();
+        notes.extend(self.span_in_words_note(&fact, &caller).await);
         if self.untaught(CLAIMS_DOMAIN, &caller).await {
             notes.push(TeachingNote::new(
                 "teaching:claims",
