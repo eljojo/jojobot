@@ -548,6 +548,52 @@ fn a_stored_clear_by_a_claim_that_did_not_hold_the_key_still_takes_it_off() {
     );
 }
 
+/// **A write of a claim that a merge physically moved is placed on that claim.**
+/// The shape a store made before `merge_event` existed leaves: the claim row is
+/// filed under the survivor with the label the merge gave it (`k2/f5`), and the
+/// write row still names the address it was made at (`k1/f1`). The write is not
+/// an orphan: its claim is the row at the place the merge put it, and the record
+/// is that row's own.
+#[test]
+fn a_write_of_a_claim_a_merge_moved_is_placed_on_the_row_the_merge_put_it_at() {
+    let mut written = write_of(1, "calm", Some("run-a"), 1);
+    written.claim.home = object("k2");
+    written.claim.label = "f5".into();
+    let rows = Rows {
+        entities: vec![entity("k1", "person:homer"), entity("k2", "person:marge")],
+        facts: vec![fact("k2", "f5", vec![written])],
+        field_writes: vec![set("k1", "mood", 1, "calm", "f1", Some(1))],
+        merges: vec![MergeRow {
+            no: 1,
+            folded: object("k1"),
+            survivor: object("k2"),
+            merged_at: at(10).unwrap(),
+            session: None,
+            claims: vec![("f1".into(), "f5".into())],
+        }],
+        ..Rows::default()
+    };
+    let events = imported(&rows);
+    let written: Vec<(&ObjectId, &RecordId)> = events
+        .iter()
+        .filter_map(|event| match &event.payload {
+            ClaimEvent::FieldWritten {
+                subject, record, ..
+            } => Some((subject, record)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        written,
+        [(&object("k2"), &RecordId("k2/f5".into()))],
+        "the write is on the survivor, on the record the claim row holds"
+    );
+    assert_eq!(
+        State::replay(&events).fields(&object("k2"), &[])["mood"],
+        "calm"
+    );
+}
+
 /// **A key write whose claim no row holds is named with its count, and no claim
 /// is made up for it.** The import used to give such a write a record under the
 /// thing it landed on, a record nothing created. It now refuses by name, and the

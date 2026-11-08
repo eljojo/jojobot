@@ -19,8 +19,8 @@ use jiff::Timestamp;
 use jojobot_domain::log::ObjectId;
 use jojobot_domain::log::claims::import::{
     AdoptedRow, EntityRow, EntityWriteRow, FactRow, FactWriteRow, FieldWriteRow, FormerHandleRow,
-    MergeRow, MetadataRow, Rows, SuppliedRow, TypeWriteRow, adopted_identity, record_id,
-    supply_identity,
+    MergeRow, MetadataRow, Rows, SuppliedRow, TypeWriteRow, adopted_identity, key_write_name,
+    record_id, supply_identity, unexplained_key_writes,
 };
 use jojobot_domain::log::claims::{ClaimBody, FieldValue, KeyId, ObjectSnapshot};
 use jojobot_domain::memory::types::{DeclaredType, Origin};
@@ -51,6 +51,10 @@ pub struct ImportRead {
     /// that more than one thing wore is a finding instead, because the import never
     /// guesses which.
     pub dangling_pointers: Vec<DanglingPointer>,
+    /// **Key writes whose claim no row holds**, each named by its thing, its key and
+    /// its place. The reader leaves them out of the rows and the import goes on: they
+    /// stay in the old tables, where a later build that reads them can import them.
+    pub skipped_key_writes: Vec<String>,
 }
 
 /// **One stored pointer that names nothing**, where it was read.
@@ -368,34 +372,24 @@ impl DoltMemory {
 
         Self::claim_rows(tx, &mut read, &mut rows).await?;
         Self::field_write_rows(tx, &mut read, &mut rows).await?;
-        // **A key write whose claim no row holds is skipped and named with its
-        // count**, never given a claim of its own. The rows stay in the store, and
-        // the import refuses what reaches it here (rule 796: a boot goes on).
-        let claims: HashSet<(&ObjectId, &str)> = rows
-            .facts
-            .iter()
-            .map(|fact| (&fact.home, fact.local.as_str()))
-            .collect();
-        let mut orphaned: Vec<String> = Vec::new();
-        rows.field_writes.retain(|write| {
-            let held = claims.contains(&(&write.fact_home, write.fact_local.as_str()));
-            if !held {
-                orphaned.push(format!(
-                    "{}/{}#{}",
-                    write.entity.0, write.key.0, write.ordinal
-                ));
-            }
-            held
-        });
-        if let Some(first) = orphaned.first() {
-            read.findings.push(Finding {
-                table: "field_write",
-                row: first.clone(),
-                what: format!("{} key writes name a claim no row holds", orphaned.len()),
-            });
-        }
         Self::merge_rows(tx, &mut read, &mut rows).await?;
         Self::type_write_rows(tx, &mut rows).await?;
+        // **A key write whose claim no row holds is skipped and named**, never given
+        // a claim of its own and never a finding: the deployed build serves such a
+        // store, so a boot goes on (rule 796). The rows stay in the store. Which
+        // writes those are is the import's own decision, asked after the merges are
+        // read because a claim a merge moved is found where the merge put it.
+        let orphaned = unexplained_key_writes(&rows);
+        let skipped_key_writes: Vec<String> = orphaned
+            .iter()
+            .map(|at| key_write_name(&rows.field_writes[*at]))
+            .collect();
+        let mut at = 0usize;
+        rows.field_writes.retain(|_| {
+            let kept = !orphaned.contains(&at);
+            at += 1;
+            kept
+        });
 
         let metadata =
             sqlx::query("SELECT fact_home, fact_id, `key`, value FROM fact_event_metadata ORDER BY fact_home, fact_id, `key`")
@@ -420,6 +414,7 @@ impl DoltMemory {
             findings: read.findings,
             skipped_homes: read.skipped.into_iter().collect(),
             dangling_pointers: read.dangling,
+            skipped_key_writes,
         })
     }
 }

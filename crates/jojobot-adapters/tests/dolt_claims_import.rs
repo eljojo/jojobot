@@ -1938,6 +1938,168 @@ async fn claims_import_carries_a_reference_and_a_mark_at_names_nothing_holds() {
         [("refs", "person:ralph"), ("stands_for", "person:moe")],
         "the report names the reference and the mark"
     );
+    server.stop().await;
+}
 
+/// **A key write whose claim no row holds does not refuse the boot.** The boot
+/// calls `import_claims_once`, which refuses a store on any finding, so the write
+/// is no finding: it is left out of the rows, named in the answer with its place,
+/// and the rest imports. The write stays in the old table. **Paired**: the write
+/// of the claim that is held reaches the log.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn claims_import_goes_on_over_a_key_write_whose_claim_no_row_holds() {
+    let (_scratch, mut server, pool) = store("claims-import-orphan-write").await;
+    let memory = DoltMemory::open(pool.clone());
+    let homer = thing(&memory, "person:homer", "Homer").await;
+    let mut fact = NewFact::about(homer.clone(), "eats donuts", date(2026, 9, 1));
+    fact.provenance = Provenance::Testimony;
+    fact.fields = [("mood".to_string(), "happy".to_string())]
+        .into_iter()
+        .collect();
+    fact.sets = fact.fields.keys().cloned().collect();
+    memory
+        .capture(fact)
+        .await
+        .expect("capture")
+        .written()
+        .expect("not blocked");
+    let badge: String = sqlx::query_scalar("SELECT badge FROM entity WHERE id = ?")
+        .bind(homer.as_str())
+        .fetch_one(&pool)
+        .await
+        .expect("the thing wears a badge");
+    sqlx::query(
+        "INSERT INTO field_write (entity, `key`, ordinal, value, fact_id, written_at, write_class)
+         VALUES (?, 'mood', 9, 'wary', 'f99', '2026-10-09T09:00:00Z', 'sets')",
+    )
+    .bind(&badge)
+    .execute(&pool)
+    .await
+    .expect("the write lands");
+
+    let imported = import_claims_once(&Writer::default(), &pool, &Provisions::default(), at())
+        .await
+        .expect("a write with no claim does not refuse the boot");
+    let Imported::Done {
+        skipped_key_writes, ..
+    } = imported
+    else {
+        panic!("the import ran: {imported:?}");
+    };
+    assert_eq!(skipped_key_writes, [format!("{badge}/mood#9")]);
+    let held = logged(&pool).await;
+    let written: Vec<_> = held
+        .iter()
+        .filter_map(|event| match &event.payload {
+            ClaimEvent::FieldWritten { record, write, .. } => Some((record.0.clone(), write)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        written.len(),
+        1,
+        "only the write of the held claim entered the log: {written:?}"
+    );
+    server.stop().await;
+}
+
+/// **A write of a claim a merge physically moved is imported on the claim row the
+/// merge put it at.** The shape a store made before `merge_event` existed leaves:
+/// the claim's rows are filed under the survivor with the label the merge gave it,
+/// and the key write still names the address it was made at. The shape is made
+/// here by moving the rows of a merge the port made, so the key write's address
+/// is the stored one and the claim rows sit where the old build put them.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn claims_import_places_a_write_of_a_claim_a_merge_moved_on_the_row_it_was_moved_to() {
+    let (_scratch, mut server, pool) = store("claims-import-legacy-moved").await;
+    let memory = DoltMemory::open(pool.clone());
+    let bart = thing(&memory, "person:bart", "Bart").await;
+    let lisa = thing(&memory, "person:lisa", "Lisa").await;
+    let me = thing(&memory, "bot:sigma", "Sigma").await;
+    let mut own = NewFact::about(bart.clone(), "skates", date(2026, 9, 1));
+    own.provenance = Provenance::Testimony;
+    memory
+        .capture(own)
+        .await
+        .expect("capture")
+        .written()
+        .expect("not blocked");
+    let mut moved = NewFact::about(lisa.clone(), "plays the saxophone", date(2026, 9, 1));
+    moved.provenance = Provenance::Testimony;
+    moved.fields = [("instrument".to_string(), "saxophone".to_string())]
+        .into_iter()
+        .collect();
+    moved.sets = moved.fields.keys().cloned().collect();
+    memory
+        .capture(moved)
+        .await
+        .expect("capture")
+        .written()
+        .expect("not blocked");
+    memory
+        .merge(
+            &lisa,
+            &bart,
+            Some("filed twice"),
+            date(2026, 9, 3),
+            &me,
+            Some("run-a"),
+        )
+        .await
+        .expect("the fold lands");
+    let key_of = |handle: &'static str| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, String>("SELECT badge FROM entity WHERE id = ?")
+                .bind(handle)
+                .fetch_one(&pool)
+                .await
+                .expect("a badge")
+        }
+    };
+    let (lisa_key, bart_key) = (key_of("person:lisa").await, key_of("person:bart").await);
+    let new_label: String = sqlx::query_scalar(
+        "SELECT survivor_id FROM merge_event WHERE folded = ? AND folded_id = 'f1' AND ordinal > 0",
+    )
+    .bind(&lisa_key)
+    .fetch_one(&pool)
+    .await
+    .expect("the merge moved the claim and named its new label");
+    for statement in [
+        "UPDATE fact SET entity = ?, id = ? WHERE entity = ? AND id = 'f1'",
+        "UPDATE fact_write SET entity = ?, fact_id = ? WHERE entity = ? AND fact_id = 'f1'",
+    ] {
+        sqlx::query(statement)
+            .bind(&bart_key)
+            .bind(&new_label)
+            .bind(&lisa_key)
+            .execute(&pool)
+            .await
+            .expect("the claim's rows move to the survivor");
+    }
+
+    let imported = import_claims_once(&Writer::default(), &pool, &Provisions::default(), at())
+        .await
+        .expect("a moved claim's write is placed, not refused");
+    let Imported::Done {
+        skipped_key_writes, ..
+    } = imported
+    else {
+        panic!("the import ran: {imported:?}");
+    };
+    assert!(
+        skipped_key_writes.is_empty(),
+        "the write has a claim, so it is not skipped: {skipped_key_writes:?}"
+    );
+    let state = State::replay(logged(&pool).await.iter());
+    let survivor = jojobot_domain::log::ObjectId(bart_key);
+    assert_eq!(
+        state
+            .fields(&survivor, &[])
+            .get("instrument")
+            .map(String::as_str),
+        Some("saxophone"),
+        "the write reached the survivor through the claim row the merge moved it to"
+    );
     server.stop().await;
 }

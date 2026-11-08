@@ -1057,6 +1057,7 @@ pub async fn boot_store_observed(
             empty_merge_numbers,
             skipped_homes,
             dangling_pointers,
+            skipped_key_writes,
         }) => {
             tracing::info!(events, "imported today's claims into the event log");
             // **Named once, at info**: the numbers stay empty and are never
@@ -1082,6 +1083,16 @@ pub async fn boot_store_observed(
                     column = %pointer.column,
                     value = %pointer.value,
                     "the import kept a pointer that names nothing the store holds, as written"
+                );
+            }
+            // **Key writes whose claim no row holds**, skipped: the old tables keep
+            // them, and the deployed build served such a store, so the boot goes on.
+            // Info, like the homes: a state the import tolerates, not a fault.
+            if let Some(first) = skipped_key_writes.first() {
+                tracing::info!(
+                    count = skipped_key_writes.len(),
+                    first = %first,
+                    "the import skipped key writes whose claim no row holds; they stay in the old tables"
                 );
             }
             if !empty_merge_numbers.is_empty() {

@@ -530,6 +530,55 @@ fn placed_by_merges(rows: &Rows) -> HashMap<usize, (ObjectId, u64, String)> {
     out
 }
 
+/// The claim rows by the place they are filed at.
+fn fact_rows(rows: &Rows) -> HashMap<(&ObjectId, &str), &FactRow> {
+    rows.facts
+        .iter()
+        .map(|fact| ((&fact.home, fact.local.as_str()), fact))
+        .collect()
+}
+
+/// **The claim row a stored key write belongs to**, or none. The row it names by
+/// its own address; else, for a claim a merge physically moved (a store made before
+/// `merge_event` existed), the row filed where the merge put the claim: the
+/// survivor and the label the merge gave it. A write neither finds belongs to no
+/// claim, and the import never makes one for it.
+fn claim_row_of<'a>(
+    facts: &HashMap<(&ObjectId, &str), &'a FactRow>,
+    write: &FieldWriteRow,
+    placed_on: &ObjectId,
+    placed_as: &str,
+) -> Option<&'a FactRow> {
+    facts
+        .get(&(&write.fact_home, write.fact_local.as_str()))
+        .or_else(|| facts.get(&(placed_on, placed_as)))
+        .copied()
+}
+
+/// How a key write is named in a finding: its thing, its key and its place.
+pub fn key_write_name(write: &FieldWriteRow) -> String {
+    format!("{}/{}#{}", write.entity.0, write.key.0, write.ordinal)
+}
+
+/// **The key writes whose claim no row holds**, by their place among the rows. The
+/// one decision of which writes the import cannot place on a claim: the reader of
+/// the stored rows leaves them out and names them, and [`import`] refuses any that
+/// reach it.
+pub fn unexplained_key_writes(rows: &Rows) -> Vec<usize> {
+    let placed = placed_by_merges(rows);
+    let facts = fact_rows(rows);
+    rows.field_writes
+        .iter()
+        .enumerate()
+        .filter(|(at, write)| {
+            placed
+                .get(at)
+                .is_some_and(|(on, _, local)| claim_row_of(&facts, write, on, local).is_none())
+        })
+        .map(|(at, _)| at)
+        .collect()
+}
+
 /// **The merge numbers the rows hold**: the folded things that have a merge row,
 /// the things marked merged with no row, and every number below the highest that
 /// no row holds. **The stored numbers are kept as they are, gap and all.** A
@@ -715,27 +764,16 @@ pub fn import(rows: &Rows) -> Result<Vec<Event<ClaimEvent>>, ImportError> {
         events.extend(claim_events(fact, &served));
     }
     let placed = placed_by_merges(rows);
-    let facts: HashMap<(&ObjectId, &str), &FactRow> = rows
-        .facts
-        .iter()
-        .map(|fact| ((&fact.home, fact.local.as_str()), fact))
-        .collect();
-    let mut unexplained = 0usize;
-    let mut first_unexplained = String::new();
+    let facts = fact_rows(rows);
+    let mut unexplained: Vec<&FieldWriteRow> = Vec::new();
     for (at, write) in rows.field_writes.iter().enumerate() {
-        let Some((subject, ordinal, _)) = placed.get(&at) else {
+        let Some((subject, ordinal, local)) = placed.get(&at) else {
             continue;
         };
-        let stored = facts
-            .get(&(&write.fact_home, write.fact_local.as_str()))
-            .copied();
         // **A write whose claim no row holds is named, never given a record**:
         // the import invents no claim for it.
-        let Some(created) = stored else {
-            if unexplained == 0 {
-                first_unexplained = format!("{}/{}#{}", write.entity.0, write.key.0, write.ordinal);
-            }
-            unexplained += 1;
+        let Some(created) = claim_row_of(&facts, write, subject, local) else {
+            unexplained.push(write);
             continue;
         };
         let origin = created
@@ -777,10 +815,10 @@ pub fn import(rows: &Rows) -> Result<Vec<Event<ClaimEvent>>, ImportError> {
             }
         }));
     }
-    if unexplained > 0 {
+    if let Some(first) = unexplained.first() {
         return Err(ImportError::KeyWritesNameNoClaim {
-            count: unexplained,
-            first: first_unexplained,
+            count: unexplained.len(),
+            first: key_write_name(first),
         });
     }
     // A merge made before `merge_event` existed is told only by the mark on the

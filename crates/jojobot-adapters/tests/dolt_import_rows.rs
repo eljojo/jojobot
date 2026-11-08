@@ -700,9 +700,9 @@ async fn every_stored_row_is_read_and_the_legacy_shapes_read_as_stored() {
     server.stop().await;
 }
 
-/// **A key write whose claim no row holds is skipped and named with its count**,
-/// and the rows left map through the import. The write stays in the store: the
-/// reader leaves it out of the rows and says so, so a boot goes on. **Paired**: the
+/// **A key write whose claim no row holds is skipped and named**, and the rows
+/// left map through the import. The write stays in the store: the reader leaves it
+/// out of the rows and names it apart from the findings, so a boot goes on. **Paired**: the
 /// write of a claim that is held is read with it.
 #[tokio::test]
 async fn a_key_write_whose_claim_no_row_holds_is_skipped_and_named() {
@@ -735,16 +735,15 @@ async fn a_key_write_whose_claim_no_row_holds_is_skipped_and_named() {
     .expect("the write lands");
 
     let read = memory.import_rows().await.expect("the reader reads");
-    let named: Vec<(&str, String)> = read
-        .findings
-        .iter()
-        .map(|one| (one.table, one.row.clone()))
-        .collect();
-    assert_eq!(
-        named,
-        [("field_write", format!("{badge}/mood#9"))],
-        "the orphan is named, and nothing else is: {:?}",
+    assert!(
+        read.findings.is_empty(),
+        "an orphan is no finding, which would refuse the boot: {:?}",
         read.findings
+    );
+    assert_eq!(
+        read.skipped_key_writes,
+        [format!("{badge}/mood#9")],
+        "the orphan is named, and nothing else is"
     );
     assert!(
         read.rows.field_writes.iter().all(|w| w.fact_local != "f99"),
