@@ -1161,6 +1161,9 @@ impl InMemoryMemory {
             .expect("fake mutex poisoned")
             .clone();
         events.reverse();
+        // By handle, the newest first for one handle (the sort is stable): the
+        // real store's `ORDER BY former_handle, ordinal DESC`.
+        events.sort_by(|a, b| a.former.cmp(&b.former));
         events.extend(self.numbered_formers());
         events
     }
@@ -4995,14 +4998,23 @@ impl Memory for InMemoryMemory {
         // **The event of the fold, made from the writes as they are served before
         // it**, before the entities are locked: the merged view and the keys the
         // event names read them.
-        self.emit_merge(&folded_key, &survivor_key, &moved, caller, session);
+        // One moment for the event and for the merge it records, as the store has.
+        let merged_at = self.clock().now();
+        self.emit_merge(
+            &folded_key,
+            &survivor_key,
+            &moved,
+            caller,
+            session,
+            merged_at,
+        );
         self.merges
             .lock()
             .expect("fake mutex poisoned")
             .push(StoredMerge {
                 folded: folded_key.clone(),
                 survivor: survivor_key.clone(),
-                merged_at: self.clock().now(),
+                merged_at,
                 session: session.map(str::to_string),
                 claims: moved.clone(),
             });

@@ -144,6 +144,7 @@ impl InMemoryMemory {
         moved: &[(FactId, FactId)],
         caller: &EntityId,
         session: Option<&str>,
+        at: jiff::Timestamp,
     ) {
         let claims: std::collections::HashMap<&str, &str> = moved
             .iter()
@@ -188,7 +189,7 @@ impl InMemoryMemory {
         let origin = Origin {
             actor: Some(crate::actor::Actor::Bot(actor)),
             run: session.map(str::to_string),
-            written_at: Some(self.clock().now()),
+            written_at: Some(at),
         };
         self.emit([emit::merge(
             self.object_key(folded),
