@@ -938,6 +938,55 @@ async fn a_journaled_store_refuses_a_claim_write_with_no_writer_job() {
     server.stop().await;
 }
 
+/// **Inside a writer job, a bare store still emits nothing and a journaled store
+/// emits its claim write**: the mode is the store's, not the job's.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn inside_a_job_a_bare_store_emits_nothing_and_a_journaled_store_emits() {
+    let (_scratch, mut server, journaled, writer, pool) = world("claim-events-in-a-job").await;
+    let homer = EntityId("person:homer".into());
+    let claims_in_the_log = || async {
+        writer
+            .shared_log(&pool)
+            .read_from(Position(0), 100)
+            .await
+            .expect("the log reads")
+            .iter()
+            .flat_map(|batch| batch.members().to_vec())
+            .filter(|member| {
+                crate::claims_log::codec::decode_own(member)
+                    .ok()
+                    .flatten()
+                    .is_some()
+            })
+            .count()
+    };
+    let before = claims_in_the_log().await;
+    let (bare, fact) = (
+        DoltMemory::open(pool.clone()),
+        NewFact::about(homer.clone(), "a bare claim", date(2026, 9, 1)),
+    );
+    writer
+        .run(async move { bare.capture(fact).await })
+        .await
+        .expect("a bare store writes in a job");
+    assert_eq!(
+        claims_in_the_log().await,
+        before,
+        "a bare store emits nothing, in a job too"
+    );
+    let fact = NewFact::about(homer, "a journaled claim", date(2026, 9, 1));
+    writer
+        .run(async move { journaled.capture(fact).await })
+        .await
+        .expect("a journaled store writes in a job");
+    assert!(
+        claims_in_the_log().await > before,
+        "a journaled store emits its claim write"
+    );
+    writer.drain().await;
+    server.stop().await;
+}
+
 /// **A bare store writes the same claim and emits nothing**: it is what the boot
 /// passes, the seeds and the direct-store cases use, and the log stays as it was.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
