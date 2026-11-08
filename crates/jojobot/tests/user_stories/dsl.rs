@@ -113,6 +113,17 @@ pub struct Blindable {
     /// The next read of one document waits here, once armed. See
     /// [`Blindable::holds_the_next_document_read`].
     document_gate: std::sync::Mutex<Option<Arc<DocumentGate>>>,
+    /// The next write waits after it has landed. See [`Blindable::holds_the_next_write`].
+    write_gate: std::sync::Mutex<Option<Arc<DocumentGate>>>,
+}
+
+/// A State that cannot answer: behind the log.
+struct BehindTheLog;
+
+impl jojobot_domain::log::claims::ClaimsLender for BehindTheLog {
+    fn lend(&self, _read: &mut dyn FnMut(&jojobot_domain::log::claims::State)) -> bool {
+        false
+    }
 }
 
 /// **A read of one document held until the story lets it go.** The image of the
@@ -148,6 +159,7 @@ impl Blindable {
             unoriginated: std::sync::atomic::AtomicBool::new(false),
             damaged: std::sync::Mutex::new(None),
             document_gate: std::sync::Mutex::new(None),
+            write_gate: std::sync::Mutex::new(None),
         }
     }
 
@@ -167,14 +179,39 @@ impl Blindable {
     }
 
     /// **The next read of one document waits until the gate is released.** The
-    /// read is the one the image makes after a write, so the write has landed in
-    /// the store and is not yet in the image.
+    /// read is the one the index makes after a write, so the write has landed in
+    /// the store and is not yet in the index.
     pub fn holds_the_next_document_read(&self) -> Arc<DocumentGate> {
         let gate = Arc::new(DocumentGate {
             reached: tokio::sync::Notify::new(),
             released: tokio::sync::Notify::new(),
         });
         *self.document_gate.lock().expect("the gate is not poisoned") = Some(gate.clone());
+        gate
+    }
+
+    /// Wait on the armed gate, once, if there is one.
+    async fn held_after_the_write(&self) {
+        let gate = self
+            .write_gate
+            .lock()
+            .expect("the gate is not poisoned")
+            .take();
+        if let Some(gate) = gate {
+            gate.reached.notify_one();
+            gate.released.notified().await;
+        }
+    }
+
+    /// **The next write waits, once it has landed, until the gate is released.**
+    /// The image follows a write when the verb returns, so the write has reached
+    /// the store and is still inside the verb.
+    pub fn holds_the_next_write(&self) -> Arc<DocumentGate> {
+        let gate = Arc::new(DocumentGate {
+            reached: tokio::sync::Notify::new(),
+            released: tokio::sync::Notify::new(),
+        });
+        *self.write_gate.lock().expect("the gate is not poisoned") = Some(gate.clone());
         gate
     }
 
@@ -232,7 +269,6 @@ impl Blindable {
         add_entity,
         add_entity_with_first_claim,
         archive_entity,
-        capture,
         declare_kind,
         declare_type,
         declared_kinds,
@@ -247,12 +283,62 @@ impl Blindable {
         restore_entity,
         retract,
         set_prose,
-        update_entity,
-        update_entity_with_claim,
-        update_fact
+        update_entity_with_claim
     )
 )]
 impl jojobot_domain::memory::Memory for Blindable {
+    /// **A write that has landed waits here when the story armed the gate**, so it
+    /// has reached the store and not yet the image: the image follows a write when
+    /// the verb returns.
+    async fn capture(
+        &self,
+        fact: jojobot_domain::memory::NewFact,
+    ) -> Result<
+        jojobot_domain::memory::Guarded<jojobot_domain::memory::Fact>,
+        jojobot_domain::memory::MemoryError,
+    > {
+        let landed = self.inner.capture(fact).await;
+        self.held_after_the_write().await;
+        landed
+    }
+
+    async fn update_fact(
+        &self,
+        address: &jojobot_domain::memory::FactAddress,
+        patch: jojobot_domain::memory::FactPatch,
+        caller: &jojobot_domain::memory::EntityId,
+    ) -> Result<
+        jojobot_domain::memory::Guarded<jojobot_domain::memory::Fact>,
+        jojobot_domain::memory::MemoryError,
+    > {
+        let landed = self.inner.update_fact(address, patch, caller).await;
+        self.held_after_the_write().await;
+        landed
+    }
+
+    async fn update_entity(
+        &self,
+        handle: &jojobot_domain::memory::EntityId,
+        patch: jojobot_domain::memory::EntityPatch,
+    ) -> Result<
+        jojobot_domain::memory::Guarded<jojobot_domain::memory::Entity>,
+        jojobot_domain::memory::MemoryError,
+    > {
+        let landed = self.inner.update_entity(handle, patch).await;
+        self.held_after_the_write().await;
+        landed
+    }
+
+    /// **A store that has gone away lends no State a reader can trust**, so the
+    /// refresh after a write that landed cannot be made: the image is dropped, as
+    /// it is when the seam is behind the log after an uncertain commit.
+    fn claims_lender(&self) -> Option<Arc<dyn jojobot_domain::log::claims::ClaimsLender>> {
+        if self.blind.load(std::sync::atomic::Ordering::Acquire) {
+            return Some(Arc::new(BehindTheLog));
+        }
+        self.inner.claims_lender()
+    }
+
     async fn scan(
         &self,
     ) -> Result<Vec<jojobot_domain::memory::search::DocScan>, jojobot_domain::memory::MemoryError>

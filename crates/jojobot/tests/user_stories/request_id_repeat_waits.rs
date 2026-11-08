@@ -22,7 +22,7 @@ async fn a_resend_made_while_the_first_call_is_still_inside_the_verb_waits_and_t
     s.add("person:milhouse", "Milhouse").await;
 
     // ── the first call has reached the store and is not yet in the image ────
-    let gate = store.holds_the_next_document_read();
+    let gate = store.holds_the_next_write();
     let write = json!({
         "subject": "person:milhouse",
         "content": "allergic to shellfish",
@@ -73,7 +73,7 @@ async fn a_resend_on_another_connection_waits_for_the_first_call_too() {
     // handler for each of them.
     let again = story.on_a_fresh_connection(&s).await;
 
-    let gate = store.holds_the_next_document_read();
+    let gate = store.holds_the_next_write();
     let write = json!({
         "subject": "person:milhouse",
         "content": "allergic to shellfish",
