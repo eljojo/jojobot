@@ -116,6 +116,165 @@ fn all() -> Vec<Event<ClaimEvent>> {
     ]
 }
 
+#[tokio::test]
+async fn canonical_handle_append_refuses_a_duplicate_before_any_batch_is_written() {
+    let log: Arc<dyn LogStore> = Arc::new(InMemoryLog::default());
+    let owner = claims(&log).await;
+    let duplicate = event(
+        ClaimEvent::AddressBound {
+            object: homer(),
+            address: "person:marge".into(),
+        },
+        1,
+    );
+    let result = owner
+        .append(
+            vec![object_created(), address_bound(), duplicate.clone()],
+            at(1),
+        )
+        .await;
+    assert!(
+        result.is_err(),
+        "two live handles must be refused: {result:?}"
+    );
+    assert!(log.read_from(Position(0), 10).await.unwrap().is_empty());
+    assert_eq!(owner.head().await, Position(0));
+    assert_eq!(owner.state().await, State::default());
+
+    owner
+        .append(
+            vec![
+                object_created(),
+                address_bound(),
+                address_bound(),
+                event(
+                    ClaimEvent::AddressBound {
+                        object: homer(),
+                        address: "person:homer/1".into(),
+                    },
+                    0,
+                ),
+            ],
+            at(0),
+        )
+        .await
+        .expect("the same handle and a numbered alias are admitted");
+    let head = owner.head().await;
+    assert!(owner.append(vec![duplicate.clone()], at(1)).await.is_err());
+    assert!(log.read_from(head, 10).await.unwrap().is_empty());
+    owner
+        .append(
+            vec![
+                event(
+                    ClaimEvent::AddressRetired {
+                        object: homer(),
+                        address: "person:homer".into(),
+                        day: jiff::civil::date(2026, 11, 5),
+                    },
+                    1,
+                ),
+                duplicate,
+            ],
+            at(1),
+        )
+        .await
+        .expect("retire then bind is a rename");
+    assert_eq!(
+        owner.state().await.handle(&homer()).unwrap().0,
+        "person:marge"
+    );
+}
+
+#[tokio::test]
+async fn canonical_handle_durable_duplicate_replays_safely_as_a_former_handle() {
+    let sink = crate::log_capture::log_sink();
+    let log: Arc<dyn LogStore> = Arc::new(InMemoryLog::default());
+    let second = event(
+        ClaimEvent::AddressBound {
+            object: homer(),
+            address: "person:lisa".into(),
+        },
+        1,
+    );
+    let mut repeated = second.clone();
+    repeated.written_at = Some(at(2));
+    let batch = SealedBatch::seal(
+        BatchId("duplicate-handles".into()),
+        Position(0),
+        at(1),
+        REPRESENTATION_VERSION,
+        [object_created(), address_bound(), second, repeated]
+            .iter()
+            .map(codec::encode)
+            .collect(),
+    )
+    .unwrap();
+    log.append(Position(0), &batch).await.unwrap();
+    let owner = claims(&log).await;
+    let state = owner.state().await;
+    assert_eq!(state.handle(&homer()).unwrap().0, "person:lisa");
+    let former = state
+        .canonical_handle("person:homer")
+        .expect("the former handle resolves");
+    assert_eq!(former.0, "person:lisa");
+    assert_eq!(state.resolve(&former.0), Some(&homer()));
+    assert!(
+        state.former_handles().is_empty(),
+        "no event stated a retirement day"
+    );
+    assert_eq!(state.duplicate_handle_bindings(), 1);
+    assert_eq!(state.last_duplicate_handle_binding_at(), Some(at(1)));
+    assert_eq!(owner.head().await, Position(4));
+    let logged = sink.text();
+    let warnings: Vec<_> = logged
+        .lines()
+        .filter(|line| {
+            line.contains("WARN")
+                && line.contains("object=k1")
+                && line.contains("person:homer")
+                && line.contains("person:lisa")
+        })
+        .collect();
+    assert_eq!(warnings.len(), 1, "each repaired duplicate is logged once");
+    assert!(warnings[0].contains("duplicate_handle_bindings=1"));
+    assert!(warnings[0].contains(&at(1).to_string()));
+}
+
+#[tokio::test]
+async fn canonical_handle_append_refuses_retirement_of_an_unheld_spelling() {
+    let log: Arc<dyn LogStore> = Arc::new(InMemoryLog::default());
+    let owner = claims(&log).await;
+    owner
+        .append(vec![object_created(), address_bound()], at(0))
+        .await
+        .unwrap();
+    let head = owner.head().await;
+    for (object, address) in [
+        (homer(), "person:marge"),
+        (ObjectId("k2".into()), "person:homer"),
+    ] {
+        let result = owner
+            .append(
+                vec![event(
+                    ClaimEvent::AddressRetired {
+                        object,
+                        address: address.into(),
+                        day: jiff::civil::date(2026, 11, 5),
+                    },
+                    1,
+                )],
+                at(1),
+            )
+            .await;
+        assert!(
+            result.is_err(),
+            "an unheld retirement must be refused: {result:?}"
+        );
+        assert_eq!(owner.head().await, head);
+        assert!(log.read_from(head, 10).await.unwrap().is_empty());
+    }
+}
+
 /// **A restart replays to the same state**, answered from the log alone: what the
 /// first process held is what the second reads back, and the head is where the
 /// writes left it. The state is compared with the one the interpreter builds from

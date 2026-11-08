@@ -43,6 +43,9 @@ pub enum ClaimsLogError {
     /// The log or a stored event could not be read or written.
     #[error("the claims family could not reach the log: {0}")]
     Store(String),
+    /// Admission refused the batch before it reached the log.
+    #[error("the claims family refused the batch: {0}")]
+    Refused(String),
     /// Whether the batch committed is not known yet. The next write reads the
     /// tail and settles it.
     #[error("the claims family does not know whether the batch committed")]
@@ -62,6 +65,30 @@ fn refused(error: LogError) -> ClaimsLogError {
 
 fn unreadable(error: codec::DecodeError) -> ClaimsLogError {
     ClaimsLogError::Store(error.to_string())
+}
+
+pub(crate) fn apply(state: &mut State, event: &Event<ClaimEvent>) {
+    let applied = state.apply(event);
+    if let Some(former) = applied.replaced_handle
+        && let ClaimEvent::AddressBound { object, address } = &event.payload
+    {
+        tracing::warn!(
+            object = %object.0,
+            former,
+            current = %address,
+            duplicate_handle_bindings = state.duplicate_handle_bindings(),
+            replacing_event_at = ?state.last_duplicate_handle_binding_at(),
+            "a durable claims binding replaced a live handle"
+        );
+    }
+}
+
+pub(crate) fn report_replay(state: &State) {
+    tracing::info!(
+        duplicate_handle_bindings = state.duplicate_handle_bindings(),
+        last_duplicate_handle_binding_at = ?state.last_duplicate_handle_binding_at(),
+        "claims replay complete"
+    );
 }
 
 struct Held {
@@ -91,6 +118,7 @@ impl LoggedClaims {
         {
             let mut held = this.held.lock().await;
             this.catch_up(&mut held).await?;
+            report_replay(&held.state);
         }
         Ok(this)
     }
@@ -120,7 +148,7 @@ impl LoggedClaims {
                     let Some(event) = codec::decode_own(member).map_err(unreadable)? else {
                         continue;
                     };
-                    held.state.apply(&event);
+                    apply(&mut held.state, &event);
                 }
                 held.head = batch.range().last;
             }
@@ -149,6 +177,9 @@ impl LoggedClaims {
     ) -> Result<(), ClaimsLogError> {
         let mut held = self.held.lock().await;
         self.catch_up(&mut held).await?;
+        held.state
+            .check(&events)
+            .map_err(|error| ClaimsLogError::Refused(error.to_string()))?;
         let members: Vec<Vec<u8>> = events.iter().map(codec::encode).collect();
         let identity = jojobot_domain::request::digest_of(&format!(
             "{}:{}",
@@ -177,7 +208,7 @@ impl LoggedClaims {
                 // the state holds, the stored form of each event included.
                 for event in &events {
                     let stored = codec::decode(&codec::encode(event)).map_err(unreadable)?;
-                    held.state.apply(&stored);
+                    apply(&mut held.state, &stored);
                 }
                 held.head = range.last;
                 Ok(())

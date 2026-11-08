@@ -102,7 +102,7 @@ impl Held {
         match claims {
             Ok(events) => {
                 for event in &events {
-                    self.claims.apply(event);
+                    crate::claims_log::apply(&mut self.claims, event);
                 }
                 self.claims_applied = last;
             }
@@ -151,7 +151,7 @@ impl Pending {
         }
         if held.claims_unreadable.is_none() {
             for claim in &self.claims {
-                held.claims.apply(claim);
+                crate::claims_log::apply(&mut held.claims, claim);
             }
             held.claims_applied = self.last;
         }
@@ -201,6 +201,7 @@ impl Seam {
         if !seam.lock().seen {
             seam.import(pool).await?;
         }
+        crate::claims_log::report_replay(&seam.lock().claims);
         Ok(seam)
     }
 
@@ -390,6 +391,10 @@ impl Seam {
                     .map_err(|error| LedgerError::Refused(error.to_string()))
             })
             .collect::<Result<_, _>>()?;
+        self.lock()
+            .claims
+            .check(&claims)
+            .map_err(|error| LedgerError::Refused(error.to_string()))?;
         let head = self.log.head_in(tx).await.map_err(refused)?;
         let batch = Self::seal(head, &events, &claims, at, import)?;
         let staged = self
@@ -584,7 +589,7 @@ impl Seam {
                     }
                 }
                 for claim in &claims {
-                    held.claims.apply(claim);
+                    crate::claims_log::apply(&mut held.claims, claim);
                 }
                 held.claims_applied = batch.range().last;
             }

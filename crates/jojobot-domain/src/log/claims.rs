@@ -352,6 +352,12 @@ struct MergeEntry {
     relabelled: Vec<(String, String)>,
 }
 
+/// A replay repair the adapter must report, without giving the interpreter I/O.
+#[derive(Debug, Default)]
+pub struct Applied {
+    pub replaced_handle: Option<String>,
+}
+
 /// **What the events so far say.**
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct State {
@@ -379,13 +385,16 @@ pub struct State {
     merge_log: Vec<MergeEntry>,
     /// Every spelling retired from an object, in the order they were retired.
     retirements: Vec<Retirement>,
+    duplicate_handle_bindings: u64,
+    last_duplicate_handle_binding_at: Option<Timestamp>,
     indexes: indexes::Indexes,
 }
 
 impl State {
     /// **The interpreter.** Structural only. It reads the actor and the run of a
     /// write from the envelope.
-    pub fn apply(&mut self, event: &Event<ClaimEvent>) {
+    pub fn apply(&mut self, event: &Event<ClaimEvent>) -> Applied {
+        let mut applied = Applied::default();
         match &event.payload {
             // **The current state at the cut serves the object and is never a
             // version of it** (the baseline of an import).
@@ -429,6 +438,16 @@ impl State {
                     source_time: event.imported_source_time,
                 }),
             ClaimEvent::AddressBound { object, address } => {
+                if indexes::handle_shaped(address)
+                    && let Some(former) = self.own_handle_of(object)
+                    && former.0 != *address
+                {
+                    self.retire_address(object, &former.0, None);
+                    self.duplicate_handle_bindings += 1;
+                    self.last_duplicate_handle_binding_at =
+                        event.imported_source_time.or(event.written_at);
+                    applied.replaced_handle = Some(former.0);
+                }
                 if let Some(held) = self.addresses.insert(address.clone(), object.clone()) {
                     self.unbind_spelling(&held, address);
                 }
@@ -439,17 +458,7 @@ impl State {
                 address,
                 day,
             } => {
-                if self.addresses.get(address) == Some(object) {
-                    self.addresses.remove(address);
-                    self.unbind_spelling(object, address);
-                    self.retired_addresses
-                        .insert(address.clone(), object.clone());
-                    self.retirements.push(Retirement {
-                        address: address.clone(),
-                        object: object.clone(),
-                        day: *day,
-                    });
-                }
+                self.retire_address(object, address, Some(*day));
             }
             ClaimEvent::ObjectsMerged {
                 folded,
@@ -567,6 +576,34 @@ impl State {
                 self.declarations.remove(kind);
             }
         }
+        applied
+    }
+
+    fn retire_address(&mut self, object: &ObjectId, address: &str, day: Option<Date>) {
+        if self.addresses.get(address) != Some(object) {
+            return;
+        }
+        self.addresses.remove(address);
+        self.unbind_spelling(object, address);
+        self.retired_addresses
+            .insert(address.into(), object.clone());
+        if let Some(day) = day {
+            self.retirements.push(Retirement {
+                address: address.into(),
+                object: object.clone(),
+                day,
+            });
+        }
+    }
+
+    /// The durable duplicate bindings repaired while filling this state.
+    pub fn duplicate_handle_bindings(&self) -> u64 {
+        self.duplicate_handle_bindings
+    }
+
+    /// The replacing event's own instant, absent when that event named none.
+    pub fn last_duplicate_handle_binding_at(&self) -> Option<Timestamp> {
+        self.last_duplicate_handle_binding_at
     }
 
     /// **A thing named by any spelling it answers to, as a measure reads it**:

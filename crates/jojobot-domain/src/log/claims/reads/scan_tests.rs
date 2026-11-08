@@ -391,11 +391,10 @@ fn canonical_handle_follows_a_rename_after_a_merge() {
     );
 }
 
-/// Two current handles on one object are malformed events, rather than a
-/// lexical choice a read may silently make.
+/// An already durable duplicate is read as a rename, in log order. Its former
+/// spelling still resolves, and aliases and idempotent binds change no handle.
 #[test]
-#[should_panic(expected = "an object cannot hold two current handles")]
-fn canonical_handle_rejects_a_second_live_handle_binding() {
+fn canonical_handle_replays_a_second_live_binding_as_the_latest_handle() {
     let mut state = replayed(vec![
         made("kept"),
         bound("kept", "work:zeta"),
@@ -404,5 +403,24 @@ fn canonical_handle_rejects_a_second_live_handle_binding() {
     ]);
     assert_eq!(state.resolve("work:zeta"), Some(&object("kept")));
     assert_eq!(state.resolve("work:alpha-queue/1"), Some(&object("kept")));
+    assert_eq!(state.duplicate_handle_bindings(), 0);
     state.apply(&stamped(None, None, bound("kept", "work:omega")));
+    let former = state
+        .canonical_handle("work:zeta")
+        .expect("the former handle resolves");
+    assert_eq!(former.0, "work:omega");
+    assert_eq!(state.resolve(&former.0), Some(&object("kept")));
+    assert_eq!(state.resolve("work:omega"), Some(&object("kept")));
+    assert_eq!(
+        state.addresses_of(&object("kept")),
+        vec!["work:alpha-queue/1", "work:omega"],
+        "the displaced handle is former, not a second live spelling"
+    );
+    assert_eq!(
+        state.own_handle_of(&object("kept")).unwrap().0,
+        "work:omega"
+    );
+    assert_eq!(state.duplicate_handle_bindings(), 1);
+    assert_eq!(state.last_duplicate_handle_binding_at(), None);
+    assert!(state.former_handles().is_empty());
 }

@@ -115,7 +115,7 @@ pub(super) fn claim_number(label: &str) -> Option<u64> {
     whole_number(label.strip_prefix('f')?)
 }
 
-fn handle_shaped(address: &str) -> bool {
+pub(super) fn handle_shaped(address: &str) -> bool {
     address.contains(':') && !address.contains(['/', '#'])
 }
 
@@ -160,6 +160,71 @@ impl State {
         self.own_handle_of(self.survivor(object))
     }
 
+    /// Refuse malformed new bindings before they become durable. Only the
+    /// batch's touched addresses and handles are copied; replay never calls this.
+    pub fn check(
+        &self,
+        events: &[super::Event<super::ClaimEvent>],
+    ) -> Result<(), memory::MemoryError> {
+        use super::ClaimEvent;
+
+        let mut addresses: BTreeMap<String, Option<ObjectId>> = BTreeMap::new();
+        let mut handles: BTreeMap<ObjectId, Option<String>> = BTreeMap::new();
+        for event in events {
+            match &event.payload {
+                ClaimEvent::AddressBound { object, address } => {
+                    let previous = addresses
+                        .get(address)
+                        .cloned()
+                        .unwrap_or_else(|| self.addresses.get(address).cloned());
+                    if handle_shaped(address) {
+                        if let Some(previous) = previous {
+                            let handle = handles.entry(previous.clone()).or_insert_with(|| {
+                                self.own_handle_of(&previous).map(|handle| handle.0)
+                            });
+                            if handle.as_deref() == Some(address.as_str()) {
+                                *handle = None;
+                            }
+                        }
+                        let handle = handles
+                            .entry(object.clone())
+                            .or_insert_with(|| self.own_handle_of(object).map(|handle| handle.0));
+                        if let Some(held) = handle.as_ref()
+                            && held != address
+                        {
+                            return Err(memory::MemoryError::InvalidFact(format!(
+                                "object {} holds current handle {held}; retire it before binding {address}",
+                                object.0
+                            )));
+                        }
+                        *handle = Some(address.clone());
+                    }
+                    addresses.insert(address.clone(), Some(object.clone()));
+                }
+                ClaimEvent::AddressRetired {
+                    object, address, ..
+                } => {
+                    let held = addresses
+                        .get(address)
+                        .cloned()
+                        .unwrap_or_else(|| self.addresses.get(address).cloned());
+                    if held.as_ref() != Some(object) {
+                        return Err(memory::MemoryError::InvalidFact(format!(
+                            "object {} does not hold the spelling {address} it would retire",
+                            object.0
+                        )));
+                    }
+                    addresses.insert(address.clone(), None);
+                    if handle_shaped(address) {
+                        handles.insert(object.clone(), None);
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
     /// **The handle an object wore itself**, folded or not.
     ///
     /// Spellings retain their original owner, so this reads the same binding
@@ -175,13 +240,6 @@ impl State {
 
     pub(super) fn bind_spelling(&mut self, object: &ObjectId, address: &str) {
         let spellings = self.indexes.spellings.entry(object.clone()).or_default();
-        assert!(
-            !handle_shaped(address)
-                || spellings
-                    .iter()
-                    .all(|held| held == address || !handle_shaped(held)),
-            "an object cannot hold two current handles"
-        );
         spellings.insert(address.to_string());
     }
 

@@ -64,6 +64,9 @@ pub enum ClaimsImportError {
     /// The rows do not map to events.
     #[error("the stored rows do not map to claims events: {0}")]
     Unmappable(String),
+    /// Admission refused the reconciliation before it reached the log.
+    #[error("the claims import refused the batch: {0}")]
+    Refused(String),
     /// Whether the batch committed is not known. The next start reads the log.
     #[error("the claims import does not know whether its batch committed")]
     Indeterminate,
@@ -310,6 +313,9 @@ async fn reconcile_in_job(
     if events.is_empty() {
         return Ok(0);
     }
+    state
+        .check(&events)
+        .map_err(|error| ClaimsImportError::Refused(error.to_string()))?;
     let members: Vec<Vec<u8>> = events.iter().map(codec::encode).collect();
     let mut tx = pool
         .writer()

@@ -104,6 +104,81 @@ async fn staged(
         .await
 }
 
+/// Both durable entrances refuse before staging: rolling the transaction back
+/// is not what protects the log from a malformed claims batch.
+#[tokio::test]
+async fn canonical_handle_seam_refuses_duplicates_before_staging_import_or_live_batches() {
+    let scratch = Scratch::new("seam-handle-admission");
+    let mut server = Dolt::start(&scratch.0, free_port()).await.unwrap();
+    let store = migrated_database(&server, "alpha").await.unwrap();
+    let pool = sql::Pool::from(store.clone());
+    let writer = Writer::default();
+    let seam = opened(&writer, &pool).await;
+    let mut duplicate = thing("k1", "person:homer");
+    duplicate.push(thing("k1", "person:marge").pop().unwrap());
+    for import in [true, false] {
+        if !import {
+            staged(
+                &writer,
+                &pool,
+                &seam,
+                vec![],
+                thing("k2", "person:lisa"),
+                true,
+            )
+            .await
+            .unwrap();
+        }
+        let log = writer.shared_log(&store);
+        let before = log.read_from(Position(0), 100).await.unwrap();
+        let (staging, pool, duplicate) = (seam.clone(), pool.clone(), duplicate.clone());
+        let result = writer
+            .run(async move {
+                let mut tx = pool.writer().begin().await.unwrap();
+                let result = if import {
+                    staging.stage_import(&mut tx, duplicate, at(1)).await
+                } else {
+                    staging
+                        .stage_with(&mut tx, vec![spent()], duplicate, at(1))
+                        .await
+                };
+                // Commit even on refusal: admission itself must have staged nothing.
+                sql::commit(tx).await.unwrap();
+                result.map(|pending| pending.committed())
+            })
+            .await;
+        assert!(matches!(result, Err(LedgerError::Refused(_))), "{result:?}");
+        assert_eq!(log.read_from(Position(0), 100).await.unwrap(), before);
+        assert!(seam.read_claims(|state| state.resolve("person:homer").is_none()));
+    }
+    // A real retire/bind rename is admitted by the same entrances.
+    staged(
+        &writer,
+        &pool,
+        &seam,
+        vec![],
+        thing("k1", "person:homer"),
+        false,
+    )
+    .await
+    .unwrap();
+    let mut rename = thing("k1", "person:marge");
+    rename[0].payload = ClaimEvent::AddressRetired {
+        object: ObjectId("k1".into()),
+        address: "person:homer".into(),
+        day: jiff::civil::date(2026, 11, 5),
+    };
+    staged(&writer, &pool, &seam, vec![], rename, false)
+        .await
+        .unwrap();
+    assert_eq!(
+        seam.read_claims(|state| state.handle(&ObjectId("k1".into())).unwrap().0),
+        "person:marge"
+    );
+    writer.drain().await;
+    server.stop().await;
+}
+
 /// **Before a completed import the seam stages no claims event**, whatever else
 /// the write carries, and the log is unchanged. A write of the ledgers alone goes
 /// on. The import's own batch is staged, and after it the same write is staged.
