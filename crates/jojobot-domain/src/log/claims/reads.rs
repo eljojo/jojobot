@@ -252,10 +252,30 @@ impl State {
             if let Some(write) = self.holding_write(stream)
                 && !write.targets.is_empty()
             {
-                out.insert(key.0.clone(), self.survivors_of(&write.targets));
+                out.insert(key.0.clone(), self.targets_in_value_order(write));
             }
         }
         out
+    }
+
+    /// **The things a write names, in the order its value names them**, each once
+    /// and as the merge survivor it stands for, as the store serves them
+    /// (`marked_field_links`). The write's own targets are the fallback for a value
+    /// that marks none.
+    fn targets_in_value_order(&self, write: &Write) -> Vec<ObjectId> {
+        if let FieldValue::Set(value) = &write.write {
+            let mut named: Vec<ObjectId> = Vec::new();
+            for id in value.split(',').filter_map(memory::stored_handle_id) {
+                let target = self.survivor(&ObjectId(id.to_string())).clone();
+                if !named.contains(&target) {
+                    named.push(target);
+                }
+            }
+            if !named.is_empty() {
+                return named;
+            }
+        }
+        self.survivors_of(&write.targets)
     }
 
     /// **What a thing holds, as a read serves it**: every item of a value that
@@ -370,32 +390,12 @@ impl State {
                 );
             }
             if !write.targets.is_empty() {
-                // **In the order the value names them**, each once, as the store
-                // serves them (`marked_field_links`); the write's own targets
-                // are the fallback for a value that marks none.
-                let named: Vec<EntityId> = match &write.write {
-                    FieldValue::Set(value) => {
-                        let mut named = Vec::new();
-                        for id in value.split(',').filter_map(memory::stored_handle_id) {
-                            let target = handle(&ObjectId(id.to_string()));
-                            if !named.contains(&target) {
-                                named.push(target);
-                            }
-                        }
-                        named
-                    }
-                    _ => Vec::new(),
-                };
                 field_links.insert(
                     key.0.clone(),
-                    if named.is_empty() {
-                        self.survivors_of(&write.targets)
-                            .iter()
-                            .map(handle)
-                            .collect()
-                    } else {
-                        named
-                    },
+                    self.targets_in_value_order(write)
+                        .iter()
+                        .map(handle)
+                        .collect(),
                 );
             }
         }
@@ -411,9 +411,14 @@ impl State {
             && match &held.first_writer {
                 Some(crate::actor::Actor::Bot(bot)) => {
                     memory::authorship::another_bots_claim(&home, Some(bot), |bot| {
-                        self.resolve(&bot.0).is_some_and(|object| {
-                            self.survivor(object) == self.survivor(&claim.home)
-                        })
+                        // **The writer is kept as the id its bot is filed under**,
+                        // which a rename never changes, so the id is compared
+                        // first; a writer kept as a handle is resolved.
+                        let home_object = self.survivor(&claim.home);
+                        self.survivor(&ObjectId(bot.0.clone())) == home_object
+                            || self
+                                .resolve(&bot.0)
+                                .is_some_and(|object| self.survivor(object) == home_object)
                     })
                 }
                 _ => false,

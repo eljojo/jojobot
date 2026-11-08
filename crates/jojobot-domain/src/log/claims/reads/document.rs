@@ -78,7 +78,9 @@ fn claim_write(state: &State, ordinal: usize, write: &Revision) -> ClaimWrite {
         stale_after: claim.stale_after,
         receipt: claim.receipt.clone(),
         app_stamp: claim.app.clone(),
-        refs: Some(claim.refs.iter().map(|o| served(state, o)).collect()),
+        // By the handle each thing wore itself, a merged-away one included: the
+        // store serves a ref as the thing it named, not as its survivor.
+        refs: Some(claim.refs.iter().map(|o| state.handle_worn_by(o)).collect()),
         stands_for: Some(
             claim
                 .stands_for
@@ -95,7 +97,10 @@ fn snapshot(state: &State, body: &ObjectBody) -> EntitySnapshot {
         name: body.name.clone(),
         source: body.source.clone(),
         crm: body.metadata.get("crm").cloned(),
-        parent: body.parent.as_ref().map(|parent| served(state, parent)),
+        parent: body
+            .parent
+            .as_ref()
+            .map(|parent| state.handle_worn_by(parent)),
         boot: body.boot.clone().unwrap_or_default(),
         archived_reason: body.metadata.get("archived_reason").cloned(),
         archived_at: body.metadata.get("archived_at").cloned(),
@@ -111,7 +116,10 @@ fn observed_snapshot(state: &State, snapshot: &ObjectSnapshot) -> EntitySnapshot
         name: snapshot.name.clone(),
         source: snapshot.source.clone(),
         crm: snapshot.crm.clone(),
-        parent: snapshot.parent.as_ref().map(|parent| served(state, parent)),
+        parent: snapshot
+            .parent
+            .as_ref()
+            .map(|parent| state.handle_worn_by(parent)),
         boot: snapshot.boot.clone(),
         archived_reason: snapshot.archived_reason.clone(),
         archived_at: snapshot.archived_at.clone(),
