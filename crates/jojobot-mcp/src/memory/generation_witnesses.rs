@@ -361,3 +361,43 @@ async fn a_retraction_through_a_merged_away_address_waits_for_the_requests_lock(
     )
     .await;
 }
+
+/// **Taking back a spec claim writes one generation claim, never two.** The
+/// verb sends no number and the store writes the one it works out, so the
+/// history of the key grows by one write for the act.
+#[tokio::test]
+async fn taking_back_a_spec_claim_writes_one_generation_claim() {
+    let jojobot = handler();
+    writing_as(&jojobot);
+    a_request_otto_manages(&jojobot).await;
+    let claim = capture_ok(
+        &jojobot,
+        CaptureArgs {
+            sets: Some(
+                [("desired".to_string(), "stopped".to_string())]
+                    .into_iter()
+                    .collect(),
+            ),
+            ..capture_args(REQUEST, "stop it")
+        },
+    )
+    .await;
+    let address = claim["address"].as_str().expect("an address").to_string();
+    let writes = || async {
+        jojobot
+            .memory
+            .history(&EntityId::person(REQUEST), "generation")
+            .await
+            .expect("the history reads")
+            .len()
+    };
+    let before = writes().await;
+    jojobot
+        .retract(Parameters(args(serde_json::json!({
+            "address": address, "reason": "written in error", "sid": TEST_SID,
+        }))))
+        .await
+        .expect("the retraction answers");
+    assert_eq!(writes().await, before + 1, "one claim carries the number");
+    assert_eq!(generation_of(&jojobot, REQUEST).await, "3");
+}

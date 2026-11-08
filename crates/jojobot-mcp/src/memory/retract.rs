@@ -180,51 +180,22 @@ impl Jojobot {
         // `capture`'s own note on the same shape.
         //
         // **Taking back a claim of a bot request that changes its folded spec
-        // carries the next generation, written in the same act.** A retracted
-        // claim's keys leave the thing, so the number rides on a live claim
-        // beside the retraction. Read and written under the request's lock.
+        // makes the next generation in the store**, on a claim of its own written
+        // in the same act. The verb sends no number.
+        // The request's lock stays until the writer's job replaces it.
         // TEMPORARY(9.3.3): prepare in the one writer replaces the lock.
         let spec_lock = match self.hold_for_a_request_spec(&address.home).await {
             Ok(guard) => guard,
             Err(e) => return memory_declined("retract", e),
         };
-        let minted = match self.generation_a_withdrawal_makes(&address).await {
-            Ok(minted) => minted,
-            Err(e) => return memory_declined("retract", e),
-        };
-        let withdrawn = match minted {
-            Some(number) => {
-                let companion =
-                    Self::generation_claim(&address.home, number, date, caller.sid.as_str());
-                jojobot_domain::request::armed(self.memory.retract_with_claim(
-                    &address,
-                    args.reason.as_deref(),
-                    date,
-                    &caller.bot,
-                    Some(caller.sid.as_str()),
-                    companion,
-                ))
-                .await
-                .and_then(|written| match written {
-                    jojobot_domain::memory::Guarded::Written((taken_back, _)) => Ok(taken_back),
-                    jojobot_domain::memory::Guarded::Blocked { .. } => {
-                        Err(MemoryError::InvalidFact(
-                            "the claim that carries the generation was blocked".into(),
-                        ))
-                    }
-                })
-            }
-            None => {
-                jojobot_domain::request::armed(self.memory.retract(
-                    &address,
-                    args.reason.as_deref(),
-                    date,
-                    &caller.bot,
-                    Some(caller.sid.as_str()),
-                ))
-                .await
-            }
-        };
+        let withdrawn = jojobot_domain::request::armed(self.memory.retract(
+            &address,
+            args.reason.as_deref(),
+            date,
+            &caller.bot,
+            Some(caller.sid.as_str()),
+        ))
+        .await;
         drop(spec_lock);
         let (taken_back, fold_behind) = match withdrawn {
             Ok(taken_back) => (taken_back, None),

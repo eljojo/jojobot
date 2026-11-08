@@ -394,7 +394,11 @@ pub async fn a_retraction_under_a_former_handle_carries_its_generation_claim<M: 
             date(2026, 10, 5),
             &manager,
             None,
-            spec(&request, &[(GENERATION, "3")], 5),
+            state(NewFact::about(
+                request.clone(),
+                "taken back in error",
+                date(2026, 10, 5),
+            )),
         )
         .await
         .expect("the call answers")
