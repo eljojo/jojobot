@@ -301,8 +301,8 @@ async fn run() -> anyhow::Result<()> {
     });
 
     // **The event log's snapshots are kept while this serves**, and the last one
-    // is taken when the stop token fires, after the drain. A snapshot is
-    // disposable: a miss costs the next boot some replay and nothing else.
+    // is taken by the writer after the shutdown tasks and its queue drain. A
+    // snapshot is disposable: a miss costs the next boot some replay and nothing else.
     let snapshots = {
         let (snapshots, stop) = (booted.snapshots.clone(), ct.clone());
         tokio::spawn(async move { snapshots.run(stop.cancelled_owned()).await })
@@ -383,6 +383,13 @@ async fn run() -> anyhow::Result<()> {
     {
         tracing::warn!("queued call counts were still unsaved at the grace; they are dropped");
     }
+    // Accepted writes outlive an abandoned caller. Closing admission and taking
+    // the snapshot as the final job covers those writes too. The service manager's
+    // stop deadline can cut this work; the next boot then replays the tail.
+    booted
+        .writer
+        .finish(async move { booted.snapshots.shutdown().await })
+        .await;
     // **The store outlives the drain and stops here, asked and then killed.** The
     // unit signals this process alone, and the store has a process group of its
     // own, so nothing stops it before the calls above have finished with it.

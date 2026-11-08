@@ -3,9 +3,9 @@
 //! [`CADENCE`] events or minutes of unsnapshotted writes, and on an orderly
 //! shutdown with writes not yet covered. The snapshot itself is
 //! [`take_snapshot`]: it rebuilds the State from the log's newest valid snapshot
-//! plus its tail, so the view is coherent at one position and the work does not
-//! hold the writer's queue. This type only decides when to call it. The numbers
-//! are engineering defaults to measure, not settings.
+//! plus its tail, so the view is coherent at one position. Periodic work does not
+//! hold the writer's queue; the shutdown snapshot is its last job. This type only
+//! decides when to call it. The numbers are engineering defaults to measure, not settings.
 
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -117,9 +117,9 @@ impl SnapshotKeeper {
     }
 
     /// **Keep the log's snapshot while the process serves.** A tick asks whether
-    /// one is due; when `stop` ends, one last snapshot covers whatever is
-    /// uncovered. A failed snapshot is logged and tried again at the next tick: a
-    /// snapshot is disposable, so a miss costs boot time and nothing else.
+    /// one is due; when `stop` ends, the writer owns the final flush after its
+    /// other jobs have drained. A failed snapshot is logged and tried again at
+    /// the next tick: a snapshot is disposable, so a miss costs boot time and nothing else.
     pub async fn run(
         &self,
         head: impl Fn() -> Option<Position>,
@@ -142,14 +142,6 @@ impl SnapshotKeeper {
                         }
                     }
                 }
-            }
-        }
-        let Some(head) = head() else { return };
-        match self.flush(head, jiff::Timestamp::now()).await {
-            Ok(Some(covered)) => tracing::info!(covered = covered.0, "snapshot taken at shutdown"),
-            Ok(None) => {}
-            Err(error) => {
-                tracing::warn!(%error, "no snapshot at shutdown; the next boot replays the tail")
             }
         }
     }
@@ -201,9 +193,21 @@ impl ServingSnapshots {
         }
     }
 
-    /// Serve until `stop` ends, then take the last snapshot.
+    /// Serve until `stop` ends. The writer takes the shutdown snapshot separately.
     pub async fn run(&self, stop: impl std::future::Future<Output = ()>) {
         self.keeper.run(|| self.head(), TICK, stop).await;
+    }
+
+    /// Called as the writer's last job, after its other writes have drained.
+    pub async fn shutdown(&self) {
+        let Some(head) = self.head() else { return };
+        match self.keeper.flush(head, jiff::Timestamp::now()).await {
+            Ok(Some(covered)) => tracing::info!(covered = covered.0, "snapshot taken at shutdown"),
+            Ok(None) => {}
+            Err(error) => {
+                tracing::warn!(%error, "no snapshot at shutdown; the next boot replays the tail")
+            }
+        }
     }
 }
 

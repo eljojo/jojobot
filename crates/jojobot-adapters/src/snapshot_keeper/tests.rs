@@ -161,10 +161,10 @@ async fn the_loop_takes_a_due_snapshot_on_a_tick() {
     assert_eq!(keeper.covered(), head);
 }
 
-/// **A stop takes one last snapshot of whatever is uncovered.** The cadence is
-/// far off, so only the shutdown moment can publish it.
+/// **Stopping the periodic loop leaves the shutdown snapshot to the writer.**
+/// The cadence is far off and other shutdown tasks can still append.
 #[tokio::test]
-async fn the_loop_flushes_an_uncovered_head_when_it_stops() {
+async fn the_loop_leaves_the_shutdown_snapshot_to_the_writer() {
     let log = InMemoryLog::default();
     let far = Cadence {
         events: 1_000_000,
@@ -175,6 +175,86 @@ async fn the_loop_flushes_an_uncovered_head_when_it_stops() {
     keeper
         .run(|| Some(head), Duration::from_secs(3600), async {})
         .await;
+    assert!(
+        log.load_snapshot().await.unwrap().is_none(),
+        "the periodic loop snapshotted before the writer drained"
+    );
+}
+
+/// **The shutdown snapshot follows accepted writes even when their callers were
+/// abandoned.** Its writer refuses later work and the next boot has no tail.
+#[tokio::test]
+async fn the_shutdown_snapshot_is_the_writers_last_act() {
+    let log = InMemoryLog::default();
+    let keeper = keeper(&log, SMALL).await;
+    let writer = crate::writer::Writer::default();
+    let (release, held) = tokio::sync::oneshot::channel();
+    let writing = tokio::spawn({
+        let (writer, log) = (writer.clone(), log.clone());
+        async move {
+            writer
+                .run(async move {
+                    held.await.unwrap();
+                    append(&log, "alpha", 2).await
+                })
+                .await
+        }
+    });
+    while writer.submitted_jobs() < 1 {
+        tokio::task::yield_now().await;
+    }
+    writing.abort();
+    let _ = writing.await;
+
+    let (entered, final_started) = tokio::sync::oneshot::channel();
+    let (snapshot, take) = tokio::sync::oneshot::channel();
+    let finishing = tokio::spawn({
+        let (writer, log) = (writer.clone(), log.clone());
+        async move {
+            let nested = writer.clone();
+            writer
+                .finish(async move {
+                    entered.send(()).unwrap();
+                    take.await.unwrap();
+                    // Snapshot I/O uses the same writer as the accepted writes.
+                    nested
+                        .run(async move {
+                            let head = append(&log, "beta", 1).await;
+                            keeper.flush(head, at(1)).await.unwrap();
+                            head
+                        })
+                        .await
+                })
+                .await
+        }
+    });
+    while writer.submitted_jobs() < 2 {
+        tokio::task::yield_now().await;
+    }
+    release.send(()).unwrap();
+    final_started.await.unwrap();
+    let late = tokio::spawn({
+        let writer = writer.clone();
+        async move { writer.run(async {}).await }
+    });
+    let rejected = tokio::time::timeout(Duration::from_secs(1), late).await;
+    // Release the final job even on a broken admission gate.
+    snapshot.send(()).unwrap();
+    let head = finishing.await.unwrap();
+    assert!(
+        rejected.is_ok_and(|ended| ended.is_err()),
+        "the writer admitted work after its final operation"
+    );
     let stored = log.load_snapshot().await.unwrap().expect("published");
     assert_eq!(stored.covered_position, head);
+    assert_eq!(head, Position(3), "the abandoned caller's write landed");
+    assert!(
+        log.read_from(stored.covered_position, 256)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    let boot = crate::log_snapshot::boot(&log).await.unwrap();
+    assert_eq!(boot.position, head);
+    assert_eq!(boot.state.teaching.history().len(), 3);
 }

@@ -57,7 +57,7 @@ tokio::task_local! {
 
 struct Driver {
     id: u64,
-    sender: OnceLock<mpsc::UnboundedSender<Job>>,
+    sender: OnceLock<Mutex<Option<mpsc::UnboundedSender<Job>>>>,
     sql: OnceLock<fence::Session>,
     /// The store's event log, one head for every family that appends to it.
     log: OnceLock<crate::dolt_log::DoltLog>,
@@ -210,6 +210,21 @@ impl Writer {
         if self.inside() {
             return work.await;
         }
+        // **The work is boxed once, here, at the job's submission.** In a debug build
+        // the work of a write is a large future, and the job built below would hold
+        // a second copy of it on the stack of the thread that polls the caller. The
+        // box leaves the job holding a pointer.
+        self.submit(Box::pin(work), false).await
+    }
+
+    async fn submit<T: Send + 'static>(
+        &self,
+        work: Pin<Box<impl Future<Output = T> + Send + 'static>>,
+        last: bool,
+    ) -> T {
+        if self.inside() {
+            return work.await;
+        }
         let sender = self.0.sender.get_or_init(|| {
             let (sender, mut jobs) = mpsc::unbounded_channel::<Job>();
             let id = self.0.id;
@@ -227,32 +242,39 @@ impl Writer {
                     }
                 }),
             ));
-            sender
+            Mutex::new(Some(sender))
         });
-        // **The work is boxed once, here, at the job's submission.** In a debug build
-        // the work of a write is a large future, and the job built below would hold
-        // a second copy of it on the stack of the thread that polls the caller. The
-        // box leaves the job holding a pointer.
-        let work = Box::pin(work);
         let context = Context::capture();
         let span = tracing::Span::current();
         let (answer, waiting) = oneshot::channel();
         let owner = self.clone();
         #[cfg(any(test, feature = "testing"))]
         self.0.submitted.fetch_add(1, Ordering::SeqCst);
-        sender
-            .send(Box::pin(async move {
-                let result = sql::job(&owner, context.run(work)).instrument(span).await;
-                // After the State holds the write and before the next write
-                // starts. The job owns this step, so a caller that stopped
-                // waiting cannot lose it.
-                let panicked = owner.0.publication.deliver().await;
-                owner
-                    .0
-                    .subscriber_panics
-                    .fetch_add(panicked, Ordering::SeqCst);
-                let _ = answer.send(result);
-            }))
+        let job: Job = Box::pin(async move {
+            let result = sql::job(&owner, context.run(work)).instrument(span).await;
+            // After the State holds the write and before the next write
+            // starts. The job owns this step, so a caller that stopped
+            // waiting cannot lose it.
+            let panicked = owner.0.publication.deliver().await;
+            owner
+                .0
+                .subscriber_panics
+                .fetch_add(panicked, Ordering::SeqCst);
+            let _ = answer.send(result);
+        });
+        let accepted = {
+            let mut sender = sender.lock().expect("writer admission lock");
+            let accepted = sender.as_ref().map(|sender| sender.send(job));
+            // Admission and the final enqueue share this lock: no clone can put
+            // a write behind the snapshot. Dropping the sender also ends the
+            // queue once the final job has run.
+            if last {
+                sender.take();
+            }
+            accepted
+        };
+        accepted
+            .expect("the writer stopped accepting writes")
             .unwrap_or_else(|_| panic!("the writer task stopped before accepting its write"));
         waiting
             .await
@@ -262,6 +284,14 @@ impl Writer {
     /// Wait for accepted writes before stopping their store.
     pub async fn drain(&self) {
         self.run(async {}).await;
+    }
+
+    /// Close admission and run the last operation after every accepted write.
+    pub async fn finish<T: Send + 'static>(
+        &self,
+        work: impl Future<Output = T> + Send + 'static,
+    ) -> T {
+        self.submit(Box::pin(work), true).await
     }
 
     /// Let a fixture observe queue admission without a timer.

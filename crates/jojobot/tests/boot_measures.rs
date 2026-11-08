@@ -1691,12 +1691,25 @@ async fn an_orderly_stop_publishes_a_snapshot_the_next_boot_loads() {
         first.log_boot()
     );
     let (state, seen) = first.stopped();
-    assert!(
-        seen.iter()
-            .any(|line| line.contains("snapshot taken at shutdown")),
-        "the stop took no snapshot. What it said:\n{}",
-        seen.join("\n")
-    );
+    let covered = seen
+        .iter()
+        .find(|line| line.contains("snapshot taken at shutdown"))
+        .unwrap_or_else(|| {
+            panic!(
+                "the stop took no snapshot. What it said:\n{}",
+                seen.join("\n")
+            )
+        })
+        .split_whitespace()
+        .find_map(|field| {
+            field
+                .strip_prefix("covered=")
+                .and_then(|n| n.parse::<u64>().ok())
+        })
+        .expect("the shutdown snapshot names its covered position");
+    // Release notes can append after the first answer; the final snapshot must
+    // cover those too, rather than pinning the head from before the boot.
+    assert!(covered >= size.events, "the prepared tail is covered");
     assert!(
         !seen
             .iter()
@@ -1724,11 +1737,6 @@ async fn an_orderly_stop_publishes_a_snapshot_the_next_boot_loads() {
         "{}",
         second.log_boot()
     );
-    assert_eq!(
-        second.boot_field("head"),
-        size.events,
-        "{}",
-        second.log_boot()
-    );
+    assert_eq!(second.boot_field("head"), covered, "{}", second.log_boot());
     let _ = second.stopped();
 }
