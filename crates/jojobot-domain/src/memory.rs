@@ -7949,6 +7949,14 @@ pub trait Memory: Send + Sync {
         1
     }
 
+    /// **The claims State this store keeps, when it keeps one the reads above it
+    /// can use**, lent through the handle. Every layer over a store forwards the
+    /// answer of the layer beneath. The default is none: a store that does not
+    /// say keeps no State a reader can borrow, and the layer above reads it.
+    fn claims_lender(&self) -> Option<std::sync::Arc<dyn crate::log::claims::ClaimsLender>> {
+        None
+    }
+
     /// **Declare a type: a name, and the keys a record of it carries.**
     ///
     /// Write-time help. It tells a writer which keys to fill and what belongs

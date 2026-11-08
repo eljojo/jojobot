@@ -283,6 +283,9 @@ impl Memory for Counted {
     fn read_width(&self) -> usize {
         self.inner.read_width()
     }
+    fn claims_lender(&self) -> Option<Arc<dyn jojobot_domain::log::claims::ClaimsLender>> {
+        self.inner.claims_lender()
+    }
     async fn thought_writers(&self, thread: &EntityId) -> Result<Vec<EntityId>, MemoryError> {
         self.hit("thought_writers");
         self.inner.thought_writers(thread).await

@@ -2022,6 +2022,10 @@ impl super::Memory for Mentioning {
     fn read_width(&self) -> usize {
         self.inner.read_width()
     }
+    /// **Straight through**: the State is the inner store's.
+    fn claims_lender(&self) -> Option<std::sync::Arc<dyn crate::log::claims::ClaimsLender>> {
+        self.inner.claims_lender()
+    }
     /// **Straight through.** The answer is handles and renders nothing, and the
     /// default would list every bot and recall each one.
     async fn thought_writers(

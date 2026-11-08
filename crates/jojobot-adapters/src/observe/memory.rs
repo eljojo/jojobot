@@ -122,6 +122,11 @@ impl Memory for Observed<dyn Memory> {
     fn read_width(&self) -> usize {
         self.inner.read_width()
     }
+    fn claims_lender(
+        &self,
+    ) -> Option<std::sync::Arc<dyn jojobot_domain::log::claims::ClaimsLender>> {
+        self.inner.claims_lender()
+    }
     async fn thought_writers(&self, thread: &EntityId) -> Result<Vec<EntityId>, MemoryError> {
         self.result(
             Operation::Memory(MemoryOperation::ThoughtWriters),

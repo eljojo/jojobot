@@ -587,6 +587,11 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
     fn read_width(&self) -> usize {
         self.inner.read_width()
     }
+    fn claims_lender(
+        &self,
+    ) -> Option<std::sync::Arc<dyn jojobot_domain::log::claims::ClaimsLender>> {
+        self.inner.claims_lender()
+    }
     async fn thought_writers(&self, thread: &EntityId) -> Result<Vec<EntityId>, MemoryError> {
         self.inner.thought_writers(thread).await
     }

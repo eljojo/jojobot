@@ -308,6 +308,11 @@ pub trait StoredMemory: Send + Sync {
     /// [`Memory::read_width`](super::Memory::read_width) of the store beneath.
     /// No default, so a layer that forgets it does not compile.
     fn read_width(&self) -> usize;
+    /// [`Memory::claims_lender`](super::Memory::claims_lender) of the store
+    /// beneath: none unless the store keeps a State.
+    fn claims_lender(&self) -> Option<std::sync::Arc<dyn crate::log::claims::ClaimsLender>> {
+        None
+    }
     async fn keys_holding(
         &self,
         key: &str,
@@ -652,6 +657,9 @@ impl StoredMemory for Unrendered {
     }
     fn read_width(&self) -> usize {
         self.0.read_width()
+    }
+    fn claims_lender(&self) -> Option<std::sync::Arc<dyn crate::log::claims::ClaimsLender>> {
+        self.0.claims_lender()
     }
     async fn keys_holding(
         &self,

@@ -358,6 +358,22 @@ pub struct Applied {
     pub replaced_handle: Option<String>,
 }
 
+/// **A holder of the claims State that lends it to a read.**
+pub trait ClaimsLender: Send + Sync {
+    /// Run `read` on the State and say so, or return `false` and run nothing
+    /// when the State cannot answer: it is behind the log, or the import has not
+    /// filled it yet. The caller then reads the store, slower and correct.
+    fn lend(&self, read: &mut dyn FnMut(&State)) -> bool;
+}
+
+/// A State behind a lock answers always: nothing it was fed can be missing.
+impl ClaimsLender for std::sync::Mutex<State> {
+    fn lend(&self, read: &mut dyn FnMut(&State)) -> bool {
+        read(&self.lock().expect("claims state lock"));
+        true
+    }
+}
+
 /// **What the events so far say.**
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct State {
@@ -794,6 +810,13 @@ impl State {
             at = next;
         }
         at
+    }
+
+    /// **Whether the object holds a lease**, a role: its renewals are heartbeats
+    /// kept off the log, so the State does not hold what a read of it serves.
+    pub fn holds_a_lease(&self, object: &ObjectId) -> bool {
+        self.object(object)
+            .is_some_and(|body| body.kind.0 == crate::memory::EntityKind::ROLE.as_token())
     }
 
     /// **Whether a merge touched this object**: it was folded into another, or
