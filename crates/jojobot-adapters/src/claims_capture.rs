@@ -117,7 +117,7 @@ pub(crate) async fn admit(
                 let numbers = state.generation_events(
                     &admitted,
                     &declared,
-                    at.to_zoned(jiff::tz::TimeZone::UTC).date(),
+                    request.draft.recorded_at,
                     jojobot_domain::log::claims::job::fresh_record,
                 );
                 admitted.extend(numbers);

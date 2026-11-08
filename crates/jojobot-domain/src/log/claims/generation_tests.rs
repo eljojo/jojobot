@@ -182,6 +182,27 @@ fn taking_back_the_claim_that_holds_the_spec_makes_the_next_number() {
     assert_eq!(generations(&state, &pending), vec![withdrawn]);
 }
 
+/// **The claim written beside a taken-back one is dated the day it is given.**
+/// The day comes from the caller, so a run whose day is not the UTC day of the
+/// write dates it like the run's other writes.
+#[test]
+fn the_claim_beside_a_taken_back_one_takes_the_day_it_is_given() {
+    let mut events = world();
+    events.extend(holding("r1", "f1", "k1", "running", "1"));
+    let state = replay(&events);
+    let pending = [archived("r1", "f1", "k1")];
+    let given = jiff::civil::date(2026, 11, 7);
+    let written = state.generation_events(&pending, &[], given, || record("r2"));
+    let dated: Vec<_> = written
+        .iter()
+        .filter_map(|event| match event {
+            ClaimEvent::RecordCreated { claim, .. } => Some(claim.recorded_at),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(dated, vec![given], "{written:?}");
+}
+
 #[test]
 fn a_batch_not_applied_changes_nothing_in_the_state() {
     let mut events = world();
