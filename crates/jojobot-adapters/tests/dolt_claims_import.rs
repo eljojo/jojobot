@@ -1836,3 +1836,78 @@ async fn claims_reconcile_keeps_a_shipped_name_the_compared_list_leaves_out() {
 
     server.stop().await;
 }
+
+/// **A reference and a mark at a name nothing holds are imported as written and
+/// named**, as an edge, a lineage and a link are. A claim that refers to Homer and
+/// stands for another claim of Marge's has both broken by hand: the reference now
+/// names a thing nothing holds, and the mark a home nothing holds. The import keeps
+/// the claim and the report names both.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn claims_import_carries_a_reference_and_a_mark_at_names_nothing_holds() {
+    let (_scratch, mut server, pool) = store("claims-import-dangling-ref-mark").await;
+    let memory = DoltMemory::open(pool.clone());
+    let marge = thing(&memory, "person:marge", "Marge").await;
+    let homer = thing(&memory, "person:homer", "Homer").await;
+    let source = memory
+        .capture(NewFact::about(marge.clone(), "a note", date(2026, 9, 1)))
+        .await
+        .expect("capture")
+        .written()
+        .expect("not blocked")
+        .address();
+    let mut summary = NewFact::about(marge, "sums it up", date(2026, 9, 1));
+    summary.provenance = Provenance::Testimony;
+    summary.refs = vec![homer];
+    let summary = memory
+        .capture(summary)
+        .await
+        .expect("capture")
+        .written()
+        .expect("not blocked")
+        .address();
+    memory
+        .update_fact(
+            &summary,
+            jojobot_domain::memory::FactPatch {
+                stands_for: Some(vec![source]),
+                ..Default::default()
+            },
+            &EntityId("bot:sigma".into()),
+        )
+        .await
+        .expect("the mark lands")
+        .written()
+        .expect("not blocked");
+    for statement in [
+        "UPDATE fact_event_ref SET entity = 'person:ralph'",
+        "UPDATE fact_stands_for SET source_home = 'person:moe'",
+    ] {
+        sqlx::query(statement)
+            .execute(&pool)
+            .await
+            .expect("the pointer is broken by hand");
+    }
+
+    let imported = import_claims_once(&Writer::default(), &pool, &Provisions::default(), at())
+        .await
+        .expect("a reference and a mark at nothing do not stop the import");
+    let Imported::Done {
+        dangling_pointers, ..
+    } = imported
+    else {
+        panic!("the import ran: {imported:?}");
+    };
+    let mut named: Vec<(&str, &str)> = dangling_pointers
+        .iter()
+        .map(|pointer| (pointer.column.as_str(), pointer.value.as_str()))
+        .collect();
+    named.sort_unstable();
+    named.dedup();
+    assert_eq!(
+        named,
+        [("refs", "person:ralph"), ("stands_for", "person:moe")],
+        "the report names the reference and the mark"
+    );
+
+    server.stop().await;
+}
