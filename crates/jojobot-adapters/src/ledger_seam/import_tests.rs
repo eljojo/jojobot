@@ -293,3 +293,172 @@ async fn a_seam_opened_over_a_completed_import_stages_claims_events() {
     writer.drain().await;
     server.stop().await;
 }
+
+fn large_import() -> Vec<Event<ClaimEvent>> {
+    let mut events = thing("k1", "person:homer");
+    for ordinal in 1..=300 {
+        let mut event = events[0].clone();
+        event.payload = ClaimEvent::ObjectWriteObserved {
+            object: ObjectId("k1".into()),
+            filed_under: "person:homer".into(),
+            ordinal,
+            snapshot: None,
+        };
+        events.push(event);
+    }
+    events.push(jojobot_domain::log::claims::import::import_completed(
+        events.len(),
+    ));
+    events
+}
+
+/// The import's batches preserve event order and contiguous positions. Neither
+/// the log reader nor the seam sees them before their one transaction commits.
+#[tokio::test]
+async fn a_claims_import_uses_bounded_batches_in_one_transaction() {
+    let scratch = Scratch::new("seam-import-batches");
+    let mut server = Dolt::start(&scratch.0, free_port()).await.unwrap();
+    let store = migrated_database(&server, "alpha").await.unwrap();
+    let pool = sql::Pool::from(store.clone());
+    let writer = Writer::default();
+    let seam = opened(&writer, &pool).await;
+    let claims = large_import();
+    let expected: Vec<_> = claims
+        .iter()
+        .map(crate::claims_log::codec::encode)
+        .collect();
+    let (staging, job_pool, reader) = (seam.clone(), pool.clone(), store.clone());
+    writer
+        .run(async move {
+            let mut tx = job_pool.writer().begin().await.unwrap();
+            let pending = staging.stage_import(&mut tx, claims, at(1)).await.unwrap();
+            let visible: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM event_log WHERE first_position IS NOT NULL",
+            )
+            .fetch_one(&reader)
+            .await
+            .unwrap();
+            assert_eq!(visible, 0, "uncommitted import batches are not visible");
+            assert!(!staging.lock().claims_import);
+            assert!(staging.read_claims(|state| state.resolve("person:homer").is_none()));
+            sql::commit(tx).await.unwrap();
+            pending.committed();
+        })
+        .await;
+    let batches = writer
+        .shared_log(&store)
+        .read_from(Position(0), 100)
+        .await
+        .unwrap();
+    assert_eq!(batches.len(), 3, "303 events occupy three bounded batches");
+    let mut previous = Position(0);
+    for (index, batch) in batches.iter().enumerate() {
+        assert!(
+            batch.members().len() <= 128,
+            "one batch exceeds the measured bound"
+        );
+        assert_eq!(batch.header().expected_previous_position, previous);
+        assert_eq!(batch.range().first.0, previous.0 + 1);
+        assert_eq!(
+            batch.header().batch_id.0,
+            format!("{CLAIMS_IMPORT_PREFIX}{}:{index}", previous.0)
+        );
+        previous = batch.range().last;
+    }
+    assert_eq!(previous.0, expected.len() as u64);
+    assert_eq!(
+        batches
+            .iter()
+            .flat_map(|batch| batch.members().iter())
+            .collect::<Vec<_>>(),
+        expected.iter().collect::<Vec<_>>()
+    );
+    assert!(seam.read_claims(|state| state.resolve("person:homer").is_some()));
+    let refused = staged(&writer, &pool, &seam, vec![], large_import(), true).await;
+    assert!(
+        matches!(refused, Err(LedgerError::Refused(_))),
+        "{refused:?}"
+    );
+    assert_eq!(
+        writer
+            .shared_log(&store)
+            .read_from(Position(0), 100)
+            .await
+            .unwrap(),
+        batches
+    );
+    writer.drain().await;
+    drop(seam);
+    drop(writer);
+    let reopened = Writer::default();
+    let seam = opened(&reopened, &pool).await;
+    assert!(seam.lock().claims_import);
+    assert!(seam.read_claims(|state| state.resolve("person:homer").is_some()));
+    reopened.drain().await;
+    server.stop().await;
+}
+
+/// A duplicate slot makes the second INSERT fail after the first succeeded.
+/// Rolling back leaves no claims event, and a retry imports the whole history.
+#[tokio::test]
+async fn a_claims_import_fault_between_batches_leaves_no_claims_event() {
+    let scratch = Scratch::new("seam-import-batch-fault");
+    let mut server = Dolt::start(&scratch.0, free_port()).await.unwrap();
+    let store = migrated_database(&server, "alpha").await.unwrap();
+    let pool = sql::Pool::from(store.clone());
+    let writer = Writer::default();
+    let seam = opened(&writer, &pool).await;
+    let blocked = format!(
+        "b:{}",
+        jojobot_domain::request::digest_of("claims-import:128:1")
+    );
+    sqlx::query("INSERT INTO event_log (slot, first_position, last_position, payload) VALUES (?, NULL, 0, ?)")
+        .bind(&blocked).bind(b"[]".as_slice()).execute(&store).await.unwrap();
+    let (staging, job_pool) = (seam.clone(), pool.clone());
+    writer
+        .run(async move {
+            let mut tx = job_pool.writer().begin().await.unwrap();
+            let result = staging.stage_import(&mut tx, large_import(), at(1)).await;
+            assert!(
+                result.is_err(),
+                "the second batch must meet the duplicate slot"
+            );
+            let staged: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM event_log WHERE first_position IS NOT NULL",
+            )
+            .fetch_one(&mut *tx)
+            .await
+            .unwrap();
+            assert_eq!(staged, 1, "the fault follows a successful first batch");
+            tx.rollback().await.unwrap();
+        })
+        .await;
+    assert!(
+        writer
+            .shared_log(&store)
+            .read_from(Position(0), 100)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(!seam.lock().claims_import);
+    assert!(seam.read_claims(|state| state.resolve("person:homer").is_none()));
+    sqlx::query("DELETE FROM event_log WHERE slot = ?")
+        .bind(&blocked)
+        .execute(&store)
+        .await
+        .unwrap();
+    staged(&writer, &pool, &seam, vec![], large_import(), true)
+        .await
+        .unwrap();
+    let batches = writer
+        .shared_log(&store)
+        .read_from(Position(0), 100)
+        .await
+        .unwrap();
+    assert_eq!(batches.len(), 3);
+    assert_eq!(batches.last().unwrap().range().last.0, 303);
+    assert!(seam.read_claims(|state| state.resolve("person:homer").is_some()));
+    writer.drain().await;
+    server.stop().await;
+}

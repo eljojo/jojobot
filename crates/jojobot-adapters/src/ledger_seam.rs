@@ -60,11 +60,14 @@ const IMPORTED_GENERATION: u64 = 1;
 /// (see [`Seam::stage_with`]).
 pub(crate) const CLAIMS_IMPORT_PREFIX: &str = "claims-import:";
 
+/// Bounds the encoded import row and a replay page of READ_BOUND batches.
+const CLAIMS_IMPORT_BATCH_SIZE: usize = 128;
+
 struct Held {
     state: State,
     /// **The claims family's state, held beside the ledgers'.** One replay of the
     /// log fills both, because the log holds every family's members and a batch
-    /// may carry both (one batch per transaction).
+    /// may carry both (one batch per ordinary write transaction).
     claims: jojobot_domain::log::claims::State,
     /// The position of the last batch applied to `state`.
     applied: Position,
@@ -116,7 +119,7 @@ pub(crate) struct Seam {
     held: Mutex<Held>,
 }
 
-/// **A batch staged in the caller's transaction.** Call [`Pending::committed`]
+/// **Events staged in the caller's transaction.** Call [`Pending::committed`]
 /// after the COMMIT is acknowledged and [`Pending::unknown`] when its outcome is
 /// not known. Dropped any other way, the transaction rolled back and nothing
 /// changed.
@@ -124,9 +127,9 @@ pub(crate) struct Pending {
     seam: Arc<Seam>,
     staged: Staged,
     events: Vec<LedgerEvent>,
-    /// The claims events of the batch, as the log stores them.
+    /// The claims events of the transaction, as the log stores them.
     claims: Vec<Event<ClaimEvent>>,
-    /// The batch is the claims import: its commit sets `claims_import`.
+    /// The transaction is the claims import: its commit sets `claims_import`.
     imported: bool,
     last: Position,
 }
@@ -335,19 +338,50 @@ impl Seam {
         claims: Vec<Event<ClaimEvent>>,
         at: Timestamp,
     ) -> Result<Pending, LedgerError> {
-        self.stage_batch(tx, events, claims, at, false).await
+        self.stage_batch(tx, events, claims, at).await
     }
 
-    /// **Stage the claims import as one batch in `tx`**, under the id the seam
-    /// reads as a completed import once it commits. The one way a claims event
-    /// reaches a log that holds none.
+    /// **Stage the claims import as bounded batches in `tx`**. Every batch has
+    /// the import prefix and its index; the one transaction makes them visible
+    /// together. Only its last staged head is acknowledged after that commit.
     pub(crate) async fn stage_import(
         self: &Arc<Self>,
         tx: &mut Transaction<'_, MySql>,
         claims: Vec<Event<ClaimEvent>>,
         at: Timestamp,
     ) -> Result<Pending, LedgerError> {
-        self.stage_batch(tx, Vec::new(), claims, at, true).await
+        self.settle().await?;
+        self.settle_claims().await?;
+        if self.lock().claims_import {
+            return Err(LedgerError::Refused(
+                "the log already holds a completed claims import".into(),
+            ));
+        }
+        // Admission covers the whole import, including bindings that straddle
+        // a batch boundary, before its first stored row is staged.
+        // The import carries the numbers its rows held, and none is made for it.
+        let claims = self.checked_claims(claims)?;
+        let mut head = Position(self.log.head_in(tx).await.map_err(refused)?);
+        let mut staged = None;
+        for (index, chunk) in claims.chunks(CLAIMS_IMPORT_BATCH_SIZE).enumerate() {
+            let batch = Self::seal(head.0, &[], chunk, at, Some(index))?;
+            staged = Some(
+                match index {
+                    0 => self.log.stage(tx, head, &batch).await,
+                    _ => self.log.stage_after(tx, head, &batch).await,
+                }
+                .map_err(refused)?,
+            );
+            head = batch.range().last;
+        }
+        Ok(Pending {
+            seam: Arc::clone(self),
+            staged: staged.ok_or_else(|| refused(jojobot_domain::log::LogError::InvalidBatch))?,
+            events: Vec::new(),
+            claims,
+            imported: true,
+            last: head,
+        })
     }
 
     async fn stage_batch(
@@ -356,7 +390,6 @@ impl Seam {
         events: Vec<LedgerEvent>,
         claims: Vec<Event<ClaimEvent>>,
         at: Timestamp,
-        import: bool,
     ) -> Result<Pending, LedgerError> {
         if self.lock().behind {
             self.catch_up().await?;
@@ -373,17 +406,34 @@ impl Seam {
         // not need it and goes on.
         if !claims.is_empty() {
             self.settle_claims().await?;
-            if !import && !self.lock().claims_import {
+            if !self.lock().claims_import {
                 return Err(LedgerError::Refused(
                     "the log holds no completed claims import, so no claims event is staged".into(),
                 ));
             }
         }
-        // The import carries the numbers its rows held, and none is made for it.
-        let claims = match import {
-            true => claims,
-            false => self.numbered(claims, at),
-        };
+        let claims = self.checked_claims(self.numbered(claims, at))?;
+        let head = self.log.head_in(tx).await.map_err(refused)?;
+        let batch = Self::seal(head, &events, &claims, at, None)?;
+        let staged = self
+            .log
+            .stage(tx, Position(head), &batch)
+            .await
+            .map_err(refused)?;
+        Ok(Pending {
+            seam: Arc::clone(self),
+            staged,
+            events,
+            claims,
+            imported: false,
+            last: batch.range().last,
+        })
+    }
+
+    fn checked_claims(
+        &self,
+        claims: Vec<Event<ClaimEvent>>,
+    ) -> Result<Vec<Event<ClaimEvent>>, LedgerError> {
         let claims: Vec<Event<ClaimEvent>> = claims
             .iter()
             .map(|event| {
@@ -395,21 +445,7 @@ impl Seam {
             .claims
             .check(&claims)
             .map_err(|error| LedgerError::Refused(error.to_string()))?;
-        let head = self.log.head_in(tx).await.map_err(refused)?;
-        let batch = Self::seal(head, &events, &claims, at, import)?;
-        let staged = self
-            .log
-            .stage(tx, Position(head), &batch)
-            .await
-            .map_err(refused)?;
-        Ok(Pending {
-            seam: Arc::clone(self),
-            staged,
-            events,
-            claims,
-            imported: import,
-            last: batch.range().last,
-        })
+        Ok(claims)
     }
 
     /// Stage `events` as one more batch in `tx`, after the batch this transaction
@@ -421,7 +457,7 @@ impl Seam {
         events: Vec<LedgerEvent>,
         at: Timestamp,
     ) -> Result<Pending, LedgerError> {
-        let batch = Self::seal(after.0, &events, &[], at, false)?;
+        let batch = Self::seal(after.0, &events, &[], at, None)?;
         let staged = self
             .log
             .stage_after(tx, after, &batch)
@@ -442,7 +478,7 @@ impl Seam {
         events: &[LedgerEvent],
         claims: &[Event<ClaimEvent>],
         at: Timestamp,
-        import: bool,
+        import: Option<usize>,
     ) -> Result<SealedBatch, LedgerError> {
         let members: Vec<Vec<u8>> = events
             .iter()
@@ -459,8 +495,8 @@ impl Seam {
         ));
         SealedBatch::seal(
             BatchId(match import {
-                true => format!("{CLAIMS_IMPORT_PREFIX}{identity}"),
-                false => format!("ledger:{identity}"),
+                Some(index) => format!("{CLAIMS_IMPORT_PREFIX}{head}:{index}"),
+                None => format!("ledger:{identity}"),
             }),
             Position(head),
             at,

@@ -1,6 +1,6 @@
 //! **The one-time import of today's claims, fields and identities into the event
 //! log.** It reads every row the claims import names ([`DoltMemory::import_rows`]),
-//! maps them to events ([`import`]) and appends them as ONE batch, in one
+//! maps them to events ([`import`]) and appends them as bounded batches, in one
 //! transaction, so a log that holds a claims event holds the whole import and a
 //! start cut short leaves nothing. A log that already holds a claims event is
 //! never imported into again.

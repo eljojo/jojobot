@@ -1,7 +1,7 @@
 //! **Today's claims, fields and identities are imported into the event log once,
 //! in the real store.** The rows are made with the port the way a deployed build
-//! made them; the import reads them back, maps them and appends them as one
-//! batch. What it appended is what the pure mapping says the rows mean, and
+//! made them; the import reads them back, maps them and appends bounded batches
+//! in one transaction. What it appended is what the pure mapping says the rows mean, and
 //! nothing is appended when a row is not understood.
 
 use jiff::{Timestamp, civil::date};
