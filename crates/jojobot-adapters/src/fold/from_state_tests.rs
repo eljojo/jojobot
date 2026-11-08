@@ -160,6 +160,36 @@ async fn compare(merged: bool) {
         )
         .await
         .expect("the fold lands");
+    // **A moved claim is edited at the address the merge serves it at**, so the
+    // store holds a write of it filed under the survivor and the label the merge
+    // gave it, after the merge.
+    let served_at = memory
+        .merge_events(Some(&lisa))
+        .await
+        .expect("the merge is read")
+        .pop()
+        .expect("the merge is there")
+        .claims
+        .first()
+        .expect("the merge moved a claim")
+        .1
+        .clone();
+    memory
+        .update_fact(
+            &FactAddress::new(lisa.clone(), served_at),
+            FactPatch {
+                fields: [("mood".to_string(), "wary".to_string())]
+                    .into_iter()
+                    .collect(),
+                sets: ["mood".to_string()].into_iter().collect(),
+                ..Default::default()
+            },
+            &EntityId("bot:sigma".into()),
+        )
+        .await
+        .expect("the moved claim is edited")
+        .written()
+        .expect("not blocked");
     let renamed = EntityId("person:ralph".into());
     let rename = |token: Option<String>| {
         let (memory, nelson, renamed) = (&memory, &nelson, &renamed);

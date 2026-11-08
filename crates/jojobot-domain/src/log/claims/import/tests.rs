@@ -548,6 +548,35 @@ fn a_stored_clear_by_a_claim_that_did_not_hold_the_key_still_takes_it_off() {
     );
 }
 
+/// **A key write whose claim no row holds is named with its count, and no claim
+/// is made up for it.** The import used to give such a write a record under the
+/// thing it landed on, a record nothing created. It now refuses by name, and the
+/// same rows without the orphan import whole, so the refusal is about the write.
+#[test]
+fn a_key_write_whose_claim_no_row_holds_is_named_and_gets_no_record() {
+    let held = Rows {
+        entities: vec![entity("k1", "person:homer")],
+        facts: vec![fact("k1", "f1", vec![write_of(1, "x", None, 1)])],
+        field_writes: vec![set("k1", "mood", 1, "calm", "f1", Some(1))],
+        ..Rows::default()
+    };
+    assert!(import(&held).is_ok(), "the rows with no orphan import");
+    let mut orphaned = held.clone();
+    orphaned
+        .field_writes
+        .push(set("k1", "mood", 2, "wary", "f9", None));
+    orphaned
+        .field_writes
+        .push(set("k1", "hair", 1, "blue", "f8", None));
+    assert_eq!(
+        import(&orphaned),
+        Err(ImportError::KeyWritesNameNoClaim {
+            count: 2,
+            first: "k1/mood#2".into()
+        })
+    );
+}
+
 fn with_status(mut row: FactRow, status: FactStatus) -> FactRow {
     row.head.status = status;
     for write in &mut row.writes {
@@ -1462,13 +1491,12 @@ fn no_stored_row_binds_an_object_to_an_app_so_an_import_leaves_every_object_unbo
 /// in the right one.** Each rule below sorts its rows by the number or ordinal the
 /// row carries, and the store hands rows back in no order a case may lean on. A
 /// write stored on the first thing of a chain of two merges ends under the last
-/// thing, with the id its claim wears there, only when the merges are applied in
-/// their numbers' order; the merge events then arrive in that order too; and a
+/// thing, on the record its claim was made as, only when the merges are applied
+/// in their numbers' order; the merge events then arrive in that order too; and a
 /// numbering whose rows come back as 2, 1 is the numbering 1, 2.
 fn a_chain_of_two_merges(descending: bool) -> Rows {
-    let mut written = write_of(1, "calm", Some("run-a"), 1);
-    written.claim.home = object("k3");
-    written.claim.label = "f9".into();
+    // The claim stays on the row it was made on, whatever the merges call it.
+    let written = write_of(1, "calm", Some("run-a"), 1);
     let step = |no: i64, folded: &str, survivor: &str, from: &str, to: &str| MergeRow {
         no,
         folded: object(folded),
@@ -1490,7 +1518,7 @@ fn a_chain_of_two_merges(descending: bool) -> Rows {
             entity("k2", "person:marge"),
             entity("k3", "person:bart"),
         ],
-        facts: vec![fact("k3", "f9", vec![written])],
+        facts: vec![fact("k1", "f1", vec![written])],
         field_writes: vec![set("k1", "mood", 1, "calm", "f1", Some(1))],
         merges,
         ..Rows::default()
@@ -1513,8 +1541,8 @@ fn merges_given_in_descending_order_import_as_they_do_in_ascending_order() {
         .collect();
     assert_eq!(
         written,
-        [(&object("k3"), &RecordId("k3/f9".into()))],
-        "the write follows both merges"
+        [(&object("k3"), &RecordId("k1/f1".into()))],
+        "the write follows both merges and names the record its claim was made as"
     );
     let folded: Vec<&ObjectId> = ascending
         .iter()

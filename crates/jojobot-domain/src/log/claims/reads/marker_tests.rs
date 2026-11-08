@@ -201,9 +201,10 @@ fn the_marker_does_not_fall_when_a_merge_leaves_two_claims_one_label() {
             merging("work:beta", "work:alpha", &moved),
         ));
         let after = state.write_marker(&object("work:alpha"));
-        // alpha: row 1 + claim writes 3; beta: row 1 + claim writes 1.
+        // alpha: row 1 + claim writes 3; beta: claim writes 1. The row of the
+        // folded thing is filed under it, and the store counts it for that thing.
         assert_eq!(before, 4, "{moved:?}");
-        assert_eq!(after, 6, "{moved:?}: both claims and both rows are counted");
+        assert_eq!(after, 5, "{moved:?}: both claims and the survivor's row");
         assert!(after >= before);
     }
 }

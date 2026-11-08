@@ -47,6 +47,8 @@ pub enum ImportError {
     },
     #[error("merge numbers must run 1, 2, 3 without a gap: expected {expected}, found {found}")]
     MergeNumberGap { expected: i64, found: i64 },
+    #[error("{count} key writes name a claim no row holds, the first {first}")]
+    KeyWritesNameNoClaim { count: usize, first: String },
 }
 
 /// **One `type_write` row**, its declaration decoded.
@@ -718,21 +720,28 @@ pub fn import(rows: &Rows) -> Result<Vec<Event<ClaimEvent>>, ImportError> {
         .iter()
         .map(|fact| ((&fact.home, fact.local.as_str()), fact))
         .collect();
+    let mut unexplained = 0usize;
+    let mut first_unexplained = String::new();
     for (at, write) in rows.field_writes.iter().enumerate() {
-        let Some((subject, ordinal, local)) = placed.get(&at) else {
+        let Some((subject, ordinal, _)) = placed.get(&at) else {
             continue;
         };
         let stored = facts
             .get(&(&write.fact_home, write.fact_local.as_str()))
             .copied();
-        // A claim a merge moved is filed under the survivor now, with its new id.
-        let origin = stored
-            .or_else(|| facts.get(&(subject, local.as_str())).copied())
-            .and_then(|fact| {
-                fact.writes
-                    .iter()
-                    .find(|held| Some(held.ordinal) == write.fact_write_ordinal)
-            });
+        // **A write whose claim no row holds is named, never given a record**:
+        // the import invents no claim for it.
+        let Some(created) = stored else {
+            if unexplained == 0 {
+                first_unexplained = format!("{}/{}#{}", write.entity.0, write.key.0, write.ordinal);
+            }
+            unexplained += 1;
+            continue;
+        };
+        let origin = created
+            .writes
+            .iter()
+            .find(|held| Some(held.ordinal) == write.fact_write_ordinal);
         let (actor, run) = match origin {
             Some(held) => {
                 let by = write_origin::written_by(Some(origin_of(held)), held.claim.app.as_ref());
@@ -743,10 +752,7 @@ pub fn import(rows: &Rows) -> Result<Vec<Event<ClaimEvent>>, ImportError> {
         events.push(envelope(actor, run, write.written_at, {
             // **The record the claim was created as**: a stored claim keeps its
             // key and its id whatever a merge has since called it.
-            let record = match stored {
-                Some(fact) => record_id(&fact.home, &fact.local),
-                None => record_id(subject, local),
-            };
+            let record = record_id(&created.home, &created.local);
             match &write.write {
                 // **Every stored clear took the key off the thing** (rule 677),
                 // whichever claim held the value, so it keeps that meaning in
@@ -770,6 +776,12 @@ pub fn import(rows: &Rows) -> Result<Vec<Event<ClaimEvent>>, ImportError> {
                 },
             }
         }));
+    }
+    if unexplained > 0 {
+        return Err(ImportError::KeyWritesNameNoClaim {
+            count: unexplained,
+            first: first_unexplained,
+        });
     }
     // A merge made before `merge_event` existed is told only by the mark on the
     // folded entity. It has no moment and no run. **The first as many as there are
