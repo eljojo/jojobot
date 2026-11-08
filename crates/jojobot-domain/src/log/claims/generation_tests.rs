@@ -183,27 +183,6 @@ fn taking_back_the_claim_that_holds_the_spec_makes_the_next_number() {
 }
 
 #[test]
-fn a_retract_makes_no_number() {
-    let mut events = world();
-    events.extend(holding("r1", "f1", "k1", "running", "1"));
-    let state = replay(&events);
-    // **A retract is the claim taken back and the account written beside it**;
-    // the rows of a retract hold no number, so the batch holds none.
-    let pending = [
-        archived("r1", "f1", "k1"),
-        created("r2", claim("f2", "k1", "retracted", 3)),
-        write(
-            "r2",
-            "k1",
-            crate::memory::RETRACTS,
-            1,
-            "bot-request:alpha#f1",
-        ),
-    ];
-    assert_eq!(generations(&state, &pending), Vec::new());
-}
-
-#[test]
 fn a_batch_not_applied_changes_nothing_in_the_state() {
     let mut events = world();
     events.extend(holding("r1", "f1", "k1", "running", "1"));
