@@ -508,6 +508,32 @@ async fn stage_claims(
         .map_err(ledger)
 }
 
+/// **Commit a transaction that carries no request id, sealing the claim events
+/// its writers emitted.** A write that spends no id (a role's renewal) commits
+/// natively; when a companion claim written in the same transaction emitted
+/// events, those events join the transaction and are applied when it commits,
+/// as a covered write's are. With nothing emitted it is the native commit.
+pub(crate) async fn commit_emitted(
+    mut tx: Transaction<'_, MySql>,
+    clock: &Clock,
+) -> Result<(), sqlx::Error> {
+    let claims = crate::writer::sql::take_emitted();
+    if claims.is_empty() {
+        return crate::writer::sql::commit(tx).await;
+    }
+    let pending = stage_claims(&mut tx, clock, claims).await?;
+    match crate::writer::sql::commit(tx).await {
+        Ok(()) => {
+            pending.committed();
+            Ok(())
+        }
+        Err(e) => {
+            pending.unknown();
+            Err(e)
+        }
+    }
+}
+
 /// **Commit the transaction that stores a write, with the id's ledger event in
 /// it** when the call carries an id. This is the whole of what a covered write
 /// does at its commit point.

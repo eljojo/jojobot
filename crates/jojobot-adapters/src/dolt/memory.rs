@@ -272,7 +272,9 @@ impl Commit {
     async fn commit(self, tx: Transaction<'_, MySql>, clock: &Clock) -> Result<(), MemoryError> {
         match self {
             Commit::None => Ok(()),
-            Commit::Native => commit_native(tx).await.map_err(store),
+            Commit::Native => super::requests::commit_emitted(tx, clock)
+                .await
+                .map_err(store),
             Commit::Request(landed) => super::requests::commit(tx, clock, || landed)
                 .await
                 .map_err(store),
