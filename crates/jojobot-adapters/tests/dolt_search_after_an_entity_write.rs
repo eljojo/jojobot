@@ -119,10 +119,15 @@ async fn a_search_after_an_edit_a_rename_an_archive_a_restore_or_prose_costs_wha
             .knowing(supplied.clone()),
         supplied,
     ));
+    // **Mentions resolve above the fold and below the index**, as the server wires
+    // it: the fold holds text as stored, the layer over it renders a mention as a
+    // handle, and the index scans what a reader sees.
+    let folded = Arc::new(jojobot_adapters::fold::Folded::new(provisioned));
     let indexed = Arc::new(
-        IndexedMemory::new(Arc::new(Mentioning::new(provisioned))).expect("the search index opens"),
+        IndexedMemory::with_writer(Arc::new(Mentioning::new(folded.clone())), folded.writer())
+            .expect("the search index opens"),
     );
-    indexed.state().rebuild().await.expect("the fold loads");
+    folded.rebuild().await.expect("the fold loads");
     indexed.rebuild().await.expect("the boot scan reads");
     let retrieval = Retrieval::new(indexed.index(), vec![indexed.clone()]);
 
@@ -354,7 +359,7 @@ async fn a_search_after_an_edit_a_rename_an_archive_a_restore_or_prose_costs_wha
         .expect("the direct edit lands");
     // The fold holds the store as this process wrote it, so a row changed past
     // the process is seen when the fold reads the store again, as at a start.
-    indexed.state().rebuild().await.expect("the fold loads");
+    folded.rebuild().await.expect("the fold loads");
     let (hand_hits, _) = counted(retrieval.search(&SearchQuery::text("Renamed By Hand"))).await;
     assert!(
         names(&hand_hits.expect("search ok"), &holder),
