@@ -21,5 +21,6 @@ disallowed-types = [
     { path = "jojobot_domain::request::Requests", reason = "a page reads through jojobot_query_api::QueryHandle, never the store" },
     { path = "jojobot_domain::push::Outbox", reason = "a page reads through jojobot_query_api::MailHandle, never the store" },
     { path = "jojobot_domain::log::LogStore", reason = "a page reads through jojobot_query_api::QueryHandle, never the store" },
+    { path = "jojobot_domain::log::claims::ClaimsLender", reason = "it lends the claims State, which is the memory itself; a page reads through jojobot_query_api::QueryHandle" },
     { path = "jojobot_domain::storage_check::StorageCheck", reason = "a page reads through jojobot_query_api::QueryHandle, never the store" },
 ]
