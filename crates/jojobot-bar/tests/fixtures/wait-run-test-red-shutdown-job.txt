@@ -1,0 +1,6 @@
+2026-11-08T15:38:59.1962238Z thread 'the_unscaled_seed_and_its_restored_claims_state_hold_the_same_history' (74362) panicked at crates/jojobot/tests/boot_measures.rs:1068:5:
+2026-11-08T15:38:59.2032996Z test the_unscaled_seed_and_its_restored_claims_state_hold_the_same_history ... FAILED
+2026-11-08T15:39:00.5710168Z thread 'scaled_claim_rows_and_the_restored_claims_state_hold_the_same_history' (74361) panicked at crates/jojobot/tests/boot_measures.rs:1068:5:
+2026-11-08T15:39:00.5755997Z test scaled_claim_rows_and_the_restored_claims_state_hold_the_same_history ... FAILED
+2026-11-08T15:39:00.5756769Z test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 8 filtered out; finished in 6.07s
+2026-11-08T15:39:00.5732029Z time="2026-11-08T10:38:58-05:00" level=info msg="stats stopped: context canceled"

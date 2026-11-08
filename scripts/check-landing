@@ -83,7 +83,7 @@ def only_known_reds(run, known):
     if not red_jobs:
         return False
     for job in red_jobs:
-        kind, block = wr.classify(wr.fetch(f"/actions/jobs/{job['id']}/logs"))
+        kind, block = wr.classify(wr.fetch(f"/actions/jobs/{job['id']}/logs"), True)
         if kind != "block" or block[0] != "verdict: RED":
             return False
         names = set()
@@ -122,7 +122,7 @@ def head_omissions(trunk):
                     continue
                 text = wr.fetch(f"/actions/jobs/{job['id']}/logs")
                 omitted.update(wr.boundary_jobs(text))
-                kind, block = wr.classify(text)
+                kind, block = wr.classify(text, False)
                 if kind != "block" or block[0] != "verdict: GREEN":
                     continue
                 lines = [re.sub(r"^\d{4}-\d\d-\d\dT[\d:.]+Z ", "", line) for line in text.splitlines()]

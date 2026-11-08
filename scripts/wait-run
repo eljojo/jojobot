@@ -14,7 +14,11 @@ prints the run's number, its ref and its commit, then, for each job of the run,
 its name, its status and the bar's verdict block from its log: the verdict, each
 phase and the names that FAILED, and nothing else of the log.
 
-  A JOB WHOSE LOG HOLDS NO VERDICT BLOCK and carries a line the runner wrote when
+  A JOB WHOSE LOG HOLDS NO VERDICT BLOCK but holds a failed test result, a named
+  failed test or a test panic prints RED and the failing names it holds. Test
+  failures win over shutdown lines, even when shutdown is the last line.
+
+  A JOB WHOSE LOG HOLDS NO VERDICT BLOCK OR TEST FAILURE and carries a line the runner wrote when
   it lost the job ("RUN signal: terminated", "context canceled", "failed to stat
   working directory", or "No such file or directory (os error 2)") prints
   RUNNER DIED and that line, the first of them in the log. A job with neither a
@@ -223,11 +227,12 @@ def boundary_jobs(text):
     return jobs
 
 
-def classify(text):
-    """**How one job's log ended, in one place.** Returns ("block", lines) when the log holds
-    the bar's verdict block, from the `verdict:` line to the `log:` line that ends it, both the
-    bar's own lines and without timestamps; else ("died", line) with the first line that
-    names a runner loss; else ("none", None)."""
+def classify(text, failed):
+    """**How one job's log ended, in one place.** `failed` says the forge did not report the job
+    a success. Returns ("block", lines) when the log holds the bar's verdict block, from the
+    `verdict:` line to the `log:` line that ends it, both the bar's own lines and without
+    timestamps; else, for a job that did not succeed, ("red", lines) built from the test lines;
+    else ("died", line) with the first line that names a runner loss; else ("none", None)."""
     lines = [re.sub(r"^\d{4}-\d\d-\d\dT[\d:.]+Z ", "", l) for l in text.splitlines()]
     start = next((i for i, l in enumerate(lines) if l.startswith("verdict:")), None)
     end = next((i for i, l in enumerate(lines) if l.startswith("log:")), None)
@@ -236,6 +241,28 @@ def classify(text):
         if block[0] == "verdict: GREEN" and boundary_jobs("\n".join(block)):
             block[0] = "verdict: GREEN-PARTIAL"
         return "block", block
+    # The test lines are read only for a job that did not succeed: a passing job may print
+    # a panic (a `should_panic` case, a worker under --nocapture) and is still green.
+    failures = []
+    panics = []
+    summaries = []
+    for line in lines if failed else ():
+        named = re.match(r"^test (\S+) \.\.\. FAILED$", line)
+        panic = re.match(r"^thread '([^']+)' (?:\(\d+\) )?panicked at", line)
+        if named and named.group(1) not in failures:
+            failures.append(named.group(1))
+        if panic and panic.group(1) not in panics:
+            panics.append(panic.group(1))
+        if line.startswith("test result: FAILED"):
+            summaries.append(line)
+    # A `test ... FAILED` line names the test; a thread name is the fallback for a log that has none.
+    names = failures or panics
+    if names or summaries:
+        return "red", (
+            ["verdict: RED (read from the log's test lines; the bar wrote no verdict block)"]
+            + [f"FAILED: {name}" for name in names]
+            + summaries
+        )
     died = next((l for l in lines if any(lost in l for lost in RUNNER_LOST)), None)
     if died is not None:
         return "died", died.strip()
@@ -270,12 +297,14 @@ def report(run):
             continue
         # **A job cancelled before it started has no log either**, whatever its status.
         try:
-            kind, found = classify(fetch(f"/actions/jobs/{job['id']}/logs"))
+            kind, found = classify(
+                fetch(f"/actions/jobs/{job['id']}/logs"), job["status"] != "success"
+            )
         except Gone:
             print(f"no log of the {job['name']} job")
             print()
             continue
-        if kind == "block":
+        if kind in {"block", "red"}:
             print("\n".join(found))
             red = red or found[0] not in {"verdict: GREEN", "verdict: GREEN-PARTIAL"}
         elif kind == "died":

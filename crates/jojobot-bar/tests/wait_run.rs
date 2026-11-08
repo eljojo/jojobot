@@ -1679,6 +1679,123 @@ fn a_job_the_runner_killed_prints_runner_died_and_the_run_exits_five() {
     }
 }
 
+/// Job 13951 of run 4514 failed both history assertions before Dolt shut down.
+/// The fixture keeps its failure lines and puts the shutdown last, so cleanup
+/// cannot hide a test failure even without the bar's verdict block. The
+/// `summary`, `named` and `panic` shapes are the observed lines filtered to one
+/// kind each; the real log holds them together.
+#[test]
+fn test_red_before_shutdown_exits_one_and_names_the_failed_tests() {
+    let observed = fixture("wait-run-test-red-shutdown-job.txt");
+    for (evidence, log) in [
+        ("all", observed.clone()),
+        (
+            "summary",
+            observed
+                .lines()
+                .filter(|l| l.contains("test result:") || l.contains("stats stopped:"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        ),
+        (
+            "named",
+            observed
+                .lines()
+                .filter(|l| l.contains(" ... FAILED") || l.contains("stats stopped:"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        ),
+        (
+            "panic",
+            observed
+                .lines()
+                .filter(|l| l.contains("panicked at") || l.contains("stats stopped:"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        ),
+    ] {
+        for status in ["failure", "cancelled"] {
+            let forge = stand(Forge {
+                runs: vec![(run(250, "dev9-2647-work", RED_SHA, status), log.clone())],
+                ..Default::default()
+            });
+            let (code, out, err) = wait(&forge, &[RED_SHA]);
+            assert_eq!(code, 1, "{evidence}/{status}: {out}\n{err}");
+            assert!(out.contains("verdict: RED"), "{evidence}: {out}");
+            assert!(!out.contains("RUNNER DIED"), "{evidence}: {out}");
+            if evidence != "summary" {
+                for name in [
+                    "the_unscaled_seed_and_its_restored_claims_state_hold_the_same_history",
+                    "scaled_claim_rows_and_the_restored_claims_state_hold_the_same_history",
+                ] {
+                    assert!(
+                        out.contains(&format!("FAILED: {name}")),
+                        "{evidence}: {out}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn test_red_before_shutdown_still_defers_to_a_verdict_block() {
+    let log = format!(
+        "{}\n{}",
+        fixture("wait-run-green-job.txt"),
+        fixture("wait-run-test-red-shutdown-job.txt")
+    );
+    let forge = stand(Forge {
+        runs: vec![(run(250, "dev9-2647-work", RED_SHA, "success"), log)],
+        ..Default::default()
+    });
+    let (code, out, err) = wait(&forge, &[RED_SHA]);
+    assert_eq!(code, 0, "{out}\n{err}");
+    assert!(out.contains("verdict: GREEN"), "{out}");
+    assert!(
+        !out.contains("verdict: RED") && !out.contains("RUNNER DIED"),
+        "{out}"
+    );
+}
+
+/// A job that succeeded and wrote no verdict block can still print a panic or a
+/// `FAILED` line: a `should_panic` case, a worker under `--nocapture`. The test
+/// lines name a failure only for a job the forge did not report a success.
+#[test]
+fn a_successful_job_with_test_failure_lines_and_no_block_stays_green() {
+    let log = fixture("wait-run-test-red-shutdown-job.txt");
+    let forge = stand(Forge {
+        runs: vec![(run(250, "dev9-2647-work", RED_SHA, "success"), log)],
+        ..Default::default()
+    });
+    let (code, out, err) = wait(&forge, &[RED_SHA]);
+    assert_eq!(code, 0, "{out}\n{err}");
+    assert!(
+        !out.contains("verdict: RED") && !out.contains("FAILED:"),
+        "{out}"
+    );
+}
+
+/// A `test ... FAILED` line names the test. A thread name is only the fallback,
+/// so a worker thread that panicked inside the test is not listed as a test.
+#[test]
+fn a_failed_test_line_names_the_test_before_the_thread_that_panicked() {
+    let log = "thread 'worker-3' panicked at crates/a/src/lib.rs:1:1:\n\
+               test the_real_case ... FAILED\n\
+               test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out\n";
+    let forge = stand(Forge {
+        runs: vec![(
+            run(250, "dev9-2647-work", RED_SHA, "failure"),
+            log.to_string(),
+        )],
+        ..Default::default()
+    });
+    let (code, out, err) = wait(&forge, &[RED_SHA]);
+    assert_eq!(code, 1, "{out}\n{err}");
+    assert!(out.contains("FAILED: the_real_case"), "{out}");
+    assert!(!out.contains("worker-3"), "{out}");
+}
+
 /// **A red job outranks a dead one.** A test that failed is the news, and the
 /// dead job is named beside it.
 #[test]
