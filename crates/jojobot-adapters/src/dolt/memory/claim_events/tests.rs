@@ -975,3 +975,129 @@ async fn a_bare_store_commits_a_claim_write_and_emits_nothing() {
     writer.drain().await;
     server.stop().await;
 }
+
+/// **A renewal's companion claim reaches the log, though the renewal itself
+/// does not.** A role's lease renewal spends no request id and commits
+/// natively; the claim written beside it in the same transaction is ordinary
+/// durable data, so its events must be sealed with the rows, or the log and the
+/// claims State would lack a claim the store holds.
+#[tokio::test]
+async fn a_renewals_companion_claim_is_in_the_log_with_its_rows() {
+    use jojobot_domain::memory::Guarded;
+    use jojobot_domain::session::{ROLE_CLAIMED_AT, ROLE_HOLDER, RoleMove, RoleMoveKind};
+
+    let (_scratch, mut server, memory, writer, pool) = world("claim-events-renewal").await;
+    let bot = EntityId("bot:sigma".into());
+    let role = EntityId("role:contract-lease-version".into());
+    let t0 = jiff::Timestamp::now() - jiff::SignedDuration::from_mins(10);
+    let fields_at = |at: jiff::Timestamp| {
+        std::collections::BTreeMap::from([
+            (ROLE_HOLDER.to_string(), "delta".to_string()),
+            (ROLE_CLAIMED_AT.to_string(), at.to_string()),
+        ])
+    };
+    let claimed = {
+        let (memory, bot, role, fields) =
+            (memory.clone(), bot.clone(), role.clone(), fields_at(t0));
+        writer
+            .run(async move {
+                memory
+                    .add_entity(NewEntity::new(bot.clone(), "Sigma", "user-named"))
+                    .await
+                    .expect("add")
+                    .written()
+                    .expect("written");
+                memory
+                    .add_entity(NewEntity {
+                        parent: Some(bot),
+                        ..NewEntity::new(role.clone(), "lease-version", "fixture")
+                    })
+                    .await
+                    .expect("add")
+                    .written()
+                    .expect("written");
+                let mut fact = NewFact::about(role, "delta claims the role", date(2026, 9, 1));
+                fact.derived = fields.keys().cloned().collect();
+                fact.fields = fields;
+                memory
+                    .capture(fact)
+                    .await
+                    .expect("capture")
+                    .written()
+                    .expect("written")
+                    .address()
+            })
+            .await
+    };
+    let members_in_the_log = || async {
+        writer
+            .shared_log(&pool)
+            .read_from(Position(0), 1000)
+            .await
+            .expect("the log reads")
+            .iter()
+            .map(|batch| batch.members().len())
+            .sum::<usize>()
+    };
+    writer.drain().await;
+    let before = members_in_the_log().await;
+    let landed = {
+        let (memory, bot, role, fields) = (
+            memory.clone(),
+            bot.clone(),
+            role.clone(),
+            fields_at(t0 + jiff::SignedDuration::from_mins(5)),
+        );
+        writer
+            .run(async move {
+                let mut patch = FactPatch {
+                    fields,
+                    role_move: Some(RoleMove {
+                        kind: RoleMoveKind::Renew,
+                        role: "lease-version".into(),
+                        claimant: "delta".into(),
+                    }),
+                    ..Default::default()
+                };
+                patch.derived = patch.fields.keys().cloned().collect();
+                memory
+                    .update_fact_with_claim(
+                        &claimed,
+                        patch,
+                        &bot,
+                        NewFact::about(role, "delta renews the role", date(2026, 9, 1)),
+                    )
+                    .await
+            })
+            .await
+    };
+    assert!(
+        matches!(landed, Ok(Guarded::Written(_))),
+        "the renewal with its companion lands: {landed:?}"
+    );
+    writer.drain().await;
+    let companions: Vec<String> = writer
+        .shared_log(&pool)
+        .read_from(Position(0), 1000)
+        .await
+        .expect("the log reads")
+        .iter()
+        .flat_map(|batch| batch.members().to_vec())
+        .filter_map(|bytes| crate::claims_log::codec::decode_own(&bytes).ok().flatten())
+        .filter_map(|event| match event.payload {
+            jojobot_domain::log::claims::ClaimEvent::RecordCreated { claim, .. } => {
+                Some(claim.content)
+            }
+            _ => None,
+        })
+        .filter(|content| content == "delta renews the role")
+        .collect();
+    assert_eq!(
+        companions.len(),
+        1,
+        "the companion claim is stored, so its creation is in the log once; \
+         {before} members before, {} after",
+        members_in_the_log().await
+    );
+    server.stop().await;
+}
