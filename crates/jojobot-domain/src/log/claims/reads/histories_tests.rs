@@ -346,3 +346,78 @@ fn a_missing_record_of_a_supplied_home_is_served_under_its_handle() {
     let write = parts.histories[&FactId("f2".into())].last().unwrap();
     assert_eq!(write.derived_from, Some(served), "the history");
 }
+
+/// **A field written by a bot that was merged away is served under the handle
+/// of the bot that took it in**, as `ClaimWrite.bot` is: the writer follows the
+/// survivor, never the handle the folded bot wore. A second bot nobody merged is
+/// the control, served under its own handle.
+#[test]
+fn a_field_written_by_a_merged_bot_names_the_survivor() {
+    crate::memory::kinds::load_shipped();
+    let mut state = State::default();
+    let mut events = things();
+    for name in ["bot:sigma", "bot:theta", "bot:gamma"] {
+        events.push(ClaimEvent::ObjectCreated {
+            object: object(name),
+            body: body("bot", name),
+        });
+        events.push(ClaimEvent::AddressBound {
+            object: object(name),
+            address: name.to_string(),
+        });
+    }
+    for event in events {
+        state.apply(&stamped(None, None, event));
+    }
+    for (record, label, bot, ordinal) in
+        [("r1", "f1", "bot:sigma", 1), ("r2", "f2", "bot:gamma", 2)]
+    {
+        state.apply(&under(
+            Some(Actor::Bot(EntityId(bot.into()))),
+            None,
+            created(record, claim(label, "work:alpha", "set", 3)),
+        ));
+        state.apply(&under(
+            Some(Actor::Bot(EntityId(bot.into()))),
+            None,
+            super::super::tests::write(record, "work:alpha", "stage", ordinal, bot),
+        ));
+    }
+    state.apply(&stamped(
+        None,
+        None,
+        ClaimEvent::ObjectsMerged {
+            folded: object("bot:sigma"),
+            survivor: object("bot:theta"),
+            records: Vec::new(),
+            writes: Vec::new(),
+        },
+    ));
+    let trails = state.key_trails(&object("work:alpha"));
+    let writers: Vec<Option<String>> = trails.history["stage"]
+        .iter()
+        .map(|write| {
+            write
+                .writer
+                .as_ref()
+                .and_then(Actor::bot)
+                .map(|b| b.0.clone())
+        })
+        .collect();
+    assert_eq!(
+        writers,
+        [Some("bot:theta".to_string()), Some("bot:gamma".to_string())]
+    );
+    let served: Vec<String> = state
+        .document_parts(&object("work:alpha"), &[])
+        .expect("the thing is held")
+        .histories[&FactId("f1".into())]
+        .iter()
+        .filter_map(|write| write.bot.as_ref().map(|b| b.0.clone()))
+        .collect();
+    assert_eq!(
+        served,
+        ["bot:theta"],
+        "ClaimWrite.bot follows the survivor too"
+    );
+}

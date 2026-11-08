@@ -680,10 +680,12 @@ impl State {
                     written_at: write.written_at,
                     recorded_by: record.claim.app.clone(),
                     // **The writer is kept as the id its bot is filed under**; the
-                    // port serves the handle the bot wears.
+                    // port serves the handle the bot answers to now, which follows
+                    // a merge to the survivor, as `ClaimWrite.bot` does.
                     writer: write.writer.as_ref().map(|actor| match actor {
                         crate::actor::Actor::Bot(bot) => {
-                            crate::actor::Actor::Bot(self.handle_worn_by(&ObjectId(bot.0.clone())))
+                            let id = ObjectId(bot.0.clone());
+                            crate::actor::Actor::Bot(self.handle_of(&id).unwrap_or(EntityId(id.0)))
                         }
                         other => other.clone(),
                     }),
