@@ -134,11 +134,16 @@ impl Jojobot {
                         .and_then(|block| block.get_mut("steps"))
                         .and_then(Value::as_array_mut)
                         .expect("the served block came from the body");
-                    steps.retain(|step| {
-                        !step["unlocks"]
-                            .as_str()
-                            .is_some_and(|sentence| sentences.iter().any(|lost| lost == sentence))
-                    });
+                    // One step goes for each lost key, so a sentence two keys share
+                    // leaves the step of the key that was not lost.
+                    for sentence in &sentences {
+                        if let Some(at) = steps
+                            .iter()
+                            .position(|step| step["unlocks"].as_str() == Some(sentence))
+                        {
+                            steps.remove(at);
+                        }
+                    }
                     if steps.is_empty() {
                         body.as_object_mut()
                             .expect("a capture receipt is an object")
@@ -750,5 +755,130 @@ mod tests {
         assert!(served.get("hint").is_none(), "{served}");
         assert!(served["left_out"].to_string().contains("hint"), "{served}");
         assert!(served["over_budget"].as_u64().is_some(), "{served}");
+    }
+
+    /// **Steps come out by key, not by sentence.** Two keys share one sentence and
+    /// only one is lost: one step still ships, and its key is spent.
+    #[tokio::test]
+    async fn a_shared_sentence_loses_one_step_for_one_lost_key() {
+        let jojobot = handler();
+        let caller = the_caller();
+        assert!(
+            jojobot
+                .first_contact("type-unlocks:one", Some(&caller))
+                .await
+        );
+        let served = jojobot
+            .own_capture_receipt(
+                a_receipt_with_steps(&["same step", "same step"]),
+                &caller,
+                false,
+                &[
+                    owed("type-unlocks:one", "same step"),
+                    owed("type-unlocks:two", "same step"),
+                ],
+                None,
+                Vec::new(),
+            )
+            .await;
+        assert_eq!(
+            served["unlocks"]["steps"].as_array().map(Vec::len),
+            Some(1),
+            "{served}"
+        );
+        assert!(!jojobot.untaught("type-unlocks:two", &caller).await);
+    }
+
+    /// **A note that spent stays spent when the note after it is lost**: the
+    /// receipt is composed again and the first note is not spent a second time,
+    /// which would read as lost.
+    #[tokio::test]
+    async fn a_note_ahead_of_a_lost_note_stays_served_and_spent() {
+        let jojobot = handler();
+        let caller = the_caller();
+        assert!(
+            jojobot
+                .first_contact("owner-test:taken", Some(&caller))
+                .await
+        );
+        let served = jojobot
+            .own_capture_receipt(
+                json!({"address": "thing:delta#f1"}),
+                &caller,
+                false,
+                &[],
+                None,
+                vec![
+                    note("teaching:free", "owner-test:free", "free note", Tier::High),
+                    note(
+                        "teaching:taken",
+                        "owner-test:taken",
+                        "taken note",
+                        Tier::Low,
+                    ),
+                ],
+            )
+            .await;
+        assert_eq!(served["teaching"], json!(["free note"]), "{served}");
+        assert!(!jojobot.untaught("owner-test:free", &caller).await);
+    }
+
+    /// **A part spent in one pass stays spent when another part is lost in the
+    /// next**: a free possible-subject note ships and is spent, a teaching note
+    /// another receipt took comes out, and the note is still served.
+    #[tokio::test]
+    async fn a_part_spent_before_a_loss_stays_served() {
+        let jojobot = handler();
+        let caller = the_caller();
+        assert!(
+            jojobot
+                .first_contact("owner-test:taken", Some(&caller))
+                .await
+        );
+        let (possible, body) = naming(&[("thing:the-furnace", "possible-subject:free")]);
+        let served = jojobot
+            .own_capture_receipt(
+                body,
+                &caller,
+                false,
+                &[],
+                Some(possible),
+                vec![note(
+                    "teaching:taken",
+                    "owner-test:taken",
+                    "taken note",
+                    Tier::High,
+                )],
+            )
+            .await;
+        assert!(served.get("possible_subject_note").is_some(), "{served}");
+        assert!(served.get("teaching").is_none(), "{served}");
+        assert!(!jojobot.untaught("possible-subject:free", &caller).await);
+    }
+
+    /// **The small form teaches nothing, so nothing that needs a spend ships.**
+    /// A ledger that cannot spend answers the same way. The core is whole and
+    /// no teaching, possible-subject note or carry hint is on it.
+    #[tokio::test]
+    async fn a_receipt_that_cannot_spend_serves_its_core_and_no_teaching() {
+        let jojobot = handler();
+        let (possible, body) = naming(&[("thing:the-furnace", "possible-subject:one")]);
+        let served = crate::write_receipts::TOKEN_SAVING
+            .scope(
+                Some(crate::settings::TokenSaving::on()),
+                jojobot.own_capture_receipt(
+                    body,
+                    &the_caller(),
+                    true,
+                    &[],
+                    Some(possible),
+                    vec![note("teaching:one", "owner-test:one", "a note", Tier::High)],
+                ),
+            )
+            .await;
+        for key in ["teaching", "possible_subject_note", "hint"] {
+            assert!(served.get(key).is_none(), "{key} shipped: {served}");
+        }
+        assert_eq!(served["address"], "work:atlas-root#f1", "{served}");
     }
 }
