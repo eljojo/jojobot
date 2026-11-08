@@ -391,6 +391,27 @@ impl Jojobot {
         if let Ok(facts) = self.memory.referring_to(&id).await {
             sources.extend(facts.into_iter().map(|fact| fact.home));
         }
+        // **What its claims name, served under the names the targets answer to
+        // now** (rule 646): the marks of their field values, their edges and refs,
+        // and the handles in their words and notes. A target renamed since is
+        // another word in the claim with no write to the claim.
+        if let Ok(facts) = self.memory.recall(&id).await {
+            for fact in &facts {
+                sources.extend(fact.field_links.values().flatten().cloned());
+                sources.extend(fact.refs.iter().cloned());
+                sources.extend(fact.edge.iter().map(|edge| edge.object.clone()));
+                let (in_words, in_note) = jojobot_domain::memory::mention::followable_words(
+                    &fact.content,
+                    fact.details.as_deref(),
+                );
+                sources.extend(
+                    in_words
+                        .into_iter()
+                        .chain(in_note)
+                        .map(|(_, handle)| handle),
+                );
+            }
+        }
         if id.kind() == Some(jojobot_domain::memory::EntityKind::LIST)
             && let Ok(held) = self.memory.recall(&id).await
         {
@@ -431,15 +452,35 @@ impl Jojobot {
     /// value links to is what its stored marks say, served under the names the
     /// targets answer to now (rule 646), so a target renamed since the claim was
     /// served changes the claim's words with no write to it.
-    async fn claim_around(&self, address: &str) -> Option<Timestamp> {
+    async fn claim_around(
+        &self,
+        address: &str,
+        last: &jojobot_domain::memory::ClaimWrite,
+    ) -> Option<Timestamp> {
         let address = FactAddress::parse(address).ok()?;
         let facts = self.memory.recall(&address.home).await.ok()?;
         let fact = facts.into_iter().find(|fact| fact.address() == address)?;
+        // **Everything the claim serves under a target's current handle**: the
+        // marks of its field values, its edge, its refs, and the handles in its
+        // words and in its note. The newest write of the claim says the words, the
+        // note and the edge; the record says the fields, their marks and the refs.
         let mut sources: std::collections::BTreeSet<EntityId> =
             fact.field_links.values().flatten().cloned().collect();
         for value in fact.fields.values() {
             sources.extend(jojobot_domain::memory::handles_in_value(value));
         }
+        sources.extend(fact.refs.iter().cloned());
+        sources.extend(last.edge.iter().map(|edge| edge.object.clone()));
+        let (in_words, in_note) = jojobot_domain::memory::mention::followable_words(
+            &last.content,
+            last.details.as_deref(),
+        );
+        sources.extend(
+            in_words
+                .into_iter()
+                .chain(in_note)
+                .map(|(_, handle)| handle),
+        );
         let mut newest = None;
         for source in sources {
             if let Ok(ages) = self.memory.field_ages(&source).await {
@@ -518,7 +559,7 @@ impl Jojobot {
                     writes: chain.len(),
                     status: format!("{:?}", last.status).to_lowercase(),
                     source,
-                    around: self.claim_around(address).await,
+                    around: self.claim_around(address, last).await,
                 })
             }
             Held::Message(id) => {

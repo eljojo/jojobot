@@ -233,6 +233,47 @@ async fn a_real_handle_inside_code_stays_as_written_through_a_rename_and_the_sam
         .await;
 }
 
+/// **A claim that mentions a thing is served again when the thing is renamed.**
+/// The claim was read in full before the rename and says the old handle in its
+/// words. After it the words are served under the new handle with no write to
+/// the claim, so a session that sends no reship key must not be told the claim
+/// is unchanged since served.
+#[tokio::test]
+async fn a_claim_that_mentions_a_renamed_thing_is_served_again_under_the_new_name() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+
+    s.add("place:shelbyvile", "Shelbyville").await;
+    s.add("person:milhouse", "Milhouse").await;
+    s.call(
+        "capture",
+        json!({
+            "subject": "person:milhouse",
+            "content": "grew up in @place:shelbyvile",
+            "provenance": "testimony",
+            "recorded_at": "2026-04-19",
+        }),
+    )
+    .await;
+    s.recall("person:milhouse").await.says("place:shelbyvile");
+
+    s.call(
+        "rename_entity",
+        json!({
+            "handle": "place:shelbyvile",
+            "to": "place:shelbyville",
+            "recorded_at": "2026-08-02",
+        }),
+    )
+    .await;
+
+    s.recall("person:milhouse")
+        .await
+        .says("place:shelbyville")
+        .never_says("place:shelbyvile");
+    story.finish().await;
+}
+
 /// **The payoff this file's own header used to say it could not show.** For
 /// months the operator filed Shelbyville under a typo — `place:shelbyvile` —
 /// and wrote about it from that name: a claim on the place itself, and a
@@ -246,6 +287,8 @@ async fn a_real_handle_inside_code_stays_as_written_through_a_rename_and_the_sam
 #[tokio::test]
 async fn a_rename_reaches_months_of_mentions_written_under_the_old_name() {
     let story = Story::begin("bot:gamma").await;
+    // Reads the one place twice, by its new name and then by its old one, and
+    // wants the body both times.
     let s = story.session().await.asking_whole();
 
     s.add("place:shelbyvile", "Shelbyville").await;
