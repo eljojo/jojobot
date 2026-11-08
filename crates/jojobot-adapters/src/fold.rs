@@ -364,8 +364,13 @@ impl Folded {
         // - a record the State does not know, which is a record the build supplies
         //   and the overlay serves: TEMPORARY(9.3.5), until supplied records are
         //   supplied events.
-        let before_the_import = self.before_the_import.load(Ordering::SeqCst);
-        let stated = if before_the_import {
+        // **A thing the build supplies content at** is a named decline too: the
+        // layer over the store lays that content on what the store holds, and the
+        // State holds none of it. TEMPORARY(9.3.5), until supplied records are
+        // supplied events.
+        let from_the_store =
+            self.before_the_import.load(Ordering::SeqCst) || self.inner.supplies_at(handle);
+        let stated = if from_the_store {
             Ok(None)
         } else {
             self.claims(|state| {
@@ -1401,6 +1406,9 @@ impl Memory for Folded {
     /// **Straight through**: the State is the inner store's.
     fn claims_lender(&self) -> Option<Arc<dyn jojobot_domain::log::claims::ClaimsLender>> {
         self.inner.claims_lender()
+    }
+    fn supplies_at(&self, handle: &EntityId) -> bool {
+        self.inner.supplies_at(handle)
     }
     /// **Answered from the image**, which holds each bot's records with their
     /// edges. The store's own check inside a ceiling write is its own and does

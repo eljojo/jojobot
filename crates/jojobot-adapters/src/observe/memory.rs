@@ -127,6 +127,9 @@ impl Memory for Observed<dyn Memory> {
     ) -> Option<std::sync::Arc<dyn jojobot_domain::log::claims::ClaimsLender>> {
         self.inner.claims_lender()
     }
+    fn supplies_at(&self, handle: &EntityId) -> bool {
+        self.inner.supplies_at(handle)
+    }
     async fn thought_writers(&self, thread: &EntityId) -> Result<Vec<EntityId>, MemoryError> {
         self.result(
             Operation::Memory(MemoryOperation::ThoughtWriters),

@@ -313,6 +313,10 @@ pub trait StoredMemory: Send + Sync {
     fn claims_lender(&self) -> Option<std::sync::Arc<dyn crate::log::claims::ClaimsLender>> {
         None
     }
+    /// [`Memory::supplies_at`](super::Memory::supplies_at) of the store beneath.
+    fn supplies_at(&self, _handle: &EntityId) -> bool {
+        false
+    }
     async fn keys_holding(
         &self,
         key: &str,
@@ -660,6 +664,9 @@ impl StoredMemory for Unrendered {
     }
     fn claims_lender(&self) -> Option<std::sync::Arc<dyn crate::log::claims::ClaimsLender>> {
         self.0.claims_lender()
+    }
+    fn supplies_at(&self, handle: &EntityId) -> bool {
+        self.0.supplies_at(handle)
     }
     async fn keys_holding(
         &self,
