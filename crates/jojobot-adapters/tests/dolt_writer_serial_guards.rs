@@ -42,11 +42,11 @@ async fn store_and_writer(
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
-    let direct = Arc::new(DoltMemory::open(pool.clone()).journaled());
-    jojobot_domain::memory::kinds::seed(&*direct)
+    jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
         .await
         .expect("the kinds are seeded");
     jojobot_adapters::testing::import_claims_now(&pool).await;
+    let direct = Arc::new(DoltMemory::open(pool.clone()).journaled());
     let writer = Writer::default();
     let served = Folded::new(direct.clone()).with_writer(writer.clone());
     served.rebuild().await.expect("the image fills");
