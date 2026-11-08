@@ -4,7 +4,9 @@
 #     scripts/refresh-upgrade-fixture REF DIR
 #
 # REF is the deployed tag; DIR is an absolute cache directory outside git.
-# The commit of each is in that directory's ref.txt. The recording needs a build
+# Normal recording writes the commit to DIR/ref.txt. With BOOT_STORE_DIR set,
+# DIR validates the output path; the input is the inherited UPGRADE_FIXTURE_DIR
+# and the grown dump is written to BOOT_STORE_DIR. The recording needs a build
 # that takes `sets` and writes a closing entry on a wrap, which no build before
 # the fourth deploy's does.
 # The ref is built in a DETACHED worktree, so

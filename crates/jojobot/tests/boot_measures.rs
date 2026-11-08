@@ -546,6 +546,7 @@ async fn record_the_grown_store() {
     let grown = restore_into("jojobot-measure-recorder", "UPGRADE_FIXTURE_DIR", true).await;
     let mut store = scaling_store(&grown).await;
     jojobot_domain::memory::kinds::load_shipped();
+    // Opening the log ensures its validity row, which is kept in the cached dump.
     let log = WriterLog::open(store.pool().clone(), Writer::default())
         .await
         .expect("the recorder log opens before scaling");
@@ -864,6 +865,7 @@ async fn the_unscaled_seed_and_its_restored_claims_state_hold_the_same_history()
 fn claims_counts(batches: &[SealedBatch]) -> (usize, usize) {
     use jojobot_domain::log::claims::ClaimEvent;
 
+    jojobot_domain::memory::kinds::load_shipped();
     let mut records = 0;
     let mut imports = 0;
     for member in batches.iter().flat_map(|batch| batch.members()) {
@@ -1059,11 +1061,16 @@ async fn compare_grown_claims(scaled: bool) {
         .history
         .remove("load_key_0")
         .expect("the held key has its history");
-    // State trails use permanent homes; the row port serves their current handles.
+    // State trails use permanent identities; the row port serves their current handles.
     for write in &mut state_rows {
         write.fact.home = held
             .handle(&jojobot_domain::log::ObjectId(write.fact.home.0.clone()))
             .expect("a history home has its served handle");
+        if let Some(jojobot_domain::actor::Actor::Bot(writer)) = &mut write.writer {
+            *writer = held
+                .handle(&jojobot_domain::log::ObjectId(writer.0.clone()))
+                .expect("a history writer has its served handle");
+        }
     }
     assert_eq!(
         state_rows, rows,
