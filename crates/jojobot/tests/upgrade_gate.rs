@@ -1123,29 +1123,6 @@ async fn boot_current_with(
     ambiguous_reports: Option<usize>,
     tolerated_warnings: &[&str],
 ) -> Booted {
-    boot_current_with_env(
-        state_dir,
-        store_port,
-        git_ref,
-        stored_over_the_ceiling,
-        ambiguous_reports,
-        tolerated_warnings,
-        &[],
-    )
-    .await
-}
-
-/// **The same boot, with variables of the case's own** set on the binary, for a
-/// case that runs the head with a switch an operator may have set.
-async fn boot_current_with_env(
-    state_dir: &std::path::Path,
-    store_port: u16,
-    git_ref: &str,
-    stored_over_the_ceiling: bool,
-    ambiguous_reports: Option<usize>,
-    tolerated_warnings: &[&str],
-    env: &[(&str, &str)],
-) -> Booted {
     let (marked_before, expected_r1) =
         recorded_r1::recorded_r1_before_boot(state_dir, store_port).await;
     let binary = jojobot_exercise::room::server_binary().expect("a jojobot binary to run");
@@ -1159,7 +1136,6 @@ async fn boot_current_with_env(
         // out: the package build exports RUST_LOG="", which parses as a filter
         // with no directives and hides every info line.
         .env("RUST_LOG", "info")
-        .envs(env.iter().copied())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true)

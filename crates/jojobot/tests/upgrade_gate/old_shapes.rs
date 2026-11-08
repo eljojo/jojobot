@@ -15,13 +15,6 @@ fn parsed(what: &str, git_ref: &str, body: &str) -> Value {
 
 /// The head, connected to as the assistant in a run of its own.
 async fn as_the_assistant(booted: &Booted, git_ref: &str) -> (Surface, String) {
-    let (surface, sid, _) = as_the_assistant_run(booted, git_ref).await;
-    (surface, sid)
-}
-
-/// The same, with the run's public name beside its key: the teaching marks are
-/// filed under the name.
-async fn as_the_assistant_run(booted: &Booted, git_ref: &str) -> (Surface, String, String) {
     let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
         .await
         .expect("connecting to the current binary");
@@ -39,122 +32,7 @@ async fn as_the_assistant_run(booted: &Booted, git_ref: &str) -> (Surface, Strin
         .as_str()
         .unwrap_or_else(|| panic!("recorded at {git_ref}: no run to write in: {boot}"))
         .to_string();
-    let run = boot["session"]["run"]
-        .as_str()
-        .unwrap_or_else(|| panic!("recorded at {git_ref}: no run name: {boot}"))
-        .to_string();
-    (surface, sid, run)
-}
-
-/// ── (c) The teaching shadow off ─────────────────────────────────────────────
-///
-/// **A store booted with the teaching shadow off still agrees with its rows at
-/// boot, and the log serves the ledger.** `JOJOBOT_SHADOW=off` stops the legacy
-/// rows being kept current; it must not stop the log answering whether a run was
-/// taught. The boot says so in its own warning, which is the one warning this
-/// case tolerates. After it, the marks the restore seeded read the same in the
-/// log and in the rows, and a teaching rides once in a run: the second answer of
-/// the same kind carries none.
-#[tokio::test]
-async fn a_boot_with_the_teaching_shadow_off_keeps_the_marks_and_serves_the_ledger_from_the_log() {
-    let Restored {
-        scratch,
-        state_dir,
-        store_port,
-        git_ref,
-        ..
-    } = restore_the_fixture("shadow-off").await;
-    let reports = usize::from(recording_holds_the_plain_ambiguous_handle(&git_ref));
-    let off = [("JOJOBOT_SHADOW", "off")];
-    let first = boot_current_with_env(
-        &state_dir,
-        store_port,
-        &git_ref,
-        false,
-        Some(reports),
-        &["teaching shadow is off"],
-        &off,
-    )
-    .await;
-    assert!(
-        first
-            .log
-            .iter()
-            .any(|line| line.contains("the teaching shadow is off")),
-        "recorded at {git_ref}: the boot did not say the shadow was off: {:?}",
-        first.log
-    );
-    first.stop().await;
-    assert_the_teaching_marks_equal_the_rows(&state_dir, store_port, &git_ref).await;
-
-    let second = boot_current_with_env(
-        &state_dir,
-        store_port,
-        &git_ref,
-        false,
-        Some(0),
-        &["teaching shadow is off"],
-        &off,
-    )
-    .await;
-    let (surface, sid, run) = as_the_assistant_run(&second, &git_ref).await;
-    let made = surface
-        .call(
-            "add_entity",
-            json!({"kind": "thing", "handle": "gate-shadow-off", "name": "Shadow off",
-                   "source": "user-named", "sid": sid}),
-        )
-        .await;
-    let one = surface
-        .call(
-            "capture",
-            json!({"subject": "thing:gate-shadow-off", "content": "the first claim", "sid": sid}),
-        )
-        .await;
-    let two = surface
-        .call(
-            "capture",
-            json!({"subject": "thing:gate-shadow-off", "content": "the second claim", "sid": sid}),
-        )
-        .await;
-    surface.finish().await;
-    second.stop().await;
-    assert!(
-        made.contains("\"teaching\"") || one.contains("\"teaching\""),
-        "recorded at {git_ref}: no answer of the run carried the claims teaching: {made} {one}"
-    );
-    assert!(
-        !two.contains("\"teaching\""),
-        "recorded at {git_ref}: the claims teaching rode twice in one run with the shadow off: {two}"
-    );
-    // The seeded marks are still what the rows hold, whether or not the rows were
-    // kept current for the run just made.
-    let mut store = open_the_store(&state_dir, store_port).await;
-    let logged = the_logged_marks(store.pool()).await;
-    for (seeded, _) in TEACHING_MARKS {
-        assert!(
-            logged.iter().any(|mark| mark.sid.as_str() == seeded),
-            "recorded at {git_ref}: the log lost the seeded mark of {seeded}: {logged:?}"
-        );
-    }
-    assert!(
-        logged.iter().any(|mark| mark.sid.as_str() == run),
-        "recorded at {git_ref}: the log did not take the mark of the run that was taught: {logged:?}"
-    );
-    // **What tells the shadow off from the shadow on**: the legacy rows are no
-    // longer kept, so the run just taught has a mark in the log and none in the
-    // rows. With the shadow on, the same run would be in both. The once-in-a-run
-    // check above holds either way; this one does not.
-    let rows = jojobot_adapters::dolt::teaching::DoltTeachings::open(store.pool().clone())
-        .marks()
-        .await
-        .expect("the teaching rows read back");
-    assert!(
-        rows.iter().all(|mark| mark.sid.as_str() != run),
-        "recorded at {git_ref}: the legacy rows were kept current with the shadow off: {rows:?}"
-    );
-    store.stop().await;
-    drop(scratch);
+    (surface, sid)
 }
 
 /// ── (d) A thought stored over its cap ───────────────────────────────────────

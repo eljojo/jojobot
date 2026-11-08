@@ -22,7 +22,6 @@ pub const ORDINARY: &[&str] = &[
     "thing:gate-fine",
     "thing:gate-whisk",
     "thing:gate-pointer",
-    "thing:gate-shadow-off",
     "topic:gate-ordinances",
     // A numbered queue of work items, filed under a queue named for a greek
     // letter. They name nobody.
