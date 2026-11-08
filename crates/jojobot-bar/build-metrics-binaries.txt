@@ -34,6 +34,7 @@ test-boot_keeps_a_key_a_caller_added_to_a_shipped_kind
 test-boot_logs_the_time_of_each_step
 test-boot_lowers_a_value_naming_a_supplied_record
 test-boot_measures
+test-boot_names_a_kept_dangling_pointer
 test-boot_reads_dolt
 test-boot_reads_link_rule_dolt
 test-boot_store_refuses_a_stated_clock_it_cannot_continue
