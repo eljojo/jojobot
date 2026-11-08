@@ -8,6 +8,8 @@ use super::*;
 
 pub mod at_write;
 #[cfg(test)]
+mod claim_order_tests;
+#[cfg(test)]
 mod link_rule_tests;
 
 /// Resolve only marked items from the value owner's stored fields. A grouped
@@ -250,7 +252,9 @@ pub fn claims_in_label_order(facts: &mut [super::Fact]) {
 
 /// The order of two claim labels: by number, then by text.
 pub fn claim_label_order(a: &str, b: &str) -> std::cmp::Ordering {
-    let number = |label: &str| super::numbered::whole_number(label.trim_start_matches('f'));
+    // One leading `f` is part of a label's form; `ff3` holds no number.
+    let number =
+        |label: &str| super::numbered::whole_number(label.strip_prefix('f').unwrap_or(label));
     (number(a).is_none(), number(a), a).cmp(&(number(b).is_none(), number(b), b))
 }
 

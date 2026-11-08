@@ -7192,7 +7192,9 @@ impl Memory for DoltMemory {
             }
         }
         standing_on.sort_by(|a, b| {
-            (a.0.home.as_str(), a.0.local.as_str()).cmp(&(b.0.home.as_str(), b.0.local.as_str()))
+            a.0.home.as_str().cmp(b.0.home.as_str()).then_with(|| {
+                jojobot_domain::memory::claim_label_order(a.0.local.as_str(), b.0.local.as_str())
+            })
         });
         commit_native(tx).await.map_err(store)?;
         Ok(standing_on.into_iter().map(|(_, fact)| fact).collect())

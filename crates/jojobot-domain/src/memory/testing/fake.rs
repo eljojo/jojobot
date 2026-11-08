@@ -1268,12 +1268,14 @@ impl InMemoryMemory {
 
     /// The claims as served: a copy of the rows when no merge has been made.
     fn facts_view(&self) -> Vec<Fact> {
-        if self.merges.lock().expect("fake mutex poisoned").is_empty() {
-            return self.facts.lock().expect("fake mutex poisoned").clone();
-        }
-        // **In the order the store lists a thing's claims**: a claim a merge moved
-        // sits among the survivor's own by the label the merge gave it.
-        let mut facts = self.world().facts.clone();
+        let mut facts = if self.merges.lock().expect("fake mutex poisoned").is_empty() {
+            self.facts.lock().expect("fake mutex poisoned").clone()
+        } else {
+            self.world().facts.clone()
+        };
+        // **In the order the store lists a thing's claims**, whether or not a merge
+        // was made: a claim a merge moved sits among the survivor's own by the label
+        // the merge gave it, and no listing leans on the order the claims were made.
         crate::memory::claims_in_label_order(&mut facts);
         facts
     }

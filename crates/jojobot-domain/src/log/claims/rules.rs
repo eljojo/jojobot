@@ -56,12 +56,7 @@ impl State {
                 content: held.claim.content.clone(),
             })
             .collect();
-        live.sort_by_key(|held| {
-            (
-                memory::numbered::whole_number(held.label.trim_start_matches('f')),
-                held.label.clone(),
-            )
-        });
+        live.sort_by(|a, b| memory::claim_label_order(&a.label, &b.label));
         live
     }
 
@@ -106,12 +101,11 @@ impl State {
             })
             .filter(|(record, _)| self.is_starred_and_plain(bot, record))
             .collect();
-        starred.sort_by_key(|(_, held)| {
-            (
-                held.claim.inserted_at,
-                memory::numbered::whole_number(held.claim.label.trim_start_matches('f')),
-                held.claim.label.clone(),
-            )
+        starred.sort_by(|(_, a), (_, b)| {
+            a.claim
+                .inserted_at
+                .cmp(&b.claim.inserted_at)
+                .then_with(|| memory::claim_label_order(&a.claim.label, &b.claim.label))
         });
         starred
             .into_iter()

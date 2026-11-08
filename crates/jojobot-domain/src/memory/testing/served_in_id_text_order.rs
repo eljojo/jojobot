@@ -5,11 +5,12 @@ use std::sync::Arc;
 
 use super::Memory;
 
-/// **A store that serves `recall` in the order the real store does when records
-/// of one thing are filed under ids of different lengths**: sorted by the id as
-/// text, so `f10` comes before `f9`. A reader that takes the last record served
-/// as the newest is right on the fake and wrong here, which is what a case run
-/// against this store is for. Every other method is forwarded as it is.
+/// **A double that serves `recall` by the id as text**, so `f10` comes before
+/// `f9`. The real store no longer lists a thing's claims that way (it lists them by
+/// the number in the label), but a reader must not lean on the order, and this
+/// double is how a case holds it to that: a reader that takes the last record
+/// served as the newest is right on the fake and wrong here. Every other method is
+/// forwarded as it is.
 pub struct ServedInIdTextOrder(pub Arc<dyn Memory>);
 
 #[crate::forward(

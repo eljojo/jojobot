@@ -190,3 +190,94 @@ fn holders_are_ordered_by_their_key_and_not_by_their_handle() {
         ]
     );
 }
+
+/// **Holders are listed by the key their records are served under**, which is the
+/// survivor's for a claim a merge moved, and a holder's own records by the number
+/// in their labels. The moved claim was made under `k9`, a key that sorts after
+/// `k3`; served under `k1` it comes first. **Paired**: before the merge the same
+/// claim comes after `k3`, so the order moved with the merge and not by chance.
+#[test]
+fn holders_follow_the_key_they_are_served_under_and_their_label_numbers() {
+    let base = made("k1", "person:alpha")
+        .into_iter()
+        .chain(made("k9", "person:beta"))
+        .chain(made("k3", "person:gamma"))
+        .chain(made("k4", "person:delta"))
+        .chain([
+            claim_on("k9", "k9/f1"),
+            claim_on("k3", "k3/f1"),
+            writes(
+                "k9/f1",
+                "k9",
+                "friend",
+                1,
+                FieldValue::Set("@#k4".into()),
+                &["k4"],
+            ),
+            writes(
+                "k3/f1",
+                "k3",
+                "friend",
+                1,
+                FieldValue::Set("@#k4".into()),
+                &["k4"],
+            ),
+        ]);
+    let before = state_of(base.clone());
+    assert_eq!(
+        holders(&before, "person:delta"),
+        vec![
+            ("person:gamma".to_string(), "f1".to_string()),
+            ("person:beta".to_string(), "f1".to_string()),
+        ],
+        "made under k9, the claim is served after k3's"
+    );
+    let merged = state_of(base.chain([ClaimEvent::ObjectsMerged {
+        folded: object("k9"),
+        survivor: object("k1"),
+        records: vec![super::super::MovedRecord {
+            record: record("k9/f1"),
+            label: "f1".to_string(),
+        }],
+        writes: Vec::new(),
+    }]));
+    assert_eq!(
+        holders(&merged, "person:delta"),
+        vec![
+            ("person:alpha".to_string(), "f1".to_string()),
+            ("person:gamma".to_string(), "f1".to_string()),
+        ],
+        "served under the survivor k1, the moved claim comes before k3's"
+    );
+}
+
+/// A holder's own records are listed by the number in their labels: the tenth
+/// follows the ninth.
+#[test]
+fn a_holders_records_are_listed_by_the_number_in_their_labels() {
+    let mut events: Vec<ClaimEvent> = made("k1", "person:alpha")
+        .into_iter()
+        .chain(made("k2", "person:beta"))
+        .collect();
+    for number in [10_u64, 2, 11] {
+        let id = format!("k1/f{number}");
+        events.push(ClaimEvent::RecordCreated {
+            record: record(&id),
+            claim: super::super::tests::claim(&format!("f{number}"), "k1", "a claim", 1),
+        });
+        events.push(writes(
+            &id,
+            "k1",
+            "friend",
+            number,
+            FieldValue::Set("@#k2".into()),
+            &["k2"],
+        ));
+    }
+    let state = state_of(events);
+    let labels: Vec<String> = holders(&state, "person:beta")
+        .into_iter()
+        .map(|(_, label)| label)
+        .collect();
+    assert_eq!(labels, ["f2", "f10", "f11"]);
+}

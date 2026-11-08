@@ -424,3 +424,26 @@ fn canonical_handle_replays_a_second_live_binding_as_the_latest_handle() {
     assert_eq!(state.last_duplicate_handle_binding_at(), None);
     assert!(state.former_handles().is_empty());
 }
+
+/// **A claim whose label holds no number follows the numbered ones**, as the
+/// shared order of a thing's claims puts it, so a scan and a listing of the same
+/// claims agree.
+#[test]
+fn a_scan_lists_a_claim_with_no_number_after_the_numbered_ones() {
+    let state = replayed(vec![
+        made("work:alpha"),
+        created("r1", claim("note", "work:alpha", "unnumbered", 3)),
+        created("r2", claim("f10", "work:alpha", "ten", 3)),
+        created("r3", claim("f2", "work:alpha", "two", 3)),
+    ]);
+    let scan = state
+        .scan(&object("work:alpha"), &[])
+        .expect("the thing is held");
+    assert_eq!(
+        scan.claims
+            .iter()
+            .map(|(_, held)| held.claim.label.as_str())
+            .collect::<Vec<_>>(),
+        vec!["f2", "f10", "note"]
+    );
+}

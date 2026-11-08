@@ -108,3 +108,29 @@ fn the_claims_built_on_a_claim_are_the_claims_that_name_it_as_their_source() {
         vec![("person:alpha".to_string(), "f8".to_string())]
     );
 }
+
+/// **The claims built on a claim come in the order of their label numbers**, so
+/// the eleventh claim of a thing follows the tenth and does not come before the
+/// second.
+#[test]
+fn the_claims_built_on_a_claim_are_listed_by_the_number_in_their_labels() {
+    let mut events: Vec<ClaimEvent> = made("k1", "person:alpha").into_iter().collect();
+    events.push(created("k1/f1", "f1", "k1", None));
+    for number in 2..=12 {
+        events.push(created(
+            &format!("k1/f{number}"),
+            &format!("f{number}"),
+            "k1",
+            Some("k1/f1"),
+        ));
+    }
+    let state = state_of(events);
+    let listed: Vec<String> = standing_on(&state, "person:alpha", "f1")
+        .into_iter()
+        .map(|(_, label)| label)
+        .collect();
+    assert_eq!(
+        listed,
+        (2..=12).map(|n| format!("f{n}")).collect::<Vec<_>>()
+    );
+}

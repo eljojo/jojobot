@@ -2064,6 +2064,27 @@ async fn dolt_satisfies_the_stands_for_contract_when_folded() {
     store.stop().await;
 }
 
+/// **The claims built on a claim are listed by the number in their labels, in the
+/// real store**: the tenth follows the ninth. The store listed them by the text of
+/// the label, which puts `f10` before `f2`.
+#[tokio::test]
+async fn dolt_lists_the_claims_built_on_a_claim_by_the_number_in_their_labels() {
+    let scratch = Scratch::new("built-on-order");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "builtonorder")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+
+    memory::built_on_lists_what_was_built_by_the_number_in_the_labels(&DoltMemory::open(pool))
+        .await;
+
+    store.stop().await;
+}
+
 /// TEMPORARY(9.3.5) kept witness: W: per-store mount, record capacity.
 /// **The record ceiling's contract, against the real store.**
 #[tokio::test]

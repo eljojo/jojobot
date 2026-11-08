@@ -145,7 +145,7 @@ impl State {
     }
 
     /// **Which claims were worked out from this one**, of every status, in the
-    /// order of their addresses.
+    /// order of the key they are filed under and the number in their labels.
     pub fn built_on(&self, source: &FactAddress) -> Vec<memory::Fact> {
         let Some(located) = self.claim_at(&format!("{}#{}", source.home.0, source.local.0)) else {
             return Vec::new();
@@ -156,7 +156,10 @@ impl State {
             .filter(|record| self.has_served_address(record))
             .filter_map(|record| Some((self.filed_under(record)?, self.fact(record)?)))
             .collect();
-        facts.sort_by(|a, b| (a.0, a.1.id.as_str()).cmp(&(b.0, b.1.id.as_str())));
+        facts.sort_by(|a, b| {
+            a.0.cmp(b.0)
+                .then_with(|| memory::claim_label_order(a.1.id.as_str(), b.1.id.as_str()))
+        });
         facts.into_iter().map(|(_, fact)| fact).collect()
     }
 
@@ -181,13 +184,15 @@ impl State {
         facts.into_iter().map(|(_, fact)| fact).collect()
     }
 
-    /// **The key a claim's records are filed under as they are served**: its
-    /// home, which a rename does not change, and the survivor's when a merge
-    /// folded the home away. A holder's records stand at this key.
+    /// **The key a claim's records are filed under as they are served**: its home,
+    /// which a rename does not change. A merge rewrites the home of every claim it
+    /// moves to the survivor's, and a claim it leaves unmapped has no served
+    /// address, so the home is the key a record is served under. A holder's
+    /// records stand at this key.
     fn filed_under(&self, record: &RecordId) -> Option<&str> {
         self.records
             .get(record)
-            .map(|held| self.survivor(&held.claim.home).0.as_str())
+            .map(|held| held.claim.home.0.as_str())
     }
 
     /// The thing a handle names, when the handle is the one it answers to now.
@@ -463,12 +468,9 @@ impl State {
             .filter_map(|id| self.records.get(id).map(|held| (id, held)))
             .partition(|(_, held)| held.claim.home == *subject);
         for list in [&mut claims, &mut unmapped] {
-            list.sort_by_key(|(id, held)| {
-                (
-                    memory::numbered::whole_number(held.claim.label.trim_start_matches('f')),
-                    held.claim.label.clone(),
-                    (*id).clone(),
-                )
+            list.sort_by(|a, b| {
+                memory::claim_label_order(&a.1.claim.label, &b.1.claim.label)
+                    .then_with(|| a.0.cmp(b.0))
             });
         }
         Some(ThingScan {

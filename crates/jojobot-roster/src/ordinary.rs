@@ -1059,6 +1059,7 @@ pub const ORDINARY: &[&str] = &[
     "person:contract-mention-author",
     "person:contract-address-restart-was",
     "person:contract-built-on-was",
+    "person:contract-built-order",
     "person:contract-edge-subject",
     "person:contract-former-handle-never",
     "person:contract-parent-was",

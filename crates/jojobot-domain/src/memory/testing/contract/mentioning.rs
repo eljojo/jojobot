@@ -1727,6 +1727,54 @@ pub async fn built_on_through_a_stale_address_finds_what_was_built_on_the_claim<
     );
 }
 
+/// **What was built on a claim is listed by the number in the claims' labels.**
+/// Eleven claims on one thing are worked out from the first, so their labels run
+/// from `f2` to `f12`: the tenth follows the ninth, and does not come before the
+/// second as a listing by the text of the label would put it.
+pub async fn built_on_lists_what_was_built_by_the_number_in_the_labels<M: Memory + ?Sized>(
+    store: &M,
+) {
+    let thing = EntityId("person:contract-built-order".into());
+    store
+        .add_entity(NewEntity::new(thing.clone(), "Built Order", "the roster"))
+        .await
+        .expect("the fixture is written")
+        .written()
+        .expect("nothing collides with it");
+    let source = capture(
+        store,
+        NewFact::about(thing.clone(), "the claim others stand on", date(2026, 5, 1)),
+    )
+    .await;
+    let mut built = Vec::new();
+    for number in 1..=11 {
+        let claim = capture(
+            store,
+            NewFact {
+                derived_from: Some(source.address()),
+                ..NewFact::about(
+                    thing.clone(),
+                    format!("worked out {number}"),
+                    date(2026, 5, 2),
+                )
+            },
+        )
+        .await;
+        built.push(claim.id);
+    }
+    let listed: Vec<FactId> = store
+        .built_on(&source.address())
+        .await
+        .expect("built_on reads")
+        .into_iter()
+        .map(|fact| fact.id)
+        .collect();
+    assert_eq!(
+        listed, built,
+        "the claims come in the order of their label numbers"
+    );
+}
+
 /// 🚨 **An edit through a stale address lands on the record it always
 /// named — it does not fork it onto a second key.**
 ///
@@ -3237,6 +3285,7 @@ pub async fn run_all_mentioning<M: Memory + ?Sized, B: Memory + ?Sized>(
     a_retype_and_a_reparent_are_each_a_rename(bare).await;
     a_stale_address_resolves_to_the_same_claim_after_a_rename(bare, rehandles).await;
     built_on_through_a_stale_address_finds_what_was_built_on_the_claim(bare, rehandles).await;
+    built_on_lists_what_was_built_by_the_number_in_the_labels(bare).await;
     an_edit_through_a_stale_address_reaches_the_record_it_always_named(bare, rehandles).await;
     a_retraction_through_a_stale_address_reaches_the_record_it_always_named(bare, rehandles).await;
 }
