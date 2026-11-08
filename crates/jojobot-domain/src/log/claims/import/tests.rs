@@ -607,6 +607,48 @@ fn merged_pair() -> Rows {
     merged_pair_as_the_store_leaves_it()
 }
 
+/// **The merge numbers the store holds stay where it holds them, gaps included.**
+/// The store kept merges 1 and 3 and nothing under 2. The claim the first merge
+/// left unmapped names merge 1, and the State's count is 3: the empty number sits
+/// between the two merges, not before both.
+#[test]
+fn an_unmapped_claim_names_the_stored_number_of_its_merge_across_a_gap() {
+    // A scan reads the kind of each thing, so the shipped kinds are loaded.
+    crate::memory::kinds::load_shipped();
+    let merge = |no: i64, folded: &str, at_second: i64| MergeRow {
+        no,
+        folded: object(folded),
+        survivor: object("k1"),
+        merged_at: at(at_second).expect("a moment"),
+        session: None,
+        claims: Vec::new(),
+    };
+    // The claim stays under the key it was made on, the folded thing's.
+    let mut left_behind = write_of(1, "left behind", None, 1);
+    left_behind.claim.home = object("k2");
+    let rows = Rows {
+        entities: vec![
+            entity("k1", "person:homer"),
+            entity("k2", "person:marge"),
+            entity("k3", "person:lisa"),
+        ],
+        facts: vec![fact("k2", "f1", vec![left_behind])],
+        merges: vec![merge(1, "k2", 10), merge(3, "k3", 30)],
+        ..Rows::default()
+    };
+    let state = state_of(&rows);
+    assert_eq!(state.highest_merge_number(), 3);
+    let scan = state
+        .document_scan(&object("k1"), &[])
+        .expect("the survivor");
+    let left: Vec<(String, u64)> = scan
+        .unmapped
+        .iter()
+        .map(|claim| (claim.address.to_string(), claim.merge_no))
+        .collect();
+    assert_eq!(left, vec![("person:marge#f1".to_string(), 1)]);
+}
+
 /// A merged pair: the folded thing's write is interleaved by the ledger's rule,
 /// and its spelling answers to the survivor.
 #[test]

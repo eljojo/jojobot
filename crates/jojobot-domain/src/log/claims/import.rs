@@ -580,11 +580,8 @@ pub fn import(rows: &Rows) -> Result<Vec<Event<ClaimEvent>>, ImportError> {
             key: row.key.clone(),
         });
     }
-    let (with_event, marked_without_row, hole_numbers) = merge_numbers(rows)?;
+    let (with_event, _, hole_numbers) = merge_numbers(rows)?;
     let holes = hole_numbers.len();
-    // **A number nothing explains stays empty** (rule 677: the stored numbers
-    // are the record). The count the State keeps is then the highest number.
-    let empty = holes.saturating_sub(marked_without_row);
     let mut events = Vec::new();
     for row in &rows.entities {
         events.push(envelope(
@@ -775,11 +772,12 @@ pub fn import(rows: &Rows) -> Result<Vec<Event<ClaimEvent>>, ImportError> {
         }));
     }
     // A merge made before `merge_event` existed is told only by the mark on the
-    // folded entity. It has no moment and no run, and it comes first because it
-    // is older than every merge that has a row. **The first as many as there are
+    // folded entity. It has no moment and no run. **The first as many as there are
     // holes in the numbers are counted merges, each holding a missing number**;
     // the rest are redirects the store never numbered, which the count leaves out.
+    // A counted merge waits for the hole it fills.
     let mut counted = holes;
+    let mut marked_merges = std::collections::VecDeque::new();
     for row in &rows.entities {
         let Some(survivor) = &row.merged_into else {
             continue;
@@ -787,27 +785,46 @@ pub fn import(rows: &Rows) -> Result<Vec<Event<ClaimEvent>>, ImportError> {
         if with_event.contains(&row.key) {
             continue;
         }
-        events.push(plain(if counted > 0 {
+        if counted > 0 {
             counted -= 1;
-            ClaimEvent::ObjectsMerged {
+            marked_merges.push_back(plain(ClaimEvent::ObjectsMerged {
                 folded: row.key.clone(),
                 survivor: survivor.clone(),
                 records: Vec::new(),
                 writes: Vec::new(),
-            }
+            }));
         } else {
-            ClaimEvent::ObjectRedirected {
+            events.push(plain(ClaimEvent::ObjectRedirected {
                 folded: row.key.clone(),
                 survivor: survivor.clone(),
-            }
-        }));
+            }));
+        }
     }
-    if empty > 0 {
-        events.push(plain(ClaimEvent::MergeNumbersLeftEmpty {
-            count: empty as u64,
-        }));
-    }
+    // **The numbers are told in order, so a number the store left empty sits
+    // where the store left it.** A number no row holds is a hole: the marked
+    // merges fill the first holes, in the order of the entity rows, and a hole
+    // nothing explains stays empty (rule 677: the stored numbers are the record).
+    // Empty numbers that follow one another are counted in one event.
+    let mut number = 1_i64;
+    let mut empty_run = 0_u64;
+    let leave_empty = |run: &mut u64, events: &mut Vec<Event<ClaimEvent>>| {
+        if *run > 0 {
+            events.push(plain(ClaimEvent::MergeNumbersLeftEmpty { count: *run }));
+            *run = 0;
+        }
+    };
     for (step, records) in moves {
+        while number < step.no {
+            // The marked merges fill the first holes, so no empty number comes
+            // before one: the run is empty whenever a marked merge is told.
+            match marked_merges.pop_front() {
+                Some(marked) => events.push(marked),
+                None => empty_run += 1,
+            }
+            number += 1;
+        }
+        leave_empty(&mut empty_run, &mut events);
+        number = step.no + 1;
         events.push(envelope(
             None,
             step.session.clone(),
