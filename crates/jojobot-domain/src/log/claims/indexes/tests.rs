@@ -924,6 +924,21 @@ fn an_address_names_a_claim_and_its_home() {
             ask: vec![("thing:alpha#f1", at("a1", "alpha"))],
         },
         Row {
+            name: "a listed claim takes a label an unlisted claim shares, and the survivor's own stays",
+            events: vec![
+                bound("alpha", "thing:alpha"),
+                bound("beta", "thing:beta"),
+                created("a1", claim("f1", "alpha", "c", 1)),
+                created("b1", claim("f1", "beta", "c", 1)),
+                created("b2", claim("f2", "beta", "c", 2)),
+                merged("beta", "alpha", &[("b1", "f2")], &[]),
+            ],
+            ask: vec![
+                ("thing:alpha#f2", at("b1", "alpha")),
+                ("thing:alpha#f1", at("a1", "alpha")),
+            ],
+        },
+        Row {
             name: "a mapped claim and a survivor's claim both stay served beside an unlisted one",
             events: vec![
                 bound("alpha", "thing:alpha"),

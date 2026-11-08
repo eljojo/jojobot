@@ -625,6 +625,15 @@ impl State {
                 .issued
                 .insert((survivor.clone(), seat.1, seat.2));
         }
+        // The moved claims take their labels first, so a label a merge lists
+        // is served to the claim it lists, and the leftover slots below only
+        // fill labels nobody serves.
+        for moved in records {
+            if let Some(held) = self.records.get(&moved.record) {
+                let claim = held.claim.clone();
+                self.index_claim(&moved.record, &claim);
+            }
+        }
         let labels: Vec<(ObjectId, String)> = self
             .indexes
             .labels
@@ -651,12 +660,6 @@ impl State {
                 .entry(survivor.clone())
                 .or_default()
                 .extend(left);
-        }
-        for moved in records {
-            if let Some(held) = self.records.get(&moved.record) {
-                let claim = held.claim.clone();
-                self.index_claim(&moved.record, &claim);
-            }
         }
         if let Some(children) = self.indexes.children.remove(folded) {
             self.indexes
