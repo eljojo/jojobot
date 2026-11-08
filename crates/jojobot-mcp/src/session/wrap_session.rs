@@ -39,8 +39,8 @@ impl Jojobot {
                        wrapping is not lost: the next boot sweeps it to `abandoned` \
                        after a day (two stated days if it states them) and offers it back to resume for \
                        {{offer}}; its story was never told. \
-                       Wrapping is also how you ROTATE a long run (wrap, then boot \
-                       again for a fresh sid) and how work moves to another agent NOW: \
+                       Wrapping is also how you ROTATE a long run (wrap, then a NEW \
+                       runtime agent boots fresh and reads your story) and how work moves to another agent NOW: \
                        the wrap frees your role at once (a role still held is in the \
                        answer's `roles`, with `held_until` and the reason), and the \
                        next agent boots fresh and reads your story. A wrap ends every voucher your run holds, and \
@@ -285,8 +285,8 @@ impl Jojobot {
         // last word, and every later write on this handle comes back blocked in
         // those words.
         //
-        // A bot that wraps and keeps working boots again for a fresh handle,
-        // which is the rotation the description names.
+        // A bot continues after a wrap through a new runtime agent, which boots
+        // fresh and reads the story. The wrapped agent cannot boot again.
         let mut receipt = serde_json::json!({
             "session": session_json(&wrapped),
             "entry": entry_receipt_json(&entry),

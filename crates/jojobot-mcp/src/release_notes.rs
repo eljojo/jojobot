@@ -99,6 +99,10 @@ pub(crate) const SHIPPED: &[(&str, &str)] = &[
         ),
     ),
     (
+        "a-wrap-rotation-needs-a-new-runtime-agent",
+        include_str!("../release-notes/deploy-9.3.3/a-wrap-rotation-needs-a-new-runtime-agent.md"),
+    ),
+    (
         "a-manager-asks-for-a-bot-with-a-request-record",
         include_str!(
             "../release-notes/deploy-9.3.2.1/a-manager-asks-for-a-bot-with-a-request-record.md"
