@@ -72,11 +72,15 @@ pub(crate) enum Version {
         children: (usize, usize),
     },
     /// How many times the claim was written, and its status. `source` is the same
-    /// of the claim it was derived from, which it reads the standing of.
+    /// of the claim it was derived from, which it reads the standing of. `around`
+    /// is the newest moment of anything the claim's served fields link to: a
+    /// target renamed since is served under its new name with no write to the
+    /// claim. `None` when the claim links to nothing.
     Claim {
         writes: usize,
         status: String,
         source: Option<(usize, String)>,
+        around: Option<jiff::Timestamp>,
     },
     /// The state the message was in.
     Message(String),

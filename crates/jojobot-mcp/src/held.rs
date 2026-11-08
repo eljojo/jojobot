@@ -427,6 +427,28 @@ impl Jojobot {
         newest
     }
 
+    /// **The newest moment of anything a claim's served fields link to.** What a
+    /// value links to is what its stored marks say, served under the names the
+    /// targets answer to now (rule 646), so a target renamed since the claim was
+    /// served changes the claim's words with no write to it.
+    async fn claim_around(&self, address: &str) -> Option<Timestamp> {
+        let address = FactAddress::parse(address).ok()?;
+        let facts = self.memory.recall(&address.home).await.ok()?;
+        let fact = facts.into_iter().find(|fact| fact.address() == address)?;
+        let mut sources: std::collections::BTreeSet<EntityId> =
+            fact.field_links.values().flatten().cloned().collect();
+        for value in fact.fields.values() {
+            sources.extend(jojobot_domain::memory::handles_in_value(value));
+        }
+        let mut newest = None;
+        for source in sources {
+            if let Ok(ages) = self.memory.field_ages(&source).await {
+                newest = newest.max(ages.newest);
+            }
+        }
+        newest
+    }
+
     /// **The things that stand under an entity, archived ones too**: how many are
     /// directly under it, and all of them at any depth. The counts a read of a
     /// parent carries move when any of them is added, archived or taken away, with
@@ -496,6 +518,7 @@ impl Jojobot {
                     writes: chain.len(),
                     status: format!("{:?}", last.status).to_lowercase(),
                     source,
+                    around: self.claim_around(address).await,
                 })
             }
             Held::Message(id) => {

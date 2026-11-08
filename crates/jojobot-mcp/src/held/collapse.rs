@@ -32,7 +32,7 @@ use crate::seen::Shape;
 /// it). No version sees the arguments of a call, so each is named by what the
 /// question made of it and the same thing read under another question is
 /// another part. The renderers in `memory/recall.rs` set these from an argument.
-const FROM_THE_QUESTION: [&str; 10] = [
+const FROM_THE_QUESTION: [&str; 11] = [
     "scoped_out",
     "overdue_by_days",
     "due_in_days",
@@ -43,6 +43,9 @@ const FROM_THE_QUESTION: [&str; 10] = [
     "review_marks_left_out",
     "release_notes_record_left_out",
     "fields_backing_left_out",
+    // The link a walk reached a thing by: its direction and relation are the
+    // walk's, so the same thing reached by another walk is another part.
+    "via",
 ];
 
 /// The key the count rides under, at the top of an answer that collapsed.
@@ -665,6 +668,11 @@ mod tests {
                 "fields_backing_left_out",
                 json!("1 key is not backed"),
                 json!("2 keys are not backed"),
+            ),
+            (
+                "via",
+                json!({"direction": "out", "relation": "owner"}),
+                json!({"direction": "in", "relation": "owner"}),
             ),
         ];
         for (part, asked, other) in rows {
