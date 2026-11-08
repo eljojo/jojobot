@@ -614,6 +614,17 @@ impl Image {
         }
     }
 
+    /// **The things this image lists that `listed` does not**, in the order the
+    /// image holds them.
+    pub(super) fn entities_missing_from(&self, listed: &[Entity]) -> Vec<Entity> {
+        let named: std::collections::HashSet<&EntityId> = listed.iter().map(|e| &e.id).collect();
+        self.entities
+            .iter()
+            .filter(|held| !named.contains(&held.id))
+            .cloned()
+            .collect()
+    }
+
     /// Put the listing read in the place of the one held, and let go of the
     /// documents of the things it no longer lists.
     fn take_in_listing(&mut self, entities: Vec<Entity>) {

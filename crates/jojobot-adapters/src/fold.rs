@@ -362,7 +362,31 @@ impl Folded {
         let read = async {
             let (entities, doc, in_state) = match stated {
                 Err(unseen) => return Err(Self::without_state(unseen)),
-                Ok(Some((entities, doc))) => (entities, doc, true),
+                Ok(Some((entities, doc))) => {
+                    // **A thing the State has never heard of is a record the build
+                    // supplies**, and the State's listing leaves it out: the image
+                    // keeps what it lists of those. TEMPORARY(9.3.5), until supplied
+                    // records are supplied events.
+                    let entities = match entities {
+                        Some(mut listed) => {
+                            let missing = self
+                                .held(|image| image.entities_missing_from(&listed))
+                                .unwrap_or_default();
+                            let supplied = self
+                                .claims(|state| {
+                                    missing
+                                        .into_iter()
+                                        .filter(|entity| state.resolve(&entity.id.0).is_none())
+                                        .collect::<Vec<_>>()
+                                })
+                                .map_err(Self::without_state)?;
+                            listed.extend(supplied);
+                            Some(listed)
+                        }
+                        None => None,
+                    };
+                    (entities, doc, true)
+                }
                 Ok(None) => {
                     let entities = if relist {
                         Some(self.inner.list_entities(None).await?)

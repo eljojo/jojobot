@@ -93,6 +93,55 @@ async fn a_claim_about_a_supplied_record_is_served_as_the_store_serves_it() {
     }
 }
 
+/// **An entity write keeps the records the build supplies in the listing.** The
+/// State's listing leaves them out, so the relist after the write must carry them
+/// over from the image, or the supplied view is unknown to the fold.
+#[tokio::test]
+async fn an_entity_write_keeps_a_supplied_record_in_the_listing() {
+    use jojobot_domain::memory::owned::{Provision, Provisions};
+    use jojobot_domain::memory::{Entity, EntityKind};
+    let id = EntityId("view:loops".into());
+    let record = Provision::record(
+        Entity {
+            folded_names: Vec::new(),
+            id: id.clone(),
+            kind: EntityKind::VIEW,
+            name: "The shipped board".into(),
+            aliases: Vec::new(),
+            source: "jojobot".into(),
+            crm: None,
+            parent: None,
+            boot: Default::default(),
+            merged_into: None,
+            badge: None,
+            archived: None,
+        },
+        std::collections::BTreeMap::new(),
+    );
+    let supplied = Provisions::new(vec![record]);
+    let store = Arc::new(crate::provisioned::Provisioned::new(
+        InMemoryMemory::booted().knowing(supplied.clone()),
+        supplied,
+    ));
+    let folded = Folded::new(store);
+    folded.rebuild().await.expect("the fold loads");
+    folded
+        .add_entity(NewEntity::new(alpha(), "Alpha", "user-named"))
+        .await
+        .expect("add ok")
+        .written()
+        .expect("not blocked");
+    let listed = folded.list_entities(None).await.expect("lists");
+    assert!(
+        listed.iter().any(|entity| entity.id == id),
+        "the supplied view left the listing: {listed:?}"
+    );
+    assert!(
+        folded.fields(&id).await.is_ok(),
+        "the supplied view is unknown to the fold"
+    );
+}
+
 /// **A page written onto a thing is served by the refreshed fold as a fold filled
 /// anew serves it**: the prose the State holds is the prose the store holds.
 #[tokio::test]
