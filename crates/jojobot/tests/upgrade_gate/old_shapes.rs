@@ -711,6 +711,24 @@ async fn a_run_closed_twice_offers_its_wrap_code_once_on_the_head() {
     let Some(reopened_sid) = reopened["session"]["sid"].as_str() else {
         fail("the code reopening the run", &reopened.to_string());
     };
+    // An open window still holds the spent code. The second wrap clears it, so
+    // only a retry here can expose a guard that accepts the open window again.
+    let spent_open = parsed(
+        "the spent code while the window is open",
+        &git_ref,
+        &surface
+            .call(
+                "start_here",
+                json!({"bot": "assistant", "resume": code, "brief": true}),
+            )
+            .await,
+    );
+    if spent_open["status"] != "blocked" || !spent_open["session"]["sid"].is_null() {
+        fail(
+            "the spent code refused while its window is open",
+            &spent_open.to_string(),
+        );
+    }
     let second = parsed(
         "the second wrap",
         &git_ref,
@@ -734,7 +752,7 @@ async fn a_run_closed_twice_offers_its_wrap_code_once_on_the_head() {
         )
         .await;
     let spent_answer = parsed("the spent code", &git_ref, &spent);
-    if !spent_answer["session"]["sid"].is_null() || spent.contains("\"sid\":\"sk-") {
+    if spent_answer["status"] != "blocked" || !spent_answer["session"]["sid"].is_null() {
         fail("the spent code reopening nothing", &spent);
     }
     surface.finish().await;
