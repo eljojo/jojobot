@@ -2675,3 +2675,41 @@ fn an_unknown_name_is_refused_with_the_names_it_resembles() {
     };
     assert!(near.is_empty(), "nothing resembles it: {near:?}");
 }
+
+/// **A source is the claim the ordinary address names, after a merge left a
+/// folded claim on the same label.** The folded claim is revised after the merge,
+/// which indexes it again.
+#[test]
+fn a_source_names_the_survivors_claim_when_an_unlisted_claim_shares_its_label() {
+    let (mut state, declared) = world();
+    apply(&mut state, &created("b1", claim("f1", "beta", "folded", 1)));
+    apply(
+        &mut state,
+        &ClaimEvent::ObjectsMerged {
+            folded: object("beta"),
+            survivor: object("alpha"),
+            records: Vec::new(),
+            writes: Vec::new(),
+        },
+    );
+    apply(
+        &mut state,
+        &ClaimEvent::RecordRevised {
+            record: record("b1"),
+            claim: claim("f1", "beta", "edited", 2),
+        },
+    );
+    let events = prepare(
+        &state,
+        &declared,
+        &CaptureRequest {
+            derived_from: Some("alpha#f1".into()),
+            ..request("alpha")
+        },
+    )
+    .expect("admitted");
+    let ClaimEvent::RecordCreated { claim, .. } = &events[0] else {
+        panic!("the first event creates the claim: {events:?}");
+    };
+    assert_eq!(claim.derived_from, Some(record("r1")));
+}

@@ -909,6 +909,21 @@ fn an_address_names_a_claim_and_its_home() {
             ],
         },
         Row {
+            name: "a later revision of a claim a merge did not list leaves the survivor's label",
+            events: vec![
+                bound("alpha", "thing:alpha"),
+                bound("beta", "thing:beta"),
+                created("a1", claim("f1", "alpha", "c", 1)),
+                created("b1", claim("f1", "beta", "c", 1)),
+                merged("beta", "alpha", &[], &[]),
+                ClaimEvent::RecordRevised {
+                    record: record("b1"),
+                    claim: claim("f1", "beta", "edited", 2),
+                },
+            ],
+            ask: vec![("thing:alpha#f1", at("a1", "alpha"))],
+        },
+        Row {
             name: "a mapped claim and a survivor's claim both stay served beside an unlisted one",
             events: vec![
                 bound("alpha", "thing:alpha"),

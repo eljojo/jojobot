@@ -456,9 +456,13 @@ impl State {
             .entry(home.clone())
             .or_default()
             .insert(record.clone());
+        // A label another claim already serves stays that claim's: a claim a
+        // merge left unlisted is homed on the folded object and shares the
+        // survivor's label, and editing it must not take the address over.
         self.indexes
             .labels
-            .insert((home, claim.label.clone()), record.clone());
+            .entry((home, claim.label.clone()))
+            .or_insert_with(|| record.clone());
     }
 
     fn unindex_claim(&mut self, record: &RecordId, claim: &ClaimBody) {
