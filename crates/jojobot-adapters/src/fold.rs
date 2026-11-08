@@ -28,6 +28,7 @@
 //! reason this is authoritative rather than a guess. Add a second writer and
 //! this assumption breaks first.
 
+pub mod claims_view;
 mod held;
 mod image;
 pub mod mail;
@@ -85,6 +86,9 @@ pub struct Folded {
     /// The projection families whose reads are computed two ways and compared
     /// ([`shadow`]); none unless the configuration names one.
     shadow: Arc<shadow::Shadow>,
+    /// **Where a refresh reads the claims State from** when this is set; else the
+    /// seam of the shared writer, once it holds one ([`Folded::claims`]).
+    claims_view: Option<Arc<dyn claims_view::ClaimsView>>,
     /// Told the address of the next selected fact edit, before it queues for the
     /// writer.
     #[cfg(any(test, feature = "testing"))]
@@ -109,9 +113,35 @@ impl Folded {
             wanted: Arc::new(AtomicBool::new(false)),
             generation: Arc::new(AtomicU64::new(0)),
             shadow: Arc::new(shadow::Shadow::default()),
+            claims_view: None,
             #[cfg(any(test, feature = "testing"))]
             fact_edit: Arc::new(std::sync::Mutex::new(None)),
         }
+    }
+
+    /// **Read the claims State from `view`** instead of the shared writer's seam.
+    /// A store with no seam (a fake) lends its State this way.
+    pub fn with_claims_view(mut self, view: Arc<dyn claims_view::ClaimsView>) -> Self {
+        self.claims_view = Some(view);
+        self
+    }
+
+    /// **Run `read` on the claims State when it can answer**, from the view this
+    /// holds or else the shared writer's seam. `None` sends the read to the store.
+    fn claims<T>(&self, read: impl FnOnce(&jojobot_domain::log::claims::State) -> T) -> Option<T> {
+        let mut read = Some(read);
+        let mut out = None;
+        let mut take = |state: &jojobot_domain::log::claims::State| {
+            if let Some(read) = read.take() {
+                out = Some(read(state));
+            }
+        };
+        let answered = match (&self.claims_view, self.writer.seam()) {
+            (Some(view), _) => view.read(&mut take),
+            (None, Some(seam)) => claims_view::ClaimsView::read(&*seam, &mut take),
+            (None, None) => false,
+        };
+        answered.then_some(out).flatten()
     }
 
     /// Observe the next selected fact edit before it waits behind a writer.
@@ -275,13 +305,34 @@ impl Folded {
         if self.held(|_| ()).is_none() {
             return self.fill().await.map(|_| ());
         }
+        // **The State answers when it can**: the thing's document, and the listing
+        // after an entity write, are built from the claims State this write has
+        // just changed. The store is read when the State cannot answer, and for a
+        // thing a merge touched: TEMPORARY(9.3.8), the survivor's document waits
+        // on the import placing a moved claim under its own identity
+        // (`a_merge_survivors_document_read_from_the_state_is_the_document_the_store_reads`).
+        let from_state = self
+            .claims(|state| {
+                let object = state.resolve(&handle.0)?;
+                if state.was_merged(object) {
+                    return None;
+                }
+                let doc = Doc::from_state(state, object, &state.declared_types())?;
+                Some((relist.then(|| state.listing()), doc))
+            })
+            .flatten();
         let read = async {
-            let entities = if relist {
-                Some(self.inner.list_entities(None).await?)
-            } else {
-                None
+            let (entities, doc, in_state) = match from_state {
+                Some((entities, doc)) => (entities, doc, true),
+                None => {
+                    let entities = if relist {
+                        Some(self.inner.list_entities(None).await?)
+                    } else {
+                        None
+                    };
+                    (entities, Doc::load(&*self.inner, handle).await?, false)
+                }
             };
-            let doc = Doc::load(&*self.inner, handle).await?;
             // **Both entity and claim writes patch who points where from their
             // old and new documents** ([`Image::install`]). Only a spelling the
             // entity newly answers to, or a claim's engine-record exception,
@@ -295,7 +346,13 @@ impl Folded {
                     }
                 })
                 .unwrap_or_default();
-            let referring = image::ask_referring(&self.inner, names).await?;
+            let held = in_state
+                .then(|| self.claims(|state| image::referring_in(state, &names)))
+                .flatten();
+            let referring = match held {
+                Some(referring) => referring,
+                None => image::ask_referring(&self.inner, names).await?,
+            };
             Ok::<_, MemoryError>((entities, doc, referring))
         }
         .await;
@@ -1436,6 +1493,8 @@ mod counting_scan;
 mod from_state_tests;
 #[cfg(test)]
 mod landed_tests;
+#[cfg(test)]
+mod refresh_from_state_tests;
 #[cfg(test)]
 mod stalled_read;
 

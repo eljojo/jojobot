@@ -391,7 +391,15 @@ pub async fn disagreement(left: &dyn Memory, right: &dyn Memory) -> Option<Strin
         ($what:expr, $subject:expr, $a:expr, $b:expr) => {{
             let (a, b) = (format!("{:?}", $a), format!("{:?}", $b));
             if a != b {
-                let cut = |s: &str| s.chars().take(600).collect::<String>();
+                // The window around the first character that differs, so a long
+                // answer shows where it parts and not only how it begins.
+                let at = a
+                    .chars()
+                    .zip(b.chars())
+                    .take_while(|(x, y)| x == y)
+                    .count()
+                    .saturating_sub(200);
+                let cut = |s: &str| s.chars().skip(at).take(600).collect::<String>();
                 return Some(format!(
                     "{} of {}:\n  left:  {}\n  right: {}",
                     $what,

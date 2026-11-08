@@ -601,6 +601,20 @@ impl Seam {
         read(&self.lock().state)
     }
 
+    /// **Lend the claims state to `read` when it can answer**: the import is in
+    /// the log and no member of the log is unread. `false` runs nothing.
+    pub(crate) fn read_claims_if_current(
+        &self,
+        read: &mut dyn FnMut(&jojobot_domain::log::claims::State),
+    ) -> bool {
+        let held = self.lock();
+        if held.claims_unreadable.is_some() || !held.claims_import {
+            return false;
+        }
+        read(&held.claims);
+        true
+    }
+
     /// Read the held claims state. The capture job reads the State it prepares
     /// against through this.
     pub(crate) fn read_claims<T>(

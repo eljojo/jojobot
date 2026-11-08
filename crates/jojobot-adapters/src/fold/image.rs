@@ -127,9 +127,6 @@ impl Doc {
     /// **The document of one thing, read from the claims State alone**: the
     /// domain's scan and value parts of the thing stored under `object`. `None`
     /// when the State holds no such thing.
-    ///
-    /// Only the parity case calls it until the refresh reads the State.
-    #[cfg(test)]
     pub fn from_state(
         state: &jojobot_domain::log::claims::State,
         object: &jojobot_domain::log::ObjectId,
@@ -1256,6 +1253,19 @@ pub type Wrote = Vec<(FactId, Vec<String>)>;
 
 /// One thing's records for each name they point at, to put on that name's list.
 type ReferringPatch = (EntityId, Vec<(String, Vec<Fact>)>);
+
+/// **`referring_to` of each name, read from the claims State.** The names the
+/// store would refuse are skipped, as [`ask_referring`] skips them.
+pub(super) fn referring_in(
+    state: &jojobot_domain::log::claims::State,
+    names: &[String],
+) -> Vec<(String, Vec<Fact>)> {
+    names
+        .iter()
+        .filter(|name| jojobot_domain::memory::validate_subject(&EntityId((*name).clone())).is_ok())
+        .map(|name| (name.clone(), state.referring(&EntityId(name.clone()))))
+        .collect()
+}
 
 /// **`referring_to` of each name, asked of the store**, a few at a time. A name
 /// that is no well-formed handle is skipped: nothing can ask for it, and the

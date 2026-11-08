@@ -796,6 +796,13 @@ impl State {
         at
     }
 
+    /// **Whether a merge touched this object**: it was folded into another, or
+    /// something was folded into it.
+    pub fn was_merged(&self, object: &ObjectId) -> bool {
+        let survivor = self.survivor(object);
+        survivor != object || self.folded_under.contains_key(survivor)
+    }
+
     /// **The spellings an object answers to now**, in order.
     pub fn addresses_of(&self, object: &ObjectId) -> Vec<String> {
         self.addresses
