@@ -679,7 +679,14 @@ impl State {
                 .push(FieldWrite {
                     written_at: write.written_at,
                     recorded_by: record.claim.app.clone(),
-                    writer: write.writer.clone(),
+                    // **The writer is kept as the id its bot is filed under**; the
+                    // port serves the handle the bot wears.
+                    writer: write.writer.as_ref().map(|actor| match actor {
+                        crate::actor::Actor::Bot(bot) => {
+                            crate::actor::Actor::Bot(self.handle_worn_by(&ObjectId(bot.0.clone())))
+                        }
+                        other => other.clone(),
+                    }),
                     run: write.run.as_ref().map(|run| run.0.clone()),
                     value,
                     fact: FactAddress::new(EntityId(record.claim.home.0.clone()), carried),
