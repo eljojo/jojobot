@@ -263,6 +263,37 @@ pub fn next_generation_withdrawing(
     })
 }
 
+/// **The generation a retract makes, from what the rows hold**: the writes on the
+/// request and the folds before and after the retract. The same number the claims
+/// State works out for the same act ([`next_generation_withdrawing`]), so a store
+/// that writes its rows writes the claim the seam mints.
+pub fn generation_after_a_retract(
+    subject: &super::EntityId,
+    held: &[super::KeyWrite],
+    before: &std::collections::BTreeMap<String, String>,
+    after: &std::collections::BTreeMap<String, String>,
+) -> Option<u64> {
+    let folded = |fold: &std::collections::BTreeMap<String, String>| {
+        fold.get(GENERATION)
+            .and_then(|value| value.trim().parse::<u64>().ok())
+            .unwrap_or(0)
+    };
+    let highest = highest_number(
+        held.iter()
+            .filter(|write| write.key == GENERATION)
+            .map(|write| write.value.as_deref()),
+    );
+    next_generation_withdrawing(
+        subject,
+        &spec_of(before),
+        &spec_of(after),
+        folded(before),
+        folded(after),
+        highest,
+    )
+    .map(|number| number.parse().expect("a generation is a number"))
+}
+
 /// **The spec the history of the spec keys holds once one claim is taken out.**
 /// Each spec key reads its newest write among the active claims other than
 /// `withdrawn`; a clear, or a blank value, leaves the key off. This is the fold

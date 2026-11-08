@@ -5322,6 +5322,14 @@ impl Memory for InMemoryMemory {
             &Default::default(),
             &declared,
         );
+        // **A retract that changes the spec of a request makes the next number**,
+        // on a claim of its own, as the claims State does for the same act.
+        let number = super::super::bot_request::generation_after_a_retract(
+            &handle,
+            &held,
+            &before_fold,
+            &after_fold,
+        );
         let (before_fold, after_fold) = (
             self.with_manager_served(&before_fold),
             self.with_manager_served(&after_fold),
@@ -5373,6 +5381,36 @@ impl Memory for InMemoryMemory {
                 .map(|(field, value)| (field.clone(), Some(value.clone()))),
             &Default::default(),
         );
+        if let Some(number) = number {
+            let numbered = Fact {
+                id: FactId(format!("f{}", existing + 2)),
+                content: format!("Set generation on @{handle}."),
+                provenance: crate::memory::Provenance::Inference,
+                standing: Standing::default_for(crate::memory::Provenance::Inference),
+                derived_from: None,
+                fields: [(
+                    super::super::bot_request::GENERATION.to_string(),
+                    number.to_string(),
+                )]
+                .into(),
+                reaching: [super::super::bot_request::GENERATION.to_string()].into(),
+                ..record.clone()
+            };
+            self.push_stored(Fact {
+                fields: Default::default(),
+                ..numbered.clone()
+            });
+            self.append_claim_write(&numbered, session.map(str::to_string), None);
+            self.append_writes(
+                &numbered.home,
+                &numbered.id,
+                numbered
+                    .fields
+                    .iter()
+                    .map(|(field, value)| (field.clone(), Some(value.clone()))),
+                &Default::default(),
+            );
+        }
         // **Served under the handle, stored under the key** — the same rule
         // capture and update_fact answer to.
         Ok(Retraction {

@@ -2361,6 +2361,44 @@ impl DoltMemory {
             claim_write,
         )
         .await?;
+        // **A retract that changes the spec of a request makes the next number**,
+        // on a claim of its own beside the account, as the claims State works it
+        // out for the same act: the rows and the log write the same claims.
+        if let Some(number) = jojobot_domain::memory::bot_request::generation_after_a_retract(
+            &handle,
+            &held,
+            &before_fold,
+            &after_fold,
+        ) {
+            let numbered = Fact {
+                id: Self::mint(tx, &key).await?,
+                content: format!("Set generation on @{handle}."),
+                provenance: jojobot_domain::memory::Provenance::Inference,
+                standing: jojobot_domain::memory::Standing::default_for(
+                    jojobot_domain::memory::Provenance::Inference,
+                ),
+                derived_from: None,
+                fields: [(
+                    jojobot_domain::memory::bot_request::GENERATION.to_string(),
+                    number.to_string(),
+                )]
+                .into(),
+                reaching: [jojobot_domain::memory::bot_request::GENERATION.to_string()].into(),
+                ..record.clone()
+            };
+            let numbered_write = self
+                .write_fact(tx, &numbered, &self.clock, session, bot.as_ref())
+                .await?;
+            self.append_writes(
+                tx,
+                &numbered.home,
+                &numbered.id,
+                written_keys(&numbered),
+                &Default::default(),
+                numbered_write,
+            )
+            .await?;
+        }
         // **Served under the handle, stored under the key.**
         let served_retracted = Fact {
             home: handle.clone(),

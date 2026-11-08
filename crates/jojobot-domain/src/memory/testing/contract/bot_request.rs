@@ -492,22 +492,27 @@ pub async fn a_retracted_generation_is_still_the_highest_ever_written<M: Memory>
         .expect("the manager retracts the second spec");
     let fold = read().await;
     assert_eq!(
-        fold.get(GENERATION).map(String::as_str),
-        Some("1"),
+        fold.get(DESIRED).map(String::as_str),
+        Some("running"),
         "the fold reads the spec that stands"
     );
     assert_eq!(
-        highest().await,
-        2,
-        "the retracted claim's number is still the highest ever written"
+        fold.get(GENERATION).map(String::as_str),
+        Some("3"),
+        "the retract changed the spec, so it made a number above every one written"
     );
-    let third = next_generation(
+    assert_eq!(
+        highest().await,
+        3,
+        "the retracted claim's number and the new one are both on the history"
+    );
+    let next = next_generation(
         &request,
         &spec_of(&fold),
         &spec_after(&fold, &fields(&[(DESIRED, "paused")]), &[]),
         highest().await,
     );
-    assert_eq!(third.as_deref(), Some("3"), "2 names the retracted spec");
+    assert_eq!(next.as_deref(), Some("4"), "3 names the spec that stands");
 }
 
 /// **An archive and the claim that carries the new number land as one act.** The
@@ -1017,8 +1022,8 @@ pub async fn a_claim_that_sets_only_the_generation_is_not_taken_back<M: Memory>(
     assert_eq!(fold.get(DESIRED).map(String::as_str), Some("running"));
     assert_eq!(
         fold.get(GENERATION).map(String::as_str),
-        Some("3"),
-        "the number claim that was refused above still stands"
+        Some("4"),
+        "the retract changed the spec, so it made the number above the refused claim's"
     );
 }
 
