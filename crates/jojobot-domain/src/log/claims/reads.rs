@@ -353,11 +353,15 @@ impl State {
             else {
                 continue;
             };
-            if memory::reaches_the_thing(write.class) {
-                reaching.insert(key.0.clone());
-            }
-            if write.class == WriteClass::Sets {
-                sets.insert(key.0.clone());
+            // A clear takes the key out of both bags, as the fold of a record's
+            // writes does (`fold_field_writes`).
+            if matches!(write.write, FieldValue::Set(_)) {
+                if memory::reaches_the_thing(write.class) {
+                    reaching.insert(key.0.clone());
+                }
+                if write.class == WriteClass::Sets {
+                    sets.insert(key.0.clone());
+                }
             }
             if let FieldValue::Set(value) = &write.write {
                 fields.insert(
@@ -366,12 +370,32 @@ impl State {
                 );
             }
             if !write.targets.is_empty() {
+                // **In the order the value names them**, each once, as the store
+                // serves them (`marked_field_links`); the write's own targets
+                // are the fallback for a value that marks none.
+                let named: Vec<EntityId> = match &write.write {
+                    FieldValue::Set(value) => {
+                        let mut named = Vec::new();
+                        for id in value.split(',').filter_map(memory::stored_handle_id) {
+                            let target = handle(&ObjectId(id.to_string()));
+                            if !named.contains(&target) {
+                                named.push(target);
+                            }
+                        }
+                        named
+                    }
+                    _ => Vec::new(),
+                };
                 field_links.insert(
                     key.0.clone(),
-                    self.survivors_of(&write.targets)
-                        .iter()
-                        .map(handle)
-                        .collect(),
+                    if named.is_empty() {
+                        self.survivors_of(&write.targets)
+                            .iter()
+                            .map(handle)
+                            .collect()
+                    } else {
+                        named
+                    },
                 );
             }
         }
@@ -678,6 +702,8 @@ mod served;
 pub use document::DocumentParts;
 #[cfg(test)]
 mod built_on_tests;
+#[cfg(test)]
+mod fact_tests;
 #[cfg(test)]
 mod former_handles_tests;
 #[cfg(test)]
