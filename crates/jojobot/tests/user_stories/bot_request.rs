@@ -385,6 +385,102 @@ async fn clearing_a_spec_key_raises_the_generation_and_the_generation_stays() {
     story.finish().await;
 }
 
+/// Clearing an older spec claim leaves the app reconciled with the held spec.
+/// A set beside the clear still takes effect, and clearing that holder changes
+/// the spec again.
+#[tokio::test]
+async fn clearing_an_older_desired_claim_keeps_the_generation() {
+    let (story, token) = Story::begin_serving_an_app(
+        "bot:marge",
+        APP,
+        vec![
+            OperationSpec {
+                operation: "recall".into(),
+                kinds: vec![],
+                keys: vec![],
+            },
+            OperationSpec {
+                operation: "capture".into(),
+                kinds: vec!["bot-request".into()],
+                keys: status_keys(),
+            },
+        ],
+    )
+    .await;
+    let marge = story.session().await.asking_whole();
+    marge
+        .call(
+            "add_entity",
+            json!({"kind": "bot", "handle": "homer", "name": "Homer",
+                   "source": "user-named", "sets": {"reports_to": "bot:marge"}}),
+        )
+        .await;
+    marge.add("machine:theta", "Theta").await;
+    let older = marge
+        .call("add_entity", creating(spec("bot:homer", "machine:theta")))
+        .await
+        .field("address");
+    marge
+        .call(
+            "capture",
+            json!({"subject": "bot-request:alpha", "content": "Stop the bot.",
+                   "sets": {"desired": "stopped"}}),
+        )
+        .await;
+    let (status, written) = story
+        .app_calls(
+            &token,
+            "capture",
+            json!({"subject": "bot-request:alpha", "content": "Stopped.",
+                   "sets": {"observed_state": "stopped", "observed_generation": "2"}}),
+        )
+        .await;
+    assert_eq!(status, 200, "{written}");
+    let read = || async {
+        let (status, read) = story.app_calls(&token, "recall", bound_to_the_app()).await;
+        assert_eq!(status, 200, "{read}");
+        read["objects"][0]["fields"].clone()
+    };
+    let before = read().await;
+    assert_eq!(before["desired"], "stopped", "{before}");
+    assert_eq!(before["generation"], "2", "{before}");
+    assert_eq!(before["observed_generation"], "2", "{before}");
+
+    marge
+        .call(
+            "update_fact",
+            json!({"address": &older, "clear_fields": ["desired"]}),
+        )
+        .await;
+    let after = read().await;
+    assert_eq!(after["desired"], "stopped", "{after}");
+    assert_eq!(after["generation"], "2", "{after}");
+    assert_eq!(after["observed_generation"], after["generation"], "{after}");
+
+    marge
+        .call(
+            "update_fact",
+            json!({"address": &older, "clear_fields": ["desired"],
+                   "sets": {"desired": "paused"}}),
+        )
+        .await;
+    let reset = read().await;
+    assert_eq!(reset["desired"], "paused", "{reset}");
+    assert_eq!(reset["generation"], "3", "{reset}");
+
+    marge
+        .call(
+            "update_fact",
+            json!({"address": &older, "clear_fields": ["desired"]}),
+        )
+        .await;
+    let cleared = read().await;
+    assert!(cleared.get("desired").is_none(), "{cleared}");
+    assert_eq!(cleared["generation"], "4", "{cleared}");
+    assert_eq!(cleared["observed_generation"], "2", "{cleared}");
+    story.finish().await;
+}
+
 /// **An entity update that changes the spec raises the generation too.** The
 /// same change through `capture` and `update_fact` is held by other cases; this
 /// is the third verb that writes the keys.

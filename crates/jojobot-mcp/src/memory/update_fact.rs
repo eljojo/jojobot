@@ -792,6 +792,24 @@ impl Jojobot {
                     Ok(held) => held,
                     Err(e) => return memory_declined("update_fact", e),
                 };
+                let backing = match self.memory.backing(&address.home).await {
+                    Ok(backing) => backing,
+                    Err(e) => return memory_declined("update_fact", e),
+                };
+                // A clear withdraws this claim's write; another holder keeps
+                // the spec key, under the same decision the fold uses.
+                let cleared_spec: Vec<String> = cleared
+                    .iter()
+                    .filter(|key| {
+                        jojobot_domain::memory::holder_after(
+                            backing.get(*key).map(|held| &held.fact),
+                            &address.local,
+                            jojobot_domain::memory::KeyEffect::Clears,
+                        )
+                        .is_none()
+                    })
+                    .cloned()
+                    .collect();
                 let highest = match self.highest_generation_ever(&address.home).await {
                     Ok(highest) => highest,
                     Err(e) => return memory_declined("update_fact", e),
@@ -799,7 +817,11 @@ impl Jojobot {
                 if let Some(next) = jojobot_domain::memory::bot_request::next_generation(
                     &address.home,
                     &jojobot_domain::memory::bot_request::spec_of(&held),
-                    &jojobot_domain::memory::bot_request::spec_after(&held, &reaching, &cleared),
+                    &jojobot_domain::memory::bot_request::spec_after(
+                        &held,
+                        &reaching,
+                        &cleared_spec,
+                    ),
                     highest,
                 ) {
                     fields.insert(generation.to_string(), next);
