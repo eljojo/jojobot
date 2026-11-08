@@ -1454,3 +1454,33 @@ async fn claims_import_skips_a_home_that_one_table_alone_names() {
         server.stop().await;
     }
 }
+
+/// **A link row on a home somebody holds, with no key write naming it, is still a
+/// finding.** The pair of the cases above: only a removed home's links are dropped
+/// with it. Homer's link row has no write behind it, and the import names it
+/// instead of dropping it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn claims_import_still_refuses_a_link_row_on_a_live_home_with_no_key_write() {
+    let (_scratch, mut server, pool) = store("claims-import-orphan-link-live").await;
+    let memory = DoltMemory::open(pool.clone());
+    thing(&memory, "person:homer", "Homer").await;
+    sqlx::query(
+        "INSERT INTO field_link (entity, `key`, ordinal, target) \
+         SELECT COALESCE(badge, id), 'ruled_by', 1, COALESCE(badge, id) \
+         FROM entity WHERE id = 'person:homer'",
+    )
+    .execute(&pool)
+    .await
+    .expect("a link row with no write behind it");
+
+    let refused = import_claims_once(&Writer::default(), &pool, &Provisions::default(), at())
+        .await
+        .expect_err("a link row on a live home with no key write is a finding");
+    let ClaimsImportError::Findings { rows, .. } = &refused else {
+        panic!("the finding is named: {refused:?}");
+    };
+    assert!(rows.contains("no field_write row"), "{rows}");
+    assert!(logged(&pool).await.is_empty(), "nothing was appended");
+
+    server.stop().await;
+}

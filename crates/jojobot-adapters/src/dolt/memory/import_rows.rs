@@ -796,10 +796,11 @@ impl DoltMemory {
         .fetch_all(&mut **tx)
         .await
         .map_err(store)?;
+        // The links of a skipped home go with it, whether or not a write names them.
+        targets.retain(|(entity, _, _), _| !read.skipped.contains_key(entity));
         for row in &writes {
             let (stored, key) = (text(row, "entity")?, text(row, "key")?);
             if read.skipped.contains_key(&stored) {
-                targets.retain(|(entity, _, _), _| entity != &stored);
                 continue;
             }
             let ordinal = row.try_get::<i64, _>("ordinal").map_err(store)?;
@@ -833,9 +834,6 @@ impl DoltMemory {
         }
         // A link no write names is a finding, not a dropped row.
         for ((entity, key, ordinal), _) in targets {
-            if read.skipped.contains_key(&entity) {
-                continue;
-            }
             read.findings.push(Finding {
                 table: "field_link",
                 row: format!("{entity}/{key}#{ordinal}"),
