@@ -25,6 +25,8 @@ mod capture_schedule;
 mod capture_standing;
 pub mod claim_room;
 pub(crate) mod clauses;
+#[cfg(test)]
+mod clear_holder_tests;
 pub mod declare_type;
 #[cfg(test)]
 mod declare_type_describing_keys;

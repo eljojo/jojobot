@@ -973,6 +973,21 @@ impl Memory for FailsOnCapture {
     }
 }
 
+/// **A store that cannot say which claim holds a key**: every read of the backing
+/// fails with a store error, while every other read and every write answers.
+pub(crate) struct BackingDown(pub(crate) Arc<dyn Memory>);
+
+#[jojobot_domain::forward(jojobot_domain::forward_memory, via = 0)]
+impl Memory for BackingDown {
+    async fn backing(
+        &self,
+        _entity: &EntityId,
+    ) -> Result<std::collections::BTreeMap<String, jojobot_domain::memory::FieldBacking>, MemoryError>
+    {
+        Err(MemoryError::Store("the backing could not be read".into()))
+    }
+}
+
 #[cfg(test)]
 mod down_memory_tests {
     use super::*;

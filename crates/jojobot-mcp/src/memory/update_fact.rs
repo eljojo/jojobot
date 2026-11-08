@@ -709,7 +709,10 @@ impl Jojobot {
             .collect();
         // **A clear sent to a claim that does not hold the key leaves the thing as
         // it is**, so it moves no due moment either.
-        let leaving = self.clears_that_leave_the_thing(&address, &cleared).await;
+        let leaving = match self.clears_that_leave_the_thing(&address, &cleared).await {
+            Ok(leaving) => leaving,
+            Err(e) => return memory_declined("update_fact", e),
+        };
         let (due_on_computed, due_on_derived) = self
             .moved_due_moment(
                 &address.home,
@@ -792,24 +795,15 @@ impl Jojobot {
                     Ok(held) => held,
                     Err(e) => return memory_declined("update_fact", e),
                 };
-                let backing = match self.memory.backing(&address.home).await {
-                    Ok(backing) => backing,
+                // A clear withdraws this claim's write; another holder keeps
+                // the spec key. **A holder that cannot be read refuses the
+                // write**, as the reads beside it do: a guess either way names a
+                // spec that is not the spec held.
+                let cleared_spec = match self.clears_that_leave_the_thing(&address, &cleared).await
+                {
+                    Ok(leaving) => leaving,
                     Err(e) => return memory_declined("update_fact", e),
                 };
-                // A clear withdraws this claim's write; another holder keeps
-                // the spec key, under the same decision the fold uses.
-                let cleared_spec: Vec<String> = cleared
-                    .iter()
-                    .filter(|key| {
-                        jojobot_domain::memory::holder_after(
-                            backing.get(*key).map(|held| &held.fact),
-                            &address.local,
-                            jojobot_domain::memory::KeyEffect::Clears,
-                        )
-                        .is_none()
-                    })
-                    .cloned()
-                    .collect();
                 let highest = match self.highest_generation_ever(&address.home).await {
                     Ok(highest) => highest,
                     Err(e) => return memory_declined("update_fact", e),

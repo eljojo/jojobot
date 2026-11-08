@@ -195,26 +195,31 @@ impl Jojobot {
     /// event about one claim's write: it takes a key off the thing only when that
     /// claim holds the key, and otherwise withdraws that claim's write alone. The
     /// holder is asked of the same [`holder_after`](jojobot_domain::memory::holder_after)
-    /// the fold uses (rule 498). A key no claim holds, or a holder that cannot be
-    /// read, leaves as before: a failed read must never keep a due moment the
-    /// clear took away.
+    /// the fold uses (rule 498). A key no claim holds leaves, as it always did.
+    ///
+    /// **A holder that cannot be read is an error, and both callers refuse the
+    /// write with it.** Guessing either way names a state that is not the one
+    /// held: a spec the generation did not follow, or a due moment kept or taken
+    /// off wrongly. Taking the due moment off needs the same backing read, so
+    /// treating every clear as leaving would not take it off either.
     pub(crate) async fn clears_that_leave_the_thing(
         &self,
         address: &FactAddress,
         cleared: &[String],
-    ) -> Vec<String> {
+    ) -> Result<Vec<String>, MemoryError> {
         use jojobot_domain::memory::{KeyEffect, holder_after};
-        let Ok(backing) = self.memory.backing(&address.home).await else {
-            return cleared.to_vec();
-        };
-        cleared
+        if cleared.is_empty() {
+            return Ok(Vec::new());
+        }
+        let backing = self.memory.backing(&address.home).await?;
+        Ok(cleared
             .iter()
             .filter(|key| {
                 let held = backing.get(key.trim()).map(|held| &held.fact);
                 holder_after(held, &address.local, KeyEffect::Clears).is_none()
             })
             .cloned()
-            .collect()
+            .collect())
     }
 
     /// **What this write should do to the stored due moment.**
