@@ -172,6 +172,18 @@ async fn a_thought_stored_over_its_cap_is_read_and_edited_and_refuses_a_merge_wi
     ] {
         entity(store.pool(), handle, badge_text, None).await;
     }
+    // A bot of the earlier build has its box, which the release notes go to.
+    for (name, owner) in [
+        ("gate-thinker", "bot:gate-thinker"),
+        ("gate-heir", "bot:gate-heir"),
+    ] {
+        sqlx::query("INSERT INTO mailbox (name, owner) VALUES (?, ?)")
+            .bind(name)
+            .bind(owner)
+            .execute(store.pool())
+            .await
+            .expect("the old bot's empty box");
+    }
     for badge_text in ["gthink", "gheir"] {
         record(store.pool(), badge_text, "the room holds seven").await;
         field(store.pool(), badge_text, "thought_capacity", "7", "sets").await;
