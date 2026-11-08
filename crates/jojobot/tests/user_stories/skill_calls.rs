@@ -4,6 +4,7 @@
 //! do what the sentence around it says. Each story below sends the call as the
 //! skill prints it, through the served surface as a real client does, and then
 //! asks what the call was supposed to leave behind.
+//! The rhythms story is the exception: it drives the described keys by hand.
 
 use serde_json::{Value, json};
 
@@ -183,13 +184,13 @@ async fn the_asking_skills_calls_do_what_the_skill_says() {
     story.finish().await;
 }
 
-/// **The rhythms skill's calls, as printed.** A loop is written with its keys in
+/// **The rhythm keys the skill describes, driven by hand.** A loop is written with its keys in
 /// `sets`; a check-in on a loop that already ran is dated with `recorded_at`; a
 /// promise cannot lose `promised_by` and is ended instead; a day on a thing
 /// that carries `runs_out` is taken away by clearing that key; and a loop the
 /// operator finds stressful is archived.
 #[tokio::test]
-async fn the_rhythms_skills_calls_do_what_the_skill_says() {
+async fn the_rhythm_keys_the_skill_describes_work_with_handwritten_calls() {
     let story = Story::begin("bot:gamma").await;
     let s = story.session().await;
     s.add("thing:gravel-bike", "The Gravel Bike").await;
