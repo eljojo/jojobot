@@ -4025,7 +4025,7 @@ async fn a_lease_renewal_moves_the_version_the_cache_keys_on() {
         .expect("a database of this case's own");
     migrate::run(&pool).await.expect("the schema");
     booted(&pool).await;
-    let memory = Arc::new(DoltMemory::open(pool));
+    let memory = Arc::new(DoltMemory::open(pool.clone()));
 
     let bot = EntityId("bot:contract-lease-holder".into());
     memory
@@ -4065,7 +4065,8 @@ async fn a_lease_renewal_moves_the_version_the_cache_keys_on() {
         .written()
         .expect("not blocked");
 
-    let folded = Folded::new(memory.clone());
+    jojobot_adapters::testing::import_claims_now(&pool).await;
+    let folded = Folded::new(Arc::new(DoltMemory::open(pool.clone()).journaled()));
     folded.rebuild().await.expect("the fold fills");
     let (_, before) = memory
         .fields_versioned(&role)
