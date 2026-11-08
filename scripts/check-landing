@@ -20,7 +20,7 @@ check could not read its inputs. This check does not replace the branch's own
 green run and independent review.
 
 A report that left a touched crate's jobs to the boundary cannot prove HEAD.
-A successful boundary or targeted run on that same SHA can supply the missing
+A successful pull-request boundary run on that same SHA can supply the missing
 proof. This check reads once and never starts a run.
 """
 import argparse
@@ -111,7 +111,6 @@ def head_omissions(trunk):
     head = git("rev-parse", "HEAD")
     omitted = set()
     full = False
-    covered = set()
     for page in range(1, wr.PAGES + 1):
         runs = wr.runs_of(head_sha=head, page=page)
         for run in runs:
@@ -129,11 +128,6 @@ def head_omissions(trunk):
                 lines = [re.sub(r"^\d{4}-\d\d-\d\dT[\d:.]+Z ", "", line) for line in text.splitlines()]
                 if run["workflow_id"] == "pull-request.yml":
                     full |= any(re.match(r"^level: (?:ok — )?boundary, [1-9]\d* jobs\b", line) for line in lines)
-                if run["workflow_id"] == "targeted.yml":
-                    for line in lines:
-                        match = re.match(r"^level: boundary, narrow (\S+), .*; [1-9]\d* runnable cases; left to full boundary: none$", line)
-                        if match:
-                            covered.add(match[1])
         if len(runs) < wr.PAGE:
             break
     else:
@@ -147,8 +141,6 @@ def head_omissions(trunk):
     for directory in directories:
         manifest = tomllib.loads(git("show", f"{head}:crates/{directory}/Cargo.toml"))
         crate = manifest["package"]["name"]
-        if crate in covered:
-            continue
         owned = {f"lib-{crate}", "lib", "bins", "doc"}
         files = git("ls-tree", "-r", "--name-only", head, "--", f"crates/{directory}/tests").splitlines() if any(
             job.startswith("test-") for job in omitted

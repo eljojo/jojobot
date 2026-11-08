@@ -323,7 +323,6 @@ fn boundary_omissions_refuse_touched_crates_until_the_same_head_has_covering_pro
         "none",
         "pull-request.yml",
         "targeted.yml",
-        "wrong-crate",
         "wrong-sha",
         "unrelated-omission",
         "integration-omission",
@@ -353,39 +352,27 @@ fn boundary_omissions_refuse_touched_crates_until_the_same_head_has_covering_pro
                 },
                 "success",
             );
-            proof["workflow_id"] = json!(if covering == "pull-request.yml" {
-                covering
-            } else {
+            proof["workflow_id"] = json!(if covering == "targeted.yml" {
                 "targeted.yml"
+            } else {
+                "pull-request.yml"
             });
-            let log = if covering == "pull-request.yml" {
+            let log = if covering != "targeted.yml" {
                 "level: boundary, 92 jobs\nverdict: GREEN\nlog: target/bar/check.log\n".to_string()
             } else {
-                format!(
-                    "level: boundary, narrow {}, FILTER=the_case; 1 runnable cases; left to full boundary: other tests\nverdict: GREEN\nlog: target/bar/narrow.log\n",
-                    if covering == "wrong-crate" {
-                        "jojobot-domain"
-                    } else {
-                        "jojobot-adapters"
-                    }
-                )
+                "level: boundary, narrow jojobot-adapters, FILTER=the_case; 1 runnable cases; left to full boundary: other tests\nverdict: GREEN\nlog: target/bar/narrow.log\n".to_string()
             };
             runs.insert(0, (proof, log));
         }
         let standing = stand(Forge {
             branches: vec![("em-carry", base.clone())],
             runs,
+            ignore_head_sha: covering == "wrong-sha",
             ..Default::default()
         });
         let (code, output) = landing_in(&standing, json!({}), Some(&dir));
-        let refused = [
-            "none",
-            "wrong-crate",
-            "wrong-sha",
-            "integration-omission",
-            "targeted.yml",
-        ]
-        .contains(&covering);
+        let refused =
+            ["none", "wrong-sha", "integration-omission", "targeted.yml"].contains(&covering);
         assert_eq!(code, i32::from(refused), "{covering}: {output}");
         if refused {
             assert!(
