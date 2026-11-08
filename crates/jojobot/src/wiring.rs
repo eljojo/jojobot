@@ -1088,27 +1088,7 @@ pub async fn boot_store_observed(
             // **Key writes whose claim no row holds**, skipped: the old tables keep
             // them, and the deployed build served such a store, so the boot goes on.
             // Info, like the homes: a state the import tolerates, not a fault.
-            // **Each write the reader skipped is named** (thing, key and place), up
-            // to a bound, so a reader of the log can find it in the old table. A
-            // write of a claim a merge did not map is left out with the claim and is
-            // not among them. The words are the constant the upgrade gate reads.
-            if !skipped_key_writes.is_empty() {
-                const NAMED: usize = 20;
-                let mut keys = skipped_key_writes
-                    .iter()
-                    .take(NAMED)
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                if skipped_key_writes.len() > NAMED {
-                    keys.push_str(&format!(", and {} more", skipped_key_writes.len() - NAMED));
-                }
-                tracing::info!(
-                    count = skipped_key_writes.len(),
-                    keys = %keys,
-                    "the import {SKIPPED_KEY_WRITES_LINE}; they stay in the old tables"
-                );
-            }
+            name_skipped_key_writes(&skipped_key_writes);
             if !empty_merge_numbers.is_empty() {
                 tracing::info!(
                     numbers = ?empty_merge_numbers,
@@ -1372,6 +1352,34 @@ pub mod field_links;
 /// says.
 pub const SKIPPED_KEY_WRITES_LINE: &str = "skipped key writes whose claim no row holds";
 
+/// **Name the key writes the import skipped**, a write of a claim no row holds: the
+/// old tables keep them, and the deployed build served such a store, so the boot
+/// goes on. One info line, like the homes the import skips: a state the import
+/// tolerates, not a fault. Each write is named (thing, key and place), up to a
+/// bound, so a reader of the log can find it in the old table. A write of a claim a
+/// merge did not map is left out with the claim and is not among them. The words are
+/// the constant the upgrade gate reads, and the boot calls this in its `Done` arm.
+fn name_skipped_key_writes(skipped_key_writes: &[String]) {
+    const NAMED: usize = 20;
+    if skipped_key_writes.is_empty() {
+        return;
+    }
+    let mut keys = skipped_key_writes
+        .iter()
+        .take(NAMED)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(", ");
+    if skipped_key_writes.len() > NAMED {
+        keys.push_str(&format!(", and {} more", skipped_key_writes.len() - NAMED));
+    }
+    tracing::info!(
+        count = skipped_key_writes.len(),
+        keys = %keys,
+        "the import {SKIPPED_KEY_WRITES_LINE}; they stay in the old tables"
+    );
+}
+
 /// **What the boot says when the claims import stops**, for the log and for the
 /// error, so the two cannot differ. A failure to reach the store says the next
 /// start tries again. A row the import will not take says that starting again
@@ -1500,6 +1508,58 @@ mod tests {
         let clone = store.clone();
         clone.start_journaling();
         assert!(require_journaled(&store).is_ok());
+    }
+
+    /// What the boot's info line says for these skipped key writes.
+    fn the_line_for(names: &[String]) -> String {
+        #[derive(Clone, Default)]
+        struct Sink(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+        impl std::io::Write for Sink {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().expect("the sink").extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let sink = Sink::default();
+        let writer = sink.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || writer.clone())
+            .with_ansi(false)
+            .finish();
+        tracing::subscriber::with_default(subscriber, || name_skipped_key_writes(names));
+        let said = sink.0.lock().expect("the sink").clone();
+        String::from_utf8(said).expect("text")
+    }
+
+    /// **The boot names the key writes the import skipped, in the words the upgrade
+    /// gate reads.** The boot calls `name_skipped_key_writes` in its `Done` arm, so a
+    /// call deleted there leaves this function unused and the lint red. The line
+    /// carries the count and each name up to twenty, then says how many more, and
+    /// says nothing when none were skipped.
+    #[test]
+    fn the_boot_names_the_skipped_key_writes_in_the_gates_words_and_within_a_bound() {
+        let two = vec!["k1/mood#9".to_string(), "k1/hair#3".to_string()];
+        let said = the_line_for(&two);
+        assert!(said.contains(SKIPPED_KEY_WRITES_LINE), "{said}");
+        assert!(
+            said.contains("k1/mood#9") && said.contains("k1/hair#3"),
+            "{said}"
+        );
+        assert!(said.contains("count=2"), "{said}");
+
+        let many: Vec<String> = (1..=25).map(|n| format!("k1/key#{n}")).collect();
+        let said = the_line_for(&many);
+        assert!(
+            said.contains("k1/key#20, and 5 more"),
+            "the twentieth is the last named: {said}"
+        );
+        assert!(!said.contains("k1/key#21"), "the 21st is not named: {said}");
+        assert!(said.contains("count=25"), "{said}");
+
+        assert_eq!(the_line_for(&[]), "", "no skipped write, no line");
     }
     use jojobot_domain::memory::testing::InMemoryMemory;
     use jojobot_domain::memory::{EntityId, NewEntity, NewFact};

@@ -2161,6 +2161,36 @@ async fn claims_import_agrees_with_the_stores_history_and_differs_on_its_ages_ov
         ],
         "the store's ages count a write no claim backs and the State's do not"
     );
+    // **The per-key ages agree**: the moment of the write that holds each key's
+    // value. The orphan holds neither key (a write no claim backs holds nothing), so
+    // `mood` is held since the held write's moment and `hair` is held by none, in
+    // the store's two reads and in the State, and the orphan's moment is in none.
+    let held_in_the_state = state.held_since(&object, &[]);
+    let held_in_the_store = memory.field_ages(&homer).await.expect("ages").keys;
+    let held_in_the_bulk = reader
+        .field_ages_many(std::slice::from_ref(&homer))
+        .await
+        .expect("bulk ages")
+        .remove(&homer)
+        .expect("the bulk read answers for the thing")
+        .keys;
+    assert_eq!(held_in_the_store, held_in_the_bulk);
+    assert_eq!(
+        held_in_the_store.keys().collect::<Vec<_>>(),
+        held_in_the_state.keys().collect::<Vec<_>>(),
+        "the same keys are held: mood by its claim, hair by none"
+    );
+    assert!(
+        held_in_the_store.contains_key("mood") && !held_in_the_store.contains_key("hair"),
+        "{held_in_the_store:?}"
+    );
+    assert!(
+        held_in_the_store
+            .values()
+            .chain(held_in_the_state.values())
+            .all(|moment| *moment < ahead),
+        "no key is held since the orphan's moment"
+    );
     server.stop().await;
 }
 
