@@ -530,6 +530,61 @@ async fn a_thing_the_session_holds_unchanged_comes_back_as_its_handle() {
     story.finish().await;
 }
 
+/// **A second merge into a thing the session holds is news to it, even when the
+/// read has the same parts as before.** Lisa already took Bart, so her `foldedNames`
+/// is a part Otto was handed. Otto reads her without the claims and holds her. Then
+/// Maggie, filed before the first merge, is folded into her: no part is new, only
+/// the names in `foldedNames` change. The read after it must name Maggie and not
+/// be Lisa's handle alone. The read before it is required to be the handle, so the
+/// collapse is live and the whole read after the merge is the merge's doing.
+#[tokio::test]
+async fn a_second_merge_into_a_held_thing_comes_back_whole_without_a_new_part() {
+    let story = Story::begin("bot:otto").await;
+    let otto = story.session().await;
+    let other = story.as_bot("bot:assistant").await;
+    other.add("person:bart", "Bart").await;
+    other.add("person:maggie", "Maggie").await;
+    otto.add("person:lisa", "Lisa").await;
+    other
+        .call(
+            "merge_entities",
+            json!({"duplicate": "person:bart", "survivor": "person:lisa",
+                   "reason": "the same person, filed twice"}),
+        )
+        .await;
+    let ask = json!({"subject": "person:lisa"});
+    let first = otto.call("recall", ask.clone()).await.json();
+    assert_eq!(
+        first["objects"][0]["foldedNames"],
+        json!(["Bart"]),
+        "{first}"
+    );
+    let unchanged = otto.call("recall", ask.clone()).await.json();
+    assert_eq!(
+        unchanged["objects"][0],
+        json!({"id": "person:lisa", "held": "unchanged since served"}),
+        "{unchanged}"
+    );
+
+    other
+        .call(
+            "merge_entities",
+            json!({"duplicate": "person:maggie", "survivor": "person:lisa",
+                   "reason": "the same person, filed twice"}),
+        )
+        .await;
+    let merged = otto.call("recall", ask).await.json();
+    assert_eq!(merged["objects"][0]["name"], "Lisa", "{merged}");
+    assert!(
+        merged["objects"][0]["foldedNames"]
+            .to_string()
+            .contains("Maggie"),
+        "the name that came over is in the read: {merged}"
+    );
+    assert!(merged.get("held_collapsed").is_none(), "{merged}");
+    story.finish().await;
+}
+
 /// **Every verb that can hand a handle back publishes the call that returns the
 /// thing whole.** Otto lists the people, then lists them again with nothing
 /// changed: the second listing carries Homer's handle and no name, and says how
