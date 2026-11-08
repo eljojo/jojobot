@@ -42,6 +42,62 @@ async fn a_fold_refreshed_from_the_state_agrees_with_one_filled_anew() {
     }
 }
 
+/// **A rename reads the store for nothing but the rename.** The patch after it
+/// takes the listing, the rename history, the merge events, the renamed thing's
+/// document and the holders of its names from the claims State. The image
+/// carries the rename, which a read after it shows.
+#[tokio::test]
+async fn a_rename_patches_the_image_from_the_claims_state() {
+    let (folded, counted, _store) = folded_over_a_counted_fake().await;
+    let beta = EntityId::person("person:beta");
+    for (id, name) in [(alpha(), "Alpha"), (beta.clone(), "Beta")] {
+        folded
+            .add_entity(NewEntity::new(id, name, "user-named"))
+            .await
+            .expect("add ok")
+            .written()
+            .expect("not blocked");
+    }
+    folded
+        .capture(NewFact::about(
+            beta.clone(),
+            "knows alpha",
+            date(2026, 9, 1),
+        ))
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("not blocked");
+    let gamma = EntityId::person("person:gamma");
+    counted.reset();
+    folded
+        .rename_entity(
+            &alpha(),
+            &gamma,
+            None,
+            date(2026, 9, 2),
+            jojobot_domain::memory::Override::default(),
+            None,
+        )
+        .await
+        .expect("rename ok")
+        .written()
+        .expect("not blocked");
+    let seen = counted.seen();
+    assert_eq!(
+        seen.keys().copied().collect::<Vec<_>>(),
+        ["rename_entity"],
+        "the patch read the store: {seen:?}"
+    );
+    counted.reset();
+    let listed = folded.list_entities(None).await.expect("list ok");
+    assert_eq!(counted.calls(), 0, "the listing reached the store");
+    assert!(
+        listed.iter().any(|entity| entity.id == gamma),
+        "the image carries the rename: {listed:?}"
+    );
+}
+
 /// **A claim write reads the store for nothing but the write.** The refresh
 /// after it builds the thing's document from the State: no scan of the thing, no
 /// listing, no holders. The image carries the write, which a read after it shows.

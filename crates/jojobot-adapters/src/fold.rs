@@ -348,6 +348,7 @@ impl Folded {
                 .unwrap_or_default();
             let held = in_state
                 .then(|| self.claims(|state| image::referring_in(state, &names)))
+                .flatten()
                 .flatten();
             let referring = match held {
                 Some(referring) => referring,
