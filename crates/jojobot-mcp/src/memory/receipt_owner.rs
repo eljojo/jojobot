@@ -13,8 +13,12 @@ use serde_json::Value;
 
 use super::possible_subject::PossibleSubject;
 use super::unlocks::OwedUnlock;
+use rmcp::ErrorData as McpError;
+use rmcp::model::{CallToolResult, ContentBlock};
+
 use crate::answer::compose::{
-    Answer, Budget, Composed, Form, Kind, LEFT_OUT_KEY, Layer, Tier, account_of, compose_within,
+    Answer, Budget, Composed, Form, Kind, LEFT_OUT_KEY, Layer, OVER_BUDGET_KEY, Tier, account_of,
+    compose_within,
 };
 use crate::{Jojobot, caller::Caller};
 
@@ -470,6 +474,31 @@ impl ServedParts {
     }
 }
 
+/// **The one exit of every capture answer**, a refusal and a note-free answer
+/// included. An answer that still holds two or more suggestions, and has not
+/// been composed, is composed here. Any other answer leaves exactly as built.
+pub(crate) fn exit(answered: Result<CallToolResult, McpError>) -> Result<CallToolResult, McpError> {
+    let Ok(mut result) = answered else {
+        return answered;
+    };
+    let Some(Value::Object(body)) = result
+        .content
+        .first()
+        .and_then(|block| block.as_text())
+        .and_then(|text| serde_json::from_str::<Value>(&text.text).ok())
+    else {
+        return Ok(result);
+    };
+    let holds = |key: &str| body.contains_key(key);
+    let suggestions = SUGGESTIONS.iter().filter(|(key, _)| holds(key)).count();
+    if suggestions < 2 || holds(LEFT_OUT_KEY) || holds(OVER_BUDGET_KEY) {
+        return Ok(result);
+    }
+    let served = compose_receipt(Value::Object(body), &[]).served;
+    result.content = vec![ContentBlock::text(served.to_string())];
+    Ok(result)
+}
+
 /// The call that returns a left-out suggestion's ground: the thing it is about.
 /// **Ground, not the suggestion itself**: `recall` does not return a hint or an
 /// unlocks block, it returns the thing and its claims that the suggestion is
@@ -822,6 +851,29 @@ mod tests {
             json!([{"layer": "hint", "call": "recall"}]),
             "the lower suggestion is named with the call that returns it: {receipt}"
         );
+    }
+
+    /// **Every capture answer leaves through the owner's exit.** An answer that
+    /// still holds two suggestions is composed there: the higher one ships and
+    /// the other is named as left out. An answer with one suggestion, or none,
+    /// leaves exactly as it was built.
+    #[test]
+    fn the_exit_chooses_between_two_suggestions_and_leaves_any_other_answer_alone() {
+        use super::exit;
+        let answer = |body: Value| {
+            let sent = rmcp::model::CallToolResult::success(vec![rmcp::model::ContentBlock::text(
+                body.to_string(),
+            )]);
+            let served = exit(Ok(sent)).expect("the exit answers");
+            serde_json::from_str::<Value>(&served.content[0].as_text().expect("text").text)
+                .expect("a json body")
+        };
+        let two = answer(json!({"status": "blocked", "hint": "h", "unlocks": {"steps": []}}));
+        assert_eq!(two["hint"], "h", "{two}");
+        assert!(two.get("unlocks").is_none(), "{two}");
+        assert_eq!(two["left_out"][0]["layer"], "unlocks", "{two}");
+        let one = json!({"status": "blocked", "hint": "h"});
+        assert_eq!(answer(one.clone()), one);
     }
 
     /// **A fact about how the write stands ships beside a suggestion.** A status

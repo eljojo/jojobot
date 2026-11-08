@@ -100,7 +100,6 @@ impl Jojobot {
 
     /// A second write failing cannot turn the first into "nothing was written".
     /// Keep its address and leave an id open, so a resend finishes the same plan.
-    // TEMPORARY(9.3.3): off the composer, capture check-in.
     pub(super) fn check_in_schedule_not_written(
         &self,
         source: &Fact,

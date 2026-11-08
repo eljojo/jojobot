@@ -13,7 +13,6 @@ use super::*;
 impl Jojobot {
     /// The refusal of a batch that adds `adding` records to `subject` past its
     /// ceiling, or `None` when it fits or the list has no ceiling.
-    // TEMPORARY(9.3.3): off the composer, capture entries/ticks.
     pub(super) async fn refuses_a_batch_over_the_ceiling(
         &self,
         subject: &EntityId,
