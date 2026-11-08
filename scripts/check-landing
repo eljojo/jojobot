@@ -131,7 +131,7 @@ def head_omissions(trunk):
                     full |= any(re.match(r"^level: (?:ok — )?boundary, [1-9]\d* jobs\b", line) for line in lines)
                 if run["workflow_id"] == "targeted.yml":
                     for line in lines:
-                        match = re.match(r"^level: boundary, narrow (\S+), .*; [1-9]\d* runnable cases;", line)
+                        match = re.match(r"^level: boundary, narrow (\S+), .*; [1-9]\d* runnable cases; left to full boundary: none$", line)
                         if match:
                             covered.add(match[1])
         if len(runs) < wr.PAGE:

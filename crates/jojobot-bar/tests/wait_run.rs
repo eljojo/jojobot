@@ -378,8 +378,14 @@ fn boundary_omissions_refuse_touched_crates_until_the_same_head_has_covering_pro
             ..Default::default()
         });
         let (code, output) = landing_in(&standing, json!({}), Some(&dir));
-        let refused =
-            ["none", "wrong-crate", "wrong-sha", "integration-omission"].contains(&covering);
+        let refused = [
+            "none",
+            "wrong-crate",
+            "wrong-sha",
+            "integration-omission",
+            "targeted.yml",
+        ]
+        .contains(&covering);
         assert_eq!(code, i32::from(refused), "{covering}: {output}");
         if refused {
             assert!(
