@@ -229,6 +229,11 @@ impl Writer {
             ));
             sender
         });
+        // **The work is boxed once, here, at the job's submission.** In a debug build
+        // the work of a write is a large future, and the job built below would hold
+        // a second copy of it on the stack of the thread that polls the caller. The
+        // box leaves the job holding a pointer.
+        let work = Box::pin(work);
         let context = Context::capture();
         let span = tracing::Span::current();
         let (answer, waiting) = oneshot::channel();
