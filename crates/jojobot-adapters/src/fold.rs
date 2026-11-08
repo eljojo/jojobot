@@ -96,6 +96,16 @@ pub struct Folded {
 type FactEditObserver =
     std::sync::Mutex<Option<tokio::sync::oneshot::Sender<jojobot_domain::memory::FactAddress>>>;
 
+/// **Why a refresh got no answer from the claims State.**
+enum Unseen {
+    /// The fold holds no State: the store beneath keeps none and the writer holds no
+    /// seam.
+    Missing,
+    /// The State is held but cannot be trusted: its seam is behind the log, read an
+    /// unreadable member, or holds no import.
+    Untrusted,
+}
+
 impl Folded {
     /// Wrap a store with **no image**. Nothing is read yet — the image is
     /// filled by [`rebuild`](Folded::rebuild), separately, so a store that is
@@ -115,10 +125,14 @@ impl Folded {
         }
     }
 
-    /// **Run `read` on the claims State when it can answer**: the State of the
-    /// store beneath, which a fake keeps and lends, else the seam of the shared
-    /// writer, once it holds one. `None` sends the read to the store.
-    fn claims<T>(&self, read: impl FnOnce(&jojobot_domain::log::claims::State) -> T) -> Option<T> {
+    /// **Run `read` on the claims State**: the State of the store beneath, which a
+    /// fake keeps and lends, else the seam of the shared writer, once it holds one.
+    /// When there is no answer, [`Unseen`] says why. A caller never turns either
+    /// reason into a read of the store.
+    fn claims<T>(
+        &self,
+        read: impl FnOnce(&jojobot_domain::log::claims::State) -> T,
+    ) -> Result<T, Unseen> {
         use jojobot_domain::log::claims::ClaimsLender;
         let mut read = Some(read);
         let mut out = None;
@@ -130,9 +144,35 @@ impl Folded {
         let answered = match (self.inner.claims_lender(), self.writer.seam()) {
             (Some(lender), _) => lender.lend(&mut take),
             (None, Some(seam)) => seam.lend(&mut take),
-            (None, None) => false,
+            (None, None) => return Err(Unseen::Missing),
         };
-        answered.then_some(out).flatten()
+        match (answered, out) {
+            (true, Some(out)) => Ok(out),
+            _ => Err(Unseen::Untrusted),
+        }
+    }
+
+    /// **The failure of a refresh that has no State to read**, which drops the
+    /// image as any failed refresh does. A fold with no State is a mistake of
+    /// construction and is loud under test; a State that cannot be trusted after
+    /// an uncertain write is the fenced recovery's, which refills the image.
+    fn without_state(unseen: Unseen) -> MemoryError {
+        match unseen {
+            Unseen::Missing => {
+                if cfg!(test) {
+                    panic!("a fold was refreshed after a write and holds no claims state");
+                }
+                MemoryError::Store(
+                    "the fold holds no claims state to refresh from, so its image is dropped"
+                        .into(),
+                )
+            }
+            Unseen::Untrusted => MemoryError::Store(
+                "the claims state cannot be trusted after an uncertain write, so the image \
+                 is dropped and the fenced recovery refills it"
+                    .into(),
+            ),
+        }
     }
 
     /// Observe the next selected fact edit before it waits behind a writer.
@@ -296,31 +336,34 @@ impl Folded {
         if self.held(|_| ()).is_none() {
             return self.fill().await.map(|_| ());
         }
-        // **The State answers when it can**: the thing's document, and the listing
-        // after an entity write, are built from the claims State this write has
-        // just changed. The store is read when the State cannot answer, and for a
-        // thing a merge touched: TEMPORARY(9.3.3), owner
-        // card `q-933-import-places-moved-claim-under-own-identity`, the survivor's document waits on the
-        // import placing a moved claim under its own identity
-        // (`a_merge_survivors_document_read_from_the_state_is_the_document_the_store_reads`).
-        let from_state = self
-            .claims(|state| {
-                let object = state.resolve(&handle.0)?;
-                // A role's lease renewals are heartbeats kept off the log, so the
-                // State does not hold what a read of it serves: TEMPORARY(9.3.4),
-                // owner card `q-933-d-s4-lease-home`, until the lease home is read
-                // through the State.
-                if state.was_merged(object) || state.holds_a_lease(object) {
-                    return None;
-                }
-                let doc = Doc::from_state(state, object, &state.declared_types())?;
-                Some((relist.then(|| state.listing()), doc))
-            })
-            .flatten();
+        // **The thing's document, and the listing after an entity write, are built
+        // from the claims State this write has just changed.** A State that cannot
+        // be had fails the refresh ([`Folded::without_state`]). Three things are
+        // read from the store, each a named decline and not a missing State:
+        // - a thing a merge touched: TEMPORARY(9.3.3), owner card
+        //   `q-933-import-places-moved-claim-under-own-identity`, the survivor's
+        //   document waits on the import placing a moved claim under its own
+        //   identity
+        //   (`a_merge_survivors_document_read_from_the_state_is_the_document_the_store_reads`);
+        // - a role: its lease renewals are heartbeats kept off the log, so the State
+        //   does not hold what a read of it serves: TEMPORARY(9.3.4), owner card
+        //   `q-933-d-s4-lease-home`;
+        // - a record the State does not know, which is a record the build supplies
+        //   and the overlay serves: TEMPORARY(9.3.5), until supplied records are
+        //   supplied events.
+        let stated = self.claims(|state| {
+            let object = state.resolve(&handle.0)?;
+            if state.was_merged(object) || state.holds_a_lease(object) {
+                return None;
+            }
+            let doc = Doc::from_state(state, object, &state.declared_types())?;
+            Some((relist.then(|| state.listing()), doc))
+        });
         let read = async {
-            let (entities, doc, in_state) = match from_state {
-                Some((entities, doc)) => (entities, doc, true),
-                None => {
+            let (entities, doc, in_state) = match stated {
+                Err(unseen) => return Err(Self::without_state(unseen)),
+                Ok(Some((entities, doc))) => (entities, doc, true),
+                Ok(None) => {
                     let entities = if relist {
                         Some(self.inner.list_entities(None).await?)
                     } else {
@@ -342,10 +385,12 @@ impl Folded {
                     }
                 })
                 .unwrap_or_default();
-            let held = in_state
-                .then(|| self.claims(|state| image::referring_in(state, &names)))
-                .flatten()
-                .flatten();
+            let held = if in_state {
+                self.claims(|state| image::referring_in(state, &names))
+                    .map_err(Self::without_state)?
+            } else {
+                None
+            };
             let referring = match held {
                 Some(referring) => referring,
                 None => image::ask_referring(&self.inner, names).await?,

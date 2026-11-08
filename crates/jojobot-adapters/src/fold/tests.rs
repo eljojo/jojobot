@@ -720,6 +720,9 @@ struct Gauged {
 
 #[async_trait]
 impl Memory for Gauged {
+    fn claims_lender(&self) -> Option<Arc<dyn jojobot_domain::log::claims::ClaimsLender>> {
+        self.inner.claims_lender()
+    }
     async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
         self.inner.add_entity(new).await
     }
@@ -920,6 +923,9 @@ struct AgesBehindAGate {
 
 #[async_trait]
 impl Memory for AgesBehindAGate {
+    fn claims_lender(&self) -> Option<Arc<dyn jojobot_domain::log::claims::ClaimsLender>> {
+        self.inner.claims_lender()
+    }
     async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
         self.inner.add_entity(new).await
     }
@@ -1250,16 +1256,11 @@ async fn scan_entity_does_not_pay_for_the_whole_corpus() {
     );
 }
 
-/// **Two writes reach the image in the order they reached the store.**
-///
-/// A writes `due_on = A`; its re-read stalls. While it is stalled, B tries
-/// to write `due_on = B`. B must wait for A's write and A's re-read to
-/// finish: if it ran through, A's older snapshot could land after B's and
-/// the image would serve the earlier value for ever, with the store
-/// holding the later one. Only after A is released does B write, so the
-/// store and the image both end at `B`.
+/// **A write completes while the store's versioned read is stalled**, because the
+/// refresh after it reads the claims State and not the store. The store holds its
+/// first versioned read open; a refresh that asked for it would wait for ever.
 #[tokio::test]
-async fn a_second_write_waits_for_the_first_ones_reread_so_the_image_ends_at_the_later_value() {
+async fn a_write_completes_while_the_stores_versioned_read_is_stalled() {
     let inner = Arc::new(InMemoryMemory::booted());
     inner
         .add_entity(NewEntity::new(alpha(), "Alpha", "user-named"))
@@ -1267,96 +1268,39 @@ async fn a_second_write_waits_for_the_first_ones_reread_so_the_image_ends_at_the
         .expect("add ok")
         .written()
         .expect("not blocked");
-
-    let stalled = Arc::new(tokio::sync::Notify::new());
-    let released = Arc::new(tokio::sync::Notify::new());
     let double = Arc::new(StallFirstVersionedRead {
         inner: inner.clone(),
         written: std::sync::atomic::AtomicU64::new(0),
-        stalled: stalled.clone(),
-        released: released.clone(),
+        stalled: Arc::new(tokio::sync::Notify::new()),
+        released: Arc::new(tokio::sync::Notify::new()),
         first: std::sync::atomic::AtomicBool::new(false),
     });
-    let folded = Arc::new(Folded::new(double.clone()));
+    let folded = Folded::new(double.clone());
     folded.rebuild().await.expect("the image fills");
     double
         .first
         .store(true, std::sync::atomic::Ordering::SeqCst);
-
-    let a_folded = folded.clone();
-    let a_task = tokio::spawn(async move {
-        a_folded
-            .capture(jojobot_domain::memory::testing::contract::state(NewFact {
-                fields: BTreeMap::from([("due_on".to_string(), "A".to_string())]),
-                ..NewFact::about(alpha(), "A writes first", date(2026, 9, 1))
-            }))
-            .await
-    });
-
-    // A's write has landed and its re-read is holding a snapshot open.
-    stalled.notified().await;
-
-    let b_folded = folded.clone();
-    let b_task = tokio::spawn(async move {
-        b_folded
-            .capture(jojobot_domain::memory::testing::contract::state(NewFact {
-                fields: BTreeMap::from([("due_on".to_string(), "B".to_string())]),
-                ..NewFact::about(
-                    alpha(),
-                    "B writes second, while A is stalled",
-                    date(2026, 9, 2),
-                )
-            }))
-            .await
-    });
-    for _ in 0..50 {
-        tokio::task::yield_now().await;
-    }
-    assert!(
-        !b_task.is_finished(),
-        "B ran through while A's re-read was still open"
-    );
-    assert_eq!(
-        inner
-            .fields(&alpha())
-            .await
-            .expect("fields ok")
-            .get("due_on"),
-        Some(&"A".to_string()),
-        "B has not reached the store while A holds the gate"
-    );
-
-    released.notify_one();
-    a_task
-        .await
-        .expect("the task did not panic")
-        .expect("capture ok")
-        .written()
-        .expect("not blocked");
-    b_task
-        .await
-        .expect("the task did not panic")
-        .expect("capture ok")
-        .written()
-        .expect("not blocked");
-
+    let written = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        folded.capture(jojobot_domain::memory::testing::contract::state(NewFact {
+            fields: BTreeMap::from([("due_on".to_string(), "A".to_string())]),
+            ..NewFact::about(alpha(), "A writes", date(2026, 9, 1))
+        })),
+    )
+    .await
+    .expect("the write waited on the store's stalled read")
+    .expect("capture ok")
+    .written()
+    .expect("not blocked");
+    assert_eq!(written.content, "A writes");
     assert_eq!(
         folded
             .fields(&alpha())
             .await
             .expect("fields ok")
             .get("due_on"),
-        Some(&"B".to_string()),
-        "the image ends at the later write"
-    );
-    assert_eq!(
-        inner
-            .fields(&alpha())
-            .await
-            .expect("fields ok")
-            .get("due_on"),
-        Some(&"B".to_string()),
-        "and so does the store"
+        Some(&"A".to_string()),
+        "the image carries the write"
     );
 }
 
@@ -1573,11 +1517,6 @@ struct CountsReferring(Arc<InMemoryMemory>, Arc<std::sync::atomic::AtomicUsize>)
 
 #[jojobot_domain::forward(jojobot_domain::forward_memory, via = 0)]
 impl Memory for CountsReferring {
-    /// **No State is lent**, so the fold asks this store for the holders: the
-    /// cases here are about which names it asks for.
-    fn claims_lender(&self) -> Option<Arc<dyn jojobot_domain::log::claims::ClaimsLender>> {
-        None
-    }
     async fn referring_to(&self, target: &EntityId) -> Result<Vec<Fact>, MemoryError> {
         self.1.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         self.0.referring_to(target).await
@@ -1618,9 +1557,10 @@ async fn entity_writes_patch_referring_without_asking_for_unchanged_names() {
     );
 }
 
-/// A new alias is asked once; keeping that alias on a later edit asks nothing.
+/// A new alias asks the store for no holders, and neither does a later edit that
+/// keeps it: the holders of the names a write touches come from the claims State.
 #[tokio::test]
-async fn entity_writes_ask_only_for_a_new_spelling() {
+async fn entity_writes_ask_the_store_for_no_holders() {
     let inner = a_store_with_links().await;
     let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let folded = Folded::new(Arc::new(CountsReferring(inner, calls.clone())));
@@ -1639,7 +1579,11 @@ async fn entity_writes_ask_only_for_a_new_spelling() {
         .unwrap()
         .written()
         .expect("alias lands");
-    assert_eq!(calls.swap(0, std::sync::atomic::Ordering::SeqCst), 1);
+    assert_eq!(
+        calls.swap(0, std::sync::atomic::Ordering::SeqCst),
+        0,
+        "the holders of a new spelling come from the claims State, not the store"
+    );
     folded
         .update_entity(
             &stan,

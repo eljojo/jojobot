@@ -26,8 +26,31 @@ async fn seeded(store: &Folded, id: &EntityId, name: &str) {
 /// before this double existed.
 struct WritesThenFailsToReadFields(Arc<InMemoryMemory>);
 
+/// **A State that cannot be trusted**: the seam is behind the log after a commit
+/// whose outcome was not known, and lends nothing.
+struct UntrustedState;
+
+impl jojobot_domain::log::claims::ClaimsLender for UntrustedState {
+    fn lend(&self, _read: &mut dyn FnMut(&jojobot_domain::log::claims::State)) -> bool {
+        false
+    }
+}
+
+/// The fake under a State that cannot be trusted, every other method forwarding.
+struct AfterAnUncertainCommit(Arc<InMemoryMemory>);
+
+#[jojobot_domain::forward(jojobot_domain::forward_memory, via = 0)]
+impl Memory for AfterAnUncertainCommit {
+    fn claims_lender(&self) -> Option<Arc<dyn jojobot_domain::log::claims::ClaimsLender>> {
+        Some(Arc::new(UntrustedState))
+    }
+}
+
 #[async_trait]
 impl Memory for WritesThenFailsToReadFields {
+    fn claims_lender(&self) -> Option<Arc<dyn jojobot_domain::log::claims::ClaimsLender>> {
+        self.0.claims_lender()
+    }
     async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
         self.0.add_entity(new).await
     }
@@ -166,10 +189,18 @@ impl Memory for WritesThenFailsToReadFields {
 #[tokio::test]
 async fn a_write_that_lands_and_a_refresh_that_fails_answers_landed_not_failed() {
     let inner = Arc::new(InMemoryMemory::booted());
-    let flaky = Arc::new(WritesThenFailsToReadFields(inner.clone()));
+    // **A refresh that finds a State it cannot trust installs nothing from it**: the
+    // image is dropped for the fenced recovery, and the write still answers landed.
+    let flaky = Arc::new(AfterAnUncertainCommit(inner.clone()));
     let folded = Folded::new(flaky);
     folded.rebuild().await.expect("an empty store fills");
-    seeded(&folded, &alpha(), "Alpha").await;
+    inner
+        .add_entity(NewEntity::new(alpha(), "Alpha", "user-named"))
+        .await
+        .expect("add ok")
+        .written()
+        .expect("not blocked");
+    folded.rebuild().await.expect("the store with alpha fills");
 
     let err = folded
         .capture(NewFact::about(
@@ -192,6 +223,10 @@ async fn a_write_that_lands_and_a_refresh_that_fails_answers_landed_not_failed()
         panic!("capture's landed payload is a Fact");
     };
     assert_eq!(fact.content, "captured while the fold could not refresh");
+    assert!(
+        folded.held(|_| ()).is_none(),
+        "nothing was installed from the State it could not trust: the image is dropped"
+    );
 
     // **The positive half.** Without this, a write that never happened
     // would look identical to one that did — both come back as

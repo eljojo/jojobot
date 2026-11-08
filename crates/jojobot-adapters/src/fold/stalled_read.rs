@@ -25,6 +25,9 @@ pub(super) struct StallFirstVersionedRead {
 
 #[async_trait]
 impl Memory for StallFirstVersionedRead {
+    fn claims_lender(&self) -> Option<Arc<dyn jojobot_domain::log::claims::ClaimsLender>> {
+        self.inner.claims_lender()
+    }
     async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
         self.inner.add_entity(new).await
     }
