@@ -545,6 +545,16 @@ async fn record_the_grown_store() {
     );
     let grown = restore_into("jojobot-measure-recorder", "UPGRADE_FIXTURE_DIR", true).await;
     let mut store = scaling_store(&grown).await;
+    jojobot_domain::memory::kinds::load_shipped();
+    let log = WriterLog::open(store.pool().clone(), Writer::default())
+        .await
+        .expect("the recorder log opens before scaling");
+    assert_eq!(
+        claims_counts(&log.read_from(Position(0), 100_000).await.unwrap()),
+        (0, 0),
+        "the restored recorder leaves claims for the first head boot"
+    );
+    drop(log);
     let counts = scale_to_production(store.pool()).await;
     store.stop().await;
     dump_grown_store(&grown, &out, &counts);
