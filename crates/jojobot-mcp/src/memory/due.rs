@@ -191,6 +191,32 @@ pub(crate) async fn writing_a_claim<F: std::future::Future>(
 }
 
 impl Jojobot {
+    /// **The keys of a clear that leave the thing without them.** A clear is an
+    /// event about one claim's write: it takes a key off the thing only when that
+    /// claim holds the key, and otherwise withdraws that claim's write alone. The
+    /// holder is asked of the same [`holder_after`](jojobot_domain::memory::holder_after)
+    /// the fold uses (rule 498). A key no claim holds, or a holder that cannot be
+    /// read, leaves as before: a failed read must never keep a due moment the
+    /// clear took away.
+    pub(crate) async fn clears_that_leave_the_thing(
+        &self,
+        address: &FactAddress,
+        cleared: &[String],
+    ) -> Vec<String> {
+        use jojobot_domain::memory::{KeyEffect, holder_after};
+        let Ok(backing) = self.memory.backing(&address.home).await else {
+            return cleared.to_vec();
+        };
+        cleared
+            .iter()
+            .filter(|key| {
+                let held = backing.get(key.trim()).map(|held| &held.fact);
+                holder_after(held, &address.local, KeyEffect::Clears).is_none()
+            })
+            .cloned()
+            .collect()
+    }
+
     /// **What this write should do to the stored due moment.**
     /// [`attention::DueMove::Unchanged`] covers both "this write cannot move
     /// anything" (skipped before any read) and "it would not move it",

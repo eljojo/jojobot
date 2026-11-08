@@ -240,3 +240,89 @@ async fn a_clear_sent_to_an_older_record_leaves_the_value_and_one_sent_to_the_ba
 
     story.finish().await;
 }
+
+const DESK: &str = "thing:standing-desk";
+const ASKED: &str = "2026-12-06";
+
+/// The handles the overdue read lists.
+async fn owed(s: &super::dsl::Session) -> Vec<String> {
+    s.call(
+        "recall",
+        json!({"fields": [{"key": "due_on"}], "overdue": {"as_of": ASKED}}),
+    )
+    .await
+    .json()["objects"]
+        .as_array()
+        .expect("objects")
+        .iter()
+        .map(|o| o["id"].as_str().expect("an id").to_string())
+        .collect()
+}
+
+/// **A clear sent to an older claim leaves the stored due moment where it is.**
+/// The desk's return window ran out twice: the older claim says March, the newer
+/// April, and the newer one backs the date. Clearing `runs_out` on the older claim
+/// withdraws that claim's own write and nothing else, so the desk keeps April, its
+/// due day and its place in the owed read. **The control is the clear the newer
+/// claim takes:** it takes the date off the desk and the desk stops being owed.
+#[tokio::test]
+async fn clearing_an_older_expiry_claim_keeps_the_date_and_the_desk_owed() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add(DESK, "Standing desk").await;
+    let mut addresses = Vec::new();
+    for (words, recorded, runs_out) in [
+        (
+            "Return window runs out 8 Mar 2026.",
+            "2026-02-08",
+            "2026-03-08",
+        ),
+        (
+            "Return window now runs out 8 Apr 2026.",
+            "2026-02-20",
+            "2026-04-08",
+        ),
+    ] {
+        let written = s
+            .call(
+                "capture",
+                json!({"subject": DESK, "content": words, "provenance": "inference",
+                       "recorded_at": recorded, "sets": {"runs_out": runs_out}}),
+            )
+            .await;
+        addresses.push(
+            written.json()["address"]
+                .as_str()
+                .expect("an address")
+                .to_string(),
+        );
+    }
+    assert_eq!(owed(&s).await, [DESK], "owed before any clear");
+
+    s.call(
+        "update_fact",
+        json!({"address": addresses[0], "clear_fields": ["runs_out"]}),
+    )
+    .await;
+    let held = s
+        .call(
+            "recall",
+            json!({"subject": DESK, "keys": ["runs_out", "due_on"]}),
+        )
+        .await;
+    let fields = held.json()["objects"][0]["fields"].clone();
+    assert_eq!(fields["runs_out"], "2026-04-08", "{}", held.raw());
+    assert_eq!(fields["due_on"], "2026-04-08", "{}", held.raw());
+    assert_eq!(owed(&s).await, [DESK], "still owed after the older clear");
+
+    s.call(
+        "update_fact",
+        json!({"address": addresses[1], "clear_fields": ["runs_out"]}),
+    )
+    .await;
+    assert!(
+        owed(&s).await.is_empty(),
+        "the clear the backing claim takes ends the owing"
+    );
+    story.finish().await;
+}

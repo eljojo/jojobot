@@ -707,11 +707,14 @@ impl Jojobot {
             .filter(|(key, _)| set_keys.contains(*key))
             .map(|(key, value)| (key.clone(), value.clone()))
             .collect();
+        // **A clear sent to a claim that does not hold the key leaves the thing as
+        // it is**, so it moves no due moment either.
+        let leaving = self.clears_that_leave_the_thing(&address, &cleared).await;
         let (due_on_computed, due_on_derived) = self
             .moved_due_moment(
                 &address.home,
                 &reaching,
-                &cleared,
+                &leaving,
                 self.dated(None, args.sid.as_deref()).await?,
                 &unread,
             )
