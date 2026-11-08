@@ -1072,6 +1072,9 @@ impl InMemoryMemory {
         self.index_reads
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let mut entities = self.entities.lock().expect("fake mutex poisoned").clone();
+        // The real store lists by handle (`ORDER BY id`), not in the order the
+        // rows were made.
+        entities.sort_by(|a, b| a.id.cmp(&b.id));
         super::super::with_folded_names(&mut entities)
             .expect("the fake merges nothing into itself, so its merges never loop");
         let snapshot = entities.clone();
