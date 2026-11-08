@@ -693,8 +693,7 @@ async fn a_failure_in_the_middle_of_the_import_leaves_no_ledger_event_and_the_ne
     .await
     .expect("the fault is armed");
 
-    jojobot_adapters::testing::import_claims_now(&pool).await;
-    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone()).journaled()));
+    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
     let _ledger = DoltRequests::new(pool.clone()).with_writer(memory.writer());
     let (stored, _) = captured(
         &memory,
@@ -2267,8 +2266,7 @@ async fn an_unknown_kind_of_the_ledgers_own_family_stops_the_first_write() {
     thing(&plain, "bot:sigma", "Sigma").await;
     let planted = jojobot_adapters::testing::plant_unknown_ledger_member(&pool, "future").await;
 
-    jojobot_adapters::testing::import_claims_now(&pool).await;
-    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone()).journaled()));
+    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
     let _ledger = DoltRequests::new(pool.clone()).with_writer(memory.writer());
     let (stored, _) = captured(
         &memory,
