@@ -675,6 +675,16 @@ async fn a_failure_in_the_middle_of_the_import_leaves_no_ledger_event_and_the_ne
     let plain = DoltMemory::open(pool.clone());
     let milhouse = thing(&plain, "person:milhouse", "Milhouse").await;
     thing(&plain, "bot:sigma", "Sigma").await;
+    jojobot_adapters::testing::import_claims_now(&pool).await;
+    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone()).journaled()));
+    let _ledger = DoltRequests::new(pool.clone()).with_writer(memory.writer());
+    let head: Option<u64> = sqlx::query_scalar(
+        "SELECT MAX(last_position) FROM event_log WHERE first_position IS NOT NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("the imported head");
+    let refused_at = head.unwrap_or(0) + 513;
     for n in 0..600 {
         sqlx::query(
             "INSERT INTO app_write (app_id, event_key, digest, landed, written_at) \
@@ -685,21 +695,20 @@ async fn a_failure_in_the_middle_of_the_import_leaves_no_ledger_event_and_the_ne
         .await
         .expect("an app row");
     }
-    // 600 events are three batches: 1..=256, 257..=512 and 513..=600. The store
+    // After the claims import, 600 ledger events form three batches: two of 256
+    // and one of 88. The store
     // refuses the LAST one, so the two before it are in flight when it fails, and
     // an import that lets either of them out of the transaction is caught.
-    sqlx::raw_sql(
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
         "CREATE TRIGGER refuse_last_batch BEFORE INSERT ON event_log FOR EACH ROW \
-         BEGIN IF NEW.first_position = 513 THEN \
+         BEGIN IF NEW.first_position = {refused_at} THEN \
          SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'the last batch is refused'; \
          END IF; END",
-    )
+    )))
     .execute(&pool)
     .await
     .expect("the fault is armed");
 
-    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
-    let _ledger = DoltRequests::new(pool.clone()).with_writer(memory.writer());
     let (stored, _) = captured(
         &memory,
         request("bot:sigma", "first"),
@@ -2275,10 +2284,11 @@ async fn an_unknown_kind_of_the_ledgers_own_family_stops_the_first_write() {
     let plain = DoltMemory::open(pool.clone());
     let milhouse = thing(&plain, "person:milhouse", "Milhouse").await;
     thing(&plain, "bot:sigma", "Sigma").await;
+    jojobot_adapters::testing::import_claims_now(&pool).await;
+    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone()).journaled()));
+    let _ledger = DoltRequests::new(pool.clone()).with_writer(memory.writer());
     let planted = jojobot_adapters::testing::plant_unknown_ledger_member(&pool, "future").await;
 
-    let memory = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
-    let _ledger = DoltRequests::new(pool.clone()).with_writer(memory.writer());
     let (stored, _) = captured(
         &memory,
         request("bot:sigma", "first"),
