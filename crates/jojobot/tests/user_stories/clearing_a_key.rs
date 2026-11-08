@@ -324,5 +324,21 @@ async fn clearing_an_older_expiry_claim_keeps_the_date_and_the_desk_owed() {
         owed(&s).await.is_empty(),
         "the clear the backing claim takes ends the owing"
     );
+    // **The stored due moment goes with the date, as a separate effect of the same
+    // clear**: the owed read above holds without it, so the owed assertion is not
+    // what pins the clear reaching the due arithmetic. The read is sent whole
+    // (`reship`), because the session holds the desk and a collapsed read would
+    // hold no fields to look in.
+    let gone = s
+        .call(
+            "recall",
+            json!({"subject": DESK, "keys": ["runs_out", "due_on"], "reship": true}),
+        )
+        .await;
+    let desk = &gone.json()["objects"][0];
+    assert_eq!(desk["name"], "Standing desk", "read whole: {}", gone.raw());
+    let fields = &desk["fields"];
+    assert_eq!(fields["runs_out"], json!(null), "{}", gone.raw());
+    assert_eq!(fields["due_on"], json!(null), "{}", gone.raw());
     story.finish().await;
 }
