@@ -691,6 +691,7 @@ mod tests {
                 &caller,
                 false,
                 &[],
+                None,
                 vec![note(
                     "teaching:one",
                     "owner-test:one",
@@ -741,6 +742,7 @@ mod tests {
                     &the_caller(),
                     false,
                     &[],
+                    None,
                     Vec::new(),
                 ),
             )

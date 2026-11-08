@@ -15,6 +15,14 @@ fn sets(pairs: &[(&str, &str)]) -> Option<std::collections::BTreeMap<String, Str
     )
 }
 
+/// The session's first-contact teaching, said by an earlier capture. That
+/// teaching is outside the budget and crowds the unlocks block out of a
+/// session's first receipt, so a case about the block starts past it.
+async fn told_the_first_contact(jojobot: &Jojobot) {
+    ensure(jojobot, "thing:kettle").await;
+    capture_ok(jojobot, capture_args("thing:kettle", "keeps the water hot")).await;
+}
+
 /// A loop under a thing, holding nothing yet.
 async fn a_loop(jojobot: &Jojobot, handle: &str) {
     ensure(jojobot, "thing:kettle").await;
@@ -121,6 +129,7 @@ async fn declare_journey(jojobot: &Jojobot) {
 #[tokio::test]
 async fn a_loop_with_a_cadence_and_no_check_in_names_what_a_check_in_unlocks() {
     let jojobot = handler();
+    told_the_first_contact(&jojobot).await;
     a_loop(&jojobot, "rhythm:descale").await;
 
     let partial = capture_sets(
@@ -175,6 +184,7 @@ async fn a_loop_with_a_cadence_and_no_check_in_names_what_a_check_in_unlocks() {
 #[tokio::test]
 async fn a_loop_with_a_basis_and_no_cadence_names_both_shapes_of_one() {
     let jojobot = handler();
+    told_the_first_contact(&jojobot).await;
     a_loop(&jojobot, "rhythm:descale").await;
 
     let partial = capture_sets(
@@ -208,6 +218,7 @@ async fn a_loop_with_a_basis_and_no_cadence_names_both_shapes_of_one() {
 #[tokio::test]
 async fn a_partly_matched_type_is_named_once_per_set_of_missing_keys_per_session() {
     let jojobot = handler();
+    told_the_first_contact(&jojobot).await;
     declare_journey(&jojobot).await;
 
     let first = capture_sets(
@@ -259,6 +270,7 @@ async fn a_partly_matched_type_is_named_once_per_set_of_missing_keys_per_session
 #[tokio::test]
 async fn a_type_step_the_receipt_drops_is_still_offered_to_the_next_write() {
     let jojobot = handler();
+    told_the_first_contact(&jojobot).await;
     declare_journey(&jojobot).await;
     ensure(&jojobot, "thing:the-furnace").await;
 
@@ -296,6 +308,7 @@ async fn a_type_step_the_receipt_drops_is_still_offered_to_the_next_write() {
 #[tokio::test]
 async fn a_thing_that_holds_a_whole_type_or_matches_none_gets_no_block() {
     let jojobot = handler();
+    told_the_first_contact(&jojobot).await;
     declare_journey(&jojobot).await;
 
     let partial = capture_sets(
@@ -396,6 +409,7 @@ async fn every_write_that_sets_keys_carries_the_block() {
 #[tokio::test]
 async fn a_type_of_computed_keys_is_not_offered_but_a_completable_one_is() {
     let jojobot = handler();
+    told_the_first_contact(&jojobot).await;
     crate::seed::ensure_shipped_types(&jojobot.memory)
         .await
         .expect("the shipped types declare");
@@ -426,6 +440,7 @@ async fn a_type_of_computed_keys_is_not_offered_but_a_completable_one_is() {
 #[tokio::test]
 async fn a_type_step_leaves_out_the_keys_jojobot_computes() {
     let jojobot = handler();
+    told_the_first_contact(&jojobot).await;
     ensure(&jojobot, "thing:kettle").await;
     let field = |key: &str, holds: &str| FieldArgs {
         key: key.into(),
@@ -630,6 +645,7 @@ async fn a_thing_that_is_not_a_rhythm_is_offered_no_check_in_step_and_refused_th
 #[tokio::test]
 async fn a_key_the_loop_step_names_is_not_named_again_by_the_kind() {
     let jojobot = handler();
+    told_the_first_contact(&jojobot).await;
     a_loop(&jojobot, "rhythm:descale").await;
 
     let receipt = capture_sets(

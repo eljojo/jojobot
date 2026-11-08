@@ -225,6 +225,20 @@ mod tests {
         ensure(jojobot, "org:mr-plow").await;
     }
 
+    /// A session that has been told its first-contact teaching. That teaching is
+    /// outside the budget and crowds a suggestion out of a session's first
+    /// receipt, so a case about the note starts from a session past it.
+    async fn booted_taught(jojobot: &Jojobot, slug: &'static str) -> String {
+        let sid = booted(jojobot, slug).await;
+        capture_as(
+            jojobot,
+            &sid,
+            capture_args("thing:the-furnace", "keeps the house warm"),
+        )
+        .await;
+        sid
+    }
+
     async fn capture_on(jojobot: &Jojobot, args: CaptureArgs) -> serde_json::Value {
         json_of(&jojobot.capture(Parameters(args)).await.expect("capture ok"))
     }
@@ -253,7 +267,7 @@ mod tests {
         }
         let session = |slug: &'static str| {
             let jojobot = &jojobot;
-            async move { booted(jojobot, slug).await }
+            async move { booted_taught(jojobot, slug).await }
         };
 
         let positive = session("gamma").await;
@@ -365,7 +379,7 @@ mod tests {
                      floor was waxed and Springfield was quiet.";
         make_bot(&jojobot, "gamma").await;
         make_bot(&jojobot, "delta").await;
-        let single = booted(&jojobot, "gamma").await;
+        let single = booted_taught(&jojobot, "gamma").await;
         let receipt = capture_as(&jojobot, &single, capture_args("org:mr-plow", words)).await;
         assert_ne!(receipt["status"], "blocked", "{receipt}");
         assert!(
@@ -373,7 +387,7 @@ mod tests {
             "single words draw no note: {receipt}"
         );
 
-        let named = booted(&jojobot, "delta").await;
+        let named = booted_taught(&jojobot, "delta").await;
         let said = format!("{words} The dining chairs are next.");
         let receipt = capture_as(&jojobot, &named, capture_args("org:mr-plow", &said)).await;
         let note = noted(&receipt).unwrap_or_else(|| panic!("the whole name is noted: {receipt}"));
@@ -395,8 +409,8 @@ mod tests {
         make_bot(&jojobot, "gamma").await;
         make_bot(&jojobot, "delta").await;
         let (first, second) = (
-            booted(&jojobot, "gamma").await,
-            booted(&jojobot, "delta").await,
+            booted_taught(&jojobot, "gamma").await,
+            booted_taught(&jojobot, "delta").await,
         );
         let file = |sid: &str, words: &str| {
             let args = CaptureArgs {
