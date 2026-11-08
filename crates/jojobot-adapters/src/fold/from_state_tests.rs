@@ -75,11 +75,7 @@ async fn a_document_read_from_the_state_is_the_document_the_store_reads() {
 }
 
 /// **The merge survivor's document, and the merge events, equal the store's.**
-/// Not run yet: the import places a claim a merge moved under the identity it was
-/// made under, and the merge event names another, so the survivor's State lacks
-/// the folded thing's fields. It runs again when the import names the moved record.
 #[tokio::test]
-#[ignore = "TEMPORARY(9.3.3): the import names a moved claim by an identity it never created; this runs when card q-933-import-places-moved-claim-under-own-identity places a merged claim under its own"]
 async fn a_merge_survivors_document_read_from_the_state_is_the_document_the_store_reads() {
     compare(true).await;
 }

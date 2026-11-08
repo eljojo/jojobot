@@ -521,13 +521,34 @@ impl State {
     /// answering for a later state. A lease renewal is a heartbeat kept off the
     /// log and adds none.
     pub fn write_marker(&self, subject: &ObjectId) -> u64 {
+        let subject = self.survivor(subject);
         let claim_writes: usize = self
             .records_homed_on(subject)
             .into_iter()
             .map(|record| self.claim_history(record).len())
             .sum();
-        (claim_writes + self.entity_versions(subject).len() + self.observed_chain(subject).len())
+        (claim_writes + self.own_entity_versions(subject).len() + self.own_observed(subject).len())
             as u64
+    }
+
+    /// **The writes of a thing's own row that were filed under the thing itself.**
+    /// A thing folded into it keeps its own writes, and the merge's row is filed
+    /// under the folded thing too: the store counts neither as the survivor's.
+    fn own_entity_versions(&self, subject: &ObjectId) -> Vec<&ObjectVersion> {
+        self.entity_versions(subject)
+            .into_iter()
+            .filter(|version| version.thing == *subject)
+            .collect()
+    }
+
+    /// The observed writes of a thing's own row, apart from those of the things
+    /// folded into it.
+    fn own_observed(&self, subject: &ObjectId) -> Vec<&ObservedWrite> {
+        self.observed_chain(subject)
+            .into_iter()
+            .filter(|(object, _)| **object == *subject)
+            .map(|(_, write)| write)
+            .collect()
     }
 
     /// **The newest moment any write on a thing was taken in**: its own row, and
@@ -549,13 +570,13 @@ impl State {
             })
         }));
         let own = self
-            .entity_versions(subject)
+            .own_entity_versions(subject)
             .into_iter()
             .filter_map(|version| version.written_at)
             .chain(
-                self.observed_chain(subject)
+                self.own_observed(subject)
                     .into_iter()
-                    .filter_map(|(_, write)| write.source_time),
+                    .filter_map(|write| write.source_time),
             );
         let fields = streams
             .iter()

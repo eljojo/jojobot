@@ -135,7 +135,7 @@ fn observed_snapshot(state: &State, snapshot: &ObjectSnapshot) -> EntitySnapshot
 fn entity_version(state: &State, ordinal: usize, version: &ObjectVersion) -> EntityVersion {
     EntityVersion {
         ordinal,
-        thing: served(state, &version.thing),
+        thing: state.handle_worn_by(&version.thing),
         written_at: version.written_at,
         session: version.run.as_ref().map(|run| run.0.clone()),
         snapshot: Some(snapshot(state, &version.body)),
@@ -201,7 +201,7 @@ impl State {
                     .into_iter()
                     .map(|(thing, write)| EntityVersion {
                         ordinal: 0,
-                        thing: served(self, thing),
+                        thing: self.handle_worn_by(thing),
                         written_at: write.source_time,
                         session: write.run.as_ref().map(|run| run.0.clone()),
                         snapshot: write
