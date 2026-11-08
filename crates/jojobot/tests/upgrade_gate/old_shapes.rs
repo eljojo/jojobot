@@ -158,50 +158,31 @@ async fn a_thought_stored_over_its_cap_is_read_and_edited_and_refuses_a_merge_wi
         ..
     } = restore_the_fixture("thought-over-cap").await;
     let reports = usize::from(recording_holds_the_plain_ambiguous_handle(&git_ref));
-    // The head makes the room: two bots and a thing, written through the surface.
-    let first = boot_current_expecting(&state_dir, store_port, &git_ref, Some(reports), &[]).await;
-    let (surface, sid) = as_the_assistant(&first, &git_ref).await;
-    for (kind, handle, name) in [
-        ("bot", "gate-thinker", "Gate Thinker"),
-        ("bot", "gate-heir", "Gate Heir"),
-        ("thing", "gate-whisk", "Gate Whisk"),
-    ] {
-        let made = surface
-            .call(
-                "add_entity",
-                json!({"kind": kind, "handle": handle, "name": name,
-                       "source": "user-named", "sid": sid}),
-            )
-            .await;
-        assert!(
-            !made.contains("\"status\":\"blocked\""),
-            "recorded at {git_ref}: {kind}:{handle} was not made: {made}"
-        );
-    }
-    for bot in ["bot:gate-thinker", "bot:gate-heir"] {
-        let ceiling = surface
-            .call(
-                "capture",
-                json!({"subject": bot, "content": "the room holds seven",
-                       "sets": {"thought_capacity": "7"}, "sid": sid}),
-            )
-            .await;
-        assert!(
-            !ceiling.contains("\"status\":\"blocked\""),
-            "recorded at {git_ref}: the room of {bot} was not set: {ceiling}"
-        );
-    }
-    surface.finish().await;
-    first.stop().await;
-
-    // The earlier build's rows: the bot's own thought, and a thing's claim that a
-    // fold would carry over to a bot as a thought.
+    // **The whole room is the earlier build's rows, planted before the head's first
+    // boot.** A real upgrade has the old rows in the store before the head imports
+    // them, and the import runs once, at that first boot. Rows planted under a head
+    // that has already imported are written beneath the one writer (decision 292),
+    // so the State would not hold them and an edit of the thought would find no
+    // claim. The room is two bots and a thing, each bot with a ceiling of seven.
     let mut store = open_the_store(&state_dir, store_port).await;
+    for (handle, badge_text) in [
+        ("bot:gate-thinker", "gthink"),
+        ("bot:gate-heir", "gheir"),
+        ("thing:gate-whisk", "gwhisk"),
+    ] {
+        entity(store.pool(), handle, badge_text, None).await;
+    }
+    for badge_text in ["gthink", "gheir"] {
+        record(store.pool(), badge_text, "the room holds seven").await;
+        field(store.pool(), badge_text, "thought_capacity", "7", "sets").await;
+    }
+    // The bot's own thought, and a thing's claim that a fold would carry over to a
+    // bot as a thought.
     plant_a_long_thought(store.pool(), "bot:gate-thinker", "f90", "bot:assistant").await;
     plant_a_long_thought(store.pool(), "thing:gate-whisk", "f90", "bot:assistant").await;
     store.stop().await;
 
-    let booted = boot_current_expecting(&state_dir, store_port, &git_ref, Some(0), &[]).await;
+    let booted = boot_current_expecting(&state_dir, store_port, &git_ref, Some(reports), &[]).await;
     let (surface, sid) = as_the_assistant(&booted, &git_ref).await;
     let fail = |what: &str, body: &str| -> ! {
         panic!("recorded at {git_ref}: {what} did not hold: {body}")
