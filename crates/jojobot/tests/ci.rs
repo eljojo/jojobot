@@ -1113,6 +1113,15 @@ fn a_run_ends_by_deleting_the_large_artifacts_it_uploaded() {
             if name.starts_with("bar-logs-") {
                 continue;
             }
+            let sweep = std::fs::read_to_string(root().join("scripts/artifact-sweep")).unwrap();
+            let large = sweep
+                .lines()
+                .find(|l| l.starts_with("LARGE = ("))
+                .expect("the sweep names the large artifacts");
+            assert!(
+                large.contains(&format!("\"{name}\"")),
+                "{workflow}: {name} is uploaded and not named in the sweep's LARGE, so it is never deleted:\n{large}"
+            );
             assert!(
                 step.contains("retention-days: 1\n"),
                 "{workflow}: {name} is large and is kept more than a day:\n{step}"

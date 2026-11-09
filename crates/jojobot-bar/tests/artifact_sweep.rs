@@ -156,6 +156,8 @@ fn two_runs() -> Vec<serde_json::Value> {
         artifact(55, 7, "test-bundle", 0, false),
         artifact(54, 7, "upgrade-fixture", 0, false),
         artifact(53, 7, "bar-logs-build", 0, false),
+        // A proof a later step reads after the run: not named as large, so it stays.
+        artifact(52, 7, "gate-f-proof", 0, false),
     ]
 }
 
@@ -227,6 +229,7 @@ fn the_sweep_deletes_what_ended_runs_left_and_not_what_runs_in_flight_hold() {
         artifact(499, 14, "upgrade-fixture", 0, false),
         artifact(498, 10, "test-bundle", 0, false),
         artifact(497, 11, "test-bundle", 0, false),
+        artifact(494, 10, "gate-j-proof", 0, false),
         artifact(496, 11, "bar-logs-check", 0, false),
         artifact(495, 12, "boot-store", 0, true),
     ];

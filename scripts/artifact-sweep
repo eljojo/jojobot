@@ -5,10 +5,12 @@
     scripts/artifact-sweep --finished [--delete] # every ended run's artifacts, the sweeper
 
 Nelly's disk is shared with the forge, the database and production, so a run
-leaves nothing large behind. A bundle of test binaries is 1.2 GB. The only
-artifacts that stay are the bar's logs, whose names start with `bar-logs-`.
-Every other artifact is deleted: a job of a run that ended is never re-run on
-its own, so nothing reads one again.
+leaves nothing large behind. A bundle of test binaries is 1.2 GB. **Only the
+artifacts named in LARGE are deleted**: the workflows upload them to carry
+binaries and stores between the jobs of one run, and a job of a run that ended is
+never re-run on its own, so nothing reads one again. Every other artifact stays,
+the bar's logs (`bar-logs-*`, which scripts/slow-tests reads) and any proof a
+gate or a card reads after its run. A new large upload is added to LARGE.
 
 `--run` is the final job of a workflow, which runs whether the jobs before it
 passed or failed. `--finished` is the sweeper for the runs that job never
@@ -33,8 +35,8 @@ import sys
 import urllib.error
 import urllib.request
 
-# The artifacts that stay. The bar uploads its logs under this prefix.
-LOG_PREFIX = "bar-logs-"
+# The artifacts that carry binaries and stores between the jobs of one run.
+LARGE = ("test-bundle", "upgrade-fixture", "boot-store")
 # The runs whose artifacts are read for the sweeper. A newer run's artifacts
 # come first; an older artifact than this was swept by an earlier pass or has
 # expired by its own retention.
@@ -55,7 +57,7 @@ def forge(path, method="GET"):
 
 
 def large(artifact):
-    return not artifact["name"].startswith(LOG_PREFIX) and not artifact.get("expired")
+    return artifact["name"] in LARGE and not artifact.get("expired")
 
 
 def of_run(run):
