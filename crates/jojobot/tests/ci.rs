@@ -441,6 +441,8 @@ fn every_job_runs_the_runner_pre_job_first() {
                         .take_while(|line| !line.starts_with("      - ")),
                 )
                 .map(|line| line.trim())
+                // The artifact cleanup job runs the hook with continue-on-error.
+                .filter(|line| *line != "continue-on-error: true")
                 .collect();
             assert!(first[0].starts_with("- name:"), "{job}: {first:?}");
             assert_eq!(
@@ -1101,13 +1103,24 @@ fn a_run_ends_by_deleting_the_large_artifacts_it_uploaded() {
             ),
             "{workflow}:\n{cleanup}"
         );
-        // The whole job, not only its script step: a failed hook, checkout or nix start
-        // must not turn a green run red, because wait-run and the landing check read
-        // the run's status.
-        assert!(
-            cleanup.lines().any(|l| l == "    continue-on-error: true"),
-            "{workflow}:\n{cleanup}"
-        );
+        // Every step, not the job: this forge fails the run when a job fails even with
+        // the job's own continue-on-error (run 4785: every other job green, the run
+        // failure). A failed hook, checkout or script must not turn a green run red,
+        // because wait-run and the landing check read the run's status.
+        let steps = lines_under(&cleanup, "steps:", 4);
+        let blocks: Vec<String> = steps
+            .join("\n")
+            .split("      - ")
+            .skip(1)
+            .map(str::to_string)
+            .collect();
+        assert_eq!(blocks.len(), 3, "{workflow}:\n{cleanup}");
+        for block in &blocks {
+            assert!(
+                block.lines().any(|l| l.trim() == "continue-on-error: true"),
+                "{workflow}: a step of the cleanup job can fail the run:\n{block}"
+            );
+        }
         assert!(cleanup.contains("TOKEN: ${{ forgejo.token }}"), "{cleanup}");
         for step in yaml
             .split("      - ")

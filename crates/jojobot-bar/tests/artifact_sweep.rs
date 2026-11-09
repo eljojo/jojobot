@@ -283,3 +283,23 @@ fn the_sweep_leaves_artifacts_older_than_its_window_and_still_reads_the_newer_on
     assert_eq!(swept.code, 0, "{}", swept.said);
     assert_eq!(swept.asked, [90], "{}", swept.said);
 }
+
+/// A page with nothing recent ends the read, so the hourly sweep never walks the whole
+/// history the forge keeps. The second page here would hold a recent bundle of an ended
+/// run; the sweep must not reach it.
+#[test]
+fn the_sweep_stops_at_a_page_with_nothing_recent() {
+    let mut list: Vec<_> = (0..50)
+        .map(|n| artifact(200 - n, 10, "bar-logs-check", 9, false))
+        .collect();
+    list.push(artifact(100, 10, "test-bundle", 0, false));
+    let swept = sweep(
+        list,
+        vec![(10, "success")],
+        vec![],
+        &["--finished", "--delete"],
+        Some("t0ken"),
+    );
+    assert_eq!(swept.code, 0, "{}", swept.said);
+    assert!(swept.asked.is_empty(), "{}", swept.said);
+}

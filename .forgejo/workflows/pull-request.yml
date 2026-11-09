@@ -415,14 +415,17 @@ jobs:
   artifact-cleanup:
     needs: [build, boot-store, check, rooms, year]
     if: ${{ always() }}
-    continue-on-error: true
     runs-on: nix
     timeout-minutes: 10
+    # This forge fails the run when a job fails, even with the job's own
+    # continue-on-error, so every step carries it: no step can fail the job.
     steps:
       - name: Runner cleanup
+        continue-on-error: true
         run: |
           [ -z "${JOJOBOT_PRE_JOB:-}" ] || "$JOJOBOT_PRE_JOB"
-      - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - continue-on-error: true
+        uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
       - continue-on-error: true
