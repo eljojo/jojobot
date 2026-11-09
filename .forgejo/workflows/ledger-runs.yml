@@ -67,10 +67,19 @@ jobs:
         run: nix develop -c python3 scripts/prepare-upgrade-fixture
         env:
           UPGRADE_FIXTURE_DIR: target/upgrade-fixture
+      # The boot measures read a grown store from BOOT_STORE_DIR, as the
+      # pull-request workflow's boot-store job prepares it. A lane that runs them
+      # without it is red before any mutant.
+      - name: Grown store
+        run: nix develop -c python3 scripts/prepare-boot-store
+        env:
+          UPGRADE_FIXTURE_DIR: target/upgrade-fixture
+          BOOT_STORE_DIR: target/boot-store
       - name: Coverage
         if: ${{ forgejo.event.inputs.job == 'coverage' }}
         env:
           UPGRADE_FIXTURE_DIR: target/upgrade-fixture
+          BOOT_STORE_DIR: target/boot-store
         run: |
           if [ "$BRANCH" = yes ]; then nix develop -c make coverage; else nix develop -c make coverage COVERAGE_BRANCH=; fi
       - name: Branch measure
@@ -91,6 +100,7 @@ jobs:
         if: ${{ forgejo.event.inputs.job == 'mutants' }}
         env:
           UPGRADE_FIXTURE_DIR: target/upgrade-fixture
+          BOOT_STORE_DIR: target/boot-store
         run: nix develop -c make mutants LANE="$LANE" FROM="$FROM" COUNT="$COUNT"
       - if: ${{ !cancelled() }}
         continue-on-error: true
