@@ -1061,16 +1061,12 @@ async fn compare_grown_claims(scaled: bool) {
         .history
         .remove("load_key_0")
         .expect("the held key has its history");
-    // State trails use permanent identities; the row port serves their current handles.
+    // State trails keep the permanent identity of the home; the row port serves its
+    // current handle. The writer is already served as the handle its bot answers to.
     for write in &mut state_rows {
         write.fact.home = held
             .handle(&jojobot_domain::log::ObjectId(write.fact.home.0.clone()))
             .expect("a history home has its served handle");
-        if let Some(jojobot_domain::actor::Actor::Bot(writer)) = &mut write.writer {
-            *writer = held
-                .handle(&jojobot_domain::log::ObjectId(writer.0.clone()))
-                .expect("a history writer has its served handle");
-        }
     }
     assert_eq!(
         state_rows, rows,
