@@ -795,11 +795,21 @@ impl Jojobot {
             });
         }
         notes.deliver(&mut body);
+        let mut held_back: Vec<String> =
+            std::mem::take(&mut *spends.lock().expect("a batch's spends are poisoned"));
+        // **The carry hint is peeked here and its row is written with the others**,
+        // so a hint the owner drops stays owed.
+        if args.ticks.is_some()
+            && let Some(carry) = self
+                .pending_carry_teaching_after_ticks(&subject, &caller)
+                .await
+        {
+            crate::answer::note_hint(&mut body, carry.to_string());
+            held_back.push(super::list_carry::PLAN_CARRY_DOMAIN.to_string());
+        }
         // **The merged receipt goes through the owner once**, since each item was
         // composed alone and the merge can hold more than one suggestion. A
         // suggestion it drops spends nothing.
-        let held_back: Vec<String> =
-            std::mem::take(&mut *spends.lock().expect("a batch's spends are poisoned"));
         let (owned, held_back) = super::receipt_owner::own_batch_receipt(body, held_back);
         body = owned;
         // **The notes are delivered, so their ledger rows are written now**, and
@@ -810,11 +820,6 @@ impl Jojobot {
         jojobot_domain::request::finished();
         let changed = self.changed_on(&before, &subject).await;
         crate::changed::note_changed(&mut body, changed);
-        if args.ticks.is_some()
-            && let Some(carry) = self.carry_teaching_after_ticks(&subject, &caller).await
-        {
-            crate::answer::note_hint(&mut body, carry.to_string());
-        }
         crate::answer::note_postcondition(
             &mut body,
             format!("{count} {form} landed on {subject}, each its own record, in the order sent."),

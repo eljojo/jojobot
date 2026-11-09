@@ -608,3 +608,38 @@ async fn a_dropped_carry_hint_does_not_spend_the_sessions_teaching() {
     assert_eq!(plan["entries"][0]["state"], "open", "{plan}");
     story.finish().await;
 }
+
+/// **A batch of ticks serves one suggestion too.** The ticks' words name a known
+/// thing, so the possible-subject note wins and the carry hint is dropped; the
+/// dropped hint is not spent, so the next single tick still teaches the carry.
+#[tokio::test]
+async fn a_batch_of_ticks_whose_note_wins_does_not_spend_the_carry_hint() {
+    let story = Story::begin_pretending_it_is("bot:gamma", TODAY).await;
+    let s = story.session().await;
+    let at = three_entries(&s, Some("2026-W43")).await;
+    add_entry(&s, "list:errands", "sweep", None).await;
+    s.add("thing:the-furnace", "The furnace").await;
+
+    let batch = s
+        .call(
+            "capture",
+            json!({"subject": "list:errands", "content": "The furnace service is complete",
+                   "provenance": "testimony",
+                   "ticks": [{"entry": at[0], "act": "done"}, {"entry": at[1], "act": "done"}]}),
+        )
+        .await;
+    assert!(
+        batch.json()["possible_subject_note"].is_string(),
+        "{}",
+        batch.raw()
+    );
+    assert!(batch.json().get("hint").is_none(), "{}", batch.raw());
+
+    let taught = tick_one(&s, &at[2]).await;
+    assert!(
+        the_line(&taught).contains("derived_from"),
+        "the hint the batch dropped was never spent: {}",
+        taught.raw()
+    );
+    story.finish().await;
+}
