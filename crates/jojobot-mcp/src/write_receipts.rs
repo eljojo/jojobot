@@ -180,6 +180,16 @@ impl Call {
                 derived.insert(argument.into(), stored.clone());
             }
         }
+        // **A parent the server chose is new information too**: the caller sent
+        // none, so the check above has nothing to compare, and the placement would
+        // be lost with the `parent_defaulted` block.
+        if let Some(chosen) = body
+            .pointer("/parent_defaulted/parent")
+            .filter(|v| v.is_string())
+            && !self.args.contains_key("parent")
+        {
+            derived.insert("parent".into(), chosen.clone());
+        }
         if self.verb == "capture" {
             for key in ["provenance", "standing", "recorded_at"] {
                 if !self.args.contains_key(key)

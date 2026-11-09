@@ -213,3 +213,40 @@ async fn numbered_things_under_one_bot_are_siblings_and_not_near_names() {
     again["kind"] = json!("work");
     s.refused("add_entity", again).await;
 }
+
+/// **A bot that asked for lean receipts is told where a parentless create
+/// landed**, in `derived`, as a parent it sent and the store changed already is.
+/// Beside it a create at the root on purpose, which has no placement to tell.
+#[tokio::test]
+async fn a_lean_receipt_still_says_where_a_parentless_create_landed() {
+    let story = Story::begin("bot:marge").await;
+    let s = story.session().await;
+    s.call(
+        "capture",
+        json!({"subject": "bot:marge", "content": "Use lean receipts",
+               "sets": {"setting_token_saving": "on"}}),
+    )
+    .await;
+
+    let made = s.call("add_entity", thing("zeta", "Zeta")).await;
+    assert_eq!(
+        parent_of(&s, "thing:zeta").await.as_deref(),
+        Some("bot:marge")
+    );
+    assert_eq!(
+        made.json()["derived"]["parent"],
+        "bot:marge",
+        "{}",
+        made.raw()
+    );
+
+    let mut at_root = thing("kappa", "Kappa");
+    at_root["root"] = json!(true);
+    let rooted = s.call("add_entity", at_root).await;
+    assert_eq!(parent_of(&s, "thing:kappa").await, None);
+    assert!(
+        rooted.json()["derived"].get("parent").is_none(),
+        "{}",
+        rooted.raw()
+    );
+}
