@@ -308,6 +308,7 @@ async fn the_receipt_splits_what_reached_the_thing_from_what_stayed_and_hints_at
     let s = story.session().await;
     s.add("project:atlas", "The Campaign").await;
     s.add_under("project:atlas", "work:phi", "The Wiring").await;
+    s.past_first_contact().await;
 
     let receipt = s
         .call(
