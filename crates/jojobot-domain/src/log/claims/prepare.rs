@@ -248,6 +248,29 @@ fn marked_value(state: &State, value: &str, reference: bool) -> String {
         .join(", ")
 }
 
+/// **The key a verb's capture sends that jojobot writes itself**, if it sends one:
+/// the stored due moment or a bookkeeping key. A key the verb computed rides as
+/// `derived` and is the verb's, not the caller's. The one place that says which
+/// keys these are and who may send them (rule 498): the fake store asks it too.
+pub fn server_written_key<'a>(
+    fields: impl IntoIterator<Item = &'a String>,
+    derived: &BTreeSet<String>,
+) -> Option<String> {
+    fields
+        .into_iter()
+        .map(|key| key.trim())
+        .find(|key| {
+            (*key == attention::DUE_ON || memory::review::SERVER_WRITTEN_KEYS.contains(key))
+                && !derived.iter().any(|computed| computed.trim() == *key)
+        })
+        .map(str::to_string)
+}
+
+/// The error a caller reads when a verb's capture sends such a key.
+pub fn server_written_error(key: &str) -> MemoryError {
+    MemoryError::InvalidFact(format!("'{key}' is written by jojobot, not by a caller"))
+}
+
 /// Decide one capture over the state. `declared` is what the types declare: the
 /// state does not hold it.
 pub fn prepare(
@@ -266,15 +289,9 @@ pub fn prepare(
         return Err(Refusal::RoleFieldGuarded { role, key });
     }
     if request.route == Route::Verb
-        && let Some(key) = request.fields.keys().map(|key| key.trim()).find(|key| {
-            (*key == attention::DUE_ON || memory::review::SERVER_WRITTEN_KEYS.contains(key))
-                // A key the verb computed rides as derived: the verb's, not the caller's.
-                && !request.derived.iter().any(|computed| computed.trim() == *key)
-        })
+        && let Some(key) = server_written_key(request.fields.keys(), &request.derived)
     {
-        return Err(Refusal::ServerWritten {
-            key: key.to_string(),
-        });
+        return Err(Refusal::ServerWritten { key });
     }
     // The claim's own inputs, in the order the store reads them: the receipt,
     // then the subject as a place to write, the words, the span, the fields and

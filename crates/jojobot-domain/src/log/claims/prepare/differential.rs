@@ -244,3 +244,85 @@ async fn prepare_answers_as_the_fake_store_does_for_add_entity_and_capture() {
         divergences.join("\n")
     );
 }
+
+/// **A verb capture of a key jojobot writes itself is refused alike.** The decider
+/// refuses the stored due moment and the six bookkeeping keys unless the verb marked
+/// the key as computed; the fake, which stands for the real store under a job, must
+/// refuse the same keys, in the same words, and let the same keys through when the
+/// verb computed them or the engine wrote them. The seven keys are named here and
+/// not read from the decider's list, so a key that list loses fails this case.
+#[tokio::test]
+async fn a_verb_capture_of_a_server_written_key_is_refused_alike_by_the_fake_and_the_decider() {
+    use super::super::job::{self, CaptureJob};
+    use super::declined::Declined;
+    use std::sync::Arc;
+
+    crate::memory::kinds::load_shipped();
+    let mut state = State::default();
+    for event in made("thing:alpha", "thing", None) {
+        apply(&mut state, &event);
+    }
+    let fake = InMemoryMemory::seeded();
+    let alpha = NewEntity::new(
+        EntityId("thing:alpha".to_string()),
+        "thing:alpha",
+        "differential",
+    );
+    assert!(matches!(
+        fake.add_entity(alpha).await,
+        Ok(Guarded::Written(_))
+    ));
+    let by = |actor: Actor| CaptureJob::new(&actor, None, Arc::new(|_, _| None), None);
+    let verb = || by(Actor::Bot(EntityId("bot:alpha".to_string())));
+    let engine = || by(Actor::System("the engine".to_string()));
+    let about = |key: &str, derived: bool| {
+        let mut fact = NewFact::about(
+            EntityId("thing:alpha".to_string()),
+            "a claim",
+            date(2026, 4, 19),
+        );
+        fact.fields.insert(key.to_string(), "v".to_string());
+        if derived {
+            fact.derived.insert(key.to_string());
+        }
+        fact
+    };
+    for key in [
+        "due_on",
+        "defragged_at",
+        "review_mark",
+        "settings_record",
+        "engine_record",
+        "release_notes_told",
+        "archive_reason",
+    ] {
+        let sent = about(key, false);
+        let Err(refusal) = prepare(&state, &[], &request_of(&sent, "r1")) else {
+            panic!("{key}: the decider admitted a verb capture of it");
+        };
+        let Declined::Refused(wanted) = refusal.declined(&state) else {
+            panic!("{key}: the decider blocked it instead of refusing it");
+        };
+        let got = job::within(verb(), fake.capture(sent)).await;
+        let Err(refused) = got else {
+            panic!("{key}: the fake admitted a verb capture of it");
+        };
+        assert_eq!(refused.to_string(), wanted.to_string(), "{key}");
+
+        // The key the verb computed rides as derived, and both let it through.
+        let computed = about(key, true);
+        assert!(
+            prepare(&state, &[], &request_of(&computed, "r2")).is_ok(),
+            "{key}: the decider refused a computed key"
+        );
+        let got = job::within(verb(), fake.capture(computed)).await;
+        assert!(
+            got.is_ok(),
+            "{key}: the fake refused a computed key: {got:?}"
+        );
+
+        // The engine's own capture takes the engine route, which does not ask.
+        let got = job::within(engine(), fake.capture(about(key, false))).await;
+        assert!(got.is_ok(), "{key}: the fake refused the engine: {got:?}");
+    }
+}

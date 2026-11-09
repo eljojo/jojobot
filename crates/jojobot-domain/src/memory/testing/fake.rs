@@ -3274,22 +3274,15 @@ impl Memory for InMemoryMemory {
             // **A verb's capture decided over a job is decided by the claims decider**,
             // which refuses a key jojobot writes unless the verb marked it as
             // computed. The engine's own captures take the engine route, which does
-            // not ask. Only the two keys a verb computes are asked here; the keys of
-            // the routes that write the other server-written keys are not this
-            // decider's refusal.
+            // not ask. The keys and the words are the decider's own.
             Some(job) => {
                 let by_the_engine = (job.door)(&crate::log::claims::State::default(), &[], &fact)
                     .is_ok_and(|door| matches!(door.actor, crate::actor::Actor::System(_)));
                 if !by_the_engine
-                    && let Some(key) = fact.fields.keys().map(|key| key.trim()).find(|key| {
-                        (*key == crate::attention::DUE_ON
-                            || *key == crate::memory::capacity::ENGINE_RECORD)
-                            && !fact.derived.iter().any(|computed| computed.trim() == *key)
-                    })
+                    && let Some(key) =
+                        crate::log::claims::server_written_key(fact.fields.keys(), &fact.derived)
                 {
-                    return Err(MemoryError::InvalidFact(format!(
-                        "bad claim: '{key}' is written by jojobot, not by a caller"
-                    )));
+                    return Err(crate::log::claims::server_written_error(&key));
                 }
             }
         }

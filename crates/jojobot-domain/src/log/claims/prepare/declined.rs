@@ -87,9 +87,7 @@ impl Refusal {
             Refusal::RoleFieldGuarded { role, key } => {
                 Declined::Refused(MemoryError::RoleFieldGuarded { role, key })
             }
-            Refusal::ServerWritten { key } => Declined::Refused(MemoryError::InvalidFact(format!(
-                "'{key}' is written by jojobot, not by a caller"
-            ))),
+            Refusal::ServerWritten { key } => Declined::Refused(super::server_written_error(&key)),
             Refusal::Unlicensed(error)
             | Refusal::Numbering(error)
             | Refusal::BreaksKind(error)

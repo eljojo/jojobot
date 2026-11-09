@@ -960,7 +960,7 @@ pub mod type_change;
 pub use indexes::Located;
 pub use prepare::{
     Admitted, BootFloor, CaptureRequest, ClaimSize, Declined, Door, Draft, Measures, Refusal,
-    Route, prepare,
+    Route, prepare, server_written_error, server_written_key,
 };
 pub use rules::{HeldRecord, StarredRule};
 
