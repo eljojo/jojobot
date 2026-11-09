@@ -14,7 +14,8 @@ use serde_json::Value;
 use super::possible_subject::PossibleSubject;
 use super::unlocks::OwedUnlock;
 use crate::answer::compose::{
-    Answer, Budget, Composed, Kind, LEFT_OUT_KEY, Layer, Tier, compose_within,
+    Answer, Budget, Composed, Form, Kind, LEFT_OUT_KEY, Layer, LeftOut, Tier, account,
+    compose_within,
 };
 use crate::{Jojobot, caller::Caller};
 
@@ -238,6 +239,34 @@ fn suggestion_of(domain: &str) -> Option<&'static str> {
     }
 }
 
+/// **The layers an account of what was left out names**, whichever of its three
+/// forms it is written in.
+fn layers_named(account: &Value) -> Vec<String> {
+    let mut layers = Vec::new();
+    let mut take = |value: &Value| {
+        if let Some(layer) = value.as_str() {
+            layers.push(layer.to_string());
+        }
+    };
+    match account {
+        Value::Array(entries) => {
+            for entry in entries {
+                take(&entry["layer"]);
+                for layer in entry["layers"].as_array().into_iter().flatten() {
+                    take(layer);
+                }
+            }
+        }
+        Value::Object(_) => {
+            for layer in account["layers"].as_array().into_iter().flatten() {
+                take(layer);
+            }
+        }
+        _ => {}
+    }
+    layers
+}
+
 /// **A batch's merged receipt, composed once**: the items' notes were each
 /// composed by their own item, so the merge can hold more than one suggestion.
 /// The owner keeps the top-ranked one. The spends the batch held back come back
@@ -258,22 +287,36 @@ pub(crate) fn own_batch_receipt(mut body: Value, spends: Vec<String>) -> (Value,
         .filter(|key| served.get(*key).is_none())
         .collect();
     // What the items left out stays named unless the receipt serves it after all.
-    let mut account: Vec<Value> = match served.get(LEFT_OUT_KEY) {
-        Some(Value::Array(named)) => named.clone(),
-        _ => Vec::new(),
-    };
-    if let Some(Value::Array(named)) = earlier {
-        for entry in named {
-            let layer = entry["layer"].as_str().unwrap_or_default();
-            if served.get(layer).is_none() && !account.contains(&entry) {
-                account.push(entry);
-            }
+    // **An account is read by the layers it names, in any of its three forms**,
+    // and written back in the form the composer chose for this receipt.
+    let made = served.get(LEFT_OUT_KEY).cloned();
+    let mut named = made.as_ref().map(layers_named).unwrap_or_default();
+    for layer in earlier.as_ref().map(layers_named).unwrap_or_default() {
+        if served.get(&layer).is_none() && !named.contains(&layer) {
+            named.push(layer);
         }
     }
-    if !account.is_empty()
-        && let Some(object) = served.as_object_mut()
+    let omitted: Vec<LeftOut> = named
+        .iter()
+        .filter_map(|layer| SUGGESTIONS.iter().find(|(key, _)| key == layer))
+        .map(|(key, _)| LeftOut {
+            layer: key,
+            call: RETURNED_BY,
+        })
+        .collect();
+    if let Some(object) = served.as_object_mut()
+        && !omitted.is_empty()
     {
-        object.insert(LEFT_OUT_KEY.to_string(), Value::Array(account));
+        let form = match &made {
+            Some(Value::Object(_)) => Form::Floor,
+            Some(Value::Array(entries))
+                if entries.iter().any(|entry| entry.get("layers").is_some()) =>
+            {
+                Form::Grouped
+            }
+            _ => Form::Full,
+        };
+        object.insert(LEFT_OUT_KEY.to_string(), account(&omitted, form));
     }
     let kept = spends
         .into_iter()
@@ -377,6 +420,91 @@ mod tests {
             key: key.into(),
             sentence: sentence.into(),
         }
+    }
+
+    /// A batch's merged receipt: a note and a type step, with the marks its
+    /// items left, and a core padded by `pad` characters.
+    fn a_merged_batch_receipt(marks: Value, pad: usize) -> Value {
+        let mut receipt = a_receipt_with_steps(&["Set returns_on in sets"]);
+        receipt["possible_subject_note"] = json!("The words also name thing:delta.");
+        receipt["filler"] = json!("x".repeat(pad));
+        if !marks.is_null() {
+            receipt["left_out"] = marks;
+        }
+        receipt
+    }
+
+    /// The layers an account names, in the order it names them.
+    fn named_in(receipt: &Value) -> Vec<String> {
+        super::layers_named(&receipt["left_out"])
+    }
+
+    /// **A batch names what its items left out unless the receipt serves it
+    /// after all.** The note outranks the step, so the step is dropped and named;
+    /// the item's mark for the hint stays; and an item's mark for the note, which
+    /// the receipt serves, is not kept.
+    #[test]
+    fn a_batch_names_what_it_left_out_and_not_what_it_serves() {
+        let marks = json!([
+            {"layer": "hint", "call": "recall"},
+            {"layer": "possible_subject_note", "call": "recall"},
+        ]);
+        let (served, _) = super::own_batch_receipt(a_merged_batch_receipt(marks, 0), Vec::new());
+        assert!(served["possible_subject_note"].is_string(), "{served}");
+        assert!(served.get("unlocks").is_none(), "{served}");
+        let mut named = named_in(&served);
+        named.sort();
+        assert_eq!(named, ["hint", "unlocks"], "{served}");
+    }
+
+    /// **A mark an item left for a layer the batch serves is removed**, and with
+    /// no layer left out the account goes.
+    #[test]
+    fn a_mark_for_a_layer_the_batch_serves_is_removed() {
+        let mut receipt = a_receipt_with_steps(&["Set returns_on in sets"]);
+        receipt["left_out"] = json!([{"layer": "unlocks", "call": "recall"}]);
+        let (served, _) = super::own_batch_receipt(receipt, Vec::new());
+        assert!(served["unlocks"].is_object(), "{served}");
+        assert!(served.get("left_out").is_none(), "{served}");
+    }
+
+    /// **An item's compact account joins the batch's**: its layers are read
+    /// whichever form it is written in.
+    #[test]
+    fn an_items_compact_account_joins_the_batchs_account() {
+        for marks in [
+            json!([{"call": "recall", "layers": ["hint"]}]),
+            json!({"layers": ["hint"], "calls": "recall"}),
+        ] {
+            let (served, _) =
+                super::own_batch_receipt(a_merged_batch_receipt(marks.clone(), 0), Vec::new());
+            let mut named = named_in(&served);
+            named.sort();
+            assert_eq!(named, ["hint", "unlocks"], "{marks}: {served}");
+        }
+    }
+
+    /// **A compact account the composer made stays compact, and keeps its
+    /// marks beside the items'.** A core near the limit makes the composer write
+    /// the names alone.
+    #[test]
+    fn a_compact_account_of_the_composer_keeps_its_marks_and_the_items() {
+        let marks = json!([{"layer": "hint", "call": "recall"}]);
+        let compact = (LEAN_LIMIT - 400..LEAN_LIMIT)
+            .map(|pad| {
+                super::own_batch_receipt(a_merged_batch_receipt(marks.clone(), pad), Vec::new()).0
+            })
+            .find(|served| served["left_out"].is_object())
+            .expect("some core size makes the composer write a compact account");
+        // The core is near the limit, so the composer may leave the note out too.
+        let named = named_in(&compact);
+        for layer in ["hint", "unlocks"] {
+            assert!(named.iter().any(|name| name == layer), "{layer}: {compact}");
+        }
+        assert!(
+            named.iter().all(|name| compact.get(name).is_none()),
+            "a layer named as left out is not served: {compact}"
+        );
     }
 
     /// **A step whose key another receipt spent first is taken out of the
