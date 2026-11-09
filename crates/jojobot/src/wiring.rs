@@ -1473,10 +1473,6 @@ mod tests {
     use jojobot_domain::memory::testing::InMemoryMemory;
     use jojobot_domain::memory::{EntityId, NewEntity, NewFact};
 
-    /// **A failure to reach the store says a restart tries again; a row the import
-    /// will not take says a restart fails the same way and what to do instead.**
-    /// The step is to report the line: the fix is a build that imports the row,
-    /// and no line tells anyone to change production rows (rule 796).
     /// **The supply list reconcile tells a refusal from a retry by the same
     /// words as the import**: a refused batch does not heal on a restart there
     /// either, so its line names a build that imports the row and not a retry.
@@ -1493,6 +1489,10 @@ mod tests {
         assert!(store.contains("the next start tries again"), "{store}");
     }
 
+    /// **A failure to reach the store says a restart tries again; a row the import
+    /// will not take says a restart fails the same way and what to do instead.**
+    /// The step is to report the line: the fix is a build that imports the row,
+    /// and no line tells anyone to change production rows (rule 796).
     #[test]
     fn the_import_failure_line_tells_a_retry_from_a_row_that_needs_a_build() {
         use jojobot_adapters::claims_import::ClaimsImportError as Why;
