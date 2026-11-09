@@ -1002,6 +1002,59 @@ fn an_address_names_a_claim_and_its_home() {
     }
 }
 
+/// **The unlisted claim an earlier merge left is still reached through its home**
+/// when a later merge lists another claim at its label: the address serves the
+/// listed claim, and the unlisted one is held by the survivor and read by the
+/// label it was filed under.
+#[test]
+fn an_unlisted_claim_that_lost_its_label_to_a_listed_one_is_reached_through_its_home() {
+    let state = state(&[
+        bound("alpha", "thing:alpha"),
+        bound("beta", "thing:beta"),
+        bound("gamma", "thing:gamma"),
+        created("r1", claim("f1", "alpha", "c", 1)),
+        created("a", claim("f1", "beta", "c", 1)),
+        created("u", claim("f7", "beta", "c", 2)),
+        merged("beta", "alpha", &[("a", "f3")], &[]),
+        created("q3", claim("f3", "gamma", "c", 1)),
+        merged("gamma", "alpha", &[("q3", "f7")], &[]),
+    ]);
+    assert_eq!(state.claim_at("thing:alpha#f7"), at("q3", "alpha"));
+    assert_eq!(
+        state.record_at_origin(&object("beta"), "f7"),
+        Some(record("u"))
+    );
+    assert!(
+        state
+            .records_homed_on(&object("alpha"))
+            .contains(&&record("u")),
+        "the survivor holds the claim the address no longer serves"
+    );
+}
+
+/// **What the plain insert of a listed claim does when its label is one the
+/// survivor's own claim holds**: the listed claim takes the address and the
+/// survivor's own is reached through its home. The store mints a merge's labels
+/// above the survivor's own rows, so valid data does not collide; this pins what
+/// hand-built data does, so a reader does not take the survivor's-own protection
+/// of the other rows to cover it.
+#[test]
+fn a_listed_claim_takes_a_label_the_survivors_own_claim_holds() {
+    let state = state(&[
+        bound("alpha", "thing:alpha"),
+        bound("beta", "thing:beta"),
+        created("r1", claim("f1", "alpha", "c", 1)),
+        created("b1", claim("f1", "beta", "c", 1)),
+        merged("beta", "alpha", &[("b1", "f1")], &[]),
+    ]);
+    assert_eq!(state.claim_at("thing:alpha#f1"), at("b1", "alpha"));
+    assert!(
+        state
+            .records_homed_on(&object("alpha"))
+            .contains(&&record("r1"))
+    );
+}
+
 #[test]
 fn a_label_is_a_claim_number_only_as_f_and_a_whole_number() {
     assert_eq!(claim_number("f12"), Some(12));
