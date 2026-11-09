@@ -1482,8 +1482,10 @@ mod tests {
     /// that one is refused whole, so the sets do not land either.
     #[tokio::test]
     async fn a_sets_only_edit_of_a_shipped_record_lands_on_top_of_what_ships() {
-        // **The served store holds a row for a shipped record**, so the edit is the
+        // **A record the store has adopted holds a row**, so the edit is the
         // stored one's: the claim is written inside the store's own transaction.
+        // The overlay branch of a record with no row is covered by the story
+        // `a_sets_only_edit_of_a_shipped_view_lands_through_the_surface_like_one_of_a_stored_view`.
         let jojobot = crate::harness::handler_shipped_over_stored_rows(&["view:loops"]).await;
         let sid = writing_as(&jojobot);
 

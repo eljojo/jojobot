@@ -91,3 +91,42 @@ async fn an_archive_of_a_supplied_record_is_refused_and_one_of_the_operators_own
 
     story.finish().await;
 }
+
+/// **A sets-only edit of a record the build supplies lands, through the served
+/// surface**: the answer is not blocked, it carries the address of the claim it
+/// wrote, and the key reads back on the shipped view beside what the build
+/// ships. Paired with the same edit of a view of the operator's own, which
+/// lands: a refusal of the shipped one would be about the record the build
+/// supplies and not about the verb.
+#[tokio::test]
+async fn a_sets_only_edit_of_a_shipped_view_lands_through_the_surface_like_one_of_a_stored_view() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("view:my-bikes", "My Bikes").await;
+    for handle in ["view:my-bikes", "view:loops"] {
+        let landed = s
+            .call(
+                "update_entity",
+                json!({"handle": handle, "sets": {"note_9": "kept on top"}}),
+            )
+            .await
+            .json();
+        assert_ne!(landed["status"], "blocked", "{handle}: {landed}");
+        // The served store holds no row for the shipped view, so its edit lands
+        // through the overlay branch; both answer with the address of the claim.
+        assert!(landed["address"].is_string(), "{handle}: {landed}");
+    }
+    let read = s
+        .call("recall", json!({"subject": "view:loops"}))
+        .await
+        .json();
+    assert_eq!(
+        read["objects"][0]["fields"]["note_9"], "kept on top",
+        "{read}"
+    );
+    assert!(
+        read["objects"][0]["fields"]["selects"].is_string(),
+        "what the build ships is still there under the edit: {read}"
+    );
+    story.finish().await;
+}

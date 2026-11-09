@@ -199,10 +199,12 @@ pub(crate) fn handler_shipped_reaching() -> Jojobot {
 }
 
 /// **[`handler_shipped`] over a store that already holds a row at each of these
-/// handles the build supplies**, as the served store does once the build's records
-/// are bound: a handle with a row is a stored thing and every verb treats it as one
-/// (`Provisioned::supplied_only`). The rows are written before the store is told what
-/// the build supplies, the order a new build meets a row an earlier one left.
+/// handles the build supplies**: a record the store has adopted, which every verb
+/// treats as a stored thing (`Provisioned::supplied_only`). **The served store
+/// holds no row for a record the build still supplies**, so this is not the
+/// shape of a freshly shipped record. The rows are written before the store is
+/// told what the build supplies, the order a new build meets a row an earlier one
+/// left.
 pub(crate) async fn handler_shipped_over_stored_rows(handles: &[&str]) -> Jojobot {
     use jojobot_domain::memory::{Memory as _, NewEntity};
     let store = InMemoryMemory::seeded();
