@@ -1769,6 +1769,10 @@ mod tests {
                 && at("Marge's reads are cut") < at("Marge reads her own history"),
             "the narrowing note comes first: {body}"
         );
+        assert!(
+            at("Homer's steps can be ticked") < at("Marge reads her own history"),
+            "the others keep their shipped order: {body}"
+        );
         let section = &body[at("Marge's reads are cut")..at("Homer's steps can be ticked")];
         assert!(section.contains("return less"), "it says so: {section}");
         assert_eq!(
