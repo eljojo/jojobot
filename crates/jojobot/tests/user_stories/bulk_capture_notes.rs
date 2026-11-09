@@ -140,3 +140,56 @@ async fn a_cut_batch_resent_delivers_the_note_its_first_item_earned() {
     );
     story.finish().await;
 }
+
+/// **A batch's receipt serves one suggestion, and the one it drops is not
+/// spent.** The items name a known person, which earns the possible-subject
+/// note, and the list lacks a key of a declared type, which earns the type step.
+/// The receipt carries the note, the higher ranked of the two, and not the step.
+/// The step was never shown, so the next capture on the list still offers it.
+#[tokio::test]
+async fn a_batch_serves_one_suggestion_and_the_dropped_one_is_not_spent() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    a_list_on_the_trip(&s, "packing", json!({"tick": "sink"})).await;
+    s.add("person:homer", "Homer").await;
+    s.call(
+        "declare_type",
+        json!({"name": "packing-plan", "fields": [
+            {"key": "tick", "holds": "text"},
+            {"key": "owner", "holds": "text"},
+        ]}),
+    )
+    .await;
+    s.past_first_contact().await;
+
+    let batch = s
+        .call(
+            "capture",
+            json!({"subject": "list:packing", "provenance": "testimony",
+                   "entries": ["call Homer", "email Homer"]}),
+        )
+        .await;
+    let batch = batch.json();
+    assert!(
+        batch["possible_subject_note"].is_string(),
+        "the higher ranked suggestion ships: {batch}"
+    );
+    assert!(
+        batch.get("unlocks").is_none(),
+        "and the lower does not: {batch}"
+    );
+
+    let later = s
+        .call(
+            "capture",
+            json!({"subject": "list:packing", "provenance": "testimony",
+                   "content": "pack the axe"}),
+        )
+        .await;
+    assert!(
+        later.json()["unlocks"]["steps"].is_array(),
+        "the step the batch dropped is still owed: {}",
+        later.raw()
+    );
+    story.finish().await;
+}

@@ -13,7 +13,9 @@ use serde_json::Value;
 
 use super::possible_subject::PossibleSubject;
 use super::unlocks::OwedUnlock;
-use crate::answer::compose::{Answer, Budget, Composed, Kind, Layer, Tier, compose_within};
+use crate::answer::compose::{
+    Answer, Budget, Composed, Kind, LEFT_OUT_KEY, Layer, Tier, compose_within,
+};
 use crate::{Jojobot, caller::Caller};
 
 /// **A teaching note a capture would add, not yet spent.** Its gate has held;
@@ -220,6 +222,65 @@ const SUGGESTIONS: [(&str, Tier); 3] = [
     ("hint", Tier::Medium),
     ("unlocks", Tier::Low),
 ];
+
+/// **The suggestion a ledger domain was spent for**, by the prefix each
+/// suggestion's rows are written under. A domain no suggestion owns, such as a
+/// teaching note's, answers `None`.
+fn suggestion_of(domain: &str) -> Option<&'static str> {
+    if domain.starts_with(super::possible_subject::NOTED_DOMAIN) {
+        Some("possible_subject_note")
+    } else if domain.starts_with(super::unlocks::TYPE_UNLOCKS_DOMAIN) {
+        Some("unlocks")
+    } else if domain == super::list_carry::PLAN_CARRY_DOMAIN {
+        Some("hint")
+    } else {
+        None
+    }
+}
+
+/// **A batch's merged receipt, composed once**: the items' notes were each
+/// composed by their own item, so the merge can hold more than one suggestion.
+/// The owner keeps the top-ranked one. The spends the batch held back come back
+/// without the domains of every suggestion the receipt no longer carries, since
+/// a suggestion nobody was shown stays owed.
+pub(crate) fn own_batch_receipt(mut body: Value, spends: Vec<String>) -> (Value, Vec<String>) {
+    let earlier = body
+        .as_object_mut()
+        .and_then(|core| core.remove(LEFT_OUT_KEY));
+    let held: Vec<&'static str> = SUGGESTIONS
+        .iter()
+        .map(|(key, _)| *key)
+        .filter(|key| body.get(*key).is_some())
+        .collect();
+    let mut served = compose_receipt(body, &[]).served;
+    let dropped: Vec<&'static str> = held
+        .into_iter()
+        .filter(|key| served.get(*key).is_none())
+        .collect();
+    // What the items left out stays named unless the receipt serves it after all.
+    let mut account: Vec<Value> = match served.get(LEFT_OUT_KEY) {
+        Some(Value::Array(named)) => named.clone(),
+        _ => Vec::new(),
+    };
+    if let Some(Value::Array(named)) = earlier {
+        for entry in named {
+            let layer = entry["layer"].as_str().unwrap_or_default();
+            if served.get(layer).is_none() && !account.contains(&entry) {
+                account.push(entry);
+            }
+        }
+    }
+    if !account.is_empty()
+        && let Some(object) = served.as_object_mut()
+    {
+        object.insert(LEFT_OUT_KEY.to_string(), Value::Array(account));
+    }
+    let kept = spends
+        .into_iter()
+        .filter(|domain| suggestion_of(domain).is_none_or(|key| !dropped.contains(&key)))
+        .collect();
+    (served, kept)
+}
 
 /// The call that returns a left-out suggestion's ground: the thing it is about.
 /// **Ground, not the suggestion itself**: `recall` does not return a hint or an

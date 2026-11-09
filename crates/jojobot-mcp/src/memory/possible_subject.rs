@@ -11,7 +11,7 @@ use super::*;
 /// **The ledger row a thing's note spends**, one per thing and session. The
 /// key is the thing's permanent id, so a rename between two writes does not
 /// make a second row.
-const NOTED_DOMAIN: &str = "possible-subject:";
+pub(super) const NOTED_DOMAIN: &str = "possible-subject:";
 
 /// **How many things one note names.** A claim whose words carry a dozen rare
 /// words would otherwise bury the receipt. Things past it are not named and

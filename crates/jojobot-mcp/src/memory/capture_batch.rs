@@ -772,15 +772,6 @@ impl Jojobot {
         {
             return Ok(landed_and_unfinished(unfinished, &written, &labels));
         }
-        // **The notes are delivered, so their ledger rows are written now**, and
-        // never before: a batch cut partway never reaches this line.
-        let held_back: Vec<String> =
-            std::mem::take(&mut *spends.lock().expect("a batch's spends are poisoned"));
-        for domain in held_back {
-            self.first_contact(&domain, Some(&caller)).await;
-        }
-        jojobot_domain::request::finished();
-
         let listed: Vec<serde_json::Value> = written
             .iter()
             .map(
@@ -804,6 +795,19 @@ impl Jojobot {
             });
         }
         notes.deliver(&mut body);
+        // **The merged receipt goes through the owner once**, since each item was
+        // composed alone and the merge can hold more than one suggestion. A
+        // suggestion it drops spends nothing.
+        let held_back: Vec<String> =
+            std::mem::take(&mut *spends.lock().expect("a batch's spends are poisoned"));
+        let (owned, held_back) = super::receipt_owner::own_batch_receipt(body, held_back);
+        body = owned;
+        // **The notes are delivered, so their ledger rows are written now**, and
+        // never before: a batch cut partway never reaches this line.
+        for domain in held_back {
+            self.first_contact(&domain, Some(&caller)).await;
+        }
+        jojobot_domain::request::finished();
         let changed = self.changed_on(&before, &subject).await;
         crate::changed::note_changed(&mut body, changed);
         if args.ticks.is_some()

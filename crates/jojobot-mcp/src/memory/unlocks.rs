@@ -36,6 +36,10 @@ pub(crate) struct Step {
 /// The argument of `capture` that records a turn of a loop.
 pub(crate) const CHECK_IN: &str = "check_in";
 
+/// **The ledger row a type step spends**, one per type and set of keys it offers
+/// and session. The receipt owner reads the suggestion a spend was for by it.
+pub(crate) const TYPE_UNLOCKS_DOMAIN: &str = "type-unlocks:";
+
 /// **Whether a check-in can be taken on this subject**: only a rhythm takes one.
 /// The one predicate (rule 498) that `capture`'s `check_in` refuses by and that
 /// decides whether a receipt offers one.
@@ -232,7 +236,7 @@ impl Jojobot {
             named.extend(attention::COMPUTED_KEYS.iter().map(ToString::to_string));
             for step in type_steps(subject.kind_token(), &fields, &types, &named) {
                 let pair = crate::teaching::ledger_key(
-                    "type-unlocks:",
+                    TYPE_UNLOCKS_DOMAIN,
                     &format!(
                         "{}:{}",
                         step.type_name.as_deref().unwrap_or_default(),
