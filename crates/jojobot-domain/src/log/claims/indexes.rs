@@ -413,7 +413,7 @@ impl State {
         if let Some(before) = before {
             self.unindex_claim(record, before);
         }
-        self.index_claim(record, claim);
+        self.index_claim(record, claim, false);
         // The claim's status or standing decides what its writes fold to.
         let wrote: Vec<(ObjectId, KeyId)> = self
             .indexes
@@ -433,7 +433,10 @@ impl State {
         }
     }
 
-    fn index_claim(&mut self, record: &RecordId, claim: &ClaimBody) {
+    /// **Index a claim by its address and its parts.** `listed` is a claim a merge
+    /// lists at a label: it is the owner of that address, even when a claim an
+    /// earlier merge left unlisted already fills it.
+    fn index_claim(&mut self, record: &RecordId, claim: &ClaimBody, listed: bool) {
         if let Some(source) = &claim.derived_from {
             self.indexes
                 .built_on
@@ -458,11 +461,19 @@ impl State {
             .insert(record.clone());
         // A label another claim already serves stays that claim's: a claim a
         // merge left unlisted is homed on the folded object and shares the
-        // survivor's label, and editing it must not take the address over.
-        self.indexes
-            .labels
-            .entry((home, claim.label.clone()))
-            .or_insert_with(|| record.clone());
+        // survivor's label, and editing it must not take the address over. A claim
+        // a merge lists is served at the label it lists, and the unlisted claim
+        // that held it is reached through its home.
+        if listed {
+            self.indexes
+                .labels
+                .insert((home, claim.label.clone()), record.clone());
+        } else {
+            self.indexes
+                .labels
+                .entry((home, claim.label.clone()))
+                .or_insert_with(|| record.clone());
+        }
     }
 
     fn unindex_claim(&mut self, record: &RecordId, claim: &ClaimBody) {
@@ -631,7 +642,7 @@ impl State {
         for moved in records {
             if let Some(held) = self.records.get(&moved.record) {
                 let claim = held.claim.clone();
-                self.index_claim(&moved.record, &claim);
+                self.index_claim(&moved.record, &claim, true);
             }
         }
         let labels: Vec<(ObjectId, String)> = self

@@ -939,6 +939,45 @@ fn an_address_names_a_claim_and_its_home() {
             ],
         },
         Row {
+            name: "an unlisted claim an earlier merge left fills a label nobody serves",
+            events: vec![
+                bound("alpha", "thing:alpha"),
+                bound("beta", "thing:beta"),
+                created("r1", claim("f1", "alpha", "c", 1)),
+                created("r2", claim("f2", "alpha", "c", 2)),
+                created("a", claim("f1", "beta", "c", 1)),
+                created("u", claim("f7", "beta", "c", 2)),
+                merged("beta", "alpha", &[("a", "f3")], &[]),
+            ],
+            ask: vec![("thing:alpha#f7", at("u", "alpha"))],
+        },
+        Row {
+            name: "a claim a later merge lists at a label an earlier merge's unlisted claim holds wins it",
+            events: vec![
+                bound("alpha", "thing:alpha"),
+                bound("beta", "thing:beta"),
+                bound("gamma", "thing:gamma"),
+                created("r1", claim("f1", "alpha", "c", 1)),
+                created("r2", claim("f2", "alpha", "c", 2)),
+                created("a", claim("f1", "beta", "c", 1)),
+                created("u", claim("f7", "beta", "c", 2)),
+                merged("beta", "alpha", &[("a", "f3")], &[]),
+                created("q1", claim("f1", "gamma", "c", 1)),
+                created("q2", claim("f2", "gamma", "c", 2)),
+                created("q3", claim("f3", "gamma", "c", 3)),
+                merged(
+                    "gamma",
+                    "alpha",
+                    &[("q1", "f5"), ("q2", "f6"), ("q3", "f7")],
+                    &[],
+                ),
+            ],
+            ask: vec![
+                ("thing:alpha#f7", at("q3", "alpha")),
+                ("thing:alpha#f3", at("a", "alpha")),
+            ],
+        },
+        Row {
             name: "a mapped claim and a survivor's claim both stay served beside an unlisted one",
             events: vec![
                 bound("alpha", "thing:alpha"),
