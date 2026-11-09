@@ -215,9 +215,9 @@ pub(crate) async fn handler_shipped_over_stored_rows(handles: &[&str]) -> Jojobo
         store
             .add_entity(NewEntity::new(id.clone(), entity.name.clone(), "the boot"))
             .await
-            .expect("the store takes the row")
+            .expect("the store takes the entity")
             .written()
-            .expect("the row is not blocked");
+            .expect("the entity is not blocked");
         // **A row reads back only its own keys** (rule 508), so the row the boot
         // leaves holds the keys the build ships.
         let mut keys = jojobot_domain::memory::NewFact::about(
