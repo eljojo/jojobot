@@ -55,7 +55,9 @@ pub enum ClaimsImportError {
     /// The store or the log could not be read or written.
     #[error("the claims import could not reach the store: {0}")]
     Store(String),
-    /// The log holds a claims event this build cannot read.
+    /// The log holds a claims event this build cannot decode: a member of a stored
+    /// batch the import or the reconcile reads back. A batch the seam refuses to
+    /// stage is [`Self::Refused`], and a failure to reach the log is [`Self::Store`].
     #[error("the log holds a claims event the import cannot read: {0}")]
     Log(String),
     /// The reader found rows it would not place. Each is `table row: what`.

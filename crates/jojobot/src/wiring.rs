@@ -1127,11 +1127,9 @@ pub async fn boot_store_observed(
         Ok(0) => tracing::info!("claims reconcile: the log holds the supply list"),
         Ok(events) => tracing::info!(events, "bound the records this build newly supplies"),
         Err(why) => {
-            tracing::error!(
-                error = %why,
-                "THE SUPPLY LIST RECONCILE FAILED — the boot stops and the next start tries again."
-            );
-            anyhow::bail!("the supply list reconcile failed: {why}");
+            let line = supply_reconcile_failure(&why);
+            tracing::error!("{line}");
+            anyhow::bail!("{line}");
         }
     }
 
@@ -1350,27 +1348,38 @@ pub mod field_links;
 /// is a build that imports the row. It never tells anyone to change production
 /// rows (rule 796: a fault in production is fixed forward).
 fn claims_import_failure(why: &jojobot_adapters::claims_import::ClaimsImportError) -> String {
+    claims_failure("THE CLAIMS IMPORT", why)
+}
+
+/// **The same words for the boot's reconcile of the supply list**: it refuses a
+/// batch the same way, and a refusal does not heal on a restart there either.
+fn supply_reconcile_failure(why: &jojobot_adapters::claims_import::ClaimsImportError) -> String {
+    claims_failure("THE SUPPLY LIST RECONCILE", why)
+}
+
+/// One function chooses the words of a boot pass of the claims import by whether
+/// a restart can heal what failed, so no pass tells a refusal as a retry.
+fn claims_failure(pass: &str, why: &jojobot_adapters::claims_import::ClaimsImportError) -> String {
     if why.heals_on_restart() {
         format!(
-            "THE CLAIMS IMPORT FAILED — nothing was appended to the log; the boot stops \
+            "{pass} FAILED — nothing was appended to the log; the boot stops \
              and the next start tries again. {why}"
         )
     } else {
         // The fault is a row for most kinds and an event for the log; what fixes
         // it is a build that takes the row, or one that reads the event.
         let (found, fix) = match why {
-            jojobot_adapters::claims_import::ClaimsImportError::Log(_) => (
-                "THE CLAIMS IMPORT FOUND A LOG EVENT IT CANNOT READ",
-                "a build that reads it",
-            ),
+            jojobot_adapters::claims_import::ClaimsImportError::Log(_) => {
+                ("FOUND A LOG EVENT IT CANNOT READ", "a build that reads it")
+            }
             _ => (
-                "THE CLAIMS IMPORT FOUND STORED DATA IT WILL NOT TAKE",
+                "FOUND STORED DATA IT WILL NOT TAKE",
                 "a build that imports this row",
             ),
         };
         format!(
-            "{found} — nothing was appended to the log and the boot stops. Starting again \
-             fails the same way. Report this line: the fix is {fix}. {why}"
+            "{pass} {found} — nothing was appended to the log and the boot stops. Starting \
+             again fails the same way. Report this line: the fix is {fix}. {why}"
         )
     }
 }
@@ -1468,6 +1477,22 @@ mod tests {
     /// will not take says a restart fails the same way and what to do instead.**
     /// The step is to report the line: the fix is a build that imports the row,
     /// and no line tells anyone to change production rows (rule 796).
+    /// **The supply list reconcile tells a refusal from a retry by the same
+    /// words as the import**: a refused batch does not heal on a restart there
+    /// either, so its line names a build that imports the row and not a retry.
+    #[test]
+    fn the_supply_reconcile_tells_a_refusal_from_a_retry_by_the_same_words() {
+        use jojobot_adapters::claims_import::ClaimsImportError as Why;
+        let refused = supply_reconcile_failure(&Why::Refused("a handle nothing binds".into()));
+        assert!(!refused.contains("the next start tries again"), "{refused}");
+        assert!(
+            refused.contains("a build that imports this row"),
+            "{refused}"
+        );
+        let store = supply_reconcile_failure(&Why::Store("connection lost".into()));
+        assert!(store.contains("the next start tries again"), "{store}");
+    }
+
     #[test]
     fn the_import_failure_line_tells_a_retry_from_a_row_that_needs_a_build() {
         use jojobot_adapters::claims_import::ClaimsImportError as Why;
