@@ -81,7 +81,7 @@ fn the_startup_branch_banner_names_omitted_work_for_each_selection() {
         assert_eq!(words.contains("rooms"), rooms_left, "{selection}: {words}");
         assert!(words.contains("year"), "{selection}: {words}");
     }
-    for job in text.split("    steps:\n").skip(1) {
+    for job in support::jobs_with_a_bar(&text) {
         let banner = job.split("      - uses:").next().unwrap();
         assert!(banner.contains("$BAR_BOUNDARY_LEFT"), "{banner}");
     }
@@ -93,7 +93,7 @@ fn the_startup_workflow_banner_precedes_checkout_and_its_plan_follows_checkout()
     for workflow in ["branch", "pull-request", "targeted"] {
         let text = fs::read_to_string(root.join(format!(".forgejo/workflows/{workflow}.yml")))
             .expect("the workflow");
-        for (index, job) in text.split("    steps:\n").skip(1).enumerate() {
+        for (index, job) in support::jobs_with_a_bar(&text).enumerate() {
             let starts: Vec<_> = job.match_indices("      - ").map(|(at, _)| at).collect();
             let steps: Vec<_> = starts
                 .iter()

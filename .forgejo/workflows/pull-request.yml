@@ -149,7 +149,8 @@ jobs:
           retention-days: 1
       - if: ${{ steps.plan.outputs.fast != 'true' }}
         run: nix develop -c make bundle CI_ROOT=${{ env.CI_ROOT }}
-      # The bundle is kept a day: a re-run of one job below needs it.
+      # The run deletes the bundle when it ends (artifact-cleanup below), so no
+      # job of a run is run again on its own. The day is the fallback.
       - if: ${{ steps.plan.outputs.fast != 'true' }}
         uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5
         with:
@@ -403,6 +404,25 @@ jobs:
         run: nix develop -c python3 scripts/build-metrics ci
         env:
           JOJOBOT_METRICS_OUTCOME: ${{ job.status }}
+
+  # **The last job of every run: it deletes the run's large artifacts.** The
+  # bundle is 1.2 GB and the forge shares its disk with production, so nothing
+  # large outlives the run, whether the jobs above passed, failed or were
+  # skipped. The bar's logs stay (scripts/artifact-sweep). It holds no required
+  # check, so no verdict waits for it. A run cancelled by a newer push may never
+  # reach it: the scheduled artifact-sweep workflow deletes what such a run
+  # leaves. A refused deletion never changes the run's verdict.
+  artifact-cleanup:
+    needs: [build, boot-store, check, rooms, year]
+    if: ${{ always() }}
+    runs-on: nix
+    timeout-minutes: 10
+    steps:
+      - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - continue-on-error: true
+        run: nix develop -c python3 scripts/artifact-sweep --run ${{ forgejo.run_id }} --delete
+        env:
+          TOKEN: ${{ forgejo.token }}
 
   nix-build:
     needs: static

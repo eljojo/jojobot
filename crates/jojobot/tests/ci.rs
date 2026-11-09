@@ -958,6 +958,7 @@ fn release_gate_dispatch_adds_two_independent_checks_only_when_requested() {
             "  check:",
             "  rooms:",
             "  year:",
+            "  artifact-cleanup:",
             "  nix-build:",
             "  flake-check:"
         ]
@@ -1053,4 +1054,86 @@ fn release_gate_retires_the_second_workflow_and_bar_arm_skip() {
             "nix flake check"
         }));
     }
+}
+
+/// **A run leaves nothing large on the forge's disk.** The forge shares its disk
+/// with production, so every workflow that uploads an artifact other than the
+/// bar's logs ends with a job that deletes the run's own. The job waits for every
+/// job that downloads one (a delete under a reader would fail it), runs whether
+/// they passed or not, and never changes the run's verdict. **Every large upload
+/// is kept one day at most**, the fallback if the job never runs.
+#[test]
+fn a_run_ends_by_deleting_the_large_artifacts_it_uploaded() {
+    for workflow in ["pull-request", "branch"] {
+        let yaml = forgejo_workflow(workflow);
+        let jobs = lines_under(&yaml, "jobs:", 0).join("\n");
+        let names: Vec<&str> = jobs
+            .lines()
+            .filter(|l| l.starts_with("  ") && !l.starts_with("   "))
+            .map(|l| l.trim().trim_end_matches(':'))
+            .collect();
+        let cleanup = lines_under(&jobs, "artifact-cleanup:", 2).join("\n");
+        assert!(
+            !cleanup.is_empty(),
+            "{workflow} has no artifact-cleanup job"
+        );
+        let needs = cleanup
+            .lines()
+            .find_map(|l| l.trim().strip_prefix("needs: ["))
+            .unwrap_or_else(|| panic!("{workflow}: cleanup waits for nothing:\n{cleanup}"));
+        let needs: Vec<&str> = needs.trim_end_matches(']').split(", ").collect();
+        for name in &names {
+            let block = lines_under(&jobs, &format!("{name}:"), 2).join("\n");
+            if block.contains("/download-artifact@") {
+                assert!(
+                    needs.contains(name),
+                    "{workflow}: {name} downloads an artifact, so cleanup waits for it:\n{cleanup}"
+                );
+            }
+        }
+        assert!(
+            cleanup.lines().any(|l| l == "    if: ${{ always() }}"),
+            "{workflow}:\n{cleanup}"
+        );
+        assert!(
+            cleanup.contains(
+                "      - continue-on-error: true\n        run: nix develop -c python3 scripts/artifact-sweep --run ${{ forgejo.run_id }} --delete\n"
+            ),
+            "{workflow}:\n{cleanup}"
+        );
+        assert!(cleanup.contains("TOKEN: ${{ forgejo.token }}"), "{cleanup}");
+        for step in yaml
+            .split("      - ")
+            .filter(|s| s.contains("/upload-artifact@"))
+        {
+            let name = step
+                .lines()
+                .find_map(|l| l.trim().strip_prefix("name: "))
+                .unwrap();
+            if name.starts_with("bar-logs-") {
+                continue;
+            }
+            assert!(
+                step.contains("retention-days: 1\n"),
+                "{workflow}: {name} is large and is kept more than a day:\n{step}"
+            );
+        }
+    }
+}
+
+/// The sweeper covers the runs that never reached their cleanup job, such as a run
+/// cancelled by a newer push. It reads only ended runs' artifacts.
+#[test]
+fn the_sweeper_runs_every_hour_and_deletes_only_what_ended_runs_left() {
+    let yaml = forgejo_workflow("artifact-sweep");
+    assert!(
+        yaml.lines()
+            .any(|l| l.trim().starts_with("- cron: '") && l.contains("* * * *")),
+        "{yaml}"
+    );
+    assert!(
+        yaml.contains("scripts/artifact-sweep --finished --delete"),
+        "{yaml}"
+    );
+    assert!(yaml.contains("TOKEN: ${{ forgejo.token }}"), "{yaml}");
 }

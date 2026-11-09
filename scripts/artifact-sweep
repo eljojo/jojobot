@@ -1,0 +1,130 @@
+#!/usr/bin/env python3
+"""**Delete the large artifacts of runs that ended, or say which it would.**
+
+    scripts/artifact-sweep --run ID [--delete]   # one run's artifacts, at the end of that run
+    scripts/artifact-sweep --finished [--delete] # every ended run's artifacts, the sweeper
+
+Nelly's disk is shared with the forge, the database and production, so a run
+leaves nothing large behind. A bundle of test binaries is 1.2 GB. The only
+artifacts that stay are the bar's logs, whose names start with `bar-logs-`.
+Every other artifact is deleted: a job of a run that ended is never re-run on
+its own, so nothing reads one again.
+
+`--run` is the final job of a workflow, which runs whether the jobs before it
+passed or failed. `--finished` is the sweeper for the runs that job never
+reached, such as a run cancelled by a newer push. It reads the newest
+artifacts, back to WINDOW, and deletes those whose run ended: success, failure
+or cancelled. **It holds an artifact whose run is waiting or running, and one
+whose run the forge cannot answer for**, because a bundle in use is not garbage.
+An artifact the forge marks expired is already gone from disk and is skipped.
+
+Without `--delete` it prints `would delete` lines and deletes nothing. A
+deletion needs the job's own token in TOKEN, and the script refuses before it
+asks anything when there is none. **A refused deletion does not stop the rest:
+every artifact is tried, and the exit code is 1 when any was refused.** A
+deletion that finds the artifact already gone counts as done.
+
+The forge is named by GITHUB_API_URL and GITHUB_REPOSITORY, as on a runner.
+"""
+import datetime
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
+
+# The artifacts that stay. The bar uploads its logs under this prefix.
+LOG_PREFIX = "bar-logs-"
+# The runs whose artifacts are read for the sweeper. A newer run's artifacts
+# come first; an older artifact than this was swept by an earlier pass or has
+# expired by its own retention.
+WINDOW = datetime.timedelta(days=3)
+# The statuses of a run that has ended. Anything else is held.
+ENDED = {"success", "failure", "cancelled", "skipped"}
+# The forge answers at most this many to a page, whatever `limit` asks.
+PAGE = 50
+
+
+def forge(path, method="GET"):
+    root = f"{os.environ['GITHUB_API_URL'].rstrip('/')}/repos/{os.environ['GITHUB_REPOSITORY']}"
+    request = urllib.request.Request(root + path, method=method)
+    if method != "GET":
+        request.add_header("Authorization", f"token {os.environ['TOKEN']}")
+    with urllib.request.urlopen(request, timeout=30) as answer:
+        return answer.read().decode("utf-8", "replace")
+
+
+def large(artifact):
+    return not artifact["name"].startswith(LOG_PREFIX) and not artifact.get("expired")
+
+
+def of_run(run):
+    """The artifacts of one run. The forge answers a run's list whole."""
+    return json.loads(forge(f"/actions/runs/{run}/artifacts"))
+
+
+def newest(now):
+    """The artifacts of the whole repository, newest first, back to WINDOW."""
+    page = 1
+    while True:
+        items = json.loads(forge(f"/actions/artifacts?limit={PAGE}&page={page}"))
+        for artifact in items:
+            made = datetime.datetime.fromisoformat(artifact["created_at"])
+            if now - made > WINDOW:
+                return
+            yield artifact
+        if len(items) < PAGE:
+            return
+        page += 1
+
+
+def ended(run, known):
+    """Whether the forge says the run ended. A run it cannot answer for is held."""
+    if run not in known:
+        try:
+            known[run] = json.loads(forge(f"/actions/runs/{run}")).get("status")
+        except (urllib.error.URLError, ValueError) as error:
+            print(f"hold run {run}: {error}", file=sys.stderr)
+            known[run] = None
+    return known[run] in ENDED
+
+
+def main(argv):
+    live = "--delete" in argv
+    if live and not os.environ.get("TOKEN"):
+        print("--delete needs the job's token in TOKEN", file=sys.stderr)
+        return 2
+    if len(argv) >= 2 and argv[0] == "--run" and argv[1].isdigit():
+        found = of_run(argv[1])
+        chosen = [a for a in found if large(a)]
+    elif "--finished" in argv:
+        now = datetime.datetime.now(datetime.timezone.utc)
+        known = {}
+        chosen = [a for a in newest(now) if large(a) and ended(a["run_id"], known)]
+    else:
+        print(__doc__, file=sys.stderr)
+        return 2
+    failed = 0
+    for artifact in chosen:
+        what = f"{artifact['id']} {artifact['name']} run {artifact['run_id']} {artifact.get('size_in_bytes', 0)} bytes"
+        if not live:
+            print(f"would delete {what}")
+            continue
+        try:
+            forge(f"/actions/artifacts/{artifact['id']}", method="DELETE")
+            print(f"deleted {what}")
+        except urllib.error.HTTPError as error:
+            if error.code == 404:
+                print(f"gone {what}")
+            else:
+                failed += 1
+                print(f"refused {what}: HTTP {error.code}", file=sys.stderr)
+        except urllib.error.URLError as error:
+            failed += 1
+            print(f"refused {what}: {error}", file=sys.stderr)
+    print(f"{len(chosen)} large artifacts; {failed} refused")
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

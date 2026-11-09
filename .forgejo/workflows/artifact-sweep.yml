@@ -1,0 +1,42 @@
+# Delete the large artifacts of the runs that ended (scripts/artifact-sweep).
+#
+# Every run deletes its own artifacts in its last job. A run cancelled by a newer
+# push, or killed, never reaches that job, and its bundle would stay on the forge's
+# disk until its retention ends. This sweeps them every hour. The bar's logs stay,
+# and so does anything a run still waiting or running holds.
+#
+# A dispatch with `delete` set to anything but `true`, `false` by default, prints
+# what it would delete and deletes nothing.
+name: artifact-sweep
+
+on:
+  schedule:
+    - cron: '23 * * * *'
+  workflow_dispatch:
+    inputs:
+      delete:
+        description: 'true deletes; anything else prints what would be deleted'
+        required: false
+        default: 'false'
+
+concurrency:
+  group: artifact-sweep
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    runs-on: nix
+    timeout-minutes: 20
+    env:
+      DELETE: ${{ forgejo.event.inputs.delete || 'true' }}
+    steps:
+      - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/checkout@11d5960a326750d5838078e36cf38b85af677262
+      # The token reaches this step alone.
+      - run: |
+          if [ "$DELETE" = true ]; then
+            nix develop -c python3 scripts/artifact-sweep --finished --delete
+          else
+            nix develop -c python3 scripts/artifact-sweep --finished
+          fi
+        env:
+          TOKEN: ${{ forgejo.token }}

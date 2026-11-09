@@ -18,6 +18,7 @@ test-app_api_unstable
 test-app_grant_kinds_start
 test-arbiter
 test-argument_coverage
+test-artifact_sweep
 test-asking_room
 test-assembled_stack_forwards_defaults
 test-assembled_stack_names_unserved_claims

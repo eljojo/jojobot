@@ -216,7 +216,7 @@ fn ci_needed_workflows_use_the_conservative_plan_for_expensive_steps() {
     for workflow in ["branch", "pull-request"] {
         let text =
             fs::read_to_string(root.join(format!(".forgejo/workflows/{workflow}.yml"))).unwrap();
-        for (index, job) in text.split("    steps:\n").skip(1).enumerate() {
+        for (index, job) in support::jobs_with_a_bar(&text).enumerate() {
             if index == 0 {
                 assert!(
                     job.contains("make static") && !job.contains("id: plan"),

@@ -131,3 +131,11 @@ pub fn loop_repository(dir: &Path) {
         assert!(status.success(), "git {args:?} in {dir:?}");
     }
 }
+
+/// The steps of each job of a workflow text that runs a bar, in order. The
+/// artifact cleanup job runs no bar: it has no plan and no boundary banner.
+pub fn jobs_with_a_bar(text: &str) -> impl Iterator<Item = &str> {
+    text.split("    steps:\n")
+        .skip(1)
+        .filter(|job| !job.contains("artifact-sweep --run"))
+}
