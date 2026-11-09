@@ -1805,4 +1805,16 @@ mod tests {
             .expect("the paging note ships");
         assert!(parse(id, text).expect("it reads").narrows);
     }
+
+    /// **The note on a capture receipt's one suggestion narrows a call**: a
+    /// receipt that used to carry a hint or unlocks may not carry it now. The case
+    /// reads the shipped note.
+    #[test]
+    fn the_one_suggestion_note_is_marked_as_narrowing() {
+        let (id, text) = SHIPPED
+            .iter()
+            .find(|(id, _)| *id == "a-capture-receipt-carries-one-suggestion")
+            .expect("the one-suggestion note ships");
+        assert!(parse(id, text).expect("it reads").narrows);
+    }
 }

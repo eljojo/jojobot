@@ -1,6 +1,7 @@
 title: A capture receipt carries one suggestion, the most urgent, and names the others
 for: roles that read the hint, the unlocks or the possible-subject note on a capture receipt
 reach_for_it_when: a capture receipt has no hint or no unlocks that an earlier receipt for a similar write had
+narrows: true
 miss: A bot that waits for the hint or the unlocks on a capture receipt will not see it when a more urgent suggestion rides on the same receipt, and may not read the line in `left_out` that says so.
 
 ## What you can now do
