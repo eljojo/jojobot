@@ -137,26 +137,37 @@ fn ledger_case_row_carries_the_assertions_of_the_helpers_it_calls() {
 /// A kill means something only against a lane that passes unmutated. The sample
 /// runs the lane once untouched and stops, mutating nothing and recording nothing,
 /// when that run is red.
+///
+/// **The case runs the tool on a manifest and a file of its own**, in a directory
+/// of its own: the real manifest's sites are the ones a mutant changes, and a
+/// case that read them would fail under every mutant and record a kill no
+/// behaviour made.
 #[test]
 fn the_mutation_sample_stops_when_its_lane_is_red_before_any_mutation() {
     let root = jojobot_exercise::expectations::room_document("../..");
-    let record = root.join("target/mutants/killed.tsv");
-    let before = std::fs::read(&record).ok();
+    let dir = std::env::temp_dir().join(format!("mutant-sample-baseline-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let site = dir.join("site.txt");
+    let tokens: Vec<String> = (0..30).map(|n| format!("SITE{n:02}")).collect();
+    std::fs::write(&site, tokens.join("\n")).unwrap();
+    let mut manifest = String::from("file\tfrom\tto\n");
+    for token in &tokens {
+        manifest.push_str(&format!("{}\t{token}\t{token}X\n", site.display()));
+    }
+    let manifest_path = dir.join("mutants.tsv");
+    std::fs::write(&manifest_path, manifest).unwrap();
     let run = std::process::Command::new("python3")
-        .current_dir(&root)
-        .args([
-            "scripts/mutant-sample",
-            "--from",
-            "0",
-            "--count",
-            "1",
-            "--",
-            "false",
-        ])
+        .current_dir(&dir)
+        .env("MUTANT_MANIFEST", &manifest_path)
+        .arg(root.join("scripts/mutant-sample"))
+        .args(["--from", "0", "--count", "1", "--", "false"])
         .output()
         .unwrap();
     let said =
         String::from_utf8_lossy(&run.stdout).to_string() + &String::from_utf8_lossy(&run.stderr);
+    let untouched = std::fs::read_to_string(&site).unwrap() == tokens.join("\n");
+    let recorded = dir.join("target").exists();
+    std::fs::remove_dir_all(&dir).unwrap();
     assert_eq!(
         run.status.code(),
         Some(3),
@@ -166,9 +177,6 @@ fn the_mutation_sample_stops_when_its_lane_is_red_before_any_mutation() {
         said.contains("baseline"),
         "the refusal names the baseline: {said}"
     );
-    assert_eq!(
-        std::fs::read(&record).ok(),
-        before,
-        "nothing is recorded: {said}"
-    );
+    assert!(untouched, "no site was mutated: {said}");
+    assert!(!recorded, "nothing is recorded: {said}");
 }

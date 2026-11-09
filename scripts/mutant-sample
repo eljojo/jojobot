@@ -31,7 +31,11 @@ import re
 import subprocess
 import sys
 
-MANIFEST = "crates/jojobot-exercise/ledger/mutants.tsv"
+# A test of this tool points it at a manifest of its own, so that a mutation of a
+# listed site cannot change what the test sees.
+MANIFEST = os.environ.get(
+    "MUTANT_MANIFEST", "crates/jojobot-exercise/ledger/mutants.tsv"
+)
 OUT = "target/mutants/killed.tsv"
 USAGE = "usage: scripts/mutant-sample [--from N] [--count M] -- <command...>"
 
