@@ -24,6 +24,14 @@ use merge_walks::{ended_at, naming_folded_in};
 mod numbering;
 mod stale_claim;
 
+tokio::task_local! {
+    /// **Set while a composite writes its claim.** The real store writes that claim
+    /// inside its own transaction (`capture_in`), which the claims decider never
+    /// sees, so it is neither counted as a bare capture nor judged for the keys
+    /// jojobot writes itself: the label of a settings claim is one of them.
+    static COMPOSITE_CLAIM: ();
+}
+
 /// An in-memory [`Memory`] adapter for tests. Holds entities and facts in `Vec`s
 /// behind `Mutex`es; mints fact ids `f1`, `f2`, … per home doc, mirroring the
 /// real store's per-doc numbering. A fresh instance starts empty.
@@ -2478,10 +2486,10 @@ impl Memory for InMemoryMemory {
                 entity_versions_before.clone();
             *self.world_cache.lock().expect("fake mutex poisoned") = None;
         };
-        match self.capture(first).await {
+        match COMPOSITE_CLAIM.scope((), self.capture(first)).await {
             Ok(Guarded::Written(fact)) => {
                 for record in also {
-                    match self.capture(record).await {
+                    match COMPOSITE_CLAIM.scope((), self.capture(record)).await {
                         Ok(Guarded::Written(_)) => {}
                         Ok(Guarded::Blocked {
                             attempted,
@@ -2594,7 +2602,7 @@ impl Memory for InMemoryMemory {
                 entity_versions_before.clone();
             *self.world_cache.lock().expect("fake mutex poisoned") = None;
         };
-        match self.capture(claim).await {
+        match COMPOSITE_CLAIM.scope((), self.capture(claim)).await {
             Ok(Guarded::Written(fact)) => {
                 if let Err(e) = self.spend_claim(request, || {
                     crate::request::entity_claim_landed(&entity, &fact)
@@ -2673,7 +2681,7 @@ impl Memory for InMemoryMemory {
                 claim.subject, edited.subject
             )));
         }
-        match self.capture(claim).await {
+        match COMPOSITE_CLAIM.scope((), self.capture(claim)).await {
             Ok(Guarded::Written(fact)) => {
                 if let Err(e) = self.spend_claim(request, || {
                     serde_json::json!({ "address": address.to_string() }).to_string()
@@ -2744,7 +2752,7 @@ impl Memory for InMemoryMemory {
                 claim.subject, retraction.retracted.subject
             )));
         }
-        match self.capture(claim).await {
+        match COMPOSITE_CLAIM.scope((), self.capture(claim)).await {
             Ok(Guarded::Written(fact)) => {
                 if let Err(e) = self.spend_claim(request, || {
                     serde_json::json!({ "address": address.to_string() }).to_string()
@@ -3266,7 +3274,9 @@ impl Memory for InMemoryMemory {
     }
 
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
+        let composite = COMPOSITE_CLAIM.try_with(|_| ()).is_ok();
         match crate::log::claims::job::current() {
+            _ if composite => {}
             None => {
                 self.captures_without_a_job
                     .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -5199,7 +5209,7 @@ impl Memory for InMemoryMemory {
                 claim.subject, merged.survivor.id
             )));
         }
-        match self.capture(claim).await {
+        match COMPOSITE_CLAIM.scope((), self.capture(claim)).await {
             Ok(Guarded::Written(fact)) => {
                 if let Err(e) = self.spend_claim(request, || {
                     format!("{{\"folded\":\"{folded}\",\"survivor\":\"{survivor}\"}}")
