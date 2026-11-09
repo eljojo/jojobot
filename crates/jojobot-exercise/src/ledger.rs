@@ -27,7 +27,7 @@ use crate::{expectations, lock};
 pub const HEADER: &str = "kind\troom\tlock\tphase\twindow\tasks\talso\toracle\tunkept\tfailure\thistory\theld_by\tproof\tmoves_to";
 
 fn tests_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests")
+    expectations::room_document("tests")
 }
 
 /// One text with the characters that would break a row folded to a space.

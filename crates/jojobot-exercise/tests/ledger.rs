@@ -11,17 +11,22 @@
 
 use jojobot_exercise::ledger;
 
-const FILE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/ledger/room-assertions.tsv");
+fn file() -> std::path::PathBuf {
+    jojobot_exercise::expectations::room_document("ledger/room-assertions.tsv")
+}
 
 #[test]
 fn the_kept_ledger_is_the_one_the_shipped_rooms_make() {
     let made = ledger::render();
     if std::env::var_os("LEDGER_UPDATE").is_some() {
-        std::fs::create_dir_all(std::path::Path::new(FILE).parent().unwrap()).unwrap();
-        std::fs::write(FILE, &made).unwrap();
+        std::fs::create_dir_all(file().parent().unwrap()).unwrap();
+        std::fs::write(file(), &made).unwrap();
     }
-    let kept = std::fs::read_to_string(FILE).unwrap_or_else(|e| {
-        panic!("the ledger at {FILE} must exist (LEDGER_UPDATE=1 writes it): {e}")
+    let kept = std::fs::read_to_string(file()).unwrap_or_else(|e| {
+        panic!(
+            "the ledger at {} must exist (LEDGER_UPDATE=1 writes it): {e}",
+            file().display()
+        )
     });
     assert!(
         kept == made,
