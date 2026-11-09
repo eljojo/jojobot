@@ -70,12 +70,15 @@ def newest(now):
     page = 1
     while True:
         items = json.loads(forge(f"/actions/artifacts?limit={PAGE}&page={page}"))
-        for artifact in items:
-            made = datetime.datetime.fromisoformat(artifact["created_at"])
-            if now - made > WINDOW:
-                return
-            yield artifact
-        if len(items) < PAGE:
+        recent = [
+            a
+            for a in items
+            if now - datetime.datetime.fromisoformat(a["created_at"]) <= WINDOW
+        ]
+        yield from recent
+        # A page with nothing recent ends the read; one old artifact among newer
+        # ones does not, so a list in another order than newest first is still read.
+        if not recent or len(items) < PAGE:
             return
         page += 1
 

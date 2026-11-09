@@ -387,6 +387,7 @@ jobs:
   artifact-cleanup:
     needs: [boot-store, report, rooms]
     if: ${{ always() }}
+    continue-on-error: true
     runs-on: nix
     timeout-minutes: 10
     steps:

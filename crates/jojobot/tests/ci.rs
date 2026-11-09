@@ -1101,6 +1101,13 @@ fn a_run_ends_by_deleting_the_large_artifacts_it_uploaded() {
             ),
             "{workflow}:\n{cleanup}"
         );
+        // The whole job, not only its script step: a failed hook, checkout or nix start
+        // must not turn a green run red, because wait-run and the landing check read
+        // the run's status.
+        assert!(
+            cleanup.lines().any(|l| l == "    continue-on-error: true"),
+            "{workflow}:\n{cleanup}"
+        );
         assert!(cleanup.contains("TOKEN: ${{ forgejo.token }}"), "{cleanup}");
         for step in yaml
             .split("      - ")
@@ -1142,6 +1149,12 @@ fn the_sweeper_runs_every_hour_and_deletes_only_what_ended_runs_left() {
     );
     assert!(
         yaml.contains("scripts/artifact-sweep --finished --delete"),
+        "{yaml}"
+    );
+    // A schedule has no inputs, so this default is what makes the hourly run delete.
+    assert!(
+        yaml.lines()
+            .any(|l| l.trim() == "DELETE: ${{ forgejo.event.inputs.delete || 'true' }}"),
         "{yaml}"
     );
     assert!(yaml.contains("TOKEN: ${{ forgejo.token }}"), "{yaml}");

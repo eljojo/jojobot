@@ -265,3 +265,21 @@ fn a_run_the_forge_does_not_know_is_held_not_deleted() {
     );
     assert!(swept.asked.is_empty(), "{}", swept.said);
 }
+
+/// The sweep reads three days back. An older artifact is left to its own retention, and
+/// one old artifact in a page never hides the newer artifacts beside it.
+#[test]
+fn the_sweep_leaves_artifacts_older_than_its_window_and_still_reads_the_newer_ones() {
+    let swept = sweep(
+        vec![
+            artifact(91, 10, "test-bundle", 5, false),
+            artifact(90, 10, "boot-store", 0, false),
+        ],
+        vec![(10, "success")],
+        vec![],
+        &["--finished", "--delete"],
+        Some("t0ken"),
+    );
+    assert_eq!(swept.code, 0, "{}", swept.said);
+    assert_eq!(swept.asked, [90], "{}", swept.said);
+}
