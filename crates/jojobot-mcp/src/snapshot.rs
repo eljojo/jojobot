@@ -972,7 +972,9 @@ fn every_teaching_constant_is_in_the_snapshot() {
     let source = include_str!("teaching.rs");
     let listed = include_str!("snapshot.rs");
     for line in source.lines() {
-        if let Some(rest) = line.strip_prefix("pub(crate) const ")
+        if let Some(rest) = line
+            .strip_prefix("pub(crate) const ")
+            .or_else(|| line.strip_prefix("pub const "))
             && let Some((name, _)) = rest.split_once(": &str")
             && name.ends_with("_TEACHING")
         {
