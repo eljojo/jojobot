@@ -1,6 +1,7 @@
 title: A bot's new thing sits under that bot unless it asks for the root
 for: roles that make a thing for their own work and then look for it among the roots
 reach_for_it_when: a thing you just made is not among the roots, or a count of the roots no longer holds what you add
+narrows: true
 miss: A bot that makes a thing and then looks for it among the roots will not find it, because it sits under the bot.
 
 ## What you can now do

@@ -1817,4 +1817,16 @@ mod tests {
             .expect("the one-suggestion note ships");
         assert!(parse(id, text).expect("it reads").narrows);
     }
+
+    /// **The note on a bot's new thing sitting under that bot narrows a read**: a
+    /// read of the roots no longer returns what that bot adds. The case reads the
+    /// shipped note.
+    #[test]
+    fn the_bot_home_note_is_marked_as_narrowing() {
+        let (id, text) = SHIPPED
+            .iter()
+            .find(|(id, _)| *id == "a-bots-new-thing-sits-under-that-bot")
+            .expect("the bot home note ships");
+        assert!(parse(id, text).expect("it reads").narrows);
+    }
 }
