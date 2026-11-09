@@ -198,6 +198,45 @@ pub(crate) fn handler_shipped_reaching() -> Jojobot {
     shipped_over(InMemoryMemory::seeded().with_own_fields_reaching())
 }
 
+/// **[`handler_shipped`] over a store that already holds a row at each of these
+/// handles the build supplies**, as the served store does once the build's records
+/// are bound: a handle with a row is a stored thing and every verb treats it as one
+/// (`Provisioned::supplied_only`). The rows are written before the store is told what
+/// the build supplies, the order a new build meets a row an earlier one left.
+pub(crate) async fn handler_shipped_over_stored_rows(handles: &[&str]) -> Jojobot {
+    use jojobot_domain::memory::{Memory as _, NewEntity};
+    let store = InMemoryMemory::seeded();
+    for handle in handles {
+        let id = jojobot_domain::memory::EntityId((*handle).to_string());
+        let supplied = crate::provisions();
+        let (entity, shipped) = supplied
+            .record_for(&id)
+            .expect("the build supplies a record at the handle");
+        store
+            .add_entity(NewEntity::new(id.clone(), entity.name.clone(), "the boot"))
+            .await
+            .expect("the store takes the row")
+            .written()
+            .expect("the row is not blocked");
+        // **A row reads back only its own keys** (rule 508), so the row the boot
+        // leaves holds the keys the build ships.
+        let mut keys = jojobot_domain::memory::NewFact::about(
+            id,
+            "Shipped with the build.",
+            jiff::civil::date(2026, 11, 9),
+        );
+        keys.sets = shipped.keys().cloned().collect();
+        keys.fields = shipped.clone();
+        store
+            .capture(keys)
+            .await
+            .expect("the shipped keys are written")
+            .written()
+            .expect("the shipped keys are not blocked");
+    }
+    shipped_over(store)
+}
+
 fn shipped_over(store: InMemoryMemory) -> Jojobot {
     let supplied = crate::provisions();
     // **The inner store is told what the build supplies too.** Its own

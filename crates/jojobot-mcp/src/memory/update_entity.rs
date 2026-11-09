@@ -1478,7 +1478,9 @@ mod tests {
     /// that one is refused whole, so the sets do not land either.
     #[tokio::test]
     async fn a_sets_only_edit_of_a_shipped_record_lands_on_top_of_what_ships() {
-        let jojobot = handler_shipped();
+        // **The served store holds a row for a shipped record**, so the edit is the
+        // stored one's: the claim is written inside the store's own transaction.
+        let jojobot = crate::harness::handler_shipped_over_stored_rows(&["view:loops"]).await;
         let sid = writing_as(&jojobot);
 
         let landed = json_of(
@@ -1530,8 +1532,15 @@ mod tests {
         );
         assert_ne!(stored["status"], "blocked", "{stored}");
         assert_eq!(stored["id"], "thing:red-bike", "{stored}");
+    }
 
-        // A piece the build keeps, beside sets: refused whole.
+    /// **A piece the build keeps, beside sets, is refused whole**: a record the
+    /// build supplies and the store holds no row for takes no edit of its source,
+    /// and the sets sent with it do not land either.
+    #[tokio::test]
+    async fn sets_beside_a_piece_the_build_keeps_are_refused_whole_and_none_land() {
+        let jojobot = handler_shipped();
+        let sid = writing_as(&jojobot);
         let whole = json_of(
             &jojobot
                 .update_entity(Parameters(UpdateEntityArgs {
