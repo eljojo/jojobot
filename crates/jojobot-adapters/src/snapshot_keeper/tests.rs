@@ -258,3 +258,46 @@ async fn the_shutdown_snapshot_is_the_writers_last_act() {
     assert_eq!(boot.position, head);
     assert_eq!(boot.state.teaching.history().len(), 3);
 }
+
+/// **Admission closes when the final operation is queued, not when it starts.**
+/// A write offered while the final operation still waits behind an accepted job
+/// is refused: it could otherwise land behind the shutdown snapshot.
+#[tokio::test]
+async fn the_writer_refuses_work_from_the_moment_the_final_operation_is_queued() {
+    let writer = crate::writer::Writer::default();
+    let (release, held) = tokio::sync::oneshot::channel::<()>();
+    let writing = tokio::spawn({
+        let writer = writer.clone();
+        async move {
+            writer
+                .run(async move {
+                    held.await.unwrap();
+                })
+                .await
+        }
+    });
+    while writer.submitted_jobs() < 1 {
+        tokio::task::yield_now().await;
+    }
+    let finishing = tokio::spawn({
+        let writer = writer.clone();
+        async move { writer.finish(async {}).await }
+    });
+    while writer.submitted_jobs() < 2 {
+        tokio::task::yield_now().await;
+    }
+    // The first job still holds the queue, so the final operation has not started.
+    let late = tokio::spawn({
+        let writer = writer.clone();
+        async move { writer.run(async {}).await }
+    });
+    let rejected = tokio::time::timeout(Duration::from_secs(1), late).await;
+    // Release the queue even on a broken admission gate.
+    release.send(()).unwrap();
+    writing.await.unwrap();
+    finishing.await.unwrap();
+    assert!(
+        rejected.is_ok_and(|ended| ended.is_err()),
+        "the writer admitted work while its final operation was only queued"
+    );
+}
