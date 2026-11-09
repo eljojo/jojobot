@@ -490,7 +490,7 @@ mod tests {
     #[test]
     fn a_compact_account_of_the_composer_keeps_its_marks_and_the_items() {
         let marks = json!([{"layer": "hint", "call": "recall"}]);
-        let compact = (LEAN_LIMIT - 400..LEAN_LIMIT)
+        let compact = (0..LEAN_LIMIT)
             .map(|pad| {
                 super::own_batch_receipt(a_merged_batch_receipt(marks.clone(), pad), Vec::new()).0
             })
