@@ -106,3 +106,69 @@ fn ledger_case_row_carries_its_assertions() {
         .count();
     assert_eq!(blank, 0, "a case holds an assertion or says it holds none");
 }
+
+/// **A test that asserts through a helper of its own file carries that helper's
+/// assertions**, each under the call that reaches it, so taking the helper's
+/// `assert_eq!` out changes every row that calls it.
+#[test]
+fn ledger_case_row_carries_the_assertions_of_the_helpers_it_calls() {
+    let file = "async fn check(n: usize, m: usize) {\n    assert_eq!(n, m, \"same\");\n}\n\n#[tokio::test]\nasync fn a_case() {\n    check(1, 1).await;\n}\n";
+    let body = "async fn a_case() {\n    check(1, 1).await;\n}\n";
+    let held = ledger::assertions_through_helpers(body, file);
+    assert_eq!(held.len(), 1, "{held:?}");
+    assert!(held[0].contains("check(1, 1)"), "{held:?}");
+    assert!(held[0].contains("assert_eq!(n, m"), "{held:?}");
+    let without = file.replace("    assert_eq!(n, m, \"same\");\n", "");
+    assert!(ledger::assertions_through_helpers(body, &without).is_empty());
+
+    let made = ledger::render();
+    let row = made
+        .lines()
+        .find(|row| {
+            row.starts_with("case\t")
+                && row.contains("::january_launch_day_in_a_sentence_reds_only_the_launch_lock\t")
+        })
+        .expect("the agency room case has a row");
+    let oracle = row.split('\t').nth(7).unwrap();
+    assert!(oracle.contains("discriminates(0, 0)"), "{oracle}");
+    assert!(oracle.contains("assert_eq!(held, all_but"), "{oracle}");
+}
+
+/// A kill means something only against a lane that passes unmutated. The sample
+/// runs the lane once untouched and stops, mutating nothing and recording nothing,
+/// when that run is red.
+#[test]
+fn the_mutation_sample_stops_when_its_lane_is_red_before_any_mutation() {
+    let root = jojobot_exercise::expectations::room_document("../..");
+    let record = root.join("target/mutants/killed.tsv");
+    let before = std::fs::read(&record).ok();
+    let run = std::process::Command::new("python3")
+        .current_dir(&root)
+        .args([
+            "scripts/mutant-sample",
+            "--from",
+            "0",
+            "--count",
+            "1",
+            "--",
+            "false",
+        ])
+        .output()
+        .unwrap();
+    let said =
+        String::from_utf8_lossy(&run.stdout).to_string() + &String::from_utf8_lossy(&run.stderr);
+    assert_eq!(
+        run.status.code(),
+        Some(3),
+        "a red lane before any mutation exits 3: {said}"
+    );
+    assert!(
+        said.contains("baseline"),
+        "the refusal names the baseline: {said}"
+    );
+    assert_eq!(
+        std::fs::read(&record).ok(),
+        before,
+        "nothing is recorded: {said}"
+    );
+}

@@ -12,6 +12,10 @@ mutant in the slice runs `scripts/sabotage <file> <from> <to> -- <command...>`.
 The killed set of a lane is the set of mutants the lane reddens; a lane that
 replaces another must kill the same set (rule 767: no coverage lost).
 
+The lane runs once unmutated before the first mutant. A lane that fails then
+stops the sample with exit 3, before any mutation and with nothing recorded:
+its kills would not be kills.
+
 The verdict of each mutant is the word `scripts/sabotage` prints: RED (killed),
 GREEN (survived), or a refusal or a break that does not build (neither colour,
 counted apart). One line per mutant goes to stdout and to
@@ -108,6 +112,18 @@ def main(argv):
     if found:
         print("\n".join(found), file=sys.stderr)
         return 2
+    # A lane that is red unmutated reads every mutant as killed, so the sample
+    # runs it once untouched and refuses before any mutation when it fails.
+    baseline = subprocess.run(command, capture_output=True, text=True)
+    if baseline.returncode != 0:
+        print(
+            f"baseline: the lane is red unmutated (exit {baseline.returncode}): "
+            + " ".join(command)
+            + "\n"
+            + (baseline.stdout + baseline.stderr)[-2000:],
+            file=sys.stderr,
+        )
+        return 3
     chosen = list(enumerate(sample))[start : None if count is None else start + count]
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     refused = 0

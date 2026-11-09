@@ -64,7 +64,6 @@ jobs:
         if: ${{ forgejo.event.inputs.job == 'mutants' }}
         run: nix develop -c python3 scripts/mutant-sample --check
       - name: Last deployed store
-        if: ${{ forgejo.event.inputs.job == 'coverage' }}
         run: nix develop -c python3 scripts/prepare-upgrade-fixture
         env:
           UPGRADE_FIXTURE_DIR: target/upgrade-fixture
@@ -90,6 +89,8 @@ jobs:
           EOF
       - name: Mutants
         if: ${{ forgejo.event.inputs.job == 'mutants' }}
+        env:
+          UPGRADE_FIXTURE_DIR: target/upgrade-fixture
         run: nix develop -c make mutants LANE="$LANE" FROM="$FROM" COUNT="$COUNT"
       - if: ${{ !cancelled() }}
         continue-on-error: true

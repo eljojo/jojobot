@@ -161,9 +161,123 @@ pub fn assertions_of(body: &str) -> Vec<String> {
     found
 }
 
+/// **The functions of one test file that are not tests**, `(name, body)`. A
+/// function ends at the first line that is a lone closing brace at its own
+/// indentation.
+fn helpers_of(file: &str) -> Vec<(String, String)> {
+    let lines: Vec<&str> = file.lines().collect();
+    let mut found = Vec::new();
+    for (at, line) in lines.iter().enumerate() {
+        let trimmed = line.trim_start();
+        let Some(rest) = trimmed
+            .strip_prefix("async fn ")
+            .or_else(|| trimmed.strip_prefix("fn "))
+            .or_else(|| trimmed.strip_prefix("pub fn "))
+            .or_else(|| trimmed.strip_prefix("pub async fn "))
+        else {
+            continue;
+        };
+        let attributed = lines[..at]
+            .iter()
+            .rev()
+            .take_while(|above| above.trim_start().starts_with("#["))
+            .any(|above| {
+                above.trim_start().starts_with("#[test]")
+                    || above.trim_start().starts_with("#[tokio::test")
+            });
+        let Some(name) = rest.split(['(', '<']).next().map(str::trim) else {
+            continue;
+        };
+        if attributed || name.is_empty() {
+            continue;
+        }
+        let indent = &line[..line.len() - trimmed.len()];
+        let closing = format!("{indent}}}");
+        let to = lines[at..]
+            .iter()
+            .position(|l| *l == closing)
+            .map_or(lines.len(), |n| at + n + 1);
+        found.push((name.to_string(), lines[at..to].join("\n")));
+    }
+    found
+}
+
+/// **The calls in a body that reach a helper of the same file**, as the text of
+/// the call, in order and each once.
+fn calls_of<'a>(body: &str, helpers: &'a [(String, String)]) -> Vec<(String, &'a str)> {
+    let bytes = body.as_bytes();
+    let mut found: Vec<(String, &str)> = Vec::new();
+    for (name, helper_body) in helpers {
+        let mut from = 0;
+        while let Some(n) = body[from..].find(name.as_str()) {
+            let begin = from + n;
+            let end_of_name = begin + name.len();
+            let before = body[..begin].chars().next_back();
+            let named = !before.is_some_and(|c| c.is_alphanumeric() || c == '_')
+                && bytes.get(end_of_name) == Some(&b'(');
+            from = end_of_name;
+            if !named {
+                continue;
+            }
+            let (mut depth, mut end, mut quoted) = (0usize, end_of_name, false);
+            let mut i = end_of_name;
+            while i < bytes.len() {
+                match bytes[i] {
+                    b'\\' if quoted => i += 1,
+                    b'"' => quoted = !quoted,
+                    b'(' if !quoted => depth += 1,
+                    b')' if !quoted => {
+                        depth -= 1;
+                        if depth == 0 {
+                            end = i;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+                i += 1;
+            }
+            let call = body[begin..=end]
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
+            if !found.iter().any(|(seen, _)| *seen == call) {
+                found.push((call, helper_body.as_str()));
+            }
+        }
+    }
+    found
+}
+
+/// **The assertions a test body reaches through helpers of its own file**, each
+/// as `call => assertions`, the helpers' own helpers included. Taking an
+/// assertion out of a helper changes the row of every test that calls it.
+pub fn assertions_through_helpers(body: &str, file: &str) -> Vec<String> {
+    let helpers = helpers_of(file);
+    let mut found = Vec::new();
+    let mut pending = vec![body.to_string()];
+    let mut seen: Vec<String> = Vec::new();
+    while let Some(text) = pending.pop() {
+        for (call, helper_body) in calls_of(&text, &helpers) {
+            if seen.contains(&call) {
+                continue;
+            }
+            seen.push(call.clone());
+            let held = assertions_of(helper_body);
+            if !held.is_empty() {
+                found.push(format!("{call} => {}", held.join("; ")));
+            }
+            // The signature line names the helper and is not a call.
+            let inside = helper_body.split_once('\n').map_or("", |(_, rest)| rest);
+            pending.push(inside.to_string());
+        }
+    }
+    found
+}
+
 /// **Every integration test of this crate**, with the claim in the comment above
-/// it and the text of its body: `(file, function, claim, body)`.
-fn cases() -> Vec<(String, String, String, String)> {
+/// it, the text of its body and of its file: `(file, function, claim, body, text)`.
+fn cases() -> Vec<(String, String, String, String, String)> {
     let mut found = Vec::new();
     for (file, text) in test_sources() {
         let lines: Vec<&str> = text.lines().collect();
@@ -203,7 +317,7 @@ fn cases() -> Vec<(String, String, String, String)> {
                 }
             }
             claim.reverse();
-            found.push((file.clone(), name, claim.join(" "), body));
+            found.push((file.clone(), name, claim.join(" "), body, text.clone()));
         }
     }
     found
@@ -279,8 +393,9 @@ pub fn render() -> String {
             out.push('\n');
         }
     }
-    for (file, name, claim, body) in cases() {
-        let held = assertions_of(&body);
+    for (file, name, claim, body, text) in cases() {
+        let mut held = assertions_of(&body);
+        held.extend(assertions_through_helpers(&body, &text));
         let oracle = if held.is_empty() {
             "no assertion macro".to_string()
         } else {
