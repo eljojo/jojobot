@@ -1489,6 +1489,7 @@ mod tests {
                 rows: "fact person:homer/f2: a derived_from nobody holds".into(),
             },
             Why::Log("an event this build cannot read".into()),
+            Why::Refused("the ledger refused the batch: a handle nothing binds".into()),
         ];
         for why in &data {
             let line = claims_import_failure(why);

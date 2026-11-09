@@ -82,6 +82,21 @@ impl ClaimsImportError {
     }
 }
 
+/// **What a refusal of the seam to stage the import is to the import.** Admission
+/// refusing the batch is a row this build will not take: a restart fails the same
+/// way until a build that imports it. A failed read or write of the log, a batch
+/// whose commit is unknown and another writer's position are failures to reach the
+/// store, which a restart may heal. None of them is an event the build cannot read.
+fn staging_failed(error: crate::ledger_log::LedgerError) -> ClaimsImportError {
+    use crate::ledger_log::LedgerError;
+    match error {
+        LedgerError::Refused(why) => ClaimsImportError::Refused(why),
+        LedgerError::Store(why) => ClaimsImportError::Store(why),
+        LedgerError::Indeterminate => ClaimsImportError::Indeterminate,
+        LedgerError::Conflict => ClaimsImportError::Store(error.to_string()),
+    }
+}
+
 impl crate::writer::recovery::StoreError for ClaimsImportError {
     fn store(why: String) -> Self {
         Self::Store(why)
@@ -194,7 +209,7 @@ async fn import_in_job(
     let staged = seam
         .stage_import(&mut tx, events, at)
         .await
-        .map_err(|e| ClaimsImportError::Log(e.to_string()))?;
+        .map_err(staging_failed)?;
     match sql::commit(tx).await {
         Ok(()) => {
             staged.committed();
@@ -359,5 +374,46 @@ fn refuse_two_records_with_one_first_handle(
             "two supplied records were first supplied under {first:?}"
         ))),
         None => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ledger_log::LedgerError;
+
+    /// **Which variant each way the seam can refuse to stage the import reaches the
+    /// boot as**, and whether a restart can heal it. A batch admission refuses is
+    /// a row this build will not take, and a failed read or write of the log is a
+    /// failure to reach the store; neither is an event the build cannot read.
+    #[test]
+    fn a_failure_to_stage_the_import_reaches_the_boot_as_what_it_is() {
+        let refused = staging_failed(LedgerError::Refused("a handle nothing binds".into()));
+        assert!(
+            matches!(refused, ClaimsImportError::Refused(_)),
+            "{refused:?}"
+        );
+        assert!(!refused.heals_on_restart(), "a refused batch fails again");
+
+        let store = staging_failed(LedgerError::Store("connection lost".into()));
+        assert!(matches!(store, ClaimsImportError::Store(_)), "{store:?}");
+        assert!(
+            store.heals_on_restart(),
+            "a store error may pass on the next start"
+        );
+
+        let unknown = staging_failed(LedgerError::Indeterminate);
+        assert!(
+            matches!(unknown, ClaimsImportError::Indeterminate),
+            "{unknown:?}"
+        );
+        assert!(unknown.heals_on_restart());
+
+        let taken = staging_failed(LedgerError::Conflict);
+        assert!(matches!(taken, ClaimsImportError::Store(_)), "{taken:?}");
+        assert!(
+            taken.heals_on_restart(),
+            "another writer's position is gone on the next start"
+        );
     }
 }
