@@ -6976,6 +6976,24 @@ pub trait Memory: Send + Sync {
         ))
     }
 
+    /// **The companion claim of an edit, written alone.** It takes the route the
+    /// claim of [`update_entity_with_claim`](Memory::update_entity_with_claim)
+    /// takes, so the engine's own label on it is not a caller's key, and it
+    /// chooses no entity: the layer that knows a record is supplied answers the
+    /// edit with its own. It returns the fact and commits the act's request with
+    /// it as the receipt.
+    ///
+    /// **A store that cannot do this refuses loudly**, for the reason
+    /// [`add_entity_with_first_claim`](Memory::add_entity_with_first_claim) does.
+    // TEMPORARY(9.3.4): goes with `capture_in`, when the edit and its claim become
+    // one domain command.
+    async fn capture_companion(&self, claim: NewFact) -> Result<Guarded<Fact>, MemoryError> {
+        let _ = claim;
+        Err(MemoryError::InvalidFact(
+            "this store cannot write the companion claim of an edit".into(),
+        ))
+    }
+
     /// **Take back a claim and write a claim about the same thing, in one act.**
     /// [`retract`](Memory::retract) with a companion claim, run as a capture runs
     /// it. If any guard of the retraction or of the claim refuses, **nothing is

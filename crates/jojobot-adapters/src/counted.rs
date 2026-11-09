@@ -217,6 +217,12 @@ impl Memory for Counted {
         self.hang_if_armed("update_entity_with_claim").await;
         landed
     }
+    async fn capture_companion(&self, claim: NewFact) -> Result<Guarded<Fact>, MemoryError> {
+        self.hit("capture_companion");
+        let landed = self.inner.capture_companion(claim).await;
+        self.hang_if_armed("capture_companion").await;
+        landed
+    }
     async fn list_entities(&self, kind: Option<EntityKind>) -> Result<Vec<Entity>, MemoryError> {
         self.hit("list_entities");
         if self.unreachable.load(Ordering::SeqCst) {

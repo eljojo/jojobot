@@ -454,7 +454,11 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
             } else {
                 self.with_overlay(&supplied).await?
             };
-            return Ok(match self.inner.capture(claim).await? {
+            // **The claim takes the route a stored row's companion claim takes**
+            // (rule 676), not the public capture, which refuses the engine's
+            // own label under a verb's job. The store chooses no entity: this
+            // layer answers with its own.
+            return Ok(match self.inner.capture_companion(claim).await? {
                 Guarded::Written(fact) => Guarded::Written((after, fact)),
                 Guarded::Blocked {
                     attempted,

@@ -2282,6 +2282,14 @@ async fn add_entity_guards_hold_for_stored_and_supplied_against_the_fake() {
     .await;
 }
 
+/// **The companion claim of an edit, for a supplied record, against the fake.**
+#[tokio::test]
+async fn a_companion_claim_for_a_supplied_record_is_written_against_the_fake() {
+    let fake = fake_knowing_a_supplied_view();
+    contract::a_companion_claim_for_a_supplied_record_is_written_and_no_row_appears(&fake).await;
+    contract::a_public_capture_of_the_engine_label_is_refused_in_a_verbs_job(&fake).await;
+}
+
 /// **Every entity read, counted in one place, against the fake.**
 #[tokio::test]
 async fn every_entity_read_answers_for_a_supplied_record_against_the_fake() {

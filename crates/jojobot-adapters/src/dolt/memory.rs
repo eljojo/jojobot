@@ -5730,6 +5730,23 @@ impl Memory for DoltMemory {
         }
     }
 
+    // TEMPORARY(9.3.4): goes with `capture_in`, when the edit and its claim become
+    // one domain command.
+    async fn capture_companion(&self, claim: NewFact) -> Result<Guarded<Fact>, MemoryError> {
+        validate_write_subject(&claim.subject)?;
+        validate_new_fact(&claim)?;
+        let mut tx = self.pool.begin().await.map_err(store)?;
+        let written = self.capture_in(&mut tx, claim).await?;
+        if let Guarded::Written(fact) = &written {
+            super::requests::commit(tx, &self.clock, || {
+                serde_json::json!({ "address": fact.address().to_string() }).to_string()
+            })
+            .await
+            .map_err(store)?;
+        }
+        Ok(written)
+    }
+
     async fn archive_entity(
         &self,
         id: &EntityId,

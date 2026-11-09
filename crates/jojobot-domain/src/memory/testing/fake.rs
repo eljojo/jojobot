@@ -2629,6 +2629,16 @@ impl Memory for InMemoryMemory {
         }
     }
 
+    /// **The companion claim of an edit, written alone.** It is written in the
+    /// composite's scope, as the claim half of every other composite is, so the
+    /// engine's own label on it is not judged as a caller's key. The fake's
+    /// capture spends the act's request itself, and the fake chooses no entity,
+    /// as the real store does not.
+    // TEMPORARY(9.3.4): goes with the port method.
+    async fn capture_companion(&self, claim: NewFact) -> Result<Guarded<Fact>, MemoryError> {
+        COMPOSITE_CLAIM.scope((), self.capture(claim)).await
+    }
+
     /// **The edit and its companion claim, as one act.** A refusal of the claim
     /// puts every row back exactly as it was, as the real store's one
     /// transaction does.

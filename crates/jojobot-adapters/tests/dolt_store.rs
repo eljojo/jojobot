@@ -2682,6 +2682,7 @@ async fn dolt_satisfies_the_supplied_record_guard_contract() {
 
     memory::add_entity_guards_hold_for_stored_and_supplied(&bare, &known).await;
     memory::a_claim_on_a_supplied_record_reads_back(&known).await;
+    memory::a_companion_claim_for_a_supplied_record_is_written_and_no_row_appears(&known).await;
     memory::a_rename_of_a_supplied_handle_is_refused_not_a_silent_no_op(&known).await;
     memory::an_archive_of_a_supplied_handle_is_refused_not_a_silent_no_op(&known).await;
     memory::a_merge_naming_a_supplied_handle_is_refused_not_a_silent_no_op(&known).await;
@@ -9980,6 +9981,88 @@ async fn an_upgrade_that_renames_a_shipped_record_leaves_the_operators_name_on_t
         "a record the operator never named takes the new build's name"
     );
 
+    store.stop().await;
+}
+
+/// **A sets-only edit of a record the build still supplies lands, over the real
+/// store.** The edit's claim is the settings claim `update_entity` writes: it wears
+/// the engine's own label and runs inside a verb's job.
+#[tokio::test]
+async fn a_sets_only_edit_of_a_still_supplied_record_lands_over_the_real_store() {
+    use jojobot_adapters::provisioned::overlay_contract::supplied;
+    use jojobot_domain::memory::EntityPatch;
+
+    let scratch = Scratch::new("overlay-edit");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "overlay_edit")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    jojobot_adapters::testing::import_claims_now(&pool).await;
+    let provisions = supplied();
+    let provisioned: Arc<dyn Memory> = Arc::new(Provisioned::new(
+        DoltMemory::open(pool.clone())
+            .journaled()
+            .knowing(provisions.clone()),
+        provisions,
+    ));
+    let served = Folded::new(provisioned);
+    served.rebuild().await.expect("the image fills");
+    let handle = EntityId("view:loops".into());
+    let claim = jojobot_domain::memory::NewFact {
+        sets: ["note_9".to_string()].into(),
+        fields: jojobot_domain::memory::review::settings_fields(
+            [("note_9".to_string(), "kept on top".to_string())].into(),
+        ),
+        ..jojobot_domain::memory::NewFact::about(
+            handle.clone(),
+            "Set note_9 on @view:loops.",
+            date(2026, 11, 9),
+        )
+    };
+    let job =
+        || jojobot_domain::log::claims::job::test_job(&jojobot_domain::actor::Actor::Operator);
+    let (_, landed) = jojobot_domain::log::claims::job::within(
+        job(),
+        served.update_entity_with_claim(&handle, EntityPatch::default(), claim.clone()),
+    )
+    .await
+    .expect("the edit answers")
+    .written()
+    .expect("nothing blocks the edit");
+
+    // The key reaches the thing, and the label stays on the one record.
+    assert_eq!(
+        served
+            .fields(&handle)
+            .await
+            .expect("the keys read")
+            .get("note_9"),
+        Some(&"kept on top".to_string()),
+        "the edit's key is not on the thing"
+    );
+    let recalled = served.recall(&handle).await.expect("recall answers");
+    assert!(
+        recalled.iter().any(|fact| fact.id == landed.id),
+        "the edit's claim is not in the read: {recalled:?}"
+    );
+    let settings_records = recalled
+        .iter()
+        .filter(|fact| fact.fields.contains_key("settings_record"))
+        .count();
+    assert_eq!(settings_records, 1, "a second settings record was written");
+
+    // The other half: a public capture of the engine's label is still refused.
+    // A control, not a red of its own: on the regression the edit above fails first.
+    let refused = jojobot_domain::log::claims::job::within(job(), served.capture(claim)).await;
+    assert!(
+        matches!(&refused, Err(jojobot_domain::memory::MemoryError::InvalidFact(words))
+            if words.contains("settings_record")),
+        "a public capture of the engine's label was not refused: {refused:?}"
+    );
     store.stop().await;
 }
 
