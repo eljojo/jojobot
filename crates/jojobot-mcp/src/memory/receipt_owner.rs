@@ -14,8 +14,7 @@ use serde_json::Value;
 use super::possible_subject::PossibleSubject;
 use super::unlocks::OwedUnlock;
 use crate::answer::compose::{
-    Answer, Budget, Composed, Form, Kind, LEFT_OUT_KEY, Layer, LeftOut, Tier, account,
-    compose_within,
+    Answer, Budget, Composed, Form, Kind, LEFT_OUT_KEY, Layer, Tier, account_of, compose_within,
 };
 use crate::{Jojobot, caller::Caller};
 
@@ -260,32 +259,43 @@ fn suggestion_of(domain: &str) -> Option<&'static str> {
     }
 }
 
-/// **The layers an account of what was left out names**, whichever of its three
-/// forms it is written in.
-fn layers_named(account: &Value) -> Vec<String> {
-    let mut layers = Vec::new();
-    let mut take = |value: &Value| {
-        if let Some(layer) = value.as_str() {
-            layers.push(layer.to_string());
-        }
-    };
+/// **The `(layer, call)` pairs an account of what was left out names**, whichever
+/// of its three forms it is written in. The compact object form keeps its calls
+/// apart from its layers; with one call it applies to every layer, and with
+/// several the pairing is gone, so each layer is given the call every capture
+/// layer is returned by.
+fn marks_named(account: &Value) -> Vec<(String, String)> {
+    let call_of = |value: &Value| value.as_str().unwrap_or(RETURNED_BY).to_string();
+    let mut marks = Vec::new();
     match account {
         Value::Array(entries) => {
             for entry in entries {
-                take(&entry["layer"]);
+                if let Some(layer) = entry["layer"].as_str() {
+                    marks.push((layer.to_string(), call_of(&entry["call"])));
+                }
                 for layer in entry["layers"].as_array().into_iter().flatten() {
-                    take(layer);
+                    if let Some(layer) = layer.as_str() {
+                        marks.push((layer.to_string(), call_of(&entry["call"])));
+                    }
                 }
             }
         }
         Value::Object(_) => {
+            let calls = account["calls"].as_str().unwrap_or_default();
+            let call = if calls.contains(", ") || calls.is_empty() {
+                RETURNED_BY
+            } else {
+                calls
+            };
             for layer in account["layers"].as_array().into_iter().flatten() {
-                take(layer);
+                if let Some(layer) = layer.as_str() {
+                    marks.push((layer.to_string(), call.to_string()));
+                }
             }
         }
         _ => {}
     }
-    layers
+    marks
 }
 
 /// **A batch's merged receipt, composed once**: the items' notes were each
@@ -311,19 +321,15 @@ pub(crate) fn own_batch_receipt(mut body: Value, spends: Vec<String>) -> (Value,
     // **An account is read by the layers it names, in any of its three forms**,
     // and written back in the form the composer chose for this receipt.
     let made = served.get(LEFT_OUT_KEY).cloned();
-    let mut named = made.as_ref().map(layers_named).unwrap_or_default();
-    for layer in earlier.as_ref().map(layers_named).unwrap_or_default() {
-        if served.get(&layer).is_none() && !named.contains(&layer) {
-            named.push(layer);
+    let mut named = made.as_ref().map(marks_named).unwrap_or_default();
+    for (layer, call) in earlier.as_ref().map(marks_named).unwrap_or_default() {
+        if served.get(&layer).is_none() && !named.iter().any(|(held, _)| *held == layer) {
+            named.push((layer, call));
         }
     }
-    let omitted: Vec<LeftOut> = named
+    let omitted: Vec<(&str, &str)> = named
         .iter()
-        .filter_map(|layer| SUGGESTIONS.iter().find(|(key, _)| key == layer))
-        .map(|(key, _)| LeftOut {
-            layer: key,
-            call: RETURNED_BY,
-        })
+        .map(|(layer, call)| (layer.as_str(), call.as_str()))
         .collect();
     if let Some(object) = served.as_object_mut()
         && !omitted.is_empty()
@@ -337,7 +343,7 @@ pub(crate) fn own_batch_receipt(mut body: Value, spends: Vec<String>) -> (Value,
             }
             _ => Form::Full,
         };
-        object.insert(LEFT_OUT_KEY.to_string(), account(&omitted, form));
+        object.insert(LEFT_OUT_KEY.to_string(), account_of(&omitted, form));
     }
     let kept = spends
         .into_iter()
@@ -575,7 +581,10 @@ mod tests {
 
     /// The layers an account names, in the order it names them.
     fn named_in(receipt: &Value) -> Vec<String> {
-        super::layers_named(&receipt["left_out"])
+        super::marks_named(&receipt["left_out"])
+            .into_iter()
+            .map(|(layer, _)| layer)
+            .collect()
     }
 
     /// **A batch names what its items left out unless the receipt serves it
@@ -605,6 +614,39 @@ mod tests {
         let (served, _) = super::own_batch_receipt(receipt, Vec::new());
         assert!(served["unlocks"].is_object(), "{served}");
         assert!(served.get("left_out").is_none(), "{served}");
+    }
+
+    /// **A mark an item left for a layer that is not a suggestion is kept**, in
+    /// each form, with the call the item named.
+    #[test]
+    fn a_mark_for_a_layer_that_is_not_a_suggestion_is_kept() {
+        let (served, _) = super::own_batch_receipt(
+            a_merged_batch_receipt(json!([{"layer": "teaching:claims", "call": "search"}]), 0),
+            Vec::new(),
+        );
+        assert!(
+            served["left_out"].as_array().is_some_and(
+                |marks| marks.contains(&json!({"layer": "teaching:claims", "call": "search"}))
+            ),
+            "the call the item named is kept: {served}"
+        );
+        for marks in [
+            json!([{"layer": "teaching:claims", "call": "recall"}]),
+            json!([{"call": "recall", "layers": ["teaching:claims"]}]),
+            json!({"layers": ["teaching:claims"], "calls": "recall"}),
+        ] {
+            let (served, _) =
+                super::own_batch_receipt(a_merged_batch_receipt(marks.clone(), 0), Vec::new());
+            let named = named_in(&served);
+            assert!(
+                named.iter().any(|layer| layer == "teaching:claims"),
+                "{marks}: {served}"
+            );
+            assert!(
+                named.iter().any(|layer| layer == "unlocks"),
+                "the batch's own omission stays: {served}"
+            );
+        }
     }
 
     /// **An item's compact account joins the batch's**: its layers are read

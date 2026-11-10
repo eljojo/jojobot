@@ -208,19 +208,30 @@ impl Form {
 
 /// What the omissions are written as under [`LEFT_OUT_KEY`], in one form.
 pub(crate) fn account(omitted: &[LeftOut], form: Form) -> Value {
+    let pairs: Vec<(&str, &str)> = omitted
+        .iter()
+        .map(|omitted| (omitted.layer, omitted.call))
+        .collect();
+    account_of(&pairs, form)
+}
+
+/// [`account`] for omissions given as `(layer, call)` pairs, so a layer named by
+/// an account already written, not by a layer of this answer, is written the same
+/// way.
+pub(crate) fn account_of(omitted: &[(&str, &str)], form: Form) -> Value {
     match form {
         Form::Full => Value::Array(
             omitted
                 .iter()
-                .map(|omitted| json!({ "layer": omitted.layer, "call": omitted.call }))
+                .map(|(layer, call)| json!({ "layer": layer, "call": call }))
                 .collect(),
         ),
         Form::Grouped => {
             let mut groups: Vec<(&str, Vec<&str>)> = Vec::new();
-            for omitted in omitted {
-                match groups.iter_mut().find(|(call, _)| *call == omitted.call) {
-                    Some((_, layers)) => layers.push(omitted.layer),
-                    None => groups.push((omitted.call, vec![omitted.layer])),
+            for (layer, call) in omitted {
+                match groups.iter_mut().find(|(held, _)| held == call) {
+                    Some((_, layers)) => layers.push(layer),
+                    None => groups.push((call, vec![layer])),
                 }
             }
             Value::Array(
@@ -232,13 +243,13 @@ pub(crate) fn account(omitted: &[LeftOut], form: Form) -> Value {
         }
         Form::Floor => {
             let mut calls: Vec<&str> = Vec::new();
-            for omitted in omitted {
-                if !calls.contains(&omitted.call) {
-                    calls.push(omitted.call);
+            for (_, call) in omitted {
+                if !calls.contains(call) {
+                    calls.push(call);
                 }
             }
             json!({
-                "layers": omitted.iter().map(|omitted| omitted.layer).collect::<Vec<_>>(),
+                "layers": omitted.iter().map(|(layer, _)| *layer).collect::<Vec<_>>(),
                 "calls": calls.join(", "),
             })
         }
