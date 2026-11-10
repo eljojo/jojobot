@@ -8,6 +8,11 @@ use jojobot_domain::request::events::{
 };
 use jojobot_domain::teaching::events::{RunId, TeachingEvent};
 
+/// **The skip counts are one set for the whole test process**, so a case that reads
+/// one as an exact change holds this while it boots, and so does every case that
+/// boots over a snapshot of another build's shape.
+static FINGERPRINT_SKIPS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 fn request() -> Request {
     Request {
         key: RequestKey {
@@ -133,6 +138,7 @@ fn projection(state: &State) -> Vec<u8> {
 /// valid row must skip its prefix and preserve both families and their tail.
 #[tokio::test]
 async fn snapshot_boot_agrees_with_full_replay_and_discards_each_bad_snapshot() {
+    let _counting = FINGERPRINT_SKIPS.lock().await;
     let log = InMemoryLog::default();
     prefix(&log, "homer").await;
     take_snapshot(&log, jiff::Timestamp::UNIX_EPOCH)
@@ -472,6 +478,7 @@ async fn each_defect_of_a_snapshot_has_its_own_named_reason() {
 /// the one /metrics serves, so a deploy that replays from zero is seen.
 #[tokio::test]
 async fn a_boot_that_skips_a_snapshot_counts_it_by_reason() {
+    let _counting = FINGERPRINT_SKIPS.lock().await;
     let count = |name: &str| {
         skip_counts()
             .into_iter()
@@ -489,9 +496,10 @@ async fn a_boot_that_skips_a_snapshot_counts_it_by_reason() {
     log.replace_snapshot(Some(stale));
     let before = count("fingerprint");
     boot(&log).await.unwrap();
-    assert!(
-        count("fingerprint") > before,
-        "a fingerprint skip is counted"
+    assert_eq!(
+        count("fingerprint"),
+        before + 1,
+        "a fingerprint skip is counted once"
     );
 }
 
