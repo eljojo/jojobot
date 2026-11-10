@@ -130,13 +130,20 @@ fn skipped(skip: Skip) {
     }
 }
 
+/// **Whether `snapshot` is of the shape this build reads.** The one place the
+/// rule is written: the boot refuses a snapshot that fails it, and the keeper
+/// counts no coverage from one.
+pub(crate) fn is_this_builds(snapshot: &ValidatedSnapshot) -> bool {
+    snapshot.projection_version == PROJECTION_FINGERPRINT
+}
+
 /// **The reason `snapshot` cannot be used against `validity`**, or none when it
 /// can. The checks run in a fixed order, so one defect has one name.
 fn refusal(snapshot: &ValidatedSnapshot, validity: &Validity) -> Option<Skip> {
     if snapshot.snapshot_format_version != FORMAT {
         return Some(Skip::Format);
     }
-    if snapshot.projection_version != PROJECTION_FINGERPRINT {
+    if !is_this_builds(snapshot) {
         return Some(Skip::Fingerprint);
     }
     if snapshot.log_identity != validity.log_identity {

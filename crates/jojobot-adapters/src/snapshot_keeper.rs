@@ -55,9 +55,7 @@ impl SnapshotKeeper {
         let covered = log
             .load_snapshot()
             .await?
-            .filter(|snapshot| {
-                snapshot.projection_version == crate::log_snapshot::PROJECTION_FINGERPRINT
-            })
+            .filter(crate::log_snapshot::is_this_builds)
             .map_or(Position(0), |snapshot| snapshot.covered_position);
         Ok(Self {
             log,
