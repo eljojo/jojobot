@@ -461,7 +461,6 @@ impl Jojobot {
     }
 
     /// **Add many entries to a list, or tick many, in one call.**
-    // TEMPORARY(9.3.3): off the composer, capture entries/ticks.
     pub(super) async fn capture_batch(
         &self,
         args: CaptureArgs,

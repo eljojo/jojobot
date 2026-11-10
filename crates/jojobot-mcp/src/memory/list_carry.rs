@@ -31,7 +31,12 @@ impl Jojobot {
         crate::teaching::BATCH_SPENDS
             .scope(
                 std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
-                self.carry_teaching_after_ticks(list, caller),
+                async {
+                    let carry = self.carry_line_after_ticks(list).await?;
+                    self.first_contact(PLAN_CARRY_DOMAIN, Some(caller))
+                        .await
+                        .then_some(carry)
+                },
             )
             .await
     }
@@ -52,20 +57,5 @@ impl Jojobot {
             .values()
             .any(|state| *state == entries::OPEN)
             .then_some(CARRY_LINE)
-    }
-
-    /// **The carry sentence a tick receipt delivers, or none.** The plan must read
-    /// open first and the session's one teaching is spent after that, never
-    /// before: a tick that leaves nothing open must not use it up.
-    // TEMPORARY(9.3.3): off the composer, capture.
-    pub(crate) async fn carry_teaching_after_ticks(
-        &self,
-        list: &EntityId,
-        caller: &Caller,
-    ) -> Option<&'static str> {
-        let carry = self.carry_line_after_ticks(list).await?;
-        self.first_contact(PLAN_CARRY_DOMAIN, Some(caller))
-            .await
-            .then_some(carry)
     }
 }
