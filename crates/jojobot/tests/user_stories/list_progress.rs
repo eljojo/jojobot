@@ -326,3 +326,151 @@ async fn an_archived_piece_that_never_finished_leaves_the_bundle_and_a_finished_
     assert_eq!(restored["reads"], "2 of 3 done", "{restored}");
     story.finish().await;
 }
+
+/// The bundle as a read of it serves it, narrowed to the keys when some are named.
+async fn the_bundle(s: &Session, keys: Option<Value>) -> Value {
+    let mut args = json!({"subject": "work:the-utilities"});
+    if let Some(keys) = keys {
+        args["keys"] = keys;
+    }
+    s.call("recall", args).await.json()["objects"][0].clone()
+}
+
+#[tokio::test]
+async fn the_read_of_a_bundle_says_how_far_along_each_list_under_it_is() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    a_shed_with_five_parts(&s).await;
+
+    let none = the_bundle(&s, None).await;
+    assert_eq!(
+        none["progress"],
+        json!([{"list": "list:checklist", "done": 0, "of": 5, "reads": "0 of 5 done"}]),
+        "{none}"
+    );
+    assert_eq!(
+        none["fields"]["status"], "now",
+        "the bundle's own status is untouched: {none}"
+    );
+    assert_eq!(
+        none["progress"][0]["reads"],
+        progress(&s, "list:checklist").await["reads"],
+        "the bundle's row and the list's own read are one count"
+    );
+    story.finish().await;
+}
+
+/// **A bundle read again after its linked work moved is served the new progress.**
+/// The bundle itself was not written, so what says the progress changed is the work
+/// its lists link; a read that held the bundle back as unchanged would show the
+/// session the old count.
+#[tokio::test]
+async fn a_bundle_read_again_after_its_linked_work_moved_serves_the_new_progress() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    a_shed_with_five_parts(&s).await;
+
+    let before = the_bundle(&s, None).await;
+    assert_eq!(before["progress"][0]["reads"], "0 of 5 done", "{before}");
+    for part in &PARTS[..2] {
+        finish(&s, part).await;
+    }
+    let after = the_bundle(&s, None).await;
+    assert_eq!(
+        after["progress"][0]["reads"], "2 of 5 done",
+        "the progress is worked out at each read: {after}"
+    );
+    story.finish().await;
+}
+
+/// **Only a one-subject read of a piece of work carries the rows.** A list keeps
+/// its own block, a project or anything else that is not work gets none even with a
+/// list of its own that links work, a browse and a walk get none, a read that names
+/// other keys works none out, a list that links no work has no row, and an archived
+/// list is no part of the bundle.
+#[tokio::test]
+async fn only_the_one_subject_read_of_a_piece_of_work_carries_the_rows() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    a_shed_with_five_parts(&s).await;
+    s.call(
+        "add_entity",
+        json!({"kind": "list", "handle": "errands", "name": "Errands",
+               "source": "user-named", "parent": "work:the-utilities"}),
+    )
+    .await;
+    plain_entry(&s, "list:errands", "buy nails").await;
+
+    let bundle = the_bundle(&s, None).await;
+    assert_eq!(
+        bundle["progress"].as_array().map(Vec::len),
+        Some(1),
+        "a list that links no work has no row: {bundle}"
+    );
+
+    let narrowed = the_bundle(&s, Some(json!(["status"]))).await;
+    assert!(narrowed.get("progress").is_none(), "{narrowed}");
+
+    // A project with a list of its own that links work: not a piece of work.
+    s.call(
+        "add_entity",
+        json!({"kind": "list", "handle": "packing", "name": "Packing",
+               "source": "user-named", "parent": "project:the-shed"}),
+    )
+    .await;
+    entry_about(&s, "list:packing", "the roof", PARTS[3]).await;
+    let project = s
+        .call("recall", json!({"subject": "project:the-shed"}))
+        .await
+        .json()["objects"][0]
+        .clone();
+    assert!(project.get("progress").is_none(), "{project}");
+
+    // A walk from the bundle is not the one-subject read.
+    let walked = s
+        .call(
+            "recall",
+            json!({"subject": "work:the-utilities", "follow": {"direction": "out"}}),
+        )
+        .await
+        .json();
+    assert!(
+        walked["objects"]
+            .as_array()
+            .expect("objects")
+            .iter()
+            .all(|object| object.get("progress").is_none() || object["id"] != "work:the-utilities"),
+        "{walked}"
+    );
+
+    // A browse of many carries none, and a list keeps its own single block.
+    let browse = s
+        .call("recall", json!({"parent": "project:the-shed"}))
+        .await
+        .json();
+    assert!(
+        browse["objects"]
+            .as_array()
+            .expect("objects")
+            .iter()
+            .all(|object| object["id"] == "list:packing"
+                || object["id"] == "list:checklist"
+                || object.get("progress").is_none()),
+        "{browse}"
+    );
+    assert_eq!(
+        the_list(&s, "list:checklist").await["progress"]["of"],
+        5,
+        "a list's own read is one block, not rows"
+    );
+
+    // An archived list is no part of the bundle.
+    s.call(
+        "archive_entity",
+        json!({"handle": "list:checklist", "reason": "cancelled"}),
+    )
+    .await;
+    let after = the_bundle(&s, None).await;
+    assert!(after.get("progress").is_none(), "{after}");
+    story.finish().await;
+}

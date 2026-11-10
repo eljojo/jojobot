@@ -184,6 +184,28 @@ fn events_after<'a>(events: &'a [MessageEvent], held: &str) -> &'a [MessageEvent
     &events[start..]
 }
 
+/// **What a list's progress depends on, the one place that says so (rule 498).**
+/// Returns the work the list's entries link, and the things a held version of the
+/// list, or of the work that bundles it, has to watch: that work, and the record
+/// that maps the status words the count reads when any work is linked.
+fn linked_work_sources(
+    held: &[jojobot_domain::memory::Fact],
+    fields: &std::collections::BTreeMap<String, String>,
+) -> (
+    std::collections::BTreeSet<EntityId>,
+    std::collections::BTreeSet<EntityId>,
+) {
+    let setting = jojobot_domain::memory::entries::Setting::of(fields);
+    let linked = jojobot_domain::memory::entries::counted_links(held, setting);
+    let mut watched = linked.clone();
+    if !linked.is_empty() {
+        watched.insert(EntityId(
+            jojobot_domain::memory::INSTANCE_RECORD.to_string(),
+        ));
+    }
+    (linked, watched)
+}
+
 /// **A read of a held thing's history failed**: said in the log, and the thing's
 /// held version is not moved, so the next answer tries again.
 fn unread(what: &Held, error: &dyn std::fmt::Display) {
@@ -377,7 +399,8 @@ impl Jojobot {
     ///
     /// A field that names another thing is served under that thing's handle; a
     /// list reads the state of the work its entries link and where each entry was
-    /// carried; the held block reads the records that point at the thing. A source
+    /// carried, and a piece of work reads how far along its lists are from that
+    /// same work; the held block reads the records that point at the thing. A source
     /// that cannot be read adds nothing, as an unreadable version is no change.
     /// A plan reads the day and a walk reads every claim that names the thing,
     /// which no version follows, so [`collapse`] never withholds them.
@@ -416,7 +439,7 @@ impl Jojobot {
             && let Ok(held) = self.memory.recall(&id).await
         {
             let setting = jojobot_domain::memory::entries::Setting::of(&fields);
-            let linked = jojobot_domain::memory::entries::counted_links(&held, setting);
+            let (linked, watched) = linked_work_sources(&held, &fields);
             // **Readiness reads what the linked work depends on, and progress
             // reads the status words the instance maps.**
             for work in &linked {
@@ -426,16 +449,29 @@ impl Jojobot {
                     }
                 }
             }
-            if !linked.is_empty() {
-                sources.insert(EntityId(
-                    jojobot_domain::memory::INSTANCE_RECORD.to_string(),
-                ));
-            }
-            sources.extend(linked);
+            sources.extend(watched);
             for entry in &jojobot_domain::memory::entries::view(&held, setting).entries {
                 if let Ok(built) = self.memory.built_on(&entry.fact.address()).await {
                     sources.extend(built.into_iter().map(|fact| fact.home));
                 }
+            }
+        }
+        // **A piece of work that bundles lists reads how far along each is** from the
+        // work those lists link, which no write to the bundle moves. The lists
+        // under it are already sources through `below`; this adds the work their
+        // entries link, and the instance record that maps the status words.
+        if id.kind() == Some(jojobot_domain::memory::EntityKind::WORK) {
+            for list in below
+                .iter()
+                .filter(|below| below.kind() == Some(jojobot_domain::memory::EntityKind::LIST))
+            {
+                let (Ok(held), Ok(list_fields)) = (
+                    self.memory.recall(list).await,
+                    self.memory.fields(list).await,
+                ) else {
+                    continue;
+                };
+                sources.extend(linked_work_sources(&held, &list_fields).1);
             }
         }
         sources.remove(&id);

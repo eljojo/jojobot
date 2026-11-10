@@ -195,7 +195,8 @@ pub struct RecallArgs {
     /// ready one. **It also answers `ticked`, how far along it is by its own
     /// ticks**: `done` out of `of` on a checklist, `done` and `open` on a queue and
     /// `turns` on a rotation, with nothing for a list with no entry that is not dropped. **A list whose
-    /// entries link work also answers `progress`**: `done` out of `of` pieces of linked work, with `reads` saying it; work archived before it finished counts in neither. **A list that sets `covers` (a day, or an ISO week) is a plan**
+    /// entries link work also answers `progress`**: `done` out of `of` pieces of linked work, with `reads` saying it; work archived before it finished counts in neither. The read of one piece of
+    /// work holding such lists answers it too, one block for each naming its `list`. **A list that sets `covers` (a day, or an ISO week) is a plan**
     /// and also answers `plan`: its `from` and `to` days, what falls `due` in
     /// them, what is `overdue` (fell due before `from` and is still owed, with
     /// `overdue_by_days` at `from`) and which of that work is `ready`, worked out
@@ -3706,6 +3707,34 @@ impl Jojobot {
                 numbering_views.insert(object.entity.id.clone(), numbering.next_number);
             }
         }
+        // **A piece of work that bundles lists says how far along each is**, on the
+        // read of that one piece of work. A browse of many carries none, so its cost
+        // stays what it was; a walk from the work is not the one-subject read; and
+        // only work has rows (a list keeps its own `progress`, and a project or
+        // anything else gets none). **Only a read that wants the block works it out**,
+        // so a read that names other keys is not failed by it (rule 130), and a read
+        // of the linked work that fails is the verb's store failure, never rows that
+        // count only the work it could read.
+        let mut bundle_progress: std::collections::HashMap<EntityId, Vec<serde_json::Value>> =
+            std::collections::HashMap::new();
+        if wants_key(narrowing, "progress")
+            && query.follow.is_none()
+            && let Some(children) = subject_children.as_ref().filter(|c| c.live > 0)
+        {
+            for object in &found {
+                if object.entity.id == children.parent
+                    && object.entity.id.kind() == Some(EntityKind::WORK)
+                {
+                    let rows = match self.progress_rows(&object.entity.id).await {
+                        Ok(rows) => rows,
+                        Err(e) => return memory_declined("recall", e),
+                    };
+                    if !rows.is_empty() {
+                        bundle_progress.insert(object.entity.id.clone(), rows);
+                    }
+                }
+            }
+        }
         // **A list says its open entries, in order.** Each is a claim on the
         // list; the order is the key the server minted when it was placed, and
         // the state is computed, never stored on the entry. Read for every list
@@ -4089,6 +4118,9 @@ impl Jojobot {
                     }
                     if let Some(next) = numbering_views.get(&o.entity.id) {
                         rendered["next_number"] = (*next).into();
+                    }
+                    if let Some(rows) = bundle_progress.get(&o.entity.id) {
+                        rendered["progress"] = rows.clone().into();
                     }
                     if let Some(read) = list_entries.get(&o.entity.id) {
                         let ticks_asked = args.ticks == Some(true);

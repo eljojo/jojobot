@@ -122,9 +122,47 @@ impl Progress {
             },
         })
     }
+
+    /// **The row a bundle's read carries for one of its lists**: the list's own
+    /// block, and the list it is the block of.
+    pub(crate) fn as_row(&self, list: &EntityId) -> serde_json::Value {
+        let mut row = self.as_read();
+        row["list"] = list.to_string().into();
+        row
+    }
 }
 
 impl Jojobot {
+    /// **One row for each list standing directly under `bundle` whose entries link
+    /// work**, by handle. An archived list is no part of the bundle, and a list
+    /// that links no work has no row. Each row counts with the two calls the read
+    /// of the list makes, [`entries::counted_links`] and [`Progress::of`], so the
+    /// two cannot part. **A read that fails is an error** (rule 130): a bundle that
+    /// dropped the list it could not read would read further along than it is.
+    pub(crate) async fn progress_rows(
+        &self,
+        bundle: &EntityId,
+    ) -> Result<Vec<serde_json::Value>, MemoryError> {
+        let lists = self.memory.list_entities(Some(EntityKind::LIST)).await?;
+        let mut under: Vec<&Entity> = jojobot_domain::memory::children_in(&lists, bundle)
+            .into_iter()
+            .filter(|list| list.archived.is_none())
+            .collect();
+        under.sort_by(|a, b| a.id.cmp(&b.id));
+        let mut rows = Vec::new();
+        for list in under {
+            let held = self.memory.recall(&list.id).await?;
+            let fields = self.memory.fields(&list.id).await?;
+            let setting = jojobot_domain::memory::entries::Setting::of(&fields);
+            let counted = jojobot_domain::memory::entries::counted_links(&held, setting);
+            let linked = self.linked_state(&counted).await?;
+            if let Some(progress) = Progress::of(&counted, &linked) {
+                rows.push(progress.as_row(&list.id));
+            }
+        }
+        Ok(rows)
+    }
+
     /// **The state of each piece of work among `handles`**, by handle. A handle
     /// that is not a piece of work or a project (a person, a place) has no state
     /// and is left out. **A read that fails is an error**, never a handle left
