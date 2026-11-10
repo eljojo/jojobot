@@ -8,7 +8,7 @@
 use jojobot_domain::app::operations::OperationSpec;
 use serde_json::json;
 
-use super::dsl::Story;
+use super::dsl::{Session, Story};
 
 const APP: &str = "springfield-watch";
 
@@ -58,6 +58,97 @@ async fn a_controller_pages_only_the_boxes_its_grant_names() {
     assert!(
         why.contains("bot:marge") && why.contains("bot:bart"),
         "{why}"
+    );
+    story.finish().await;
+}
+
+/// **A controller whose grant lists recipients, on an instance that has an
+/// operator and a colleague**: the operator is Homer, the colleague is Marge.
+async fn a_controller_granted_pages_to(recipients: &[&str]) -> (Story, String, Session) {
+    let post = serde_json::from_value(json!({
+        "operation": "post_message", "recipients": recipients
+    }))
+    .expect("a configured recipient grant");
+    let (story, token) = Story::begin_serving_an_app("bot:marge", APP, vec![post]).await;
+    let s = story.session().await;
+    s.add("person:homer", "Homer").await;
+    s.call(
+        "capture",
+        json!({"subject": "topic:instance", "content": "who the operator is",
+               "provenance": "testimony", "sets": {"operator": "person:homer"}}),
+    )
+    .await;
+    // One boot of the bot holds one run: a second would be offered a resume.
+    (story, token, s)
+}
+
+/// **A grant that lists the operator pages the operator, and no other box.** The
+/// page is in the operator's box; the same call to a colleague's box is refused
+/// with the handles of both, and nothing reaches it.
+#[tokio::test]
+async fn a_grant_that_lists_the_operator_pages_the_operator_and_no_other_box() {
+    let (story, token, s) = a_controller_granted_pages_to(&["person:homer"]).await;
+    let (status, page) = story
+        .app_calls(
+            &token,
+            "post_message",
+            json!({"to": "person:homer", "body": "The gate is open.", "subject": "gate"}),
+        )
+        .await;
+    assert_eq!(status, 200, "{page}");
+    assert_eq!(
+        story.operators_mail("person:homer").await,
+        [("gate".to_string(), "The gate is open.".to_string())],
+        "the page is in the operator's box"
+    );
+
+    let (status, refused) = story
+        .app_calls(
+            &token,
+            "post_message",
+            json!({"to": "bot:marge", "body": "The gate is open.", "subject": "gate"}),
+        )
+        .await;
+    assert_eq!(status, 403, "a box the grant does not list: {refused}");
+    let why = refused["error"].as_str().expect("a grant refusal");
+    assert!(
+        why.contains("person:homer") && why.contains("bot:marge"),
+        "{why}"
+    );
+    let inbox = s
+        .call("read_mailbox", json!({"new_only": false}))
+        .await
+        .json();
+    assert_eq!(
+        inbox["messages"].as_array().map(Vec::len),
+        Some(0),
+        "nothing reached the refused box: {inbox}"
+    );
+    story.finish().await;
+}
+
+/// **A grant that lists a colleague refuses the operator's page**: a list names
+/// every box the app may reach, so the operator is no default beside it. The
+/// operator's box holds nothing afterwards.
+#[tokio::test]
+async fn a_grant_that_lists_only_a_colleague_refuses_the_operator_page() {
+    let (story, token, _s) = a_controller_granted_pages_to(&["bot:marge"]).await;
+    let (status, refused) = story
+        .app_calls(
+            &token,
+            "post_message",
+            json!({"to": "person:homer", "body": "The gate is open.", "subject": "gate"}),
+        )
+        .await;
+    assert_eq!(status, 403, "the operator is not on the list: {refused}");
+    let why = refused["error"].as_str().expect("a grant refusal");
+    assert!(
+        why.contains("bot:marge") && why.contains("person:homer"),
+        "{why}"
+    );
+    assert!(
+        story.operators_mail("person:homer").await.is_empty(),
+        "the refused page did not reach the operator"
     );
     story.finish().await;
 }
