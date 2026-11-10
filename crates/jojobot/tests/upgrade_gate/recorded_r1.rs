@@ -102,6 +102,22 @@ pub(super) fn recorded_r1_counts_match(seen: &[String], expected: &[String]) -> 
     })
 }
 
+/// Whether the store holds a snapshot of the event log. A store with no event log
+/// table holds none; any other failure of the count is an error, because reading it
+/// as "none held" would let a boot that lost its snapshot pass the gate.
+pub(super) async fn snapshots_held(pool: &sqlx::MySqlPool) -> Result<bool, sqlx::Error> {
+    match sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM event_log WHERE slot LIKE 'snapshot%'")
+        .fetch_one(pool)
+        .await
+    {
+        Ok(held) => Ok(held > 0),
+        Err(sqlx::Error::Database(refusal)) if refusal.message().contains("table not found") => {
+            Ok(false)
+        }
+        Err(other) => Err(other),
+    }
+}
+
 /// Only a not-yet-marked store can warn about its held R1 values. A superseded,
 /// inactive or cleared value is historical, even though its raw row survives.
 /// **The third answer is whether the store holds a snapshot of the event log**:
@@ -112,11 +128,9 @@ pub(super) async fn recorded_r1_before_boot(
     store_port: u16,
 ) -> (bool, Vec<String>, bool) {
     let mut store = open_the_store(state_dir, store_port).await;
-    let snapshot_held: bool =
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM event_log WHERE slot LIKE 'snapshot%'")
-            .fetch_one(store.pool())
-            .await
-            .is_ok_and(|held| held > 0);
+    let snapshot_held = snapshots_held(store.pool())
+        .await
+        .expect("the snapshot count reads");
     let passes: Vec<String> = sqlx::query_scalar("SELECT name FROM store_pass")
         .fetch_all(store.pool())
         .await
@@ -148,4 +162,62 @@ pub(super) async fn recorded_r1_before_boot(
     }
     store.stop().await;
     (marked, expected, snapshot_held)
+}
+
+#[tokio::test]
+async fn a_store_with_no_event_log_table_holds_no_snapshot() {
+    let scratch = Scratch::new("gate-snapshot-held-no-table");
+    let mut server = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("a store comes up");
+    let held = snapshots_held(server.pool()).await;
+    server.stop().await;
+    assert!(
+        matches!(held, Ok(false)),
+        "no table reads as none held: {held:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_snapshot_row_reads_as_held_and_an_empty_log_as_none() {
+    let scratch = Scratch::new("gate-snapshot-held-rows");
+    let mut server = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("a store comes up");
+    let pool = jojobot_adapters::testing::migrated_database(&server, "alpha")
+        .await
+        .expect("a migrated database");
+    let empty = snapshots_held(&pool).await;
+    sqlx::query(
+        "INSERT INTO event_log (slot, last_position, payload) VALUES ('snapshot:alpha', 1, X'00')",
+    )
+    .execute(&pool)
+    .await
+    .expect("a snapshot row lands");
+    let held = snapshots_held(&pool).await;
+    drop(pool);
+    server.stop().await;
+    assert!(
+        matches!(empty, Ok(false)),
+        "an empty log holds none: {empty:?}"
+    );
+    assert!(matches!(held, Ok(true)), "a snapshot row is held: {held:?}");
+}
+
+#[tokio::test]
+async fn a_count_that_fails_for_another_reason_is_an_error_not_none_held() {
+    let scratch = Scratch::new("gate-snapshot-held-closed");
+    let mut server = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("a store comes up");
+    let pool = jojobot_adapters::testing::migrated_database(&server, "alpha")
+        .await
+        .expect("a migrated database");
+    pool.close().await;
+    let held = snapshots_held(&pool).await;
+    server.stop().await;
+    assert!(
+        held.is_err(),
+        "a closed pool is not a store with no snapshot: {held:?}"
+    );
 }
