@@ -66,7 +66,14 @@ fn rule_words(kind: sqlx::error::ErrorKind) -> Option<&'static str> {
 /// The database jojobot serves out of its data directory. Named rather than
 /// derived from the directory, so a test's temporary path and the deployed
 /// `/var/lib/jojobot/db` address the same database by the same name.
-const DATABASE: &str = "jojobot";
+pub(crate) const DATABASE: &str = "jojobot";
+
+/// **The address of the server on `port` of the loopback address**, as the process
+/// that serves names it, with the `root` account [`Dolt::start`] explains. The one
+/// place it is written: the pre-build connects to a serving process's store by it.
+pub(crate) fn server_url(port: u16) -> String {
+    format!("mysql://root@127.0.0.1:{port}")
+}
 
 /// Where the server keeps its own configuration, inside the data directory.
 ///
@@ -298,7 +305,7 @@ impl Dolt {
         // exposed by it — the listener is loopback and the account has no
         // password to leak — and inventing a second account would be
         // ceremony over a socket only this process reaches.
-        let server = format!("mysql://root@127.0.0.1:{port}");
+        let server = server_url(port);
         let pool = Self::once_answering(
             &format!("{server}/{DATABASE}"),
             &mut child,

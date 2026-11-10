@@ -17,9 +17,6 @@ use sqlx::mysql::MySqlPoolOptions;
 use crate::dolt_log::DoltLog;
 use crate::log_snapshot::take_snapshot;
 
-/// The store's database, as the serving process names it.
-const DATABASE: &str = "jojobot";
-
 /// **The log, read through the store's pool and never appended to.** The one write
 /// it makes is the snapshot, inside a transaction that rechecks the log's validity
 /// as every publication does.
@@ -85,7 +82,11 @@ mod tests;
 pub async fn run(port: u16) -> Result<Position, LogError> {
     let pool = MySqlPoolOptions::new()
         .max_connections(2)
-        .connect(&format!("mysql://root@127.0.0.1:{port}/{DATABASE}"))
+        .connect(&format!(
+            "{}/{}",
+            crate::dolt::server_url(port),
+            crate::dolt::DATABASE
+        ))
         .await
         .map_err(|e| LogError::Store(format!("the store on port {port} did not answer: {e}")))?;
     build(pool, jiff::Timestamp::now()).await
