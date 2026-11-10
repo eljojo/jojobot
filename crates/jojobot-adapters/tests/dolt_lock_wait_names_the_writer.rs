@@ -11,7 +11,7 @@
 use std::sync::Arc;
 
 use jiff::Timestamp;
-use jojobot_adapters::claims_import::import_claims_once;
+use jojobot_adapters::claims_import::{ClaimsImportError, import_claims_once};
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::{Dolt, migrate};
 use jojobot_adapters::fold::Folded;
@@ -45,13 +45,14 @@ async fn add(folded: &Folded, handle: &str) -> Result<(), MemoryError> {
     .map(|_| ())
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_journaled_write_beside_a_held_log_says_another_writer_holds_it() {
-    let scratch = Scratch::new("lock-wait-names-the-writer");
-    let mut server = Dolt::start(&scratch.0, free_port())
+/// A store whose log is held: the first writer imported and is kept, so it holds the
+/// log's lock. The scratch directory and the server go back so they outlive the case.
+async fn a_held_log(name: &str) -> (Scratch, Dolt, sqlx::MySqlPool, Writer) {
+    let scratch = Scratch::new(name);
+    let server = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let pool = migrated_database(&server, "lockwaitnames")
+    let pool = migrated_database(&server, &name.replace('-', ""))
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
@@ -70,6 +71,13 @@ async fn a_journaled_write_beside_a_held_log_says_another_writer_holds_it() {
     .await
     .expect("the import");
     first.drain().await;
+
+    (scratch, server, pool, first)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_journaled_write_beside_a_held_log_says_another_writer_holds_it() {
+    let (_scratch, mut server, pool, first) = a_held_log("lock-wait-names-the-writer").await;
 
     let refused = add(&stack(&pool), "person:homer").await;
     match &refused {
@@ -93,5 +101,33 @@ async fn a_journaled_write_beside_a_held_log_says_another_writer_holds_it() {
         .await
         .expect("the write lands once no other writer holds the log");
 
+    server.stop().await;
+}
+
+/// **The import a second server starts with says the same.** It opens its first
+/// transaction inside the writer's job, where the error is the pool's own.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_claims_import_beside_a_held_log_says_another_writer_holds_it() {
+    let (_scratch, mut server, pool, first) = a_held_log("lock-wait-names-the-import").await;
+
+    let second = Writer::default();
+    let refused = import_claims_once(
+        &second,
+        &pool,
+        &Provisions::default(),
+        Timestamp::from_second(1_800_000_001).expect("a moment"),
+    )
+    .await;
+    match &refused {
+        Err(ClaimsImportError::Store(said)) => {
+            assert!(
+                said.contains("another writer holds the log"),
+                "the sentence names the other writer: {said}"
+            );
+        }
+        other => panic!("an import beside a held log is refused as a store error: {other:?}"),
+    }
+
+    drop(first);
     server.stop().await;
 }

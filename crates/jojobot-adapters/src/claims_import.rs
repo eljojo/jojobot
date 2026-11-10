@@ -148,7 +148,7 @@ async fn import_in_job(
         .writer()
         .begin()
         .await
-        .map_err(|e| ClaimsImportError::Store(e.to_string()))?;
+        .map_err(|e| ClaimsImportError::Store(sql::why(&e)))?;
     let settled = log.settle_on(&mut tx).await;
     let _ = tx.rollback().await;
     settled.map_err(log_failed)?;

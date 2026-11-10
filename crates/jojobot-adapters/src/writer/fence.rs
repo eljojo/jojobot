@@ -59,7 +59,8 @@ impl Session {
                         .bind(WAIT_SECONDS)
                         .fetch_one(&mut *connection)
                         .await?;
-                    noted.store(held != Some(1), Ordering::SeqCst);
+                    // 0 is a wait that ended; NULL is an error of the call, not a held lock.
+                    noted.store(held == Some(0), Ordering::SeqCst);
                     if held != Some(1) {
                         return Err(sqlx::Error::PoolTimedOut);
                     }
