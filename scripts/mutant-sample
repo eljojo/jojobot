@@ -2,7 +2,7 @@
 """**Run the mutation sample, and record which mutants a lane kills.**
 
     scripts/mutant-sample --check
-    scripts/mutant-sample [--from N] [--count M] -- <command...>
+    scripts/mutant-sample [--from N] [--count M] [--baseline-run ID] -- <command...>
 
 `--check` validates the manifest and mutates nothing; every run does it first and
 refuses on a problem. The workflow runs it before any lane.
@@ -16,6 +16,15 @@ The lane runs once unmutated before the first mutant. A lane that fails then
 stops the sample with exit 3, before any mutation and with nothing recorded:
 its kills would not be kills.
 
+**`--baseline-run ID` stands a pull-request run's job in for that baseline.** The
+job is the lane run unmutated on the same commit, and it costs the sample about an
+hour it has no need to spend again: a runner kills any job at 2h15m. ID is the
+run's forge id. The sample refuses, with exit 2 and before any mutation, unless
+the run is on this checkout's commit, is of `pull-request.yml`, and its job for
+the lane (`check` for `make check`, `rooms` for `make rooms`) succeeded. The forge
+is read through scripts/wait-run, so WAIT_RUN_API or a runner's own context names
+it. Any other lane has no such job and is refused.
+
 The verdict of each mutant is the word `scripts/sabotage` prints: RED (killed),
 GREEN (survived), or a refusal or a break that does not build (neither colour,
 counted apart). One line per mutant goes to stdout and to
@@ -26,6 +35,9 @@ finding for the ledger, not a failure of this tool.
 This runs a lane once per mutant, so it never runs on a dev host: the
 `mutants` workflow runs it.
 """
+import importlib.machinery
+import importlib.util
+import json
 import os
 import re
 import subprocess
@@ -37,7 +49,9 @@ MANIFEST = os.environ.get(
     "MUTANT_MANIFEST", "crates/jojobot-exercise/ledger/mutants.tsv"
 )
 OUT = "target/mutants/killed.tsv"
-USAGE = "usage: scripts/mutant-sample [--from N] [--count M] -- <command...>"
+USAGE = "usage: scripts/mutant-sample [--from N] [--count M] [--baseline-run ID] -- <command...>"
+# The pull-request job that runs a lane unmutated, by the lane's command.
+BASELINE_JOBS = {("make", "check"): "check", ("make", "rooms"): "rooms"}
 
 
 def rows(path):
@@ -85,6 +99,51 @@ def problems(sample):
     return found
 
 
+def wait_run():
+    """scripts/wait-run, loaded as a module: the one reader of the forge."""
+    sys.dont_write_bytecode = True
+    path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "wait-run")
+    loader = importlib.machinery.SourceFileLoader("wait_run", path)
+    spec = importlib.util.spec_from_loader("wait_run", loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
+
+
+def baseline_refusal(run_id, command):
+    """**Why this run does not stand in for the baseline, or None when it does.**"""
+    job_name = BASELINE_JOBS.get(tuple(command))
+    if job_name is None:
+        return f"no pull-request job runs `{' '.join(command)}`"
+    wr = wait_run()
+    if not wr.API:
+        return "WAIT_RUN_API is not set and this is not a runner"
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True
+    ).stdout.strip()
+    try:
+        found = None
+        for page in range(1, wr.PAGES + 1):
+            runs = wr.runs_of(head_sha=head, page=page)
+            found = next((run for run in runs if run["id"] == run_id), None)
+            if found or len(runs) < wr.PAGE:
+                break
+        if found is None:
+            return f"run {run_id} is not among the runs of {head[:9]}"
+        if found["commit_sha"] != head:
+            return f"run {run_id} is on {found['commit_sha'][:9]}, not on {head[:9]}"
+        if found["workflow_id"] != "pull-request.yml":
+            return f"run {run_id} is a run of {found['workflow_id']}, not of pull-request.yml"
+        jobs = json.loads(wr.fetch(f"/actions/runs/{run_id}/jobs"))
+    except (OSError, ValueError, KeyError, wr.Gone) as error:
+        return f"the forge could not be read: {error}"
+    job = next((job for job in jobs if job.get("name") == job_name), None)
+    if job is None or job.get("status") != "success":
+        status = job.get("status") if job else "absent"
+        return f"job {job_name} of run {run_id} is {status}, not success"
+    return None
+
+
 def main(argv):
     if argv == ["--check"]:
         found = problems(rows(MANIFEST))
@@ -101,13 +160,15 @@ def main(argv):
     if not command:
         print(USAGE, file=sys.stderr)
         return 2
-    start, count = 0, None
+    start, count, baseline_run = 0, None, None
     it = iter(options)
     for option in it:
         if option == "--from":
             start = int(next(it))
         elif option == "--count":
             count = int(next(it))
+        elif option == "--baseline-run":
+            baseline_run = int(next(it))
         else:
             print(USAGE, file=sys.stderr)
             return 2
@@ -118,8 +179,15 @@ def main(argv):
         return 2
     # A lane that is red unmutated reads every mutant as killed, so the sample
     # runs it once untouched and refuses before any mutation when it fails.
-    baseline = subprocess.run(command, capture_output=True, text=True)
-    if baseline.returncode != 0:
+    if baseline_run is not None:
+        why = baseline_refusal(baseline_run, command)
+        if why:
+            print(f"baseline-run: refused: {why}", file=sys.stderr)
+            return 2
+        baseline = None
+    else:
+        baseline = subprocess.run(command, capture_output=True, text=True)
+    if baseline is not None and baseline.returncode != 0:
         print(
             f"baseline: the lane is red unmutated (exit {baseline.returncode}): "
             + " ".join(command)

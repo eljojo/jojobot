@@ -31,6 +31,10 @@ on:
         description: 'mutants only: how many mutants (digits)'
         required: false
         default: '8'
+      baseline_run:
+        description: 'mutants only: the forge id of a pull-request run on this ref''s commit whose job for the lane passed; it stands in for the sample''s own unmutated run (digits, empty runs the lane once first)'
+        required: false
+        default: ''
 
 concurrency:
   group: ledger-runs-${{ forgejo.ref }}-${{ forgejo.event.inputs.job }}-${{ forgejo.event.inputs.lane }}-${{ forgejo.event.inputs.from }}-${{ forgejo.event.inputs.branch }}
@@ -39,6 +43,9 @@ concurrency:
 jobs:
   ledger-runs:
     runs-on: nix
+    # **The runner kills any job at 2h15m (135 minutes), whatever this says.** A
+    # make check slice costs about 14 minutes for the grown store, 65 for the
+    # unmutated lane (baseline_run skips them) and 33 for each mutant.
     timeout-minutes: 360
     env:
       JOB: ${{ forgejo.event.inputs.job }}
@@ -46,6 +53,7 @@ jobs:
       FROM: ${{ forgejo.event.inputs.from }}
       COUNT: ${{ forgejo.event.inputs.count }}
       BRANCH: ${{ forgejo.event.inputs.branch }}
+      BASELINE_RUN: ${{ forgejo.event.inputs.baseline_run }}
     steps:
       - name: Runner cleanup
         run: |
@@ -59,6 +67,7 @@ jobs:
           case "$LANE" in "make rooms"|"make check") ;; *) echo "lane must be make rooms or make check" >&2; exit 1;; esac
           case "$FROM$COUNT" in ''|*[!0-9]*) echo "from and count are digits" >&2; exit 1;; esac
           case "$BRANCH" in yes|no) ;; *) echo "branch is yes or no" >&2; exit 1;; esac
+          case "$BASELINE_RUN" in *[!0-9]*) echo "baseline_run is digits" >&2; exit 1;; esac
           echo "level: ledger-runs, $JOB; left to full boundary: everything else"
       - name: Manifest
         if: ${{ forgejo.event.inputs.job == 'mutants' }}
@@ -101,7 +110,7 @@ jobs:
         env:
           UPGRADE_FIXTURE_DIR: target/upgrade-fixture
           BOOT_STORE_DIR: target/boot-store
-        run: nix develop -c make mutants LANE="$LANE" FROM="$FROM" COUNT="$COUNT"
+        run: nix develop -c make mutants LANE="$LANE" FROM="$FROM" COUNT="$COUNT" BASELINE_RUN="$BASELINE_RUN"
       - if: ${{ !cancelled() }}
         continue-on-error: true
         uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5

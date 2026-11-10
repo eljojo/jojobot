@@ -340,12 +340,12 @@ coverage: ## Coverage of the contract and rooms lanes: target/coverage/{contract
 		test ! -s target/coverage/lane-failures'
 
 # **The mutation sample against one lane**, from `crates/jojobot-exercise/ledger/mutants.tsv`:
-# `make mutants LANE="make rooms" FROM=0 COUNT=8`. The killed set goes to
+# `make mutants LANE="make rooms" FROM=0 COUNT=8 [BASELINE_RUN=id]`. The killed set goes to
 # target/mutants/killed.tsv. It runs the lane once per mutant, so the
 # `ledger-runs` workflow runs it, never a dev host.
 LANE ?= make rooms
 mutants: ## The mutation sample against a lane: make mutants LANE="make rooms" [FROM=n COUNT=m]
-	scripts/mutant-sample $(if $(FROM),--from $(FROM),) $(if $(COUNT),--count $(COUNT),) -- $(LANE)
+	scripts/mutant-sample $(if $(FROM),--from $(FROM),) $(if $(COUNT),--count $(COUNT),) $(if $(BASELINE_RUN),--baseline-run $(BASELINE_RUN),) -- $(LANE)
 
 nix-build: ## The package build, as release QA runs it
 	nix build

@@ -134,19 +134,41 @@ fn ledger_case_row_carries_the_assertions_of_the_helpers_it_calls() {
     assert!(oracle.contains("assert_eq!(held, all_but"), "{oracle}");
 }
 
-/// A kill means something only against a lane that passes unmutated. The sample
-/// runs the lane once untouched and stops, mutating nothing and recording nothing,
-/// when that run is red.
-///
-/// **The case runs the tool on a manifest and a file of its own**, in a directory
-/// of its own: the real manifest's sites are the ones a mutant changes, and a
-/// case that read them would fail under every mutant and record a kill no
-/// behaviour made.
-#[test]
-fn the_mutation_sample_stops_when_its_lane_is_red_before_any_mutation() {
-    let root = jojobot_exercise::expectations::room_document("../..");
-    let dir = std::env::temp_dir().join(format!("mutant-sample-baseline-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+/// **A directory of its own for one run of the mutation sample**: a git checkout
+/// with one commit, a site file and a thirty-row manifest over it, a stand-in
+/// `scripts/sabotage` that writes the file `sabotaged` and says the mutant was
+/// killed, and a stand-in `make` that writes the file `lane_ran` and fails. The
+/// real manifest's sites are the ones a mutant changes, and a case that read them
+/// would fail under every mutant and record a kill no behaviour made.
+struct SampleDir {
+    dir: std::path::PathBuf,
+    manifest: std::path::PathBuf,
+    sha: String,
+}
+
+fn git_in(dir: &std::path::Path, args: &[&str]) -> String {
+    let out = std::process::Command::new("git")
+        .current_dir(dir)
+        .args(["-c", "user.name=t", "-c", "user.email=t@example.invalid"])
+        .args(["-c", "commit.gpgsign=false"])
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "git {args:?}: {out:?}");
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
+fn an_executable(path: &std::path::Path, text: &str) {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::write(path, text).unwrap();
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+fn a_sample_dir(label: &str) -> SampleDir {
+    let dir = std::env::temp_dir().join(format!("mutant-sample-{label}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("scripts")).unwrap();
+    std::fs::create_dir_all(dir.join("bin")).unwrap();
     let site = dir.join("site.txt");
     let tokens: Vec<String> = (0..30).map(|n| format!("SITE{n:02}")).collect();
     std::fs::write(&site, tokens.join("\n")).unwrap();
@@ -156,18 +178,127 @@ fn the_mutation_sample_stops_when_its_lane_is_red_before_any_mutation() {
     }
     let manifest_path = dir.join("mutants.tsv");
     std::fs::write(&manifest_path, manifest).unwrap();
-    let run = std::process::Command::new("python3")
-        .current_dir(&dir)
-        .env("MUTANT_MANIFEST", &manifest_path)
+    an_executable(
+        &dir.join("scripts/sabotage"),
+        "#!/bin/sh\ntouch sabotaged\necho 'SABOTAGE VERDICT RED: stand-in'\n",
+    );
+    an_executable(&dir.join("bin/make"), "#!/bin/sh\ntouch lane_ran\nexit 1\n");
+    git_in(&dir, &["init", "-q"]);
+    git_in(&dir, &["commit", "-q", "--allow-empty", "-m", "one"]);
+    let sha = git_in(&dir, &["rev-parse", "HEAD"]);
+    SampleDir {
+        dir,
+        manifest: manifest_path,
+        sha,
+    }
+}
+
+/// **A stand-in for the forge**: it answers the two reads the sample makes, the
+/// list of runs and the jobs of one run, from the bodies given, and stops when the
+/// returned flag is set.
+fn a_forge(
+    runs: serde_json::Value,
+    jobs: serde_json::Value,
+) -> (
+    String,
+    std::sync::Arc<std::sync::atomic::AtomicBool>,
+    std::thread::JoinHandle<()>,
+) {
+    use std::io::{Read, Write};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let api = format!("http://{}", listener.local_addr().unwrap());
+    let stop = std::sync::Arc::new(AtomicBool::new(false));
+    let stopped = stop.clone();
+    let handle = std::thread::spawn(move || {
+        while !stopped.load(Ordering::SeqCst) {
+            let Ok((mut stream, _)) = listener.accept() else {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+                continue;
+            };
+            stream.set_nonblocking(false).unwrap();
+            let mut seen = Vec::new();
+            let mut chunk = [0u8; 1024];
+            while !seen.windows(4).any(|w| w == b"\r\n\r\n") {
+                match stream.read(&mut chunk) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => seen.extend_from_slice(&chunk[..n]),
+                }
+            }
+            let text = String::from_utf8_lossy(&seen).to_string();
+            let path = text
+                .lines()
+                .next()
+                .and_then(|line| line.split(' ').nth(1))
+                .unwrap_or("")
+                .to_string();
+            let body = if path.contains("/jobs") {
+                jobs.to_string()
+            } else if path.starts_with("/actions/runs") {
+                runs.to_string()
+            } else {
+                String::new()
+            };
+            let status = if body.is_empty() {
+                "404 Not Found"
+            } else {
+                "200 OK"
+            };
+            let _ = write!(
+                stream,
+                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+        }
+    });
+    (api, stop, handle)
+}
+
+/// One run of the sample in its directory, against the forge stand-in.
+fn sampled(dir: &SampleDir, api: &str, args: &[&str]) -> std::process::Output {
+    let root = jojobot_exercise::expectations::room_document("../..");
+    let path = format!(
+        "{}:{}",
+        dir.dir.join("bin").display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    std::process::Command::new("python3")
+        .current_dir(&dir.dir)
+        .env("MUTANT_MANIFEST", &dir.manifest)
+        .env("WAIT_RUN_API", api)
+        .env("PATH", path)
         .arg(root.join("scripts/mutant-sample"))
-        .args(["--from", "0", "--count", "1", "--", "false"])
+        .args(["--from", "0", "--count", "1"])
+        .args(args)
         .output()
-        .unwrap();
-    let said =
-        String::from_utf8_lossy(&run.stdout).to_string() + &String::from_utf8_lossy(&run.stderr);
-    let untouched = std::fs::read_to_string(&site).unwrap() == tokens.join("\n");
-    let recorded = dir.join("target").exists();
-    std::fs::remove_dir_all(&dir).unwrap();
+        .unwrap()
+}
+
+fn said(run: &std::process::Output) -> String {
+    String::from_utf8_lossy(&run.stdout).to_string() + &String::from_utf8_lossy(&run.stderr)
+}
+
+/// A kill means something only against a lane that passes unmutated. The sample
+/// runs the lane once untouched and stops, mutating nothing and recording nothing,
+/// when that run is red.
+///
+/// **The case runs the tool on a manifest and a file of its own**, in a directory
+/// of its own: see [`SampleDir`].
+#[test]
+fn the_mutation_sample_stops_when_its_lane_is_red_before_any_mutation() {
+    let one = a_sample_dir("baseline");
+    let run = sampled(&one, "", &["--", "false"]);
+    let said = said(&run);
+    let mutated = one.dir.join("site.txt").exists()
+        && std::fs::read_to_string(one.dir.join("site.txt")).unwrap()
+            != (0..30)
+                .map(|n| format!("SITE{n:02}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+    let sabotaged = one.dir.join("sabotaged").exists();
+    let recorded = one.dir.join("target").exists();
+    let _ = std::fs::remove_dir_all(&one.dir);
     assert_eq!(
         run.status.code(),
         Some(3),
@@ -177,6 +308,127 @@ fn the_mutation_sample_stops_when_its_lane_is_red_before_any_mutation() {
         said.contains("baseline"),
         "the refusal names the baseline: {said}"
     );
-    assert!(untouched, "no site was mutated: {said}");
+    assert!(!mutated && !sabotaged, "no site was mutated: {said}");
     assert!(!recorded, "nothing is recorded: {said}");
+}
+
+/// **A pull-request run's job on the same commit stands in for the sample's own
+/// baseline.** That job is the lane run unmutated, so the sample does not run it
+/// again: the stand-in `make`, which fails, is never called, and the mutant gets
+/// its verdict.
+#[test]
+fn a_pull_request_check_job_on_this_commit_stands_for_the_baseline() {
+    let one = a_sample_dir("proved");
+    let (api, stop, forge) = a_forge(
+        serde_json::json!({"workflow_runs": [{"id": 7, "index_in_repo": 70,
+            "commit_sha": one.sha, "workflow_id": "pull-request.yml", "status": "success"}]}),
+        serde_json::json!([{"name": "static", "status": "success"},
+            {"name": "check", "status": "success"}]),
+    );
+    let run = sampled(&one, &api, &["--baseline-run", "7", "--", "make", "check"]);
+    stop.store(true, std::sync::atomic::Ordering::SeqCst);
+    forge.join().unwrap();
+    let said = said(&run);
+    let record = std::fs::read_to_string(one.dir.join("target/mutants/killed.tsv"));
+    let lane_ran = one.dir.join("lane_ran").exists();
+    let _ = std::fs::remove_dir_all(&one.dir);
+    assert_eq!(run.status.code(), Some(0), "{said}");
+    assert!(!lane_ran, "the lane was not run for a baseline: {said}");
+    assert!(
+        record.is_ok_and(|rows| rows.contains("\tRED")),
+        "the mutant got its verdict: {said}"
+    );
+}
+
+/// One way a named run fails to prove the baseline.
+struct NotAProof {
+    wrong: &'static str,
+    /// The commit the run is on, the checkout's own when none.
+    commit: Option<&'static str>,
+    workflow: &'static str,
+    job_status: &'static str,
+    /// Whether the forge lists the run at all.
+    listed: bool,
+    lane: &'static [&'static str],
+}
+
+/// **A baseline named by a run that does not prove it is refused before any
+/// mutation**: another commit, no such run, a failed job, another workflow, or a
+/// lane no pull-request job runs. Each leaves nothing recorded and calls no
+/// sabotage, and the refusal says which input it refused.
+#[test]
+fn a_baseline_run_that_does_not_prove_the_lane_is_refused() {
+    const CHECK: &[&str] = &["make", "check"];
+    let cases = [
+        NotAProof {
+            wrong: "another commit",
+            commit: Some("0000000000000000000000000000000000000000"),
+            workflow: "pull-request.yml",
+            job_status: "success",
+            listed: true,
+            lane: CHECK,
+        },
+        NotAProof {
+            wrong: "no such run",
+            commit: None,
+            workflow: "pull-request.yml",
+            job_status: "success",
+            listed: false,
+            lane: CHECK,
+        },
+        NotAProof {
+            wrong: "a failed job",
+            commit: None,
+            workflow: "pull-request.yml",
+            job_status: "failure",
+            listed: true,
+            lane: CHECK,
+        },
+        NotAProof {
+            wrong: "another workflow",
+            commit: None,
+            workflow: "ledger-runs.yml",
+            job_status: "success",
+            listed: true,
+            lane: CHECK,
+        },
+        NotAProof {
+            wrong: "a lane no job runs",
+            commit: None,
+            workflow: "pull-request.yml",
+            job_status: "success",
+            listed: true,
+            lane: &["false"],
+        },
+    ];
+    for case in cases {
+        let one = a_sample_dir("refused");
+        let sha = case.commit.map_or_else(|| one.sha.clone(), str::to_string);
+        let runs = if case.listed {
+            serde_json::json!({"workflow_runs": [{"id": 7, "index_in_repo": 70,
+                "commit_sha": sha, "workflow_id": case.workflow, "status": "success"}]})
+        } else {
+            serde_json::json!({"workflow_runs": []})
+        };
+        let (api, stop, forge) = a_forge(
+            runs,
+            serde_json::json!([{"name": "check", "status": case.job_status}]),
+        );
+        let mut args = vec!["--baseline-run", "7", "--"];
+        args.extend_from_slice(case.lane);
+        let run = sampled(&one, &api, &args);
+        stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        forge.join().unwrap();
+        let said = said(&run);
+        let sabotaged = one.dir.join("sabotaged").exists();
+        let recorded = one.dir.join("target").exists();
+        let _ = std::fs::remove_dir_all(&one.dir);
+        assert_eq!(run.status.code(), Some(2), "{}: {said}", case.wrong);
+        assert!(said.contains("baseline-run"), "{}: {said}", case.wrong);
+        assert!(
+            !sabotaged && !recorded,
+            "{}: nothing ran: {said}",
+            case.wrong
+        );
+    }
 }
