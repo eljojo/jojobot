@@ -404,7 +404,12 @@ impl Jojobot {
     /// that cannot be read adds nothing, as an unreadable version is no change.
     /// A plan reads the day and a walk reads every claim that names the thing,
     /// which no version follows, so [`collapse`] never withholds them.
-    async fn around(&self, handle: &str, below: &[EntityId]) -> Option<Timestamp> {
+    async fn around(
+        &self,
+        handle: &str,
+        below: &[EntityId],
+        direct: &[EntityId],
+    ) -> Option<Timestamp> {
         let id = EntityId(handle.to_string());
         let mut sources: std::collections::BTreeSet<EntityId> = below.iter().cloned().collect();
         let fields = self.memory.fields(&id).await.ok()?;
@@ -457,13 +462,16 @@ impl Jojobot {
             }
         }
         // **A piece of work that bundles lists reads how far along each is** from the
-        // work those lists link, which no write to the bundle moves. The lists
-        // under it are already sources through `below`; this adds the work their
-        // entries link, and the instance record that maps the status words.
+        // work those lists link, which no write to the bundle moves. The rows count
+        // the lists directly under the work, so this watches those and no list
+        // further down; an archived one is watched too, an extra source and never a
+        // missing one. The lists under it are already sources through `below`; this
+        // adds the work their entries link, and the instance record that maps the
+        // status words.
         if id.kind() == Some(jojobot_domain::memory::EntityKind::WORK) {
-            for list in below
+            for list in direct
                 .iter()
-                .filter(|below| below.kind() == Some(jojobot_domain::memory::EntityKind::LIST))
+                .filter(|under| under.kind() == Some(jojobot_domain::memory::EntityKind::LIST))
             {
                 let (Ok(held), Ok(list_fields)) = (
                     self.memory.recall(list).await,
@@ -540,14 +548,17 @@ impl Jojobot {
         }
     }
 
-    /// **The things that stand under an entity, archived ones too**: how many are
+    /// **The things that stand under an entity, archived ones too**: those
     /// directly under it, and all of them at any depth. The counts a read of a
     /// parent carries move when any of them is added, archived or taken away, with
     /// no write to the parent, so they are both counted in its version and read
     /// as sources of it. Read from the index of the answer, which is built once.
-    async fn below(&self, handle: &str, messages: &HeldMessages) -> (usize, Vec<EntityId>) {
+    async fn below(&self, handle: &str, messages: &HeldMessages) -> (Vec<EntityId>, Vec<EntityId>) {
         let index = messages.parents(&*self.memory).await;
-        let direct = index.get(&EntityId(handle.to_string())).map_or(0, Vec::len);
+        let direct = index
+            .get(&EntityId(handle.to_string()))
+            .cloned()
+            .unwrap_or_default();
         let mut all: std::collections::BTreeSet<EntityId> = Default::default();
         let mut queue: Vec<&EntityId> = index
             .get(&EntityId(handle.to_string()))
@@ -577,8 +588,8 @@ impl Jojobot {
                 let (direct, below) = self.below(handle, messages).await;
                 Some(Version::Entity {
                     own: ages.newest,
-                    around: self.around(handle, &below).await,
-                    children: (direct, below.len()),
+                    around: self.around(handle, &below, &direct).await,
+                    children: (direct.len(), below.len()),
                 })
             }
             Held::Claim(address) => {
@@ -1469,6 +1480,78 @@ mod tests {
             children,
             (1, 1),
             "an archived child still stands under its parent in the count"
+        );
+    }
+
+    /// **A bundle's version follows the work its direct lists link, and no list
+    /// further down.** The progress rows of a read of the work count the lists
+    /// directly under it, so the version watches the same lists: the work a list
+    /// under a child work links moves no row of the bundle. Paired with a list
+    /// directly under the bundle, whose linked work moves the version.
+    #[tokio::test]
+    async fn a_bundles_version_follows_the_work_its_direct_lists_link_and_no_deeper() {
+        let jojobot = handler();
+        let alpha = EntityId::person("work:alpha");
+        ensure(&jojobot, "work:alpha").await;
+        for (handle, parent) in [
+            ("work:omega", "work:alpha"),
+            ("list:packing", "work:omega"),
+            ("list:errands", "work:alpha"),
+        ] {
+            jojobot
+                .memory
+                .add_entity(NewEntity {
+                    parent: Some(EntityId::person(parent)),
+                    ..NewEntity::new(EntityId::person(handle), handle, "fixture")
+                })
+                .await
+                .expect("the entity is created")
+                .written()
+                .expect("nothing blocks it");
+        }
+        for linked in ["work:sigma", "work:phi"] {
+            ensure(&jojobot, linked).await;
+            capture_ok(&jojobot, capture_args(linked, "has begun")).await;
+        }
+        for (list, linked) in [("list:packing", "work:sigma"), ("list:errands", "work:phi")] {
+            capture_ok(
+                &jojobot,
+                CaptureArgs {
+                    shape: Some("about".into()),
+                    object: Some(linked.into()),
+                    ..capture_args(list, "finish it")
+                },
+            )
+            .await;
+        }
+        let before = version(&jojobot, alpha.as_str()).await;
+
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                sets: Some([("status".to_string(), "done".to_string())].into()),
+                ..capture_args("work:sigma", "is finished")
+            },
+        )
+        .await;
+        assert_eq!(
+            version(&jojobot, alpha.as_str()).await,
+            before,
+            "the work a list under a child work links is no part of the bundle's rows"
+        );
+
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                sets: Some([("status".to_string(), "done".to_string())].into()),
+                ..capture_args("work:phi", "is finished")
+            },
+        )
+        .await;
+        assert_ne!(
+            version(&jojobot, alpha.as_str()).await,
+            before,
+            "the work a list directly under the bundle links moves its rows"
         );
     }
 
